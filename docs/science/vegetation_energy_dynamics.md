@@ -144,40 +144,48 @@ temperature. Nothing switches; the physics chooses, per cohort, every step, cont
 The store is always on (`build_column_frozen` in `meds_fast_frozen`). The capacity splits its two
 halves across **different** masses, which is a physical distinction and not a detail:
 
-- **dry tissue → ALL the wood.** Heartwood is dead structure but still stores sensible heat, and a
-  sapwood fraction defined on the bole under-counts branch wood, which is thin enough to be thermally
-  active throughout.
-- **internal water → the SAPWOOD RING only**, at a fixed moisture. Heartwood is taken as dry, which
-  is what makes it heartwood. This is not the hydraulic store: the water network's wood store is the
-  sapwood **plus the fine roots**, and carries its own prognostic water
-  ([plant_hydraulics](plant_hydraulics.md) §1), which the heat capacity does not read (see
-  `docs/ROADMAP.md`).
+- **dry tissue → ALL the wood**, at the dry specific heat. Heartwood is dead structure but still
+  stores sensible heat, and a sapwood fraction defined on the bole under-counts branch wood, which is
+  thin enough to be thermally active throughout.
+- **water → the sapwood share of the water network's store.** The network's wood store is the
+  sapwood **plus the fine roots**, with one prognostic water mass $`W_{wood}`$
+  ([plant_hydraulics](plant_hydraulics.md) §1) and a capacity in proportion to their carbon; the
+  heat capacity counts the sapwood's share of it. The fine roots sit in the soil, so their share is
+  not the wood's, and heartwood holds none, which is what makes it heartwood. A store that drains
+  through a dry season holds less heat.
 
 Per unit ground area, with $B$ the dry biomass (carbon × 2 × $`n_{plant}`$):
 
 ```math
-\mathrm{cap}_{wood} = \max\!\big(c_{wood}\,B_{wood},\ C_{min}\,\mathrm{WAI}\big) + c_{liq}\,f_{moist}\,B_{sap}, \qquad
+\mathrm{cap}_{wood} = \max\!\big(c_{wood}\,B_{wood},\ C_{min}\,\mathrm{WAI}\big)
+  + c_{liq}\,n_{plant}\,W_{wood}\,\frac{B_{sap}}{B_{sap}+B_{root}}, \qquad
 \mathrm{cap}_{leaf} = \max\!\big(c_{leaf}\,B_{leaf},\ C_{min}\,\mathrm{LAI}\big) + c_{liq}\,W_{leaf} \qquad(8)
 ```
 
-with $`c_{wood}`$ = 2700 and $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ (`c_sapw`, `c_leaf`),
-$`C_{min}`$ = 20 J K⁻¹ per m² of the tissue's own area (`veg_hcap_min`; per area, so the capacity scales
-with the tissue's area as its fluxes do), a fresh-sapwood moisture $`f_{moist}`$ = 1 kg water per kg
-dry wood, and $`W_{leaf}`$ the leaf's internal water from the hydraulics. The intercepted film is a
-separate store and is not in $`\mathrm{cap}_{leaf}`$. The wood masses come from the ED2 allometry
-(`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`, `sapwood_area_b1/b2`). Sized this way,
-`τ_wood ≈ 1200–1600 s` and `w_end ≈ 0.23–0.32` at `dt_fast = 1800 s` — wood carries **genuine memory**.
+with $`c_{wood}`$ = 1217 J kg⁻¹ K⁻¹, ED2's specific heat of **dry** wood at 15 °C (`c_wood_dry`;
+103.1 + 3.867 T), $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ for dry leaf (`c_leaf`), $`C_{min}`$ = 20 J K⁻¹ per m²
+of the tissue's own area (`veg_hcap_min`; per area, so the capacity scales with the tissue's area as its
+fluxes do), $`W_{wood}`$ the wood store's water per plant and $`W_{leaf}`$ the leaf's internal water,
+both from the water network. Fresh wood's specific heat (about 2700 J kg⁻¹ K⁻¹ at 100 % moisture) is
+not used: the water is counted on its own, so a fresh-wood value would count it twice. The function
+`wood_thermal_water` gives the water term to both the fast loop and the state layer's
+`cohort_tissue_heat_capacity`, so the fusion weights and the slow ledger use the same capacity. The
+intercepted film is a separate store and is not in $`\mathrm{cap}_{leaf}`$. The wood masses come from
+the ED2 allometry (`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`, `sapwood_area_b1/b2`).
+Sized this way, with a saturated store (`wood_water_sat` = 1 kg per kg of carbon),
+`τ_wood ≈ 600–760 s` and `w_end ≈ 0.22–0.31` at `dt_fast = 900 s` — wood carries **genuine memory**.
 
-**`τ_wood` is set by the mass, not by the method** — the sapwood ring alone would give 74–102 s. And
-because `w_end` is small for wood while `w_avg` is not, **the store's effect lives in the FLUXES, not
-in the temperature**: "the wood barely lags" does not imply "the wood barely matters", and comparing
-tissue temperatures alone makes the store look negligible.
+**Most of the wood's capacity is the sapwood and its water**: dry wood holds 1217 J kg⁻¹ K⁻¹ against
+water's 4186, so the heartwood adds little. And because `w_end` is small for wood while `w_avg` is
+not, **the store's effect lives in the FLUXES, not in the temperature**: "the wood barely lags" does
+not imply "the wood barely matters", and comparing tissue temperatures alone makes the store look
+negligible.
 
-Measured effect, from a 2×2 over (store, longwave) on a 2 h night window: the store leaves the night
-canopy air **1.57 K warmer** (leaf + wood carry ~1.5×10⁴ J m⁻² K⁻¹ against the canopy air's ~3.0×10⁴,
-so shedding a ~3 K excess should lift the air by ~0.5 × 3 K — and it does). It also absorbs most of
-the net-longwave signal, which is why a test that thresholds nighttime cooling is pinned against the
-store-on control.
+Measured effect, from a 2×2 over (store, longwave) on a 2 h night window (`test_fast_loop`): the store
+leaves the night canopy air **0.85 K warmer**, since leaf and wood carry a heat capacity comparable to
+the canopy air's and pass their stored heat to it as they cool. It also absorbs a third of the
+net-longwave signal (2.44 K without the store, 1.60 K with it), which is why a test that thresholds
+nighttime cooling is pinned against the store-on control.
 
 **Why not backward Euler.** BE is the $`w_{\rm end}=w_{\rm avg}=1/(1+x)`$ approximation. A leaf at
 production `dt_fast` has $`x\approx144`$: the exact endpoint weight is $`\sim 5\times10^{-63}`$ against
@@ -196,9 +204,10 @@ $`\tau_{\rm leaf}\approx 12`$–20 s, and — a useful result — it is **LAI-in
 `denom` both scale with LAI, so every leaf cohort shares one τ and there is no per-cohort structure to
 resolve. A leaf is genuinely at equilibrium at any `dt_fast` the model runs at.
 
-Wood is different. The allometric sizing above gives $`\tau_{\rm wood}\approx 1200`$–1600 s; a physical
-estimate (branch wood plus the bole's diurnal damping depth) is ≈1300 s for branches and ≈3690 s for
-boles — so wood memory at `dt_fast = 1800 s` is real, not negligible. Wood is also treated as
+Wood is different. The allometric sizing above gives $`\tau_{\rm wood}\approx 600`$–760 s with a
+saturated store, less as it drains; a physical estimate (branch wood plus the bole's diurnal damping
+depth) is ≈1300 s for branches and ≈3690 s for boles — so wood memory at `dt_fast = 900 s` is real,
+not negligible. Wood is also treated as
 **internally isothermal**, a deliberate simplification: Bi ≈ 7.45 for a bole skin against the Bi ≪ 0.1
 lumped capacitance needs, so real wood is a diffusion problem with no single τ. That is a limitation of
 the one-node wood store, not of the integrator.

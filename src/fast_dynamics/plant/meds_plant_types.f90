@@ -217,7 +217,8 @@ module meds_plant_types
       real(wp) :: effarea_evap   = 1.0_wp                   !< [-] film-evaporation sidedness
       real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness (per PFT)
       real(wp) :: veg_hcap_min   = 20.0_wp                  !< [J/m2 tissue/K] least dry heat capacity
-      real(wp) :: c_leaf = 3200.0_wp, c_sapw = 2700.0_wp    !< [J/kg/K] tissue specific heats
+      real(wp) :: c_leaf     = 3200.0_wp                    !< [J/kg/K] dry leaf specific heat
+      real(wp) :: c_wood_dry = 1217.0_wp                    !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
    end type veg_thermal_params_t
 
 end module meds_plant_types

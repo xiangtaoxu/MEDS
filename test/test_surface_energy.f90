@@ -17,6 +17,7 @@ program test_surface_energy
    use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi, cp_liq
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_plant_types, only : veg_thermal_params_t
+   use meds_water_retention,  only : wood_thermal_water
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy
    use meds_plant_biophysics, only : veg_energy_balance
@@ -55,7 +56,10 @@ contains
    !=======================================================================================!
    subroutine test_wood_stiffness_spread()
       type(veg_thermal_params_t) :: tp
-      real(wp), parameter :: C2B = 2.0_wp, DT_FAST = 1800.0_wp, TREF = 295.0_wp
+      real(wp), parameter :: C2B = 2.0_wp, DT_FAST = 900.0_wp, TREF = 295.0_wp
+      !----- The default wood store's saturated water, [hydraulics].wood_water_sat [kg/kgC]: a      !
+      !      saturated store, the most water the wood's heat capacity can count. ------------------!
+      real(wp), parameter :: WOOD_WATER_SAT = 1.0_wp
       real(wp), parameter :: GBH = 0.03_wp, RHO = 1.2_wp
       real(wp), parameter :: WOOD_EMISS = 0.90_wp       !< the default PFT wood_emissivity
       !----- ED2 ed_params.f90: b1WAI = 0.0192*0.5 (note the *0.5), b2WAI = 2.0947 for tropical  !
@@ -79,13 +83,15 @@ contains
          !        DRY tissue   -> ALL the wood. Heartwood is dead structure but still stores      !
          !                        sensible heat, and a bole-defined sapwood fraction under-counts !
          !                        branch wood, which is thermally active throughout.              !
-         !        INTERNAL WATER -> the SAPWOOD RING only. Heartwood is taken as dry, which is    !
-         !                        what makes it heartwood.                                        !
+         !        INTERNAL WATER -> the sapwood share of the water network's store, here a        !
+         !                        saturated one (wood_thermal_water). Heartwood holds none, which !
+         !                        is what makes it heartwood.                                     !
          !      ONE enthalpy pool at ONE temperature either way -- a bole/branch partition would  !
          !      mean two wood temperatures and is deliberately not taken. --------------------!
          dbio_w   = wc(i) * npl(i) * C2B                                ! [kg dry/m2] all wood
          dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
-         cap    = max(dbio_w * tp%c_sapw, tp%veg_hcap_min * wai) + dbio_sap * cp_liq
+         cap    = max(dbio_w * tp%c_wood_dry, tp%veg_hcap_min * wai)                            &
+                + wood_thermal_water(WOOD_WATER_SAT * dbio_sap / C2B, dbio_sap / C2B, 0.0_wp) * cp_liq
          drdt   = 8.0_wp * WOOD_EMISS * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
          tau    = cap / drdt
          !----- the EXACT endpoint memory the kernel uses (eq. (4)), not backward Euler's 1/(1+x) !
@@ -99,13 +105,13 @@ contains
             f_sap_big = f_sap ; sap_big = dbio_sap
          end if
       end do
-      !----- WHAT THIS MEASURES. tau_wood = 1200-1600 s and w_end = 0.23-0.32 at dt_fast = 1800 s,     !
-      !      so wood carries GENUINE memory at production cadence -- the whole reason the store        !
-      !      exists. tau_wood is set by the MASS, not by the method: the sapwood ring as the WHOLE     !
-      !      thermal mass gives tau = 74-102 s (w_end ~ 1e-8), and ED2's b1WAI (written 0.0192*0.5)    !
-      !      halves WAI, hence the coupling, which dominates over leaving out the heartwood water. ----!
-      call check_true('tau_wood is O(1e3 s)', tau_min > 1000.0_wp .and. tau_max < 2500.0_wp, tau_max)
-      call check_true('wood carries GENUINE memory at dt_fast = 1800 s (w_end > 0.2)',              &
+      !----- WHAT THIS MEASURES. tau_wood = 600-760 s and w_end = 0.22-0.31 at dt_fast = 900 s, with a  !
+      !      saturated store, so wood carries GENUINE memory at production cadence -- the whole reason  !
+      !      the store exists. Most of the capacity is the sapwood and its water: dry wood holds 1217   !
+      !      J/kg/K against water's 4186, so the heartwood adds little. ED2's b1WAI (written            !
+      !      0.0192*0.5) halves WAI, hence the coupling, which lengthens tau. --------------------------!
+      call check_true('tau_wood is several hundred seconds', tau_min > 500.0_wp .and. tau_max < 1000.0_wp, tau_max)
+      call check_true('wood carries GENUINE memory at dt_fast = 900 s (w_end > 0.2)',               &
            exp(-DT_FAST / tau_min) > 0.2_wp, exp(-DT_FAST / tau_min))
       !----- The DRY mass must be the FULL wood mass: 36 kg/m2 = 1200 kgC/plant * 0.015 pl/m2 * C2B, !
       !      which is what an independent mass audit of that cohort gives. Re-pointing the dry half  !

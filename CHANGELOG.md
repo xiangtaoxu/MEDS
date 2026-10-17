@@ -327,6 +327,34 @@ before and after.
   with no coupling; `test_fast_loop` runs the thin stand as one cohort and as two at half density
   through the whole fast loop (temperatures within 5×10⁻⁸ K, GPP per plant within 10⁻¹³) and a
   leafless tree whose leaves take its wood's temperature.
+- **The wood's heat capacity counts the sapwood share of its water, at a dry specific heat** (#419).
+  The wood's thermal water was the sapwood ring at a fixed 1 kg per kg dry (`WOOD_MOIST_FRAC`, and
+  its copy `WOOD_MOIST_FRAC_ARK` in the fast loop), twice what the default store holds at saturation,
+  while the water network carries the wood's own water; and `c_sapw` = 2700 J kg⁻¹ K⁻¹ was fresh
+  wood's (100 % moisture), applied to dry mass with the water added on top, so the water was counted
+  twice. The water term is now the sapwood share of the network's store, `wood_water_mass ·
+  bsap/(bsap + broot)` (`wood_thermal_water`, one function for `build_column_frozen` and
+  `cohort_tissue_heat_capacity`, so the fusion weights and the slow ledger see the same capacity); the
+  dry wood, heartwood included, is at ED2's dry 1217 J kg⁻¹ K⁻¹ (`c_wood_dry`, `TISSUE_C_WOOD_DRY`);
+  both moisture constants are gone. The fine-root shed declares the heat of the sapwood share it
+  drains. The wood capacity halves and its temperature swings more; daily means barely move
+  (`vegetation_energy_dynamics.md` eq. (8); τ_wood is now 600–760 s with a saturated store). On the
+  issue's windows (example 04's evaluation run, Palo Verde's inventory run), against the code before:
+  - BCI wet, Sep 2012: wood capacity 2.75×10⁵ → 1.31×10⁵ J m⁻² K⁻¹, midday H +20.1 W m⁻² (188.8 →
+    208.9), night H −4.3, wood daily amplitude +0.71 K (4.16 → 4.86), LE −0.9 %, GPP −0.08 %;
+  - BCI dry, Mar–Apr 2013: 2.77×10⁵ → 1.32×10⁵, midday H +25.8 (267.8 → 293.6), night H −6.7,
+    amplitude +0.51 K, LE −0.07 %, GPP −0.09 %;
+  - Palo Verde dry, Dec 2008 – May 2009: 1.62×10⁵ → 0.99×10⁵, midday H +20.5 (250.2 → 270.7), night H
+    −7.3, amplitude +0.71 K (10.2 → 10.9), LE −0.4 %, GPP −0.03 %; Sep 2008: capacity −34 %, midday H
+    +6.2, LE −1.1 %.
+
+  The issue's measured variant predicted +19.7/+25.3/+19.9 W m⁻² at midday and +0.68/+0.49/+0.68 K. On
+  the compare runs: example 04 (2012-08-01..20, ARK) midday H +18.9 W m⁻², night −2.7, ET −0.7 %, GPP
+  −0.07 %; Palo Verde's inventory month ET −1.6 %, H +1.3 W m⁻²; BCI regrowth from bare ground
+  unchanged to 0.01 %. Example 04 is to be refitted, since its diurnal H is in the calibration.
+  `test_column_ark` checks the capacity against the store (a store drained by a fifth holds a fifth
+  less water heat), `test_slow_ledger` that the shed's declared heat is the tissue store's change,
+  and `test_surface_energy` the new wood timescale.
 
 ### Documentation
 

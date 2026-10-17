@@ -155,7 +155,10 @@ The network moves water; the soil-energy solve and the tissue stores carry its e
 - Root uptake leaves each layer at that layer's own temperature (`root_heat`, per layer).
 - A tissue's heat is its frozen capacity times its temperature; the change in its water is booked at
   its start-of-step temperature (`water_store_enth`), and arriving water heats it only by its
-  temperature difference.
+  temperature difference. The wood's capacity counts the sapwood share of the wood store's water
+  ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq. (8)); the booking covers the whole
+  store, fine roots included, at the wood's temperature, which is the temperature eq. (4) moves all of
+  the store's water at.
 - The pond carries its own enthalpy through each sub-step: rain joins it first, what infiltrates
   leaves at the mixture's temperature, water the top layer pushes up arrives at that layer's
   temperature, and the spill leaves at the pond's.

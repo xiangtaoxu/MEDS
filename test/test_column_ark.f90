@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_column_ark
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o
+   use meds_constants,           only : rho_h2o, cp_liq
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -207,6 +207,7 @@ program test_column_ark
    call test_ark_aquifer()
    call test_wood_prognostic(INTEG_ARK, 'ARK ')
    call test_refilling_wood_isothermal()
+   call test_wood_capacity_follows_store()
 
    call test_report('test_column_ark')
 
@@ -270,6 +271,35 @@ contains
                        'what the soil gives up = what the tissues and their water stores gain')
       call reset_state()
    end subroutine test_refilling_wood_isothermal
+
+   !----- The wood's heat capacity is its dry wood at the dry specific heat plus the sapwood share of   !
+   !      the water network's store (docs/science/vegetation_energy_dynamics.md eq. (8)), so a store     !
+   !      drained by a fifth holds a fifth less of that water's heat, and the fine roots' share is not  !
+   !      counted at all. ------------------------------------------------------------------------------!
+   subroutine test_wood_capacity_follows_store()
+      type(column_frozen_t) :: fz
+      type(column_state_t)  :: ys
+      real(wp) :: w_store, w_sap, cap_dry, cap_full, cap_drained
+      call reset_state()
+      call set_noon_forcing()
+      w_store = biophys%wood_water_mass(1)
+      w_sap   = w_store * col_cohort%bsap(1) / (col_cohort%bsap(1) + col_cohort%broot(1))
+      cap_dry = max(col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * col_config%veg_thermal%c_wood_dry,  &
+                    col_config%veg_thermal%veg_hcap_min * col_cohort%wai(1))
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+                               ws%spac, n, nsl, fz, ys)
+      cap_full = fz%tissue%wood_hcap_per_dt(1) * dt_fast
+      call check_close(cap_full, cap_dry + col_cohort%nplant(1) * w_sap * cp_liq, 1.0e-12_wp * cap_full,       &
+                       'wood heat capacity = dry wood + the sapwood share of the store''s water')
+      call check_true('the fine roots hold part of the store', col_cohort%broot(1) > 0.0_wp, col_cohort%broot(1))
+      biophys%wood_water_mass(1) = 0.8_wp * w_store
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+                               ws%spac, n, nsl, fz, ys)
+      cap_drained = fz%tissue%wood_hcap_per_dt(1) * dt_fast
+      call check_close(cap_full - cap_drained, 0.2_wp * col_cohort%nplant(1) * w_sap * cp_liq,                  &
+                       1.0e-9_wp * cap_full, 'a store drained by a fifth holds a fifth less water heat')
+      call reset_state()
+   end subroutine test_wood_capacity_follows_store
 
    !----- The aquifer bottom BC is a head-driven, two-way boundary with no prognostic state, and the   !
    !      ARK commits the water network's theta, so it takes the aquifer like any other face. A column !

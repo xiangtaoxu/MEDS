@@ -391,16 +391,17 @@ program test_fast_loop
       !----- Net-longwave wiring: at night (SW=0) the sky (LWdown=340) is far colder than the surface !
       !      (~sigma*T^4 ~ 385 W/m2), so the two-stream NET longwave (leaf + ground) is a radiative    !
       !      LOSS that drives the canopy air below its ~288 K start and the 288.5-291.5 K atmosphere. !
-      !----- The threshold, measured 2x2 (2 h night window; LW off = abs_lw/abs_lw_ground at 0):      !
+      !----- The threshold, measured 2x2 (2 h night window; LW off = abs_lw/abs_lw_ground at 0;     !
+      !      store off = the leaf and wood heat capacities at 0):                                     !
       !                        LW on     LW off    LW signal                                        !
-      !          store off     286.09    288.48    2.39 K                                           !
-      !          store on      287.66    288.56    0.90 K                                           !
-      !      The tissue heat store warms the night canopy air by 1.57 K, which is REAL: leaf and wood !
-      !      carry ~1.5e4 J/m2/K against the canopy air's ~3.0e4, so tissue shedding a ~3 K excess    !
-      !      lifts the air by ~0.5*3 K -- and the observed 1.57 K matches. It also eats most of the   !
-      !      LW signal, so the threshold has to sit between the store-on pair, not the store-off      !
-      !      pair. 288.0 K discriminates in BOTH configurations (margins 0.34/0.56 K with the store   !
-      !      on, 1.91/0.48 K with it off). Re-measure both controls if either is touched. ------------!
+      !          store off     285.95    288.39    2.44 K                                           !
+      !          store on      286.80    288.41    1.60 K                                           !
+      !      The tissue heat store warms the night canopy air by 0.85 K, which is REAL: leaf and wood !
+      !      carry a heat capacity comparable to the canopy air's, so tissue shedding its excess      !
+      !      lifts the air. It also eats part of the LW signal, so the threshold has to sit between   !
+      !      the store-on pair, not the store-off pair. 288.0 K discriminates in BOTH configurations  !
+      !      (margins 1.20/0.41 K with the store on, 2.05/0.39 K with it off). Re-measure both        !
+      !      controls if either is touched. ----------------------------------------------------------!
       call check(tcas_n < 288.0_wp, 'net longwave wired: canopy air radiatively cools (net-LW loss to the cold sky)')
       write(*,'(a,es10.3,a,es10.3,a)') '   (forcing GPP: night=', gpp_night, '  day=', gpp_day, ' kgC/plant)'
       write(*,'(a,f7.3,a)') '   (night CAS temp=', tcas_n, ' K, radiatively cooled below the ~288 K start)'

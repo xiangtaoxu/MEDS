@@ -173,9 +173,6 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
   `τ = cap/denom` together — in the kernel with the most delicate conservation invariant in the
   model, whose adaptive controller has already been broken once by a discontinuity here. That is not
   a proportionate trade for a few percent of one denominator term.
-- **The wood's heat capacity uses a fixed sapwood moisture.** *Candidate.* [#419](https://github.com/xiangtaoxu/MEDS/issues/419) The water
-  network carries the wood's own water, and the leaf's capacity already uses its prognostic water; the
-  wood's does not.
 - **The sub-canopy ground conductance.** *Open question.* [#265](https://github.com/xiangtaoxu/MEDS/issues/265) MEDS ports ED2's non-default
   `icanturb = 4`, CLM4's dense-canopy form, whose ground resistance is 8–16× that of the Sellers et al.
   (1986) form ED2 ships; it matters most in gaps. It is a faithful port of a published scheme, a

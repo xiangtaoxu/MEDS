@@ -6,7 +6,7 @@ program test_fusion_cohort
    use meds_config,          only : meds_config_t
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_site_state_types,           only : site_t, set_cohort_size, cohort_tissue_heat_capacity, &
-                                               TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN,       &
+                                               TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN,   &
                                                set_cohort_size_from_carbon, cohort_bad_field,       &
                                                cohort_field_name, cohort_deriv_block,               &
                                                cohort_deriv_alloc, init_cohort
@@ -63,8 +63,8 @@ program test_fusion_cohort
                 / (site%cohort%nplant(1) + site%cohort%nplant(2))
    woodmass_exp = (site%cohort%nplant(1)*3.0_wp + site%cohort%nplant(2)*7.0_wp)                     &
                 / (site%cohort%nplant(1) + site%cohort%nplant(2))
-   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cl1, cw1)
-   call cohort_tissue_heat_capacity(site%cohort, 2_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cl2, cw2)
+   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, cl1, cw1)
+   call cohort_tissue_heat_capacity(site%cohort, 2_ik, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, cl2, cw2)
    ltemp_exp = (cl1*300.0_wp + cl2*305.0_wp) / (cl1 + cl2)
    wtemp_exp = (cw1*298.0_wp + cw2*306.0_wp) / (cw1 + cw2)
    e_leaf0   = cl1*300.0_wp + cl2*305.0_wp
@@ -104,7 +104,7 @@ program test_fusion_cohort
    !      energy closes exactly; the WOOD's does not, because set_cohort_size_from_carbon re-derives!
    !      the sapwood ring from the merged diameter -- that residual is a thermal-mass change, of   !
    !      the same kind growth makes, and it is bounded here rather than asserted to zero. ---------!
-   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, clf, cwf)
+   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, clf, cwf)
    call check_close(clf*site%cohort%leaf_temp(1), e_leaf0, 1.0e-12_wp,                              &
                     'cohort fusion must conserve LEAF tissue energy exactly')
    call check(abs(cwf*site%cohort%wood_temp(1) - e_wood0) <= 1.0e-3_wp * abs(e_wood0),              &
