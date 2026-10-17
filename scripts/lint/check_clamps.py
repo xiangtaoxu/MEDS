@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""check_clamps.py -- no bare literal clamps in the model source (#346).
+"""check_clamps.py -- no bare literal clamps in the model source.
 
-A max/min against a literal hides a threshold in the arithmetic. The rule:
+A max/min against a real literal hides a threshold in the arithmetic. The rule:
   * a guard against dividing by zero or leaving a function's domain uses tiny_num;
   * a physical threshold is a named setting or parameter with its source;
   * 0 and +-1 are physical bounds (non-negativity, fractions, the domain of acos) and pass.

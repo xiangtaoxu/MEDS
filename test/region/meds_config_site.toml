@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # The site config test_region derives its region and site configs from: one deciduous PFT at
-# Ithaca NY, fast biophysics on. The test prepends an override block (the synthetic ERA5-Land
-# archive, a bare-ground start, a 12-day window) and drops the keys region mode rejects, so only
-# the keys below that it leaves alone matter. CMakeLists.txt runs the test in this folder.
+# Ithaca NY, fast biophysics on. The test prepends an override block (the synthetic ED_ERA5land
+# archive and its soil maps, a bare-ground start, a 12-day window) and drops the keys the archive,
+# the soil maps or region mode reject, so only the keys below that it leaves alone matter.
+# CMakeLists.txt runs the test in this folder.
 [run]
 dt_slow    = "1d"
 start_time = "2074-07-01"

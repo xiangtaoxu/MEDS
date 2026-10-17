@@ -1,18 +1,17 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_biophysics_opts -- the run-configuration bundles of the fast (sub-daily) biophysics loop: !
-! solver selectors + tolerances (soil water / soil energy) and the physical parameter tables      !
-! (snow, aerodynamics). These are NOT prognostic state and NOT per-column descriptors -- they are  !
-! run-config, filled once (defaults here for standalone/test use; the tunable subset from the       !
-! [soil]/[energy]/[snow]/[aerodynamics] TOML blocks when the wiring lands). So they live in the      !
-! shared config layer, a LOW-LEVEL leaf (`meds_kinds` only, like meds_pft_params) that the sealed    !
-! device-eligible biophysics kernels can `use` WITHOUT depending on the heavyweight meds_config       !
-! aggregator. Imported directly by the kernels that switch on them and by the loader that reads    !
-! them from TOML; the meds_canopy_types/meds_soil_types re-export shims were removed in step 4.                 !
+! meds_biophysics_opts -- the run-configuration bundles of the fast (sub-daily) biophysics !
+! loop: the solver selectors and tolerances (soil water, soil energy) and the physical     !
+! parameter tables (snow, aerodynamics), filled from the [soil], [energy], [snow] and      !
+! [aerodynamics] blocks, with the defaults below for standalone and test use. They are run !
+! configuration, not prognostic state and not per-column descriptors, so they live in a    !
+! low-level config leaf (`meds_kinds` only, like meds_pft_params) that the device-eligible !
+! biophysics kernels can `use` without depending on the meds_config aggregator. The        !
+! kernels that switch on them and the loader that reads them import this module directly.  !
 !                                                                                          !
-! (The constitutive SOIL_RETENTION_* selectors stay in meds_hydr_lib with the retention curves; the   !
-! per-column soil_params_t / soil_thermal_params_t descriptors stay in meds_column_state_types beside  !
-! the prognostic soil columns they describe and travel with.)                                          !
+! (The SOIL_RETENTION_* selectors stay in meds_water_retention with the retention curves;  !
+! the per-column soil_params_t / soil_thermal_params_t descriptors are in                  !
+! meds_column_params.)                                                                     !
 !==========================================================================================!
 module meds_biophysics_opts
    use meds_kinds, only : wp, ik
@@ -27,8 +26,8 @@ module meds_biophysics_opts
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
-   integer(ik), parameter :: SOIL_BC_FREE_DRAIN = 1_ik     !< unit-gradient q = K(theta_N)  (MVP default)
-   integer(ik), parameter :: SOIL_BC_AQUIFER    = 2_ik     !< SIMTOP aquifer / water table (P2)
+   integer(ik), parameter :: SOIL_BC_FREE_DRAIN = 1_ik     !< unit-gradient q = K(theta_N)  (default)
+   integer(ik), parameter :: SOIL_BC_AQUIFER    = 2_ik     !< water table at the column base (wet sites only)
    integer(ik), parameter :: SOIL_BC_BEDROCK    = 3_ik     !< no-flow  q = 0
 
    integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: prescribed flux (Neumann)
@@ -47,9 +46,9 @@ module meds_biophysics_opts
       !      and wetland stands; WRONG for a typical upland one, where free_drain is the correct        !
       !      choice.  It is not a drop-in "more realistic drainage" option.  ------------------------!
       integer(ik) :: bottom_bc = SOIL_BC_FREE_DRAIN
-      !----- The water network's sub-step tolerances (MEDS_SPAC_WATER_NETWORK_PLAN.md D8): a store's  !
-      !      error is weighed against atol of its scale -- water content for soil layers and the      !
-      !      pond, relative water content for plant tissues -- plus rtol of its water. ----------------!
+      !----- The water network's sub-step tolerances (docs/science/soil_plant_water.md §3): a        !
+      !      store's error is weighed against atol of its scale -- water content for soil layers     !
+      !      and the pond, relative water content for plant tissues -- plus rtol of its water. ------!
       real(wp)    :: rtol   = 1.0e-3_wp
       real(wp)    :: atol   = 1.0e-4_wp
       real(wp)    :: w_pond_max = 5.0_wp                 !< [kg/m2] ponding capacity before surface runoff
@@ -66,26 +65,16 @@ module meds_biophysics_opts
       real(wp)    :: ground_emissivity = 0.95_wp        !< [-] soil longwave emissivity
    end type soil_opts_t
 
-   !----- Soil-energy: solver selectors + tolerances (NOT the whole config). ----------------!
-   !----- MEASURED before trimming (#163). The soil-thermal solve is ONE backward-Euler step:      !
-   !      soil_energy_step_implicit hard-codes flux%nsub = 1 and flux%converged = .true., and BE is  !
-   !      unconditionally stable, so substepping could only ever buy accuracy -- and accuracy of the  !
-   !      integrated state is already controlled by the OUTER adaptive march through GRP_SE (soil     !
-   !      internal energy, which is what the state vector actually carries).                           !
-   !                                                                                          !
-   !      So the adaptive-substep controls were not merely unread, they were controls for a second     !
-   !      controller on a quantity the first one already owns. `rtol` went with them: it fed only      !
-   !      GRP_SOIL_T, a tolerance group with NO MEMBER in state_wrms_grouped -- the norm sums GRP_SE   !
-   !      and GRP_THETA and never GRP_SOIL_T, so nothing downstream could read it.                      !
-   !                                                                                          !
-   !      `bottom_bc` STAYS despite being unread today: #145 wires the Dirichlet thermal anchor onto    !
-   !      it in this same release, so deleting and re-adding it would be churn.                          !
+   !----- Soil energy: the bottom boundary and the debug budget check (NOT the whole config).      !
+   !      The soil-thermal solve is one backward-Euler step, unconditionally stable, and the       !
+   !      integrator's adaptive step already controls the soil internal energy it carries          !
+   !      (tolerance group GRP_SE), so there are no sub-step controls here. -----------------------!
    type :: energy_opts_t
-      !----- geothermal (default) | dirichlet.  See soil_heat_be_solve for the discretisation and    !
-      !      docs/science/soil_biophysics.md for what each one costs.  `geothermal` prescribes the     !
-      !      bottom FLUX (hard-wired to zero today), which makes the base adiabatic and REFLECTS the   !
-      !      annual temperature wave; `dirichlet` conducts to a fixed deep temperature `deep_temp` at   !
-      !      depth `deep_depth`, which absorbs most of it.  ------------------------------------------!
+      !----- geothermal (default) | dirichlet (docs/science/soil_biophysics.md, "The bottom          !
+      !      thermal boundary"; the discretisation is in soil_heat_be_solve). `geothermal`           !
+      !      prescribes the bottom FLUX (held at zero), which makes the base adiabatic and           !
+      !      REFLECTS the annual temperature wave; `dirichlet` conducts to a fixed deep              !
+      !      temperature `deep_temp` at depth `deep_depth`, which absorbs most of it. ---------------!
       integer(ik) :: bottom_bc    = ENERGY_BC_GEOTHERMAL
       !----- Dirichlet anchor (read only when bottom_bc == ENERGY_BC_DIRICHLET).  `deep_temp` is a     !
       !      SITE property -- the mean annual soil temperature below the annual damping depth, close    !
@@ -93,37 +82,31 @@ module meds_biophysics_opts
       !      REQUIRES it.  An error in it is a steady flux `kappa/l_deep * error` into the column base,  !
       !      i.e. a mean-annual bias of roughly the same size at depth, so guessing it is not safe.      !
       real(wp)    :: deep_temp   = -1.0_wp        !< [K] anchor temperature; < 0 means "not set"
-      !----- Depth of the anchor PLANE below the surface.  The bottom node conducts to it over          !
-      !      l_deep = deep_depth - |z_node(n)|, so this is the one knob that sets how transparent the    !
-      !      boundary is, and it is a PHYSICAL choice, not a numerical one: a purely resistive           !
-      !      termination reflects least when l_deep = d/sqrt(2), d the annual damping depth.             !
-      !                                                                                          !
-      !      The default is that optimum for the DEFAULT column (2 m on the default layers, the          !
-      !      [soil_column] defaults) and a mid-latitude mineral soil at theta = 0.3:                     !
-      !          d = sqrt(2*alpha/omega) = 1.973 m,   |z_node(7)| = 1.75 m                               !
-      !          deep_depth = 1.75 + 1.973/sqrt(2)   = 3.145 m                                           !
-      !      A measured sweep puts the optimum at 3.0-3.1 m, i.e. the derivation is right to within one   !
-      !      sweep step (test_soil_annual_damping; docs/science/soil_biophysics.md).  CHANGE THIS if you  !
-      !      change the column depth or the soil's thermal texture -- the formula above is the recipe.    !
+      !----- Depth of the anchor PLANE below the surface. The bottom node conducts to it over        !
+      !      l_deep = deep_depth - |z_node(n)|, and a resistive termination reflects the annual      !
+      !      wave least at l_deep = d/sqrt(2), d the annual damping depth                            !
+      !      (docs/science/soil_biophysics.md eq. (13)). The default, 1.75 + 1.973/sqrt(2) =         !
+      !      3.145 m, is that optimum for the default 2 m column in a mid-latitude mineral soil      !
+      !      at theta = 0.3; change it with the column depth or the soil's thermal texture. ---------!
       real(wp)    :: deep_depth  = 3.145_wp       !< [m] depth (positive) of the anchor plane
       !----- [K] budget-closure threshold for the debug halt, NOT an integrator tolerance. -----------!
       real(wp)    :: atol        = 1.0e-2_wp
       logical     :: debug_error = .false.
    end type energy_opts_t
 
-   !----- Snow / temporary-surface-water physical parameters (MEDS_SNOW_DESIGN.md P0). ------!
-   !      Defaults for standalone/test use; the tunable subset is filled from the [snow] TOML  !
-   !      block when the wiring lands (like soil_opts_t / energy_opts_t).                       !
+   !----- Snow / temporary-surface-water physical parameters, the [snow] block             !
+   !      (docs/science/snow_biophysics.md). One layer, with a fixed density and           !
+   !      conductivity (multi-layer snow: see docs/ROADMAP.md). ---------------------------!
    type :: snow_params_t
-      real(wp) :: rho_snow          = 250.0_wp    !< [kg/m3] P0 fixed SEASONAL-mean bulk density (depth = swe/rho)
-      real(wp) :: k_snow            = 0.15_wp     !< [W/m/K] P0 fixed snow thermal conductivity
+      real(wp) :: rho_snow          = 250.0_wp    !< [kg/m3] fixed SEASONAL-mean bulk density (depth = swe/rho)
+      real(wp) :: k_snow            = 0.15_wp     !< [W/m/K] fixed snow thermal conductivity
       real(wp) :: albedo_vis_fresh  = 0.85_wp     !< [-] fresh-snow VIS albedo
       real(wp) :: albedo_nir_fresh  = 0.65_wp     !< [-] fresh-snow NIR albedo
       real(wp) :: albedo_vis_aged   = 0.518_wp    !< [-] aged VIS endpoint (ED2)
       real(wp) :: albedo_nir_aged   = 0.435_wp    !< [-] aged NIR endpoint (ED2)
       real(wp) :: snow_emiss        = 0.97_wp     !< [-] thermal (LW) emissivity
       real(wp) :: liquid_holding_frac = 0.10_wp   !< [-] percolation holding capacity (LEAF-3 1:9)
-      real(wp) :: snow_stab_thresh  = 3.0_wp      !< [kg/m2] active-integration floor; thinner packs stay passive (MVP)
+      real(wp) :: snow_stab_thresh  = 3.0_wp      !< [kg/m2] active-integration floor; thinner packs stay passive
       real(wp) :: min_new_snow_mass = 1.0e-3_wp   !< [kg/m2] first-flake creation threshold (ED2 tiny_sfcwater_mass)
       real(wp) :: tiny_snow_mass    = 1.0e-6_wp   !< [kg/m2] melt-out threshold (dump residual to soil)
       real(wp) :: ny07_a            = 2.5_wp      !< [-] Niu-Yang07 snow-cover-fraction shape factor
@@ -131,9 +114,9 @@ module meds_biophysics_opts
       real(wp) :: z0_snow           = 0.001_wp    !< [m] snow surface roughness (aero burial floor)
    end type snow_params_t
 
-   !----- Canopy-aerodynamics run constants (device-constant; defaults = ED2/CLM5 reference     !
-   !      values). The tunable subset is filled from the [aerodynamics] TOML block when the       !
-   !      wiring lands, like soil_opts_t. (The von Karman constant lives in meds_constants.)       !
+   !----- Canopy-aerodynamics run constants, the [aerodynamics] block                       !
+   !      (docs/science/canopy_aerodynamics.md); defaults are the ED2/CLM5 reference        !
+   !      values. (The von Karman constant lives in meds_constants.) -----------------------!
    type :: aero_cfg_t
       real(wp) :: z0m_ratio = 0.13_wp               !< z0m / canopy height (ED2 vh2vr)
       real(wp) :: d_ratio   = 0.63_wp               !< displacement / canopy height (ED2 vh2dh)

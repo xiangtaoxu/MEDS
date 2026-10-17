@@ -9,8 +9,9 @@
 !                     order is load-bearing for the overtopping sweep and the fusion scans.     !
 !   Cohort fusion  -- receptor (taller) absorbs same-PFT donors of similar HEIGHT unless the    !
 !   /fission          merged cohort LAI exceeds the cap; split a cohort whose LAI exceeds it.   !
-!                     The conserved invariant is TOTAL ABOVEGROUND BIOMASS (carbon):            !
-!                     fused/split diameters are re-derived from conserved AGB, never averaged.  !
+!                     The four carbon pools are conserved, and with them AGB and leaf area:     !
+!                     fused/split diameters are re-derived from the conserved wood carbon,      !
+!                     never averaged.                                                           !
 !   Termination    -- cull cohorts below the density/AGB floors.                                !
 !   Recruitment    -- apply_recruitment: accumulate the supplied per-(PFT,patch) recruit        !
 !                     density and spawn min-size cohorts (a HOST structural process).           !
@@ -173,9 +174,9 @@ contains
    end subroutine fuse_pass
 
    !---------------------------------------------------------------------------------------!
-   ! Merge donor cohort into receptor, conserving plant number and total aboveground         !
-   ! biomass (carbon). The fused per-plant AGB is the nplant-weighted mean; the diameter is   !
-   ! re-derived from it (agb_to_dbh) and the rest of the geometry refreshed.                  !
+   ! Merge donor cohort into receptor, conserving plant number and the four carbon pools (so     !
+   ! AGB and leaf area). The fused per-plant pools are nplant-weighted means; the diameter and   !
+   ! the rest of the geometry are re-derived from them (set_cohort_size_from_carbon).            !
    !---------------------------------------------------------------------------------------!
    subroutine fuse_2_cohorts(site, recc, donc, conservation_tol)
       type(site_t), intent(inout) :: site
@@ -184,6 +185,7 @@ contains
       real(wp) :: nr, nd, ntot, agb_tot, agb_new, wr, wd, wtot
       real(wp) :: lc_tot, fc_tot, wc_tot, nc_tot                !< pre-merge pool totals [kgC/m2]
       real(wp) :: cr, cd                                        !< the two cohorts' leaf carbon [kgC/m2]
+      real(wp) :: hlr, hld, hwr, hwd                            !< their leaf and wood heat capacities [J/m2/K]
 
       associate (cohort => site%cohort)
          nr      = cohort%nplant(recc)
@@ -191,29 +193,32 @@ contains
          ntot    = nr + nd
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
          !----- The fast-loop-owned state fuses by its DECLARED per-field policy, in one place  !
-         !      (meds_site_state_types%fuse_cohort_fast_state): leaf-area-weighted for the tissue   !
-         !      temperatures, nplant-weighted for the per-plant amounts, summed for the ground-      !
-         !      referenced film. Enumerating it here is how the film-water convention got it wrong    !
-         !      once already (PR #119). The dynamic leaf traits stay here: they are slow-loop state,   !
+         !      (meds_site_state_types%fuse_cohort_fast_state): heat-capacity-weighted for the         !
+         !      tissue temperatures, nplant-weighted for the per-plant amounts, summed for the         !
+         !      ground-referenced film. Enumerating it here would let a field drift from its           !
+         !      declared convention. The dynamic leaf traits stay here: they are slow-loop state,      !
          !      not fast, and they must be set BEFORE the survivor's geometry is re-derived because    !
          !      sla maps its leaf_carbon <-> leaf_area. Each trait blends on the quantity it is per: !
          !      vcmax25, rd25 and llspan are per leaf area, so leaf area weights them; sla is leaf    !
          !      area per leaf CARBON, so leaf carbon weights it and the fused cohort shows the leaf    !
-         !      area its two parents showed (#389). --------------------------------------------------!
+         !      area its two parents showed. ---------------------------------------------------------!
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
          cr = nr * cohort%leaf_carbon(recc) ; cd = nd * cohort%leaf_carbon(donc)
+         !----- The tissue heat capacities the diagnostic temperatures fuse on, taken BEFORE          !
+         !      fuse_cohort_fast_state blends the survivor's tissue water into them: the same          !
+         !      weights the prognostic temperatures fuse on. ----------------------------------------!
+         call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, hlr, hwr)
+         call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, hld, hwd)
          call fuse_cohort_fast_state(cohort, recc, donc, nr, nd)
          cohort%sla(recc)     = pair_mean(cohort%sla(recc),     cr, cohort%sla(donc),     cd)
          cohort%vcmax25(recc) = pair_mean(cohort%vcmax25(recc), wr, cohort%vcmax25(donc), wd)
          cohort%rd25(recc)    = pair_mean(cohort%rd25(recc),    wr, cohort%rd25(donc),    wd)
          cohort%llspan(recc)  = pair_mean(cohort%llspan(recc),  wr, cohort%llspan(donc),  wd)
-         !----- Fast-loop DIAGNOSTIC accumulators. Handed the SAME two weight pairs used above --   !
-         !      leaf area for the intensive quantities, nplant for the extensive ones -- so a        !
-         !      diagnostic and its prognostic twin can never be fused on different weights. Which     !
-         !      of the two applies is declared per field in meds_site_diag_types (CDIAG_FUSE), not     !
-         !      decided here.  -----------------------------------------------------------------!
-         call cohort_diag_fuse(cohort%diag,  recc, donc, wr, wd, nr, nd, CDIAG_FUSE)
-         call cohort_diag_fuse(cohort%sdiag, recc, donc, wr, wd, nr, nd, CSDIAG_FUSE)
+         !----- Fast-loop DIAGNOSTIC accumulators, handed leaf area (wr, wd), nplant (nr, nd) and the  !
+         !      tissue heat capacities. Which weight applies is declared per field in                 !
+         !      meds_site_diag_types (CDIAG_FUSE), not decided here. ------------------------------------!
+         call cohort_diag_fuse(cohort%diag,  recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CDIAG_FUSE)
+         call cohort_diag_fuse(cohort%sdiag, recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CSDIAG_FUSE)
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          !----- Same convention for the predawn water status. Fusion requires the two cohorts to  !
@@ -292,7 +297,7 @@ contains
                wc0 = cohort%wood_carbon(i)
                call copy_cohort_slot(cohort, m, i)           ! copies halved nplant + params + pools
                !----- the interception films are per m2 GROUND, not per plant: each daughter keeps  !
-               !      half, or the split creates film water (2026-09 review, item 1B #1). ----------!
+               !      half, or the split creates film water. ---------------------------------------!
                call scale_cohort_ground_fields(cohort, i, 0.5_wp)
                call scale_cohort_ground_fields(cohort, m, 0.5_wp)
                cohort%wood_carbon(i) = wc0 * (1.0_wp + eps)
@@ -319,19 +324,19 @@ contains
    end subroutine split_cohorts
 
    !---------------------------------------------------------------------------------------!
-   ! Cull cohorts below the AGB-density floor or the absolute density floor. The ENTIRE        !
-   ! remaining carbon of a culled cohort (leaf/fine-root/wood/storage; it is being removed      !
-   ! outright, unlike a turnover shed) becomes litter into its own patch's soil-carbon pools    !
-   ! (B1, MEDS_SLOW_DYNAMICS_DESIGN.md Part II; OPT-IN [soil_carbon].soil_carbon_on -- default    !
-   ! .false. keeps this bit-identical) -- added directly onto the named fields since this module  !
-   ! cannot link biogeochemistry (necromass_to_litter is DAG-safe: plain scalars).                !
+   ! Cull cohorts below the AGB-density floor or the absolute density floor. The ENTIRE           !
+   ! remaining carbon of a culled cohort (leaf/fine-root/wood/storage; it is being removed        !
+   ! outright, unlike a turnover shed) becomes litter in its own patch's soil-carbon pools when   !
+   ! [soil_carbon].soil_carbon_on (default on; docs/science/soil_carbon.md §5) -- added           !
+   ! directly onto the named fields, since this module cannot link biogeochemistry                !
+   ! (necromass_to_litter takes plain scalars).                                                   !
    !---------------------------------------------------------------------------------------!
    subroutine terminate_cohorts(site, cfg, water_shed)
       type(site_t),     intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
-      !----- What the cull HANDED ON, for the caller to declare to the site ledger (plan §10.2).   !
-      !      Reported rather than declared here because meds_demography must not link the ledger:  !
-      !      the engine applies, the driver accounts. --------------------------------------------!
+      !----- What the cull HANDED ON, for the caller to declare to the slow ledger                !
+      !      (meds_slow_ledger). Reported rather than declared here because the demography library  !
+      !      does not link the ledger: the engine applies, the driver accounts. -------------------!
       real(wp), optional, intent(out) :: water_shed  !< [kg/m2 site] tissue + film water -> the ground
       logical, allocatable :: keep(:)
       integer(ik)          :: i, n, pf, ip
@@ -350,22 +355,22 @@ contains
             if (keep(i)) cycle
             ip = cohort%owner_patch(i)
             !----- A culled cohort's WATER goes to the ground, down the same channel turnover      !
-            !      shedding already uses -- one verified path, not a second mechanism. It was      !
-            !      simply dropped by cohort_compact before (review item 1B #7). Its tissue HEAT is !
-            !      a change in thermal MASS and is declared with the rest of the phase's, by the   !
-            !      caller, since fusion and fission change it too and they are one mechanism. -----!
+            !      shedding already uses -- one verified path, not a second mechanism. Its tissue  !
+            !      HEAT is a change in thermal MASS and is declared with the rest of the phase's,  !
+            !      by the caller, since fusion and fission change it too and they are one          !
+            !      mechanism. ---------------------------------------------------------------------!
             w_cohort = cohort_tissue_water(cohort, i)                                              &
                      + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
             w_tot = w_tot + patch%area(ip) * w_cohort
-            !----- The CULL pathway's carbon (#169). BEFORE the soil_carbon_on cycle below, for the   !
+            !----- The CULL pathway's carbon. BEFORE the soil_carbon_on cycle below, for the          !
             !      same reason the water above is: a cohort dropping off the tracked size floor is a  !
             !      demographic event, and it still happened when the soil pools are off. The cull     !
             !      runs inside the cohort restructuring, which permutes the COHORT axis and leaves    !
             !      the patch axis alone, so patch slot `ip` is the one this cohort's diagnostics      !
             !      belong to and still will be after cohort_compact.                                  !
-            !      A rate [kgC/m2/yr] times the step's weight in seconds -- the block's contract      !
-            !      (#239). `dt_slow` is the weight one slow step accumulates; the cull fires on a     !
+            !      A rate [kgC/m2/yr] times the step's weight in seconds -- the block's contract.     !
+            !      `dt_slow` is the weight one slow step accumulates; the cull fires on a             !
             !      month boundary and the output layer's temporal fold handles the rest.              !
             if (patch%diag%active)                                                                 &
                patch%diag%v(PD_MORT_C_CULL, ip) = patch%diag%v(PD_MORT_C_CULL, ip)                 &
@@ -403,16 +408,15 @@ contains
    ! housekeeping.                                                                                 !
    !                                                                                          !
    ! The pool is CREDITED DAILY by the driver (accumulate_recruit_pool) and CONSUMED monthly here. !
-   ! It used to be credited here too, from whatever recruitment rate the driver had computed on    !
-   ! this one day, scaled up to stand for the whole month -- a 12-point sample of a quantity the   !
-   ! model computes 365 times a year, and one that made the pool's carbon content depend on which  !
-   ! days happened to be month boundaries.  ------------------------------------------------------!
+   ! Crediting it here from the one day's recruitment rate, scaled up to the month, would take a   !
+   ! 12-point sample of a quantity the model computes every day and make the pool's carbon         !
+   ! depend on which days are month boundaries. ---------------------------------------------------!
    !---------------------------------------------------------------------------------------!
    subroutine apply_recruitment(site, cfg, carbon_drawn, heat_drawn)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       !----- What a recruit brought IN FROM OUTSIDE the modelled system, for the caller to declare  !
-      !      (plan §10.2). Recruitment is a stand-in for everything that happens between a seed and !
+      !      to the slow ledger. Recruitment is a stand-in for everything between a seed and         !
       !      a 2 m sapling -- germination, and the seedling's own photosynthesis, transpiration and !
       !      energy balance -- none of which this model represents, because it tracks no cohort     !
       !      below `min_cohort_height`. The carbon and heat a recruit arrives with are therefore    !
@@ -440,10 +444,6 @@ contains
       !----- All PFTs recruit at the smallest tracked size -> the same diameter. ----------!
       recruit_dbh = height_to_dbh(site%cohort%allom, cfg%pft%min_cohort_height)
 
-      !                                                                                     !
-      !      The pool is CREDITED DAILY by the vegetation driver (accumulate_recruit_pool), not  !
-      !      here. This routine only spawns from what has accumulated.  ------------------------!
-
       !----- Count pools that have reached the spawn threshold. ---------------------------!
       nspawn = 0_ik
       do ip = 1_ik, np
@@ -451,10 +451,8 @@ contains
             if (site%patch%recruit_pool(pf, ip) >= cfg%min_recruit_size) nspawn = nspawn + 1_ik
          end do
       end do
-      !----- No pool reached the spawn threshold. The seed rain still ARRIVED this month, so the  !
-      !      import must be reported before returning -- an early exit that skips the report        !
-      !      silently under-declares on exactly the months nothing is born (two thirds of them in   !
-      !      the run this was found on).  ---------------------------------------------------------!
+      !----- No pool reached the spawn threshold: nothing is born, so nothing is drawn (the seed    !
+      !      rain is declared daily, as it arrives, by accumulate_recruit_pool). -------------------!
       if (nspawn == 0_ik) then
          if (present(carbon_drawn)) carbon_drawn = c_tot
          return

@@ -9,6 +9,8 @@
 !   4. boundary_gbh_mos is positive, above the floor, and increases with wind (forced convection).!
 !   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom;        !
 !      gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare in the open-canopy limit.       !
+!   6. SMALL CROWN: a cohort's own crown cover, however small, sets its wind extinction.   !
+! The equations are docs/science/canopy_aerodynamics.md §2 and §4 (eqs. (3), (7)-(10)).    !
 !==========================================================================================!
 program test_aerodynamics
    use meds_test_assert, only : check, check_true, test_report
@@ -119,8 +121,8 @@ contains
    end subroutine test_master
 
    !----- A cohort whose crowns cover almost nothing barely slows the wind: its extinction is      !
-   !      ca*exp(-lai/(2 ca)) + (1 - ca) with its own crown cover ca, however small (#346: the     !
-   !      cover used to be floored at 0.01). --------------------------------------------------!
+   !      ca*exp(-lai/(2 ca)) + (1 - ca) with its own crown cover ca, however small, unfloored   !
+   !      (docs/science/canopy_aerodynamics.md eq. (8)). ----------------------------------------!
    subroutine test_small_crown()
       type(aero_cfg_t)  :: cfg
       type(aero_env_t)  :: env

@@ -32,6 +32,16 @@ Inside a protected block or span the LaTeX is honoured verbatim, so write it cle
 balanced, every conflicting construct inside a fence or a dollar-backtick span — and eyeball the
 rendered file on a branch or pull request before merging.
 
+## Equation numbers are cited from the code
+
+Every display equation carries one number, `\qquad(N)` at the end of its block, sequential per page in
+reading order. Source comments, TOML comments and other pages cite them as
+`docs/science/<page>.md eq. (N)` (several: `eqs. (3)–(5)`), and sections as `§N` or, on an unnumbered
+page, `§<title>`. Inserting or removing an equation renumbers the rest of the page, so update every
+citation in the same change: `grep -rn '<page>.md' src test python scripts examples docs *.toml`
+finds them. A paper's own equation numbers are cited with the paper (`WN85 eq. 3`, `Chave et al.
+(2014) eq. 4`) so they cannot be mistaken for the page's.
+
 ## What belongs on a science page
 
 Equations and their rationale, in the present tense. **Not** change history: what changed and when

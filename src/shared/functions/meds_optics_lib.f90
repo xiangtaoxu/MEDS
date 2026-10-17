@@ -7,6 +7,7 @@
 ! src/shared/functions and can be evaluated at config-load (per-PFT optics-table build) and on the !
 ! GPU hot path alike. The per-PFT/per-cohort ASSEMBLY that fills rad_pft_optics_t and the surface !
 ! optics live in src/fast_dynamics/canopy/meds_canopy_radiation; that module `use`s this one.     !
+! The equations are docs/science/canopy_radiation_transfer.md §1-§2, eqs. (1)-(4).              !
 !==========================================================================================!
 module meds_optics_lib
    use meds_kinds,     only : wp, ik

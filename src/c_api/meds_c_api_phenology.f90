@@ -2,10 +2,10 @@
 !==========================================================================================!
 ! meds_c_api_phenology -- the C-API shim for the PHENOLOGY kernel (`meds.plant.pheno`).       !
 !                                                                                          !
-! One shim per subsystem, mirroring the Fortran tree (structure plan §7.6 #3).                !
+! One shim per subsystem, mirroring the Fortran tree (src/README.md).                         !
 ! The bind(c) structs are an ABI contract with `python/meds/plant/pheno.py` and are compiled  !
 ! by a mandatory ctest target (`test_c_api_phenology`) so a field-order change breaks the     !
-! BUILD -- see the header of meds_c_api_leaf for the incident that rule comes from.           !
+! BUILD -- see the header of meds_c_api_leaf for why.                                         !
 !==========================================================================================!
 module meds_c_api_phenology
    use iso_c_binding,        only : c_double, c_int
@@ -52,8 +52,9 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Advance one cohort's phenology ONE step: unpack the C structs, call phenology_kernel     !
-   ! (state advanced in place), pack the state and the potential rates back out. `state_c` is !
-   ! intent(inout): the caller keeps it across days (the phenological memory).               !
+   ! (docs/science/plant_phenology.md §1-§4; state advanced in place), pack the state and the !
+   ! potential rates back out. `state_c` is intent(inout): the caller keeps it across days    !
+   ! (the phenological memory).                                                              !
    !---------------------------------------------------------------------------------------!
    subroutine meds_phenology_step(env_c, p_c, dt, state_c, out_c) bind(c, name="meds_phenology_step")
       type(pheno_env_c),    intent(in)    :: env_c
@@ -118,8 +119,9 @@ contains
    end subroutine meds_phenology_step
 
    !---------------------------------------------------------------------------------------!
-   ! One step of leaf loss and the flush cap (meds_phenology::leaf_turnover_step), so Python   !
-   ! applies the carbon layer's own rule rather than a copy of it.                            !
+   ! One step of leaf loss and the flush cap (meds_phenology::leaf_turnover_step,              !
+   ! docs/science/plant_phenology.md §5, eq. (9)), so Python applies the carbon layer's own    !
+   ! rule rather than a copy of it.                                                           !
    !---------------------------------------------------------------------------------------!
    subroutine meds_leaf_turnover_step(leaf, leaf_full, leaf_flush_tendency, leaf_shed_tendency,  &
                                       flush_rate_max, shed_rate_max, leaf_turnover_rate,         &

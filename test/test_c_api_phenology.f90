@@ -2,16 +2,17 @@
 !==========================================================================================!
 ! test_c_api_phenology -- COVERAGE FOR THE PHENOLOGY C-API SHIM.                              !
 !                                                                                          !
-! WHY THIS TEST EXISTS. The same reason test_c_api_leaf does, one subsystem over. A C-API shim !
-! that only the optional `-DMEDS_BUILD_PYLIB=ON` library compiles is invisible to ctest on both  !
-! back ends, so a field inserted into `pheno_params_t` or a renamed component can leave the C     !
-! API unable to compile while the whole suite stays green. That is not hypothetical: it happened  !
-! to the leaf shim (#95 -> #100) and, while this file was being written, to the DEMOGRAPHY shim,   !
-! which did not compile against main at all because a signature moved under it a day earlier.     !
+! WHY THIS TEST EXISTS. The same reason test_c_api_leaf does, one subsystem over. A C-API  !
+! shim that only the optional `-DMEDS_BUILD_PYLIB=ON` library compiles is invisible to     !
+! ctest on both back ends, so a field inserted into `pheno_params_t` or a renamed          !
+! component can leave the C API unable to compile while the whole suite stays green. Every !
+! C-API shim is therefore compiled into a ctest target, so an interface mismatch fails the !
+! build (docs/building.md §Running the tests).                                             !
 !                                                                                          !
-! Registering the shim in a ctest target COMPILES it in every build, which is the substance of    !
-! the fix. The assertions then cover what a compile cannot: that the bind(c) mirrors carry values  !
-! through to the kernel and back, rather than silently reading the wrong member.                    !
+! The assertions then cover what a compile cannot: that the bind(c) mirrors carry values   !
+! through to the kernel and back, rather than silently reading the wrong member. The       !
+! values checked are the cue sums and the leaf-turnover terms of                           !
+! docs/science/plant_phenology.md eqs. (3)-(5) and (9).                                    !
 !                                                                                          !
 ! Needs no .so and no Python -- it calls the bind(c) procedures directly as Fortran.                !
 !==========================================================================================!

@@ -6,9 +6,9 @@
 - Two runs in one Python process each write their own parameter record.
 - Patch areas weight the cohorts to the site totals the model reports.
 
-Each run is two days from the demography example's census on the fast loop's constant reference
-climate. MEDS_MAIN names the executable for the comparison (CTest sets it); without it that test is
-skipped.
+Each run is two days from the pseudo census in data/census_example.csv on the fast loop's constant
+reference climate. MEDS_MAIN names the executable for the comparison (CTest sets it); without it
+that test is skipped.
 """
 import os
 import subprocess

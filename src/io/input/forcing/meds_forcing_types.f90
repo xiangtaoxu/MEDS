@@ -1,14 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_forcing_types -- the RUNTIME meteorological-forcing types (design MEDS_FORCING_DESIGN.md   !
-! sections 3.1-3.2; MEDS_POLYGON_RUNTIME_PLAN.md §10.3): the instantaneous per-site record         !
-! met_forcing_t (a read-only boundary condition, the analogue of rad_forcing_t / chydro_forcing_t), !
-! one raw file record met_record_t, the reader's shared state met_source_t (one per run) and each   !
-! polygon's met_cursor_t, the archive's cell list met_cells_t and month buffer met_month_t, and the  !
-! prescribed CO2 series co2_series_t.                                                               !
+! meds_forcing_types -- the RUNTIME meteorological-forcing types (docs/science/forcing.md §2): the !
+! instantaneous per-site record met_forcing_t (a read-only boundary condition, the analogue of      !
+! rad_forcing_t / chydro_forcing_t), one raw file record met_record_t, the reader's shared state    !
+! met_source_t (one per run) and each polygon's met_cursor_t, the archive's cell list met_cells_t  !
+! and month buffer met_month_t, and the prescribed CO2 series co2_series_t.                         !
 !                                                                                          !
-! Lives in src/io/input/forcing (libmeds_forcing); links meds_shared only (meds_kinds, meds_time   !
-! for the meds_time_t timestamp, meds_forcing_config for the [forcing]/[site] config). No physics    !
+! Lives in src/io/input/forcing (libmeds_forcing); uses meds_kinds, meds_time for the meds_time_t  !
+! timestamp and meds_forcing_config for the [forcing]/[site] config, nothing else. No physics        !
 ! library ever names these types; the reader (meds_met_driver) owns the only mutable forcing state. !
 !==========================================================================================!
 module meds_forcing_types
@@ -25,10 +24,6 @@ module meds_forcing_types
    public :: FLD_U10, FLD_V10, FLD_RAINF, FLD_LWDOWN, FLD_SWDOWN, FLD_PAR_BEAM, FLD_PAR_DIFFUSE
    public :: FLD_NIR_BEAM, FLD_NIR_DIFFUSE
 
-   !----- The humidity a source carries (MEDS_FLUX_TOWER_FORCING_PLAN.md D2). A file stores the     !
-   !      quantity its source measured -- relative humidity for a tower, dewpoint for ERA5-Land --   !
-   !      and the reader converts it with the model's own saturation curve, so a tower's 100 % is   !
-   !      saturation in the model whatever curve the provider used. Qair is for a model-made source. !
    !----- The fields a MEDS forcing file may carry, listed once. met_open finds each one's column   !
    !      in the series it reads (met_source_t%series_col); read_record looks them up by index. -----!
    integer(ik), parameter :: N_MEDS_FIELD = 15_ik
@@ -41,6 +36,10 @@ module meds_forcing_types
       'Tair', 'Qair', 'RHair', 'Tdew', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'SWdown',     &
       'SWdown_par_beam', 'SWdown_par_diffuse', 'SWdown_nir_beam', 'SWdown_nir_diffuse']
 
+   !----- The humidity a source carries (docs/science/forcing.md §7). A file stores the quantity   !
+   !      its source measured -- relative humidity for a tower, dewpoint for ERA5-Land -- and the   !
+   !      reader converts it with the model's own saturation curve, so a tower's 100 % is           !
+   !      saturation in the model whatever curve the provider used. Qair is for a model-made source. !
    integer(ik), parameter :: HUMIDITY_QAIR  = 0_ik          !< specific humidity [kg/kg], used as is
    integer(ik), parameter :: HUMIDITY_RHAIR = 1_ik          !< relative humidity over liquid water [1]
    integer(ik), parameter :: HUMIDITY_TDEW  = 2_ik          !< dewpoint temperature [K]
@@ -49,7 +48,7 @@ module meds_forcing_types
    !  met_forcing_t -- the instantaneous per-SITE atmospheric state the fast loop consumes.       !
    !  Per-site scalars + four SW-band reals (no cohort-sized allocatables) -> trivially copyable,   !
    !  GPU-mappable. All defaults are a valid "reference climate" box (the four SW streams SUM to      !
-   !  400 W/m2 = today's fast_context_t%rad_sw_top), so met_forcing_t() is usable as the CONST         !
+   !  400 W/m2 = fast_context_t%rad_sw_top's default), so met_forcing_t() is usable as the CONST      !
    !  backend value. cosz and rho_air are DERIVED each substep (not read).                             !
    !==========================================================================================!
    type :: met_forcing_t
@@ -61,7 +60,8 @@ module meds_forcing_types
       !      canopy-air top, the temperature the precipitation's enthalpy is valued at too. -----------!
       real(wp) :: precip       = 0.0_wp       !< [kg/m2/s]  total precipitation rate
       real(wp) :: wind         = 2.0_wp       !< [m/s]      wind speed at reference height
-      !----- The wind VECTOR (§3.1, §5.3), carried beside the speed for a direction-aware consumer.  !
+      !----- The wind VECTOR (docs/science/forcing.md §1), carried beside the speed for a           !
+      !      direction-aware consumer.                                                              !
       !      Filled only when the source supplies components (has_wind_vector); aerodynamics reads   !
       !      `wind`, whose energy-form interpolation makes it at least the vector's length.          !
       real(wp) :: wind_u       = 2.0_wp       !< [m/s]      eastward component at reference height
@@ -82,7 +82,7 @@ module meds_forcing_types
 
    !----- One raw timestamped record as read (pre-interpolation). The four SW streams are      !
    !      already split at INGEST (partition_shortwave) from the file's total SWdown. No CO2: it is  !
-   !      not meteorology, and comes from co2_series_t or [forcing].co2_const on MODEL time (#184). !
+   !      not meteorology, and comes from co2_series_t or [forcing].co2_const on MODEL time.        !
    type :: met_record_t
       type(meds_time_t) :: when
       real(wp) :: tair_k = 288.0_wp, qair = 0.008_wp, psurf_pa = 101325.0_wp
@@ -93,10 +93,10 @@ module meds_forcing_types
 
    !==========================================================================================!
    !  met_cells_t -- the cells of a regular-grid archive (ED_ERA5land) that a run reads: one for  !
-   !  a site, the valid cells of a box for the polygon runtime (§15.5). Grid indices are 0-based,  !
-   !  as the netCDF C API counts. `by_chunk` lists the cells grouped by the archive's 16 x 16      !
-   !  spatial chunk, `chunk_first` indexes into it (length nchunk+1), so a month load reads each    !
-   !  touched chunk column once (§15.3), and only the box its cells occupy within that chunk.       !
+   !  a site, the valid cells of a box for a region. Grid indices are 0-based, as the netCDF C    !
+   !  API counts. `by_chunk` lists the cells grouped by the archive's 16 x 16 spatial chunk,      !
+   !  `chunk_first` indexes into it (length nchunk+1), so a month load reads each touched chunk    !
+   !  column once, and only the box its cells occupy within that chunk.                            !
    !==========================================================================================!
    type :: met_cells_t
       integer(ik) :: ncell = 0_ik
@@ -113,8 +113,8 @@ module meds_forcing_types
    end type met_cells_t
 
    !----- One archive month for every cell of a domain: values(hour, cell, variable), float32 as  !
-   !      the archive stores it (§15.3 memory table). Hours run 01:00 on the 1st .. 00:00 on the  !
-   !      1st of the next month, the archive's end-stamped convention. ----------------------------!
+   !      the archive stores it. Hours run 01:00 on the 1st .. 00:00 on the 1st of the next month, !
+   !      the archive's end-stamped convention. ---------------------------------------------------!
    type :: met_month_t
       integer(ik) :: year = 0_ik, month = 0_ik, nt = 0_ik
       real(sp), allocatable :: values(:,:,:)
@@ -135,8 +135,8 @@ module meds_forcing_types
    end type co2_series_t
 
    !==========================================================================================!
-   !  met_source_t -- the SHARED reader state: one per run, read by every polygon (MEDS_POLYGON_     !
-   !  RUNTIME_PLAN.md §10.3). Holds the config, the time axis and recycle window, the cells, and    !
+   !  met_source_t -- the SHARED reader state: one per run, read by every polygon                  !
+   !  (docs/science/forcing.md §2). Holds the config, the time axis and recycle window, the cells, and !
    !  what is in memory: the archive's loaded month plus its carried record, or a MEDS forcing       !
    !  file's series. Only met_open, met_prefetch and met_close change it, all outside the compute    !
    !  phase, so stepping only reads it -- which is what lets polygons share it across threads.      !
@@ -162,8 +162,8 @@ module meds_forcing_types
       integer(ik) :: n_cycle_years   = 0_ik                 !< whole calendar years the declared window spans
       integer(ik) :: irec_cycle_first = 0_ik                !< record index of cycle_anchor (exact match, 1-based)
       integer(ik) :: irec_cycle_last  = 0_ik                !< record index of the LAST record strictly inside the window
-      logical     :: has_wind_vector = .false.              !< the source supplies u10/v10 (§15.4)
-      !----- ED_ERA5land archive backend (§15). The months the run needs form one continuous hourly   !
+      logical     :: has_wind_vector = .false.              !< the source supplies u10/v10
+      !----- ED_ERA5land archive backend. The months the run needs form one continuous hourly        !
       !      axis (time_sec, seconds since 1970-01-01, the archive's own epoch); month k holds records !
       !      month_rec0(k)+1 .. month_rec0(k)+hours, and one month of every cell sits in `buffer`.    !
       character(len=MET_PATH_LEN) :: file_template = ''     !< resolved file template
@@ -171,7 +171,7 @@ module meds_forcing_types
       type(met_cells_t) :: cells                            !< the cells read: one for a site, many for a region
       integer(ik), allocatable :: month_year(:), month_month(:), month_rec0(:)
       type(met_month_t) :: buffer                           !< the loaded month (year = 0 before the first)
-      !----- Everything a step reads is in memory before the step (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1): !
+      !----- Everything a step reads is in memory before the step (docs/science/forcing.md §2):       !
       !      the archive's loaded month plus the one record read before it (00:00 on the 1st, from the   !
       !      previous month's file, or the window's last record at the recycle wrap), loaded by         !
       !      met_prefetch, and the recycle window's first day, kept from open; a MEDS forcing file's    !
@@ -206,7 +206,8 @@ module meds_forcing_types
       integer(ik) :: irec_prev  = 0_ik                      !< cursor: index of the "previous" bracketing record
       type(met_record_t) :: rec_prev, rec_next              !< the two records bracketing the model time
       logical     :: at_wrap_seam    = .false.              !< current bracket is the cycle-boundary seam (last -> first)
-      !----- LONGWAVE SYNTHESIS (#182): the last DAYTIME clearness index, held through the night.   !
+      !----- LONGWAVE SYNTHESIS (docs/science/forcing.md §11): the last DAYTIME clearness index,    !
+      !      held through the night.                                                                !
       !      kt is undefined after dark -- there is no shortwave to divide -- and treating that as   !
       !      kt = 0 would apply the maximum cloud correction to every night. Holding dusk's value    !
       !      is the better guess, and the one scalar of state it needs lives here rather than in a   !

@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_hydr_lib -- how water MOVES into and through the plant, as conductances and the flows   !
-! they carry (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.2):                                          !
+! they carry (docs/science/plant_hydraulics.md §3-§4, docs/science/soil_plant_water.md §1):    !
 !   * the rhizosphere: from a soil layer into a cohort's roots, a single-root (Gardner)        !
 !     conductance times the soil's conductivity, never back out to drier soil;                !
 !   * the xylem: from a cohort's wood up to its leaves, the intact sapwood conductance          !
@@ -34,9 +34,9 @@ module meds_hydr_lib
    public :: root_fraction_profile
 
    !----- [MPa] Width of the ramp that keeps water from flowing back out of the roots: below a     !
-   !      zero driving force the root takes nothing (no hydraulic redistribution, plan D2); above  !
-   !      this width it takes the full Gardner flow. Small against the 0.1-1 MPa a root works      !
-   !      across. -------------------------------------------------------------------------------!
+   !      zero driving force the root takes nothing (no hydraulic redistribution); above this      !
+   !      width it takes the full Gardner flow (docs/science/soil_plant_water.md eq. (1)). Small   !
+   !      against the 0.1-1 MPa a root works across. ----------------------------------------------!
    real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-3_wp
    !----- [-] Width, in relative water content, of the corner where a leaf's transpiration starts  !
    !      to follow its remaining water (supply_limited_transpiration). -----------------------!
@@ -45,11 +45,11 @@ module meds_hydr_lib
    !      the intact xylem's: it keeps a fully embolised cohort's leaf joined to its wood, so its   !
    !      equations stay solvable, and moves no water that matters. --------------------------!
    real(wp), parameter :: XYLEM_RETAINED_MIN = 1.0e-12_wp
-   !----- [kg/s/MPa per plant] The least maximum conductance a plant is given, for a cohort with no  !
-   !      sapwood yet: the same guard the plant solver used. -------------------------------------!
+   !----- [kg/s/MPa per plant] The least maximum conductance a plant is given, for a cohort with no !
+   !      sapwood yet. -----------------------------------------------------------------------------!
    real(wp), parameter :: XYLEM_COND_MIN = 1.0e-15_wp
-   !----- Root spacing below which the single-root (Gardner) form no longer holds: closer, the    !
-   !      roots all but touch. -------------------------------------------------------------!
+   !----- Root spacing below which the single-root (Gardner) form fails: closer, the roots all  !
+   !      but touch. ---------------------------------------------------------------------------!
    real(wp), parameter :: MIN_SPACING_RATIO = 2.0_wp
    !----- [MPa] Below this difference of potentials the Kirchhoff mean conductance is taken at   !
    !      the midpoint, where the difference quotient would lose its digits. ---------------------!
@@ -57,7 +57,8 @@ module meds_hydr_lib
 
    !----- Sapwood specific conductivity against wood density (Xu et al. 2016, New Phytol 212:80;   !
    !      ED2 plant_hydro_scheme 2): ln Ks = a + b rho, residual variance s2, fitted to 72 species  !
-   !      of neotropical seasonally dry forests (R2 0.21). Panama canopy branches give 2-4 at 0.6. -!
+   !      of neotropical seasonally dry forests (R2 0.21). Panama canopy branches give 2-4 at 0.6.  !
+   !      This is docs/science/plant_hydraulics.md eq. (11). --------------------------------------!
    real(wp), parameter :: kmax_ln_a     =  2.348_wp   !< [ln(kg/m/s/MPa)] intercept
    real(wp), parameter :: kmax_ln_b     = -2.455_wp   !< [ln(kg/m/s/MPa) per g/cm3] slope
    real(wp), parameter :: kmax_ln_var   =  0.6186_wp  !< [-] residual variance of ln Ks
@@ -117,11 +118,11 @@ contains
       end if
    end function flux_potential
 
-   !----- integral_0^r du/(1+u^kexp). The integrand falls from 1 to near 0 around u ~ 1, so one     !
-   !      7-point rule over all of [0, r] is accurate only for small r: at r = 7,800 it missed the    !
-   !      whole integral (about 1e-6 instead of 1.11 at kexp 4), and a wood-to-leaf edge with a       !
-   !      desiccated leaf then read a negative conductance. Panels no wider than KIRCH_PANEL cover    !
-   !      [0, min(r, HYDRO_TABLE_RMAX)]; beyond the table's edge the tail is added analytically. ----!
+   !----- integral_0^r du/(1+u^kexp). The integrand falls from 1 to near 0 around u ~ 1, so one       !
+   !      7-point rule over all of [0, r] is accurate only for small r: at r = 7,800 it gives about   !
+   !      1e-6 instead of 1.11 (kexp 4), which would hand a wood-to-leaf edge with a desiccated leaf  !
+   !      a negative conductance. Panels no wider than KIRCH_PANEL cover                              !
+   !      [0, min(r, HYDRO_TABLE_RMAX)]; beyond the table's edge the tail is added analytically. -----!
    pure real(wp) function kirchhoff_integral(r, kexp) result(g)
       real(wp), intent(in) :: r, kexp
       real(wp)    :: rc, w
@@ -139,8 +140,8 @@ contains
    !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre: exact   !
    !      for polynomials up to degree 13, far below any model tolerance on a short panel. The sum   !
    !      is written out rather than handed a function, because ifx allocates a lock-guarded record  !
-   !      on every call that passes a contained function as an argument, which made more than four  !
-   !      threads slower than four (#325). u=0 is guarded as in plc_retained. --------------------!
+   !      on every call that passes a contained function as an argument, which makes more than four !
+   !      threads slower than four. u=0 is guarded as in plc_retained. ---------------------------!
    pure real(wp) function kirchhoff_panel(a, b, kexp) result(g)
       real(wp), intent(in) :: a, b, kexp
       real(wp), parameter :: node(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
@@ -229,7 +230,8 @@ contains
    !      (both >= 0, below surface, z_bot > z_top): frac = beta^(z_top/D) - beta^(z_bot/D), with      !
    !      D = root_depth and beta in (0,1). Shallower layers get more roots; depths clamp to [0, D] so  !
    !      layers below the rooting depth contribute 0. Summed over [0, D] the profile telescopes to     !
-   !      1 - beta (ED2 convention; only the RELATIVE distribution enters the conductance weights).     !
+   !      1 - beta (ED2 convention); the caller divides by that, giving the normalised profile of       !
+   !      docs/science/plant_hydraulics.md eq. (13). ---------------------------------------------------!
    elemental real(wp) function root_fraction_profile(root_beta, root_depth, z_top, z_bot) result(frac)
       real(wp), intent(in) :: root_beta   !< [-]  root-profile decay (0,1); smaller => shallower
       real(wp), intent(in) :: root_depth  !< [m]  maximum rooting depth (> 0)
@@ -250,7 +252,8 @@ contains
    !      above the width, joined by the cubic 2x^2/w - x^3/w^2, which matches both in value and     !
    !      slope and rises monotonically, so a Newton iteration never meets a corner. Every one-way    !
    !      water flow uses it: root uptake, the leaves' supply limit, and ground evaporation          !
-   !      (meds_soil_water). It lives with the flows so the hot ones inline it. -------------------!
+   !      (meds_soil_water). It lives with the flows so the hot ones inline it                      !
+   !      (docs/science/soil_plant_water.md eq. (1)). --------------------------------------------!
    elemental subroutine smooth_max0(x, width, f, df)
       real(wp), intent(in)  :: x, width
       real(wp), intent(out) :: f, df
@@ -271,7 +274,7 @@ contains
    !      (Gardner 1960), 2 pi L / ln(r_half / r_root) for each of nplant plants with root length L !
    !      in the layer, made a potential gradient by rho/grav_head. It depends on the roots alone,  !
    !      so it is set once a step; times the layer's current conductivity it is the conductance   !
-   !      root_water_uptake uses. -----------------------------------------------------------------!
+   !      root_water_uptake uses (docs/science/plant_hydraulics.md eq. (14)). ---------------------!
    elemental function rhizosphere_conductance(nplant, root_length, half_spacing, root_radius)      &
                       result(g_rhizo)
       real(wp), intent(in) :: nplant        !< [plants/m2]
@@ -286,7 +289,7 @@ contains
    !----- A cohort's root water uptake [kg/m2/s] from one soil layer into its wood: the rhizosphere   !
    !      conductance g_rhizo K_soil times the driving force psi_soil + grav_head z_soil - psi_wood    !
    !      (z_soil the layer's depth, < 0), passed through the ramp so a root never loses water to     !
-   !      drier soil (no hydraulic redistribution). ----------------------------------------------!
+   !      drier soil (no hydraulic redistribution; docs/science/plant_hydraulics.md eq. (15)). ---!
    elemental subroutine root_water_uptake(g_rhizo, k_soil, psi_soil, z_soil, psi_wood, u,             &
                                           du_dpsi_soil, du_dpsi_wood, du_dk)
       real(wp), intent(in)  :: g_rhizo, k_soil, psi_soil, z_soil, psi_wood
@@ -321,7 +324,8 @@ contains
 
    !----- One plant's intact-xylem conductance [kg/s/MPa]: the sapwood's specific conductivity over  !
    !      its cross-section and its path, height x vessel_curl. A plant with no sapwood yet keeps the  !
-   !      least conductance, so its leaf stays joined to its wood. -------------------------------!
+   !      least conductance, so its leaf stays joined to its wood                                  !
+   !      (docs/science/plant_hydraulics.md eq. (10)). -------------------------------------------!
    elemental function xylem_max_conductance(wood_kmax, sap_area, height, vessel_curl) result(k)
       real(wp), intent(in) :: wood_kmax    !< [kg/m/s/MPa] sapwood specific conductivity
       real(wp), intent(in) :: sap_area     !< [m2] sapwood cross-section
@@ -338,7 +342,8 @@ contains
    !      sit `grav` [MPa] of hydrostatic head above the wood. Phi is closed-form for vulnerability  !
    !      exponents 1 and 2 and read from the PFT's table otherwise; its derivative is the retained  !
    !      fraction itself. Near equal potentials the mean is taken at the midpoint, value and        !
-   !      slopes, where the quotient would lose its digits. ---------------------------------------!
+   !      slopes, where the quotient would lose its digits (docs/science/plant_hydraulics.md       !
+   !      eqs. (7)-(9)). --------------------------------------------------------------------------!
    pure subroutine xylem_sapflow(k_cond, psi_w, psi_l, grav, psi50, kexp, table, s, ds_dpsi_w, ds_dpsi_l)
       real(wp),            intent(in)  :: k_cond, psi_w, psi_l, grav, psi50, kexp
       type(hydro_table_t), intent(in)  :: table
@@ -363,12 +368,12 @@ contains
       ds_dpsi_l = dk_dl * drive - keff
    end subroutine xylem_sapflow
 
-   !----- Transpiration [kg/m2/s] of a leaf whose stomata ask for e_demand, given its symplastic   !
-   !      relative water content r (plan §12.2 C1). Above r_close -- the water content at which the   !
-   !      fast stomatal limb has shut the stomata -- the demand stands. Below it, a leaf with closed  !
-   !      stomata loses its residual water in proportion to the water it has left, r/r_close, so an   !
-   !      emptying leaf stops transpiring before it empties and every step has a solution. The       !
-   !      corner is rounded over [r_close, r_close + TRANSP_CLOSE_WIDTH]. --------------------------!
+   !----- Transpiration [kg/m2/s] of a leaf whose stomata ask for e_demand, given its symplastic    !
+   !      relative water content r (docs/science/soil_plant_water.md eq. (3)). Above r_close -- the !
+   !      water content at which the fast stomatal limb has shut the stomata -- the demand stands.  !
+   !      Below it, a leaf with closed stomata loses its residual water in proportion to the water  !
+   !      it has left, r/r_close, so an emptying leaf stops transpiring before it empties and every !
+   !      step has a solution. The corner is rounded over [r_close, r_close + TRANSP_CLOSE_WIDTH]. -!
    elemental subroutine supply_limited_transpiration(e_demand, r, r_close, e, de_dr)
       real(wp), intent(in)  :: e_demand, r, r_close
       real(wp), intent(out) :: e, de_dr

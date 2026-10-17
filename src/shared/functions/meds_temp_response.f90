@@ -1,6 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_temp_response -- temperature scaling of the photosynthetic biochemistry.       !
+! meds_temp_response -- temperature scaling of the photosynthetic biochemistry and of the  !
+! plant's maintenance respiration.                                                         !
 !                                                                                          !
 ! Two forms, both relative to a 25 degC reference (t_ref_photo):                            !
 !   * Arrhenius:  k(T) = k25 * exp[ Ea/(R*Tref) * (1 - Tref/T) ]                            !
@@ -9,9 +10,11 @@
 !         k(T) = k_arr(T) * fH(Tref)/fH(T),   fH(T) = 1 + exp[ (dS*T - Hd)/(R*T) ]           !
 !     which produces a thermal optimum and a roll-off above it.                              !
 !                                                                                          !
-! The Michaelis constants Kc, Ko and the CO2 compensation point Gamma* always use the plain  !
-! Arrhenius form (Bernacchi et al. 2001 activation energies); Vcmax, Jmax and Rd use the      !
-! caller-selected form. All routines are pure elemental and use the clamped safe_exp.         !
+! The Michaelis constants Kc, Ko and the CO2 compensation point Gamma* always use the      !
+! plain Arrhenius form (Bernacchi et al. 2001 activation energies); Vcmax, Jmax and Rd use !
+! the caller-selected form, and stem and root respiration the peaked one. The two forms    !
+! are docs/science/plant_respiration.md eq. (5). All routines are pure elemental and use   !
+! the clamped safe_exp.                                                                    !
 !==========================================================================================!
 module meds_temp_response
    use meds_kinds,     only : wp, ik
@@ -57,24 +60,18 @@ contains
    end function peaked_arrhenius_scale
 
    !---------------------------------------------------------------------------------------!
-   ! THERMAL ACCLIMATION, Kattge & Knorr (2007) -- issue #176.                                 !
-   !                                                                                          !
-   ! The peaked form's entropy term dS sets where the response PEAKS: raising dS moves the     !
-   ! optimum up. Kattge & Knorr fit dS as a falling linear function of the GROWTH temperature   !
-   ! (the mean air temperature of the preceding weeks), so a warm-grown plant runs a higher     !
-   ! optimum than a cold-grown one of the same PFT:                                             !
-   !                                                                                          !
-   !     dS(T_growth) = a - b * T_growth[degC]                                                  !
-   !                                                                                          !
-   ! with a = 668.39, b = 1.07 for Vcmax and a = 659.70, b = 0.75 for Jmax. The SAME fit also   !
-   ! acclimates the capacity RATIO, Jmax25/Vcmax25 = 2.59 - 0.035*T_growth -- a warm-grown      !
-   ! plant invests relatively less in electron transport. Applying the dS shift without the     !
-   ! ratio would acclimate the shape of the response while leaving its two branches in a fixed  !
-   ! proportion, which is not what the study measured.                                          !
-   !                                                                                          !
-   ! T_growth is the GROWTH temperature, not the leaf temperature: the fit is calibrated on the !
-   ! mean AIR temperature of the preceding month, so feeding it an instantaneous leaf value     !
-   ! would use the relation far outside what it was fitted to.                                  !
+   ! THERMAL ACCLIMATION, Kattge & Knorr (2007): docs/science/leaf_gas_exchange.md §2      !
+   ! Thermal acclimation, eq. (4). The peaked form's entropy term dS sets where the        !
+   ! response PEAKS, and both dS and the capacity RATIO Jmax25/Vcmax25 fall linearly with  !
+   ! the GROWTH temperature, so a warm-grown plant runs a higher optimum and invests       !
+   ! relatively less in electron transport:                                                !
+   !                                                                                       !
+   !     dS(T_growth) = a - b * T_growth[degC]                                             !
+   !                                                                                       !
+   ! with a = 668.39, b = 1.07 for Vcmax and a = 659.70, b = 0.75 for Jmax, and            !
+   ! Jmax25/Vcmax25 = 2.59 - 0.035*T_growth. T_growth is the mean AIR temperature of the   !
+   ! preceding weeks, not the leaf temperature, because that is what the fit was           !
+   ! calibrated on.                                                                        !
    !---------------------------------------------------------------------------------------!
    elemental pure function kattge_knorr_entropy(a_coef, b_coef, t_growth) result(ds)
       real(wp), intent(in) :: a_coef, b_coef   !< [J/mol/K], [J/mol/K2] intercept and slope

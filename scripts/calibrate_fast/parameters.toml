@@ -24,7 +24,8 @@
 #   fixed_at  = "kattge_knorr": fixed at Kattge & Knorr's value for the site's growth temperature (priors.py)
 #   meta      = { <plant type> = { centre, sd | log_sd, source } }: a meta-analysis prior by plant type
 #               ([fit].plant_type); the prior of a key without an EEO centre, reported beside the EEO one
-#   source    = what the key is, and where its range comes from
+#   source    = what the key is, and where its range comes from; its "plan §4.n" is
+#               docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md §4.n, where each key's range is argued
 #
 # The RANGE is what is physically possible and the PRIOR what the evidence says, kept apart: each
 # fitted key has its own sd, and its prior z at the MAP is reported. A prior centre of "eeo" is
@@ -108,7 +109,7 @@ key = "pft.theta_j"
 kind = "effective"
 range = [0.70, 0.90]
 state = "fixed"
-reason = "held at the PFT file's value (0.7 in the reference PFTs: the effective curvature of a mean-light cohort). A tower cannot tell it from the canopy's light distribution or from the error in its respiration; fit 3 drove it to its floor to absorb the GPP offset. Revisit with sunlit/shaded leaves (#343)"
+reason = "held at the PFT file's value (0.7 in the reference PFTs: the effective curvature of a mean-light cohort). A tower cannot tell it from the canopy's light distribution or from the error in its respiration; fit 3 drove it to its floor to absorb the GPP offset. Revisit with sunlit/shaded leaves (see docs/ROADMAP.md)"
 prior = { centre = 0.80, sd = 0.05, source = "the curvature of the electron-transport light response: CLM5 0.7, MEDS 0.9 (owner, 2026-10-02)" }
 shape = true
 source = "electron-transport curvature; plan §4.2. It trades with vcmax25: fit it only with a GPP target that samples the light response well"
@@ -297,7 +298,7 @@ default = -0.857143
 state = "fixed"
 reason = "held at half the PFT's turgor-loss point (owner, 2026-10-04): the BCI fit took it to its bound (-0.16 MPa, prior z +2.6), set by the ten-day windows' upwelling longwave and LE rather than the drought runs (test T6), and traded it against stomatal_g1 (correlation 0.91). wstress_sref_stomata carries the drought response"
 process = "drought"
-source = "predawn leaf potential where the stomatal stress begins [MPa] (#341). The model's default is half the PFT's turgor-loss point; -0.857143 is that at the shipped leaf_pi0 (-1.5 MPa) and leaf_elastic_mod (12 MPa). A PFT with other pressure-volume traits sets [priors.stomata_psi_onset].centre"
+source = "predawn leaf potential where the stomatal stress begins [MPa]. The model's default is half the PFT's turgor-loss point; -0.857143 is that at the shipped leaf_pi0 (-1.5 MPa) and leaf_elastic_mod (12 MPa). A PFT with other pressure-volume traits sets [priors.stomata_psi_onset].centre"
 
 [root_beta]
 file = "main"
@@ -309,7 +310,7 @@ state = "optional"
 process = "drought"
 source = "ED2 root-profile decay over 2 m (an e-folding of 0.25-2 m); plan §4.4. Uninformed by ten-day windows (sd ratio 0.98); the seasonal runs may do better"
 
-# ----- RESPIRATION (§4.5) -----------------------------------------------------------------------------------
+# ----- RESPIRATION (MEDS_FAST_CALIBRATION_PLAN.md §4.5) -------------------------------------------------------
 [rd_vcmax_ratio]
 file = "pft"
 key = "pft.rd_vcmax_ratio"

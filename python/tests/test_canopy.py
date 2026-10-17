@@ -63,7 +63,7 @@ def test_the_two_stream_conserves_the_beam(tmp_path):
     assert r["cohort_leaf_vis"].shape == (3, 2)
     assert np.allclose(r["cohort_leaf_vis"].sum(axis=1), r["leaf_vis"])
     inc = vb + vd
-    alb = 0.15                                                       # the reference's bare-soil VIS albedo
+    alb = 0.15                                                       # ground_albedo_vis in meds_config_main.toml
     #----- every VIS photon is reflected to the sky, absorbed by leaves or wood, or absorbed by the ground
     absorbed_ground = (1.0 - alb) * r["ground_vis"]
     assert np.allclose(r["up_vis"] + r["leaf_vis"] + r["wood_vis"] + absorbed_ground, inc, atol=1e-9)

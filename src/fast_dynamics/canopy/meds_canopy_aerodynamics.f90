@@ -1,20 +1,23 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_canopy_aerodynamics -- THE stateless in-canopy aerodynamics kernel (design Part I). A     !
-! pure function of (free-atmosphere forcing, canopy-air-space state, canopy geometry) that        !
-! produces every turbulence/conductance quantity the coupled fast loop's other kernels take as    !
-! forced inputs: friction velocity `ustar` + the scalar profile factors temp1/temp2 (which set    !
-! the atm<->CAS conductances g_atm_heat/g_atm_vapour/g_atm_co2 for all three CAS twins), the per-cohort in-canopy wind   !
-! and leaf/wood boundary-layer conductances, and the ground<->CAS conductance ggnet (=> the soil-  !
-! evaporation resistance r_aero = 1/ggnet). It carries NO integrated state -- like ED2's           !
-! canopy_turbulence8, it is recomputed each fast substep from the current CAS + vegetation state.  !
+! meds_canopy_aerodynamics -- THE stateless in-canopy aerodynamics kernel                  !
+! (docs/science/canopy_aerodynamics.md). A pure function of (free-atmosphere forcing,      !
+! canopy-air-space state, canopy geometry) that produces every turbulence/conductance      !
+! quantity the coupled fast loop's other kernels take as forced inputs: friction velocity  !
+! `ustar` + the scalar profile factors temp1/temp2 (which set the atm<->CAS conductances   !
+! g_atm_heat, g_atm_vapour, g_atm_co2 of all three CAS twins, eq. (5)), the per-cohort     !
+! in-canopy wind and leaf/wood boundary-layer conductances, and the ground<->CAS           !
+! conductance ggnet (=> the soil-evaporation resistance r_aero = 1/ggnet). It carries NO   !
+! integrated state -- like ED2's canopy_turbulence8, it is recomputed each fast substep    !
+! from the current CAS + vegetation state.                                                 !
 !                                                                                          !
-! Physics (see the design's ED2<->CLM reconciliation): the surface layer uses CLM5's clean         !
-! four-range Monin-Obukhov denominators with a fixed-iteration solve (no root-find, no I/O -> GPU  !
-! portable); the leaf/wood boundary layers use ED2's forced+free convection Nusselt kernel (needed !
-! for low-wind free convection); the in-canopy wind uses ED2's per-cohort crown-area extinction;   !
-! the ground conductance uses the CLM4-like dense-canopy form. All `pure`; per-cohort outputs are  !
-! written into caller-owned SoA slices (never an array-valued function result into a call, #7).    !
+! Physics (an ED2<->CLM reconciliation): the surface layer uses CLM5's four-range          !
+! Monin-Obukhov denominators with a fixed-iteration solve (no root-find, no I/O -> GPU     !
+! portable); the leaf/wood boundary layers use ED2's forced+free convection Nusselt kernel !
+! (needed for low-wind free convection); the in-canopy wind uses ED2's per-cohort          !
+! crown-area extinction; the ground conductance uses the CLM4-like dense-canopy form. All  !
+! `pure`; per-cohort outputs are written into caller-owned SoA slices (never an            !
+! array-valued function result passed into a call: see CLAUDE.md).                         !
 !==========================================================================================!
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
@@ -46,12 +49,13 @@ module meds_canopy_aerodynamics
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! cas_atm_conductances -- the canopy-air-space <-> atmosphere bulk conductances from the         !
-   ! surface-layer solution: g_atm_heat = rho*ustar*temp_heat [kg/m2/s] for enthalpy, g_atm_vapour = rho*ustar*     !
-   ! temp_vapour [kg/m2/s] for water vapour and g_atm_co2 = can_dmol*ustar*temp_vapour [mol/m2/s] for CO2  !
-   ! (molar capacity). The ONE formula for the three callers that used to spell it out (the frozen   !
-   ! pre-pass, the live per-stage refresh, the reported fluxes); a caller that treats heat and        !
-   ! vapour alike passes the same profile factor twice.                                              !
+   ! cas_atm_conductances -- the canopy-air-space <-> atmosphere bulk conductances from    !
+   ! the surface-layer solution, docs/science/canopy_aerodynamics.md eq. (5): g_atm_heat = !
+   ! rho*ustar*temp_heat [kg/m2/s] for enthalpy, g_atm_vapour = rho*ustar*temp_vapour      !
+   ! [kg/m2/s] for water vapour and g_atm_co2 = can_dmol*ustar*temp_vapour [mol/m2/s] for  !
+   ! CO2 (molar capacity). The ONE formula, shared by the frozen pre-pass and the live     !
+   ! per-stage refresh; a caller that treats heat and vapour alike passes the same profile !
+   ! factor twice.                                                                         !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_atm_conductances(rho, can_dmol, ustar, temp_heat, temp_vapour, g_atm_heat, g_atm_vapour, g_atm_co2)
       real(wp), intent(in)  :: rho          !< [kg/m3]  canopy-air density
@@ -65,9 +69,10 @@ contains
       g_atm_co2 = can_dmol * ustar * temp_vapour
    end subroutine cas_atm_conductances
 
-   !----- Roughness length and zero-plane displacement of a patch, from its canopy height with the  !
-   !      snow blend. The ONE definition: the aerodynamics uses it, and so does the move of the      !
-   !      forcing to the patch's canopy-air top, which has to follow the same log profile. ----------!
+   !----- Roughness length and zero-plane displacement of a patch, from its canopy height with      !
+   !      the snow blend (docs/science/canopy_aerodynamics.md eq. (1)). The ONE definition: the     !
+   !      aerodynamics uses it, and so does the move of the forcing to the patch's canopy-air       !
+   !      top, which has to follow the same log profile. -------------------------------------------!
    pure subroutine canopy_roughness(cfg, geom, rough, displace)
       type(aero_cfg_t),  intent(in)  :: cfg
       type(aero_geom_t), intent(in)  :: geom
@@ -80,8 +85,10 @@ contains
    end subroutine canopy_roughness
 
    !=======================================================================================!
-   !  Master seam: fill an aero_out_t for one patch. Cohort arrays are ordered BOTTOM(1) ->    !
-   !  TOP(n) (the canopy-radiation convention); the wind cascade walks top -> bottom.          !
+   !  Master seam: fill an aero_out_t for one patch. Cohort arrays are ordered BOTTOM(1)   !
+   !  -> TOP(n) (the canopy-radiation convention); the wind cascade walks top -> bottom.   !
+   !  Steps 1-5 below are docs/science/canopy_aerodynamics.md eq. (1), eqs. (2)-(4), eq.   !
+   !  (6), eqs. (7)-(8) and eqs. (9)-(10).                                                 !
    !=======================================================================================!
    pure subroutine canopy_aerodynamics(cfg, env, geom, n, height, lai, crown_area,        &
                                             leaf_temp, wood_temp, leaf_width, branch_diam, out)
@@ -101,11 +108,11 @@ contains
       zldis    = max(env%zref - displace, 2.0_wp * rough)
       out%rough = rough
       out%displace = displace
-      !----- CAS depth = tallest cohort + freeboard. The canopy air space is the well-mixed layer !
-      !      the canopy exchanges with, which extends ABOVE the crowns -- not the canopy volume.   !
-      !      NOTE this is a DIAGNOSTIC copy for callers that want it inline; the authority is the  !
-      !      per-patch cas_state_t%can_depth, which the SLOW loop owns (canopy height only changes !
-      !      on a slow step, and resizing the control volume has to be booked there). -----------!
+      !----- CAS depth = tallest cohort + freeboard. The canopy air space is the well-mixed      !
+      !      layer the canopy exchanges with, which extends ABOVE the crowns -- not the canopy   !
+      !      volume. This is a diagnostic copy only; the authority is the per-patch              !
+      !      cas_state_t%can_depth, which the SLOW loop owns (canopy height only changes on a    !
+      !      slow step, and resizing the control volume has to be booked there). ----------------!
       out%can_depth = max(cfg%min_canopy_depth, geom%veg_height + cfg%canopy_freeboard)
       out%n_coh = n
 
@@ -157,12 +164,14 @@ contains
    end subroutine canopy_aerodynamics
 
    !=======================================================================================!
-   !  CLM5 Monin-Obukhov surface layer. Fixed n_iter_mo sweeps of the four-range denominators, !
-   !  seeded by the analytic bulk-Richardson guess (MoninObukIni). Returns ustar + the scalar   !
-   !  profile factor temp1 (= vonk/D_h; temp2 identical for z0q=z0h) + stability diagnostics.    !
-   !  Neutral limit: ustar -> vonk*u/ln(zldis/z0m), temp1 -> vonk/ln(zldis/z0m). No division by  !
-   !  zeta near neutral (zeta0m = z0m*zeta/zldis; zeta appears in a denominator ONLY in the very- !
-   !  unstable/very-stable branches, where |zeta| > 1), so -fpe0 is safe.                        !
+   !  CLM5 Monin-Obukhov surface layer (docs/science/canopy_aerodynamics.md eqs. (2)-(4)). !
+   !  Fixed n_iter_mo sweeps of the four-range denominators, seeded by the analytic        !
+   !  bulk-Richardson guess (MoninObukIni). Returns ustar + the scalar profile factor      !
+   !  temp1 (= vonk/D_h; temp2 identical for z0q=z0h) + stability diagnostics. Neutral     !
+   !  limit: ustar -> vonk*u/ln(zldis/z0m), temp1 -> vonk/ln(zldis/z0m). No division by    !
+   !  zeta near neutral (zeta0m = z0m*zeta/zldis; zeta appears in a denominator ONLY in    !
+   !  the very-unstable/very-stable branches, where                                        !
+   !  zeta| > 1), so -fpe0 is safe.                                                        !
    !=======================================================================================!
    pure subroutine mo_surface_layer(cfg, u_ref, zref, displace, rough, theta_atm, shv_atm,     &
                                     can_theta, can_shv, ustar, temp1, zeta, rib, obu)
@@ -248,7 +257,7 @@ contains
       end if
    end function d_heat
 
-   !----- CLM StabilityFunc1 (psi_m, UNSTABLE branch; call only with zeta < 0). --------------!
+   !----- CLM StabilityFunc1 (psi_m of eq. (4), UNSTABLE branch: call only with zeta < 0) ---!
    pure function stabfunc1(zeta) result(psi)
       real(wp), intent(in) :: zeta
       real(wp) :: psi, x
@@ -257,7 +266,7 @@ contains
             - 2.0_wp * atan(x) + pi * 0.5_wp
    end function stabfunc1
 
-   !----- CLM StabilityFunc2 (psi_h, UNSTABLE branch; call only with zeta < 0). --------------!
+   !----- CLM StabilityFunc2 (psi_h of eq. (4), UNSTABLE branch: call only with zeta < 0) ---!
    pure function stabfunc2(zeta) result(psi)
       real(wp), intent(in) :: zeta
       real(wp) :: psi, x2
@@ -277,8 +286,9 @@ contains
    end function psim
 
    !=======================================================================================!
-   !  Log-profile wind at `height` from the surface-layer solution (floored at ugbmin). Used   !
-   !  for the canopy-top wind; monotonically increasing with height in neutral/stable air.      !
+   !  Log-profile wind at `height` from the surface-layer solution (floored at ugbmin),    !
+   !  docs/science/ canopy_aerodynamics.md eq. (7). Used for the canopy-top wind;          !
+   !  monotonically increasing with height in neutral/stable air.                          !
    !=======================================================================================!
    pure function reduced_wind(cfg, ustar, zeta, height, displace, rough, zldis) result(u)
       type(aero_cfg_t), intent(in) :: cfg
@@ -292,10 +302,12 @@ contains
    end function reduced_wind
 
    !=======================================================================================!
-   !  ED2 leaf (flat-plate) / wood (cylinder) boundary-layer conductance gbh_mos [m/s], the     !
-   !  parallel sum of forced (Reynolds) and free (Grashof) convection Nusselt numbers. This is   !
-   !  the PRIMITIVE the energy kernel consumes directly (its gbh/gbw are m/s velocities); the     !
-   !  driver forms gbw = gbh_2_gbw*gbh_mos and, for the leaf gas-exchange seam, gb_mol = gbw*rho. !
+   !  ED2 leaf (flat-plate) / wood (cylinder) boundary-layer conductance gbh_mos [m/s],    !
+   !  the parallel sum of forced (Reynolds) and free (Grashof) convection Nusselt numbers  !
+   !  (docs/science/canopy_aerodynamics.md eqs. (9)-(10)). This is the PRIMITIVE the       !
+   !  energy kernel consumes directly (its gbh/gbw are m/s velocities);                    !
+   !  canopy_aerodynamics forms gbw = gbh_2_gbw*gbh_mos and the pre-pass forms the leaf    !
+   !  gas-exchange seam's molar gb = gbw * molar air density.                              !
    !=======================================================================================!
    pure function boundary_gbh_mos(cfg, wind, elem_temp, can_temp, lchar, is_leaf) result(gbh_mos)
       type(aero_cfg_t), intent(in) :: cfg

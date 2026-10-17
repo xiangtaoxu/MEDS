@@ -97,8 +97,8 @@ what keeps `shared/` from becoming the place a file goes when no other place fit
 `slow_dynamics/{plant,soil}` and `state/column` link only `state_column` and `config`. That is what
 keeps each kernel library building standalone, keeps the kernels eligible for OpenMP `target`
 offload (a portability property worth holding, though offload is not currently a speedup — see
-[`dev_plans/archive/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/archive/MEDS_GPU_EVALUATION.md)), and lets twelve of
-the tests link one kernel library alone. It is checked, not assumed:
+[`dev_plans/archive/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/archive/MEDS_GPU_EVALUATION.md)), and lets a
+test link one kernel library alone. It is checked, not assumed:
 there is no occurrence of `site_t` in any of those folders. **If a new routine needs `site_t`, it
 is driver code**, and it belongs in a `driver/` folder.
 
@@ -144,10 +144,9 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
 Two edges are worth knowing because they are easy to get wrong:
 
 - **`config` links `state_column`**, not the other way round: `meds_config` takes
-  `n_soil_layer_max` from `meds_column_params` for the `[soil_column]` bounds check. The edge was
-  missing until a Ninja build exposed it — the Makefile generator happened to order the two module
-  files correctly, so a parallel build with a different scheduler failed where the everyday one
-  passed.
+  `n_soil_layer_max` from `meds_column_params` for the `[soil_column]` bounds check. A missing edge
+  here does not show in the everyday build — the Makefile generator happens to order the two module
+  files correctly — but a parallel build with a different scheduler (Ninja) fails.
 - **`io_prep` carries no netCDF.** The netCDF-free half of the output subsystem (the reductions,
   the registry, the temporal integrators) is a separate target from the serializer, so the stepper
   can tick the integrators without pulling a C dependency. It is an explicit file list, not a glob:
@@ -192,8 +191,10 @@ These are the things that break quietly if you do not know them.
   plant number or stops the run. Every fast step closes its store's budget; the slow step closes a
   site-wide ledger. **A closed budget proves bookkeeping, not plausibility** — several real leaks
   hid behind ledgers that balanced, because the ledger declared the same quantity it consumed.
-- **Declare a field's fusion kind once.** Intensive fields blend leaf-area-weighted, extensive ones
-  by plant number, ground-referenced ones sum. Getting this wrong at a call site is invisible: the
+- **Declare a field's fusion kind once.** In the cohort diagnostic block, intensive fields blend
+  leaf-area-weighted, extensive ones by plant number, ground-referenced ones sum; in the prognostic
+  state an intensive field blends on the weight that conserves its extensive product (tissue
+  temperature on heat capacity, SLA on leaf carbon). Getting this wrong at a call site is invisible: the
   biomass assertion passes and both ledgers close.
 - **Do not read `site%deriv` from the output layer.** The tendency bundle is transient and
   deliberately not lockstep-reordered, which is correct for its own consumer but wrong for the
@@ -214,12 +215,12 @@ Full build, test and run instructions are in [`docs/building.md`](../docs/buildi
 ## `test/` is flat, deliberately
 
 `src/` is two levels deep; `test/` is one flat directory. That asymmetry is a **decision, not an
-oversight** (#193, structure-plan decision #13, taken 2026-09-13).
+oversight**.
 
-Flat wins because the suite is ~47 files with globally unique names, so a mirror buys no lookup that
-`test_<subject>.f90` does not already give — while costing a test rename on every source move, in a
-tree that has moved twice. The thing that actually needs to stay honest is the **link line**, not the
-directory: seventeen tests deliberately link one narrow library each (`meds_shared`, `meds_config`,
+Flat wins because the suite's files have globally unique names, so a mirror buys no lookup that
+`test_<subject>.f90` does not already give — while costing a test rename on every source move. The
+thing that actually needs to stay honest is the **link line**, not the directory: many tests
+deliberately link one narrow library each (`meds_shared`, `meds_config`,
 `meds_fast_kernels`, `meds_forcing`) so those layers stay standalone-buildable, and that discipline
 is visible in `CMakeLists.txt` whatever directory the file sits in. It is also why the assertion
 helpers live in `meds_test_assert`, which depends on nothing but a kind.

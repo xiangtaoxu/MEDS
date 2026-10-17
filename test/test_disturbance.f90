@@ -33,14 +33,14 @@ program test_disturbance
    call check(h_tall  >= cfg%disturbance_survive_height, 'tall cohort should exceed threshold')
    call check(h_short <  cfg%disturbance_survive_height, 'short cohort should be below threshold')
    n_before = total_nplant(site)
-   !----- REVIEW 2026-09 (item 1B #1): the survivor's film [kg/m2 of ITS patch] must dilute into the !
-   !      gap like its density; the site total of the SURVIVOR's film is conserved across the split. -!
+   !----- The survivor's film [kg/m2 of ITS patch] must dilute into the gap like its density; the  !
+   !      site total of the SURVIVOR's film is conserved across the split. ------------------------!
    site%cohort%leaf_surf_water(site%cohort%n) = 0.25_wp
    film_before = site%patch%area(1) * 0.25_wp
 
    !----- Turn the per-patch diagnostic block ON. It defaults OFF (a run with no diagnostics    !
    !      allocates nothing and every entry point no-ops), so a test that wants to read a slot     !
-   !      must ask for it -- and #170's silent zero was invisible partly because nothing did.      !
+   !      must ask for it: a slot nothing reads can sit at a silent zero unseen. -------------------!
    call patch_diag_alloc(site%patch%diag, site%patch%n + 1_ik, .true.)
 
    call apply_patch_disturbance(site, cfg, 1.0_wp)
@@ -49,16 +49,16 @@ program test_disturbance
    call check(site%patch%n == 2_ik, 'disturbance should add exactly one gap patch')
    call check_close(total_area(site), 1.0_wp, 1.0e-9_wp, 'disturbance broke area conservation')
 
-   !----- The disturbed-area flux is REPORTED (#170). The slot was declared and never written, so   !
-   !      it read as a silent zero -- which no conservation check can see, because zero disturbed   !
-   !      area is a perfectly conservative answer. Assert the VALUE, not merely that it is finite.  !
-   !                                                                                          !
-   !      Asserted through patch_diag_value -- the SAME reader the output layer uses -- and not off  !
-   !      the raw accumulator (#239). The block is (value, weight) and the reader returns value/     !
-   !      weight, so reading `v` directly tests the contribution rather than the number the variable !
-   !      emits, and it certified a contribution that was a factor yr_sec wrong for six shipped      !
-   !      variables. The weight is what a year of fast steps accumulates, because that is the window !
-   !      a once-a-year disturbance is normalized over; the answer is then the declared [1/yr] rate. !
+   !----- The disturbed-area flux is REPORTED. A slot declared and never written reads as a       !
+   !      silent zero -- which no conservation check can see, because zero disturbed area is a    !
+   !      perfectly conservative answer. Assert the VALUE, not merely that it is finite.          !
+   !                                                                                              !
+   !      Asserted through patch_diag_value -- the SAME reader the output layer uses -- and not   !
+   !      off the raw accumulator. The block is (value, weight) and the reader returns            !
+   !      value/weight, so reading `v` directly tests the contribution rather than the number the !
+   !      variable emits, and can pass a contribution that is a factor yr_sec wrong. The weight   !
+   !      is what a year of fast steps accumulates, because that is the window a once-a-year      !
+   !      disturbance is normalized over; the answer is then the declared [1/yr] rate.            !
    site%patch%diag%n      = site%patch%n
    site%patch%diag%w(1:site%patch%n) = yr_sec
    frac_expect = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)
@@ -74,7 +74,7 @@ program test_disturbance
    call check(ig > 0_ik, 'no treefall gap patch found')
    call check_close(site%patch%age(ig), 0.0_wp, 1.0e-12_wp, 'gap patch should have age 0')
    call check_close(site%patch%shed_water_rate(ig), 0.0_wp, 1.0e-12_wp,                            &
-                    'gap patch should have a fresh (zero) shed_water_rate, like age (P4)')
+                    'gap patch should have a fresh (zero) shed_water_rate, like age')
 
    !----- The gap holds ONLY survivors (height < threshold): the short cohort. -------------!
    i0 = site%patch%cohort_offset(ig) ; i1 = i0 + site%patch%cohort_count(ig) - 1_ik

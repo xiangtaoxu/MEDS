@@ -1,12 +1,14 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_plant_trait_dynamics -- unit tests for the light-plasticity kernel.                  !
+! test_plant_trait_dynamics -- unit tests for the light-plasticity kernel                   !
+! (docs/science/plant_traits.md eqs. (1)-(2)).                                             !
 !                                                                                          !
 !   1. NO SHADE      : cum_lai_above = 0 => every target equals its top-of-canopy value.       !
 !   2. SHADE SIGNS   : shaded => SLA up, Vcmax/Rd down, leaf lifespan up (ED2 directions).      !
 !   3. GRADIENT      : target = trait_toc * exp(kplastic * cum_lai_above).                      !
-!   4. RELAX RATE    : relax_trait moves by f = 1 - exp(-dt/llspan); dt->0 barely moves,        !
-!                      a long-lived (shaded) canopy acclimates slowly, dt>>llspan reaches target.!
+!   4. RELAX RATE    : update_plastic_trait moves by f = 1 - exp(-dt/llspan); dt->0 barely      !
+!                      moves, a long-lived (shaded) canopy acclimates slowly, dt>>llspan reaches  !
+!                      target, and the instantaneous (census) mode reaches it at once.            !
 !==========================================================================================!
 program test_plant_trait_dynamics
    use meds_test_assert, only : check_close, check_true, test_report

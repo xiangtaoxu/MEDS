@@ -28,8 +28,8 @@ program test_patch
    call add_cohort(site, cfg, 2_ik, 1_ik, 0.7_wp,  6.0_wp)
    call finalize_init(site)
    n0 = total_nplant(site)
-   !----- REVIEW 2026-09 (item 1B #2): films are per m2 of THEIR patch; on fusion they must dilute   !
-   !      by the area weights like nplant. Site total before = 0.5*(0.2+0.1) + 0.5*(0.4+0.0) = 0.35. --!
+   !----- Films are per m2 of THEIR patch; on fusion they must dilute by the area weights like      !
+   !      nplant. Site total before = 0.5*(0.2+0.1) + 0.5*(0.4+0.0) = 0.35. -------------------------!
    site%cohort%leaf_surf_water(1) = 0.20_wp ; site%cohort%wood_surf_water(2) = 0.10_wp   ! patch 1
    site%cohort%leaf_surf_water(3) = 0.40_wp                                               ! patch 2
    call new_fuse_patches(site, cfg)
@@ -53,9 +53,9 @@ program test_patch
    call add_cohort(site, cfg, 4_ik, 1_ik, 0.3_wp,  7.0_wp)
    call finalize_init(site)
    !----- Give the doomed patch content UNLIKE its neighbours', which is the realistic case (a    !
-   !      sliver is usually a fresh gap). Dropping it and renormalizing the survivors used to     !
-   !      destroy that content outright; it is merged into the largest survivor now, so the site  !
-   !      total must come through untouched (review item 1B #9).  --------------------------------!
+   !      sliver is usually a fresh gap). Dropping it and renormalizing the survivors would       !
+   !      destroy that content outright; it is merged into the largest survivor, so the site      !
+   !      total must come through untouched. ------------------------------------------------------!
    site%patch%soil_w(1)%theta(1) = 0.20_wp
    site%patch%soil_w(2)%theta(1) = 0.20_wp
    site%patch%soil_w(3)%theta(1) = 0.45_wp        ! the slivers are much wetter
@@ -86,8 +86,8 @@ program test_patch
    !----- DIFFERENT canopy depths, or this fixture cannot tell the two weightings apart. The      !
    !      canopy air is intensive per kg of AIR, and the air mass is area x depth, so the merged  !
    !      value is mass-weighted: (0.75*30*1000 + 0.25*10*2000)/(0.75*30 + 0.25*10) = 1100, not   !
-   !      the 1250 an area weighting gives. Both patches sat at the default 20 m until now, which !
-   !      is exactly the case where the wrong answer and the right one agree.  -------------------!
+   !      the 1250 an area weighting gives. Equal depths are exactly the case where the wrong     !
+   !      answer and the right one agree. ---------------------------------------------------------!
    site%patch%cas(1)%can_depth = 30.0_wp ; site%patch%cas(2)%can_depth = 10.0_wp
    cas_before = site%patch%area(1) * site%patch%cas(1)%can_depth * site%patch%cas(1)%can_enthalpy  &
               + site%patch%area(2) * site%patch%cas(2)%can_depth * site%patch%cas(2)%can_enthalpy
@@ -111,8 +111,8 @@ program test_patch
 
    !=== The tolerance ceiling: dissimilar patches stay apart even above max_patch. ===========!
    !    A closed stand and a sparse understory, and max_patch = 1 asking for one patch. Under the !
-   !    shipped ceiling (0.15) they stay two; under the old schedule, 0.10 x 1.5 per pass with no  !
-   !    ceiling (0.76 by the sixth pass), they fuse.                                               !
+   !    shipped ceiling (0.15) they stay two; under an uncapped schedule, 0.10 x 1.5 per pass     !
+   !    (0.76 by the sixth pass), they fuse.                                                      !
    cfg = build_test_config()
    cfg%max_patch = 1_ik
    call check_close(cfg%patch_light_tol * cfg%patch_light_tol_mult**(cfg%n_patch_fusion_iter - 1_ik),  &
@@ -127,7 +127,7 @@ program test_patch
               'fixture: the two light profiles must differ by between 0.3 and 0.7 on average')
    call new_fuse_patches(site, cfg)
    call check(site%patch%n == 2_ik, 'patches more different than the ceiling must stay apart above max_patch')
-   !----- The old schedule, spelled as a ceiling: 0.10 * 1.5**5 over six passes is a step of 1.5. --!
+   !----- The uncapped schedule, spelled as a ceiling: 0.10 * 1.5**5 over six passes is a step of 1.5. -!
    cfg%patch_light_tol_max = 0.10_wp * 1.5_wp**5
    call derive_parameters(cfg)
    call check_close(cfg%patch_light_tol_mult, 1.5_wp, 1.0e-12_wp, 'ceiling 0.759375 must give the old 1.5 step')

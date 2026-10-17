@@ -61,7 +61,7 @@ disturbance_survive_height = 10.0
 [recruitment]
 min_recruit_size = 1.0e-2
 
-# The PFT file's [derived] table sets each PFT's mortality (example 03's census fit).
+# The PFT file's [derived] table sets the light-plasticity slopes; mortality follows wood density ([camac]).
 [options]
 override_derived = true
 
@@ -85,7 +85,7 @@ enabled       = true
 dir           = "output"
 prefix        = "pv"
 sync_every    = "flush"
-# Daily per-cohort records for the leaf-habit analysis; hourly leaf potential per cohort (io_config.toml).
+# Daily per-cohort records for the leaf-habit analysis; hourly leaf potential per cohort (io_config_inventory.toml).
 axes_cohort   = true
 axes_patch    = false
 radiation     = false
@@ -175,9 +175,10 @@ start_clamp    = "error"
 soil_carbon_on = true             # starts empty; the inventory carries no soil pools
 
 # A Cambisol, ~40 % clay at every depth, 1.57 m deep (the map's soil depth). Each SoilGrids layer's curve is
-# MEDS's pedotransfer function (Hodnett & Tomasella 2002 + Ottoni 2019 ksat); one van Genuchten curve is fitted
-# to their thickness-weighted average over the column, ksat is their geometric mean, and the thermal
-# properties are CLM5's from the texture. The layers are MEDS's default SoilGrids cut at the depth.
+# MEDS's pedotransfer function (Hodnett & Tomasella 2002 + Ottoni 2019 ksat; docs/science/soil_biophysics.md
+# eqs. (6)-(7)); one van Genuchten curve is fitted to their thickness-weighted average over the column, ksat
+# is their geometric mean, and the thermal properties are CLM5's from the texture (eq. (9)). The layers are
+# MEDS's default SoilGrids cut at the depth.
 [soil_column]
 depth       = 1.5712           # [m]
 theta_sat   = 0.4456
@@ -192,4 +193,4 @@ dry_heat_capacity  = 1.26e6    # [J/m3/K]
 [energy]
 bottom_bc  = "dirichlet"
 deep_temp  = 300.0               # [K] the map's deep_temp at this cell is 299.99
-deep_depth = 2.68               # [m] bottom node (1.29 m) + 1.973/sqrt(2)
+deep_depth = 2.68               # [m] bottom node (1.29 m) + 1.973/sqrt(2) (docs/science/soil_biophysics.md eq. (13))

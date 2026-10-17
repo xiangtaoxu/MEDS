@@ -1,16 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_config_io -- load a run configuration from TWO mandatory TOML files and a presence-map !
-! check. In src/config (config input) with NO external dependency, so it is always compiled. !
+! meds_config_io -- load a run configuration from TWO mandatory TOML files and a presence- !
+! map check (docs/configuration.md). In src/config (config input) with NO external         !
+! dependency, so it is always compiled.                                                    !
 !                                                                                          !
-! Philosophy: NO hard-coded model parameters. Every parameter is supplied by the user via TOML !
-! (or DERIVED from supplied ones); a missing parameter or a missing file is a HARD ERROR.      !
-! The MAIN file (passed on the CLI) holds all non-PFT parameters and names the PFT file; the    !
-! PFT file holds all PFT-specific traits plus the allometry and mortality-hazard coefficients.  !
-! Presence is tracked while reading (a "missing key" list); after both files are read, any      !
-! missing required key aborts with the full list. Derived quantities are then computed          !
-! (derive_config + derive_pft_rates); with [options].override_derived a [derived] block in the  !
-! PFT file overwrites the computed mortality-hazard parameters.                                 !
+! Philosophy: NO hard-coded model parameters. Every parameter is supplied by the user via  !
+! TOML (or DERIVED from supplied ones); a missing parameter or a missing file is a HARD    !
+! ERROR. The exceptions are the optional keys -- solver settings, process switches and a   !
+! few blocks ([soil_column], [soil], [energy], [snow], [aerodynamics], [soil_carbon]) --   !
+! which fall back to their defaults. The MAIN file (passed on the CLI) holds all non-PFT   !
+! parameters and names the PFT file; the PFT file holds all PFT-specific traits plus the   !
+! allometry and mortality-hazard coefficients. Presence is tracked while reading (a        !
+! "missing key" list); after both files are read, any missing required key aborts with the !
+! full list. Derived quantities are then computed (derive_parameters); with                !
+! [options].override_derived a [derived] block in the PFT file overwrites the computed     !
+! mortality-hazard parameters and light-plasticity slopes.                                 !
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
@@ -169,17 +173,16 @@ contains
 
 
    !=======================================================================================!
-   !  Fast-loop biophysics run-config loaders ([soil]/[energy]/[snow]/[aerodynamics]). All      !
-   !  OPT-IN: every key is read with its CURRENT (default) value as the getter fallback, so an   !
-   !  absent key/block is byte-identical to the meds_biophysics_opts default struct. String      !
-   !  selectors keep the default when absent and HARD-ERROR when present but unrecognized (like   !
-   !  the [forcing] enum mappers, but opt-in -- no note_missing). Public for unit testing.        !
+   !  Fast-loop biophysics run-config loaders ([soil]/[energy]/[snow]/[aerodynamics]). All !
+   !  OPTIONAL: every key is read with its current (default) value as the getter fallback, !
+   !  so an absent key or block keeps the meds_biophysics_opts default. String selectors   !
+   !  keep the default when absent and HARD-ERROR when present but unrecognized (like the  !
+   !  [forcing] enum mappers, but optional -- no note_missing). Public for unit testing.   !
    !=======================================================================================!
    !---------------------------------------------------------------------------------------!
-   ! [soil_column] -> the PHYSICAL soil column: grid, hydraulic texture, thermal texture.     !
-   ! Distinct from [soil], the water network's options over this column. Every key            !
-   ! is optional and defaults to the literal that used to be hard-coded in build_fast_context, !
-   ! so an absent block reproduces the old behaviour exactly.                                  !
+   ! [soil_column] -> the PHYSICAL soil column: grid, hydraulic texture, thermal texture.  !
+   ! Distinct from [soil], the water network's options over this column. Every key is      !
+   ! optional and defaults to its soil_column_config_t value.                              !
    !---------------------------------------------------------------------------------------!
    subroutine load_soil_column(tm, c)
       type(toml_table_t),         intent(in)    :: tm
@@ -248,14 +251,15 @@ contains
       e%deep_temp   = toml_real(tm, 'energy.deep_temp',   e%deep_temp)
       e%deep_depth  = toml_real(tm, 'energy.deep_depth',  e%deep_depth)
       e%atol        = toml_real(tm, 'energy.atol',        e%atol)
-      !----- HARD-STOP on a non-closing budget. Gates budget_check_stop after all seven budgets in    !
-      !      meds_fast_ark / meds_fast_rk45. Default .false., so a production run reports a breach      !
-      !      rather than halting on it; set it to halt when you are bisecting one.                     !
-      !                                                                                          !
-      !      This key MUST keep its reader. Without one the flag could only be set from Fortran, so     !
-      !      every configured run sat at .false. and the documented protocol -- "run with               !
-      !      energy.debug_error = .true. so a breach HALTS" -- was silently vacuous: runs completed     !
-      !      because nothing was checking, not because nothing was wrong.                              !
+      !----- HARD-STOP on a non-closing budget. Gates the stop on the fast loop's budget checks      !
+      !      (meds_fast_ark, meds_fast_rk45) and the kernels' own closure checks. Default            !
+      !      .false., so a production run reports a breach rather than halting on it; set it to      !
+      !      halt when you are bisecting one.                                                        !
+      !                                                                                              !
+      !      This key MUST keep its reader. Without one the flag can be set only from Fortran,       !
+      !      every configured run sits at .false., and the protocol "run with energy.debug_error     !
+      !      = .true. so a breach HALTS" is silently vacuous: a run would complete because           !
+      !      nothing was checking, not because nothing was wrong. -----------------------------------!
       e%debug_error = toml_logical(tm, 'energy.debug_error', e%debug_error)
    end subroutine load_energy_opts
 
@@ -380,9 +384,9 @@ contains
    end subroutine req_colimitation
 
    !----- [forcing] string-enum mappers. ----------------------------------------------------!
-   !----- The two file formats are named after their families (MEDS_FLUX_TOWER_FORCING_PLAN.md D3), !
-   !      matched exactly. The earlier spellings stop with the name that replaced them, so an old      !
-   !      config gets the fix rather than a list of missing keys. -------------------------------------!
+   !----- The two file formats are named after their families, matched exactly. A retired           !
+   !      spelling stops with the name that replaced it, so an old config gets the fix rather       !
+   !      than a list of missing keys. -------------------------------------------------------------!
    subroutine req_met_backend(t, key, mode, m)      ! "ED_default" | "ED_ERA5land" | "const"
       type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
       integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
@@ -433,9 +437,8 @@ contains
       end select
    end subroutine req_sw_partition
 
-   !----- [allometry].height_allometry: "power" (the default, and every config written before the  !
-   !       option), "gmm", which then needs its three coefficients, or "chave2014", which needs the !
-   !       site's stress index chave_e. ---------------------------------------------------------!
+   !----- [allometry].height_allometry: "power" (the default), "gmm", which then needs its        !
+   !      three coefficients, or "chave2014", which needs the site's stress index chave_e. -------!
    subroutine opt_height_allometry(t, cfg, m)
       type(toml_table_t), intent(in) :: t ; type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t), intent(inout) :: m
@@ -504,9 +507,9 @@ contains
       end select
    end subroutine req_grid_match
 
-   !----- Load the [forcing]/[site] block. GATED on forcing.forcing_on (a DEFAULTED read, so a  !
-   !      config with no [forcing] block runs the constant-forcing MVP unchanged). When ON, the   !
-   !      rest are REQUIRED (the no-silent-defaults rule) -- design MEDS_FORCING_DESIGN.md §6.6.   !
+   !----- Load the [forcing]/[site] block (docs/science/forcing.md). GATED on                     !
+   !      forcing.forcing_on (a DEFAULTED read, so a config with no [forcing] block runs on       !
+   !      constant forcing). When ON, the rest are REQUIRED (the no-silent-defaults rule). -------!
    subroutine load_forcing_config(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
@@ -515,10 +518,11 @@ contains
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! opt-in gate (defaulted)
       if (.not. cfg%forcing%forcing_on) return
       call req_met_backend  (t, 'forcing.format',         cfg%forcing%backend,               m)
-      !----- The source picks its own keys. The archive (format = "ED_ERA5land", §15.2) finds the  !
-      !      site's cell itself and takes its orography from the static file, so the keys that     !
-      !      name a file, a grid slot or a grid elevation would parse and do nothing there: they    !
-      !      are rejected rather than ignored. ---------------------------------------------------!
+      !----- The source picks its own keys. The archive (format = "ED_ERA5land";                  !
+      !      docs/science/forcing.md §1) finds the site's cell itself and takes its orography     !
+      !      from the static file, so the keys that name a file, a grid slot or a grid            !
+      !      elevation would parse and do nothing there: they are rejected rather than            !
+      !      ignored. ----------------------------------------------------------------------------!
       if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
          call req_s         (t, 'forcing.data_path',       cfg%forcing%data_path,             m)
          !----- A region's polygons sit on their cells, so no site-to-cell distance exists. ------!
@@ -540,8 +544,9 @@ contains
       call req_avg_convention(t, 'forcing.avg_convention', cfg%forcing%avg_convention,       m)
       call req_sw_partition (t, 'forcing.sw_partition',   cfg%forcing%sw_partition,          m)
       call req_lwdown_source(t, 'forcing.lwdown_source',  cfg%forcing%lwdown_source,         m)
-      !----- #182 longwave-synthesis parameters, OPTIONAL: they only bite when lwdown_source is  !
-      !      "synthesize", so a file-longwave config is not made to supply them. -----------------!
+      !----- Longwave-synthesis parameters (docs/science/forcing.md §11), OPTIONAL: they only     !
+      !      bite when lwdown_source is "synthesize", so a file-longwave config is not made       !
+      !      to supply them. ---------------------------------------------------------------------!
       if (toml_has(t, 'forcing.lw_clear_form')) then
          select case (trim(toml_string(t, 'forcing.lw_clear_form', '')))
          case ('brutsaert') ; cfg%forcing%lw_clear_form = LW_CLEAR_BRUTSAERT
@@ -558,9 +563,9 @@ contains
          call req_date      (t, 'forcing.recycle_start',  cfg%forcing%recycle_start,         m)
          call req_date      (t, 'forcing.recycle_end',    cfg%forcing%recycle_end,           m)
       end if
-      !----- CO2 (#184): one source for every backend, never the met file. A DEFAULTED read      !
-      !      ("const"), so every existing config runs unchanged. The key of the other mode would  !
-      !      parse and do nothing, so it is rejected. ---------------------------------------------!
+      !----- CO2 (docs/science/forcing.md §12): one source for every backend, never the met      !
+      !      file. A DEFAULTED read ("const"). The key of the other mode would parse and do      !
+      !      nothing, so it is rejected. --------------------------------------------------------!
       select case (trim(toml_string(t, 'forcing.co2_source', 'const')))
       case ('const')
          cfg%forcing%co2_source = CO2_SOURCE_CONST
@@ -576,9 +581,9 @@ contains
       case default
          error stop 'load_meds_config: forcing.co2_source must be "const" or "file"'
       end select
-      !----- The location. A region's polygons each take theirs from their cell (the centre, the   !
-      !      static orography), so the [site] location keys would parse and do nothing there:      !
-      !      they are rejected, like forcing.max_distance_km (MEDS_POLYGON_RUNTIME_PLAN.md §9). -----!
+      !----- The location. A region's polygons each take theirs from their cell (the centre,        !
+      !      the static orography), so the [site] location keys would parse and do nothing          !
+      !      there: they are rejected, like forcing.max_distance_km. -------------------------------!
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (toml_has(t, 'site.latitude') .or. toml_has(t, 'site.longitude') .or.                  &
              toml_has(t, 'site.elevation') .or. toml_has(t, 'forcing.max_distance_km'))            &
@@ -618,9 +623,9 @@ contains
       else
          call note_missing(m, 'forcing.wind_exposure')
       end if
-      !----- The terrain lapse (§8): one lapse rate for the year, or twelve (January .. December).   !
-      !      Its two keys are read only when the lapse is on; with it off they would parse and do     !
-      !      nothing, so they are refused. -------------------------------------------------------------!
+      !----- The terrain lapse (docs/science/forcing.md §8, eqs. (13)-(14)): one lapse rate for     !
+      !      the year, or twelve (January .. December). Its two keys are read only when the         !
+      !      lapse is on; with it off they would parse and do nothing, so they are refused. --------!
       call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
       if (.not. cfg%forcing%apply_elevation_lapse) then
          if (toml_has(t, 'site.lapse_rate_tair') .or. toml_has(t, 'site.grid_elevation'))          &
@@ -648,10 +653,10 @@ contains
          call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
 
-   !----- [maps] (MEDS_POLYGON_RUNTIME_PLAN.md §14 RP3): the paths of the static maps. The three   !
-   !      soil maps go together: the depth map gives the column, the texture and chemistry maps its    !
-   !      layers. Each key the soil maps provide is refused when they are set, so a run never holds    !
-   !      two values for one quantity (OR12). -----------------------------------------------------!
+   !----- [maps] (docs/configuration.md, "Input maps"): the paths of the static maps. The three     !
+   !      soil maps go together: the depth map gives the column, the texture and chemistry maps     !
+   !      its layers. Each key the soil maps provide is refused when they are set, so a run         !
+   !      never holds two values for one quantity. -------------------------------------------------!
    subroutine load_maps_config(t, cfg)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
@@ -679,10 +684,10 @@ contains
       end do
    end subroutine load_maps_config
 
-   !----- [run].mode and the [region] block (MEDS_POLYGON_RUNTIME_PLAN.md §9). The mode is a        !
-   !      DEFAULTED read ("site"), so every existing config runs unchanged. In region mode the box is  !
-   !      required; the selection rule and the cell mask default. In site mode a [region] key        !
-   !      would parse and do nothing, so it is rejected.  -------------------------------------------!
+   !----- [run].mode and the [region] block (docs/configuration.md, "Regional runs"). The mode      !
+   !      is a DEFAULTED read ("site"). In region mode the box is required; the selection rule      !
+   !      and the cell mask default. In site mode a [region] key would parse and do nothing, so     !
+   !      it is rejected. --------------------------------------------------------------------------!
    subroutine load_region_config(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
@@ -711,11 +716,11 @@ contains
       cfg%region%cell_mask_min     = toml_real(t, 'region.cell_mask_min', 0.5_wp)
    end subroutine load_region_config
 
-   !----- Load the [output] diagnostic-aggregation block. OPT-IN: gated on output.enabled (a       !
-   !      DEFAULTED read, so a config with no [output] block writes no diagnostic stream). ALL keys  !
-   !      are optional-with-default (§6.1 softening), so no keymiss is recorded. Per-variable       !
-   !      overrides live in the optional meds_io_config.toml, applied by the driver against the     !
-   !      built registry (§6, MEDS_IO_DESIGN.md).                                                   !
+   !----- Load the [output] diagnostic-aggregation block (docs/science/diagnostics.md §5).        !
+   !      OPT-IN: gated on output.enabled (a DEFAULTED read, so a config with no [output]         !
+   !      block writes no diagnostic stream). ALL keys are optional-with-default, so no           !
+   !      keymiss is recorded. Per-variable overrides live in the optional                        !
+   !      meds_io_config.toml, applied by the driver against the built registry. -----------------!
    subroutine load_output_config(t, cfg)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
@@ -730,9 +735,8 @@ contains
       cfg%output%fast_interval_steps = toml_int    (t, 'output.fast_interval_steps', 4_ik)
       cfg%output%sync_every = merge(SYNC_NEVER, SYNC_FLUSH,                                        &
                                     trim(toml_string(t, 'output.sync_every', 'flush')) == 'never')
-      !----- high-level flux-group toggles (§6). ---!
-      !----- Variable-GROUP toggles. The v0.1 defaults (section 8 D6) turn on the six groups that   !
-      !      make a run judgeable and leave the two heavy evaluation groups off. ------------------!
+      !----- Variable-GROUP toggles: the groups that make a run judgeable are on, and the two      !
+      !      heavy evaluation groups (radiation, ecophys) off. ------------------------------------!
       cfg%output%grp_on(GRP_STRUCTURE)  = toml_logical(t, 'output.structure',  .true.)
       cfg%output%grp_on(GRP_CARBON)     = toml_logical(t, 'output.carbon',     .true.)
       cfg%output%grp_on(GRP_WATER)      = toml_logical(t, 'output.water',      .true.)
@@ -748,10 +752,10 @@ contains
       cfg%output%axis_on(AXIS_PFT)        = toml_logical(t, 'output.axes_pft',        .true.)
       cfg%output%axis_on(AXIS_SIZE)       = toml_logical(t, 'output.axes_size',       .true.)
       cfg%output%axis_on(AXIS_SOIL_PATCH) = toml_logical(t, 'output.axes_soil_patch', .false.)
-      !----- DBH size-class edges (DIM_SIZE), ascending, n_class+1 of them. Absent -> the built-in  !
-      !      inventory default is installed in manager_setup.  ------------------------------------!
+      !----- DBH size-class edges (DIM_SIZE), ascending, n_class+1 of them. Absent -> manager_setup !
+      !      installs the built-in inventory default. ----------------------------------------------!
       call load_dbh_edges(t, cfg%output)
-      !----- Integrator WORK counters (section 5.3 cost axis); opt-in, off by default. ---------------!
+      !----- Integrator WORK counters and the budget residuals; on by default. -------------------!
       cfg%output%grp_on(GRP_NUMERICS)  = toml_logical(t, 'output.numerics',      .true.)
       !----- per-tier enable + file-chunk (index order FAST/DAILY/MONTHLY/ANNUAL). ---!
       cfg%output%freq_on(1) = toml_logical(t, 'output.fast.enabled',    .false.)
@@ -764,25 +768,21 @@ contains
       cfg%output%file_chunk(4) = parse_file_chunk(toml_string(t, 'output.annual.file_chunk',  'run'))
    end subroutine load_output_config
 
-   !----- Load the per-PFT [phenology] cue params from the PFT file. Leaf phenology is UNCONDITIONAL !
-   !      now (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I), so the gate is no longer a run-   !
-   !      config flag -- it is the PRESENCE of a [phenology] override in THIS PFT file: absent -> keep !
-   !      the alloc_pft_table defaults (no cues: always flushing, never senescing, losing leaves to    !
-   !      background turnover alone, with a ~15-day flush cap). Present -> every per-PFT array is      !
-   !      REQUIRED except the optional PAR and water keys (the no-silent-defaults rule still            !
-   !      holds for a deliberate override). The arrays are flattened per cohort into a pheno_params_t   !
-   !      by the slow-loop phenology driver.                                                            !
-   !                                                                                          !
-   !      THE GATE IS THE SECTION, NOT A KEY INSIDE IT (#245). It used to be                           !
-   !      `toml_has(t, 'phenology.flush_cue_mask')`, and that key is not one the shipped               !
-   !      meds_config_pft.toml ever documented -- it documented `cue_mask`, which no reader consumes.  !
-   !      So a config that wrote a full, deliberate [phenology] block was skipped in SILENCE: the      !
-   !      presence map never saw the twenty-three required keys go missing, and every PFT fell back    !
-   !      to CUE_NONE/CUE_NONE -- always flushing, never senescing -- whatever leaf habit it           !
-   !      declared. The Ithaca reference stand, declared cold-deciduous, held LAI 5.28-5.66 through    !
-   !      every January of a 50-year run. Gating on the section asks whether the author meant to       !
-   !      configure phenology at all, which is the question, rather than whether they happened to      !
-   !      spell one particular key the way the loader wanted.  ---------------------------------------!
+   !----- Load the per-PFT [phenology] cue params from the PFT file                               !
+   !      (docs/science/plant_phenology.md). Leaf phenology always runs; what is gated is the     !
+   !      PRESENCE of a [phenology] section in THIS PFT file: absent -> keep the                  !
+   !      alloc_pft_table defaults (no cues: always flushing, never senescing, losing leaves      !
+   !      to background turnover alone, with a ~15-day flush cap). Present -> every per-PFT       !
+   !      array is REQUIRED except the optional water keys (the no-silent-defaults rule still     !
+   !      holds for a deliberate override). The arrays are flattened per cohort into a            !
+   !      pheno_params_t by the slow-loop phenology driver.                                       !
+   !                                                                                              !
+   !      THE GATE IS THE SECTION, NOT A KEY INSIDE IT (toml_has_section). Gated on one key,      !
+   !      a full, deliberate [phenology] block that misspells that key, or spells it under a      !
+   !      retired name, is skipped in SILENCE: the presence map never sees the required keys      !
+   !      go missing, and every PFT falls back to CUE_NONE/CUE_NONE -- always flushing, never     !
+   !      senescing -- whatever leaf habit it declared. Gating on the section asks whether        !
+   !      the author meant to configure phenology at all, which is the question. -----------------!
    subroutine load_phenology_pft(t, cfg, npft, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
@@ -856,13 +856,13 @@ contains
       if (nout == npft) then ; out(1:npft) = buf(1:npft) ; else ; call note_missing(m, key) ; end if
    end subroutine req_pa
 
-   !----- OPTIONAL per-PFT array: keeps whatever `out` already holds when the key is absent, so a   !
-   !      config that never mentions it gets the alloc_pft_table default. Used for parameters that   !
-   !      only bite when an OPT-IN feature is selected -- the phenology WATER/HYDRO/LIGHT cue         !
-   !      thresholds (#150). Making those required would force every user of the temperature          !
-   !      strategies to supply five numbers they never use. A WRONG-LENGTH array is still an error:   !
-   !      silently ignoring `[phenology] water_window = [10.0]` in a three-PFT run would be exactly   !
-   !      the typo this table's required-key discipline exists to catch.  ---------------------------!
+   !----- OPTIONAL per-PFT array: keeps whatever `out` already holds when the key is absent,      !
+   !      so a config that never mentions it gets the alloc_pft_table default. Used for           !
+   !      parameters that only bite when an OPT-IN feature is selected (the phenology water       !
+   !      cue, the per-PFT hydraulic overrides, storage maintenance) or that have a               !
+   !      defensible default. A WRONG-LENGTH array is still an error: silently ignoring           !
+   !      `[phenology] flush_water_sum = [10.0]` in a three-PFT run would be exactly the typo     !
+   !      this table's required-key discipline exists to catch. ----------------------------------!
    subroutine opt_pa(t, key, out, npft, m)
       type(toml_table_t), intent(in)    :: t
       character(len=*),   intent(in)    :: key
@@ -937,29 +937,29 @@ contains
       call req_dur (tm, 'run.dt_slow',    cfg%dt_slow,    miss)
       call req_date(tm, 'run.start_time', cfg%start_time, miss)
       call req_date(tm, 'run.end_time',   cfg%end_time,   miss)
-      !----- Master slow-tier freeze (opt-in; DEFAULTED true, so an existing config with no        !
-      !      run.slow_on key is unaffected). ------------------------------------------------------!
+      !----- Master slow-tier freeze and the slow ledger (both DEFAULTED true). ------------------!
       cfg%slow_on = toml_logical(tm, 'run.slow_on', .true.)
       cfg%slow_ledger_on = toml_logical(tm, 'run.slow_ledger_on', .true.)
-      !----- §7 C2 fast-loop patch threads (opt-in; DEFAULTED 1 = serial, so an existing config with  !
-      !      no run.n_threads key is byte-identical). Exposed ONCE, here -- deliberately NOT also from !
-      !      OMP_NUM_THREADS, so the run's thread count is recorded in the config that produced it. ---!
+      !----- Host threads (DEFAULTED 1 = serial). Exposed ONCE, here -- deliberately NOT also       !
+      !      from OMP_NUM_THREADS, so the run's thread count is recorded in the config that         !
+      !      produced it. --------------------------------------------------------------------------!
       cfg%n_threads = toml_int(tm, 'run.n_threads', 1_ik)
-      !----- [run].mode (DEFAULTED "site", today's behaviour) and, for a region, the [region] block. !
+      !----- [run].mode (DEFAULTED "site") and, for a region, the [region] block. ----------------!
       call load_region_config(tm, cfg, miss)
 
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       call req_l     (tm, 'fast.fast_biophysics_on', cfg%fast_biophysics_on, miss)
       call req_dur   (tm, 'fast.dt_fast',            cfg%dt_fast,            miss)
-      !----- P3 coupled-surface (Picard) knobs + option selectors: DEFAULTED reads (solver tuning, !
-      !      not physical params), so a config without them runs the documented defaults. ---------!
+      !----- Optional fast-loop settings: DEFAULTED reads, so a config without them runs the      !
+      !      documented defaults. ----------------------------------------------------------------!
       cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
       cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
-      !----- Fast-loop TIME integrator: DEFAULTED read, ARK (ESDIRK2) when absent. "split" is no       !
-      !      longer a scheme; a config still asking for it is a HARD ERROR rather than a silent          !
-      !      downgrade, because silently running a different integrator than the file asks for is        !
-      !      exactly the kind of thing that invalidates a long run without anyone noticing. -------------!
+      !----- Fast-loop TIME integrator: DEFAULTED read, ARK (ESDIRK2) when absent. "split" is        !
+      !      not a scheme (docs/science/numerical_scheme.md §3); a config asking for it is a         !
+      !      HARD ERROR rather than a silent downgrade, because silently running a different         !
+      !      integrator than the file asks for is exactly the kind of thing that invalidates a       !
+      !      long run without anyone noticing. ------------------------------------------------------!
       integrator_str = trim(toml_string(tm, 'fast.time_integrator', 'ark'))
       if (integrator_str == 'ark') then
          cfg%time_integrator = INTEG_ARK
@@ -971,12 +971,12 @@ contains
       end if
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
       cfg%ark_rtol          = toml_real   (tm, 'fast.ark_rtol',          1.0e-3_wp)
-      !----- Error-control selectors (goal a; DEFAULTED so existing configs are byte-identical). ------!
+      !----- Error-control selectors (DEFAULTED). ---------------------------------------------!
       cfg%rtol_all          = toml_real   (tm, 'fast.rtol_all',          0.0_wp)
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
       cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
       cfg%cas_condensation  = toml_logical(tm, 'fast.cas_condensation', .true.)
-      !----- Process mask (§5.1): all-on default => the full column, byte-identical. -------------------!
+      !----- Process mask: all-on default => the full column. -----------------------------------!
       cfg%mask_veg_energy   = toml_logical(tm, 'fast.mask.veg_energy', .true.)
       cfg%mask_cas_energy   = toml_logical(tm, 'fast.mask.cas_energy', .true.)
       cfg%mask_cas_vapour   = toml_logical(tm, 'fast.mask.cas_vapour', .true.)
@@ -997,9 +997,8 @@ contains
       cfg%fast_probe        = toml_logical(tm, 'fast.fast_probe',        .false.)
       cfg%fast_probe_file   = toml_string (tm, 'fast.fast_probe_file',   'fast_probe.csv')
 
-      !----- [hydraulics] (opt-in; each key DEFAULTED to the placeholder in hydraulics_config_t, so an  !
-      !      absent block is byte-identical to the former hardcoded fast-loop stub). Consumed only by    !
-      !      the fast loop (fast_biophysics_on); PFT-uniform MVP. -----------------------------------!
+      !----- [hydraulics]: each key DEFAULTED to its hydraulics_config_t value, which pft.<key>     !
+      !      overrides per PFT. Consumed only by the fast loop (fast_biophysics_on). ---------------!
       cfg%hydraulics%leaf_pi0       = toml_real(tm, 'hydraulics.leaf_pi0',       cfg%hydraulics%leaf_pi0)
       cfg%hydraulics%leaf_elastic_mod       = toml_real(tm, 'hydraulics.leaf_elastic_mod',       cfg%hydraulics%leaf_elastic_mod)
       cfg%hydraulics%leaf_apoplast_frac        = toml_real(tm, 'hydraulics.leaf_apoplast_frac', &
@@ -1021,28 +1020,28 @@ contains
       cfg%hydraulics%fine_root_radius     = toml_real(tm, 'hydraulics.fine_root_radius',                    &
                                                       cfg%hydraulics%fine_root_radius)
 
-      !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (all opt-in;    !
-      !      each key DEFAULTED to its meds_biophysics_opts placeholder, so an absent block is a     !
-      !      no-op). build_fast_context copies these verbatim into the column config. --------------!
+      !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (every key     !
+      !      DEFAULTED to its meds_biophysics_opts value, so an absent block keeps the            !
+      !      defaults). build_fast_context copies these verbatim into the column config. ---------!
       call load_soil_opts  (tm, cfg%soil)
       call load_soil_column(tm, cfg%soil_column)
       call load_energy_opts(tm, cfg%energy)
-      !----- ONE debug switch: [energy].debug_error arms every Debug-only hard stop, including the soil-  !
-      !      water kernel's own mass-closure stops, which used to be unreachable (no [soil] key). ---------!
+      !----- ONE debug switch: [energy].debug_error arms every Debug-only hard stop, including the     !
+      !      soil-water kernel's own mass-closure stops, which have no [soil] key of their own. -------!
       cfg%soil%debug_error = cfg%energy%debug_error
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)
 
-      !----- [soil_carbon] slow soil-carbon matrix (MEDS_SLOW_DYNAMICS_DESIGN.md Part II B0).      !
-      !      soil_carbon_on gates the FEATURE only -- every key below (incl. this subroutine's) is  !
-      !      a DEFAULTED read falling back to its ED2-verified in-type default, so the feature       !
-      !      needs no TOML edits at all.                                                             !
-      !                                                                                          !
-      !      The absent-key default MUST match the in-type default in meds_config (.true.). It did   !
-      !      not until this was fixed: the type said .true. and this line said .false., and since     !
-      !      toml_logical returns the supplied default whenever the key is absent, THIS line won for  !
-      !      every config that omits it -- including the shipped meds_config_main.toml. Off is not a  !
-      !      coarser soil-carbon model, it is NO soil carbon (see meds_config for the measured cost). !
+      !----- [soil_carbon] slow soil-carbon matrix (docs/science/soil_carbon.md).                 !
+      !      soil_carbon_on gates the FEATURE only -- every key below (incl. this                 !
+      !      subroutine's) is a DEFAULTED read falling back to its ED2 in-type default, so        !
+      !      the feature needs no TOML edits at all.                                              !
+      !                                                                                           !
+      !      The absent-key default here MUST match the in-type default in meds_config            !
+      !      (.true.): toml_logical returns the supplied default whenever the key is absent,      !
+      !      so THIS line, not the type, decides for every config that omits the key --           !
+      !      including the shipped meds_config_main.toml. Off is not a coarser soil-carbon        !
+      !      model, it is NO soil carbon (see meds_config for the measured cost). ----------------!
       cfg%soil_carbon_on             = toml_logical(tm, 'soil_carbon.soil_carbon_on', .true.)
       cfg%soil_carbon_spinup_steady  = toml_logical(tm, 'soil_carbon.spinup_steady',       .false.)
       cfg%soil_carbon_spinup_xi      = toml_real   (tm, 'soil_carbon.spinup_xi',           1.0_wp)
@@ -1070,8 +1069,8 @@ contains
       call req_i(tm, 'demography.n_patch_fusion_iter',    cfg%n_patch_fusion_iter,    miss)
       call req_r(tm, 'demography.patch_light_tol',        cfg%patch_light_tol,        miss)
       call req_r(tm, 'demography.patch_light_maxdev_factor', cfg%patch_light_maxdev_factor, miss)
-      !----- The tolerance ceiling is optional, so older configs load. Absent, it is 0.15, or       !
-      !      patch_light_tol when that is larger, which keeps a looser config valid.  ---------------!
+      !----- The tolerance ceiling is optional. Absent, it is 0.15, or patch_light_tol when         !
+      !      that is larger, which keeps a looser config valid. ------------------------------------!
       cfg%patch_light_tol_max = 0.15_wp
       if (toml_has(tm, 'demography.patch_light_tol'))                                               &
          cfg%patch_light_tol_max = max(0.15_wp, cfg%patch_light_tol)   ! clamp-ok: the setting's default
@@ -1096,9 +1095,9 @@ contains
       cfg%init_soil_theta = toml_real(tm, 'init.soil_theta', cfg%init_soil_theta)
       cfg%init_reacclimate_traits = toml_logical(tm, 'init.reacclimate_traits', cfg%init_reacclimate_traits)
 
-      !----- [state]: the restart stream (#173); every diagnostic is [output]'s. A config that still  !
-      !      spells the block [io], the name it had before v0.3.0, would parse and do nothing, so it  !
-      !      is refused, naming the keys that replaced it (#309). ------------------------------------!
+      !----- [state]: the restart stream; every diagnostic is [output]'s. A config that spells      !
+      !      the block [io] would parse and do nothing, so it is refused, naming the keys that      !
+      !      replaced it. --------------------------------------------------------------------------!
       do i = 1_ik, tm%n
          if (index(tm%key(i), 'io.') == 1)                                                          &
             error stop 'load_meds_config: the [io] block is now [state]: rename the block, and '//  &
@@ -1114,9 +1113,8 @@ contains
       !----- Carbon growth: stub GPP (used when the fast loop is off). ---------------------!
       call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
 
-      !----- Light trait plasticity (opt-in; DEFAULTED false). Leaf phenology itself is now         !
-      !      UNCONDITIONAL (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- there is no       !
-      !      phenology.phenology_on key any more; see load_phenology_pft for the per-PFT cue params. !
+      !----- Light trait plasticity (opt-in; DEFAULTED false). Leaf phenology always runs;        !
+      !      its per-PFT cue params are read by load_phenology_pft. ------------------------------!
       cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
       cfg%fineroot_lifespan_plastic = toml_logical(tm, 'trait_dynamics.fineroot_lifespan_plastic', .false.)
 
@@ -1146,8 +1144,9 @@ contains
       call req_r(tm, 'leaf_physiology.hd_vcmax', cfg%hd_vcmax, miss)
       call req_r(tm, 'leaf_physiology.hd_jmax',  cfg%hd_jmax,  miss)
       call req_r(tm, 'leaf_physiology.hd_rd',    cfg%hd_rd,    miss)
-      !----- Thermal acclimation (#176): OPT-IN, all keys optional so an existing config is       !
-      !      unchanged and the six Kattge & Knorr coefficients keep their published values. --------!
+      !----- Thermal acclimation (docs/science/leaf_gas_exchange.md eq. (4)): OPT-IN, every       !
+      !      key optional, the six Kattge & Knorr coefficients defaulting to their published      !
+      !      values. -----------------------------------------------------------------------------!
       cfg%leaf_thermal_acclimation = toml_logical(tm, 'leaf_physiology.thermal_acclimation',      &
                                                   cfg%leaf_thermal_acclimation)
       cfg%acclim_ds_vcmax_a  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_a',  cfg%acclim_ds_vcmax_a)
@@ -1251,13 +1250,14 @@ contains
       call req_pa(tp, 'pft.aboveground_frac',       cfg%pft%aboveground_frac,       npft, miss)
       call req_pa(tp, 'pft.storage_cushion',        cfg%pft%storage_cushion,        npft, miss)
       call req_pa(tp, 'pft.growth_resp_factor',     cfg%pft%growth_resp_factor,     npft, miss)
-      !----- #177 storage maintenance: OPTIONAL, default 0 (pre-#177 behaviour). ---------!
+      !----- Storage maintenance: OPTIONAL, default 0 (off). -----------------------------!
       call opt_pa(tp, 'pft.storage_turnover_rate', cfg%pft%storage_turnover_rate,  npft, miss)
-      !----- #151 leaf resorption: OPTIONAL, default 0 (all shed carbon to litter). ------!
+      !----- Leaf and fine-root resorption: OPTIONAL, default 0.3. ----------------------!
       call opt_pa(tp, 'pft.retained_carbon_fraction', cfg%pft%retained_carbon_fraction, npft, miss)
-      !----- #179 PER-PFT HYDRAULIC TRAITS, all OPTIONAL. An absent key keeps the HYD_UNSET        !
-      !      sentinel and the table builder substitutes the [hydraulics] scalar, so a config can    !
-      !      make ONE trait per-PFT without restating the other twelve.  ------------------------------!
+      !----- PER-PFT HYDRAULIC TRAITS, all OPTIONAL. An absent key keeps the HYD_UNSET sentinel     !
+      !      and the table builder substitutes the [hydraulics] scalar (wood_kmax, a [pft] key      !
+      !      only, follows the PFT's wood density), so a config can make ONE trait per-PFT          !
+      !      without restating the others. ---------------------------------------------------------!
       call opt_pa(tp, 'pft.leaf_pi0',            cfg%pft%hyd_leaf_pi0,            npft, miss)
       call opt_pa(tp, 'pft.leaf_elastic_mod',    cfg%pft%hyd_leaf_elastic_mod,    npft, miss)
       call opt_pa(tp, 'pft.leaf_apoplast_frac',  cfg%pft%hyd_leaf_apoplast_frac,  npft, miss)

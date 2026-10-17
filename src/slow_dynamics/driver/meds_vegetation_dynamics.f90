@@ -3,16 +3,15 @@
 ! meds_vegetation_dynamics -- MEDS's slow-loop VEGETATION-DYNAMICS driver (the analogue of      !
 ! ED2's veg_dynamics_driver), in src/slow_dynamics/driver/ (library meds_slow). It is THE         !
 ! ORCHESTRATOR: it (1) assembles the per-cohort carbon NPP from the plant seam, (2) turns that     !
-! into the demographic RATES by calling the per-individual plant vital-rate KERNELS               !
-! (meds_demography_rates: carbon growth rate, Camac mortality, recruitment), and (3) sequences    !
-! the demography engine's APPLY-PRIMITIVES (grow / die / age / recruit / fuse-fiss) folding the    !
-! calendar cadence into the structural triggers.                                                  !
+! into the demographic RATES by calling the per-individual vital-rate LAWS                         !
+! (meds_demography_rates: carbon growth rate, Camac mortality, recruitment), and (3) sequences     !
+! the demography engine's APPLY-PRIMITIVES (grow / die / recruit / fuse-fiss), folding the         !
+! calendar cadence into the structural triggers (docs/science/order_of_processes.md §4-§5).        !
 !                                                                                          !
-! This is THE single place plant and demography meet: the driver calls the plant kernels; the      !
-! demography engine only APPLIES supplied arrays, so `demography _|_ plant` holds. (The former      !
-! update_demography seam was dissolved into this routine. The empirical growth/recruitment LAWS    !
-! were removed from Fortran -- they live in the Python example -- so the Fortran model is the       !
-! carbon path.)                                                                                    !
+! This is THE single place plant and demography meet: the driver calls the plant kernels and       !
+! the rate laws; the demography engine only APPLIES supplied arrays (src/README.md rule 4). The    !
+! empirical growth and recruitment laws live in the Python example, so the Fortran model is the    !
+! carbon path.                                                                                     !
 !==========================================================================================!
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
@@ -57,8 +56,6 @@ module meds_vegetation_dynamics
    public :: reacclimate_plant_traits
    public :: shed_turnover_water, accumulate_recruit_pool
 
-   !----- Wood is the residual carbon sink (the elemental allocation kernel takes all leftover   !
-   !       NPP into wood -- no sentinel demand needed now that the interface is scalar). --------!
    !----- Guard: baseline leaf turnover = 1/llspan; floor llspan so a degenerate value cannot divide-by-0.
    real(wp), parameter :: tiny_llspan = 1.0e-6_wp         !< [yr]
    !----- Patch structural dynamics (fusion/fission/disturbance) are an ANNUAL process, so       !
@@ -79,7 +76,7 @@ contains
       !----- The per-patch litter accumulator is site%patch%litter_in, NOT a local array, so that it
       !      follows its patches when restructure_stand reorders, blends or creates them. See the
       !      field's comment in meds_site_state_types.
-      type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
+      type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (meds_slow_ledger)
       real(wp),            intent(in),    optional :: latitude_deg !< the polygon's (default [site])
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       real(wp)                 :: mort_water
@@ -90,19 +87,18 @@ contains
       type(carbon_flux_block)  :: npp
       integer(ik)              :: n_window
 
-      !----- 0. Leaf phenology (UNCONDITIONAL): advance the per-cohort leaf tendencies ONE daily   !
-      !         step, BEFORE compute_carbon_allocation reads them (the folded phenology_driver --    !
-      !         ED2 calls it inside the vegetation-dynamics slow loop). Needs the step-start          !
-      !         day-of-year; a caller with no calendar context (e.g. the Python carbon-mode C-API     !
-      !         path) simply omits doy, so the tendencies stay at their birth values (flushing, not   !
-      !         senescing).                                                                           !
-      !         advance_leaf_phenology ALSO no-ops on its own when no fast sub-step has yet supplied   !
-      !         a daily-mean temperature (site%pheno_tair_n < 1). --------------------------------------!
+      !----- 0. Leaf phenology (UNCONDITIONAL): advance the per-cohort leaf tendencies ONE daily      !
+      !         step, BEFORE compute_carbon_allocation reads them (ED2 too runs its phenology         !
+      !         driver inside the vegetation-dynamics slow loop). Needs the step-start day-of-year;   !
+      !         a caller with no calendar context (e.g. the Python carbon-mode C-API path) simply     !
+      !         omits doy, so the tendencies stay at their birth values (flushing, not senescing).    !
+      !         advance_leaf_phenology ALSO no-ops on its own when no fast sub-step has yet           !
+      !         supplied a daily-mean temperature (site%pheno_tair_n < 1). ---------------------------!
       if (present(doy)) call advance_leaf_phenology(site, cfg, doy, latitude_deg)
 
       !----- 0b. Light trait plasticity (opt-in): acclimate the per-cohort leaf traits toward     !
       !          their shaded targets from last step's overtopping LAI, BEFORE compute_carbon_allocation reads  !
-      !          cohort%sla / cohort%llspan. OFF => traits stay at top-of-canopy (bit-identical). --!
+      !          cohort%sla / cohort%llspan. OFF => traits stay at top-of-canopy. -------------------!
       !          A rising SLA resorbs leaf carbon into storage, which has no heat capacity, so the  !
       !          tissue's heat content changes at unchanged temperature: declared to the ledger,  !
       !          as the cohort and patch phases declare theirs. ----------------------------------!
@@ -112,10 +108,10 @@ contains
          if (present(ledger)) call slow_ledger_declare(ledger, energy_in = slow_tissue_heat(site) - plastic_heat0)
       end if
 
-      !----- 1. Carbon NPP from the plant seam (the ONLY plant call). Also accumulates this step's !
-      !         leaf/fine-root TURNOVER litter (leaf_shed_c/fineroot_shed_c) into the per-patch      !
-      !         litter accumulator (B1 litter seam). ZERO it for this step -- it is patch state now,
-      !         so unlike a fresh local array it arrives carrying yesterday's values.  -------------!
+      !----- 1. Carbon NPP from the plant seam. Also accumulates this step's leaf/fine-root         !
+      !         TURNOVER litter (leaf_shed_c/fineroot_shed_c) into the per-patch litter             !
+      !         accumulator. ZERO it for this step first: it is patch state, so it arrives          !
+      !         carrying the last step's values. ---------------------------------------------------!
       site%patch%litter_in(1:site%patch%n) = litter_input_t()
       !----- SLOW diagnostic block: size + zero it for this step BEFORE anything writes into it.   !
       !      SET semantics (one sample per slow step), so `w` is a presence flag rather than a dt.   !
@@ -126,72 +122,61 @@ contains
       end if
       call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, site%patch%litter_in)
 
-      !----- 1b. Leaf/fine-root turnover WATER shedding (P4): must run BEFORE update_cohort_states  !
+      !----- 1b. Leaf/fine-root turnover WATER shedding: must run BEFORE update_cohort_states       !
       !          commits this step's new leaf_carbon/fineroot_carbon below, since it needs the PRE-   !
       !          step pools as its "how much was lost" denominator (see shed_turnover_water). --------!
       call shed_turnover_water(site, cfg, npp, ledger)
       !----- LEDGER: the allocation phase COMPUTES; the only state it moves is tissue water into    !
-      !      patch%shed_water_rate, and the ledger carries that as a store, so this phase should    !
-      !      close on every currency. It is marked anyway -- a phase that must be quiet is the one  !
-      !      worth watching, because a residual here means something moved that nobody declared.    !
+      !      patch%shed_water_rate, a handoff to the fast tier that shed_turnover_water declares,   !
+      !      so this phase should close on every currency. It is marked anyway -- a phase that      !
+      !      must be quiet is the one worth watching, because a residual here means something       !
+      !      moved that nobody declared.                                                            !
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_ALLOCATE)
 
-      !----- 2. Carbon vital RATES via the plant kernels (PRE-apply, so mortality sees the same !
-      !         growth_avg the former carbon_vital_rates did -- behaviour preserved).            !
+      !----- 2. Carbon vital RATES via the rate laws, PRE-apply: mortality reads the growth_avg    !
+      !         of the steps before this one (this step's sample enters the ring buffer below).    !
       call compute_vital_rates(site, cfg, npp%wood, npp_repro, cfg%dt_years, mortality, recruitment)
 
-      !----- 2b0. Credit the recruit pool with THIS STEP's recruitment, every step. Until now the !
-      !           pool was credited inside apply_recruitment, monthly, from whatever rate the      !
-      !           driver had computed on that one day scaled up to stand for the whole month --    !
-      !           a 12-point sample of a quantity the model computes 365 times a year, whose       !
-      !           value depended on which days happened to be month boundaries.                    !
+      !----- 2b0. Credit the recruit pool with THIS STEP's recruitment, every step: the exact      !
+      !           integral of a daily quantity, where a monthly credit from one day's rate scaled  !
+      !           to the month would be a 12-point sample that depends on which days are month     !
+      !           boundaries.                                                                      !
       !                                                                                            !
       !           Crediting daily also makes the pool an EXACT carbon quantity, with no new state. !
       !           `recruitment` is n*(npp_repro/dt_yr)*efficiency/carbon_min, so rate*dt_yr is     !
       !           n*npp_repro*efficiency/carbon_min -- the establishing share of the reproduction  !
       !           carbon the parents were debited this very step, in plant units. The pool valued  !
       !           at carbon_min is therefore that carbon exactly, and the growth phase's debit and !
-      !           the pool's credit are the same number in the same phase (plan §10.2.2 item 3). --!
+      !           the pool's credit are the same number in the same phase. ------------------------!
       call accumulate_recruit_pool(site, cfg, recruitment, cfg%dt_years, seed_rain_carbon)
       if (present(ledger)) call slow_ledger_declare(ledger, carbon_in = seed_rain_carbon)
 
       !----- 2b. Mortality litter and mortality water are computed AFTER the commit below, on the         !
-      !          density it actually removed -- see accumulate_mortality_litter. The original text        !
-      !          for this step follows, kept because it still explains why `lit` is returned to the       !
-      !          caller rather than applied here.                                                         !
-      !                                                                                                   !
-      !          Soil-carbon litter (B1; OPT-IN [soil_carbon].soil_carbon_on -- default .false.           !
-      !          keeps this bit-identical to pre-Part-II behavior, matching every other feature           !
-      !          gate in this codebase). Continuous background-mortality LITTER: the carbon carried       !
-      !          by the fraction of each cohort's individuals that dies this step (the SAME hazard        !
-      !          update_cohort_states will apply as nplant *= exp(-mortality*dt) below) -- computed       !
-      !          from the PRE-update cohort pools (this step's growth has not yet been applied), the      !
-      !          standard operator-split approximation. Accumulated into the SAME `lit` array the         !
-      !          turnover litter above uses. `lit` is returned to the caller (meds_slow_dynamics) --      !
-      !          it is NOT applied here: the daily soil_carbon_step (B2, meds_biogeochem_dynamics)        !
-      !          consumes it as the matrix ODE's litter input, so a direct pool add here would double-    !
-      !          count it. ------------------------------------------------------------------------------ !
-      !----- 3. Sequence the apply-primitives (was update_demography). -----------------------------------!
+      !          density it actually removed (see accumulate_mortality_litter). The litter goes           !
+      !          into patch%litter_in, which the daily soil_carbon_step (meds_biogeochem_dynamics)        !
+      !          consumes as the matrix ODE's litter input, so adding it straight to the soil             !
+      !          pools here would count it twice. --------------------------------------------------------!
+      !----- 3. Sequence the apply-primitives. -----------------------------------------------------------!
       n_window = growth_window_steps(cfg)
       site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
 
-      !----- Growth + mortality via the TENDENCY seam: compute the per-cohort time-derivatives    !
+      !----- Growth + mortality via the TENDENCY seam: compute the per-cohort time-derivatives     !
       !      (carbon flip -> geometry/pool rates + the realized-dbh-rate moving-average ring       !
-      !      buffer; mortality -> log-space rate) HERE in the driver, into the site-carried scratch !
-      !      bundle, then let the core engine's pure applier advance the state. The ring buffer is  !
-      !      refreshed inside update_cohort_derivatives, so mortality's growth_avg dependency holds. !
+      !      buffer; mortality -> log-space rate) HERE in the driver, into the site-carried        !
+      !      scratch bundle, then let the demography engine's pure applier advance the state.      !
+      !      The ring buffer is refreshed inside update_cohort_derivatives, so mortality's         !
+      !      growth_avg dependency holds.                                                          !
       call cohort_deriv_alloc(site%deriv, site%cohort%n)
       call update_cohort_derivatives(site, npp, mortality, cfg%dt_years, n_window, site%growth_hist_pos)
       !----- TISSUE THERMAL MASS across the commit. A cohort's heat capacity is a function of its  !
       !      biomass and density, so growing or dying changes `cap * T` with no flux at all: the   !
-      !      model makes thermal mass out of carbon, and unmakes it. Neither direction had a       !
-      !      counterparty, and they partly cancelled, which is why the growth side stayed hidden   !
-      !      until the death side was declared in §10.2.9 (+5.18e6 -> +1.00e7 J once it was).      !
+      !      model makes thermal mass out of carbon, and unmakes it, with no counterparty in       !
+      !      either direction.                                                                     !
       !                                                                                            !
       !      The whole change is declared as ONE exchange because it is one mechanism, and because !
       !      splitting it into a growth part and a mortality part needs a cross-term convention    !
-      !      the physics does not supply. `update_cohort_states` and the mortality shed above BOTH !
-      !      leave the temperatures alone, so this is purely the thermal-mass term.                !
+      !      the physics does not supply. `update_cohort_states` and the mortality water shed      !
+      !      below BOTH leave the temperatures alone, so this is purely the thermal-mass term.     !
       !                                                                                            !
       !      WHY IT IS AN EXCHANGE AND NOT A LEAK: new tissue is assembled from CO2 and water at    !
       !      the plant's own temperature, and it arrives carrying the sensible heat of that mass.  !
@@ -214,11 +199,9 @@ contains
       tissue_heat1 = slow_tissue_heat(site)
 
       !----- Mortality's litter and water, on the density the applier actually removed and the     !
-      !      pools it left behind. Both were computed before the commit and are now computed after !
-      !      it; the header of accumulate_mortality_litter has the decomposition that says why.    !
-      !      UNCONDITIONAL since #169: the routine also records how much carbon died, which is a       !
-      !      demographic question that does not stop being asked when the soil pools are off; and the !
-      !      litter is recorded whether or not they are on (#316).                                    !
+      !      pools it left behind (the decomposition is in accumulate_mortality_litter's header).  !
+      !      UNCONDITIONAL: the routine also records how much carbon died, a demographic quantity  !
+      !      whether or not the soil pools are on, and the litter is recorded either way.          !
       call accumulate_mortality_litter(site, cfg, nplant_before, site%patch%litter_in)
       call shed_mortality_water(site, cfg, nplant_before, mort_water)
 
@@ -236,12 +219,12 @@ contains
       !                      the day's photosynthate would read as carbon appearing from nowhere.   !
       !        carbon_out -- necromass routed into the CENTURY pools. It leaves the live pools here !
       !                      and arrives in the soil store at SLOW_PHASE_SOILC, so declaring it at  !
-      !                      both ends TESTS the litter seam rather than hiding it.                 !
+      !                      both ends TESTS the litter seam rather than hiding it. Plus the CO2    !
+      !                      owed to the canopy air (slow_co2_handoff), which reaches it in the     !
+      !                      next fast window.                                                      !
       !                                                                                             !
-      !      What is left in this phase's residual is therefore the honest remainder: growth        !
-      !      respiration (never exhaled), the starvation deficit (never debited), the pool and      !
-      !      nplant floors, the reproduction carbon debited on a day no recruit was made, and the   !
-      !      pre/post-growth offset in the mortality valuation. Plan §10.2.2 in one number.         !
+      !      With these declared the phase closes to round-off: a residual here is a movement that  !
+      !      nobody declared.                                                                       !
       if (present(ledger)) then
          call slow_ledger_declare(ledger, carbon_in  = handover,                                    &
                                           carbon_out = litter_carbon_total(site, site%patch%litter_in)              &
@@ -251,35 +234,28 @@ contains
          call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_GROW)
       end if
 
-      !----- Slow per-patch state (patch ageing) is HOISTED OUT to meds_slow_dynamics (B2,          !
-      !      MEDS_SLOW_DYNAMICS_DESIGN.md section 10a): vegetation and biogeochemistry are now        !
-      !      PEER slow domains sharing that one applier, rather than biogeochem nesting here. --------!
+      !----- Patch ageing, the slow per-patch state vegetation and biogeochemistry share, runs in     !
+      !      meds_slow_dynamics after this routine. --------------------------------------------------!
 
       !----- SLOW patch diagnostics: litterfall and recruitment. Recorded HERE, before the       !
-      !      restructuring below permutes the patch axis.                                          !
+      !      calendar's restructuring (restructure_stand) permutes the patch axis.                 !
       !                                                                                            !
-      !      UNITS (#239). The block's weight `w` is Sum(dt) in SECONDS -- accumulate_patch_diag     !
+      !      UNITS. The block's weight `w` is Sum(dt) in SECONDS -- accumulate_patch_diag            !
       !      adds cfg%dt_fast every fast step -- and the reader returns v/w. So EVERY row, fast or   !
       !      slow, must contribute (its rate, in the units the registry declares) x (dt in SECONDS). !
       !      The fast rows do that with flux*dt_fast. These slow rows must do it with dt_slow, and   !
       !      their declared rates are per YEAR, so the per-year rate is formed first and weighted    !
-      !      second: `lit` holds this step's litter AMOUNT [kgC/m2], whose per-year rate is          !
-      !      amount/dt_years; `recruitment` is already [plant/m2/yr] and needs only the weight.      !
+      !      second: patch%litter_in holds this step's litter AMOUNT [kgC/m2], whose per-year rate   !
+      !      is amount/dt_years; `recruitment` is already [plant/m2/yr] and needs only the weight.   !
       !                                                                                            !
-      !      Contributing the bare amount (and, for recruitment, rate*dt_years) is what this did,    !
-      !      and it emitted a per-SECOND rate under a per-YEAR label -- every one of these variables !
-      !      read a factor yr_sec = 3.1557e7 too small. No ledger sees a diagnostic, and the slow    !
-      !      ledger's litter term reads patch%litter_in directly rather than this slot, so nothing   !
-      !      in the suite disagreed with it.                                                         !
-      !                                                                                            !
-      !      `lit` is the SAME accumulator biogeochemistry consumes, so litter_*_site and the        !
-      !      soil-carbon input are one number by construction, not two derivations that agree.  ----!
+      !      patch%litter_in is the SAME accumulator biogeochemistry consumes, so litter_*_site and  !
+      !      the soil-carbon input are one number by construction, not two derivations that agree. -!
       if (site%patch%diag%active) then
          !----- Without a fast loop the step also sets the block's patch count, which the fast loop  !
          !      otherwise sets, so a reader sees these rows. -------------------------------------------!
          if (.not. cfg%fast_biophysics_on) site%patch%diag%n = site%patch%n
          do ip = 1_ik, site%patch%n
-            !----- Leaf and fine-root litter by the tissue they came from (#399): what falls, not the  !
+            !----- Leaf and fine-root litter by the tissue they came from: what falls, not the        !
             !      share of it that reaches one destination pool. ----------------------------------!
             site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
                                                       + (site%patch%litter_in(ip)%leaf_c                &
@@ -301,7 +277,7 @@ contains
             site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) &
                                                       + sum(recruitment(:, ip)) * cfg%dt_slow
             !----- The block's weight: the fast loop adds dt_fast each sub-step; without one, the step  !
-            !      adds its own dt_slow, or a slow-only run reads every patch row back as 0 (#299). ----!
+            !      adds its own dt_slow, or a slow-only run reads every patch row back as 0. ----------!
             if (.not. cfg%fast_biophysics_on) site%patch%diag%w(ip) = site%patch%diag%w(ip) + cfg%dt_slow
          end do
       end if
@@ -324,7 +300,7 @@ contains
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
-      type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
+      type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (meds_slow_ledger)
       real(wp) :: cull_water, th0, th1, rec_carbon, rec_heat, dist_water
       logical  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
 
@@ -345,14 +321,14 @@ contains
          !      NONLINEAR in dbh, so the merged capacity is not the sum of the two even though     !
          !      every carbon pool is. The cull removes its cohort's capacity outright.             !
          !                                                                                          !
-         !      This is declared only AFTER the weighting itself was fixed: cohort fusion now      !
-         !      mixes the temperatures on heat capacity, so what is left here is the thermal-mass  !
-         !      term and not a wrong average wearing its clothes.  ----------------------------!
+         !      Cohort fusion mixes the temperatures on heat capacity, so what is declared here is !
+         !      the thermal-mass term alone, not a wrong average. ---------------------------------!
          if (present(ledger)) th0 = slow_tissue_heat(site)
          !----- Marked ON ITS OWN: recruitment is the one structural operator that CREATES matter   !
-         !      rather than rearranging it, and the gap between the carbon it debits and the carbon !
-         !      init_cohort endows (§10.2.2 item 3) is only visible if nothing else shares the      !
-         !      phase. Fusion and fission, which must be exact, are marked together below.          !
+         !      rather than rearranging it, and the carbon and heat it draws from outside the model !
+         !      (apply_recruitment's carbon_drawn, heat_drawn) are only checkable if nothing else   !
+         !      shares the phase. Fusion and fission, which must be exact, are marked together      !
+         !      below.                                                                              !
          if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_RECRUIT)
          call new_fuse_cohorts(site, cfg)
          call terminate_cohorts(site, cfg, cull_water)
@@ -394,15 +370,11 @@ contains
       call update_overtopping_lai(site)
    end subroutine restructure_stand
 
-   !----- Site-total carbon in this step's litter accumulator [kgC/m2 site]. The ledger declares  !
-   !       this leaving the live pools at SLOW_PHASE_GROW and arriving in the CENTURY pools at      !
-   !       SLOW_PHASE_SOILC. With soil_carbon_on off it is still accumulated and declared leaving   !
-   !       at SLOW_PHASE_GROW, and nothing arrives at SLOW_PHASE_SOILC: no soil pool takes it, so   !
-   !       the necromass leaves the model as a declared outflow (#316). ---------------------------!
-   !----- The CO2 this step handed to the fast tier [kgC/m2 site]: growth respiration less the    !
-   !       starvation over-report, the mirror of slow_fast_carbon_handover. It leaves the plant     !
-   !       inside this ledger's window and reaches the canopy air inside the NEXT fast window, so   !
-   !       like the shed water it is a declared handoff rather than a store.  ---------------------!
+   !----- The CO2 this step handed to the fast tier [kgC/m2 site]: growth respiration and           !
+   !       storage maintenance, less the starvation over-report -- the mirror of                    !
+   !       slow_fast_carbon_handover. It leaves the plant inside this ledger's window and reaches   !
+   !       the canopy air inside the NEXT fast window, so like the shed water it is a declared      !
+   !       handoff rather than a store. ------------------------------------------------------------!
    pure function slow_co2_handoff(site, cfg) result(c)
       type(site_t),        intent(in) :: site
       type(meds_config_t), intent(in) :: cfg
@@ -414,6 +386,11 @@ contains
       end do
    end function slow_co2_handoff
 
+   !----- Site-total carbon in this step's litter accumulator [kgC/m2 site]. The ledger declares    !
+   !       this leaving the live pools at SLOW_PHASE_GROW and arriving in the CENTURY pools at      !
+   !       SLOW_PHASE_SOILC. With soil_carbon_on off it is still accumulated and declared leaving   !
+   !       at SLOW_PHASE_GROW, and nothing arrives at SLOW_PHASE_SOILC: no soil pool takes it, so   !
+   !       the necromass leaves the model as a declared outflow. -----------------------------------!
    pure function litter_carbon_total(site, lit) result(c)
       type(site_t),         intent(in) :: site
       type(litter_input_t), intent(in) :: lit(:)
@@ -427,15 +404,14 @@ contains
    end function litter_carbon_total
 
    !---------------------------------------------------------------------------------------!
-   ! CARBON-mode TENDENCY computer (the carbon analogue of the former apply_growth, split so    !
-   ! the ENGINE only applies). Per cohort it adds this step's NPP to the four pools (tentatively, !
-   ! in locals -- state is NOT committed here), backs out each pool's time-derivative              !
-   ! d_X_dt = (X_new - X_old)/dt for the core applier, and runs the allometric FLIP wood_carbon->   !
-   ! dbh (carbon_to_structure) only for the reported rates: the applier derives the committed       !
-   ! geometry from the committed carbon itself. It ALSO advances the moving-average ring            !
-   ! buffer with the realized dbh-increment RATE (persistent state, identical eviction logic to    !
-   ! the former apply_growth) so Camac mortality sees carbon growth, and records the log-space     !
-   ! mortality rate dln_nplant_dt = -mortality. Host-only (the flip calls the branchy wood_to_dbh).!
+   ! CARBON-mode TENDENCY computer, kept apart from the applier so the ENGINE only applies. Per     !
+   ! cohort it adds this step's NPP to the four pools (tentatively, in locals -- state is NOT       !
+   ! committed here), backs out each pool's time-derivative d_X_dt = (X_new - X_old)/dt for the     !
+   ! applier, and runs the allometric FLIP wood_carbon->dbh (carbon_to_structure) only for          !
+   ! the reported rates: the applier derives the committed geometry from the committed carbon       !
+   ! itself. It ALSO advances the moving-average ring buffer with the realized dbh-increment RATE   !
+   ! (persistent state) so Camac mortality sees carbon growth, and records the log-space            !
+   ! mortality rate dln_nplant_dt = -mortality. Host-only (the flip calls the branchy wood_to_dbh). !
    !---------------------------------------------------------------------------------------!
    subroutine update_cohort_derivatives(site, npp, mortality, dt_yr, n_window, hist_pos)
       type(site_t),             intent(inout) :: site       ! inout: fills site%deriv + refreshes the ring buffer
@@ -461,7 +437,7 @@ contains
                                      cohort%p_hgt_max(i), cohort%p_aboveground_frac(i), cohort%sla(i), &
                                      dbh_new, height_new, ba_new, agb_new, la_new)
             !----- Back out the pools' tendencies + advance the ring buffer with the REALIZED dbh !
-            !      rate (the shared core builder; same fill/evict logic the empirical path uses). -!
+            !      rate (fill_cohort_deriv, which the C-API's empirical path shares). -------------!
             dbh_rate = (dbh_new - cohort%dbh(i)) / dt_yr
             call fill_cohort_deriv(cohort, i, site%deriv, dt_yr, mortality(i), dbh_rate,            &
                                    lc_new, fc_new, wc_new, nc_new, n_window, hist_pos)
@@ -480,11 +456,11 @@ contains
    end subroutine update_cohort_derivatives
 
    !---------------------------------------------------------------------------------------!
-   ! CARBON vital-RATE assembler: turn the per-cohort carbon fluxes (npp_wood for the dbh rate, !
+   ! CARBON vital-RATE assembler: turn the per-cohort carbon fluxes (npp_wood for the dbh rate,   !
    ! npp_repro for recruits) into the mortality [1/yr] + recruitment [plant/m2/yr] arrays, by     !
-   ! calling the per-individual plant kernels. The site-level sweep (patch reduction + baseline   !
-   ! seed rain + the GROWTH_AVG_UNSET test) stays here in the DRIVER, so the plant kernels remain  !
-   ! state-free. Mirrors the former meds_demography_rates%carbon_vital_rates exactly.             !
+   ! calling the per-individual rate laws (meds_demography_rates). The site-level sweep (patch    !
+   ! reduction + baseline seed rain + the GROWTH_AVG_UNSET test) stays here in the DRIVER, so     !
+   ! the laws remain state-free.                                                                  !
    !---------------------------------------------------------------------------------------!
    subroutine compute_vital_rates(site, cfg, npp_wood, npp_repro, dt_yr, mortality, recruitment)
       type(site_t),          intent(in)  :: site
@@ -524,8 +500,9 @@ contains
             mortality(j) = camac_mortality(cohort%growth_avg(j), dbh_rate,                          &
                                            cohort%growth_avg(j) /= GROWTH_AVG_UNSET,                &
                                            pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
-            !----- Reproduction carbon -> recruits (annual rate; monthly share applied later),    !
-            !      gated by include_pft (a disabled PFT must not re-establish).  -----------------!
+            !----- Reproduction carbon -> recruits (an annual rate; accumulate_recruit_pool       !
+            !      credits rate x dt each step), gated by include_pft (a disabled PFT must not    !
+            !      re-establish). ----------------------------------------------------------------!
             if (pft%include_pft(pf) == 1_ik)                                                       &
             recruitment(pf, ip) = recruitment(pf, ip)                                              &
                  + npp_to_recruitment(cohort%nplant(j), npp_repro(j), dt_yr,                       &
@@ -570,7 +547,7 @@ contains
    ! the growth demands are formed against the POST-SHED pool; (3) calls the ELEMENTAL,            !
    ! growth-only plant_carbon_allocation kernel; and (4) forms the NET per-pool change (growth -   !
    ! shed). Turnover-first makes the within-step leaf replacement exact (a canopy that is not      !
-   ! senescing holds target). This + compute_vital_rates are the two plant calls.                  !
+   ! senescing holds target). docs/science/plant_carbon_allocation.md §1-§2, §5.                   !
    !---------------------------------------------------------------------------------------!
    subroutine compute_carbon_allocation(site, cfg, dt_yr, npp, npp_repro, lit)
       !----- intent(inout) ONLY to record the NPP allocation split into the slow diagnostic block; !
@@ -580,7 +557,7 @@ contains
       real(wp),                intent(in)  :: dt_yr
       type(carbon_flux_block), intent(out) :: npp
       real(wp), allocatable,   intent(out) :: npp_repro(:)
-      type(litter_input_t),    intent(inout) :: lit(:)   !< per-patch litter accumulator (B1)
+      type(litter_input_t),    intent(inout) :: lit(:)   !< per-patch litter accumulator
       integer(ik) :: n, j, pf, ip
       real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_turn, root_turn
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
@@ -610,15 +587,10 @@ contains
             !      reaches the same allometric leaf area with less leaf carbon. --------------------!
             leaf_target  = size2leaf_carbon(cohort%allom, cohort%dbh(j), cohort%height(j), cohort%sla(j))
             leaf_turn    = 1.0_wp / max(cohort%llspan(j), tiny_llspan)   ! baseline leaf turnover [1/yr]
-            !----- STORAGE MAINTENANCE (#177), charged BEFORE the demand and the allocation, which is  !
-            !      ED2's ordering (apply_maintenance runs ahead of growth). Until now the                !
-            !      non-structural pool was the one live carbon store that cost nothing to hold, so a     !
-            !      cohort could carry an arbitrarily large reserve for free.                             !
-            !                                                                                          !
-            !      Form is ED2's growth_balive.f90: a fractional turnover of the pool per year, with     !
-            !      NO temperature dependence -- ED2 sets its maintenance_temp_dep to 1.0 here and        !
-            !      leaves the temperature form commented out as "experimental and arbitrary", so         !
-            !      inventing one would be going beyond the reference, not following it.                  !
+            !----- STORAGE MAINTENANCE (docs/science/plant_carbon_allocation.md eq. (2)), charged        !
+            !      BEFORE the demand and the allocation, which is ED2's ordering (apply_maintenance      !
+            !      runs ahead of growth). The form is ED2's growth_balive.f90: a fractional turnover     !
+            !      of the pool per year, with no temperature dependence (the page says why).             !
             !                                                                                          !
             !      The fraction is clamped to [0,1] rather than the AMOUNT to the pool, so a large       !
             !      rate x dt cannot make the charge exceed what is there -- and cannot go negative       !
@@ -629,9 +601,7 @@ contains
             !      cohort%nonstructural_carbon. That is the standing rule -- the driver computes, the    !
             !      engine applies -- and here it is also what keeps the ledger closed, because the       !
             !      phase that DECLARES the CO2 efflux (slow_co2_handoff, GROW) has to be the phase       !
-            !      where the pool drops. Decrementing in place cost exactly that, and the ALLOCATE       !
-            !      phase named it immediately: -2.43e-3 kgC undeclared there against +2.43e-3            !
-            !      over-declared in GROW, equal and opposite.                                            !
+            !      where the pool drops.                                                                 !
             !                                                                                          !
             !      `store_post` is what the ALLOCATOR sees, so maintenance is still paid before growth   !
             !      is funded from the reserve (ED2's apply_maintenance-then-allocate ordering) even      !
@@ -698,17 +668,17 @@ contains
             npp%fineroot(j)      = g_fineroot - fineroot_shed_c
             npp%wood(j)          = g_wood
             !----- The storage maintenance leaves the pool HERE, as part of this step's tendency,     !
-            !      and the resorbed leaf and fine-root carbon ARRIVES here for the same reason (#151). !
+            !      and the resorbed leaf and fine-root carbon ARRIVES here for the same reason.        !
             !      npp%leaf and npp%fineroot above already carry the FULL shed removals, so this       !
-            !      credit moves carbon between pools rather than creating any -- which is precisely    !
-            !      the closure the design note warns is easy to get wrong.                             !
+            !      credit moves carbon between pools rather than creating any                          !
+            !      (docs/science/plant_carbon_allocation.md eq. (3)).                                  !
             npp%nonstructural(j) = npp_store - storage_maint + leaf_retained_c + fineroot_retained_c
             npp_repro(j)         = g_repro
-            !----- SLOW-loop diagnostics: the NPP allocation split and growth respiration were pure  !
-            !      locals here -- computed every step for every cohort and discarded, so the carbon   !
-            !      budget could not be closed from the output file. Recorded as RATES [kgC/plant/yr]  !
-            !      so they are comparable across slow-step lengths. Written into a block that rides   !
-            !      the cohort lockstep, NOT into a transient scratch (see meds_site_diag_types).  ----!
+            !----- SLOW-loop diagnostics: the NPP allocation split, growth respiration, storage       !
+            !      maintenance and exudate, so the carbon budget closes from the output file. As      !
+            !      RATES [kgC/plant/yr], so they are comparable across slow-step lengths. Written     !
+            !      into a block that rides the cohort lockstep, NOT into a transient scratch (see     !
+            !      meds_site_diag_types). ------------------------------------------------------------!
             if (cohort%sdiag%active) then
                cohort%sdiag%v(CS_NPP_LEAF,     j) = g_leaf     / dt_yr
                cohort%sdiag%v(CS_NPP_FINEROOT, j) = g_fineroot / dt_yr
@@ -720,12 +690,11 @@ contains
                cohort%sdiag%v(CS_EXUDATE,      j) = exudate / dt_yr
                cohort%sdiag%w(j)                  = 1.0_wp
             end if
-            !----- THE ALLOCATOR'S OUTPUTS ALL GET A DESTINATION NOW (plan §10.2.2 items 1, 2, 3).    !
+            !----- EVERY ALLOCATOR OUTPUT HAS A DESTINATION (docs/science/plant_respiration.md §6).    !
             !                                                                                          !
-            !      GROWTH RESPIRATION is autotrophic CO2. It was charged against the plant and then    !
-            !      reached only a diagnostic, so ~23% of everything entering growth left the biosphere !
-            !      without entering the atmosphere. It goes to the canopy air, as a frozen daily rate  !
-            !      the fast loop adds to nee_biotic -- the carbon twin of the shed-water handoff.      !
+            !      GROWTH RESPIRATION is autotrophic CO2, roughly 23% of the carbon entering growth.   !
+            !      It goes to the canopy air, as a frozen daily rate the fast loop adds to             !
+            !      nee_biotic -- the carbon twin of the shed-water handoff.                            !
             !                                                                                          !
             !      THE STARVATION DEFICIT rides the same channel with the opposite sign. The fast loop !
             !      has ALREADY exhaled the full maintenance respiration; when storage could not fund   !
@@ -737,7 +706,7 @@ contains
             co2_owed(ip) = co2_owed(ip) + cohort%nplant(j) * (growth_resp - deficit)
 
             !----- leaf_shed_c + fineroot_shed_c = this step's TURNOVER litter -> the per-patch      !
-            !      litter accumulator, whether or not the soil-carbon pools are on (#316): with them   !
+            !      litter accumulator, whether or not the soil-carbon pools are on: with them         !
             !      off the necromass leaves the model, declared at SLOW_PHASE_GROW, and the litter     !
             !      outputs still report it. The SEED LOSS joins them: reproduction carbon is debited  !
             !      in full from the parent, and only the recruit carbon efficiency of it ever         !
@@ -745,9 +714,9 @@ contains
             !      NECROMASS, not nothing. It falls with the canopy (above ground, f_labile_leaf).   !
             seed_lost = g_repro * cohort%nplant(j)                                              &
                       * (1.0_wp - min(max(efficiency(j), 0.0_wp), 1.0_wp))
-            !----- Only the NON-resorbed share of the leaf and fine-root shed becomes litter      !
-            !      (#151); the rest went to storage above, so each pool's full removal is matched  !
-            !      exactly by (storage credit + litter input).  -----------------------------------!
+            !----- Only the NON-resorbed share of the leaf and fine-root shed becomes litter;      !
+            !      the rest went to storage above, so each pool's full removal is matched          !
+            !      exactly by (storage credit + litter input). ------------------------------------!
             call add_necromass(lit(ip), (leaf_shed_c - leaf_retained_c) * cohort%nplant(j),       &
                      (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j), 0.0_wp, 0.0_wp,   &
                      seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                       &
@@ -791,29 +760,26 @@ contains
    end subroutine growth_window_so_far
 
    !---------------------------------------------------------------------------------------!
-   ! Leaf/fine-root turnover WATER shedding (P4, MEDS_ED2_RK45_DESIGN.md, user-directed follow-on !
-   ! to P3). A NET biomass LOSS this slow step (npp%leaf(j)/npp%fineroot(j) < 0 -- shedding out-  !
-   ! ran growth) sheds tissue water in the SAME proportion as the carbon loss, so the REMAINING    !
-   ! tissue's rwc is unchanged (mirrors P3's own premise: mass, not psi, is the thing a biomass     !
-   ! change must not silently perturb). A NET GAIN step touches nothing here -- P3's existing       !
-   ! mass-conserving seam (meds_fast_dynamics.f90) already handles that direction with zero code     !
-   ! of its own (capacity grows, mass stays put, rwc reads lower next touch). Root sheds into the    !
-   ! LUMPED wood node's water (bwood = bsap+broot; only broot sheds under the current turnover        !
-   ! model, so fineroot_carbon's own fractional loss is used as the proxy for the lumped pool's        !
-   ! shed fraction -- an approximation, since only the fine-root half of the lumped node actually      !
-   ! sheds). MUST run before update_cohort_states commits this step's new                               !
-   ! leaf_carbon/fineroot_carbon (the caller sequences it right after compute_carbon_allocation, well    !
-   ! before that commit), since the shed FRACTION is computed against the PRE-step pool.                  !
+   ! Leaf/fine-root turnover WATER shedding. A NET biomass LOSS this slow step                         !
+   ! (npp%leaf(j)/npp%fineroot(j) < 0 -- shedding out-ran growth) sheds tissue water in the SAME       !
+   ! proportion as the carbon loss, so the REMAINING tissue's rwc is unchanged: mass, not psi, is      !
+   ! what a biomass change must not silently perturb. A NET GAIN step touches nothing here -- the      !
+   ! fast loop's mass-conserving seam (meds_fast_dynamics) handles that direction (capacity            !
+   ! grows, mass stays put, rwc reads lower next time). Root sheds into the LUMPED wood node's         !
+   ! water (bwood = bsap+broot; only broot sheds under the current turnover model, so                  !
+   ! fineroot_carbon's own fractional loss is used as the proxy for the lumped pool's shed             !
+   ! fraction -- an approximation, since only the fine-root half of the lumped node actually           !
+   ! sheds). MUST run before update_cohort_states commits this step's new                              !
+   ! leaf_carbon/fineroot_carbon (the caller sequences it right after compute_carbon_allocation,       !
+   ! well before that commit), since the shed FRACTION is computed against the PRE-step pool.          !
    !                                                                                          !
-   ! The shed water is credited (nplant-weighted, summed per patch) to site%patch%shed_water_rate --  !
-   ! a frozen daily RATE the fast loop adds to its ground-water input exactly like throughfall (its    !
-   ! own distinct variable, not merged into rainfall), so what leaves leaf_water_mass/wood_water_mass    !
-   ! here reappears in the soil the next day instead of silently vanishing (as P3's bare ceiling        !
-   ! clamp alone would do whenever a shed event was large enough to trigger it). Its ENERGY needs NO   !
-   ! separate wiring: once mixed into the ground-water input it is subject to the SAME `e_infil =        !
-   ! infiltration*internal_energy_liquid(t_film_valuation)` treatment every OTHER infiltrating input already   !
-   ! gets -- exactly "similarly as precipitation," not a more precise mechanism than precipitation        !
-   ! itself receives. ---------------------------------------------------------------------------------!
+   ! The shed water is credited (nplant-weighted, summed per patch) to site%patch%shed_water_rate      !
+   ! -- a frozen daily RATE the fast loop adds to its ground-water input exactly like throughfall      !
+   ! (its own distinct variable, not merged into rainfall), so what leaves                             !
+   ! leaf_water_mass/wood_water_mass here reappears in the soil in the next fast window instead        !
+   ! of vanishing. Its ENERGY needs NO separate wiring: mixed into the ground-water input              !
+   ! (precip_ground), it is valued like the precipitation it joins -- "similarly as                    !
+   ! precipitation," not a more precise mechanism than precipitation itself receives. -----------------!
    subroutine shed_turnover_water(site, cfg, npp, ledger)
       type(site_t),            intent(inout) :: site
       type(meds_config_t),     intent(in)    :: cfg
@@ -837,11 +803,11 @@ contains
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
                !----- LEDGER: the leaf's heat capacity carries its internal water, so shedding that  !
                !      water takes sensible heat with it, AT THE TISSUE'S TEMPERATURE. The fast loop  !
-               !      will put the mass back into the ground at t_film_valuation instead -- the      !
-               !      re-valuation §10.2.4 records. Declaring the departure here is what makes that  !
-               !      difference measurable rather than absorbed. The WOOD shed contributes nothing: !
-               !      the wood's THERMAL water is the sapwood ring at a fixed moisture fraction, not !
-               !      wood_water_mass, so draining the hydraulic store moves no heat today.          !
+               !      puts the mass back into the ground valued as the ground inflow it joins: a     !
+               !      re-valuation. Declaring the departure here is what makes that difference       !
+               !      measurable rather than absorbed. The WOOD shed contributes nothing: the wood's !
+               !      THERMAL water is the sapwood ring at a fixed moisture fraction, not            !
+               !      wood_water_mass, so draining the hydraulic store moves no heat.                !
                shed_enth = shed_enth + site%patch%area(ip) * cohort%nplant(j) * shed_amount          &
                                      * cp_liq * cohort%leaf_temp(j)
             end if
@@ -869,11 +835,10 @@ contains
    end subroutine shed_turnover_water
 
    !---------------------------------------------------------------------------------------!
-   ! Continuous background-mortality WATER (review item 1B #7). The carbon carried by the       !
-   ! individuals that die this step has always become litter; their tissue water was simply      !
-   ! dropped when `update_cohort_states` lowered nplant -- a silent sink on every cohort on every  !
-   ! step, invisible because no ledger spanned the slow step. (Their tissue HEAT is a change in    !
-   ! thermal MASS, declared with the growth commit's, since the two are one mechanism.)            !
+   ! Continuous background-mortality WATER. The individuals that die this step take their          !
+   ! tissue water with them; without this routine it would vanish when `update_cohort_states`      !
+   ! lowers nplant -- a silent sink on every cohort on every step. (Their tissue HEAT is a change  !
+   ! in thermal MASS, declared with the growth commit's, since the two are one mechanism.)         !
    !                                                                                          !
    ! The water goes to the ground down the SAME channel turnover shedding already uses, so there  !
    ! is one verified path for "tissue water that stopped being tissue water" rather than a second  !
@@ -883,8 +848,9 @@ contains
    ! states` does not scale it when nplant falls, so no film leaves the store here -- routing it     !
    ! would invent a flux the state never made.                                                       !
    !                                                                                          !
-   ! MUST run before update_cohort_states commits the new nplant: the dying fraction is measured      !
-   ! against the PRE-update density, exactly as accumulate_mortality_litter measures its carbon.      !
+   ! Runs AFTER update_cohort_states commits the new nplant, with the density from BEFORE the       !
+   ! commit (nplant_before): the dying number is n0 - n1, exactly as accumulate_mortality_litter    !
+   ! measures its carbon.                                                                           !
    !---------------------------------------------------------------------------------------!
    subroutine shed_mortality_water(site, cfg, nplant_before, water_shed)
       type(site_t),        intent(inout) :: site
@@ -900,11 +866,9 @@ contains
             died_nplant = nplant_before(j) - cohort%nplant(j)
             if (died_nplant <= 0.0_wp) cycle
             ip  = cohort%owner_patch(j)
-            !----- The water that LEFT the store is the density drop times the PER-PLANT water,   !
-            !      not a fraction of what the survivors still hold. cohort_tissue_water already    !
-            !      carries the (now post-commit) nplant, so using it here scaled the loss by       !
-            !      n1/n0 and re-opened a leak this ledger had already closed -- caught by the      !
-            !      allocate/grow water phase going from 1e-12 to 1.2e-4 in one step.  ------------!
+            !----- The water that LEFT the store is the density drop times the PER-PLANT water,    !
+            !      not a fraction of what the survivors still hold. cohort_tissue_water carries    !
+            !      the post-commit nplant, so using it here would scale the loss by n1/n0. --------!
             w_j = died_nplant * (max(cohort%leaf_water_mass(j), 0.0_wp)                            &
                                + max(cohort%wood_water_mass(j), 0.0_wp))
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
@@ -920,9 +884,9 @@ contains
    ! `recruitment` already carries both contributions: the stand's own reproduction NPP, which    !
    ! the parents were debited for in this same step, and the baseline SEED RAIN, which no parent  !
    ! here paid for. Only the second is an external import, and only it is reported -- the first   !
-   ! is an internal transfer from the plants to the pool, and both ends of it now happen in the   !
-   ! same phase, so the ledger sees it close rather than seeing carbon vanish in one phase and    !
-   ! appear in another (plan §10.2.2 item 3).                                                     !
+   ! is an internal transfer from the plants to the pool, and both ends of it happen in the same  !
+   ! phase, so the ledger sees it close rather than seeing carbon vanish in one phase and appear  !
+   ! in another.                                                                                  !
    !                                                                                          !
    ! `include_pft` gates the seed rain here exactly as compute_vital_rates gates it into the rate,!
    ! so a disabled PFT contributes neither recruits nor an import.                                !
@@ -951,23 +915,21 @@ contains
    end subroutine accumulate_recruit_pool
 
    !---------------------------------------------------------------------------------------!
-   ! Continuous background-mortality LITTER (B1): the carbon carried by the individuals that died !
-   ! this step. Runs AFTER update_cohort_states, and both of its inputs are the reason why.        !
+   ! Continuous background-mortality LITTER: the carbon carried by the individuals that died        !
+   ! this step. Runs AFTER update_cohort_states, and both of its inputs are the reason why.         !
    !                                                                                          !
    ! The live store is nplant*pool, and its change decomposes exactly as                            !
    !                                                                                          !
    !     n1.p1 - n0.p0  =  n0.(p1 - p0)  +  (n1 - n0).p1                                            !
    !                                                                                          !
    ! -- growth at the OLD density, mortality at the NEW pools. So the carbon the applier actually   !
-   ! removed for mortality is (n0-n1).p1, and valuing the litter on the PRE-growth pools p0, as     !
-   ! this did, left n_died x (this step's per-plant growth) unaccounted every step of every cohort. !
-   ! Small per step and one-signed, which is the shape that only shows up as a season's drift: it   !
-   ! was the whole of the growth phase's remaining carbon residual (§10.2.2 item 6).                !
+   ! removed for mortality is (n0-n1).p1; valuing the litter on the PRE-growth pools p0 would       !
+   ! leave n_died x (this step's per-plant growth) unaccounted every step of every cohort, small    !
+   ! per step and one-signed: the shape that only shows up as a season's drift.                     !
    !                                                                                          !
-   ! The density drop is taken as (n0 - n1) rather than recomputed from the hazard, which fixes a   !
-   ! second thing for free: when the `negligible_nplant` floor stops a cohort dying, n0 - n1 is     !
-   ! smaller than the hazard implies, and litter is no longer credited for individuals that are     !
-   ! still standing (item 4).                                                                       !
+   ! The density drop is taken as (n0 - n1) rather than recomputed from the hazard, so when the     !
+   ! `negligible_nplant` floor stops a cohort dying, litter is not credited for individuals that    !
+   ! are still standing.                                                                            !
    !                                                                                          !
    ! Whole-individual death carries EVERY pool (leaf/fine-root/wood/storage), unlike a turnover     !
    ! shed. Scatters into the SAME per-patch `lit` accumulator the turnover litter uses. ------------!
@@ -985,11 +947,11 @@ contains
             if (died_nplant <= 0.0_wp) cycle
             pf = cohort%pft(j)
             ip = cohort%owner_patch(j)
-            !----- The BACKGROUND pathway's carbon (#169), on the same density and the same pools    !
+            !----- The BACKGROUND pathway's carbon, on the same density and the same pools           !
             !      the litter below is valued on -- one measurement, two consumers, so the pathway    !
             !      split and the litter can never disagree: how much biomass died is demography, not  !
             !      biogeochemistry. As a rate [kgC/m2/yr] times the step's weight in seconds, which   !
-            !      is the block's contract (#239).                                                    !
+            !      is the block's contract.                                                           !
             if (site%patch%diag%active)                                                            &
                site%patch%diag%v(PD_MORT_C_BACKGROUND, ip) =                                       &
                   site%patch%diag%v(PD_MORT_C_BACKGROUND, ip)                                      &
@@ -1016,7 +978,7 @@ contains
    ! keep the plant's water uptake (root length sets the root-soil conductance), and only their  !
    ! background turnover follows the leaves' gate, so they age and regrow with the canopy.       !
    ! Every input is a plain scalar (the caller's per-kernel-call convention), so no cohort/PFT   !
-   ! SoA type needs to be named here. -----------------------------------------------------------!
+   ! SoA type needs to be named here (docs/science/plant_phenology.md eq. (9) and §5). ---------!
    pure subroutine cohort_carbon_demand(fast_biophysics_on,                                       &
             gpp_accum, leaf_resp_accum, stem_resp_accum, root_resp_accum, gpp_ref, leaf_area, dt_yr, &
             leaf_flush_tendency, leaf_shed_tendency, flush_rate_max, shed_rate_max, leaf_turn,     &
@@ -1034,7 +996,7 @@ contains
       real(wp), intent(in)  :: leaf_carbon, fineroot_carbon, leaf_target, dt_day, r2l
       real(wp), intent(out) :: gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c
       real(wp), intent(out) :: leaf_demand, fineroot_demand
-      !----- #151: the share of this step's leaf and fine-root LOSS (senescence and background    !
+      !----- The share of this step's leaf and fine-root LOSS (senescence and background         !
       !      turnover alike) resorbed back into the non-structural pool. Reported separately from  !
       !      leaf_shed_c and fineroot_shed_c, which stay the FULL removals from the two pools --    !
       !      crediting storage while removing only the litter share would CREATE carbon. ---------!
@@ -1070,20 +1032,21 @@ contains
    end subroutine cohort_carbon_demand
 
    !---------------------------------------------------------------------------------------!
-   ! Advance the leaf phenology of every cohort over one slow step (the folded phenology driver, !
-   ! ED2 phenology_driv analogue). It flattens the per-PFT cue params, builds the daily env from  !
-   ! what the fast loop accumulated (the site's air temperature, each cohort's PAR at its top) +   !
-   ! the cohort's predawn leaf psi + latitude + day-of-year, advances the kernel, and writes the   !
-   ! tendencies and cue memory back to the cohort. It touches NO leaf/storage carbon;             !
-   ! compute_carbon_allocation turns the stored tendencies into leaf growth and loss. A step with  !
-   ! no fast sub-steps is skipped so the memory is never advanced on a bogus 0/0 mean.             !
+   ! Advance the leaf phenology of every cohort over one slow step (ED2's phenology_driv          !
+   ! analogue; docs/science/plant_phenology.md). It flattens the per-PFT cue params, builds the   !
+   ! daily env from what the fast loop accumulated (the site's air temperature, each cohort's     !
+   ! PAR at its top) + the cohort's predawn leaf psi + latitude + day-of-year, advances the       !
+   ! kernel, and writes the tendencies and cue memory back to the cohort. It touches NO           !
+   ! leaf/storage carbon; compute_carbon_allocation turns the stored tendencies into leaf         !
+   ! growth and loss. A step with no fast sub-steps is skipped so the memory is never advanced    !
+   ! on a bogus 0/0 mean.                                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine advance_leaf_phenology(site, cfg, doy, latitude_deg)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       integer(ik),         intent(in)    :: doy
       !----- The polygon's latitude (its hemisphere). A region passes each polygon's own;           !
-      !      absent, it is the run's [site] latitude (MEDS_POLYGON_RUNTIME_PLAN.md B12). ------------!
+      !      absent, it is the run's [site] latitude. -----------------------------------------------!
       real(wp),            intent(in), optional :: latitude_deg
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
@@ -1105,7 +1068,7 @@ contains
          call flatten_pheno_params(cfg, pf, params)
 
          !----- Daily environment. `dmax_psi_leaf` is the cohort's own published predawn value      !
-         !      (#95) -- already a completed daily maximum, double-buffered against its accumulator. !
+         !      -- already a completed daily maximum, double-buffered against its accumulator.      !
          !      An UNSET cohort (born today) reports 0, which reads as well-watered for one day;     !
          !      that is the same seeding convention the leaf kernel uses.                            !
          env%temp_day         = temp_day
@@ -1141,6 +1104,7 @@ contains
    ! above (overtopping_lai), relaxing at the leaf-replacement rate 1/llspan (turnover-limited).  !
    ! Targets come from the PFT top-of-canopy values + the derived plasticity slopes; the live     !
    ! cohort traits are the state being mutated. Called only when trait_plasticity_on.             !
+   ! docs/science/plant_traits.md eqs. (1)-(2) and §4.                                             !
    !---------------------------------------------------------------------------------------!
    subroutine advance_plant_traits(site, cfg, dt_yr, instantaneous)
       type(site_t),        intent(inout) :: site
@@ -1256,10 +1220,11 @@ contains
          p%shed_water_sum        = t%pheno_shed_water_sum(ipft)
          p%shed_water_sharpness  = t%pheno_shed_water_sharpness(ipft)
       end associate
-      !----- The turgor-loss point is DERIVED, not a phenology key: the water cue compares the     !
+      !----- The turgor-loss point is DERIVED, not a phenology key: the water cue compares the       !
       !      predawn leaf psi against the same psi_tlp the leaf gas-exchange kernel builds from the  !
-      !      pressure-volume curve. One authority, so the cue cannot drift from the stress arrestor  !
-      !      that shares its threshold. -----------------------------------------------------------!
+      !      pressure-volume curve. One authority, so the cue cannot drift from the leaf's water-    !
+      !      stress controls built on the same threshold: the fast capacity ramp and the slow        !
+      !      stomatal factor (docs/science/leaf_gas_exchange.md §4.1 eq. (9), §4.2 eq. (10)). -------!
       p%leaf_psi_tlp = pft_leaf_psi_tlp(cfg, ipft)
    end subroutine flatten_pheno_params
 

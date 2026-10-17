@@ -7,13 +7,13 @@
 ! Fortran gives no compile-time failure when one of them omits a field. An omission is        !
 ! invisible three ways over: the compiler is silent, the conservation ledgers still close      !
 ! (a field left at its default is a consistent zero, not a leak), and the step controller       !
-! simply reads a smaller error and takes a longer step. Structure plan §10.3.                    !
+! simply reads a smaller error and takes a longer step.                                          !
 !                                                                                          !
 ! This cannot be a true completeness check -- Fortran cannot enumerate a derived type's         !
 ! components -- so it is the next best thing: fill every field with a DISTINCT non-zero value    !
 ! and assert each combinator's contract field by field. Adding a state field means adding its    !
 ! rows here, and the block at the top says so. What it does buy is that an omission in an        !
-! EXISTING combinator, which is the failure that has actually happened, is caught immediately.   !
+! EXISTING combinator, the failure seen in practice, is caught immediately.                      !
 !==========================================================================================!
 program test_state_combinators
    use meds_kinds,            only : wp, ik
@@ -56,8 +56,8 @@ program test_state_combinators
    call check_close(out%wood_surf_water(N), a%wood_surf_water(N) - b%wood_surf_water(N), 1.0e-14_wp, &
                     'state_sub: wood_surf_water (film)')
 
-   !=== 3. zero_like ALLOCATES and zeroes every field. The films were once left unallocated,  !
-   !       so the norm could not read them; assert the allocation, not just the value. =======!
+   !=== 3. zero_like ALLOCATES and zeroes every field. A film left unallocated is a field the !
+   !       norm cannot read; assert the allocation, not just the value. ======================!
    out = zero_like(a, N, NSL)
    call check(allocated(out%leaf_water_mass) .and. allocated(out%wood_water_mass),                  &
               'zero_like: tissue-water fields allocated')
@@ -100,8 +100,8 @@ program test_state_combinators
    !=== 6. state_accum accumulates EVERY field that has a stage tendency -- and the pond, which  !
    !       has none, must be left ALONE rather than zeroed. That distinction is the whole point:   !
    !       `column_tend_t` carries no d_w_surface, so the pond is passed through the stages and    !
-   !       committed by the hydrology path. Before this test, "accum does not touch the pond" and  !
-   !       "somebody forgot the pond in accum" were the same observable.  -------------------------!
+   !       committed by the hydrology path. Without this test, "accum does not touch the pond"    !
+   !       and "somebody forgot the pond in accum" are the same observable. -----------------------!
    block
       type(column_state_t) :: acc
       real(wp) :: pond0, pond_enth0
@@ -152,13 +152,12 @@ program test_state_combinators
 
    !=== 8. unpack_column_state -- THE COMMIT PATH. A field omitted here never reaches the patch  !
    !       state at all: the step computes it, the ledgers balance on it, and it is then dropped   !
-   !       on the floor. That makes this the most consequential of the enumerations, and it was    !
-   !       the only one with no test.                                                              !
+   !       on the floor. That makes this the most consequential of the enumerations.               !
    !                                                                                          !
    !       It writes 9 of the 11 fields. The pond is EXCLUDED ON PURPOSE -- it is passed through   !
    !       the stages and committed from the water network (see column_state_t's own               !
-   !       comment) -- so the exclusion is asserted here too, and the routine now says so in a     !
-   !       comment. Exclusion and omission must never again be the same observable.  --------------!
+   !       comment) -- so the exclusion is asserted here too, and the routine says so in a         !
+   !       comment. Exclusion and omission must not be the same observable. -----------------------!
    block
       type(patch_biophys_t) :: bio
       allocate(bio%leaf_water_mass(N), bio%wood_water_mass(N),                                     &

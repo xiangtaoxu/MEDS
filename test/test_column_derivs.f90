@@ -1,13 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_column_derivs -- unit tests for the pure fast-loop RHS (P0 increment 1: surface subsystem). !
-! The IMEX-ARK overhaul (docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md) needs a side-effect-free f(y)=dy/dt.     !
-! These tests prove `surface_derivs` is a faithful extraction of the split fast step's surface      !
-! path, so an ARK stepper can trust it:                                                            !
+! test_column_derivs -- unit tests for the pure fast-loop right-hand side f(y) = dy/dt               !
+! (surface_derivs, column_derivs) and the steppers built on it (docs/science/numerical_scheme.md     !
+! §3). Both integrators evaluate this side-effect-free RHS, so these tests pin it, starting with:    !
 !   1. LEAF DIAGNOSTIC CLOSURE   -- the diagnosed leaf temperature zeroes the linearized leaf        !
 !                                    energy balance it was solved from (multi-cohort).               !
 !   2. ANALYTIC LEAF TEMPERATURE -- a hand-computable no-latent / no-LW-forcing case matches.        !
-!   3. CAS BACKWARD-EULER CONSISTENCY -- the split's committed enth1/shv1/co21 (the BE-in-atm        !
+!   3. CAS BACKWARD-EULER CONSISTENCY -- the CAS box's committed enth1/shv1/co21 (the BE-in-atm      !
 !                                    solution of the tendencies) satisfy the implicit relation        !
 !                                    (y1-y0)/dt = f(y1); i.e. d_cas_* is the correct RHS.             !
 !   4. CONSERVATION MARCH        -- marching the CAS twins with the RHS closes the energy/water        !
@@ -64,7 +63,7 @@ program test_column_derivs
    call test_ark2()
    call test_rk45_order()
 
-   !----- 15. CONSTITUTIVE-DOMAIN SAFETY of the explicit RHS (issue #78 item 2). ------------------!
+   !----- 16. CONSTITUTIVE-DOMAIN SAFETY of the explicit RHS. ---------------------------------------!
    call test_rhs_domain_safety()
 
    call test_report('test_column_derivs')
@@ -105,7 +104,7 @@ contains
       allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
       frozen%tissue%h_coeff_w = 0.0_wp ; frozen%tissue%abs_sw_wood = 0.0_wp
       frozen%tissue%abs_lw_wood = 0.0_wp ; frozen%tissue%wai = 0.0_wp
-      frozen%tissue%qwflux_wl = 0.0_wp ; frozen%tissue%q_wood_net = 0.0_wp   ! P2 advective enthalpy: no-op unless populated
+      frozen%tissue%qwflux_wl = 0.0_wp ; frozen%tissue%q_wood_net = 0.0_wp   ! advective enthalpy: no-op unless populated
       frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_leaf = 0.0_wp
       frozen%film%g_film_w = 0.0_wp   ! canopy water: no-op unless set
       do i = 1_ik, n
@@ -159,7 +158,8 @@ contains
       do i = 1_ik, n
          dtl      = f%leaf_temp(i) - tcas
          lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(i) * stefan * tcas ** 3 * frozen%tissue%lai(i)
-         !----- the leaf pays the FULL vapour enthalpy at the linearization temperature (2026-09). -!
+         !----- the leaf pays the FULL vapour enthalpy at the linearization temperature             !
+         !      (docs/science/vegetation_energy_dynamics.md eq. (2)). ------------------------------!
          le_slope = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * dqdt
          le_ref   = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * (qsat_c - qcas)
          !----- Rnet - sensible - latent - LW-emission, all at the diagnosed leaf temperature. ---!
@@ -193,7 +193,7 @@ contains
       call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
    end subroutine test_leaf_analytic
 
-   !----- 3. The split commits the BE-in-atm solution of the tendencies; verify (y1-y0)/dt = f(y1). !
+   !----- 3. The CAS box commits the BE-in-atm solution of the tendencies; verify (y1-y0)/dt = f(y1). !
    subroutine test_cas_be_consistency()
       type(column_frozen_t)  :: frozen
       type(surface_state_t)  :: y
@@ -219,8 +219,9 @@ contains
                  / (c%cas_molar_capacity + dt * c%g_atm_co2)
       end associate
       !----- BE consistency: (y1-y0)/dt must equal the tendency evaluated with the ATM term at y1  !
-      !      (source frozen). This is exactly what an IMEX/BE stage solves, so it verifies d_cas_* !
-      !      is the correct RHS of the split's implicit update.                                     !
+      !      (source frozen). This is exactly what an implicit stage solves, so it verifies        !
+      !      d_cas_* is the correct RHS of the box's implicit update                               !
+      !      (docs/science/canopy_air_space_biophysics.md eq. (2)).                                !
       r_enth = (enth1 - enth0) / dt - (f%src_enth + frozen%cas%g_atm_heat * (frozen%cas%enthalpy_atm - enth1))  &
                / frozen%cas%cas_mass_capacity
       r_shv  = (shv1  - shv0 ) / dt - (f%src_vap  + frozen%cas%g_atm_vapour * (frozen%cas%shv_atm  - shv1 )) &
@@ -354,13 +355,13 @@ contains
                           tground_of(y, frozen), n, surf_tend)
       call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, surf_tend%d_cas_enthalpy, 1.0e-12_wp)
 
-      !----- REVIEW 2026-09 (item 1A #10): the CANOPY is energy-neutral. With no advected enthalpy    !
-      !      (qwflux_wl = q_wood_net = 0 in this fixture) the tissues hold no store on this path, so    !
-      !      what the canopy absorbs (coh_rnet) must equal what it hands the CAS: sensible + the FULL   !
-      !      enthalpy of the vapour it sheds. The old code handed the CAS transp*enthalpy_vapor while   !
-      !      the leaf paid only latent_heat_vap, and charged the difference to the SOIL (coh_qsoil), so  !
-      !      this identity was off by exactly that proxy (~30 W/m2 at 3 mm/day) and the soil paid the   !
-      !      transpired water's liquid enthalpy twice once P2 added qloss. --------------------------!
+      !----- The CANOPY is energy-neutral. With no advected enthalpy (qwflux_wl = q_wood_net = 0 in     !
+      !      this fixture) the tissues hold no store on this path, so what the canopy absorbs           !
+      !      (coh_rnet) must equal what it hands the CAS: sensible + the FULL enthalpy of the vapour it !
+      !      sheds. Guards against handing the CAS transp*enthalpy_vapor while the leaf pays only       !
+      !      latent_heat_vap and charging the difference to the soil: that breaks this identity by the  !
+      !      proxy (~30 W/m2 at 3 mm/day) and makes the soil pay the transpired water's liquid enthalpy !
+      !      twice, once through the proxy and once through qloss. -------------------------------------!
       block
          real(wp) :: canopy_to_cas, tcas_chk
          tcas_chk = cas_temp_of_enthalpy(y_stage%cas_enthalpy, y_stage%cas_shv)
@@ -376,8 +377,7 @@ contains
       !      built from the SAME surface coupling (g_top) and the water network's flows: the per-layer  !
       !      enthalpy leaving with uptake, the time-mean faces, the infiltration at the pond's          !
       !      temperature and the drainage enthalpy at the bottom. Every term is nonzero in this         !
-      !      fixture: a check that omits a term is only green while that term is zero, and this one has !
-      !      taught that lesson twice. --------------------------------------------------------------!
+      !      fixture: a check that omits a term is only green while that term is zero. -----------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc_chk%g_top = surf_tend%g_top ; eforc_chk%geothermal = frozen%hydrology%geothermal
       do k = 1_ik, nsl
@@ -456,7 +456,8 @@ contains
       call make_column(y, frozen, n, nsl)
       !----- Well-ventilated canopy (stronger CAS<->atm exchange) so the frozen-per-step source at   !
       !      the full 900 s does not out-run venting into supersaturation -- the large-dt operator-   !
-      !      split coupling error the P2 arrowhead removes; here we exercise L-stability + physical.  !
+      !      split coupling error the arrowhead Newton removes (test_arrowhead); here we exercise    !
+      !      L-stability + physical.                                                                 !
       frozen%cas%g_atm_heat = frozen%cas%g_atm_heat * 4.0_wp ; frozen%cas%g_atm_vapour = frozen%cas%g_atm_vapour * 4.0_wp
       frozen%cas%g_atm_co2 = frozen%cas%g_atm_co2 * 4.0_wp
 
@@ -477,12 +478,13 @@ contains
       end do
       call check_true('first-order BE stable + physical at dt = 900 s (6 h)', physical, tcas)
 
-      !----- (b) cross-validation: the BE step vs the explicit RK4 oracle at dt = 4 s over 4 min agree to !
-      !          first order (both solve the same RHS; O(dt) split-vs-coupled difference). Soil water is   !
-      !          not integrated in the BE stage (the water network sets it at column_fast_step level), so   !
-      !          the oracle is run with freeze_theta=.true.: same reduced system -> theta is trivially     !
-      !          equal and the CAS/soil-energy core agrees tightly. Plant water moves at constant rates in !
-      !          BOTH (in-vector oracle vs advance_plant_water) -> a small O(dt) difference. ---------------!
+      !----- (b) cross-validation: the BE step vs the explicit RK4 oracle at dt = 4 s over 4 min agree   !
+      !          to first order (both solve the same RHS; O(dt) split-vs-coupled difference).            !
+      !          column_be_stage moves soil water at the water network's theta_rate, while the oracle    !
+      !          runs with freeze_theta=.true. and holds theta still; the two match only because         !
+      !          make_column leaves theta_rate at 0, so theta is trivially equal and the CAS/soil-energy !
+      !          core agrees tightly. Plant water moves at constant rates in BOTH (in-vector oracle vs   !
+      !          advance_plant_water) -> a small O(dt) difference. --------------------------------------!
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                    ! 60 * 4 s = 4 min
          call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
@@ -493,11 +495,11 @@ contains
       dmass  = max(maxval(abs(yi%leaf_water_mass(1:n) - yr%leaf_water_mass(1:n))),                &
                   maxval(abs(yi%wood_water_mass(1:n) - yr%wood_water_mass(1:n))))
       call check_true('first-order BE ~ RK4 oracle (core, theta frozen): CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
-      call check_true('first-order BE ~ RK4 oracle: theta frozen in both (dtheta == 0)', dtheta < 1.0e-12_wp, dtheta)
+      call check_true('first-order BE ~ RK4 oracle: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, dtheta)
       call check_true('first-order BE ~ RK4 oracle: mass (operator-split both) agree < 1e-4 kg/plant', dmass < 1.0e-4_wp, dmass)
    end subroutine test_be_euler
 
-   !----- 12. the leaf<->CAS Picard coupling (niter>1) removes the large-dt over-humidification that  !
+   !----- 12. the leaf<->CAS Newton coupling (niter>1) removes the large-dt over-humidification that  !
    !          the uncoupled baseline (niter=1) suffers under a harsh constant-noon forcing at 900 s.  !
    subroutine test_be_coupled()
       type(column_state_t)  :: y, yb, yc, ytmp
@@ -519,10 +521,10 @@ contains
       !      and once it has left the physical band there is nothing further to learn from it -- but      !
       !      marching it on regardless takes it to -3.0e79 J/kg by step 10 and then into IEEE overflow,    !
       !      which is a landmine rather than a test: on a Release build the assertion below silently       !
-      !      compared against NaN, and on the -fpe0 Debug build the overflow TRAPS inside the integrator    !
+      !      compares against NaN, and on the -fpe0 Debug build the overflow TRAPS inside the integrator   !
       !      before any assertion runs.  Which of those happens depends on rounding in an already-          !
-      !      diverged trajectory, so ANY perturbation elsewhere in the surface kernel can flip it (one       !
-      !      did: a change that is bit-identical here through step 10).  Detecting the collapse and          !
+      !      diverged trajectory, so ANY perturbation elsewhere in the surface kernel can flip it, even    !
+      !      one that is bit-identical here through step 10.  Detecting the collapse and                   !
       !      stopping states the intent exactly and removes the dependence on how the collapse ends. -------!
       call copy_state(y, yb, n) ; call copy_state(y, yc, n)
       base_diverged = .false.
@@ -550,9 +552,9 @@ contains
       !      humidity is already NEGATIVE (-9.7e-2 kg/kg) and by step 10 its enthalpy is -3.0e79 J/kg,  !
       !      so tcas_base is not a number any arithmetic comparison can rest on.  Whether that garbage  !
       !      reaches IEEE overflow (-> NaN, which makes every comparison .false.) within these 12 steps  !
-      !      depends on rounding in an already-diverged trajectory, so the previous form                 !
-      !      `tcas_coup > tcas_base + 1` was green by accident of overflow TIMING, not by physics: an    !
-      !      unrelated, bit-identical-until-step-10 change to the surface kernel flipped it to NaN.      !
+      !      depends on rounding in an already-diverged trajectory, so a comparison such as             !
+      !      `tcas_coup > tcas_base + 1` is green by accident of overflow TIMING, not by physics; a     !
+      !      change to the surface kernel that is bit-identical through step 10 can flip it.            !
       !      The band test states the intent directly (the coupled run stays physical where the          !
       !      uncoupled one collapses) and is immune to how the collapse ends. -------------------------!
       call check_true('coupling matters: the uncoupled baseline leaves the physical band',         &
@@ -588,7 +590,9 @@ contains
       call check_true('Newton stays sub-saturated from a 99%-saturated start (900 s)', worst_super <= 1.0e-4_wp, worst_super)
       call check_true('Newton stays physical (270-325 K) near saturation', physical, tcas)
 
-      !----- (b) Newton (niter=8) matches the RK4 oracle at small dt (converges to the coupled soln). -!
+      !----- (b) Newton (niter=8) matches the RK4 oracle at small dt (converges to the coupled      !
+      !          soln); theta matches only through the fixture's zero theta_rate, as in             !
+      !          test_be_euler (b). ----------------------------------------------------------------!
       call make_column(y, frozen, n, nsl)
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                     ! 60 * 4 s = 4 min
@@ -598,11 +602,11 @@ contains
       dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
       call check_true('Newton (niter=8) ~ RK4 oracle (core, theta frozen): CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
-      call check_true('Newton (niter=8) ~ RK4 oracle: theta frozen in both (dtheta == 0)', dtheta < 1.0e-12_wp, dtheta)
+      call check_true('Newton (niter=8) ~ RK4 oracle: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, dtheta)
    end subroutine test_arrowhead
 
-   !----- 13. the step-doubling adaptive controller: tighter rtol takes more steps and both agree     !
-   !          with a fine fixed reference -- the P3 adaptive time-stepping contract. ---------------!
+   !----- 13. the production adaptive controller (adaptive_ark_march): tighter rtol takes more steps !
+   !          and both agree with a fine fixed reference. -------------------------------------------!
    subroutine test_adaptive_march()
       type(column_state_t)  :: y, y1, y2, yr
       type(column_frozen_t) :: frozen
@@ -618,9 +622,8 @@ contains
       !----- start the CAS cool + dry so there is a real transient to resolve adaptively. -----------!
       y%cas_enthalpy = cas_enthalpy_of_temp(290.0_wp, 0.009_wp) ; y%cas_shv = 0.009_wp
 
-      !----- The controller under test is the PRODUCTION one. This used to march the retired
-      !      IMEX-Euler tier's own step-doubling controller (#198) -- machinery that existed only to
-      !      serve that tier, so the test could not fail for any reason a real run would hit.
+      !----- The controller under test is the PRODUCTION one, so the test fails for the reasons a
+      !      real run would hit.
       ec = default_error_control(1.0e-3_wp)
       call adaptive_ark_march(y, frozen, col_config, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
       ec = default_error_control(1.0e-6_wp)
@@ -669,13 +672,12 @@ contains
    !      column_be_stage, then the closed-form mass split over the full dt on that stage's own        !
    !      transp_c (weight 1.0, because at gamma = 1 there is only one stage).                          !
    !                                                                                          !
-   !      This USED to live in src/ as meds_fast_rk4_oracle's "IMEX-Euler oracle tier" (#198). It is    !
-   !      not an oracle: it returns no reference trajectory, and it shares column_be_stage with the      !
-   !      scheme it was supposed to check, so its independence was in the tableau and not in the         !
-   !      machinery. What it IS good for is exactly what the tests below use it for -- deliberately      !
-   !      breaking the production scheme in ONE known way (drop to first order, or turn the leaf<->CAS   !
-   !      Newton off with niter = 1) and watching what fails. A degraded-configuration probe belongs      !
-   !      in the test that degrades it, not in the shipped source.                                        !
+   !      It is a probe, not an oracle: it returns no reference trajectory, and it shares              !
+   !      column_be_stage with the scheme it degrades, so it is independent in the tableau only, not   !
+   !      in the machinery. What it IS good for is exactly what the tests below use it for --          !
+   !      deliberately breaking the production scheme in ONE known way (drop to first order, or turn   !
+   !      the leaf<->CAS Newton off with niter = 1) and watching what fails. A degraded-configuration  !
+   !      probe belongs in the test that degrades it, not in the shipped source.                       !
    subroutine be_euler_step(y, frozen, n, nsl, dt, y_out, niter)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
@@ -724,8 +726,10 @@ contains
       call copy_state(y, y_out, n)
    end subroutine march_rk45
 
-   !----- 14. ARK2 (ARS(2,2,2)): 2nd-order on the soil-top temperature (differential var); mass stays !
-   !          physical at production dt (FATAL-1 guard); embedded estimate bounded; stiff-stable. -----!
+   !----- 14. ARK2 (ARS(2,2,2) gamma): 2nd order on the decoupled CO2 twin; beats first-order BE on  !
+   !          the coupled soil-top temperature; plant water mass stays physical at production dt;    !
+   !          embedded estimate bounded; stiff-stable (docs/science/numerical_scheme.md              !
+   !          eqs. (1)-(2)). ------------------------------------------------------------------------!
    subroutine test_ark2()
       type(column_state_t)  :: y, yref, y1, y2, y4, ynew, yerr, ytmp
       type(column_frozen_t) :: frozen
@@ -751,15 +755,15 @@ contains
       call check_true('ARK2 tableau is 2nd order on the decoupled CO2 twin (p >= 1.9)', &
                       p_lo >= 1.9_wp .and. p_hi >= 1.9_wp, p_hi)
 
-      !----- (a2) On the operator-split-COUPLED soil-top temperature, the full 3x3 arrowhead is        !
-      !           deferred (spec) so the effective order is ~1.2, but ARK2 is still MORE ACCURATE than  !
-      !           the 1st-order BE step at the same dt. ------------------------------------------------!
+      !----- (a2) On the operator-split-COUPLED soil-top temperature (soil water and plant water mass  !
+      !           are split out of the ESDIRK stages; see docs/ROADMAP.md) the effective order is      !
+      !           ~1.2, but ARK2 is still MORE ACCURATE than the 1st-order BE step at the same dt. ----!
       call march_ark2(y, frozen, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = soil_top_temp(yref, frozen)
       call march_ark2(y, frozen, n, nsl, 225.0_wp,  8_ik, y1) ; e1 = abs(soil_top_temp(y1, frozen) - tref)
       call march_be_euler(y, frozen, n, nsl, 225.0_wp,  8_ik, y2) ; e2 = abs(soil_top_temp(y2, frozen) - tref)
       call check_true('ARK2 beats the first-order BE step on the coupled soil-top temperature (same dt)', e1 < e2, e2 - e1)
 
-      !----- (b) FATAL-1 guard: mass stays physical (finite, positive) at production dt=900. ---------!
+      !----- (b) plant water mass stays physical (finite, positive) at production dt=900. ------------!
       call copy_state(y, y1, n) ; physical = .true.
       do step = 1_ik, 24_ik
          call ark2_column_step(y1, frozen, col_config, n, nsl, 900.0_wp, ytmp, yerr, ws%stages, niter=8_ik)
@@ -768,10 +772,10 @@ contains
                     all(y1%wood_water_mass(1:n) == y1%wood_water_mass(1:n)) .and.                  &
                     minval(y1%leaf_water_mass(1:n)) > 0.0_wp .and. minval(y1%wood_water_mass(1:n)) > 0.0_wp
       end do
-      call check_true('ARK2 mass stays physical at dt=900 (FATAL-1 split-out guard)', physical,     &
+      call check_true('ARK2 mass stays physical at dt=900 (split-out plant water)', physical,       &
                       minval(y1%leaf_water_mass(1:n)))
 
-      !----- (c) embedded error estimate is bounded (not detonating -- the pre-fix failure mode). ----!
+      !----- (c) embedded error estimate is bounded (not detonating). ---------------------------------!
       call ark2_column_step(y, frozen, col_config, n, nsl, 900.0_wp, ynew, yerr, ws%stages, niter=8_ik)
       call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
       call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
@@ -783,7 +787,7 @@ contains
       print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
       call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
 
-      !----- (e) ERROR-CONTROL: the PI controller (goal a) marches the SAME stiff window and stays     !
+      !----- (e) ERROR-CONTROL: the PI controller marches the SAME stiff window and stays               !
       !      physical -- proves the meds_fast_control PI path is wired + functional. On a multi-substep !
       !      march it takes a different (typically smoother) step sequence than the I-controller.       !
       ec%controller = CTRL_PI
@@ -793,10 +797,10 @@ contains
       call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
    end subroutine test_ark2
 
-   !----- 15. RK45 (Cash-Karp 5(4)): order-of-accuracy self-convergence (design doc sec 8 gate 1).      !
+   !----- 15. RK45 (Cash-Karp 5(4)): order-of-accuracy self-convergence.                                    !
    !          Unlike ARK2's split-degraded ~1.2 order on the coupled soil-top temperature (test_ark2's    !
-   !          part a2 -- soil water/mass are operator-split OUT of the ESDIRK stages), RK45 has NO         !
-   !          operator split at all (design doc sec 6/P2), so the FULL 5th-order tableau accuracy          !
+   !          part a2 -- soil water/mass are operator-split OUT of the ESDIRK stages), RK45 carries         !
+   !          every store in its tableau (docs/science/numerical_scheme.md §3), so the FULL 5th-order       !
    !          should show up on a genuinely-coupled variable too, not just a decoupled scalar. Same         !
    !          reference-vs-halvings technique as test_ark2's part (a): observed order                       !
    !          p = log2(e(dt)/e(dt/2)) should approach 5 as dt shrinks (some slack for pre-asymptotic         !
@@ -811,12 +815,12 @@ contains
       call make_column(y, frozen, n, nsl)
 
       !----- A 5th-order method's error ~ C*h^5 collapses to double-precision noise (~1e-13) at MUCH      !
-      !      coarser h than a 2nd-order one (test_ark2's own dt=200/8..32 s range) -- h^5 falls off so    !
-      !      fast that h must stay large enough for the TRUNCATION term to still dominate roundoff at      !
-      !      the FINEST test point. Window T=2400 s (8 * the coarsest dt below), test points dt=300/       !
-      !      150/75 s (8/16/32 steps; 300 s stays under the ~360 s single-step stability estimate,          !
-      !      design doc sec 6 -- this is a short fixed-step accuracy comparison, not a stability march),     !
-      !      reference dt=2400/1024 s (>=32x finer than the finest test point). ---------------------------!
+      !      coarser h than a 2nd-order one -- h^5 falls off so fast that h must stay large enough for    !
+      !      the TRUNCATION term to still dominate roundoff at the FINEST test point. Window T=2400 s     !
+      !      (8 * the coarsest dt below), test points dt=300/150/75 s (8/16/32 steps; 300 s stays under   !
+      !      the ~360 s explicit limit the CAS's ~130 s timescale sets -- this is a short fixed-step      !
+      !      accuracy comparison, not a stability march), reference dt=2400/1024 s (>=32x finer than the  !
+      !      finest test point). -------------------------------------------------------------------------!
       !----- (a) CLEAN scalar: CAS CO2 (decoupled affine ODE, mirrors test_ark2's part a) -- baseline   !
       !          proof the Cash-Karp tableau itself is 5th order on this RHS. ------------------------!
       call march_rk45(y, frozen, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = yref%cas_co2
@@ -832,18 +836,14 @@ contains
 
       !----- (b) COUPLED: soil-top temperature (the SAME variable test_ark2 part a2 shows degraded to  !
       !          ~1.2 order under ARK's operator split). RK45 integrates soil energy/water/mass ALL      !
-      !          genuinely (no split), so this should ALSO be ~5th order -- the key accuracy advantage    !
-      !          the design doc's "no operator split at all" claim (sec 6) predicts. -------------------!
+      !          in its stages (no split), so this should ALSO be ~5th order. ---------------------------!
       !----- FOUR test points here, not three, and the assertion is on the two FINEST pairs. The soil-  !
       !      top temperature is the most strongly coupled variable in the column, so its coarse-h error  !
       !      carries a visible h^6 contamination and p measured across the coarsest pair is simply not   !
-      !      asymptotic. That was true before #78 item 3 as well, just on the flattering side: with the  !
-      !      interior advective enthalpy FROZEN the coupling was weaker and the coarse pair read p =     !
-      !      6.05 -- super-convergence, which a 5th-order tableau cannot actually achieve, so it was     !
-      !      measuring contamination too. Wiring the faces to the stage's own theta trajectory made the  !
-      !      absolute error ~14x SMALLER at every dt tested while moving the asymptotic window finer.    !
-      !      Asserting on the finest pairs measures the tableau; asserting on the coarsest measured      !
-      !      whichever direction the h^6 term happened to point. --------------------------------------!
+      !      asymptotic: depending on how strong the coupling is it reads below 5 or above it, and a     !
+      !      super-convergent p > 5, which a 5th-order tableau cannot actually achieve, is contamination !
+      !      too. Asserting on the finest pairs measures the tableau; asserting on the coarsest measures !
+      !      whichever direction the h^6 term happens to point. -----------------------------------------!
       call march_rk45(y, frozen, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = soil_top_temp(yref, frozen)
       call march_rk45(y, frozen, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(soil_top_temp(y1, frozen) - tref)
       call march_rk45(y, frozen, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(soil_top_temp(y2, frozen) - tref)
@@ -854,10 +854,9 @@ contains
       p_fine = log(e4/max(e8, tiny_num)) / log(2.0_wp)
       print '(a,4(es10.3,a),3(f5.2,a))', '   soil-top T errors: ', e1, ' / ', e2, ' / ', e4, ' / ',  &
             e8, ' ; observed order p = ', p_lo, ' , ', p_hi, ' , ', p_fine, ''
-      !----- Soil water now moves at the water network's steady rate within a step, so the soil-top    !
-      !      temperature is smoother than when RK45 integrated Richards in its stages, and its error      !
-      !      reaches the 1024-step reference's own round-off (~1e3 eps T) by 75 s. The order is asserted  !
-      !      wherever the error is above that floor. -------------------------------------------------!
+      !----- Soil water moves at the water network's steady rate within a step, so the soil-top        !
+      !      temperature is smooth, and its error reaches the 1024-step reference's own round-off      !
+      !      (~1e3 eps T) by 75 s. The order is asserted wherever the error is above that floor. ------!
       noise = 1.0e3_wp * epsilon(1.0_wp) * tref
       call check_true('RK45 stays 5th order on the COUPLED soil-top temperature (p >= 4.5 above round-off)', &
                       (p_hi >= 4.5_wp .or. e4 < noise) .and. (p_fine >= 4.5_wp .or. e8 < noise), p_fine)
@@ -880,16 +879,13 @@ contains
       errnorm = sqrt(s/real(cnt, wp))
    end subroutine state_err_norm
 
-   !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
-   !----- 15. The explicit RHS is DOMAIN-SAFE for any theta, in or out of [theta_res, theta_sat]      !
-   !         (issue #78 item 2). ---------------------------------------------------------------------!
-   ! Item 2 as filed said RK45's stage states can sit above theta_sat, and that soil psi and K       !
-   ! evaluated there would steer the trajectory. Theta is never clamped, so the first half can still  !
-   ! happen (budget%theta_ood_max reports it per sub-step). The second cannot: a stage's water        !
-   ! tendency is the soil-plant water network's steady rate over the step, which does not depend on   !
-   ! the stage's theta at all. So the water tendency at theta_sat + eps must equal the one at         !
-   ! theta_sat EXACTLY -- the bit-identity asserted below, at eps = 0.05, about six times the worst    !
-   ! excursion measured anywhere in the suite.                                                        !
+   !----- 16. The explicit RHS is DOMAIN-SAFE for any theta, in or out of [theta_res, theta_sat]. ------!
+   ! An explicit stage's theta can sit above theta_sat: theta is never clamped (budget%theta_ood_max    !
+   ! reports the excursion per sub-step). Soil psi and K evaluated there must not steer the             !
+   ! trajectory, and they cannot: a stage's water tendency is the soil-plant water network's steady     !
+   ! rate over the step, which does not depend on the stage's theta at all. So the water tendency at    !
+   ! theta_sat + eps must equal the one at theta_sat EXACTLY -- the bit-identity asserted below, at     !
+   ! eps = 0.05, far beyond any excursion the suite produces.                                           !
    !                                                                                                  !
    ! The soil-ENERGY tendency is checked separately (part c) and for a different reason: it is a pure   !
    ! flux divergence over prognostic internal energy, so theta reaches it only through the temperature  !
@@ -900,7 +896,7 @@ contains
       type(column_state_t)  :: y, y_hi, y_lo, y_sat, y_res
       type(column_frozen_t) :: frozen
       type(column_tend_t)   :: f_sat, f_hi, f_res, f_lo
-      real(wp), parameter   :: EPS_OOD = 0.05_wp        ! ~6x the worst excursion measured in the suite
+      real(wp), parameter   :: EPS_OOD = 0.05_wp        ! far beyond the worst excursion the suite produces
       real(wp)    :: dwater, denergy
       integer(ik) :: n, nsl, k
       logical     :: finite_all
@@ -988,13 +984,14 @@ contains
                       dwater == 0.0_wp, dwater)
    end subroutine test_rhs_domain_safety
 
+   !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
    subroutine make_column(y, frozen, n, nsl)
       type(column_state_t),  intent(out) :: y
       type(column_frozen_t), intent(out) :: frozen
       integer(ik),           intent(in)  :: n, nsl
-      !----- LOCAL hydraulics traits: only needed to seed y%*_water_mass at a representative psi     !
-      !      (column_frozen_t no longer carries hydraulics_params/hydraulics_opts -- column_derivs' mass ODE needs      !
-      !      only the frozen sapflow/uptake, not the PV-curve/conductance params any more). -----------!
+      !----- LOCAL hydraulics traits, needed only to seed y%*_water_mass at a representative psi:     !
+      !      column_derivs' mass ODE takes only the frozen sapflow/uptake, not the PV-curve or        !
+      !      conductance parameters, so column_frozen_t does not carry them. -------------------------!
       type(hydro_params_t) :: hp
       integer(ik) :: i, k
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
@@ -1011,9 +1008,9 @@ contains
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
-      frozen%roots%root_share(1:nsl) = exp_root_profile(col_config%soil, nsl)   ! Phase 1: per-layer sink placement
+      frozen%roots%root_share(1:nsl) = exp_root_profile(col_config%soil, nsl)   ! per-layer sink placement
       frozen%plant%nplant = 0.3_wp
-      !----- FROZEN sapflow/uptake (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): a representative,            !
+      !----- FROZEN sapflow/uptake (docs/science/numerical_scheme.md §2): a representative,             !
       !      state-independent pair for these RHS/oracle-march tests -- not taken from the water        !
       !      network here (these tests exercise column_derivs/the tableau machinery directly, not       !
       !      build_column_frozen, which has its own coverage via test_column_ark.f90). -----------------!
@@ -1026,7 +1023,7 @@ contains
       frozen%tissue%transp_net(1:n) = frozen%plant%sapflow_frozen(1:n) * frozen%plant%nplant(1:n)
       frozen%tissue%transp_held = .true.
       frozen%roots%uptake = frozen%plant%uptake_frozen(1)*sum(frozen%plant%nplant(1:n))
-      frozen%roots%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
+      frozen%roots%qloss_frozen = 0.0_wp   ! advective enthalpy: no-op unless populated (see build_column_frozen)
       !----- The water network's step, as build_column_frozen hands it on. Held still here -- no face  !
       !      flow, drainage, uptake heat or theta change -- because these marches run for hours on one   !
       !      frozen record, which the model never does: the network sets the rates afresh every step.   !
@@ -1034,7 +1031,7 @@ contains
       allocate(frozen%roots%root_heat(nsl))
       frozen%roots%root_heat(1:nsl) = 0.0_wp
       frozen%hydrology%t_infil = 296.0_wp ; frozen%hydrology%t_bot = 292.0_wp
-      frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
+      frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp   ! canopy water: no-op unless populated
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
                frozen%tissue%lai(n))
       allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n), frozen%tissue%wai(n))
@@ -1069,14 +1066,14 @@ contains
       y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
-      y%leaf_surf_water = 0.0_wp ; y%wood_surf_water = 0.0_wp   ! P2c canopy water: no-op unless populated
+      y%leaf_surf_water = 0.0_wp ; y%wood_surf_water = 0.0_wp   ! canopy water: no-op unless populated
       do k = 1_ik, nsl
          y%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
                             296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
          y%theta(k) = 0.30_wp
       end do
-      !----- seed mass at the SAME representative (leaf psi=-1.0, wood psi=-0.5 MPa) point the old   !
-      !      psi-based fixture used, via the forward water_content map (hp above). -------------------!
+      !----- seed mass at a representative point (leaf psi=-1.0, wood psi=-0.5 MPa), via the forward !
+      !      water_content map (hp above). ----------------------------------------------------------!
       do i = 1_ik, n
          y%leaf_water_mass(i) = water_content(-1.0_wp, hp%leaf_curve, 0.5_wp)          ! 0.5 kgC of leaf
          y%wood_water_mass(i) = water_content(-0.5_wp, hp%wood_curve, 7.0_wp)          ! 5 sapwood + 2 fine root

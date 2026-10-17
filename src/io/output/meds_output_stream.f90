@@ -2,11 +2,12 @@
 !==========================================================================================!
 ! meds_output_stream -- the netCDF serializer for the diagnostic-aggregation streams: create a  !
 ! per-tier, per-time-chunk file (dims + registry-driven variable defs + CF metadata), append one  !
-! averaged record, and roll to a new file at the chunk boundary (§5). Reuses meds_netcdf_c.       !
+! averaged record, and roll to a new file at the chunk boundary (docs/science/diagnostics.md §4;  !
+! the file layout's design record is MEDS_IO_DESIGN.md §5). Reuses meds_netcdf_c.                 !
 !                                                                                          !
 ! One serializer writes every file set. A site's set has one polygon's buffers and no polygon      !
 ! axis. A region's set has every polygon's buffers and a `polygon` dimension after `time`          !
-! (MEDS_POLYGON_RUNTIME_PLAN.md §6, §14 RP6): each variable of a record is packed over the          !
+! (docs/configuration.md, Regional runs): each variable of a record is packed over the             !
 ! polygons into one hyperslab, with the fill value for a polygon that does not hold the record (it  !
 ! failed earlier that month). Cohort and patch axes are as long as the largest live count among    !
 ! the polygons when the file opens, and each polygon's live counts are its own n_cohort and         !
@@ -63,7 +64,7 @@ contains
             if (.not. same_time(bufs(p)%queue(t)%rec(i)%t_open, r1%t_open))                      &
                error stop 'write_record: the polygons'' records are not the same period'
          end do
-         !----- Cohort/patch counts are invariant only WITHIN a month (§4.4); to trim the cohort/patch !
+         !----- Cohort/patch counts are invariant only WITHIN a month; to trim the cohort/patch        !
          !      dimension to the live count the file must not span more than a month. Cap the effective  !
          !      file_chunk to FC_MONTH for any tier that carries a cohort/patch variable (site-only tiers !
          !      keep their configured chunk, e.g. the annual run-file). FAST (tier 1) cohort/patch: one   !
@@ -102,8 +103,8 @@ contains
    end subroutine stream_close_file
 
    !----- .true. if the tier defines a variable on a ragged axis -- cohort, patch or soil by patch  !
-   !      (drives the ≤1-month file-chunk cap, since those axes are invariant only within a month,  !
-   !      §4.4). ------------------------------------------------------------------------------------!
+   !      (drives the ≤1-month file-chunk cap, since those axes are invariant only within a month; !
+   !      docs/science/diagnostics.md §3). --------------------------------------------------------!
    pure logical function tier_has_cohort_or_patch(reg, tier) result(yes)
       type(output_registry_t), intent(in) :: reg
       integer(ik),             intent(in) :: tier
@@ -117,7 +118,7 @@ contains
       end do
    end function tier_has_cohort_or_patch
 
-   !----- Integer bucket key identifying the time-chunk a period belongs to (§5.2). ----------!
+   !----- Integer bucket key identifying the time-chunk a period belongs to. ----------------!
    pure integer(ik) function bucket_key(t, file_chunk) result(b)
       type(meds_time_t), intent(in) :: t
       integer(ik),       intent(in) :: file_chunk
@@ -129,7 +130,7 @@ contains
       end select
    end function bucket_key
 
-   !----- Filename stamp for the time-chunk (empty for FC_RUN -> stampless -Y.nc, §5.1). ------!
+   !----- Filename stamp for the time-chunk (empty for FC_RUN -> stampless -Y.nc). -----------!
    pure function chunk_stamp(t, file_chunk) result(s)
       type(meds_time_t), intent(in) :: t
       integer(ik),       intent(in) :: file_chunk
@@ -156,7 +157,7 @@ contains
 
    !=======================================================================================!
    !  Create a file: dims, the polygon axis and coordinates (a region's), the tier's variables    !
-   !  and CF metadata (§5.3). The cohort/patch axes are trimmed to the live counts of the record  !
+   !  and CF metadata. The cohort/patch axes are trimmed to the live counts of the record         !
    !  that opens it, the largest among a region's polygons.                                       !
    !=======================================================================================!
    subroutine open_file(files, tier, pr, file_chunk, bucket, n_cohort, n_patch)
@@ -252,7 +253,7 @@ contains
       end if
 
       !----- A region's polygon axis: its id, its cell centre and its grid indices, so a region maps  !
-      !      back onto the lat/lon grid in one step (OR7). --------------------------------------------!
+      !      back onto the lat/lon grid in one step. --------------------------------------------------!
       if (poly) then
          dims1 = [dpo]
          call nc_check(nc_def_var_f(ncid, 'polygon_id', NC_INT, 1_c_int, dims1, v_id), 'def polygon_id')
@@ -267,7 +268,7 @@ contains
          call put_var_text(ncid, v_row, 'long_name', '0-based latitude index on the forcing grid')
          call nc_check(nc_def_var_f(ncid, 'col', NC_INT, 1_c_int, dims1, v_col), 'def col')
          call put_var_text(ncid, v_col, 'long_name', '0-based longitude index on the forcing grid')
-         !----- What each polygon's cell's maps gave it (§14 RP3), as it runs them. ----------------!
+         !----- What each polygon's cell's maps gave it, as it runs them. --------------------------!
          call nc_check(nc_def_var_f(ncid, 'soil_depth', NC_DOUBLE, 1_c_int, dims1, v_depth), 'def soil_depth')
          call put_var_text(ncid, v_depth, 'units', 'm')
          call put_var_text(ncid, v_depth, 'long_name', 'soil column depth, the bottom of the deepest layer')
@@ -382,8 +383,8 @@ contains
    end subroutine open_file
 
    !----- The soil coordinate: layer node depths [m], negative downward. Inactive layers past    !
-   !      n_soil are left at 0 and are also where the data slabs carry _FillValue, so a reader can   !
-   !      mask on either.  ----------------------------------------------------------------------!
+   !      n_soil are not written, so they hold the fill value, as the data slabs do there; a      !
+   !      reader can mask on either.  -----------------------------------------------------------!
    subroutine write_soil_coord(ncid, vid_ik, dg)
       integer(c_int),      intent(in) :: ncid
       integer(ik),         intent(in) :: vid_ik
@@ -391,9 +392,9 @@ contains
       real(c_double)    :: z(n_soil_layer_max)
       integer(c_size_t) :: st(1), cn(1)
       integer(ik)       :: k, nz
-      !----- Only the ACTIVE layers (#246). Writing the full ceiling put a run of 0.0 m node      !
-      !      depths on the end of the coordinate, which reads as ten more layers all at the        !
-      !      surface; the unwritten tail is left for netCDF to fill, like every other padded axis. !
+      !----- Only the ACTIVE layers: writing the full ceiling would put a run of 0.0 m node      !
+      !      depths on the end of the coordinate, which reads as more layers all at the surface;   !
+      !      the unwritten tail is left for netCDF to fill, like every other padded axis.          !
       nz = min(max(dg%n_soil, 1_ik), n_soil_layer_max)
       do k = 1_ik, nz ; z(k) = real(dg%soil_z(k), c_double) ; end do
       st = [0_c_size_t] ; cn = [int(nz, c_size_t)]
@@ -561,7 +562,7 @@ contains
       np  = size(bufs, kind=ik)
       npo = files%n_polygon
       !----- The cohort/patch axes were trimmed to the opening record's live counts; every record in a !
-      !      <=1-month file shares each polygon's count (§4.4). Assert it rather than silently        !
+      !      <=1-month file shares each polygon's count. Assert it rather than silently               !
       !      overflow the slab. ----------------------------------------------------------------------!
       do p = 1_ik, np
          if (bufs(p)%queue(t)%n < i) cycle

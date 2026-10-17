@@ -1,17 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_biogeochem_dynamics -- the slow soil-carbon biogeochemistry driver seam (B2,             !
-! MEDS_SLOW_DYNAMICS_DESIGN.md Part II): a REAL fast loop (constant forcing, over the state-hub   !
-! reservoirs, same setup as test_fast_loop) feeds a frozen per-patch soil-carbon pool, then         !
-! advance_slow_dynamics runs the daily soil_carbon_step against that SAME frozen pool.               !
-!   1. THE DOUBLE-COUNT GATE (section 9): rh_seam_gap (soil_carbon_step's own rh_today MINUS the    !
-!      fast loop's independently-accumulated rh_fast_accum) is ~0 for the default EULER solver, BY   !
-!      CONSTRUCTION -- both read the identical frozen pool + the identical day-integrated xi_int.     !
-!   2. MASS CONSERVATION: the pool's total carbon after one day equals before + litter_in - rh_today  !
-!      (the fundamental daily identity soil_carbon_step's own audit already asserts internally; this  !
-!      test checks it holds end-to-end through the real driver seam, not just the bare kernel call).  !
-!   3. OFF-PATH: soil_carbon_on = .false. leaves the pool untouched (bit-identical, matching every     !
-!      other opt-in feature gate).                                                                     !
+! test_biogeochem_dynamics -- the slow soil-carbon driver seam                             !
+! (docs/science/soil_carbon.md §7): a REAL fast loop (constant forcing, over the state-hub !
+! reservoirs, same setup as test_fast_loop) feeds a frozen per-patch soil-carbon pool,     !
+! then advance_slow_dynamics runs the daily soil_carbon_step against that SAME frozen      !
+! pool.                                                                                    !
+!   1. THE DOUBLE-COUNT GATE: rh_seam_gap (soil_carbon_step's own rh_today MINUS the fast  !
+!      loop's independently accumulated rh_fast_accum) is ~0 for the default EULER solver, !
+!      BY CONSTRUCTION -- both read the identical frozen pool and the identical            !
+!      day-integrated xi_int. The lignin-tracer residual is ~0, and the freeze number      !
+!      lambda is nonzero and far below 1.                                                  !
+!   2. THE POOL MOVES, and stays non-negative, through the real driver seam. The exact     !
+!      daily identity (after = before + litter_in - rh_today) is soil_carbon_step's own    !
+!      audit, and test_soil_biogeochem checks it independently.                            !
+!   3. OFF-PATH: soil_carbon_on = .false. leaves the pool untouched (bit-identical,        !
+!      matching every other opt-in feature gate).                                          !
 !==========================================================================================!
 program test_biogeochem_dynamics
    use meds_kinds,               only : wp, ik
@@ -29,7 +32,7 @@ program test_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_test_support, only : banner, build_test_config, check, check_close, check_true, test_report
    implicit none
-   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
 
    integer(ik)            :: n_budget_fail
    integer(ik), parameter :: nsl = 10_ik
@@ -40,12 +43,12 @@ program test_biogeochem_dynamics
    type(soilc_seam_t) :: seam   !< per-run seam worsts, accumulated by advance_slow_dynamics
    real(wp) :: we, ww
 
-   call banner('slow soil-carbon biogeochemistry (B2 double-count gate)')
+   call banner('slow soil-carbon biogeochemistry (double-count gate)')
 
    cfg = build_test_config()
    cfg%fast_biophysics_on = .true.
    cfg%dt_fast            = 150.0_wp
-   cfg%n_fast_per_slow    = 48_ik   ! 48 x 150 s = 2 h (window held as dt_fast dropped)
+   cfg%n_fast_per_slow    = 48_ik   ! 48 x 150 s = a 2 h fast window
    cfg%soil_carbon_on     = .true.
 
    call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
@@ -91,7 +94,7 @@ program test_biogeochem_dynamics
 
       call check_true('rh_seam_gap ~ 0 (the double-count gate)',                                   &
                       seam%worst_rh_gap < 1.0e-9_wp * max(rh_fast_accum_ref, 1.0_wp), seam%worst_rh_gap)
-      !----- The other two seam numbers the same call now accumulates. Lambda is the freeze number: !
+      !----- The other two seam numbers the same call accumulates. Lambda is the freeze number:     !
       !      the fraction of a pool one slow step withdraws. It must be nonzero (the step DID        !
       !      decompose) and far below 1 (or freezing the pool across the step is unsound).  ---------!
       call check_true('lignin passive-tracer residual ~ 0', seam%worst_lignin < 1.0e-12_wp,        &
@@ -110,8 +113,8 @@ program test_biogeochem_dynamics
    !----- Direction is not asserted (this cohort's turnover litter can outweigh or be outweighed by !
    !      Rh depending on the seeded pool -- test_soil_biogeochem's INDEPENDENT mass check (Rh        !
    !      recomputed from er*xi_int*K*X0, not from the closure definition) already guarantees          !
-   !      dC_pool == litter_in - rh_today to machine                                                    !
-   !      precision); this just checks the driver seam actually moved the pool and stayed physical. --!
+   !      dC_pool == litter_in - rh_today to machine precision); this just checks the driver seam      !
+   !      actually moved the pool and stayed physical. --------------------------------------------!
    call check(abs(total1 - total0) > 1.0e-6_wp, 'pool total changed (the daily step actually ran)')
    call check(total1 > 0.0_wp, 'pool total stayed physical (non-negative)')
    write(*,'(a,es12.5,a,es12.5,a)') '   (pool total: ', total0, ' -> ', total1, ' kgC/m2)'

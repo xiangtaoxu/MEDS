@@ -2,26 +2,25 @@
 !==========================================================================================!
 ! meds_pft_params -- plant functional type (PFT) trait table.                              !
 !                                                                                          !
-! Structure-of-arrays: one allocatable array per trait, indexed by PFT. Size allometry is    !
-! pan-tropical and PFT-independent (see meds_allometry); the per-PFT allometric inputs are    !
-! `dbh_critical` (the maximum diameter) and `wood_density` (rho, which enters AGB).            !
+! Structure-of-arrays: one allocatable array per trait, indexed by PFT. The size           !
+! allometry's coefficients are shared by every PFT (meds_allometry); the per-PFT           !
+! allometric inputs are `hgt_max` (the height cap), `dbh_critical` (the maximum diameter)  !
+! and `wood_density` (rho, which enters AGB).                                              !
 !                                                                                          !
-! The PFTs carry the parameters of the PHENOMENOLOGICAL vital rates                            !
-! (meds_demography_rates, assembled by meds_vegetation_dynamics):                                                        !
-!   * GROWTH: an intrinsic capped log-linear function of dbh (growth_dbh_slope/cap/max),       !
-!     suppressed multiplicatively by neighbourhood competition (growth_lai_slope on overtopping!
-!     LAI) and by reproductive allocation (reproduction_investment_fraction above maturity).   !
-!   * MORTALITY: the Camac et al. (2018, PNAS) additive hazard, simplified to                  !
-!     rate = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg), with the three parameters     !
-!     DERIVED from wood density (low rho => higher baseline & low-growth hazard).              !
-!   * RECRUITMENT: a baseline external `seed_rain_recruits` plus a reproduction flux computed  !
-!     in the rate module from the carbon diverted to reproduction.                             !
+! The PFTs carry the parameters of the vital rates (meds_demography_rates, called from     !
+! meds_vegetation_dynamics):                                                               !
 !                                                                                          !
-! Two shared height thresholds: `min_cohort_height` (the smallest tracked cohort; recruits are !
-! born here) and `reproduction_height_fraction` (a cohort reproduces from that share of the    !
-! local maximum height, meds_allometry::local_hmax). The                                      !
-! default table seeds three strategies (pioneer/mid/climax) differing only in wood density and !
-! maximum diameter.                                                                          !
+! GROWTH is carbon-driven, by the wood NPP the cohort allocates                            !
+! (meds_plant_carbon_allocation), within the sink limits max_*_growth_*. MORTALITY is the  !
+! Camac et al. (2018, PNAS) additive hazard, rate = mort_gamma +                           !
+! mort_alpha*exp(-mort_beta*growth_avg), with the three parameters DERIVED from wood       !
+! density (low rho => higher baseline and low-growth hazard). RECRUITMENT is a baseline    !
+! external `seed_rain_recruits` plus the recruits bought by the carbon diverted to         !
+! reproduction (recruit_carbon_efficiency).                                                !
+!                                                                                          !
+! Two shared height thresholds: `min_cohort_height` (the smallest tracked cohort; recruits !
+! are born here) and `reproduction_height_fraction` (a cohort reproduces from that share   !
+! of the local maximum height, meds_allometry::local_hmax).                                !
 !==========================================================================================!
 module meds_pft_params
    use meds_kinds, only : wp, ik
@@ -45,9 +44,8 @@ module meds_pft_params
       real(wp), allocatable :: dbh_critical(:)   !< [cm]    maximum diameter (growth clamp)
       real(wp), allocatable :: hgt_max(:)        !< [m]     asymptotic max height (per-PFT allometry cap)
       real(wp), allocatable :: wood_density(:)   !< [g/cm3] rho: AGB + mortality anchor
-      !----- Reproductive allocation (carbon path). The empirical growth-curve params           !
-      !       (growth_dbh_slope/cap/max, growth_lai_slope) were REMOVED: the phenomenological      !
-      !       growth law is an experiment "example" and now lives in the Python example.           !
+      !----- Reproductive allocation and recruitment (carbon path). An empirical growth law is     !
+      !      not a trait here; it lives in the Python example. ------------------------------------!
       real(wp), allocatable :: reproduction_investment_fraction(:) !< [--] growth fraction diverted to reproduction
       real(wp), allocatable :: recruit_carbon_efficiency(:)        !< [--] share of reproduction carbon that becomes
                                                                    !<      recruits: seed set, germination and seedling
@@ -56,9 +54,9 @@ module meds_pft_params
       !----- A near-bare-ground start's seedlings (ED2's init_density): plants per m2 of each patch, at  !
       !      min_cohort_height on the polygon's height curve. 0 = no cohort of the PFT (the empty start). !
       real(wp), allocatable :: nbg_init_density(:)                 !< [plant/m2]
-      !----- Wood-density -> mortality-hazard DERIVATION coefficients (Camac et al. 2018 PNAS,  !
-      !       a power law centred on mort_rho_ref: param = param_0 * (rho/rho_ref)^exp, always   !
-      !       positive). Shared scalars for now (PFT-specific later). --------------------------!
+      !----- Wood-density -> mortality-hazard DERIVATION coefficients (Camac et al. 2018         !
+      !      PNAS, a power law centred on mort_rho_ref: param = param_0 * (rho/rho_ref)^exp,     !
+      !      always positive). Shared scalars, one set for every PFT. ---------------------------!
       real(wp) :: mort_rho_ref            !< [g/cm3] wood-density reference for the power law
       real(wp) :: mort_gamma_0, mort_gamma_exp   !< baseline hazard scale + exponent
       real(wp) :: mort_alpha_0, mort_alpha_exp   !< low-growth hazard scale + exponent
@@ -73,7 +71,7 @@ module meds_pft_params
       !----- Shared height thresholds. ----------------------------------------------------!
       real(wp) :: min_cohort_height          !< [m] smallest tracked cohort; recruits born here
       real(wp) :: reproduction_height_fraction  !< [-] share of the local maximum height to reproduce
-      !----- Leaf photosynthesis / stomatal traits (per PFT; see meds_fast_config). -------!
+      !----- Leaf photosynthesis / stomatal traits (per PFT; docs/science/leaf_gas_exchange.md). -!
       integer(ik), allocatable :: photosynthetic_pathway(:) !< PATH_C3 | PATH_C4
       real(wp), allocatable :: vcmax25(:)            !< [umol/m2/s] max carboxylation at 25 degC
       real(wp), allocatable :: jmax_vcmax_ratio(:)   !< [--]    Jmax25 / Vcmax25
@@ -85,24 +83,25 @@ module meds_pft_params
       real(wp), allocatable :: stomatal_d0(:)        !< [Pa]    Leuning humidity sensitivity
       real(wp), allocatable :: quantum_yield_c4(:)   !< [mol CO2/mol photon] C4 light-limited slope
       real(wp), allocatable :: theta_j(:)            !< [--]    non-rectangular hyperbola curvature (C3 J)
-      !----- CO-LIMITATION curvatures, one pair per pathway. These describe how sharply the leaf     !
-      !      transitions between two LIMITING PROCESSES and are physically distinct from theta_j,    !
-      !      which is the curvature of the electron-transport hyperbola. C3 borrowed theta_j for     !
-      !      both of its smoothings until #118; at 0.85 that cost ~29 % of assimilation against      !
-      !      min(Ac,Aj,Ap), nearly independently of Vcmax -- a systematic offset hidden inside a     !
-      !      parameter named for a different process.  ------------------------------------------!
+      !----- CO-LIMITATION curvatures, one pair per pathway. These describe how sharply the        !
+      !      leaf transitions between two LIMITING PROCESSES and are physically distinct from      !
+      !      theta_j, the curvature of the electron-transport hyperbola; using theta_j for         !
+      !      them costs a quarter of assimilation where A_c and A_j sit close together             !
+      !      (docs/science/leaf_gas_exchange.md §2, "The co-limitation curvatures are not          !
+      !      theta_J"). ---------------------------------------------------------------------------!
       real(wp), allocatable :: theta_cj_c3(:)        !< [--]    C3 Ac/Aj co-limitation curvature
       real(wp), allocatable :: theta_ip_c3(:)        !< [--]    C3 (Ac,Aj)/Ap co-limitation curvature
       real(wp), allocatable :: theta_cj_c4(:)        !< [--]    C4 co-limitation curvature 1
       real(wp), allocatable :: theta_ic_c4(:)        !< [--]    C4 co-limitation curvature 2
       real(wp), allocatable :: katul_lambda25(:)     !< [umol CO2/mol H2O] Katul marginal water-use efficiency
-      !< [MPa] current leaf potential at which the fast limb beta_nonstomata is 1 (<= 0) and 0 (below
-      !<       it). OPTIONAL: HYD_UNSET means the PFT's turgor-loss point and twice it (pft_wstress_psi_*)
+      !< [MPa] current leaf potential where the fast limb beta_nonstomata starts to fall (open) and where it
+      !<       reaches 0 (close), docs/science/leaf_gas_exchange.md eq. (9). OPTIONAL: HYD_UNSET means the
+      !<       PFT's turgor-loss point and twice it (pft_wstress_psi_*)
       real(wp), allocatable :: wstress_psi_open(:)
       real(wp), allocatable :: wstress_psi_close(:)
       real(wp), allocatable :: wstress_lambda_exp(:) !< [--]    Katul lambda water-stress exponent
       !< [1/MPa] Sabot stomatal-stress sensitivity: beta_stomata = exp(sref*(psi - psi_onset)) below the
-      !<         onset, psi = predawn leaf psi
+      !<         onset, psi = predawn leaf psi (docs/science/leaf_gas_exchange.md eq. (10))
       real(wp), allocatable :: wstress_sref_stomata(:)
       !< [MPa] predawn leaf psi where the stomatal stress begins (beta_stomata = 1 above it). OPTIONAL:
       !<       HYD_UNSET means half the PFT's leaf turgor-loss point (pft_stomata_psi_onset)
@@ -115,39 +114,30 @@ module meds_pft_params
       real(wp), allocatable :: jmax25(:)             !< [umol/m2/s] DERIVED = jmax_vcmax_ratio * vcmax25
       real(wp), allocatable :: tpu25(:)              !< [umol/m2/s] DERIVED = tpu_vcmax_ratio  * vcmax25
       real(wp), allocatable :: rd25(:)               !< [umol/m2/s] DERIVED = rd_vcmax_ratio   * vcmax25
-      !----- Carbon-allocation per-PFT traits (meds_plant_carbon_allocation). All state is       !
-      !       CARBON;                                                                            !
-      !       every biomass<->carbon conversion is folded into these traits here at init. Consumed !
-      !       once the carbon-allocation engine is wired (a later PR); the size-target allometry    !
-      !       size2leaf_carbon / size2wood_carbon uses sla / aboveground_frac.                      !
+      !----- Carbon-allocation per-PFT traits (meds_plant_carbon_allocation;                       !
+      !      docs/science/plant_carbon_allocation.md). All state is CARBON; every                  !
+      !      biomass<->carbon conversion is folded into these traits at init. The size-target      !
+      !      allometry size2leaf_carbon / size2wood_carbon uses sla / aboveground_frac. -----------!
       real(wp),    allocatable :: sla(:)                    !< [m2/kgC] specific leaf area (un-folds SLA from lai_b1)
-      !----- WOOD AREA INDEX allometry (ED2 b1WAI/b2WAI): wai = nplant*b1wai*dbh**b2wai. This        !
-      !      REPLACES the wai = 0.20*lai placeholder, which tied wood area to LEAF area and made     !
-      !      the wood thermal timescale ~6-20x too short. ------------------------------------------!
+      !----- WOOD AREA INDEX allometry (ED2 b1WAI/b2WAI): wai = nplant*b1wai*dbh**b2wai. Wood       !
+      !      area follows the stem, not the leaf area, and it sizes the wood's heat capacity        !
+      !      (docs/science/vegetation_energy_dynamics.md eq. (8)). ---------------------------------!
       real(wp),    allocatable :: wai_b1(:)                 !< [--] WAI intercept  (ED2 b1WAI)
       real(wp),    allocatable :: wai_b2(:)                 !< [--] WAI exponent   (ED2 b2WAI)
-      !----- SAPWOOD-AREA allometry (ED2 b1SA/b2SA, dbh2sf): sapwood area = b1sa*dbh**b2sa, and the  !
-      !      sapwood FRACTION of basal area sets bsap. REPLACES bsap = 0.10*wood_carbon. ------------!
-      !                                                                                          !
-      !      MEASURED consequence for the wood thermal time constant, which scales linearly with   !
-      !      bsap (#168). With the shipped b1SA = 1.582, b2SA = 1.764 the real fraction exceeds     !
-      !      the old 0.10 placeholder EVERYWHERE, so the placeholder made tau_wood 6.5-10x too       !
-      !      SHORT across the whole size range:                                                      !
-      !                                                                                          !
-      !        dbh [cm]     1     10     20     40     60     80    100    117                      !
-      !        f_sap     1.000  1.000  0.993  0.843  0.766  0.716  0.679  0.655                     !
-      !        vs 0.10   10.0x  10.0x   9.9x   8.4x   7.7x   7.2x   6.8x   6.5x                     !
-      !                                                                                          !
-      !      f_sap saturates at 1.0 below dbh ~ 19.4 cm -- all sapwood, no heartwood -- because      !
-      !      2.014*dbh**(-0.236) exceeds one there. That is ED2's own behaviour, not a MEDS          !
-      !      approximation: dbh2sf applies the identical min(1, A_sap/A_basal) clamp. It does mean    !
-      !      the sapwood allometry is inert across a young stand, where every cohort is all sapwood.  !
+      !----- SAPWOOD-AREA allometry (ED2 b1SA/b2SA, dbh2sf): sapwood area = b1sa*dbh**b2sa, and     !
+      !      the sapwood FRACTION of basal area, f_sap = min(1, A_sap/A_basal), sets bsap: the      !
+      !      sapwood ring holds the wood's internal water                                           !
+      !      (docs/science/vegetation_energy_dynamics.md eq. (8)) and its hydraulic                 !
+      !      capacitance. With the shipped b1SA = 1.582, b2SA = 1.764, A_sap/A_basal =              !
+      !      2.014*dbh**(-0.236), so f_sap saturates at 1.0 below dbh ~ 19.4 cm -- all sapwood,     !
+      !      no heartwood -- and falls to 0.84 at 40 cm and 0.68 at 100 cm. That is ED2's own       !
+      !      behaviour (dbh2sf applies the identical clamp); it does mean the sapwood allometry     !
+      !      is inert across a young stand. --------------------------------------------------------!
       real(wp),    allocatable :: sapwood_area_b1(:)        !< [cm2/cm^b2] sapwood-area intercept (ED2 b1SA)
       real(wp),    allocatable :: sapwood_area_b2(:)        !< [--]        sapwood-area exponent  (ED2 b2SA)
-      !----- Canopy-element geometry the aerodynamic boundary layers read. These were three     !
-      !      HARD-CODED constants inside the fast loop's per-patch gather (0.04 m, 0.02 m, 1.0), !
-      !      invisible to config and identical for every PFT, even though leaf size is one of    !
-      !      the strongest interspecific axes there is. Defaults reproduce the old constants.     !
+      !----- Canopy-element geometry the aerodynamic boundary layers read                          !
+      !      (docs/science/canopy_aerodynamics.md §4). Per PFT, because leaf size is one of        !
+      !      the strongest interspecific axes there is. -------------------------------------------!
       real(wp),    allocatable :: leaf_width(:)             !< [m]  characteristic leaf width (leaf boundary layer)
       real(wp),    allocatable :: branch_diameter(:)        !< [m]  characteristic branch diameter (wood boundary layer)
       real(wp),    allocatable :: crown_area_frac(:)        !< [--] crown area as a fraction of the patch (0,1]
@@ -155,25 +145,18 @@ module meds_pft_params
       real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
       real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
       real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf + fine-root target
-      !----- STORAGE MAINTENANCE (#177). Fractional turnover of the non-structural pool [1/yr],
-      !      charged as respiration and DECREMENTED from the pool -- ED2's growth_balive.f90
-      !      `storage_maintenance = bstorage * storage_turnover_rate * year_o_day`. ED2 applies NO
-      !      temperature dependence here (its maintenance_temp_dep is set to 1.0, with the
-      !      temperature form commented out as "experimental and arbitrary"), so neither does this.
-      !
-      !      DEFAULT 0.0, which reproduces the pre-#177 behaviour exactly. ED2's own values, for a
-      !      config that wants them: temperate broadleaf 0.6243, temperate grass and conifer 0.0,
-      !      tropical non-grass 1/6, tropical grass 1/3 -- so zero is a legitimate ED2 setting, not
-      !      an absence of physics. Turning it on by default is a v0.3.0 question, because Phase 3
-      !      was the release's rebaseline window and it is closed.
-      !----- RESORPTION (#151, #387). Fraction of all leaf and fine-root loss, senescence and
-      !      background turnover alike, returned to the non-structural pool instead of entering
-      !      litter. DEFAULT 0.3.
-      !----- PER-PFT HYDRAULIC TRAITS (#179). Until now every PFT shared one [hydraulics] block, so
-      !      wood density was the only axis on which PFTs could differ hydraulically -- in a model
-      !      whose whole point is that plant strategies differ. All OPTIONAL: an absent key takes the
-      !      [hydraulics] scalar, so a config that does not mention them is unchanged, and a config
-      !      can make just ONE trait per-PFT without restating the other ten.
+      !----- STORAGE MAINTENANCE. Fractional turnover of the non-structural pool [1/yr], charged as
+      !      respiration and taken from the pool -- ED2's growth_balive.f90 form, with no temperature
+      !      dependence, as in ED2 (docs/science/plant_carbon_allocation.md eq. (2)). DEFAULT 0.0; ED2's
+      !      own values range from 0 to 0.6243 by PFT, so zero is a legitimate ED2 setting, not an absence
+      !      of physics. Whether to default it on is open (see docs/ROADMAP.md).
+      !----- RESORPTION. Fraction of all leaf and fine-root loss, senescence and background turnover
+      !      alike, returned to the non-structural pool instead of entering litter
+      !      (docs/science/plant_carbon_allocation.md eq. (3)). DEFAULT 0.3.
+      !----- PER-PFT HYDRAULIC TRAITS, so PFTs differ hydraulically on more than wood density. All
+      !      OPTIONAL: an absent key takes the [hydraulics] scalar (wood_kmax, which has none, follows
+      !      the PFT's wood density), so a config can make just ONE trait per-PFT without restating
+      !      the others.
       real(wp),    allocatable :: hyd_leaf_pi0(:), hyd_leaf_elastic_mod(:), hyd_leaf_apoplast_frac(:)
       real(wp),    allocatable :: hyd_leaf_water_sat(:)
       real(wp),    allocatable :: hyd_wood_pi0(:), hyd_wood_elastic_mod(:), hyd_wood_apoplast_frac(:)
@@ -192,21 +175,21 @@ module meds_pft_params
       real(wp),    allocatable :: max_absolute_growth_rate(:) !< [cm/yr] maximum diameter growth of a 1 cm stem
       real(wp),    allocatable :: max_absolute_growth_exponent(:) !< [--] its scaling with dbh [cm]
       real(wp),    allocatable :: growth_resp_factor(:)     !< [--]     construction cost (fraction of metabolic NPP)
-      !----- MAINTENANCE respiration of the non-leaf tissues. Per-PFT in ED2, and hard-coded as   !
-      !      three run-uniform literals in the fast driver until now, so every PFT respired its    !
-      !      stem and roots identically no matter how they differed. (Leaf dark respiration is     !
-      !      already per-PFT, through rd_vcmax_ratio.) -------------------------------------------!
+      !----- MAINTENANCE respiration of the non-leaf tissues                                      !
+      !      (docs/science/plant_respiration.md §2-§3). Per-PFT, as in ED2, so PFTs can           !
+      !      respire their stems and roots differently. (Leaf dark respiration is per-PFT         !
+      !      through rd_vcmax_ratio.) ------------------------------------------------------------!
       logical,     allocatable :: is_woody(:)               !< .false. (e.g. grass) => stem respiration is 0
       real(wp),    allocatable :: stem_resp_factor25(:)     !< [umol CO2/m2 stem/s @25C] stem rate per surface
       real(wp),    allocatable :: stem_resp_sapwood25(:)    !< [umol CO2/m3 sapwood/s @25C] stem rate per sapwood volume
       real(wp),    allocatable :: root_resp_factor25(:)     !< [umol CO2/kgC fine root/s @25C] baseline root rate
-      !----- CANOPY OPTICS (the two-stream's per-PFT table). These were literals in the fast     !
-      !      driver, broadcast over every PFT, which meant two PFTs could not differ in how they  !
-      !      intercept or scatter light -- in a model whose two-stream solver exists to resolve    !
-      !      exactly that. Shortwave is given as reflectance + transmittance per band; LONGWAVE    !
-      !      is given as EMISSIVITY, because that is the number anyone has for a leaf, and the     !
-      !      band's reflectance is 1 - emissivity with zero transmittance (a leaf is opaque at     !
-      !      thermal wavelengths -- physics, not a knob).                                          !
+      !----- CANOPY OPTICS (the two-stream's per-PFT table;                                       !
+      !      docs/science/canopy_radiation_transfer.md §2). Per PFT, so two PFTs can differ       !
+      !      in how they intercept or scatter light -- what the two-stream solver exists to       !
+      !      resolve. Shortwave is given as reflectance + transmittance per band; LONGWAVE is     !
+      !      given as EMISSIVITY, because that is the number anyone has for a leaf, and the       !
+      !      band's reflectance is 1 - emissivity with zero transmittance (a leaf is opaque       !
+      !      at thermal wavelengths -- physics, not a knob). -------------------------------------!
       real(wp),    allocatable :: leaf_reflect_vis(:), leaf_transmit_vis(:)   !< [--] leaf VIS
       real(wp),    allocatable :: leaf_reflect_nir(:), leaf_transmit_nir(:)   !< [--] leaf NIR
       real(wp),    allocatable :: leaf_emissivity(:)                          !< [--] leaf thermal emissivity
@@ -217,23 +200,25 @@ module meds_pft_params
       real(wp),    allocatable :: leaf_angle_mean(:)                          !< [deg] mean leaf inclination
       real(wp),    allocatable :: leaf_angle_std(:)                           !< [deg] its standard deviation
       real(wp),    allocatable :: leaf_lifespan_toc(:)      !< [yr]     top-of-canopy leaf lifespan; baseline leaf
-                                                            !<          turnover = 1/llspan (was leaf_turnover_rate)
+                                                            !<          turnover = 1/llspan
       real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
       real(wp),    allocatable :: wood_carbon_density(:)    !< [kgC/m3] wood carbon density (Huber sapwood carbon)
-      !----- Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter,   !
-      !       MEDS_SLOW_DYNAMICS_DESIGN.md Part II B1). Consumed wherever plant carbon dies (leaf/    !
-      !       fine-root turnover shed, continuous background mortality, cull-termination, treefall    !
-      !       disturbance) to route it into the per-patch soil_carbon pools. aboveground_frac (above) !
-      !       doubles as the necromass above/below-ground split for BOTH the leaf/storage and wood      !
-      !       streams (fine roots are always below-ground). ------------------------------------------!
+      !----- Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter;      !
+      !      docs/science/soil_carbon.md §5). Consumed wherever plant carbon dies (leaf/fine-       !
+      !      root turnover shed, continuous background mortality, cull-termination, treefall        !
+      !      disturbance) to route it into the per-patch soil_carbon pools. aboveground_frac        !
+      !      (above) splits the wood and storage streams above/below ground; leaves and             !
+      !      reproduction are all above, fine roots all below. -------------------------------------!
       !< [--] labile (vs structural) fraction of leaf/storage/fine-root necromass
       real(wp),    allocatable :: f_labile_leaf(:)
       real(wp),    allocatable :: f_labile_stem(:)          !< [--] labile (vs structural) fraction of wood/CWD necromass
       real(wp),    allocatable :: struct_lignin_frac(:)     !< [--] lignin fraction of the structural-litter stream
-      !----- Light trait-PLASTICITY slopes (meds_plant_trait_dynamics): the per-cohort leaf traits    !
-      !       sla / vcmax25 / rd25 / llspan acclimate to cumulative LAI above as trait_toc*exp(k*LAI). !
-      !       DERIVED from the base traits in derive_pft_rates (ED2 trait_plasticity_scheme=2, Lloyd    !
-      !       et al. 2010); consumed only when [trait_dynamics].trait_plasticity_on. --------------!
+      !----- Light trait-PLASTICITY slopes (meds_plant_trait_dynamics): the per-cohort leaf        !
+      !      traits sla / vcmax25 / rd25 / llspan acclimate to cumulative LAI above as             !
+      !      trait_toc*exp(k*LAI) (docs/science/plant_traits.md eq. (1)). DERIVED from the         !
+      !      base traits in derive_pft_rates (ED2 trait_plasticity_scheme=2, Lloyd et al.          !
+      !      2010; docs/science/plant_traits.md eqs. (3)-(4)); consumed only when                  !
+      !      [trait_dynamics].trait_plasticity_on. ------------------------------------------------!
       real(wp),    allocatable :: kplastic_sla(:)           !< [1/(m2/m2)] SLA light-response slope (>0)
       real(wp),    allocatable :: kplastic_vm0(:)           !< [1/(m2/m2)] Vcmax light-response slope (<0)
       real(wp),    allocatable :: kplastic_rd(:)            !< [1/(m2/m2)] Rd light-response slope (defaults to vm0)
@@ -270,9 +255,9 @@ module meds_pft_params
       real(wp),    allocatable :: pheno_bare_leaf_cover(:)       !< [--] a dormant canopy below this goes bare
    end type pft_table_t
 
-   !----- 'take the [hydraulics] scalar' sentinel (#179). Large and negative so it cannot be
-   !      mistaken for any physical hydraulic trait -- psi50 and pi0 are the only negative ones
-   !      and neither reaches -1e30.
+   !----- 'take the [hydraulics] scalar' sentinel. Large and negative so it cannot be mistaken for
+   !      any physical hydraulic trait -- psi50 and pi0 are the only negative ones and neither
+   !      reaches -1e30.
    real(wp), parameter :: HYD_UNSET = -1.0e30_wp
 
 contains
@@ -322,17 +307,17 @@ contains
                pft%leaf_angle_mean(n), pft%leaf_angle_std(n),                                &
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &
                pft%wood_carbon_density(n))
-      pft%storage_turnover_rate = 0.0_wp   ! #177: optional key; 0 reproduces pre-#177 behaviour
+      pft%storage_turnover_rate = 0.0_wp   ! optional key; 0 = no storage maintenance
       allocate(pft%max_relative_growth_rate(n), pft%max_absolute_growth_rate(n),                     &
                pft%max_absolute_growth_exponent(n))
       pft%max_relative_growth_rate     = 0.0_wp   ! optional keys; a rate of 0 = that sink limit off
       pft%max_absolute_growth_rate     = 0.0_wp
       pft%max_absolute_growth_exponent = 0.0_wp
-      pft%retained_carbon_fraction = 0.3_wp ! #151: optional key; 30% of leaf and root loss resorbed
+      pft%retained_carbon_fraction = 0.3_wp ! optional key; 30% of leaf and root loss resorbed
       pft%reproduction_height_fraction = 0.33_wp ! optional key; within Thomas (1996)'s 0.20-0.75
-      !----- #179: HYD_UNSET marks "no per-PFT value given"; the table builder then takes the       !
-      !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here, because !
-      !      alloc_pft_table runs before the [hydraulics] block is read.  -----------------------------!
+      !----- HYD_UNSET marks "no per-PFT value given"; the table builder then takes the            !
+      !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here,       !
+      !      because alloc_pft_table runs before the [hydraulics] block is read. ------------------!
       pft%hyd_leaf_pi0 = HYD_UNSET ; pft%hyd_leaf_elastic_mod = HYD_UNSET
       pft%stomata_psi_onset = HYD_UNSET   ! the same sentinel: half the PFT's turgor-loss point
       pft%wstress_psi_open  = HYD_UNSET   ! ... and the turgor-loss point / twice it
@@ -405,7 +390,8 @@ contains
       pft%mort_beta  = pft%mort_beta_0  * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_beta_exp
       !----- Light trait-plasticity slopes, ED2 trait_plasticity_scheme=2 (Lloyd et al. 2010).      !
       !       Vcmax/Rd decrease in shade (slope < 0); SLA and leaf lifespan increase. Consumed only  !
-      !       when trait_plasticity_on; the PFT file's [derived] table can pin each one. ----------!
+      !       when trait_plasticity_on; with override_derived the PFT file's [derived] table can    !
+      !       pin each one. ------------------------------------------------------------------------!
       lnexp            = max(lnexp_min_pft, min(lnexp_max, -2.788_wp + 0.01439_wp * pft%vcmax25))
       pft%kplastic_vm0 = -exp(lnexp)                                   ! Vcmax down in the understorey
       pft%kplastic_rd  = pft%kplastic_vm0                              ! ED2 default: Rd tracks Vcmax

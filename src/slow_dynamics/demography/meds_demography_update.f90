@@ -7,20 +7,21 @@
 ! floored) -- by the per-cohort TENDENCY bundle (cohort_deriv_block) the slow-loop driver computed  !
 ! this step, and then DERIVES the geometry (dbh, height, basal area, AGB, leaf area and the wood     !
 ! caches) from the committed carbon through the allometry. Geometry is never integrated: it is a   !
-! function of the carbon, so it cannot drift from it or leave its range (#389: leaf area integrated !
-! by its own rate went negative on a bare cohort while its leaf carbon sat at 0). It is MODE-        !
+! function of the carbon, so it cannot drift from it or leave its range (a leaf area integrated    !
+! by its own rate can go negative on a bare cohort whose leaf carbon sits at 0). It is MODE-       !
 ! AGNOSTIC: whether the tendencies came from the carbon flip or the empirical growth law is the    !
 ! driver's concern, invisible here. The derived-type SEAM (host) unpacks the SoA and calls the     !
-! bare-array KERNEL, which is wrapped in an OpenMP `target` region so it offloads cleanly while     !
-! the host keeps ALL state in normal memory (the discipline the former growth_step used).          !
+! bare-array KERNEL, which is wrapped in an OpenMP `target` region so it offloads cleanly while    !
+! the host keeps ALL state in normal memory.                                                       !
 !                                                                                          !
 ! fill_cohort_deriv is the shared per-cohort TENDENCY BUILDER used by BOTH the carbon (driver) and !
 ! empirical (C-API) computers: given the new carbon pools (however the caller derived them) it     !
 ! backs out their time-derivatives and advances the growth-average ring buffer with the caller's   !
 ! sample -- so the field list and the fill/evict logic live in ONE place.                          !
 !                                                                                          !
-! update_patch_states advances the slow per-PATCH state (patch ageing now; the soil-carbon step    !
-! will join). update_overtopping_lai fills the stored competition context from the sorted stand.   !
+! update_patch_states advances patch age; the soil-carbon pools, the other slow per-patch state,   !
+! advance in meds_biogeochem_dynamics. update_overtopping_lai fills the stored competition         !
+! context from the sorted stand.                                                                   !
 !==========================================================================================!
 module meds_demography_update
    use meds_kinds,     only : wp, ik
@@ -62,7 +63,7 @@ contains
       !----- Advance the moving-average ring buffer with the caller's sample (fill or evict), and   !
       !      take the window's sum from the buffer itself. A running sum (add the new sample, take  !
       !      off the evicted one) carries the round-off of every sample it has seen, so a window of  !
-      !      zeros after a large sample could read slightly negative (#396). The slots this cohort   !
+      !      zeros after a large sample could read slightly negative. The slots this cohort          !
       !      has not written yet are zero: init_cohort clears the column. -----------------------!
       if (cohort%growth_count(i) < n_window) cohort%growth_count(i) = cohort%growth_count(i) + 1_ik
       cohort%growth_hist(hist_pos, i) = ring_sample
@@ -135,11 +136,10 @@ contains
    end subroutine update_cohort_states_kernel
 
    !---------------------------------------------------------------------------------------!
-   ! Advance the slow per-PATCH state by one step of length dt_yr. Today this is patch AGEING  !
-   ! only; it is the seam for future slow per-patch prognostic state (e.g. the  !
-   ! CENTURY soil-carbon pools, whose tendency the driver will compute via the biogeochemistry  !
-   ! kernel and APPLY here) -- the patch-level analogue of update_cohort_states. Pure state      !
-   ! mutation over the patch SoA; no new library dependency (the tendency is computed upstream). !
+   ! Advance the slow per-PATCH state by one step of length dt_yr: patch AGEING, the             !
+   ! patch-level analogue of update_cohort_states. The CENTURY soil-carbon pools, the other      !
+   ! slow per-patch state, are advanced by meds_biogeochem_dynamics (soil_carbon_step is         !
+   ! their sole writer).                                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine update_patch_states(patch, dt_yr)
       type(patch_block), intent(inout) :: patch
@@ -174,7 +174,7 @@ contains
                !      one shared `recruit_dbh`, so they tie bit-exactly.                             !
                !                                                                                  !
                !      The light capture agrees: canopy_radiation puts exactly tied cohorts in one   !
-               !      radiative-transfer layer (#207). What this sweep drives is the light-plastic  !
+               !      radiative-transfer layer. What this sweep drives is the light-plastic         !
                !      traits and the demography's competition index.                                !
                k = i
                do while (k < i1)

@@ -4,7 +4,7 @@
 ! wiring of the fast-loop biophysics run-config (meds_config_io load_* helpers -> the            !
 ! meds_biophysics_opts bundles). Writes a small TOML fixture, parses it, and checks: (1) string    !
 ! selectors map to the right enum codes, (2) scalar keys override the defaults, (3) keys ABSENT    !
-! from the block keep their meds_biophysics_opts default (opt-in, no clobber). House style.        !
+! from the block keep their meds_biophysics_opts default (opt-in, no clobber).                    !
 !==========================================================================================!
 program test_biophysics_opts_config
    use meds_test_assert, only : check, check_true, test_report
@@ -69,10 +69,10 @@ program test_biophysics_opts_config
    call check('soil.dsl_dmax absent -> default 0.015', s%dsl_dmax, 0.015_wp, 0.0_wp)
    call check('soil.atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
 
-   !----- [energy]: what survives is the budget-closure threshold and the debug halt. The adaptive  !
-   !      substep keys were deleted as unread (#163) -- the soil-thermal solve is one BE step. -------!
+   !----- [energy]: the budget-closure threshold atol, for the debug halt. The soil-thermal solve is !
+   !      one backward-Euler step, so the block has no substep keys. ---------------------------------!
    call check('energy.atol overridden',       e%atol, 0.05_wp,    1.0e-12_wp)
-   !----- [energy] bottom thermal BC (#145): selector -> enum, anchor temperature read, and the    !
+   !----- [energy] bottom thermal BC: selector -> enum, anchor temperature read, and the           !
    !      anchor DEPTH left at its derived default when the key is absent. -------------------------!
    call check_true('energy.bottom_bc "dirichlet" -> ENERGY_BC_DIRICHLET',                          &
                    e%bottom_bc == ENERGY_BC_DIRICHLET, real(e%bottom_bc, wp))
@@ -99,8 +99,7 @@ program test_biophysics_opts_config
       call check_true('reload energy.bottom_bc matches', e0%bottom_bc == e%bottom_bc, real(e0%bottom_bc, wp))
    end block
 
-   !----- A table with NO [energy] block keeps the compiled defaults, so an existing config that   !
-   !      never mentioned the block is unchanged by #145: geothermal, i.e. the old behaviour. ------!
+   !----- A table with NO [energy] block keeps the compiled default bottom boundary, geothermal. ---!
    block
       type(toml_table_t)  :: tm2
       type(energy_opts_t) :: e2

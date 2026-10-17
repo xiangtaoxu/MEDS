@@ -2,7 +2,8 @@
 !==========================================================================================!
 ! test_plant_carbon_allocation -- unit tests for the elemental, GROWTH-ONLY daily carbon      !
 ! allocation kernel + growth_respiration. (Leaf loss is applied upstream by the driver from   !
-! meds_phenology::leaf_turnover_step -- tested in test_plant_phenology.)                     !
+! meds_phenology::leaf_turnover_step -- tested in test_plant_phenology.) The equations are   !
+! docs/science/plant_carbon_allocation.md eqs. (4)-(6).                                    !
 !                                                                                          !
 !   1. GROWTH RESP     : growth_respiration = g * max(0, npp_growth).                            !
 !   2. CLOSURE         : (growth pools + npp_store) - deficit = (gpp - resp) - growth_resp.       !
@@ -51,7 +52,7 @@ contains
       call check_close(name, (gl + gf + gw + gr + gs) - def, (gpp - resp) - gresp)
    end subroutine check_closure
 
-   !----- 1. growth_respiration = g * max(0, npp_growth) (relocated from the respiration module). !
+   !----- 1. growth_respiration = g * max(0, npp_growth). -----------------------------------!
    subroutine test_growth_respiration()
       call check_close('growth_resp: 0.3 * 10 = 3', growth_respiration(10.0_wp, 0.3_wp), 3.0_wp)
       call check_close('growth_resp: npp<=0 => 0',  growth_respiration(-5.0_wp, 0.3_wp), 0.0_wp)

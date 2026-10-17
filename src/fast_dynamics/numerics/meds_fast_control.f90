@@ -1,25 +1,21 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_control -- the shared FAST-LOOP ERROR-CONTROL facility (MEDS_NUMERICS_SCOPING.md      !
-! goal (a) / §4 / §9.3). One place owns: (1) the per-STATE-GROUP tolerance set that weights the    !
-! embedded-error WRMS norm, (2) the adaptive step-size CONTROLLER (an I-controller or a PI          !
-! controller over the embedded estimate), and (3) the STRICTNESS level (fixed / adaptive /          !
-! strict-conservation). Previously each adaptive path carried a single scalar `rtol` + its own      !
-! hard-coded per-field atols + an I-controller inline; this module unifies them so every scheme     !
-! measures error and adapts identically, and a "target accuracy" is well-defined across the         !
-! physically-heterogeneous column state.                                                            !
-!                                                                                          !
-! GROUPS. The fast column state mixes incomparable units/scales, so a single tolerance is           !
-! meaningless: the WRMS normalizes each state by its GROUP's (rtol, atol). The 5 groups are the      !
-! 5 physical field classes the ARK integrates -- CAS specific enthalpy, CAS specific humidity, CAS   !
-! CO2, soil internal energy, and plant water potential (soil moisture theta is operator-split OUT    !
-! of the ESDIRK stages, so its stage-difference is identically zero and it carries no group).        !
-!                                                                                          !
-! BIT-IDENTICAL DEFAULT. default_error_control(rtol) broadcasts the one `rtol` to every group and    !
-! keeps the historical per-field atols + the I-controller, so state_wrms_grouped + step_control_     !
-! factor reproduce the old state_wrms(rtol) + adaptive_step_update EXACTLY. Per-group tolerances,    !
-! the PI controller, and the L2 strict mode are opt-in (config), so turning them off is byte-        !
-! identical to before this module existed.                                                           !
+! meds_fast_control -- the shared FAST-LOOP ERROR-CONTROL facility. One place owns: (1) the      !
+! per-STATE-GROUP tolerance set that weights the embedded-error WRMS norm, (2) the adaptive      !
+! step-size CONTROLLER (an I-controller or a PI controller over the embedded estimate), and (3)  !
+! the STRICTNESS level (fixed / adaptive / strict-conservation). Every scheme measures error and !
+! adapts through it, so a "target accuracy" means the same thing on both and across the          !
+! physically heterogeneous column state: docs/science/numerical_scheme.md eqs. (3)-(4).          !
+!                                                                                                !
+! GROUPS. The fast column state mixes incomparable units and scales, so a single tolerance is    !
+! meaningless: the WRMS normalizes each state by its GROUP's (rtol, atol). The seven groups      !
+! (meds_fast_types) are CAS specific enthalpy, CAS specific humidity, CAS CO2, soil internal     !
+! energy, leaf and wood internal water mass, and soil moisture theta; the canopy films and the   !
+! pond carry no group (meds_column_state_ops%state_entry_rules).                                 !
+!                                                                                                !
+! DEFAULTS. default_error_control(rtol) gives every group the one `rtol`, the per-field default  !
+! atols and the I-controller. Per-group tolerances, the PI controller and the L2 strict mode are !
+! opt-in through config (meds_fast_config%build_error_control).                                  !
 !==========================================================================================!
 module meds_fast_control
    use meds_kinds,       only : wp, ik
@@ -39,9 +35,9 @@ module meds_fast_control
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Build an error_control_t that is BYTE-IDENTICAL to the pre-module behaviour: one `rtol`     !
-   ! broadcast to every group, the historical atols, the I-controller, L1. The caller overrides   !
-   ! %controller / %level / per-group %tols from config to opt into PI / L2 / per-group tolerances. !
+   ! The default error_control_t: one `rtol` for every group, the per-field default atols, the       !
+   ! I-controller, level L1. The caller overrides %controller / %level / per-group %tols from config !
+   ! to opt into PI / L2 / per-group tolerances.                                                     !
    !---------------------------------------------------------------------------------------!
    pure function default_error_control(rtol) result(ec)
       real(wp), intent(in)  :: rtol
@@ -49,41 +45,38 @@ contains
       ec%tols = default_tol_set(rtol)
    end function default_error_control
 
-   !----- The default tolerance set: one `rtol` broadcast to every group + the historical per-field    !
-   !      atols. state_wrms_grouped with this set is byte-identical to the pre-module state_wrms(rtol).  !
+   !----- The default tolerance set: one `rtol` for every group and the per-field default atols    !
+   !      (tol_set_t's initial values, meds_fast_types). ------------------------------------------!
    pure function default_tol_set(rtol) result(tols)
       real(wp), intent(in) :: rtol
       type(tol_set_t)      :: tols
-      tols%rtol = rtol              ! broadcast to all groups (legacy single-rtol behaviour)
-      ! tols%atol keeps its default (the historical per-field constants)
+      tols%rtol = rtol              ! the same rtol for every group
+      ! tols%atol keeps its default (the per-field constants)
    end function default_tol_set
 
    !---------------------------------------------------------------------------------------!
-   ! Grouped WRMS error norm of (a - b), each state normalized by its group's atol + rtol*|y_ref|.  !
-   !                                                                                          !
-   ! ONE NORM OVER THE WHOLE COLUMN STATE -- no per-caller opt-outs. Every prognostic field of      !
-   ! column_state_t contributes: the three CAS twins, soil internal energy, soil MOISTURE, and the   !
-   ! leaf/wood internal water MASS. A scheme does not get to declare a state uninteresting.          !
-   !                                                                                          !
-   ! This used to carry `with_mass` / `with_theta` switches, because on the ARK path both theta and   !
-   ! mass are operator-split OUT of the ESDIRK tableau -- passed through column_be_stage unchanged,   !
-   ! then advanced once over the full step -- so their embedded differences are STRUCTURALLY ZERO      !
-   ! there, and summing them adds (nsl + 2n) exact zeros that still increment cnt and divide the norm  !
-   ! down. That dilution is real: it makes the ARK march run looser than its stated ark_rtol.           !
-   !                                                                                          !
-   ! It is nonetheless the right trade, for two reasons. (1) A switch that says "do not measure this   !
-   ! state" is indistinguishable, at the call site, from a switch that says "this state cannot move",   !
-   ! and the two were in fact confused: RK45 integrates theta inside its tableau and the norm silently  !
-   ! discarded it, leaving an integrated state with no error control at all. (2) Measured, the cost is  !
-   ! not there: on b4_stand_summer the ARK's CAS-T RMSE moves by 0-1% at every dt_fast while its        !
-   ! sub-step count FALLS 9-15%, because at production dt_fast the error is dominated by the Category-0 !
-   ! coefficient freeze, not by the stepper (MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3d/3e). A dilution the       !
-   ! measurement cannot find is not worth a configuration axis.                                         !
-   !                                                                                          !
-   ! Soil moisture is error-CONTROLLED on every path regardless of this norm: both schemes take theta  !
-   ! from the soil-plant water network, whose own sub-step control is driven by the SAME GRP_THETA      !
-   ! tolerances build_tol_set seeds here; within a step theta moves at the network's steady rate, which !
-   ! every tableau integrates exactly.                                                                  !
+   ! Grouped WRMS error norm of (a - b), each state normalized by its group's atol + rtol*|y_ref|:    !
+   ! docs/science/numerical_scheme.md eq. (3).                                                        !
+   !                                                                                                  !
+   ! ONE NORM OVER THE WHOLE COLUMN STATE -- no per-caller opt-outs. Every prognostic field with a    !
+   ! group contributes: the three CAS twins, soil internal energy, soil MOISTURE, and the leaf/wood   !
+   ! internal water MASS. A scheme does not get to declare a state uninteresting.                     !
+   !                                                                                                  !
+   ! On the ARK path theta and the plant water ride operator-split maps outside the ESDIRK tableau,   !
+   ! so their embedded differences are STRUCTURALLY ZERO there, and summing them adds (nsl + 2n)      !
+   ! exact zeros that still increment cnt and divide the norm down: the ARK march runs slightly       !
+   ! looser than its stated ark_rtol. That is the right trade, for two reasons. (1) A switch that     !
+   ! says "do not measure this state" is indistinguishable, at the call site, from a switch that      !
+   ! says "this state cannot move": RK45 integrates theta inside its tableau, and such a switch       !
+   ! would leave an integrated state with no error control at all. (2) Measured on a summer stand,    !
+   ! the accuracy cost is under 1% while the ARK's sub-step count FALLS 9-15%, because at production  !
+   ! dt_fast the error is dominated by the Category-0 coefficient freeze, not by the stepper          !
+   ! (docs/science/numerical_scheme.md §5 and §7 item 3).                                             !
+   !                                                                                                  !
+   ! Soil moisture is error-CONTROLLED on every path regardless of this norm: both schemes take theta !
+   ! from the soil-plant water network, whose own sub-step control is driven by the SAME GRP_THETA    !
+   ! tolerances build_tol_set seeds here; within a step theta moves at the network's steady rate,     !
+   ! which every tableau integrates exactly.                                                          !
    !---------------------------------------------------------------------------------------!
    pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols) result(err)
       type(column_state_t), intent(in) :: a, b, y_ref
@@ -107,15 +100,15 @@ contains
    end function state_wrms_grouped
 
    !---------------------------------------------------------------------------------------!
-   ! Step-size FACTOR from the (normalized) embedded error `err` and the PREVIOUS accepted step's   !
-   ! error `err_prev`. err is the WRMS with tolerance baked into the denominators, so err <= 1 means !
-   ! "within tolerance". Dispatch on the controller:                                                  !
+   ! Step-size FACTOR from the (normalized) embedded error `err` and the PREVIOUS accepted step's     !
+   ! error `err_prev`: docs/science/numerical_scheme.md eq. (4). err is the WRMS with tolerance       !
+   ! baked into the denominators, so err <= 1 means "within tolerance". Dispatch on the controller:   !
    !   * CTRL_I  (or the very first step, err_prev <= 0): the elementary integral controller          !
-   !     `adaptive_step_update` = clamp(safety*err^-1/2, fmin, fmax) -- BYTE-IDENTICAL to the legacy   !
-   !     inline controller.                                                                            !
-   !   * CTRL_PI: Gustafsson's PI, fac = clamp(safety*err^-alpha * err_prev^beta, fmin, fmax). Using   !
-   !     the previous error damps the step oscillation the I-controller shows on stiff transients.     !
-   ! err/err_prev are floored at tiny_num so a perfectly-converged step gives fmax, never 0^-a = Inf.  !
+   !     `adaptive_step_update` = clamp(safety*err^(-1/(p+1)), fmin, fmax), p = ec%p_order the        !
+   !     order of the embedded estimate.                                                              !
+   !   * CTRL_PI: Gustafsson's PI, fac = clamp(safety*err^-alpha * err_prev^beta, fmin, fmax). Using  !
+   !     the previous error damps the step oscillation the I-controller shows on stiff transients.    !
+   ! err/err_prev are floored at tiny_num so a perfectly-converged step gives fmax, never 0^-a = Inf. !
    !---------------------------------------------------------------------------------------!
    pure function step_control_factor(err, err_prev, ec) result(fac)
       real(wp),              intent(in) :: err, err_prev

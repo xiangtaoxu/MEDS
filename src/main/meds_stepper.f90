@@ -1,13 +1,14 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_stepper -- the master stepper (the ED2 ed_model analogue; seed of an all-process         !
-! top-level loop). Lives in src/main/, beside the program that drives it.                       !
+! meds_stepper -- the master stepper (the ED2 ed_model analogue). Lives in src/main/, beside    !
+! the program that drives it.                                                                   !
 !                                                                                               !
 ! It owns only the CADENCE: one slow step (advance_one_step) drives the fast loop and then the  !
 ! slow tier, the thin meds_slow_dynamics coordinator (advance_slow_dynamics), which sequences   !
 ! vegetation dynamics and slow soil-carbon biogeochemistry as peer domains                      !
-! (MEDS_SLOW_DYNAMICS_DESIGN.md Part II). A calendar boundary between two steps is its own call !
-! (advance_boundary): the caller makes it after the output has read the step that ended there.  !
+! (docs/science/order_of_processes.md §2-§4). A calendar boundary between two steps is its own  !
+! call (advance_boundary, §5): the caller makes it after the output has read the step that      !
+! ended there.                                                                                  !
 !==========================================================================================!
 module meds_stepper
    use meds_kinds,                only : wp
@@ -29,9 +30,9 @@ module meds_stepper
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance one step. When fast biophysics is on and a fast context is supplied,            !
-   ! the sub-daily fast loop runs over the per-patch reservoirs BEFORE the slow loop (so a   !
-   ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics). !
+   ! Advance one step. When fast biophysics is on and a fast context is supplied, the        !
+   ! sub-daily fast loop runs over the per-patch reservoirs BEFORE the slow loop, so         !
+   ! vegetation dynamics allocates the GPP the fast loop accumulated over the step.          !
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(site, cfg, fast_ctx, met_src, met_cur, step_start, out_bufs,         &
                                run_energy_budget, run_water_budget, run_face_budget, slow_ledger, &
@@ -44,25 +45,25 @@ contains
       type(meds_time_t),    intent(in),    optional :: step_start  !< calendar time at the start of this slow step
       type(output_buffers_t), intent(inout), optional :: out_bufs  !< this polygon's FAST-tier staging (to the fast loop)
       type(budget_t), intent(inout), optional :: run_energy_budget, run_water_budget !< run-level ledgers (forwarded)
-      type(budget_t), intent(inout), optional :: run_face_budget   !< per-layer face closure (#189), forwarded
-      !----- The SLOW tier's own ledger (plan §10.2). Its peers above accumulate per-fast-step   !
-      !      flux residuals; this one snapshots the site store across the slow step, which is    !
-      !      the window neither of them can see. Same lifetime, same place in the plumbing.      !
+      type(budget_t), intent(inout), optional :: run_face_budget   !< per-layer face closure, forwarded
+      !----- The SLOW tier's own ledger (docs/science/order_of_processes.md §4). Its peers above !
+      !      accumulate per-fast-step flux residuals; this one snapshots the site store across   !
+      !      the slow step, which is the window neither of them can see. Same lifetime, same     !
+      !      place in the plumbing.                                                              !
       type(slow_ledger_t), intent(inout), optional :: slow_ledger
-      !----- The soil-carbon SEAM check (design Part II section 9): |the daily pool debit - the fast    !
-      !      loop's own accumulated Rh|, worst over patches. Both sides read the same frozen pool and   !
-      !      the same per-pool xi integral, so it is ~0 BY CONSTRUCTION -- an assertion guard, not a    !
-      !      correction. It was computed and DISCARDED on every step of every run until now, because    !
-      !      nothing above the slow driver asked for it.  ----------------------------------------------!
+      !----- The soil-carbon SEAM check (docs/science/soil_carbon.md §7): |the daily pool debit - the  !
+      !      fast loop's own accumulated Rh|, worst over patches. Both sides read the same frozen pool !
+      !      and the same per-pool xi integral, so it is ~0 BY CONSTRUCTION -- an assertion guard, not !
+      !      a correction. ----------------------------------------------------------------------------!
       type(soilc_seam_t), intent(inout), optional :: seam
-      real(wp),           intent(in),    optional :: latitude_deg  !< the polygon's (default [site], B12)
+      real(wp),           intent(in),    optional :: latitude_deg  !< the polygon's (default [site])
 
-      !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics   !
-      !      is ON a fast context MUST be supplied: the old `.and. present(fast_ctx)` SILENTLY       !
-      !      skipped the loop, leaving gpp_accum=0 so carbon-mode growth ran on zero GPP (BUG1).     !
-      !      Fail loud instead of silently wrong. Every optional is handed straight on: the fast     !
-      !      loop takes the forcing only when forcing_on and the source, cursor and step_start are   !
-      !      all present, and otherwise runs the constant-forcing MVP.                              !
+      !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics is !
+      !      ON a fast context MUST be supplied: skipping the loop would leave gpp_accum = 0, and   !
+      !      growth would run on zero GPP. Fail loud instead of silently wrong. Every optional is   !
+      !      handed straight on: the fast loop takes the forcing only when forcing_on and the       !
+      !      source, cursor and step_start are all present, and otherwise runs on the context's     !
+      !      constant reference climate.                                                            !
       if (cfg%fast_biophysics_on) then
          if (.not. present(fast_ctx))                                                              &
             error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
@@ -72,13 +73,13 @@ contains
                             run_face_budget=run_face_budget)
       end if
 
-      !----- Slow loop: vegetation dynamics (rate assembly + demographic application), gated on the   !
-      !      master slow_on freeze (holds cohort/patch state static while the fast loop still runs;   !
-      !      docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). Leaf phenology is the FIRST  !
-      !      step INSIDE vegetation_dynamics and advances whenever step_start is supplied.            !
-      !      `rho_air` values the canopy-air store. It lives on the fast context (site-uniform, from  !
-      !      the forcing), so the ledger never needs state of its own to carry it; without a fast     !
-      !      context there is no canopy air worth valuing and the term stays at zero. ---------------!
+      !----- Slow loop: vegetation dynamics (rate assembly + demographic application), gated on the  !
+      !      master slow_on freeze, which holds cohort/patch state static while the fast loop still  !
+      !      runs (docs/science/order_of_processes.md §2). Leaf phenology is the FIRST step INSIDE   !
+      !      vegetation_dynamics and advances whenever step_start is supplied. `rho_air` values the  !
+      !      canopy-air store. It lives on the fast context (site-uniform, from the forcing), so the !
+      !      ledger never needs state of its own to carry it; without a fast context there is no     !
+      !      canopy air worth valuing and the term stays at zero. -----------------------------------!
       if (cfg%slow_on) then
          if (present(fast_ctx)) then
             call advance_slow_dynamics(site, cfg, step_start, seam, slow_ledger, fast_ctx%rho_air,     &

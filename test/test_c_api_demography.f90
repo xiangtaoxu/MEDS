@@ -1,20 +1,19 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_c_api_demography -- COVERAGE FOR THE DEMOGRAPHY C-API SHIM.                            !
+! test_c_api_demography -- COVERAGE FOR THE DEMOGRAPHY C-API SHIM.                         !
 !                                                                                          !
-! WHY THIS TEST EXISTS, in the sharpest possible terms: when it was written, the shim it covers  !
-! DID NOT COMPILE against main. PR #137 changed `apply_recruitment`'s signature and the shim      !
-! still passed the old argument, and 42/42 tests passed on both back ends for a day because the   !
-! only thing that built this file was the optional `-DMEDS_BUILD_PYLIB=ON` library. That is the    !
-! same hole as #95 -> #100, one subsystem over, and structure-plan §7.6 #4 asked for exactly this   !
-! target to close it.                                                                              !
+! WHY THIS TEST EXISTS: outside this target the shim is built only by the optional         !
+! `-DMEDS_BUILD_PYLIB=ON` library, so a signature change under it (in `apply_recruitment`, !
+! say) leaves the C API unable to compile while every other test passes. Every C-API shim  !
+! is compiled into a ctest target so that an interface mismatch fails the build            !
+! (docs/building.md §Running the tests).                                                   !
 !                                                                                          !
-! Two things are therefore load-bearing here and neither is an assertion:                          !
-!   * the shim is COMPILED by a mandatory target, so a signature or struct change is a build break;!
-!   * the test runs from the SOURCE directory against the SHIPPED example config, so that config    !
-!     has a build-time consumer. It had none, and had drifted 37 required keys behind the schema    !
-!     -- the example could not load at all. A config nothing loads rots exactly like a shim         !
-!     nothing compiles.                                                                             !
+! Two things are therefore load-bearing here and neither is an assertion:                  !
+!   * the shim is COMPILED by a mandatory target, so a signature or struct change is a     !
+!     build break;                                                                         !
+!   * the test runs from the SOURCE directory against the SHIPPED example config, so that  !
+!     config has a build-time consumer. A config nothing loads falls behind the config     !
+!     reader unnoticed, exactly as a shim nothing compiles falls behind its interfaces.    !
 !                                                                                          !
 ! The assertions cover what neither of those can: that the opaque-handle registry hands out         !
 ! distinct handles, releases them, and that a site actually advances behind one.                     !
@@ -42,8 +41,9 @@ program test_c_api_demography
    call banner('demography C-API shim')
 
    !=== 1. The SHIPPED example config loads. ================================================!
-   !      This is the assertion that would have caught the 37-key schema drift. It is a real  !
-   !      consumer of examples/example03_demography/, which previously had none.                !
+   !      This is the assertion that catches the example config falling behind the reader (a !
+   !      required key it lacks): it makes this test a consumer of                           !
+   !      examples/example03_demography/.                                                    !
    cpath = to_c(CFG)
    ch = meds_config_load(cpath, int(len(CFG), c_int))
    call check(ch > 0_c_int, 'the shipped example config loads through the C-API')

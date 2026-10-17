@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # The census that starts the BCI example: the 2010 census of the Barro Colorado Island 50-ha plot,
 # for scripts/prepare_census/make_census.py. Each 20 m quadrat is one patch; MEDS fuses the stand
-# before the first step (docs/dev_plans/MEDS_BCI_CENSUS_INIT_PLAN.md sec. 5.4).
+# before the first step (docs/configuration.md, "How a run starts").
 #
 # The tables are ForestGEO tree tables, one row per tree. The copy named here is the lab's
 # (/ibstorage/xiangtao/bci_census); the public release is Condit et al. 2019, Dryad

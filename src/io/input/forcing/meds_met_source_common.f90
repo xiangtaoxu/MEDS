@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_source_common -- what the two forcing FILE sources share (MEDS_FORCING_DESIGN.md   !
-! sections 4 and 15): the reader's status codes, the file time axis with its declared recycle  !
+! meds_met_source_common -- what the two forcing FILE sources share (docs/science/forcing.md   !
+! §1, §2 and §9): the reader's status codes, the file time axis with its declared recycle      !
 ! window, and the check of a file against the [forcing] config that claims to describe it.     !
 !                                                                                          !
 ! A MEDS forcing file (meds_met_file_source) and the ED_ERA5land archive                        !
@@ -55,8 +55,9 @@ contains
 
    !=======================================================================================!
    !  Validate the DECLARED recycle window ([forcing].recycle_start/recycle_end) against the    !
-   !  file that was just opened. MEDS does NOT infer the window: it is told where the cycle       !
-   !  starts and how long it is, and this routine's only job is to confirm the file agrees.       !
+   !  file that was just opened (docs/science/forcing.md §9). MEDS does NOT infer the window: it  !
+   !  is told where the cycle starts and how long it is, and this routine's only job is to        !
+   !  confirm the file agrees.                                                                    !
    !                                                                                              !
    !  Inferring the window is what this refuses to do. Wrapping a file on its own span shifts        !
    !  hour-of-day on EVERY wrap unless the span is whole years: the real ERA5-Land record (first     !
@@ -90,7 +91,7 @@ contains
       start_sec = seconds_between(src%base_time, src%fcfg%recycle_start)
       end_sec   = seconds_between(src%base_time, src%fcfg%recycle_end)
 
-      !----- V2: recycle_start must land EXACTLY on a record stamp. This is the check that stops  !
+      !----- recycle_start must land EXACTLY on a record stamp. This is the check that stops      !
       !      MEDS guessing the start of the day: a config saying 00:00:00 against an ERA5-Land      !
       !      file stamped 01:00:00 is reported, with both values, rather than quietly re-derived.   !
       do i = 1_ik, src%nrec
@@ -109,7 +110,7 @@ contains
          stat = MET_ERR_START_NOT_A_RECORD ; return
       end if
 
-      !----- V3: the file must cover the whole window, i.e. hold a record in the LAST interval    !
+      !----- The file must cover the whole window, i.e. hold a record in the LAST interval        !
       !      below recycle_end. Without that the cycle has a hole at its far edge and the seam      !
       !      bracket below would interpolate across it. --------------------------------------------!
       do i = src%nrec, src%irec_cycle_first, -1_ik
@@ -148,22 +149,14 @@ contains
       end if
    end function file_lookup_sec
 
-   !----- Map a model instant into the declared recycle window (ED2 year_use substitution), keeping !
-   !      month/day/hour/minute/second EXACT -- that exactness is the whole point: it is what makes   !
-   !      the sub-daily phase and the day-of-year survive an arbitrary number of wraps.               !
-   !                                                                                                  !
-   !      ANCHOR-RELATIVE, so the window may begin anywhere in the calendar rather than only on Jan-1: !
-   !                                                                                                   !
-   !         off = 1 when the model's (month,day,hh:mm:ss) falls BEFORE the window's own anchor         !
-   !               month/day/time-of-day -- that instant belongs to the NEXT file year of the cycle.    !
-   !         yf  = anchor_year + off + modulo(model_year - anchor_year - off, n_cycle_years)            !
-   !                                                                                                   !
-   !      For a Jan-1 00:00:00 anchor `off` is identically 0 and this reduces, term for term, to the    !
-   !      plain year substitution. Without `off`, a mid-year window (or an end-of-interval file whose   !
-   !      first stamp is 01:00) maps instants OUTSIDE the window it is supposed to cycle over.         !
-   !                                                                                                   !
-   !      LEAP DAY: Feb-29 -> Feb-28 when the target file year is non-leap (ED2 read_ol_file repeats    !
-   !      Feb 28). A non-leap model year never asks for Feb-29, so the substitution is one-directional. !
+   !----- Map a model instant into the declared recycle window (ED2 year_use substitution;         !
+   !      docs/science/forcing.md eq. (16)), keeping month/day/hour/minute/second EXACT, so the       !
+   !      sub-daily phase and the day-of-year survive an arbitrary number of wraps. Anchor-relative:  !
+   !         off = 1 when the model's (month,day,hh:mm:ss) falls BEFORE the window's anchor         !
+   !         yf  = anchor_year + off + modulo(model_year - anchor_year - off, n_cycle_years)        !
+   !      Without `off`, a mid-year window (or an end-of-interval file whose first stamp is 01:00)  !
+   !      maps instants OUTSIDE the window. LEAP DAY: Feb-29 -> Feb-28 when the target file year is !
+   !      non-leap (ED2 read_ol_file repeats Feb 28).                                               !
    pure function recycle_model_to_file(src, now) result(now_file)
       type(met_source_t), intent(in)  :: src
       type(meds_time_t),  intent(in) :: now
@@ -212,18 +205,18 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! validate_file_against_config -- the forcing file describes itself; the config also describes  !
-   ! it. When they disagree, the run is wrong in a way no later check can see, so stop here (#185). !
+   ! it. When they disagree, the run is wrong in a way no later check can see, so stop here.        !
    !                                                                                          !
    ! THE SPACING CHECK IS THE IMPORTANT ONE. dt_forcing is taken verbatim from the config and used  !
-   ! to place interval midpoints, disaggregate shortwave and bracket the recycle seam; nothing ever  !
-   ! compared it against the file. A config saying 3600 s against a half-hourly file mis-times every !
-   ! one of those. Checking the ACTUAL record spacing is strictly stronger than checking the         !
-   ! `timestep_seconds` attribute, which is why that attribute stays provenance and this does the     !
-   ! work.                                                                                            !
+   ! to place interval midpoints, disaggregate shortwave and bracket the recycle seam, so a config   !
+   ! saying 3600 s against a half-hourly file mis-times every one of those. Checking the ACTUAL      !
+   ! record spacing is strictly stronger than checking the `timestep_seconds` attribute, which is    !
+   ! why that attribute stays provenance and this does the work.                                     !
    !                                                                                          !
-   ! The two text attributes are checked when PRESENT and skipped when absent, so a file written     !
-   ! before the prep script emitted them still loads. `elevation(grid)` stays unread on purpose:     !
-   ! site elevation is a [site] property, and the variable is provenance about the source grid.      !
+   ! avg_convention, sw_input_kind and the heights are checked when PRESENT and skipped when absent, !
+   ! so a file without them still loads; time_zone is required (d). `elevation(grid)` stays unread  !
+   ! on purpose: site elevation is a [site] property, and the variable is provenance about the      !
+   ! source grid.                                                                                    !
    !---------------------------------------------------------------------------------------!
    subroutine validate_file_against_config(src, ncid, vstat)
       type(met_source_t), intent(in)   :: src
@@ -284,7 +277,7 @@ contains
          end if
       end if
 
-      !----- (d) The clock. Every forcing file is in UTC (MEDS_FLUX_TOWER_FORCING_PLAN.md D1) and   !
+      !----- (d) The clock. Every forcing file is in UTC (docs/science/forcing.md §1) and          !
       !      says so. A local-time file read as UTC keeps its daily totals and moves its sun by the   !
       !      offset, which nothing downstream notices, so the attribute is required. The archive is   !
       !      UTC by construction and is not asked. -------------------------------------------------!
@@ -316,7 +309,7 @@ contains
          end if
       end if
 
-      !----- (f) CO2air (#184): CO2 comes from [forcing].co2_source, never the met file, so a file  !
+      !----- (f) CO2air: CO2 comes from [forcing].co2_source, never the met file, so a file        !
       !      carrying it would be read by nothing. Rejected rather than ignored. -------------------!
       block
          integer(c_int) :: vid
@@ -324,7 +317,7 @@ contains
             write(*,'(a)') ' met_open: the forcing file carries CO2air, but CO2 comes from'
             write(*,'(a)') '   [forcing].co2_source ("const" or "file"), never from the met file.'
             write(*,'(a)') '   Remove it (ncks -x -v CO2air in.nc out.nc) or rebuild the file with'
-            write(*,'(a)') '   make_forcing_file.py, which no longer writes it.'
+            write(*,'(a)') '   make_forcing_file.py, which does not write it.'
             vstat = MET_ERR_CO2_IN_MET_FILE ; return
          end if
       end block

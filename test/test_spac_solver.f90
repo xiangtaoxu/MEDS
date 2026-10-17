@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_spac_solver -- the soil-plant water solver, meds_spac_solver                          !
-! (MEDS_SPAC_WATER_NETWORK_PLAN.md P2).                                                     !
+! (docs/science/soil_plant_water.md).                                                      !
 !                                                                                          !
 !   1. ARROWHEAD SOLVE : the Schur solve equals dense elimination on a random arrowhead system. !
 !   2. JACOBIAN        : the assembled Jacobian equals the residual's derivative (wet, dry,      !
@@ -16,10 +16,11 @@
 !   7. INFEASIBLE DEMAND: a leaf asked for many times the water it and its xylem can supply stays  !
 !                        above empty and transpires less than asked.                               !
 !   8. LEAFLESS        : a cohort with no leaves: its leaf sits at the wood less the crown head.    !
-!   9. DRY-LAYER STORM : the 1994-04-20 pattern -- a thin top layer near residual, a stand         !
-!                        refilling its wood, then a storm: converges, no store leaves its range.   !
+!   9. DRY-LAYER STORM : a thin top layer near residual, a stand refilling its wood, then a       !
+!                        storm: converges, no store leaves its range.                              !
 !  10. SATURATED       : rain on a saturated column ponds, spills, and conserves.                   !
 !  11. ACCURACY        : the default tolerances track a tight-tolerance run.                       !
+!  12. VANISHING STORES: a near-leafless leaf and a trace pond stay in range, and water closes.   !
 !==========================================================================================!
 program test_spac_solver
    use meds_test_assert, only : check_true, check_close, check_int, test_report
@@ -245,7 +246,7 @@ contains
          w0 = total_water(spac) ; wc0 = sum(spac%water_coh, dim=1)
          call spac_advance(spac, soil, sopts, forc, hyd, dt)
          w1 = total_water(spac) ; wc1 = sum(spac%water_coh, dim=1)
-         !----- Each cohort's leaf + wood water changes by its own uptake less its transpiration (#189). !
+         !----- Each cohort's leaf + wood water changes by its own uptake less its transpiration. ------!
          worst_coh = max(worst_coh, maxval(abs((wc1 - wc0) - (sum(spac%uptake, dim=1) - spac%transp)))    &
                                     / max(maxval(wc0), 1.0e-6_wp))
          flows = spac%rain * dt - spac%drain - spac%evap - spac%spill - sum(spac%transp)
@@ -362,8 +363,8 @@ contains
    end subroutine test_leafless
 
    !=======================================================================================!
-   !----- The BCI regrowth crash (1994-04-20): the top 2.6 cm a hair above residual, a stand    !
-   !      whose wood is half empty and refilling, then 30 mm/h of rain for two steps. ----------!
+   !----- A dry-layer storm, from a BCI regrowth stand: the top 2.6 cm a hair above residual, a !
+   !      stand whose wood is half empty and refilling, then 30 mm/h of rain for two steps. ----!
    subroutine test_dry_layer_storm()
       type(spac_solver_t) :: spac
       real(wp) :: theta(soil%n_active), w0, flows, theta_min
@@ -445,7 +446,7 @@ contains
    end subroutine test_accuracy
 
    !=======================================================================================!
-   !----- Two stores the BCI regrowth stand (1994-04-20) showed: a cohort with 1e-22 kgC of leaves,  !
+   !----- Two stores a BCI regrowth stand reaches: a cohort with 1e-22 kgC of leaves,              !
    !      whose leaf store holds 1e-26 kg/m2 against its plant's 1e-9 tolerance, and a pond holding a !
    !      trace of water over a dry top layer in light rain, which drains tens of millimetres an hour. !
    !      A day of them: no sub-step forced, the leaf never above saturation, the pond never below  !

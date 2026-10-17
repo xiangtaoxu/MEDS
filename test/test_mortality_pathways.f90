@@ -1,9 +1,9 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_mortality_pathways -- mortality carbon SPLIT BY PATHWAY (#169).                          !
+! test_mortality_pathways -- mortality carbon SPLIT BY PATHWAY.                                 !
 !                                                                                          !
-! A MEDS plant can die three ways, and the output carried the rates and the total litter but      !
-! never the split, so a stand thinning continuously and a stand being knocked over looked alike.   !
+! A MEDS plant can die three ways, and without the split a stand thinning continuously and a      !
+! stand being knocked over look alike in the output.                                               !
 ! The three pathways are mutually exclusive and jointly exhaustive:                                !
 !                                                                                          !
 !   BACKGROUND  the continuous hazard, applied every slow step to every cohort's density           !
@@ -19,7 +19,7 @@
 ! a pathway split: not a wrong total, but the same death counted twice, which no sum-to-the-total  !
 ! check can see and which is exactly what a user would be reading the split to rule out.           !
 !                                                                                          !
-! Units follow the block's contract (#239): the slots hold (rate x weight in seconds) and are read !
+! Units follow the block's contract: the slots hold (rate x weight in seconds) and are read        !
 ! through patch_diag_value, the same reader the output layer uses, never off the raw accumulator.  !
 !==========================================================================================!
 program test_mortality_pathways
@@ -36,7 +36,7 @@ program test_mortality_pathways
    use meds_test_support,        only : banner, build_test_config, check, check_close, test_report
    implicit none
 
-   call banner('mortality carbon by pathway (#169)')
+   call banner('mortality carbon by pathway')
    call check_cull()
    call check_disturbance()
    call check_background()
@@ -171,7 +171,7 @@ contains
       call add_cohort(site, cfg, 1_ik, 2_ik, 0.50_wp, 20.0_wp)
       call finalize_init(site)
       call arm_patch_diag(site, cfg)
-      !----- With the fast loop off, the slow step weights the block itself (#299), so the fixture's  !
+      !----- With the fast loop off, the slow step weights the block itself, so the fixture's         !
       !      stand-in for the fast sub-steps' weight would count the step twice. --------------------!
       site%patch%diag%w = 0.0_wp
 

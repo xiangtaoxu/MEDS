@@ -15,8 +15,8 @@
 #                                                                                          #
 # Notes:                                                                                    #
 #   * System install needs root; the script uses sudo and will prompt for your password.   #
-#   * Ubuntu's HDF5 Fortran bindings land under /usr/include/hdf5/serial — point the build  #
-#     there (or use the h5fc/pkg-config wrappers) when MEDS gains an HDF5 I/O layer.        #
+#   * Ubuntu's HDF5 Fortran bindings land under /usr/include/hdf5/serial. MEDS needs       #
+#     none (its I/O is netCDF); a build that does points there or uses h5fc/pkg-config.    #
 #==========================================================================================#
 set -euo pipefail
 

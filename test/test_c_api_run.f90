@@ -4,10 +4,10 @@
 !                                                                                          !
 ! Two things here are load-bearing and neither is an assertion:                                !
 !                                                                                          !
-!   * `src/c_api/meds_c_api_run.f90` is COMPILED by a MANDATORY target, so a change to         !
-!     `meds_driver`'s open/step/finalize seam is a build break rather than a silent rot in an   !
-!     optional library. That is the §7.6 #4 rule, and it exists because `meds_c_api_demography` !
-!     spent a day not compiling while 42/42 stayed green.                                        !
+!   * `src/c_api/meds_c_api_run.f90` is COMPILED by a MANDATORY target, so a change to     !
+!     `meds_driver`'s open/step/finalize seam is a build break rather than a silent rot in !
+!     an optional library. Every C-API shim is compiled into a ctest target for this       !
+!     reason (docs/building.md §Running the tests).                                        !
 !                                                                                          !
 !   * this test runs from `examples/example04_column_biophysics/` and LOADS BOTH of that          !
 !     example's shipped configs, the default and the calibrated run. The example runs them with   !

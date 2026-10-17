@@ -5,7 +5,7 @@ give each process's equations; this one gives their sequence. Three clocks nest:
 
 - a **fast sub-step** `dt_fast` (900 s in the shipped configs) advances the surface column: canopy air, leaves and
   wood, soil and snow;
-- a **slow step** `dt_slow` (one day) runs `n_fast_per_slow` fast sub-steps, then the vegetation and
+- a **slow step** `dt_slow` (one day in the shipped configs; `"12h"` and `"7d"` are accepted) runs `n_fast_per_slow` fast sub-steps, then the vegetation and
   soil-carbon dynamics, then the output;
 - the **calendar boundaries** between two slow steps restructure the stand: monthly for cohorts,
   yearly for patches. At each month boundary, the **I/O phase** writes the files.
@@ -41,8 +41,10 @@ the output's final partial windows.
 
 1. Prefetch the month's forcing once.
 2. The compute phase: take each polygon through all of the month's steps. It uses the same
-   `polygon_step` as a site run, and touches no file.
-3. The I/O phase: the region files, then each detail polygon's own files.
+   `polygon_step` as a site run, and touches no file. The polygons run side by side on
+   `[run].n_threads` threads.
+3. The I/O phase: the region's files and, at the years `[state].interval_years` asks for, its state
+   file ([§6](#6-output-and-io)).
 
 Each polygon's pending restructuring ([§5](#5-the-calendar-boundary)) carries from one month to the
 next.
@@ -55,7 +57,7 @@ next.
 
 1. **The boundary the last step ended on**, if it owes one (`restructure_pending`): the stand's
    monthly and yearly restructuring ([§5](#5-the-calendar-boundary)).
-2. **Growth-temperature acclimation** (opt-in, `leaf_thermal_acclimation`): advance the running mean
+2. **Growth-temperature acclimation** (opt-in, `[leaf_physiology].thermal_acclimation`): advance the running mean
    from the previous step's daily mean air temperature, and refresh the leaf photosynthesis table.
 3. **The fast loop** ([§3](#3-the-fast-loop)), when `fast_biophysics_on`.
 4. **The slow dynamics** ([§4](#4-the-slow-dynamics)), when `slow_on`.
@@ -65,10 +67,11 @@ next.
      `now` has left. A record holds the steps that start in its period ([diagnostics](diagnostics.md) §4).
 6. **Zero the step diagnostic blocks**, which the output has now read. If `now` is a month boundary,
    set `restructure_pending`, and at a year boundary `restructure_new_year` as well.
-7. **Guards**:
-   - a NaN check at each year boundary;
-   - a soil-carbon plausibility check every step. It is unconditional, while the slow ledger's copy of
-     the check can be switched off.
+7. **Guards**, every step:
+   - a NaN check on the stand, the tissue temperatures, the canopy air and the run's energy and water
+     ledgers;
+   - a bounds check on each cohort's state and, with soil carbon on, each soil-carbon pool. It is
+     unconditional, while the slow ledger's copy of the soil-carbon check can be switched off.
 
 ---
 
@@ -92,10 +95,11 @@ next.
 
 **Then, for each patch:**
 
-The patches are independent here, so this loop is threaded ([numerical_scheme](numerical_scheme.md)
-§6a). Each patch first gathers its cohorts into the column buffer with their canopy geometry, and takes
-its canopy-air top, roughness and displacement for the day. It then freezes, for the day, its
-soil-carbon pools and the tissue water the slow step shed.
+The patches are independent here, so in a site run this loop is threaded
+([numerical_scheme](numerical_scheme.md) §6a); a region threads its polygons instead, and each
+polygon's patches run on one thread. Each patch first gathers its cohorts into the column buffer
+with their canopy geometry, and takes its canopy-air top, roughness and displacement for the day.
+It then freezes, for the day, its soil-carbon pools and the tissue water the slow step shed.
 
 **Each fast sub-step `k`, in order:**
 
@@ -128,7 +132,7 @@ After the sub-steps, the run's whole-column energy and water budgets fold in the
 ## 4. The slow dynamics
 
 `advance_slow_dynamics` opens the slow ledger's window for the step, then runs
-`vegetation_dynamics`, which advances the cohorts one day:
+`vegetation_dynamics`, which advances the cohorts by one slow step:
 
 1. **Leaf phenology**: one daily step of the flush and senescence tendencies, from the step's start
    day of year, the day's mean air temperature, and each cohort's daily PAR at its top and predawn
@@ -150,7 +154,7 @@ After the sub-steps, the run's whole-column energy and water budgets fold in the
 
 Then, in `advance_slow_dynamics`:
 
-7. **Patch ageing** by one day.
+7. **Patch ageing** by one slow step.
 8. **The canopy-air depth refresh**: each patch's canopy-air volume is resized to its tallest cohort,
    with the entrained or detrained air booked as an exchange.
 9. **Soil biogeochemistry** (`soil_carbon_on`): the daily CENTURY step, which consumes the litter
@@ -209,8 +213,8 @@ Three consequences:
   period in a queue. No netCDF call is made inside a step.
 - **The I/O phase** runs at each month boundary, after the step and before the next one:
   - it writes the queued records;
-  - in a site run, every `[state].interval_years`, it writes the checkpoint at the year boundary
-    (a region writes none until its restarts exist).
+  - every `[state].interval_years`, at the year boundary, it writes the checkpoint: a site's state
+    file, or the region's one state file holding every polygon.
 
   The terminal checkpoint is written at the end of the run.
 
@@ -234,4 +238,4 @@ Three consequences:
 | the output tick | `output_integrate`, `output_integrate_fast`, `close_tier` | `meds_output_integrate` |
 | zeroing the step diagnostics | `reset_step_diagnostics` | `meds_site_state_types` |
 | writing records | `output_serialize` (a site's file set and a region's) | `meds_output_manager` |
-| checkpoints | `state_write_state`, `io_read_state` | `meds_io` |
+| checkpoints | `state_write_state`, `io_read_state`; a region's `region_write_state` | `meds_io`, `meds_region` |

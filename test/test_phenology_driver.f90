@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_phenology_driver -- integration test for the slow-loop leaf-phenology WIRING            !
-! (meds_vegetation_dynamics.advance_leaf_phenology, the folded phenology driver), as opposed to  !
+! (meds_vegetation_dynamics.advance_leaf_phenology, the phenology driver), as opposed to         !
 ! the kernel itself (test_plant_phenology). It drives a two-cohort site through one synthetic    !
 ! Ithaca year, feeding the daily drivers through the site accumulators the fast loop fills, and   !
 ! checks the two leaf tendencies:                                                                 !
@@ -12,10 +12,11 @@
 !   2. NO CUES             : a cohort with both masks CUE_NONE stays flushing, never senescing.  !
 !   3. NO-TEMPERATURE      : a step with no accumulated air temperature (pheno_tair_n = 0) is    !
 !                            skipped.                                                            !
-!   4. THE CUE DRIVERS, each against a HAND-COMPUTED value, because nothing else checks that the !
-!      numbers the fast loop reduces are the numbers the kernel reads: the warmth and cold sums,  !
-!      the predawn-psi sums against the PFT's derived turgor-loss point, each cohort's own light  !
-!      mean, and the light memory a new cohort starts from.                                       !
+!   4. THE CUE DRIVERS (docs/science/plant_phenology.md eqs. (3)-(5)), each against a            !
+!      HAND-COMPUTED value, because nothing else checks that the numbers the fast loop reduces   !
+!      are the numbers the kernel reads: the warmth and cold sums, the predawn-psi sums against  !
+!      the PFT's derived turgor-loss point, each cohort's own light mean, and the light memory a !
+!      new cohort starts from.                                                                   !
 !   5. ACCEPTANCE          : a drought-deciduous and a light-exchanging PFT run end to end.      !
 !==========================================================================================!
 program test_phenology_driver

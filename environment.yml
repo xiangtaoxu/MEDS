@@ -1,8 +1,8 @@
-# Conda environment for MEDS: the netCDF C library used by the optional Fortran output
-# layer (-DMEDS_ENABLE_IO=ON) AND the Python post-processing stack (post_proc/).
+# Conda environment for MEDS: the netCDF C library every Fortran build needs (netCDF is a hard
+# dependency) AND the Python post-processing stack (post_proc/).
 #   mamba env create -f environment.yml      # or: conda env create -f environment.yml
 #   conda activate meds
-# Then point CMake at it for the IO build: -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+# Then point CMake at it: -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 name: meds
 channels:
   - conda-forge
@@ -11,7 +11,7 @@ dependencies:
   - numpy
   - matplotlib
   - pillow           # GIF writer: plot_forest_structure.py (PillowWriter) + animate_landscape_growth.py (PIL)
-  - netcdf4          # pulls libnetcdf (the C library + CMake config) for the Fortran IO build
+  - netcdf4          # pulls libnetcdf (the C library + CMake config) for the Fortran build
   - pandas           # the flux-tower and census preparation tools (scripts/prepare_flux_tower, prepare_census)
   - pytest           # those tools' tests, which CTest runs when the Python it finds has them
   - scipy            # Voronoi / KD-tree for post_proc/plot_landscape_3d.py

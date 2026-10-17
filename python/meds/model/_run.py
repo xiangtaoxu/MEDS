@@ -4,7 +4,7 @@
 ``Run`` is an opaque handle to a live simulation -- the same thing the ``meds_main``
 executable holds -- with the time loop handed back to Python:
 
-    with Run("meds_config_july.toml") as run:
+    with Run("meds_config_main.toml") as run:
         for step in run:
             if step.is_new_year:
                 print(step.date, run.total_agb, run.soil_carbon)

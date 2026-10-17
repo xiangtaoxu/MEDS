@@ -1,8 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
-!----- Test fixture: the geometrically thickening soil layers the column tests were written on  !
+!----- Test fixture: geometrically thickening soil layers for the column tests                  !
 !      (depth D in n layers, layer k's bottom at D (e^(g k / n) - 1) / (e^g - 1)). The model's   !
 !      own layers are SOIL_LAYER_TEMPLATE cut at the depth; these tests pass this grid as an     !
-!      explicit list of bottoms, so the numbers they check stay those of the grid they used. ---!
+!      explicit list of bottoms, because the numbers they check are computed on this grid. -----!
 module meds_test_soil_grid
    use meds_kinds, only : wp, ik
    implicit none

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""netCDF writer for the demography example's runs (#260).
+"""netCDF writer for the demography example's runs.
 
 The demography example drives MEDS's law-free apply-primitives from Python with its own
 vital-rate laws, so nothing in the Fortran output layer is involved: this module writes the

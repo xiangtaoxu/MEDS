@@ -46,7 +46,7 @@ demography or state layer — so a prescribed driver stays low in the library gr
   the model's own saturation curve, and the wind components become the speed, at each stamp;
   shortwave is partitioned at ingest. Rain and shortwave come from the record whose interval
   contains the instant. Also the no-file constant-climate backend, used by the tests.
-- **`meds_co2_series`** — the prescribed CO₂ (#184): reads a MEDS CO₂ file (format 1, a plain-text
+- **`meds_co2_series`** — the prescribed CO₂: reads a MEDS CO₂ file (format 1, a plain-text
   list of period means at a declared `timestep`) and looks it up at a model instant, linear between
   period middles. `met_open` reads it once and `met_instant` sets `met%co2` from it, or from
   `co2_const`, for every backend alike; the met file never carries CO₂. The shipped series is
@@ -126,7 +126,7 @@ data. `examples/example04_column_biophysics/` is the worked example.
 
 The file format, the ERA5-Land de-accumulation recipe (including the hour-zero trap), and all the
 disaggregation math are documented in [`docs/science/forcing.md`](../../../../docs/science/forcing.md).
-The design record, now archived, is [`docs/dev_plans/archive/MEDS_FORCING_DESIGN.md`](../../../../docs/dev_plans/archive/MEDS_FORCING_DESIGN.md).
+The design record is [`docs/dev_plans/archive/MEDS_FORCING_DESIGN.md`](../../../../docs/dev_plans/archive/MEDS_FORCING_DESIGN.md).
 
 **Tested** in `test/test_met_driver.f90`: the kernels, the constant backend, a NetCDF round trip
 that writes and reads a two-grid file, with and without the wind vector, and the prescribed CO₂

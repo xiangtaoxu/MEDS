@@ -1,6 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_snow -- unit tests for the MEDS snow store (meds_ground_biophysics, P0).                              !
+! test_snow -- unit tests for the MEDS snow store (meds_ground_biophysics;                                   !
+! docs/science/snow_biophysics.md).                                                                          !
 !   1. snow-cover fraction is monotone in [0,1].                                                 !
 !   2. datum round-trip: temp_to_internal_energy/internal_energy_to_temp + internal_energy_ice are exact inverses.     !
 !   3. cold-snap ACCUMULATION: swe grows, snow_temp < t_3ple, fliq = 0; mass+energy ledgers close.!
@@ -179,10 +180,10 @@ contains
       env%can_temp = 268.0_wp ; env%ggnet = 0.01_wp ; env%rho_air = 1.3_wp ; env%press = 101325.0_wp
       env%t_soil_top = 268.0_wp ; env%k_soil_top = 1.5_wp ; env%dz_soil_top = 0.05_wp
       !----- SATURATED CAS -> no vapour gradient -> no sublimation. Saturation must be taken OVER    !
-      !      ICE (fliq = 0), because that is what the pack's surface now saturates over (#89). Using   !
-      !      the liquid curve here would leave a real 5 % humidity gradient at 268 K and quietly turn  !
-      !      this "isothermal" fixture into a deposition experiment -- which is exactly what it did     !
-      !      when the ice branch landed, and is why the g_base assertion below caught it. -------------!
+      !      ICE (fliq = 0), because that is what the pack's surface saturates over                 !
+      !      (docs/science/snow_biophysics.md eq. (1)). Using the liquid curve here would leave a real  !
+      !      5 % humidity gradient at 268 K and quietly turn this "isothermal" fixture into a           !
+      !      deposition experiment, which the g_base assertion below would catch. --------------------!
       env%can_shv = sat_specific_humidity(268.0_wp, env%press, 0.0_wp)
       swe0 = snow%swe(1) ; e0 = snow%snow_energy(1) ; tsnow0 = 268.0_wp
       do k = 1_ik, 50_ik

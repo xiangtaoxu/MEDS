@@ -46,14 +46,16 @@ stem_resp_sapwood25 = [31.25, 31.25, 31.25]   # [umol CO2/m3 sapwood/s @25C]
 # litterfall (Chave et al. 2010, Table 1, Leigh 1999's traps), 2-5 % of a tropical forest's NPP
 # (Malhi et al. 2011: 5-15 % of canopy NPP).
 reproduction_investment_fraction = [0.10, 0.10, 0.10]   # [--] growth fraction to reproduction ...
-reproduction_height_fraction = 0.1595434651742923   # [--] ... from this share of the local maximum height (calibrate_growth.py; 5.27 m)
+reproduction_height_fraction = 0.1595434651742923   # [--] ... from this share of the local maximum height
+                                                    #      (calibrate_growth.py; 5.27 m)
 
-#----- Sink limit on wood growth: a cohort's diameter grows at most max_absolute_growth_rate x dbh[cm]^0.5
-#      a year, and the carbon it cannot use is exuded by the roots. The shape is BCI's census: the 75th
-#      percentile of diameter growth rises as dbh^0.5 at a given light (a quantile regression ln g = a +
-#      0.5 ln dbh + beta x overtopping LAI on each PFT's 1990-2010 growth of trees 1-30 cm; fitted per PFT
-#      0.45, 0.65, 0.47). Its level is twice that quantile extrapolated to LAI 0 (0.211, 0.153, 0.059 cm/yr
-#      at 1 cm), which lets saplings on open ground grow as fast as the census's best-lit ones.
+#----- Sink limit on wood growth (docs/science/plant_carbon_allocation.md eq. (4)): a cohort's diameter
+#      grows at most max_absolute_growth_rate x dbh[cm]^0.5 a year, and the carbon it cannot use is
+#      exuded by the roots. The shape is BCI's census: the 75th percentile of diameter growth rises as
+#      dbh^0.5 at a given light (a quantile regression ln g = a + 0.5 ln dbh + beta x overtopping LAI on
+#      each PFT's 1990-2010 growth of trees 1-30 cm; fitted per PFT 0.45, 0.65, 0.47). Its level is
+#      twice that quantile extrapolated to LAI 0 (0.211, 0.153, 0.059 cm/yr at 1 cm), which lets
+#      saplings on open ground grow as fast as the census's best-lit ones.
 max_absolute_growth_rate     = [0.422, 0.306, 0.118]   # [cm/yr] at dbh 1 cm
 max_absolute_growth_exponent = [0.5, 0.5, 0.5]
 
@@ -88,9 +90,10 @@ wstress_sref_stomata = [2.02774, 2.02774, 2.02774]
 #----- Other carbon traits (example 04). -----------------------------------------------------------
 huber_value            = [1.5e-4, 1.5e-4, 1.5e-4]
 aboveground_frac       = [0.7, 0.7, 0.7]
-storage_cushion        = [0.5, 0.5, 0.5]  # [--] x (leaf + fine root): 0.5 keeps the earlier 1 x leaf carbon (root_to_leaf_ratio 1)
+storage_cushion        = [0.5, 0.5, 0.5]  # [--] storage target, x (leaf + fine-root target):
+                                          #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3, 0.3, 0.3]
-retained_carbon_fraction = [0.0, 0.0, 0.0]   # [--] no resorption: the calibration predates it (default 0.3)
+retained_carbon_fraction = [0.0, 0.0, 0.0]   # [--] no resorption, as the example's calibration assumes (default 0.3)
 fineroot_turnover_rate = [3.0, 2.143, 1.667]  # [1/yr] 1.5 / leaf_lifespan_toc
 wood_carbon_density    = [300.0, 300.0, 300.0]
 f_labile_leaf          = [0.70, 0.70, 0.70]
@@ -132,20 +135,22 @@ mort_beta_0    = 18.72
 mort_beta_exp  = 0.2792
 
 # Mortality m = mort_gamma + mort_alpha * exp(-mort_beta * g), g a cohort's dbh growth [cm/yr] over
-# the last 90 days: example 03's fit to the BCI censuses (vital_rates.json), the same law on the same
-# growth. Treefall (main config, 0.014/yr) kills the canopy trees in each new gap on top of this, and
-# the census's gamma already counts those deaths, so 0.014 is taken off gamma.
+# the growth window (growth_memory_days, a year): example 03's fit to the BCI censuses
+# (vital_rates.json), the same law on the same growth. Treefall (main config, 0.014/yr) kills the canopy
+# trees in each new gap on top of this, and the census's gamma already counts those deaths, so 0.014 is
+# taken off gamma.
 # Read because the main config sets [options].override_derived = true.
 [derived]
 mort_gamma = [0.011182, 0.006528, 0.005908]   # [1/yr] census gamma 0.025182, 0.020528, 0.019908 - 0.014
 mort_alpha = [0.247431, 0.086574, 0.152056]   # [1/yr]
 mort_beta  = [15.0890, 19.3890, 58.7932]      # [yr/cm]
 
-# Light plasticity, trait = top-of-canopy value x exp(k x overtopping LAI): Ma et al. (2025, JGR
-# Biogeosciences) from BCI's crane, saplings against canopy leaves -- k_Vcmax = -(0.00242 Vcmax25 +
-# 0.06212), k_Rd = -(0.18974 Rd25 + 0.11744) with Rd25 = 0.015 Vcmax25, k_SLA 0.199 -- and half of
-# their k_LL 0.240: shade lengthens leaf life 1.5 times in Kitajima et al. (2013)'s seedling gardens and
-# 2 times from canopy to understory in Xu et al. (2017), against 3.3 times at LAI 5 with 0.240.
+# Light plasticity, trait = top-of-canopy value x exp(k x overtopping LAI) (docs/science/plant_traits.md
+# eq. (1)): Ma et al. (2025, JGR Biogeosciences) from BCI's crane, saplings against canopy leaves --
+# k_Vcmax = -(0.00242 Vcmax25 + 0.06212), k_Rd = -(0.18974 Rd25 + 0.11744) with Rd25 = 0.015 Vcmax25,
+# k_SLA 0.199 -- and half of their k_LL 0.240: shade lengthens leaf life 1.5 times in Kitajima et al.
+# (2013)'s seedling gardens and 2 times from canopy to understory in Xu et al. (2017), against 3.3 times
+# at LAI 5 with 0.240.
 kplastic_vcmax  = [-0.1404, -0.1404, -0.1404]
 kplastic_rd     = [-0.2095, -0.2095, -0.2095]
 kplastic_sla    = [0.199, 0.199, 0.199]

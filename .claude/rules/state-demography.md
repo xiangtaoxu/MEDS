@@ -60,9 +60,9 @@ biomass rather than averaged; patch fusion conserves site-level plant number thr
 and patch area renormalizes to one. Patch **disturbance** conserves area but intentionally does not
 conserve plant number — the killed canopy is the disturbance.
 
-The slow loop carries a site-wide ledger on top of the per-store fast budgets. It found real leaks
-that every fast budget had passed, including growth respiration that was 23 % of growth carbon and
-was never exhaled. **A closed budget proves bookkeeping, not plausibility.**
+The slow loop carries a site-wide ledger on top of the per-store fast budgets. It catches leaks that
+every fast budget passes, such as growth respiration charged against growth carbon but never
+exhaled. **A closed budget proves bookkeeping, not plausibility.**
 
 ## Order of operations
 
@@ -78,5 +78,5 @@ over the per-step interval.
 
 The bundle is not lockstep-reordered, and the step re-sorts the cohorts after filling it, so at the
 output tick the bundle's index `i` and the cohort array's index `i` need not be the same plant. Read
-the diagnostic block instead. This mistake was made once and caught only by the thread-invariance
-test, because thread count perturbs the cohort order.
+the diagnostic block instead. Only the thread-invariance test catches this mistake, because thread
+count perturbs the cohort order.

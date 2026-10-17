@@ -26,7 +26,7 @@ ALTERNATIVES = ("gpp_ustar", "closure", "partitioning")
 def linearity(fk, u, cov_u, J, n_dir=3, log=print) -> list:
     """Along the leading principal directions of the posterior, +-1 sd: the actual change in the
     cost against the quadratic prediction d'(J'J + P)d. The mean of the two sides over the prediction
-    is the actual curvature (outside [0.5, 2] the covariance is local only, §6.4); half their
+    is the actual curvature (outside [0.5, 2] the covariance is local only); half their
     difference is the slope left where the fit stopped short of its optimum (0 at a converged fit)."""
     vals, vecs = np.linalg.eigh(cov_u)
     order = np.argsort(vals)[::-1][:n_dir]

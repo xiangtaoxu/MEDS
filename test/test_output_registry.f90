@@ -1,7 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_output_registry -- the registration list + the §6.1 config resolution (group toggles,     !
-! per-tier enables, per-variable overrides, unknown-key trap). MEDS_IO_DESIGN.md test 4.          !
+! test_output_registry -- the registration list + the [output] config resolution (group    !
+! toggles, per-tier enables, per-variable overrides, unknown-key trap;                     !
+! docs/science/diagnostics.md §5).                                                         !
 !==========================================================================================!
 program test_output_registry
    use meds_kinds,           only : wp, ik
@@ -24,7 +25,7 @@ program test_output_registry
    call banner('output_registry')
    cfg = build_test_config(86400.0_wp)     ! 1-day slow step; cfg%output holds the [output] defaults
 
-   !----- Build with the defaults (grp_on=[T,T,F,F,F], freq_on=[F,T,T,T]). -----!
+   !----- Build with the defaults (radiation + ecophys groups off, freq_on=[F,T,T,T]). -----!
    call build_output_registry(reg, cfg)
    !----- Size sanity, not an exact count. A hard-coded total has to be edited every time a       !
    !      variable is added, which trains the reader to update the number without checking what     !
@@ -35,13 +36,13 @@ program test_output_registry
    call check(find_var_index(reg, 'agb_cohort') > 0_ik, 'agb_cohort present')
    call check(find_var_index(reg, 'agb_site')   > 0_ik, 'agb_site present')
    call check(find_var_index(reg, 'gpp_site')   > 0_ik, 'gpp_site (carbon) present')
-   call check(find_var_index(reg, 'soilc_slow_site') > 0_ik, 'soilc_slow_site (carbon, B3) present')
-   call check(find_var_index(reg, 'rh_site')         > 0_ik, 'rh_site (carbon, B3) present')
+   call check(find_var_index(reg, 'soilc_slow_site') > 0_ik, 'soilc_slow_site (carbon) present')
+   call check(find_var_index(reg, 'rh_site')         > 0_ik, 'rh_site (carbon) present')
    call check(find_var_index(reg, 'soil_temp_site') > 0_ik, 'soil_temp_site (energy) present')
    call check(find_var_index(reg, 'nope')       == 0_ik, 'unknown name -> 0')
-   !----- v0.1 defaults (section 8 D6): structure/carbon/water/energy/numerics/biogeochem ON,      !
-   !      radiation + ecophys OFF -- the two heavy evaluation groups. Assert BOTH directions of the  !
-   !      toggle, so a default flip cannot pass by accident.  -----------------------------------!
+   !----- The default groups (docs/science/diagnostics.md §5): all ON but radiation + ecophys,    !
+   !      the two heavy evaluation groups. Assert BOTH directions of the toggle, so a default     !
+   !      flip cannot pass by accident. ----------------------------------------------------------!
    call check(in_tier(reg, 'soil_temp_site', 3_ik), 'energy ON by default -> soil_temp_site in MONTHLY')
    cfg%output%grp_on(4) = .false.       ! GRP_ENERGY off
    call build_output_registry(reg, cfg)
@@ -50,8 +51,8 @@ program test_output_registry
    call build_output_registry(reg, cfg)
 
    !----- FAST tier off by default. The ANNUAL tier must contain NO cohort/patch-dimensioned      !
-   !      variable (the section 3.1 guard) -- that invariant is what the check below states, rather  !
-   !      than a count that has to be re-derived on every registry edit.  ----------------------!
+   !      variable (docs/science/diagnostics.md §3) -- that invariant is what the check below     !
+   !      states, rather than a count that has to be re-derived on every registry edit. ----------!
    call check(reg%nidx(1) == 0_ik, 'FAST tier empty by default (freq_on(FAST)=false)')
    call check(reg%nidx(2) > 0_ik,  'DAILY tier populated')
    call check(reg%nidx(4) > 0_ik,  'ANNUAL tier populated')
@@ -125,9 +126,6 @@ program test_output_registry
 
 contains
 
-   !----- The section 3.1 invariant: the annual stream is SITE-LEVEL ONLY. A cohort/patch window   !
-   !      longer than a month would straddle the annual disturbance restructuring, so the slot set   !
-   !      it averaged would not be the slot set present at flush.  ------------------------------!
    !----- .true. if no variable of `grp` is live in any tier. --------------------------------!
    logical function group_absent(reg, grp) result(ok)
       type(output_registry_t), intent(in) :: reg
@@ -142,6 +140,9 @@ contains
       end do
    end function group_absent
 
+   !----- The annual stream is SITE-LEVEL ONLY (docs/science/diagnostics.md §3). A cohort/patch   !
+   !      window longer than a month would straddle the annual disturbance restructuring, so the   !
+   !      slot set it averaged would not be the slot set present at flush.  ----------------------!
    logical function annual_is_site_level(reg) result(ok)
       type(output_registry_t), intent(in) :: reg
       integer(ik) :: j, k

@@ -3,7 +3,7 @@
 ! meds_column_state_ops -- the algebra and bookkeeping helpers on the fast loop's column state     !
 ! (column_state_t / column_tend_t / stage_bflux_t / column_bflux_t), owned by the types they act   !
 ! on rather than by one integrator. Both schemes (meds_fast_ark, meds_fast_rk45) and the test-only  !
-! oracle import from here, so RK45 no longer depends on the ARK module for non-ARK code.            !
+! oracle import from here, so RK45 does not depend on the ARK module.                               !
 !                                                                                          !
 !   * the state's fields, listed once -- state_to_array / array_to_state / tend_to_array, and      !
 !                           state_entry_rules (how each field is treated)                          !
@@ -300,8 +300,9 @@ contains
       if (nplant * leaf_area > tiny_num) rate = amount / dt / (nplant * leaf_area) / mmh2o
    end function transp_per_leaf_area
 
-   !----- out = (1-b)*y + b*Y2, the ARS stage-3 extrapolation base. The plant water, the films   !
-   !      and the pond are frozen through the stages, so for them this is y again (up to rounding). !
+   !----- out = (1-b)*y + b*Y2, the ARS stage-3 extrapolation base (b = (1-gamma)/gamma,            !
+   !      docs/science/numerical_scheme.md eq. (1)). The plant water, the films and the pond are    !
+   !      frozen through the stages, so for them this is y again (up to rounding). -----------------!
    pure subroutine state_extrap(y, b, Y2, n, nsl, out)
       type(column_state_t), intent(in)    :: y, Y2
       real(wp),             intent(in)    :: b
@@ -375,8 +376,9 @@ contains
       end do
    end subroutine clamp_soil_energy
 
-   !----- The embedded error estimate of the ARS(2,2,2) step: err = (Y3 - base3) - (Y2 - y), for   !
-   !      the entries state_entry_rules counts, and 0 for the rest. ---------------------------------!
+   !----- The embedded error estimate of the ARS(2,2,2) step, err = (Y3 - base3) - (Y2 - y)          !
+   !      (docs/science/numerical_scheme.md eq. (2)), for the entries state_entry_rules counts, and  !
+   !      0 for the rest. ---------------------------------------------------------------------------!
    pure subroutine state_err_diff(Y3, base3, Y2, y, n, nsl, err)
       type(column_state_t), intent(in)    :: Y3, base3, Y2, y
       integer(ik),          intent(in)    :: n, nsl
@@ -422,9 +424,8 @@ contains
    end function zero_like
 
    !---------------------------------------------------------------------------------------!
-   ! Whole-column STORE TOTALS for the conservation ledgers [per m2 ground]. Written as the         !
-   ! ascending loops the two schemes used to carry inline, so a ledger built from these is the      !
-   ! same arithmetic on both.                                                                       !
+   ! Whole-column STORE TOTALS for the conservation ledgers [per m2 ground]. Plain ascending loops, !
+   ! shared by both schemes, so a ledger built from these is the same arithmetic on both.           !
    !---------------------------------------------------------------------------------------!
    pure function soil_water_store(theta, dz, nsl) result(w)     ! [kg/m2]
       real(wp),    intent(in) :: theta(:), dz(:)
@@ -535,17 +536,18 @@ contains
    end subroutine diagnose_soil_temps
 
    !---------------------------------------------------------------------------------------!
-   ! assemble_soil_energy_forcing -- the soil-heat column's boundary and volumetric forcing from  !
-   ! the surface ground heat flux and the water that moves through it. The ONE assembler for the  !
-   ! ARK stage (meds_fast_be_stage%column_be_stage) and the whole-column RHS                       !
-   ! (meds_fast_time_derivs%column_derivs); both take every water flow from the soil-plant water  !
-   ! network's step (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.4), so the energy advects the water the   !
-   ! committed theta actually moved. One sign convention:                                          !
-   !                                                                                                  !
-   !   * face_flux(k) [m/s] is the network's DOWN-positive time-mean flow at layer k's lower face;   !
-   !     the energy kernel wants UP-positive, hence the sign flip;                                    !
-   !   * water_heat_out(k) [W/m2] is the enthalpy leaving layer k with water that leaves it other     !
-   !     than across a face -- root uptake at the layer's temperature, and in the top layer the       !
+   ! assemble_soil_energy_forcing -- the soil-heat column's boundary and volumetric forcing from       !
+   ! the surface ground heat flux and the water that moves through it. The ONE assembler for the       !
+   ! ARK stage (meds_fast_be_stage%column_be_stage) and the whole-column RHS                           !
+   ! (meds_fast_time_derivs%column_derivs); both take every water flow from the soil-plant water       !
+   ! network's step, so the energy advects the water the committed theta actually moved                !
+   ! (docs/science/numerical_scheme.md §5b, docs/science/soil_plant_water.md §5). One sign             !
+   ! convention:                                                                                       !
+   !                                                                                                   !
+   !   * face_flux(k) [m/s] is the network's DOWN-positive time-mean flow at layer k's lower face;     !
+   !     the energy kernel wants UP-positive, hence the sign flip;                                     !
+   !   * water_heat_out(k) [W/m2] is the enthalpy leaving layer k with water that leaves it other      !
+   !     than across a face -- root uptake at the layer's temperature, and in the top layer the        !
    !     water it pushes up into the pond -- plus, in the bottom layer, the drainage enthalpy e_drain; !
    !   * the TOP face carries infiltration at the pond temperature t_infil as a kernel term with the   !
    !     same upwind rule as the interior faces; the BOTTOM face is 0 here because the drainage        !
@@ -578,13 +580,12 @@ contains
    end subroutine assemble_soil_energy_forcing
 
    !---------------------------------------------------------------------------------------!
-   ! apply_process_mask -- hold every masked-OFF process at its start-of-step state. The process    !
+   ! apply_process_mask -- hold every masked-OFF process at its start-of-step state. The process      !
    ! mask reduces the column for diagnosis (a frozen store still exchanges with its neighbours, so a  !
    ! reduced column cannot conserve -- see mask_is_full); the march integrates everything and the     !
-   ! masked fields are then restored here, once, on the committed state. ONE routine for both        !
-   ! schemes: they used to carry their own copies, which had already diverged on the pond fields     !
-   ! (2026-09 review, item 5 #3). The pond rides with soil water; on a scheme that passes it through  !
-   ! the stages the restore is an identity.                                                           !
+   ! masked fields are then restored here, once, on the committed state. ONE routine for both         !
+   ! schemes, so the two cannot restore different fields. The pond rides with soil water; on a scheme !
+   ! that passes it through the stages the restore is an identity.                                    !
    !---------------------------------------------------------------------------------------!
    pure subroutine apply_process_mask(mask, y, y_out, n, nsl)
       type(process_mask_t), intent(in)    :: mask

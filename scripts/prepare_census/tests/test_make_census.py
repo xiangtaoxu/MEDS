@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests of the census preparation tool (MEDS_BCI_CENSUS_INIT_PLAN.md sec. 9). Every table is
-synthetic, so each check has an answer that does not come from the code under test. Run with:
+"""Tests of the census preparation tool. Every table is synthetic, so each check has an answer that
+does not come from the code under test. Run with:
     python -m pytest scripts/prepare_census/tests
 """
 import json

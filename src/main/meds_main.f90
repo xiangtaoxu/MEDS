@@ -10,7 +10,7 @@
 !                                                                                          !
 ! Usage:  meds_main [main.toml]           (defaults to ./meds_config_main.toml; hard error if a !
 !                                          config file or any required parameter is missing --  !
-!                                          there are NO built-in defaults)                       !
+!                                          see docs/configuration.md)                            !
 !         meds_main --dump-io-config [main.toml]                                                 !
 !                                          write a fully-commented meds_io_config.toml listing   !
 !                                          every registered output variable, then exit.          !
@@ -38,9 +38,8 @@ program meds_main
    if (command_argument_count() >= 1_ik) call get_command_argument(1, path)
 
    !----- `--dump-io-config [main.toml]` is the discoverability half of per-variable output      !
-   !      control: the override mechanism already worked, but nothing told a user which names    !
-   !      exist. It builds the registry and exits without running anything, so it stays here in  !
-   !      the CLI rather than in the driver.  ----------------------------------------------------!
+   !      control: it lists every name an override can switch. It builds the registry and exits  !
+   !      without running anything, so it stays here in the CLI rather than in the driver. ------!
    if (trim(path) == '--dump-io-config') then
       block
          type(meds_config_t)     :: cfg
@@ -80,8 +79,8 @@ program meds_main
 
    do while (.not. driver_done(run))
       call driver_step(run, status)
-      !----- The driver RETURNS what this program used to `error stop` on, so that a library      !
-      !      caller (Python) survives it. In the executable it is still fatal.  -------------------!
+      !----- The driver RETURNS a failed step as a status, so that a library caller (Python)      !
+      !      survives it. In the executable it is fatal.  -----------------------------------------!
       if (status == DRIVER_ERR_NAN)   error stop 'meds_main: NaN in the state or the energy/water ledger'
       if (status == DRIVER_ERR_BOUNDS) error stop 'meds_main: a cohort or soil-carbon state out of bounds'
    end do

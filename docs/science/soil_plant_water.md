@@ -67,6 +67,14 @@ Each store is solved in the unknown in which its curve is best behaved:
 - A **tissue** uses its symplastic relative water content $R$, on which the pressure–volume curve is
   linear in water and has a finite slope $d\psi/dR$ everywhere. A leafless cohort's leaves hold no
   water; their $R$ stays defined.
+- **Between slow steps** a tissue keeps its water **mass**, not its potential: a change in biomass leaves
+  the water as it is, and the potential is read again on the new capacity (grown biomass reads as a
+  slightly lower $R$). A store above what today's biomass can hold is clamped to its saturated content,
+  and an empty one is seeded at its starting potential (`reconcile_tissue_water_capacity`; neither
+  amount is booked yet, see `docs/ROADMAP.md`). Tissue lost to turnover takes its water with it, in
+  proportion to the carbon lost (`shed_turnover_water`), and a plant that dies takes all of its own
+  (`shed_mortality_water`); that water reaches the ground as `shed_water_rate`, valued like the
+  precipitation it joins.
 - The **pond** uses its head $h$, with a 1 mm depression store: $S(h) = 0$ for $h\le0$, $h^2/2\delta$
   for $0<h<\delta$, $h-\delta/2$ above. An empty pond holds nothing and its head follows the soil
   below.
@@ -120,7 +128,7 @@ E = E_{demand}\,\frac{\min(R_L,\ R_{close})}{R_{close}} \qquad(3)
 
 with the corner rounded over 0.02 in $R$. $`R_{close}`$ is the leaf's symplastic water content at the
 PFT's fast-limb closing potential (`pft_wstress_psi_close`, twice the turgor-loss point by default).
-Above it the stomatal controls act as before; below it a leaf with its stomata shut loses its last
+Above it the stomatal controls act unchanged; below it a leaf with its stomata shut loses its last
 water in proportion to what it has left, so every step has a solution.
 
 $`E_{demand}`$ comes from the start-of-step surface solve, the one that also sets the leaf energy
@@ -132,10 +140,11 @@ the leaf in that solve is charged ~4.4×10⁵ J kg⁻¹ too much, runs cooler an
 The energy stages then **hold each cohort's transpiration at the network's** for the whole step, as
 they hold ground evaporation: the leaf energy balance takes `le_slope = 0` and
 $`\text{le\_ref} = h_{evap}E/(1-f_{wet})`$. The canopy air's vapour credit is then the leaf's water
-debit by construction. Within a step transpiration no longer follows the canopy air's changing
+debit by construction. Within a step transpiration does not follow the canopy air's changing
 humidity; the next step's surface solve restores the response. Measured on the BCI dry season
 (2013-01-15 to 04-15): the hourly latent heat at `dt_fast` = 900 s is within 1.9 W m⁻² of 150 s,
-against 2.9 W m⁻² for the per-stage refresh it replaces, and at 150 s it is within 0.6 W m⁻² of it.
+against 2.9 W m⁻² when transpiration is refreshed at every stage instead, and at 150 s the two
+agree to 0.6 W m⁻² in any hour.
 
 ## 5. Enthalpy
 
@@ -146,10 +155,45 @@ The network moves water; the soil-energy solve and the tissue stores carry its e
 - Root uptake leaves each layer at that layer's own temperature (`root_heat`, per layer).
 - A tissue's heat is its frozen capacity times its temperature; the change in its water is booked at
   its start-of-step temperature (`water_store_enth`), and arriving water heats it only by its
-  temperature difference (#355).
+  temperature difference.
 - The pond carries its own enthalpy through each sub-step: rain joins it first, what infiltrates
   leaves at the mixture's temperature, water the top layer pushes up arrives at that layer's
   temperature, and the spill leaves at the pond's.
+
+**The plant water's heat.** With sapflow $s$, total root uptake $U=\sum_k U_k$ and transpiration $E$
+(all per ground area per second), $u(T)$ the liquid internal energy (`internal_energy_liquid`),
+$`T_{up}=T_W`$ when $s\ge 0$ and $T_L$ otherwise, and $`Q_{loss}=\sum_k U_k\,u(T_k)`$ the enthalpy the
+roots draw from the layers, the leaf and the wood receive
+
+```math
+q_{wl} = s\,u(T_{up}) - (s-E)\,u(T_L), \qquad
+q_{w} = Q_{loss} - U\,u(T_W) - s\,\big[u(T_{up}) - u(T_W)\big] \qquad(4)
+```
+
+and the change in their water is booked, in the ledgers, at the start-of-step temperatures:
+
+```math
+H_{store} = (U-s)\,u(T_W) + (s-E)\,u(T_L) \qquad(5)
+```
+
+($`q_{wl}`$, $`q_{w}`$ and $`H_{store}`$ are `qwflux_wl`, `q_wood_net` and `water_store_enth` in
+`build_column_frozen`; the upwind temperatures are frozen at the start of the step, which keeps the
+energy ledger exact.) The heat store, capacity × temperature, has no term for water mass coming or
+going, so counting the arriving water's whole enthalpy (about 4.4×10⁵ J kg⁻¹ from the liquid datum)
+as heat would warm the wood whenever it refills: about 10 W m⁻² every night at BCI, and at a storm
+front, where wet soil refills dry-season wood with about 7 kg m⁻² in a quarter hour, 13 K above the
+canopy air and +600 W m⁻² of sensible heat at zero net radiation.
+
+**The ground inflow.** Under a pack the water reaching the pond is meltwater, at the melt temperature.
+On bare ground it is the rain plus the snowfall too light to start a pack, both valued at the air
+temperature above the canopy (the forcing moved to the canopy-air top, [forcing](forcing.md) §8), as
+`snow_accumulate` values a pack's snowfall (`precip_enthalpy`). The mixture's enthalpy per kilogram
+becomes a temperature through `temp_of_liquid_enthalpy`, the exact inverse of
+`internal_energy_liquid`; below $`T_{3ple}`$ that temperature stands for water that must still melt,
+which the pond and the soil melt with soil heat. Valuing the snow as liquid would create $L_f$ per
+kilogram at the boundary, and valuing the rain at the canopy air's temperature would hand the canopy
+and the soil heat the rain did not bring: at a cold front the canopy air is still warm (297.2 K under
+294.9 K air at BCI on 2017-04-17).
 
 ## 6. Work counters
 
@@ -170,7 +214,7 @@ The network moves water; the soil-energy solve and the tissue stores carry its e
 | plant flows | `meds_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`, `supply_limited_transpiration`, `smooth_max0` |
 | soil flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
 | one patch's step | `meds_fast_frozen`: `run_spac_solver` (called from `build_column_frozen`) |
-| plant water over the step | `meds_fast_ark`: `advance_plant_water` (constant rates; RK45 integrates the same rates in its stages) |
+| plant water over the step | `meds_fast_be_stage`: `advance_plant_water` (ARK; constant rates, RK45 integrates the same rates in its stages) |
 
 ## References
 

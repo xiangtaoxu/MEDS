@@ -75,7 +75,7 @@ height (§8).
 `time:units` as the base instant and the `time` values as seconds from it. Record interval, averaging
 convention and shortwave scheme come from the TOML `[forcing]` block; the reader checks the file's
 record spacing and its `avg_convention` and `sw_input_kind` attributes against them and stops on a
-disagreement (#185).
+disagreement.
 
 **The wind vector.** A file that carries `u10` and `v10` supplies the vector: the record keeps both
 components and derives the speed $`\sqrt{u_{10}^2+v_{10}^2}`$ from them, ignoring `Wind`. A file with
@@ -98,10 +98,10 @@ either by cutting the site's cell out of an ED_ERA5land archive (`--data-path`) 
 `download_era5land_cds.py` pulls the eight hourly variables (`t2m`, `d2m`, `sp`, `u10`, `v10`, `tp`,
 `ssrd`, `strd`) for a box around the site from the CDS, `postprocess_era5land.py --split none` decodes them
 into one box file per variable, and `make_forcing_file.py --box-dir` converts them. Either way,
-`Tair = t2m`, `PSurf = sp`, `Tdew = d2m` (the reader makes q from it by (10), as it does for the
+`Tair = t2m`, `PSurf = sp`, `Tdew = d2m` (the reader makes q from it by eq. (11), as it does for the
 archive), the components `u10`, `v10` with their speed
-$`\mathrm{Wind}=\sqrt{u_{10}^2+v_{10}^2}`$, unfloored (the reader floors every source's speed at
-0.1 m s⁻¹ itself, for the Monin–Obukhov stability), and the three **accumulated** fluxes de-accumulated
+$`\mathrm{Wind}=\sqrt{u_{10}^2+v_{10}^2}`$, unfloored (the aerodynamics floors every source's speed at
+`aerodynamics.ubmin`, for the Monin–Obukhov stability), and the three **accumulated** fluxes de-accumulated
 then unit-converted:
 $`\mathrm{Rainf}=\Delta tp\cdot 1000/3600`$ [kg m⁻² s⁻¹], $`\mathrm{SWdown}=\Delta ssrd/3600`$,
 $`\mathrm{LWdown}=\Delta strd/3600`$ [W m⁻²]. Both inputs go through one table and one rule,
@@ -123,14 +123,14 @@ last, and nothing is ever filled.
 AmeriFlux BASE, FLUXNET (ONEFlux) or a plain CSV described by a site TOML, converts the clock to UTC,
 writes `RHair` as measured, fills gaps explicitly with a per-variable `<Var>_qc` flag, and states the
 tower's heights; `examples/example04_column_biophysics/` builds Barro Colorado Island's file with it. Its
-conversions and checks are in `docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md` §7–§9.
+conversions and checks are in `scripts/prepare_flux_tower/README.md`.
 
 **The ED_ERA5land archive (`format = "ED_ERA5land"`).** The global archive built by
 `scripts/prepare_era5/` holds one file per variable per month, `ED_ERA5land_<Var>_<YYYYMM>.nc`, each
 a regular `(time, lat, lon)` grid at 0.1°: `Tair`, `Tdew`, `PSurf`, `u10`, `v10` as ERA5-Land
 delivers them, and `Rainf`, `SWdown`, `LWdown` already de-accumulated to hourly means, end-stamped
 from 01:00 on the 1st to 00:00 on the 1st of the next month. A static file carries the `valid`
-mask and the orography (`MEDS_FORCING_DESIGN.md` §14). An archive run steps daily from midnight
+mask and the orography (`MEDS_FORCING_DESIGN.md` §14.3). An archive run steps daily from midnight
 (`[run].dt_slow = "1d"`, `start_time` at 00:00, checked by `validate_config`), because the reader
 loads one month at a time before a step. Given `data_path`, the reader:
 
@@ -144,7 +144,7 @@ loads one month at a time before a step. Given `data_path`, the reader:
 - **reads a month at a time**, one chunk column per variable, into a buffer, checking each file's
   grid, stamps and units, and rejecting a missing value in the cell. A missing value is NaN, as the
   archive stores it; a file whose `_FillValue` is a number is refused rather than read as data;
-- **converts at each stamp:** $`q`$ from the stored dewpoint and pressure by (10), and the wind
+- **converts at each stamp:** $`q`$ from the stored dewpoint and pressure by eq. (11), and the wind
   speed from the stored components, whose vector the record also carries.
 
 Bracketing, recycling and the seam are the same code as for the single file: the record at 00:00 on
@@ -162,13 +162,13 @@ location and loads with its first bracket. `met_advance(src, cur, now)` slides t
 `met_instant(src, cur, now)` is a **pure function of (reader state, time)** — it interpolates and
 disaggregates the loaded bracket to the instant, so it is safe to sample ahead of the threaded patch
 loop. A run starting before the first record either
-hard-errors (`start_clamp = "error"`, the default) or holds record #1 (`"hold"`); a non-recycling run past
+hard-errors (`start_clamp = "error"`, the default) or holds the first record (`"hold"`); a non-recycling run past
 the last record clamps to the final interval. The no-file **`const`** backend returns the `met_forcing_t`
 defaults — a reference climate whose four shortwave streams sum to 400 W m⁻², $`\cos z`$ and
 $`\rho_{air}`$ still derived — so the fast loop can run with no forcing file at all.
 
 **No step reads a file.** Everything a step's sub-samples need is in memory before the step starts
-(`MEDS_POLYGON_RUNTIME_PLAN.md` §4): a MEDS forcing file's records for the recycle window or the run
+([order of processes](order_of_processes.md) §1): a MEDS forcing file's records for the recycle window or the run
 period are read at `met_open`, and for the archive `met_prefetch` loads, before each step, the month
 the step reads plus the one record before it — 00:00 on the 1st, which lives in the previous month's
 file, or the window's last record at the recycle wrap. Moving into a new month that record comes from
@@ -186,13 +186,14 @@ shortwave come from the same record, the one whose interval contains the instant
 `avg_convention = "end"` file, `rec_prev` on a `"begin"` one. Wind takes the **energy form**:
 
 ```math
-u(t) = \sqrt{\max\!\big[(1-w_{next})\,u_{prev}^2 + w_{next}\,u_{next}^2,\; u_{min}^2\big]},
-\qquad u_{min} = 0.1\ \mathrm{m\,s^{-1}} \qquad(1)
+u(t) = \sqrt{(1-w_{next})\,u_{prev}^2 + w_{next}\,u_{next}^2} \qquad(1)
 ```
 
 Wind interpolates as a **squared** quantity, then square-rooted (ED2's `vels` convention), so it is the
-kinetic-energy content, not the speed, that varies linearly across a record boundary; the floor keeps the
-Monin-Obukhov solve in the aerodynamics kernel out of its degenerate zero-wind limit.
+kinetic-energy content, not the speed, that varies linearly across a record boundary. The reader does not
+floor the speed: the aerodynamics floors the reference wind at `aerodynamics.ubmin`
+([canopy_aerodynamics](canopy_aerodynamics.md) eq. (2)), which keeps the Monin-Obukhov solve out of its
+degenerate zero-wind limit.
 
 ## 4. Solar geometry: apparent solar time
 
@@ -223,11 +224,12 @@ h = 2\pi\!\left(\frac{t_{solar}}{86400}-\tfrac12\right) \qquad(4)
 and never interpolated.
 
 That declination is `solar_declination(doy)` (Cooper 1969), and it is the **only** one in the model:
-`daylength` (a utility; the phenology's light cue counts hours of PAR) reads the same function. It used to carry its
-own White (1997) form $`-23.44^\circ\cos\frac{2\pi(\mathrm{doy}+9)}{365}`$. The two are the same
+`daylength` (a utility; the phenology's light cue counts hours of PAR) reads the same function. The
+other common form, White's (1997) $`-23.44^\circ\cos\frac{2\pi(\mathrm{doy}+9)}{365}`$, is the same
 function offset by 1.25 days — $`-\cos x = \sin(x-\pi/2)`$ puts White's ascending zero crossing at
 doy 82.25 against Cooper's 81 — and Cooper's is the closer to the true vernal equinox near doy 79–80.
-Unifying moved Ithaca daylength by at most **3.7 minutes** (at the equinoxes; ~0 at the solstices).
+The two give Ithaca daylengths that differ by at most **3.7 minutes** (at the equinoxes; ~0 at the
+solstices).
 
 ## 5. Shortwave disaggregation: conserving the interval mean
 
@@ -263,7 +265,7 @@ $`\cos z(t)\le 10^{-3}`$; there is no per-step secant to blow up.
 **The reconstruction is anchored on the MODEL window, not the file's** — the window start is found by
 stepping back from the model instant by the elapsed fraction of the bracket, so $`\langle\cos z\rangle_{win}`$
 and $`\cos z(t)`$ see the same sun. Under calendar recycling (§9) the two calendars differ, and anchoring on
-the model's is what keeps identity (5) true in the year actually simulated. The four streams are
+the model's is what keeps the identity of eq. (5) true in the year actually simulated. The four streams are
 disaggregated independently, each from the record carrying the interval mean — `rec_next` for
 `avg_convention = "end"`, `rec_prev` for `"begin"`.
 
@@ -273,7 +275,7 @@ Reanalysis ships total downwelling shortwave; the canopy two-stream needs beam a
 and the near-infrared. The split happens **at ingest**, once per record, so `met_record_t` always holds four
 streams. Its sun is the mean of $`\max(\cos z, 0)`$ over the interval the record averages — the
 $`\langle\cos z\rangle_{win}`$ of the disaggregation above — so the clearness index is a ratio of interval
-means, and a sunrise or sunset interval whose midpoint is dark still splits its light (#371). An
+means, and a sunrise or sunset interval whose midpoint is dark still splits its light. An
 instantaneous record uses the sun at its stamp. Both schemes conserve energy exactly.
 
 **`clearidx` (default)** — the Erbs et al. (1982) clearness-index correlation. With
@@ -291,7 +293,7 @@ f_{diff} =
 Then $`F_{diff}=f_{diff}\,\mathrm{SW}`$ and $`F_{beam}=\mathrm{SW}-F_{diff}`$, each divided into PAR and
 NIR by **fixed energy fractions** — 0.43 of the beam and 0.52 of the diffuse are PAR, the rest NIR; diffuse
 light is PAR-enriched because Rayleigh scattering is strongest at short wavelengths. Against tower quantum
-sensors these fractions give PPFD 3–11% high, mostly from the diffuse 0.52 (#369).
+sensors these fractions give PPFD 3–11% high, mostly from the diffuse 0.52 (see docs/ROADMAP.md).
 
 **`weiss_norman`** — the band-specific Weiss & Norman (1985) scheme, after ED2's
 `short_bdown_weissnorman`. It builds *potential* (clear-sky) band fluxes from air-mass optical depth, with
@@ -303,12 +305,12 @@ $`w_{10}=1320\cdot10^{\,-1.1950+0.4459\log_{10}m-0.0345(\log_{10}m)^2}`$ W m⁻�
 
 ```math
 R^{pot}_{vis,b} = S_{vis}e^{-0.185\,p_{rat}m}\cos z, \qquad
-R^{pot}_{vis,d} = 0.40\left(S_{vis}-R^{pot}_{vis,b}\right)\cos z
+R^{pot}_{vis,d} = 0.40\left(S_{vis}-R^{pot}_{vis,b}\right)\cos z \qquad(8)
 ```
 
 ```math
 R^{pot}_{nir,b} = \left(S_{nir}e^{-0.060\,p_{rat}m}-w_{10}\right)\cos z, \qquad
-R^{pot}_{nir,d} = 0.60\left(S_{nir}-R^{pot}_{nir,b}-w_{10}\right)\cos z \qquad(8)
+R^{pot}_{nir,d} = 0.60\left(S_{nir}-R^{pot}_{nir,b}-w_{10}\right)\cos z \qquad(9)
 ```
 
 Each band's potential total is $`R^{pot}_{full}=R^{pot}_{b}+R^{pot}_{d}`$. With
@@ -318,34 +320,34 @@ smaller ⇒ more diffuse), the band total is $`r\,R^{pot}_{full}`$ and the actua
 ```math
 f_{beam} = \frac{R^{pot}_{beam}}{R^{pot}_{full}}
 \left[1-\left(\frac{a-\min(a,\max(0,r))}{c}\right)^{2/3}\right]_{0}^{1},
-\quad (a,c)=(0.90,\,0.70)\ \mathrm{vis},\ (0.88,\,0.68)\ \mathrm{NIR} \qquad(9)
+\quad (a,c)=(0.90,\,0.70)\ \mathrm{vis},\ (0.88,\,0.68)\ \mathrm{NIR} \qquad(10)
 ```
 
 Below $`\cos z\le\cos 89^\circ`$ the secant is unstable and everything is routed to diffuse, 0.52 visible /
-0.48 NIR. One ED2-faithful edge survives the port: in a narrow twilight band just above that cutoff
+0.48 NIR. One ED2-faithful edge remains: in a narrow twilight band just above that cutoff
 $`w_{10}`$ can exceed the attenuated NIR beam, so the scaled NIR diffuse goes slightly negative while the
 four streams still sum to `SWdown` exactly.
 
-The diffuse terms of (8) keep ED2's form, which scales the beam it subtracts by $`\cos z`$ once more than
+The diffuse terms of eqs. (8)–(9) keep ED2's form, which scales the beam it subtracts by $`\cos z`$ once more than
 other implementations of WN85 eq. 3 do (pyTSEB writes $`0.40\,(S_{vis}\cos z-R^{pot}_{vis,b})`$).
 
-**Against towers** (#369). Each tower's measured shortwave is run through the scheme and its PPFD
+**Against towers.** Each tower's measured shortwave is run through the scheme and its PPFD
 ($`\times 4.6`$ µmol J⁻¹) set against the tower's quantum sensor, with the sun above 5°. `weiss_norman` gives
 1.04 of the measured PPFD at Hyytiälä (ICOS FI-Hyy, 2018–2024), 1.02 at Harvard Forest (HF001, its eight
 calibration-stable years in 2005–2024) and 0.99 at BCI (2014–2016). These constants with the ED2 form of
 the diffuse terms fit the towers best of the variants tried:
 - a 0.43 / 0.57 split of the solar constant gives 0.97, 0.96 and 0.93;
-- the single-$`\cos z`$ form of eq. 3 gives 1.08, 1.06 and 1.01, with too little diffuse light;
+- the single-$`\cos z`$ form of WN85 eq. 3 gives 1.08, 1.06 and 1.01, with too little diffuse light;
 - `clearidx` gives 1.11, 1.07 and 1.03.
 
-WN85's 600 W m⁻² visible band is the 320–700 nm share of the solar spectrum, so it includes near-UV. #369
-lists this and the other open uncertainties of the partition.
+WN85's 600 W m⁻² visible band is the 320–700 nm share of the solar spectrum, so it includes near-UV. This
+and the other open uncertainties of the partition are listed in docs/ROADMAP.md.
 
 ## 7. Humidity and precipitation phase
 
 A file carries the humidity its source measured, and the reader converts it to specific humidity at
 each stamp, with that record's own temperature and pressure: a dewpoint (`Tdew`, a reanalysis) or a
-relative humidity (`RHair`, a flux tower) by (10), a specific humidity (`Qair`) as it is. Storing the
+relative humidity (`RHair`, a flux tower) by eq. (11), a specific humidity (`Qair`) as it is. Storing the
 measured quantity is what keeps the provider's saturation curve out of the model: a tower's relative
 humidity is a sensor reading, while its vapour-pressure deficit, or a $q$ made from it offline, carries
 whichever curve the provider used (Barro Colorado Island's `vpd` column is the Alduchov–Eskridge
@@ -356,17 +358,17 @@ Both conversions go through the **same** Bolton (1980) saturation vapour pressur
 uses (`meds_therm_lib%sat_vapor_pressure`, $`e_{sat}(T)=611.2\exp[17.67\,T_c/(T_c+243.5)]`$ Pa) — over
 **liquid**, deliberately: dewpoint is *defined* as the temperature at which the liquid saturation
 vapour pressure equals the actual one, and a relative-humidity sensor reports against liquid water
-(the WMO convention) even below freezing, so the ice branch that `sat_vapor_pressure` grew for frozen
-surfaces (`snow_biophysics.md` §1) must not be applied here. Every output file of an ED_ERA5land run
-names the formula in its `forcing_qair` global attribute. The dewpoint form is the identity that the
+(the WMO convention) even below freezing, so the ice branch that `sat_vapor_pressure` has for frozen
+surfaces (`snow_biophysics.md`, §Sublimation saturates over ice) must not be applied here. Every
+output file of an ED_ERA5land run names the formula in its `forcing_qair` global attribute. The dewpoint form is the identity that the
 actual vapour pressure *is* the saturation vapour pressure evaluated at the dewpoint; RH is clipped
-to $[0,1]$ first. The model's own inverse, `specific_humidity_to_vpd`, is the exact inverse of (10),
+to $[0,1]$ first. The model's own inverse, `specific_humidity_to_vpd`, is the exact inverse of eq. (11),
 so a saturated record reads back as a vapour-pressure deficit of zero.
 
 ```math
 q = \frac{0.622\,e}{P-0.378\,e}, \qquad
 e = e_{sat}(T_d)\ \text{(dewpoint)}, \qquad
-e = \mathrm{RH}\cdot e_{sat}(T)\ \text{(relative humidity)} \qquad(10)
+e = \mathrm{RH}\cdot e_{sat}(T)\ \text{(relative humidity)} \qquad(11)
 ```
 
 The file carries one total precipitation rate, and so does the forcing record; the model needs rain and
@@ -380,7 +382,7 @@ interval straddling freezing. The forcing outputs report the split the patches r
 
 ```math
 f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qquad
-\mathrm{rainf} = f_{liq}P, \qquad \mathrm{snowfall} = P-\mathrm{rainf} \qquad(11)
+\mathrm{rainf} = f_{liq}P, \qquad \mathrm{snowfall} = P-\mathrm{rainf} \qquad(12)
 ```
 
 ## 8. Vertical corrections: the terrain, then the canopy-air top
@@ -415,7 +417,7 @@ form is the hypsometric integral of $`dP/dz=-Pg/(R_dT)`$ under the *same* linear
 
 ```math
 T_{site} = T_{grid}-\Gamma\,\Delta z, \qquad
-P_{site} = P_{grid}\left(\frac{T_{site}}{T_{grid}}\right)^{g/(R_d\Gamma)} \qquad(12)
+P_{site} = P_{grid}\left(\frac{T_{site}}{T_{grid}}\right)^{g/(R_d\Gamma)} \qquad(13)
 ```
 
 with the isothermal limit $`P_{site}=P_{grid}\exp[-g\,\Delta z/(R_dT_{grid})]`$ when $`|\Gamma|\le 10^{-6}`$.
@@ -423,7 +425,7 @@ Humidity and file longwave follow, as in NLDAS (Cosgrove et al. 2003):
 
 ```math
 q_{site} = q\!\left(RH\,e_s(T_{site}),\,P_{site}\right),\quad RH=\frac{e(q_{grid},P_{grid})}{e_s(T_{grid})}, \qquad
-L^{\downarrow}_{site} = L^{\downarrow}_{grid}\,\frac{\varepsilon(T_{site},q_{site},P_{site})\,T_{site}^4}{\varepsilon(T_{grid},q_{grid},P_{grid})\,T_{grid}^4} \qquad(13)
+L^{\downarrow}_{site} = L^{\downarrow}_{grid}\,\frac{\varepsilon(T_{site},q_{site},P_{site})\,T_{site}^4}{\varepsilon(T_{grid},q_{grid},P_{grid})\,T_{grid}^4} \qquad(14)
 ```
 
 **Relative humidity is held**, not specific humidity: holding $q$ would dry a site below its cell by
@@ -449,7 +451,7 @@ height $`z_b`$:
 
 ```math
 u(z_c) = u_m\,\frac{\ln(z_b/z_{0e})}{\ln(z_m/z_{0e})}\;\frac{\ln(h_c/z_0)}{\ln(h_b/z_0)}, \qquad
-T(z_c) = T_m-\frac{g}{c_p}\,(z_c-z_T) \qquad(16)
+T(z_c) = T_m-\frac{g}{c_p}\,(z_c-z_T) \qquad(15)
 ```
 
 with $h$ a height above $d$ (a reanalysis's heights already are; a tower's minus $d$), floored at
@@ -459,7 +461,7 @@ conserves potential temperature, $\theta = T + (g/c_p)\,z$. The aerodynamics the
 canopy air's potential temperature and this air's to $`z_c`$, where each equals its actual temperature
 ([canopy aerodynamics](canopy_aerodynamics.md) §2). Humidity, pressure, radiation, total precipitation and CO₂ are
 unchanged — pressure stays at the ground, where the canopy air, ground and leaves use it — and $`\rho_{air}`$ is
-re-derived. The rain/snow split (11) is made at $`T(z_c)`$: precipitation enters the canopy there, and
+re-derived. The rain/snow split, eq. (12), is made at $`T(z_c)`$: precipitation enters the canopy there, and
 its enthalpy is valued there too (rain as liquid and snow as ice at that temperature, `precip_enthalpy`),
 so phase and enthalpy come from the same air.
 The aerodynamics then runs from $`z_c`$: there is no fixed reference height, and nothing has to clear the
@@ -480,7 +482,7 @@ terrain lapse, at its own heights; each patch's forcing is `wind_cas_top_patch` 
 `air_temp_cas_top_patch`, with the inputs that produced it — `cas_depth_patch` ($`z_c`$), `rough_patch`
 and `displace_patch`.
 
-**What it changes** (Ithaca, the r1 cases): moving the forcing to the canopy-air top raises the friction
+**What it changes** (Ithaca): moving the forcing to the canopy-air top raises the friction
 velocity by 33 % over an established stand in the annual mean and by 21 % over regrowth in July; the
 established stand's sensible heat falls by 2.3 W/m² and its GPP rises 0.6 %. The terrain lapse (the site
 sits 47.5 m below its ERA5-Land cell) adds +0.31 K, +2.2 W/m² of longwave and +0.56 kPa.
@@ -508,12 +510,12 @@ the calendar:
 \mathrm{off} = \begin{cases}
 0 & (\text{month},\text{day},\text{hh:mm:ss})_{model}\ \ge\ (\cdot)_{anchor}\\
 1 & \text{otherwise}\end{cases}, \qquad
-y_f = Y_1 + \mathrm{off} + \mathrm{mod}\!\left(Y_m-Y_1-\mathrm{off},\,N\right) \qquad(14)
+y_f = Y_1 + \mathrm{off} + \mathrm{mod}\!\left(Y_m-Y_1-\mathrm{off},\,N\right) \qquad(16)
 ```
 
 with $`Y_1`$ the anchor year, $`Y_m`$ the model year and $N$ the cycle length in years. Month, day and **time
 of day are preserved exactly** — that exactness is what lets the sub-daily phase and the day-of-year survive
-an arbitrary number of wraps; for a Jan-1 00:00 anchor `off` is identically 0 and (14) reduces term for term
+an arbitrary number of wraps; for a Jan-1 00:00 anchor `off` is identically 0 and eq. (16) reduces term for term
 to plain year substitution. The one exception is the **leap day**: a Feb-29 model instant reads Feb-28 when
 the target file year is not a leap year (ED2's `read_ol_file` repeats Feb 28), one-directionally — a non-leap
 model year never asks for Feb-29 — so no record is double-counted, and a leap file year's Feb-29 records
@@ -542,7 +544,7 @@ drops rather than writes — which compute a variable the source does not store 
 `lwdown_source = "synthesize"` reconstructs downwelling longwave from temperature and humidity:
 
 ```math
-\mathrm{LW}_\downarrow = \varepsilon_{clear}\,\sigma\,T_a^4\,\bigl[1 + a\,(1-k_t)\bigr] \qquad(11)
+\mathrm{LW}_\downarrow = \varepsilon_{clear}\,\sigma\,T_a^4\,\bigl[1 + a\,(1-k_t)\bigr] \qquad(17)
 ```
 
 `lw_clear_form` picks the clear-sky emissivity — Brutsaert (1975), a power law in the screen-level
@@ -571,7 +573,7 @@ file has it; this exists so a source that lacks the field can drive MEDS at all.
 Free-atmosphere CO₂ is prescribed like the met, but **not read from the met file**.
 `[forcing].co2_source` gives it, the same way for every backend and every polygon:
 
-- **`"const"`** (the default, so existing configs run unchanged): `co2_const` for the whole run.
+- **`"const"`** (the default): `co2_const` for the whole run.
 - **`"file"`**: a **MEDS CO₂ file**, named by `co2_file` and read once at `met_open`. The repository
   ships one (below).
 
@@ -579,9 +581,10 @@ The key of the other mode is rejected, not ignored. CO₂ is kept out of the met
 
 - **It is looked up on model time**, not the met file's clock. A spin-up that recycles a few years
   of met gets the CO₂ of the model year, not of the met year; §9 maps only the met into its window.
-- **A met file is not a CO₂ record.** ERA5-Land has no CO₂, so the `CO2air` column the prep script
-  used to write was a constant, and it silently overrode `co2_const`. A met file that carries `CO2air`
-  is therefore rejected at open. Drop it with `ncks -x -v CO2air in.nc out.nc`, or rebuild the file.
+- **A met file is not a CO₂ record.** ERA5-Land has no CO₂, so a `CO2air` column in a file made from
+  it can only be a constant, and reading it would silently override `co2_const`. A met file that
+  carries `CO2air` is therefore rejected at open. Drop it with `ncks -x -v CO2air in.nc out.nc`, or
+  rebuild the file.
 
 **The file, format 1.** Plain text, so a user can write one by hand:
 
@@ -621,7 +624,7 @@ calendar seconds; a leap February's middle is the 15th at 12:00. At a model inst
 linear between middles:
 
 ```math
-c(t) = c_i + \frac{t - m_i}{m_{i+1} - m_i}\,\bigl(c_{i+1} - c_i\bigr), \qquad m_i \le t < m_{i+1} \qquad(15)
+c(t) = c_i + \frac{t - m_i}{m_{i+1} - m_i}\,\bigl(c_{i+1} - c_i\bigr), \qquad m_i \le t < m_{i+1} \qquad(18)
 ```
 
 Before the first middle and after the last, the end value is held. Those half-periods are still inside
@@ -630,7 +633,7 @@ the first period and the end of the last; one the file does not cover stops at `
 decades in.
 
 Interpolating moves each period's mean slightly: over an interior period of equal length, the mean of
-(15) is $`(c_{i-1} + 6c_i + c_{i+1})/8`$.
+eq. (18) is $`(c_{i-1} + 6c_i + c_{i+1})/8`$.
 
 - On the shipped annual series, a year's mean moves by at most 0.016 µmol/mol before 1950 and
   0.19 µmol/mol after (1997, where the growth rate jumps between years). The last year, 2022, is
@@ -661,17 +664,13 @@ Why this series:
 
 ## What is not here
 
-- **Regions run serially, and cannot restart.** `[run].mode = "region"` runs every selected cell of a box
-  as its own polygon, all sharing one reader. The polygons are stepped one after another, and a region
-  writes no checkpoints. The OpenMP polygon loop and region restarts are R3 and R4 of
-  `MEDS_POLYGON_RUNTIME_PLAN.md` (#183).
 - **No forcing perturbations.** MEDS runs on the forcing it is given. Sensitivity offsets, scalings
   and delta-change climate scenarios belong upstream, in the forcing file; they are out of scope.
 - **No latitude-resolved CO₂.** One global series drives every polygon (§12). CMIP7 also gives
   monthly 15° latitude bands, which a region spanning several bands would want for recent decades.
 - **`avg_convention`** takes `"end"` or `"begin"`. `"instant"` and `"center"` parse but are rejected at
   config load: they have no disaggregation branch of their own, and running the end-of-interval one under
-  their name would be silently wrong (#185).
+  their name would be silently wrong.
 
 See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 

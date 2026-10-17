@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Plot timeseries of key site-level variables from a MEDS netCDF output file.
 
-MEDS writes one record per output interval with site totals plus the full ragged cohort/patch
-state. This script writes two figures: (1) the site totals over time, and (2) the per-PFT
-aboveground biomass over time as a line plot (each cohort weighted by its patch's area), in the
-classic ED / Moorcroft et al. (2001) colours -- PFT 1 green, PFT 2 blue, PFT 3 magenta.
+The file is in the ragged cohort/patch stand layout of example 03's _write_nc.py: one record per
+output interval with site totals (total_nplant, total_lai, total_agb, total_basal_area, mean_dbh)
+plus the cohort/patch state. This script writes two figures: (1) the site totals over time, and
+(2) the per-PFT aboveground biomass over time as a line plot (each cohort weighted by its patch's
+area), in the classic ED / Moorcroft et al. (2001) colours -- PFT 1 green, PFT 2 blue, PFT 3 magenta.
 
 Usage:
-    python plot_site_timeseries.py STATE.nc [-o OUT.png]
+    python plot_site_timeseries.py STAND.nc [-o OUT.png]
 
 Requires the `meds` conda environment (numpy, matplotlib, netCDF4).
 """
@@ -32,7 +33,7 @@ def per_pft_total(ds, var, npft):
     """Site total of a per-plant cohort variable, split by PFT and weighted by patch area.
 
     For each time record: sum over cohorts of nplant*var, each cohort scaled by the area
-    of its owning patch (cohort_offset/cohort_count give the patch->cohort CSR map)."""
+    of its owning patch (owner_patch, 1-based)."""
     nt = ds.dimensions["time"].size
     out = np.zeros((nt, npft))
     pft = ds.variables["pft"][:]

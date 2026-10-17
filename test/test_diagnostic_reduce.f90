@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_diagnostic_reduce -- the WEIGHTED scale-aggregation layer (MEDS_IO_V01_PLAN.md section 3.3   !
-! and test plan items 2, 3, 3b, 4, 6).                                                        !
+! test_diagnostic_reduce -- the WEIGHTED scale-aggregation layer                              !
+! (docs/science/diagnostics.md §2, eqs. (1)-(3)).                                             !
 !                                                                                          !
 ! What these tests are FOR. The reducer's whole job is to apply the right weight to the right   !
 ! quantity, and the two ways that goes wrong are both silent: an EXTENSIVE quantity aggregated    !
@@ -27,7 +27,8 @@ program test_diagnostic_reduce
    use meds_site_diag_types,    only : cohort_diag_block, cohort_diag_alloc, cohort_diag_reorder, &
                                        cohort_diag_copy_slot, cohort_diag_fuse,                  &
                                        cohort_diag_clear_slot, cohort_diag_value,                &
-                                       CDIAG_FUSE, N_CDIAG, CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW
+                                       CDIAG_FUSE, N_CDIAG, CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW, &
+                                       CD_WOOD_TEMP, CD_GSW
    use meds_output_types,       only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close
    implicit none
@@ -207,7 +208,8 @@ contains
    !  A cohort with NO SAMPLES (missing x: recruited after the fast loop) is left out: of a   !
    !  mean's numerator AND denominator, so the mean is that of the sampled cohorts, and of a    !
    !  sum, which it would only have added 0 to. A patch whose cohorts are all unsampled has     !
-   !  nothing to report (N-11). Counting it as 0 pulled a canopy temperature towards 0 K.       !
+   !  nothing to report. Counting it as 0 would pull a canopy temperature towards 0 K           !
+   !  (docs/science/diagnostics.md §2).                                                         !
    !=======================================================================================!
    subroutine test_unsampled_cohorts()
       type(site_t) :: site
@@ -251,7 +253,7 @@ contains
    !=======================================================================================!
    !  SOIL COLUMNS. The area-weighted site column, and the FLATTENED 2-D (layer, patch) slab   !
    !  whose stride is the COMPILE-TIME layer ceiling. The closure below -- area-weighted mean    !
-   !  over the patch axis of the 2-D slab == the site column -- is the P1 acceptance test, and   !
+   !  over the patch axis of the 2-D slab == the site column -- is the acceptance test, and      !
    !  it is what proves the flattening index is right. Varying the ACTIVE layer count while the  !
    !  stride stays fixed is the specific mis-mapping it has to rule out.                         !
    !=======================================================================================!
@@ -286,7 +288,7 @@ contains
       call check(.not. vld(nlayer + 1_ik), 'inactive layers of patch 1 are invalid -> _FillValue')
       call check(vld(n_soil_layer_max + 1_ik), 'patch 2 active layers are valid')
 
-      !----- The P1 acceptance identity, computed the way a reader would.  --------------------!
+      !----- The acceptance identity, computed the way a reader would.  -----------------------!
       do k = 1_ik, nlayer
          wmean = site%patch%area(1) * flat(k)                                                    &
                + site%patch%area(2) * flat(n_soil_layer_max + k)
@@ -316,9 +318,10 @@ contains
    !  tick, with restructuring in between, so slot i must keep meaning cohort i across every     !
    !  permutation -- and a fused cohort's diagnostics must blend by each field's own kind.        !
    !                                                                                          !
-   !  The three fields exercised below are deliberately one of EACH kind, so a blend that used    !
-   !  one rule for all of them cannot pass: leaf_temp is INTENSIVE (leaf-area-weighted),           !
-   !  sapflow is EXTENSIVE (nplant-weighted), abs_sw is GROUND-referenced (summed).                !
+   !  The fields exercised below are deliberately one of EACH kind, so a blend that used one      !
+   !  rule for all of them cannot pass: leaf_temp and wood_temp fuse on their tissue's heat         !
+   !  capacity, gsw is INTENSIVE (leaf-area-weighted), sapflow is EXTENSIVE (nplant-weighted),      !
+   !  abs_sw is GROUND-referenced (summed).                                                         !
    !=======================================================================================!
    subroutine test_diag_lockstep()
       type(cohort_diag_block) :: d
@@ -328,6 +331,8 @@ contains
       call cohort_diag_alloc(d, 8_ik, .true.)
       d%n = 4_ik
       d%v(CD_LEAF_TEMP, 1:4) = [290.0_wp, 300.0_wp, 310.0_wp, 320.0_wp]
+      d%v(CD_WOOD_TEMP, 1:4) = [280.0_wp, 285.0_wp, 295.0_wp, 305.0_wp]
+      d%v(CD_GSW,       1:4) = [  0.1_wp,   0.2_wp,   0.3_wp,   0.4_wp]
       d%v(CD_SAPFLOW,   1:4) = [  1.0_wp,   2.0_wp,   3.0_wp,   4.0_wp]
       d%v(CD_ABS_SW,    1:4) = [ 10.0_wp,  20.0_wp,  30.0_wp,  40.0_wp]
       d%w(1:4)               = 1.0_wp
@@ -352,26 +357,35 @@ contains
       call cohort_diag_clear_slot(d, 5_ik)
       call check(d%v(CD_SAPFLOW, 5_ik) == 0.0_wp, 'clear_slot zeroes a reused slot')
       call check(d%w(5_ik) == 0.0_wp,             'clear_slot zeroes the weight')
-      !----- ...and reads as the caller's "no samples" value, not as 0 K (N-11). -----!
+      !----- ...and reads as the caller's "no samples" value, not as 0 K. -----!
       d%n = 5_ik
       call cohort_diag_value(d, CD_LEAF_TEMP, x, n, -1.0_wp)
       call check(x(5) == -1.0_wp .and. x(1) == 320.0_wp, 'a slot with no samples reads the empty value')
       d%n = 4_ik
 
-      !----- FUSE slot 2 into slot 1 with leaf-area weights (3, 1) and nplant weights (2, 6).   !
-      !      After the reorder above: slot1 = (320, 4, 40), slot2 = (310, 3, 30).                !
-      !        INTENSIVE  leaf_temp = (3*320 + 1*310)/4      = 317.5                              !
-      !        EXTENSIVE  sapflow   = (2*4   + 6*3  )/8      = 3.25                               !
-      !        GROUND     abs_sw    =  40 + 30                = 70                                 !
-      call cohort_diag_fuse(d, 1_ik, 2_ik, 3.0_wp, 1.0_wp, 2.0_wp, 6.0_wp, CDIAG_FUSE)
+      !----- FUSE slot 2 into slot 1 with leaf-area weights (3, 1), nplant weights (2, 6), leaf    !
+      !      heat capacities (1, 4) and wood heat capacities (5, 1). After the reorder above:     !
+      !      slot1 = (leaf 320, wood 305, gsw 0.4, sapflow 4, abs_sw 40), slot2 = (310, 295, 0.3,   !
+      !      3, 30).                                                                             !
+      !        LEAF HEAT  leaf_temp = (1*320 + 4*310)/5      = 312.0  (317.5 on leaf area)         !
+      !        WOOD HEAT  wood_temp = (5*305 + 1*295)/6      = 303.33 (302.5 on leaf area)         !
+      !        INTENSIVE  gsw       = (3*0.4 + 1*0.3)/4      = 0.375                               !
+      !        EXTENSIVE  sapflow   = (2*4   + 6*3  )/8      = 3.25                                !
+      !        GROUND     abs_sw    =  40 + 30                = 70                                  !
+      call cohort_diag_fuse(d, 1_ik, 2_ik, 3.0_wp, 1.0_wp, 2.0_wp, 6.0_wp, 1.0_wp, 4.0_wp, 5.0_wp, 1.0_wp,  &
+                            CDIAG_FUSE)
       call cohort_diag_value(d, CD_LEAF_TEMP, x, n, 0.0_wp)
-      call check_close(x(1), 317.5_wp, 1.0e-12_wp, 'INTENSIVE field fuses leaf-area-weighted')
+      call check_close(x(1), 312.0_wp, 1.0e-12_wp, 'leaf temperature fuses on leaf heat capacity')
+      call cohort_diag_value(d, CD_WOOD_TEMP, x, n, 0.0_wp)
+      call check_close(x(1), 1820.0_wp / 6.0_wp, 1.0e-12_wp, 'wood temperature fuses on wood heat capacity')
+      call cohort_diag_value(d, CD_GSW, x, n, 0.0_wp)
+      call check_close(x(1), 0.375_wp, 1.0e-12_wp, 'INTENSIVE field fuses leaf-area-weighted')
       call cohort_diag_value(d, CD_SAPFLOW, x, n, 0.0_wp)
       call check_close(x(1), 3.25_wp, 1.0e-12_wp, 'EXTENSIVE field fuses nplant-weighted')
       call cohort_diag_value(d, CD_ABS_SW, x, n, 0.0_wp)
       call check_close(x(1), 70.0_wp, 1.0e-12_wp, 'GROUND-referenced field fuses by SUM')
-      !----- The three answers are mutually distinct, so a blend that applied one rule to all    !
-      !      of them would fail at least two of the assertions above.  -----------------------!
+      !----- The five answers are mutually distinct, so a blend that applied one rule to all     !
+      !      of them would fail at least four of the assertions above. -----------------------!
 
       !----- An INACTIVE block is a total no-op: nothing allocated, every entry point safe. ---!
       block

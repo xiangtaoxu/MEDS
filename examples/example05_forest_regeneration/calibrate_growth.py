@@ -14,7 +14,7 @@ parameters, shared by the PFTs: the height at which trees start to reproduce (on
 pay for reproduction, so it shapes growth by size), fine-root turnover as a multiple of the leaves'
 (1 / leaf_lifespan_toc), and one scale on the three PFTs' Vcmax25 (the growth level; the plasticity
 slopes follow it). The shipped onset height, 5.27 m, is its fit; root turnover (1.5 x the leaves') and
-Vcmax25 (example 04's, a scale of 1) were then set from data.
+Vcmax25 (example 04's, a scale of 1) are set from data instead.
 
 The target is BCI's own growth over the census interval 2005-2010: each tree's dbh growth [cm/yr],
 by PFT, size D and overtopping LAI L at the start of the interval, the trees that died within it
@@ -72,7 +72,7 @@ RESULT = os.path.join(HERE, "calibration.json")
 FIT = {"reproduction_height_fraction": (0.15, 0.9),   # [--] of the local maximum height (5-30 m at BCI)
        "fineroot_turnover": (1.5, 5.0),          # [--] fine-root turnover x leaf_lifespan_toc
        "vcmax_scale": (0.7, 1.2)}                # [--] on the PFT file's Vcmax25
-#: Stand totals of the trial's second year, (mean, sd) each, added to the loss as ((x - mean) / sd)^2.
+#: Stand totals of the trial's years 2-5, (mean, sd) each, added to the loss as ((x - mean) / sd)^2.
 TARGETS = {"fineroot": (0.27, 0.11),    # fine roots' share of NPP: Malhi, Doughty & Galbraith (2011), 35 sites
            "gpp": (3.15, 0.30),         # [kgC/m2/yr] BCI's GPP (GOSIF; the tower's 2.8 is likely low)
            "root_resp": (0.56, 0.10),   # [kgC/m2/yr] roots + rhizosphere, Gigante and Manaus (pft_parameters.toml)

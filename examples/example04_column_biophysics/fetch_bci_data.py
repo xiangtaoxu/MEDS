@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """fetch_bci_data.py -- put the Barro Colorado Island flux data in data/, checked against the
-published checksums. The data are not in the repository (MEDS_FLUX_TOWER_FORCING_PLAN.md D7).
+published checksums. The data, like every large input dataset, are not in the repository.
 
 Source: M. Detto, "Barro Colorado Island - eddy covariance flux data (2012-2017)", Zenodo record
 6456527 (doi:10.5061/dryad.3tx95x6j5), CC0. The data README asks that publications acknowledge

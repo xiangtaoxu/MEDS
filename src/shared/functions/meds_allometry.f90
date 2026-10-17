@@ -2,12 +2,13 @@
 !==========================================================================================!
 ! meds_allometry -- pan-tropical (ED2 iallom==3) size allometry, shared across the engine.  !
 !                                                                                          !
-! The coefficients are one record, allometry_t, that every routine here takes as its first  !
+! The coefficients are one record, allometry_t, that every routine here takes as its first   !
 ! argument. A run's record is cfg%allom; each site carries a copy on its cohort block        !
-! (cohort%allom), so the polygons of a region can each have their own (polygon runtime plan  !
-! §14, RP0). The coefficients are the same for every PFT, exactly as ED2's iallom==3; the    !
-! only per-stem inputs are diameter, the derived height, and -- for biomass -- wood density  !
-! (rho). The relationships (source: ED2/ED/src/init/ed_params.f90 and utils/allometry.f90):  !
+! (cohort%allom), so the polygons of a region can each have their own                        !
+! (docs/configuration.md §Regional runs). The coefficients are the same for every PFT,       !
+! exactly as ED2's iallom==3; the only per-stem inputs are diameter, the derived height,     !
+! and -- for biomass -- wood density (rho). The relationships (source:                       !
+! ED2/ED/src/init/ed_params.f90 and utils/allometry.f90):                                    !
 !                                                                                          !
 !   height(dbh)        = exp(b1Ht + b2Ht*ln(dbh)),  capped at hgt_max (per-PFT arg) [m]           !
 !   dbh(height)        = exp((ln(height) - b1Ht)/b2Ht)                          [cm]          !
@@ -166,7 +167,7 @@ contains
    end function dbh_to_agb
 
    !----- AGB carbon [kgC/plant] of a minimum-size (recruit) plant at min_cohort_height: the    !
-   !       recruit "unit" carbon used to convert a reproduction-carbon flux into recruit numbers. !
+   !       recruit "unit" carbon that converts a reproduction-carbon flux into recruit numbers.   !
    elemental pure function min_cohort_carbon(allom, min_cohort_height, rho) result(carbon_min)
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: min_cohort_height, rho
@@ -261,7 +262,8 @@ contains
    end function agb_to_dbh_chave
 
    !---------------------------------------------------------------------------------------!
-   ! Carbon-pool size targets for the daily allocator (meds_plant_carbon_allocation).        !
+   ! Carbon-pool size targets for the daily allocator (meds_plant_carbon_allocation;           !
+   ! docs/science/plant_carbon_allocation.md §2).                                              !
    ! All are CARBON [kgC/plant] and are thin, EXACT re-expressions of the size allometry      !
    ! above, so the two descriptions of a plant cannot disagree.                                !
    ! All-carbon: SLA / density conversions are the caller's traits, done                       !
@@ -274,7 +276,7 @@ contains
    !     the Chave dbh_to_agb, so the AGB currency is reproduced with no calibration.            !
    !   * wood_to_dbh = agb_to_dbh(wood_carbon * aboveground_frac) -- the analytic inverse of     !
    !     size2wood_carbon (reuses the capped-height inversion). wood_carbon is the carbon-        !
-   !     prognostic SIZE ANCHOR: dbh is DERIVED from it (the mirror of dbh -> agb today).         !
+   !     prognostic SIZE ANCHOR: dbh is DERIVED from it (the mirror of dbh -> agb).               !
    !---------------------------------------------------------------------------------------!
    elemental pure function size2leaf_carbon(allom, dbh, h, sla) result(leaf_carbon)
       type(allometry_t), intent(in) :: allom
@@ -307,11 +309,11 @@ contains
    end function wood_to_dbh
 
    !---------------------------------------------------------------------------------------!
-   ! CARBON -> full cached geometry (the carbon-prognostic flip): wood_carbon is the size    !
-   ! anchor, so dbh = wood_to_dbh(wood_carbon), then height/basal_area/agb follow, and        !
-   ! leaf_area comes straight from the prognostic leaf_carbon. Consolidates the carbon        !
-   ! allometry (wood_to_dbh + size2*carbon above) into one composite; it IS the body of the   !
-   ! former set_cohort_size_from_carbon, lifted here so the engine + plant share one path.    !
+   ! CARBON -> full cached geometry (the wood_carbon -> dbh flip): wood_carbon is the size   !
+   ! anchor, so dbh = wood_to_dbh(wood_carbon), then height/basal_area/agb follow, and       !
+   ! leaf_area comes straight from the prognostic leaf_carbon. It is the body of             !
+   ! set_cohort_size_from_carbon, the one writer of a cohort's geometry, kept here so the    !
+   ! engine and the plant code share one path.                                               !
    !---------------------------------------------------------------------------------------!
    pure subroutine carbon_to_structure(allom, wood_carbon, leaf_carbon, rho, hgt_max, aboveground_frac, &
                                        sla, dbh, height, basal_area, agb, leaf_area)
@@ -331,12 +333,12 @@ contains
    !                                                                                        !
    !     wai = nplant * b1WAI * dbh ** b2WAI                                                 !
    !                                                                                        !
-   ! WAI is a STEM-SIZE relation, which is the whole point: the fast loop used to set        !
-   ! wai = 0.20 * lai, tying wood area to LEAF area. That is what made the modelled wood     !
-   ! thermal timescale ~6-20x too short, because tau_wood ~ (wood mass)/(wood AREA) and a    !
-   ! leaf-tied area makes the ratio nearly size-independent. It also mis-scales the wood     !
-   ! boundary layer, the wood longwave emission area and the wood sensible-heat coefficient, !
-   ! all of which take WAI directly.                                                          !
+   ! WAI is a STEM-SIZE relation, which is the whole point. A wood area tied to LEAF area    !
+   ! (wai proportional to lai) would make the wood thermal timescale, tau_wood ~ (wood       !
+   ! mass)/(wood AREA), nearly size-independent and ~6-20x too short, and would mis-scale    !
+   ! the wood boundary layer, the wood longwave emission area and the wood sensible-heat     !
+   ! coefficient, all of which take WAI directly (docs/science/vegetation_energy_dynamics.md !
+   ! §Leaf and wood energy balance).                                                         !
    !---------------------------------------------------------------------------------------!
    elemental pure function dbh_to_wai(dbh, nplant, b1wai, b2wai) result(wai)
       real(wp), intent(in) :: dbh      !< [cm]    diameter at breast height
@@ -352,14 +354,10 @@ contains
    !                                                                                        !
    !     f_sap = min(1, b1SA * dbh**b2SA / (pi/4 * dbh^2))                                   !
    !                                                                                        !
-   ! Capped at 1 because a small stem is sapwood all the way through -- which is also why    !
-   ! this is a defensible proxy for the THERMALLY ACTIVE wood mass, not just the hydraulic   !
-   ! one. The thermal store wants the wood within a diurnal damping depth of the surface     !
-   ! (~4.5 cm in wet wood); the sapwood ring is ~2-5 cm on a mature bole and becomes the      !
-   ! whole stem on a small one, so the two quantities are comparable at large size and       !
-   ! converge exactly at small size. Documented as a proxy rather than an identity -- a      !
-   ! separate thermally-active mass would additionally need bole/branch partitioning, which  !
-   ! MEDS does not carry.                                                                     !
+   ! Capped at 1 because a small stem is sapwood all the way through. The sapwood ring is    !
+   ! the stem's hydraulic capacitance and the wood thermal store's internal water; the       !
+   ! store's dry tissue is ALL the wood, because heartwood still stores sensible heat        !
+   ! (docs/science/vegetation_energy_dynamics.md eq. (8)).                                   !
    !---------------------------------------------------------------------------------------!
    elemental pure function sapwood_fraction(dbh, b1sa, b2sa) result(f_sap)
       real(wp), intent(in) :: dbh      !< [cm] diameter at breast height

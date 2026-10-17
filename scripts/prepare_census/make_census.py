@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Turn a ForestGEO tree table into a MEDS census file (MEDS_BCI_CENSUS_INIT_PLAN.md sec. 6).
+"""Turn a ForestGEO tree table into a MEDS census file (scripts/prepare_census/README.md).
 
 The tool only maps trees to patches. Each square plot cell is one patch, and each distinct
 (cell, diameter) is one row, with `nplant` the number of those trees over the cell's area. It does

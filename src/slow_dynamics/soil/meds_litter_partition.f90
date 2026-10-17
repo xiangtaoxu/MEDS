@@ -2,16 +2,15 @@
 !==========================================================================================!
 ! meds_litter_partition -- the necromass -> litter-destination split.                        !
 !                                                                                          !
-! This is a biogeochemical LAW (it partitions dead plant carbon into the CENTURY litter pools) !
-! that used to live in the column-STATE module for one reason only: src/core could not link   !
-! biogeochemistry, and the state module was the one place both sides could see. It is filed    !
-! where it belongs now; the DAG carries the edge instead of the law being displaced.           !
+! This is a biogeochemical LAW (it partitions dead plant carbon into the CENTURY litter pools, !
+! docs/science/soil_carbon.md §5), so it is filed with the slow soil kernels, and the library  !
+! graph carries the edge to the demography operators that call it.                             !
 !                                                                                          !
 ! necromass_to_litter takes plain scalars, so it stays callable from the demographic engine's  !
 ! termination / disturbance kills (which add the six outputs straight onto a soil_carbon_t).   !
 ! add_necromass is the driver's form: it adds the same split to a litter_input_t and records    !
 ! the carbon by the tissue it came from, so the litter diagnostics and the soil input are one   !
-! accumulation (#399).                                                                          !
+! accumulation.                                                                                 !
 !==========================================================================================!
 module meds_litter_partition
    use meds_kinds,              only : wp
@@ -24,9 +23,9 @@ module meds_litter_partition
 contains
 
    !=======================================================================================!
-   !  NECROMASS -> LITTER-DESTINATION split (MEDS_SLOW_DYNAMICS_DESIGN.md Part II, B1). Every input !
-   !  is a per-area carbon AMOUNT [kgC/m2], already converted from the per-plant cohort pools via    !
-   !  nplant; every PFT input is a plain scalar trait. Each tissue goes where it is (#399):          !
+   !  NECROMASS -> LITTER-DESTINATION split (docs/science/soil_carbon.md §5). Every input is a       !
+   !  per-area carbon AMOUNT [kgC/m2], already converted from the per-plant cohort pools via         !
+   !  nplant; every PFT input is a plain scalar trait. Each tissue goes where it is:                 !
    !    - canopy (leaves, and the flowers, fruit and seed of reproduction): all ABOVE ground,        !
    !      labile/structural by f_labile_leaf;                                                         !
    !    - fine roots: all BELOW ground, by f_labile_leaf (no separate root trait);                    !

@@ -1,9 +1,9 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_water_processes -- the water relations and flows the soil-plant water solver uses        !
-! (MEDS_SPAC_WATER_NETWORK_PLAN.md P1): every analytic derivative against a central finite   !
-! difference, over dry, wet and saturated states, and every value against the read-offs of    !
-! meds_water_retention, where those read-offs' floors do not bind.                            !
+! test_water_processes -- the water relations and flows the soil-plant water solver uses   !
+! (docs/science/soil_plant_water.md): every analytic derivative against a central finite   !
+! difference, over dry, wet and saturated states, and every value against the read-offs of !
+! meds_water_retention, where those read-offs' floors do not bind.                         !
 !                                                                                          !
 !   1. SOIL LAYERS  : two van Genuchten soils and a Campbell soil; the two branches of the      !
 !                     unknown meet with equal value and slope; theta and K match the            !
@@ -224,7 +224,7 @@ contains
       call soil_water_flux(ka, kb - h, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
       if (.not. fd_agrees(dkb, (qa - qb) / (2*h), 1.0e-6_wp, 0.0_wp)) ok = .false.
       call check_true('darcy: derivatives match finite differences', ok)
-      !----- The pond face at zero head: today's infiltration capacity,                           !
+      !----- The pond face at zero head: the infiltration capacity,                               !
       !      sqrt(K1 Ksat) (1 + (-psi1)/(-z1)), times the water density. -------------------------!
       psi1 = -3.0_wp ; k1 = 2.0e-9_wp ; ks = 4.5e-6_wp ; z1 = -0.015_wp
       call soil_water_flux(ks, k1, 0.5_wp, 0.0_wp, grav_head * psi1, -z1, -z1, q, dum, dum, dum, dum)

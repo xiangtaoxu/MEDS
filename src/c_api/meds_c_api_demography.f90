@@ -4,20 +4,22 @@
 ! Python (ctypes). It goes into the optional shared library libmeds.so (MEDS_BUILD_PYLIB) and   !
 ! into a mandatory ctest target, so a signature change is a build failure in a default build.   !
 !                                                                                          !
-! `site_t` (allocatable-component derived type -- not f2py-able) crosses as an OPAQUE HANDLE:   !
-! a module-`save` registry of live sites indexed by a small integer the caller holds. Config    !
-!                                                                                          !
-! WHY THIS IS ONE FILE and not the `site` / `demography` pair §7.6 #3 sketches: that registry   !
-! (g_site / g_cfg / site_used / cfg_used / g_generation) is module state EVERY entry point       !
-! indexes. Splitting lifecycle from verbs would have to hoist it into a third module both         !
-! `use`, which buys nothing at ~290 lines and gives the registry two places to be got wrong.      !
-! is likewise an opaque handle loaded from the same TOML `meds_main` uses. Only flat arrays      !
+! `site_t` (allocatable-component derived type -- not f2py-able) crosses as an OPAQUE HANDLE: a !
+! module-`save` registry of live sites indexed by a small integer the caller holds. Config is   !
+! likewise an opaque handle loaded from the same TOML `meds_main` uses. Only flat arrays        !
 ! (copied into caller buffers) and scalars cross the boundary; getters always COPY.             !
 !                                                                                          !
-! This first cut drives the standalone CARBON model from Python: load config -> create site ->   !
-! init bare -> advance_slow (the driver's carbon orchestration) -> read state -> free. A         !
-! per-handle GENERATION counter (bumped every advance_slow, which reorders the SoA on fuse/fiss) !
-! lets the caller detect a stale positional snapshot -- global_id is the only stable key.        !
+! WHY THIS IS ONE FILE, not the `site` / `demography` pair of MEDS_CODE_STRUCTURE_DESIGN.md     !
+! §7.6: that registry (g_site / g_cfg / site_used / cfg_used / g_generation) is module state    !
+! EVERY entry point indexes. Splitting lifecycle from verbs would have to hoist it into a third !
+! module both `use`, which buys nothing at this size and gives the registry two places to be    !
+! got wrong.                                                                                    !
+!                                                                                          !
+! It drives the slow model from Python: load config -> create site -> init (bare ground or      !
+! census) -> advance_slow (the driver's carbon orchestration) or apply_rates (caller-supplied   !
+! demographic rates) -> read state -> free. A per-handle GENERATION counter (bumped by every    !
+! init and advance; fuse/fiss reorder the SoA) lets the caller detect a stale positional        !
+! snapshot -- global_id is the only stable key.                                                 !
 !==========================================================================================!
 module meds_c_api_demography
    use iso_c_binding
@@ -38,8 +40,8 @@ module meds_c_api_demography
 
    !----- The shim's entry points. PUBLIC so a ctest target can `use` this module and call them   !
    !      as Fortran; the bind(c) names are exported at link level either way, but a private      !
-   !      procedure is unreachable from a test, and an untestable shim is how this file came to    !
-   !      stop compiling without anyone noticing (see the header).  ------------------------------!
+   !      procedure is unreachable from a test, and a shim no test compiles can stop compiling     !
+   !      without anyone noticing (see the header).  ---------------------------------------------!
    public :: meds_config_load, meds_config_n_pft, meds_config_dt_years
    public :: meds_site_create, meds_site_init_bare, meds_site_init_census, meds_site_free
    public :: meds_advance_slow, meds_apply_rates
@@ -129,7 +131,7 @@ contains
       integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
       !----- The litter this step accumulates lands in site%patch%litter_in and is left there: no
       !      fast loop runs on this path, so soil_carbon_step (which needs a real xi_int) is not
-      !      wired here either. Matches this path's pre-Part-II-B2 scope.
+      !      wired here either.
       call vegetation_dynamics(g_site(sh), g_cfg(ch))
       call update_patch_states(g_site(sh)%patch, g_cfg(ch)%dt_years)
       call restructure_stand(g_site(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
@@ -171,7 +173,7 @@ contains
          site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
          !----- Empirical growth + mortality via the TENDENCY seam: per cohort, forward-derive the   !
          !      on-allometry pools of the new size from the SUPPLIED growth rate [cm/yr] (capped at   !
-         !      dbh_critical, inlined; mirrors set_cohort_size), back out each pool's time-            !
+         !      dbh_critical; mirrors set_cohort_size), back out each pool's time-                     !
          !      derivative, and advance the moving-average ring buffer with the supplied rate (the     !
          !      empirical convention -- records the request even when dbh is capped); then let the     !
          !      core engine's pure applier advance the state. There is deliberately NO empirical        !
@@ -180,9 +182,8 @@ contains
          call cohort_deriv_alloc(site%deriv, site%cohort%n)
          associate (cohort => site%cohort)
             do i = 1_ik, cohort%n
-               !----- Forward allometry from the supplied dbh growth. CALLS meds_allometry rather   !
-               !      than inlining it (#200): these relations used to be copied here from             !
-               !      set_cohort_size, so a coefficient change updated the model and not the shim.     !
+               !----- Forward allometry from the supplied dbh growth. It CALLS meds_allometry rather   !
+               !      than inlining it, so a coefficient change reaches the model and this shim alike. !
                dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, cohort%p_dbh_critical(i))
                height_new = dbh_to_height(cohort%allom, dbh_new, cohort%p_hgt_max(i))
                lc_new     = size2leaf_carbon(cohort%allom, dbh_new, height_new, cohort%sla(i))
@@ -196,13 +197,11 @@ contains
                                       lc_new, fc_new, wc_new, nc_new, n_window, site%growth_hist_pos)
             end do
          end associate
-         !----- Credit the recruit pool with THIS step's supplied rate, then let the monthly       !
-         !      apply_recruitment spawn from it. The pool used to be credited INSIDE                !
-         !      apply_recruitment, monthly, at rate/12; PR #137 moved that to a per-step credit in  !
-         !      the carbon driver so the pool became an exact carbon quantity, and this empirical   !
-         !      path has to follow -- it drives the same operators. Annual totals are unchanged for !
-         !      a steady rate, which is what this path supplies. `seed_c` is the ledger's external- !
-         !      import report and has no consumer here.                                             !
+         !----- Credit the recruit pool with THIS step's supplied rate, then let the monthly        !
+         !      apply_recruitment spawn from it. The carbon driver credits the pool the same way,   !
+         !      every step, which keeps it an exact carbon quantity; this path drives the same      !
+         !      operators, so it does the same. `seed_c` is the ledger's external-import report and !
+         !      has no consumer here.                                                               !
          call accumulate_recruit_pool(site, cfg, rec, cfg%dt_years, seed_c)
          call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
          !----- From here on the step is the carbon path's: sort every step (as vegetation_dynamics  !
@@ -311,7 +310,7 @@ contains
       end associate
    end subroutine meds_site_get_int
 
-   !----- PATCH-level copy-out, the exact analogue of the two above (#260). The demography       !
+   !----- PATCH-level copy-out, the exact analogue of the two above. The demography             !
    !      example drives this engine from Python with its own vital-rate laws and writes its own  !
    !      output; the cohort getters alone cannot describe a stand, because every extensive        !
    !      quantity is per m2 of ITS OWN patch and needs the patch areas to reach the site, and     !

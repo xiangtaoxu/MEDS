@@ -1,18 +1,17 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_prepass -- the once-per-dt_fast PRE-PASS of the fast biophysics loop, split into the  !
-! five processes it fuses (2026-09 review, item 4 #4): canopy aerodynamics from the current       !
-! canopy-air state, leaf gas exchange (GPP / stomatal conductance / dark respiration) with the      !
-! frozen leaf-energy coefficients, stem + fine-root maintenance respiration, heterotrophic          !
-! respiration, and the canopy-air-space capacities + atmosphere-exchange conductances.              !
-! `column_prepass` is the thin orchestrator that runs them in order and assembles the biotic CO2   !
-! flux; both integrators reach it through build_column_frozen (meds_fast_ark), so it is the ONE     !
-! authority that keeps ARK and RK45 GPP bit-for-bit. ED2 freezes gs and hydraulics per DTLSM in the !
-! same way.                                                                                          !
-!                                                                                                    !
-! The per-cohort arithmetic keeps the SAME i = 1..n accumulation order the fused routine used, and   !
-! each patch total is summed independently of the others, so splitting the one loop into a leaf     !
-! loop and a respiration loop leaves every output bit-identical.                                     !
+! meds_fast_prepass -- the once-per-dt_fast PRE-PASS of the fast biophysics loop, split into the    !
+! five processes it runs: canopy aerodynamics from the current canopy-air state, leaf gas exchange  !
+! (GPP / stomatal conductance / dark respiration) with the frozen leaf-energy coefficients, stem +  !
+! fine-root maintenance respiration, heterotrophic respiration, and the canopy-air-space            !
+! capacities + atmosphere-exchange conductances: Category 0 of docs/science/numerical_scheme.md     !
+! §2. `column_prepass` is the thin orchestrator that runs them in order and assembles the biotic    !
+! CO2 flux; both integrators reach it through build_column_frozen (meds_fast_frozen), so it is the  !
+! ONE authority that keeps ARK and RK45 GPP bit-for-bit. ED2 freezes gs and hydraulics per DTLSM in !
+! the same way.                                                                                     !
+!                                                                                                   !
+! Each patch total is accumulated over i = 1..n in its own loop, independently of the others, so    !
+! running the leaf and the respiration processes in separate loops does not change any total.       !
 !==========================================================================================!
 module meds_fast_prepass
    use meds_kinds,            only : wp, ik
@@ -55,10 +54,12 @@ module meds_fast_prepass
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! column_prepass -- run the five processes in order and assemble the biotic CO2 flux.          !
-   !   NEE_biotic = leaf Rd + stem + root maintenance respiration + heterotrophic Rh - GPP          !
-   ! [umol/m2/s], positive to the canopy air. `biophys` is intent(in): callers that need the CAS     !
-   ! temperature persisted write biophys%cas%can_temp = tcas themselves right after the call.         !
+   ! column_prepass -- run the five processes in order and assemble the biotic CO2 flux           !
+   ! (docs/science/plant_respiration.md eq. (7)):                                                 !
+   !   NEE_biotic = leaf Rd + stem + root maintenance respiration + heterotrophic Rh - GPP        !
+   !                + slow_co2_rate                                                               !
+   ! [umol/m2/s], positive to the canopy air. `biophys` is intent(in): callers that need the CAS  !
+   ! temperature persisted write biophys%cas%can_temp = tcas themselves right after the call.     !
    !---------------------------------------------------------------------------------------!
    subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac, &
                              tcas, qcas, press, rho, t_ground, h_coeff_leaf, g_transp_leaf,                     &
@@ -79,9 +80,10 @@ contains
       real(wp),                intent(out)   :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, &
            nee_biotic
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
-      !----- OPTIONAL per-cohort DIAGNOSTIC capture (MEDS_IO_V01_PLAN.md section 3.4). Present only    !
-      !      when the run reports per-cohort ecophysiology; absent, the extra leaf_flux_t fields are    !
-      !      never even requested from the batch kernel, so this costs nothing.  ---------------------!
+      !----- OPTIONAL per-cohort DIAGNOSTIC capture (docs/science/diagnostics.md §1, stage [2]).   !
+      !      Present only when the run reports per-cohort ecophysiology; absent, the extra         !
+      !      leaf_flux_t fields are never even requested from the batch kernel, so this costs      !
+      !      nothing. -----------------------------------------------------------------------------!
       real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) INSTANTANEOUS values
 
       real(wp) :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
@@ -111,14 +113,15 @@ contains
       call patch_heterotrophic_respiration(cfg, col_config, biophys%soil_carbon, t_ground,              &
                                            soil_temp_root, theta_mean, rh, budget)
 
-      !----- NEE = autotrophic (leaf Rd + stem + root + GROWTH) + heterotrophic Rh - GPP. ---------!
-      !                                                                                          !
-      !      `slow_co2_rate` is the autotrophic term this loop cannot compute: GROWTH respiration !
-      !      is charged once per day by the allocator, on the growth it actually built, so it is  !
-      !      handed down as a frozen daily rate exactly as the shed tissue water is. Without it   !
-      !      the plant was debited for construction carbon that never reached the atmosphere --   !
-      !      ~23% of everything entering growth, silently deleted (plan §10.2.2 item 1).          !
-      !      It also carries the opposite-signed starvation correction; see the field's comment.  !
+      !----- NEE = autotrophic (leaf Rd + stem + root + GROWTH) + heterotrophic Rh - GPP           !
+      !      (docs/science/plant_respiration.md eq. (7)).                                          !
+      !                                                                                            !
+      !      `slow_co2_rate` is the autotrophic term this loop cannot compute: GROWTH respiration  !
+      !      is charged once per day by the allocator, on the growth it actually built, so it is   !
+      !      handed down as a frozen daily rate exactly as the shed tissue water is. Without it    !
+      !      the plant would be debited for construction carbon that never reached the             !
+      !      atmosphere -- ~23% of everything entering growth. It also carries the                 !
+      !      opposite-signed starvation correction (docs/science/plant_respiration.md §6).         !
       nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp + biophys%slow_co2_rate
       budget%gpp_last = gpp ; budget%nee_last = nee_biotic
 
@@ -129,8 +132,9 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! refresh_canopy_aerodynamics -- the canopy-air scalars diagnosed from the CAS state, written    !
-   ! into the aerodynamic environment, and the whole-canopy aerodynamics solve (friction velocity,   !
-   ! scalar profile factors, ground conductance, per-cohort boundary layers).                        !
+   ! into the aerodynamic environment, and the whole-canopy aerodynamics solve (friction velocity,  !
+   ! scalar profile factors, ground conductance, per-cohort boundary layers;                        !
+   ! docs/science/canopy_aerodynamics.md §2-§4).                                                    !
    !---------------------------------------------------------------------------------------!
    subroutine refresh_canopy_aerodynamics(aero_cfg, aenv, ageom, col_cohort, cas, soil_temp_top,      &
                                           leaf_temp, wood_temp, aero, tcas, qcas, press, rho, t_ground)
@@ -175,32 +179,34 @@ contains
    end subroutine root_zone_environment
 
    !---------------------------------------------------------------------------------------!
-   ! canopy_leaf_gas_exchange -- per-cohort leaf gas exchange (GPP / gs / Rd) over the whole      !
-   ! patch at once through the bare-array batch kernel, the patch GPP and leaf-respiration totals, !
-   ! and the FROZEN leaf-energy coefficients h_coeff_leaf / g_transp_leaf that the stage kernels consume.     !
+   ! canopy_leaf_gas_exchange -- per-cohort leaf gas exchange (GPP / gs / Rd) over the whole        !
+   ! patch at once through the bare-array batch kernel, the patch GPP and leaf-respiration totals,  !
+   ! and the FROZEN leaf-energy coefficients h_coeff_leaf / g_transp_leaf that the stage kernels    !
+   ! consume (docs/science/leaf_gas_exchange.md).                                                   !
    !                                                                                                !
    ! psi_leaf for gs stays FROZEN (Category-0, ED2-faithful): diagnosed ONCE per dt_fast from the   !
    ! prognostic leaf_water_mass^n -- never refreshed per stage.                                     !
    !                                                                                                !
-   ! STOMATAL WATER STRESS (issue #95): beta_stomata = min(1, exp(sref*(psi - psi_onset))) is driven by !
-   ! YESTERDAY's daily-maximum leaf water potential -- the model's predawn potential.               !
-   ! DMAX_PSI_LEAF_UNSET (positive, so unmistakable) means the cohort has no history yet: a recruit, !
-   ! or the first step of a run. It is seeded from the SURFACE-LAYER soil potential so it starts at  !
-   ! its patch's actual water status rather than at 0, which would read as fully turgid.             !
+   ! STOMATAL WATER STRESS: beta_stomata = min(1, exp(sref*(psi - psi_onset)))                      !
+   ! (docs/science/leaf_gas_exchange.md eq. (10)) is driven by YESTERDAY's daily-maximum leaf water !
+   ! potential -- the model's predawn potential. DMAX_PSI_LEAF_UNSET (positive, so unmistakable)    !
+   ! means the cohort has no history yet: a recruit, or the first step of a run. It is seeded from  !
+   ! the SURFACE-LAYER soil potential so it starts at its patch's actual water status rather than   !
+   ! at 0, which would read as fully turgid.                                                        !
    !                                                                                                !
    ! NOTE ON THE `psi=` KEYWORD: what is passed is dmax_psi_leaf -- the cohort's own predawn LEAF   !
-   ! potential, NOT a soil potential. The leaf kernel's dummy is called psi because the Sabot        !
-   ! stomatal limb is conventionally keyed on soil/predawn potential, and predawn leaf psi IS the    !
-   ! plant's overnight equilibration with the soil in WET soil. They do NOT coincide under drought,  !
-   ! which is exactly the regime this feedback exists for. Renaming the kernel dummy is deferred     !
-   ! because `psi` is a published Python keyword (meds.plant.leaf) -- see issue #99.                 !
+   ! potential, NOT a soil potential. The leaf kernel's dummy is called psi because the Sabot       !
+   ! stomatal limb is conventionally keyed on soil/predawn potential, and predawn leaf psi IS the   !
+   ! plant's overnight equilibration with the soil in WET soil. They do NOT coincide under drought, !
+   ! which is exactly the regime this feedback exists for. The dummy keeps the name `psi` because   !
+   ! it is a keyword of the published Python interface (meds.plant.leaf).                           !
    !---------------------------------------------------------------------------------------!
    subroutine canopy_leaf_gas_exchange(leaf_photo, hyd_table, hyd_opts, veg_thermal, soil, col_cohort,    &
                                        forc, aero,                                                       &
                                        biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
-      type(hydro_params_table_t), intent(in)  :: hyd_table              !< PER-PFT leaf PV curve (#179)
+      type(hydro_params_table_t), intent(in)  :: hyd_table              !< PER-PFT leaf PV curve
       type(hydro_opts_t),         intent(in)  :: hyd_opts               !< gravity switch (leafless cohorts)
       type(veg_thermal_params_t), intent(in)  :: veg_thermal  !< effective exchange areas
       type(soil_params_t),        intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
@@ -214,7 +220,7 @@ contains
       real(wp), optional,         intent(out) :: gpp_coh(:), leaf_resp_coh(:)   !< [umol/plant/s]
       real(wp), optional,         intent(inout) :: cdiag(:,:)
 
-      !----- Bare-array batch I/O for the per-cohort physiology kernel (MEDS_NUMERICS_SCOPING.md).   !
+      !----- Bare-array batch I/O for the per-cohort physiology kernel. ----------------------------!
       real(wp) :: par_arr(col_cohort%n), vpd_arr(col_cohort%n), gb_arr(col_cohort%n), rho_mol_arr(col_cohort%n), &
             psi_leaf_arr(col_cohort%n)
       real(wp) :: dmax_psi_arr(col_cohort%n), dmax_psi_seed
@@ -288,9 +294,8 @@ contains
       end if
       do i = 1_ik, n
          gsw_ms  = gs_arr(i) / max(rho_mol_arr(i), tiny_num)
-         !----- GPP is gross A. For a leaf whose stomata the low-water-potential control has nearly or  !
-         !      fully closed, gross A tends to Rd: its own respiration, refixed (#332; the CARBON NOTE in !
-         !      solve_leaf_gas_exchange). Rd is charged below either way. -------------------------------!
+         !----- GPP is gross A, and Rd is charged below either way, so the canopy air receives the !
+         !      leaf's net exchange A_g - Rd whatever the water-stress controls did to A_g. -------!
          gpp     = gpp     + a_gross_arr(i) * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(gpp_coh)) gpp_coh(i) = a_gross_arr(i) * col_cohort%leaf_area(i)
          if (present(cdiag))   cdiag(CD_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
@@ -302,9 +307,9 @@ contains
    end subroutine canopy_leaf_gas_exchange
 
    !---------------------------------------------------------------------------------------!
-   ! A cohort's leaf PAR: the PAR its leaves absorb per unit of its OWN leaf area. The guard only    !
-   ! keeps a leafless cohort, which absorbs nothing, at 0. It used to be max(LAI, 0.1), which spread !
-   ! a thin cohort's light over leaf area it does not have (#346).                                   !
+   ! A cohort's leaf PAR: the PAR its leaves absorb per unit of its OWN leaf area. The guard only   !
+   ! keeps a leafless cohort, which absorbs nothing, at 0; a floor on the leaf area would spread a  !
+   ! thin cohort's light over leaf area it does not have.                                           !
    !---------------------------------------------------------------------------------------!
    elemental real(wp) function cohort_leaf_par(abs_par, lai, par_per_w) result(par)
       real(wp), intent(in) :: abs_par    !< [W/m2 ground] PAR the cohort's leaves absorb
@@ -314,26 +319,28 @@ contains
    end function cohort_leaf_par
 
    !---------------------------------------------------------------------------------------!
-   ! canopy_maintenance_respiration -- stem and fine-root maintenance respiration, per cohort     !
-   ! [umol/plant/s] and as patch totals [umol/m2 ground/s]. Elemental kernels: the array actuals    !
-   ! drive the broadcast; the parameter records and the patch-uniform soil temperature broadcast.   !
+   ! canopy_maintenance_respiration -- stem and fine-root maintenance respiration, per cohort       !
+   ! [umol/plant/s] and as patch totals [umol/m2 ground/s] (docs/science/plant_respiration.md       !
+   ! eqs. (3)-(4)). Elemental kernels: the array actuals drive the broadcast; the parameter records !
+   ! and the patch-uniform soil temperature scale broadcast.                                        !
    !---------------------------------------------------------------------------------------!
    subroutine canopy_maintenance_respiration(wood, root, soil, root_frac, col_cohort, wood_temp, soil_temp, &
                                              ra_stem, ra_root, stem_resp_coh, root_resp_coh)
       type(wood_params_t),   intent(in)  :: wood
       type(root_params_t),   intent(in)  :: root
       real(wp),              intent(in)  :: root_frac(:)        !< [-] the patch's fine roots by layer
-      type(soil_params_t),   intent(in)  :: soil                !< active layer count (#178)
+      type(soil_params_t),   intent(in)  :: soil                !< active layer count
       type(column_cohort_t), intent(in)  :: col_cohort
       real(wp),              intent(in)  :: wood_temp(:)        !< [K] per-cohort wood temperature
-      real(wp),              intent(in)  :: soil_temp(:)        !< [K] PER-LAYER soil temperature (#178)
+      real(wp),              intent(in)  :: soil_temp(:)        !< [K] PER-LAYER soil temperature
       real(wp),              intent(out) :: ra_stem, ra_root    !< [umol/m2 ground/s]
       real(wp), optional,    intent(out) :: stem_resp_coh(:), root_resp_coh(:)   !< [umol/plant/s]
       real(wp) :: stem_resp_arr(col_cohort%n), root_resp_arr(col_cohort%n), tscale_root
       integer(ik) :: i, n
       n = col_cohort%n
-      !----- The temperature response is summed OVER LAYERS, not taken at a mean (#178). It is   !
-      !      patch-uniform, so it is evaluated once here and broadcast over the cohort array. ----!
+      !----- The temperature response is summed OVER LAYERS, not taken at a mean temperature       !
+      !      (docs/science/plant_respiration.md eq. (4)). It is patch-uniform, so it is evaluated  !
+      !      once here and broadcast over the cohort array. ---------------------------------------!
       tscale_root = root_zone_temp_scale(soil_temp, root_frac, soil%n_active, root)
       ra_stem = 0.0_wp ; ra_root = 0.0_wp
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
@@ -354,12 +361,12 @@ contains
    end subroutine canopy_maintenance_respiration
 
    !---------------------------------------------------------------------------------------!
-   ! patch_heterotrophic_respiration -- Rh [umol/m2/s] from EITHER the constant-pool scalar form   !
-   ! (soil_carbon_on = .false.) OR the CENTURY matrix over the FROZEN per-patch pool held constant   !
-   ! across today's sub-steps (B2, MEDS_SLOW_DYNAMICS_DESIGN.md Part II section 9): the day's total  !
-   ! fast Rh then equals the daily soil_carbon_step's pool debit BY CONSTRUCTION, since both read    !
-   ! the same frozen pool + the same per-pool env scalar xi (written to budget%xi_step for the caller !
-   ! to integrate into xi_int).                                                                       !
+   ! patch_heterotrophic_respiration -- Rh [umol/m2/s] from the CENTURY matrix over the FROZEN      !
+   ! per-patch pool held constant across today's sub-steps (docs/science/soil_carbon.md §7,         !
+   ! eq. (2)): the day's total fast Rh then equals the daily soil_carbon_step's pool debit BY       !
+   ! CONSTRUCTION, since both read the same frozen pool + the same per-pool env scalar xi (written  !
+   ! to budget%xi_step for the caller to integrate into xi_accum). With soil_carbon_on = .false.    !
+   ! there is no soil respiration (Rh = 0).                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine patch_heterotrophic_respiration(cfg, col_config, soil_carbon, t_ground, soil_temp_root,  &
                                               theta_mean, rh, budget)
@@ -376,39 +383,33 @@ contains
                                   col_config%soil%theta_sat(1), soil_carbon, cfg%soil_carbon, xi)
          call assemble_transfer_matrix(soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)
          !----- TWO CURRENCIES, and they are not interchangeable. heterotrophic_respiration_matrix   !
-         !      returns [kgC/m2/day] -- the units the CENTURY pools and the daily soil_carbon_step    !
-         !      are written in. `rh` feeds nee_biotic beside ra_leaf/ra_stem/ra_root, which are        !
-         !      [umol/m2/s]. This conversion was MISSING: the matrix value went straight into NEE, so  !
-         !      heterotrophic respiration reached the canopy air 963.6x too small -- measured as a      !
-         !      0.0032 umol/m2/s change in Reco when soil carbon is switched on, where the correct     !
-         !      answer is ~3.1. The scalar branch below the `else` always converted; only this one      !
-         !      did not.                                                                                !
-         !      budget%rh_matrix_step KEEPS the kgC/m2/day form on purpose: the fast loop integrates    !
-         !      it into xi_accum%rh_fast_accum, which the daily step compares against its own pool      !
-         !      debit (rh_seam_gap). That comparison lives in the pools' currency, so converting at     !
-         !      the source would have silently broken the seam check instead.  ------------------------!
+         !      returns [kgC/m2/day] -- the units the CENTURY pools and the daily soil_carbon_step   !
+         !      are written in. `rh` feeds nee_biotic beside ra_leaf/ra_stem/ra_root, which are      !
+         !      [umol/m2/s], so it is converted with kgCday_2_umols: unconverted, soil respiration   !
+         !      would reach the canopy air ~964x too small.                                          !
+         !      budget%rh_matrix_step KEEPS the kgC/m2/day form on purpose: the fast loop integrates !
+         !      it into xi_accum%rh_fast_accum, which the daily step compares against its own pool   !
+         !      debit (rh_seam_gap). That comparison lives in the pools' currency, so converting at  !
+         !      the source would break the seam check instead. --------------------------------------!
          rh_kgc = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)
          budget%xi_step = xi ; budget%rh_matrix_step = rh_kgc      ! [kgC/m2/day] -- the seam's currency
          rh = rh_kgc * kgCday_2_umols                              ! [umol/m2/s]  -- what the CAS gets
       else
-         !----- NO SOIL CARBON MODELLED => NO SOIL RESPIRATION. This branch used to respire a        !
-         !      PRESCRIBED constant 5 kgC/m2 pool through the empirical Q10 form, which is not a     !
-         !      coarser approximation of the CENTURY path -- it is carbon created from nothing: the  !
-         !      seven pools are identically zero and receive no litter when the feature is off, so   !
-         !      nothing was ever debited for the CO2 leaving the column. Measured on the lit         !
-         !      reference run, it held the canopy air 47 ppm above the 420 ppm atmospheric datum     !
-         !      (467 vs 420) and made site NEE +30.7 umol/m2/s where the true answer is ~0; the      !
-         !      elevated CO2 then fertilized photosynthesis, inflating GPP by 5%. None of it was     !
-         !      visible in the output, because `rh_site` reads the CENTURY matrix and reported 0     !
-         !      throughout. Turn [soil_carbon].soil_carbon_on on to model soil respiration. ---------!
+         !----- NO SOIL CARBON MODELLED => NO SOIL RESPIRATION. A prescribed constant pool respired    !
+         !      through an empirical Q10 form would not be a coarser approximation of the CENTURY      !
+         !      path -- it would be carbon created from nothing: the seven pools are identically zero  !
+         !      and receive no litter when the feature is off, so nothing would be debited for the     !
+         !      CO2 leaving the column, and `rh_site`, which reads the CENTURY matrix, would report 0. !
+         !      Turn [soil_carbon].soil_carbon_on on to model soil respiration. -----------------------!
          rh = 0.0_wp
       end if
    end subroutine patch_heterotrophic_respiration
 
    !---------------------------------------------------------------------------------------!
-   ! cas_capacities_and_conductances -- canopy-air-space mass and molar capacities [kg/m2],        !
-   ! [mol/m2] and the CAS <-> atmosphere conductances for enthalpy, vapour and CO2. Heat rides the  !
-   ! temp1 profile factor, vapour and CO2 ride temp2 (equal in canopy_aerodynamics, z0q = z0h).     !
+   ! cas_capacities_and_conductances -- canopy-air-space mass and molar capacities [kg/m2],         !
+   ! [mol/m2] and the CAS <-> atmosphere conductances for enthalpy, vapour and CO2                  !
+   ! (docs/science/canopy_aerodynamics.md eq. (5)). Heat rides the temp1 profile factor, vapour and !
+   ! CO2 ride temp2 (equal in canopy_aerodynamics, z0q = z0h).                                      !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_capacities_and_conductances(rho, qcas, can_depth, ustar, temp1, temp2,          &
                                                    cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2)

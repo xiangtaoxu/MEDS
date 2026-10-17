@@ -1,22 +1,23 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_surface_maps -- every static per-cell map a run reads, in one place: no other module opens  !
-! a map (MEDS_POLYGON_RUNTIME_PLAN.md §14, RP2).                                                    !
+! a map (docs/configuration.md, Input maps).                                                        !
 !                                                                                          !
 ! A map is a variable in a netCDF file on the forcing grid: the file's lat and lon axes are the     !
 ! ED_ERA5land static file's, so a cell's value sits at the cell's own (row, col) and MEDS never     !
 ! regrids. A 2-D map is (lat, lon); a layered one is (layer, lat, lon). A value the map does not    !
 ! hold -- the variable's _FillValue or missing_value, or a NaN -- reads as NaN: filling gaps is the  !
-! product's job, not MEDS's (§14.6, OR17), and the caller decides whether a missing value is an     !
-! error. Packed values (scale_factor, add_offset) are unpacked.                                     !
+! product's job, not MEDS's, and the caller decides whether a missing value is an error. Packed     !
+! values (scale_factor, add_offset) are unpacked.                                                   !
 !                                                                                          !
 ! A read takes the band of rows the cells span, every column, as one hyperslab: one read per       !
 ! variable for a whole region, which also serves a box that crosses 180 degrees.                   !
 !                                                                                          !
-! The surface inputs ([maps], §14 RP3): read_map_inputs reads the soil maps and the Chave   !
-! site index at every cell once, and apply_map_inputs turns one cell's values into that        !
-! polygon's configuration -- its soil column, layer by layer, its bottom boundaries and its height  !
-! allometry's site index. A run cell the maps leave empty is an input error naming the cell.       !
+! The surface inputs ([maps]; docs/science/soil_biophysics.md §The column from the soil maps):  !
+! read_map_inputs reads the soil maps and the Chave site index at every cell once, and          !
+! apply_map_inputs turns one cell's values into that polygon's configuration -- its soil column,  !
+! layer by layer, its bottom boundaries and its height allometry's site index. A run cell the maps !
+! leave empty is an input error naming the cell.                                                    !
 !==========================================================================================!
 module meds_surface_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
@@ -50,7 +51,7 @@ module meds_surface_maps
    character(len=*), parameter :: SOIL_LAYER_DIM = 'depth', SOIL_LAYER_BOUNDS = 'depth_bnds'
    !----- The bottom water boundary of the soil depth map's bc_class. ---------------------------!
    integer(ik), parameter :: BC_FREE_DRAIN = 1_ik   !< q = K(theta)
-   integer(ik), parameter :: BC_LEAKY      = 2_ik   !< q = f_leak K(theta): run as free_drain until #401
+   integer(ik), parameter :: BC_LEAKY      = 2_ik   !< q = f_leak K(theta): run as free_drain (see docs/ROADMAP.md)
    integer(ik), parameter :: BC_SEALED     = 3_ik   !< q = 0
    integer(ik), parameter :: BC_AQUIFER    = 4_ik   !< a water table at the column base
 
@@ -89,8 +90,9 @@ contains
       call read_cells(path, var, layer_dim, static_path, cells, values, stat)
    end subroutine map_layers_at_cells
 
-   !----- The cell mask of a region (§14 RP2, OR11): keep the cells whose mask value is at least      !
-   !      mask_min. A cell the mask leaves empty is not kept. n_dropped counts the cells it removes. ----!
+   !----- The cell mask of a region (docs/configuration.md, Regional runs): keep the cells whose    !
+   !      mask value is at least mask_min. A cell the mask leaves empty is not kept. n_dropped counts !
+   !      the cells it removes. -----------------------------------------------------------------------!
    subroutine apply_cell_mask(cells, mask_path, mask_var, mask_min, static_path, n_dropped, stat)
       type(met_cells_t), intent(inout) :: cells
       character(len=*),  intent(in)    :: mask_path, mask_var, static_path
@@ -246,11 +248,13 @@ contains
    !  * The soil column ends at the map's soil depth, on the default layers (soil_column_layers); !
    !    each layer takes the map layers it overlaps, weighted by the overlap, and below the      !
    !    deepest map layer (2 m) the deepest one. Its curve and Ks come from the pedotransfer     !
-   !    function, its thermal properties from the same texture.                                  !
+   !    function, its thermal properties from the same texture (docs/science/soil_biophysics.md  !
+   !    §The column from the soil maps).                                                         !
    !  * The bottom water boundary is the map's: free_drain, bedrock for a sealed base, aquifer;  !
-   !    a leaky base runs as free_drain until #401.                                               !
+   !    a leaky base runs as free_drain (see docs/ROADMAP.md).                                    !
    !  * The Dirichlet thermal anchor sits at the map's deep temperature, annual_damping_depth /  !
-   !    sqrt(2) below the bottom node, where it reflects the annual wave least.                   !
+   !    sqrt(2) below the bottom node, where it reflects the annual wave least                    !
+   !    (docs/science/soil_biophysics.md eq. (13)).                                               !
    !  * The Chave height allometry takes the cell's E.                                          !
    !=======================================================================================!
    subroutine apply_map_inputs(inp, k, cfg)
@@ -282,7 +286,7 @@ contains
          select case (nint(inp%bc_class(k), ik))
          case (BC_SEALED)  ; cfg%soil%bottom_bc = SOIL_BC_BEDROCK
          case (BC_AQUIFER) ; cfg%soil%bottom_bc = SOIL_BC_AQUIFER
-         case default      ; cfg%soil%bottom_bc = SOIL_BC_FREE_DRAIN     ! free_drain, and leaky (#401)
+         case default      ; cfg%soil%bottom_bc = SOIL_BC_FREE_DRAIN     ! free_drain, and leaky
          end select
          call soil_column_params(cfg%soil_column, soil)
          cfg%energy%deep_temp  = inp%deep_temp(k)

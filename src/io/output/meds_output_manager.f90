@@ -2,10 +2,11 @@
 !==========================================================================================!
 ! meds_output_manager -- the serializer-side glue: drain queued records into the file set's       !
 ! streams (output_serialize, called only from a driver's I/O phase, for a site's file set and a     !
-! region's alike), and close them at run end (flushing any final partial period). netCDF via meds_output_stream. The netCDF-free half of the manager -- allocation, !
-! manager_setup / manager_finalize / manager_alloc_buffers in meds_output_registry, and the          !
-! per-step tick, output_integrate in meds_output_integrate -- is deliberately in the core library so !
-! the stepper stays off netCDF (§2, §4.5).                                                           !
+! region's alike), and close them at run end (flushing any final partial period). netCDF via        !
+! meds_output_stream. The netCDF-free half of the manager -- allocation (manager_setup /            !
+! manager_finalize / manager_alloc_buffers in meds_output_registry) and the per-step tick           !
+! (output_integrate in meds_output_integrate) -- is deliberately in meds_io_prep, so the stepper    !
+! stays off netCDF (docs/science/diagnostics.md §1).                                                !
 !==========================================================================================!
 module meds_output_manager
    use meds_kinds,            only : ik

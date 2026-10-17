@@ -120,12 +120,12 @@ $`\mathrm{att}=1-\sigma_f`$:
 ```math
 m=\sqrt{\mathrm{att}^2-\sigma_b^2},\quad
 r_\infty=\frac{\mathrm{att}-m}{\sigma_b},\quad
-e=e^{-m\,\mathrm{ETAI}}
+e=e^{-m\,\mathrm{ETAI}} \qquad(8)
 ```
 
 ```math
 t_{dd}=\frac{(1-r_\infty^2)\,e}{1-r_\infty^2 e^2}, \qquad
-r_{dd}=\frac{r_\infty(1-e^2)}{1-r_\infty^2 e^2} \qquad(8)
+r_{dd}=\frac{r_\infty(1-e^2)}{1-r_\infty^2 e^2} \qquad(9)
 ```
 
 (The conservative-scattering singularity $\omega\to1$ is guarded; $`\sigma_b\to0`$ collapses to pure
@@ -136,13 +136,14 @@ intercepted by layer $i$ is single-scattered into the diffuse field:
 
 ```math
 I^\downarrow_0(i) = I^\downarrow_0(i{+}1)\,e^{-k_i\,\mathrm{ETAI}_i}, \qquad
-S_i = \omega_i\,\big(I^\downarrow_0(i{+}1)-I^\downarrow_0(i)\big) \qquad(9)
+S_i = \omega_i\,\big(I^\downarrow_0(i{+}1)-I^\downarrow_0(i)\big) \qquad(10)
 ```
 
 split into the layer's up-source $`\beta_{0,i}S_i`$ and down-source $`(1-\beta_{0,i})S_i`$. For the
-thermal band each layer adds a blackbody source $`(1-r_{dd}-t_{dd})\,\sigma T^4`$ to both faces
-(emission temperature = the cohort/canopy temperature; the driver sets it to the canopy-air temperature
-so leaf emission is counted once).
+thermal band each layer adds a blackbody source $`(1-r_{dd}-t_{dd})\,\sigma T^4`$ to both faces. The
+emission temperature is the cohort's effective radiative temperature,
+$`T=\big(f_l\,T_{leaf}^4+(1-f_l)\,T_{wood}^4\big)^{1/4}`$ with $`f_l=\mathrm{LAI}/(\mathrm{LAI}+\mathrm{WAI})`$,
+from the start-of-step tissue temperatures (`apply_rt_forcing`), so the longwave field sees both tissues.
 
 **The recursion.** A bottom-up sweep builds the reflectance $`r_{bel}`$ and upward source $`s_{bel}`$
 of the growing stack {ground + layers $1..i$}, seeded by the ground reflectance and its upward source
@@ -151,7 +152,7 @@ of the growing stack {ground + layers $1..i$}, seeded by the ground reflectance 
 ```math
 r_{bel}(i) = r_{dd}(i) + \frac{t_{dd}(i)^2\,r_{bel}(i{-}1)}{1-r_{bel}(i{-}1)\,r_{dd}(i)},\qquad
 s_{bel}(i) = s_{up}(i) + t_{dd}(i)\,\frac{s_{bel}(i{-}1)+r_{bel}(i{-}1)\,s_{dn}(i)}{1-r_{bel}(i{-}1)\,r_{dd}(i)}
-\qquad(10)
+\qquad(11)
 ```
 
 A top-down sweep (seeded by the incident diffuse at canopy top) then recovers the up/down diffuse
@@ -161,7 +162,7 @@ conserved by construction (in − out telescopes):
 ```math
 A_i = \big(I^\downarrow_0(i{+}1)-I^\downarrow_0(i)\big)
       + \big(d^\downarrow_{in}(i)+u^\uparrow_{up}(i)\big)
-      - \big(u^\uparrow_{top}(i)+d^\downarrow_{bot}(i)\big) \qquad(11)
+      - \big(u^\uparrow_{top}(i)+d^\downarrow_{bot}(i)\big) \qquad(12)
 ```
 
 The solver also returns the below-canopy downwelling $`d_{ground}`$, the upwelling from the ground
@@ -172,17 +173,35 @@ $`u_{ground}`$, and the patch **albedo** = upward flux leaving the top / total i
 `ground_optics` closes the two-stream at the bottom (`meds_canopy_radiation`, surface block). For a shortwave
 band the ground reflectance is the (per-band) soil albedo and its emission is zero; for the thermal
 band the reflectance is $1-\varepsilon_{soil}$ and the emission is $`\varepsilon_{soil}\,\sigma\,
-T_{soil}^4`$. This first cut models **bare soil only**; `surface_state_t` reserves the fields
-(soil moisture, litter, standing water, snow) a full implementation will consult — and the snow model
-already supplies a Niu-Yang-blended albedo through the driver.
+T_{soil}^4`$. Its state (`ground_optics_state_t`) is **bare soil plus snow**: the per-band soil albedo,
+the emissivity and the skin temperature, which the driver blends toward the snowpack's albedo,
+emissivity and temperature by the Niu-Yang snow-cover fraction. Litter, standing water and soil moisture
+do not change the ground optics (see docs/ROADMAP.md).
 
 `canopy_radiation` (the sealed public seam, `meds_canopy_radiation`) loops the configured bands,
-blends optics per cohort, and dispatches each band to `solve_band`. It then splits each cohort's
-absorbed radiation into leaves and wood by the same `leaf_frac` weight the optics blend produced:
+blends optics per cohort, and dispatches each band to `solve_band`.
+
+**Co-dominant cohorts share a layer.** Cohorts of exactly equal height form one RT layer: its ETAI is
+the members' sum, and its $\omega$, $g$ (hence $\beta$, $\beta_0$), $k$ and emission are ETAI-weighted
+means of theirs. The layer's absorbed flux $`A_\ell`$ goes back to its members by absorptivity-weighted
+area, the same weight `leaf_frac` is built from:
+
+```math
+A_{b,i} = A_{b,\ell}\,\frac{(1-\omega_i)\,\mathrm{ETAI}_i}{\sum_{j\in\ell}(1-\omega_j)\,\mathrm{ETAI}_j}
+\qquad(13)
+```
+
+and every member sees the light reaching the layer's top. A one-member layer is exactly the per-cohort
+solve. Stacking tied cohorts instead would put whichever sorts first on top, so the light split between
+PFTs would follow the PFT index rather than the ecology; recruits tie exactly, because they all enter at
+one recruit size.
+
+`canopy_radiation` then splits each cohort's absorbed radiation into leaves and wood by the same
+`leaf_frac` weight the optics blend produced:
 
 ```math
 A^{leaf}_{b,i} = A_{b,i}\,\mathrm{leaf\_frac}_i, \qquad
-A^{wood}_{b,i} = A_{b,i}\,(1-\mathrm{leaf\_frac}_i) \qquad(12)
+A^{wood}_{b,i} = A_{b,i}\,(1-\mathrm{leaf\_frac}_i) \qquad(14)
 ```
 
 A patch with **no resolvable cohorts** short-circuits: all radiation reaches the ground, and the
@@ -193,21 +212,22 @@ albedo is the ground's alone.
 > absorptance internally when it computes $`I_2`$ for electron transport). The driver therefore passes
 > $`A^{leaf}_{\mathrm{VIS}} / \alpha_{leaf}`$ as the incident-equivalent PAR — dividing by leaf
 > absorptance. Skipping this double-counts absorptance and runs photosynthesis ~15 % light-starved
-> (`apply_rt_forcing` in `meds_fast_dynamics`; see also `project_meds_rt_join`). The absorbed leaf+wood
-> SW/LW go to the energy balance *as absorbed* (no division).
+> (`apply_rt_forcing` in `meds_fast_dynamics`). The absorbed leaf+wood SW/LW go to the energy balance
+> *as absorbed* (no division).
 
 ## Parameters (config names / trait table)
 
 | Symbol | Source | Meaning |
 |---|---|---|
-| $p, q$ | `beta_p`, `beta_q` (per PFT) | Beta-LIDF shape parameters |
-| $`\overline{\theta}, \sigma_\theta`$ | (via `beta_params_from_mean`) | interpretable mean/std leaf inclination [deg] |
-| $`\rho_{leaf},\tau_{leaf}`$ | per-PFT leaf spectra | leaf reflectance / transmittance per band |
-| $`\rho_{wood},\tau_{wood}`$ | per-PFT wood spectra | wood reflectance / transmittance per band |
-| $`\Omega_{leaf},\Omega_{wood}`$ | `clumping_leaf`, `clumping_wood` | clumping factors $\in(0,1]$ |
+| $`\overline{\theta}, \sigma_\theta`$ | `[pft].leaf_angle_mean`, `leaf_angle_std` | mean / std leaf inclination [deg] |
+| $p, q$ | derived from $`\overline{\theta}, \sigma_\theta`$ (`beta_params_from_mean`) | Beta-LIDF shape parameters |
+| $`\rho_{leaf},\tau_{leaf}`$ | `[pft].leaf_reflect_*`, `leaf_transmit_*` (`_vis`, `_nir`) | leaf reflectance / transmittance |
+| $`\rho_{wood},\tau_{wood}`$ | `[pft].wood_reflect_*`, `wood_transmit_*` (`_vis`, `_nir`) | wood reflectance / transmittance |
+| $`\varepsilon_{leaf},\varepsilon_{wood}`$ | `[pft].leaf_emissivity`, `wood_emissivity` | LW: $`\rho=1-\varepsilon,\ \tau=0`$ |
+| $`\Omega_{leaf},\Omega_{wood}`$ | `[pft].leaf_clumping`, `wood_clumping` | clumping factors $\in(0,1]$ |
 | $`\varepsilon_{soil}`$ | `[soil].ground_emissivity` (0.95) | ground thermal emissivity |
 | — | `[soil].ground_albedo_vis`, `ground_albedo_nir` (0.15, 0.30) | per-band bare-soil shortwave albedo |
-| $`\alpha_{leaf}`$ | `leaf_absorptance` (leaf kernel) | leaf VIS absorptance (PAR re-normalization) |
+| $`\alpha_{leaf}`$ | `[leaf_physiology].leaf_absorptance` | leaf VIS absorptance (PAR re-normalization) |
 
 ## References
 - Longo et al. (2019), *GMD* 12:4309 — ED-2.2 technical description (the `icanrad=2` two-stream).
@@ -220,9 +240,9 @@ albedo is the ground's alone.
 
 ## Surface radiative fluxes on the diagnostic path
 
-The two-stream forms the top-of-canopy upward flux every step as `albedo(b) x incid(b)`, and until
-#171 the output discarded it — so a run could not be compared against a radiometer or a satellite
-product without re-deriving it offline. Five variables now carry it:
+The two-stream forms the top-of-canopy upward flux every step as `albedo(b) x incid(b)`, and the output
+carries it, so a run compares directly against a radiometer or a satellite product. Five variables carry
+it:
 
 | variable | meaning |
 |---|---|
@@ -235,11 +255,10 @@ a *ratio*, which is not the ratio of the means — and at night the shortwave ra
 a reader wants, and what a satellite product *is*, is
 
 ```math
-\alpha_b = \frac{\sum_t \mathrm{SW}^\uparrow_b}{\sum_t \mathrm{SW}^\downarrow_b} \qquad(A)
+\alpha_b = \frac{\sum_t \mathrm{SW}^\uparrow_b}{\sum_t \mathrm{SW}^\downarrow_b} \qquad(15)
 ```
 
-over whatever period they choose. Emitting a mean albedo would have produced a number that looks
-right and is wrong.
+over whatever period they choose. A mean albedo would be a number that looks right and is wrong.
 
 Measured on a spun-up Ithaca stand, annual sums: **VIS 0.083, NIR 0.320, broadband 0.208**. The
 VIS/NIR contrast is the vegetation red-edge — chlorophyll absorbs the visible and leaves scatter the
@@ -254,9 +273,10 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 | Beta LIDF + params | `meds_optics_lib`: `beta_lidf`, `beta_pdf_kernel`, `beta_params_from_mean` |
 | moments $`\mathrm{bf}`$, $G(\mu)$ | `meds_optics_lib`: `leaf_bf`, `gfun_direct` |
 | $\omega, g$ single-scatter pair (per PFT) | `meds_optics_lib`: `scatter_pair` |
-| $\omega, g$ optics table + per-cohort blend | `meds_canopy_radiation`: `derive_rad_optics`, `blend_cohort_optics` ($\beta,\beta_0,k,$ leaf_frac) |
-| ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`surface_state_t`) |
+| per-PFT optics table ($\omega, g$), eq. (4) | `meds_canopy_radiation`: `derive_rad_optics` |
+| per-cohort blend ($\beta, \beta_0, k$, leaf_frac), eqs. (5)–(7) | `meds_canopy_radiation`: `blend_cohort_optics` |
+| ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`ground_optics_state_t`) |
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
-| public per-patch seam | `meds_canopy_radiation`: `canopy_radiation` |
-| types (optics / forcing / flux / ground) | `meds_canopy_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `ground_optics_state_t` |
-| fast-loop join (PAR renorm) | `meds_fast_dynamics`: `apply_rt_forcing` |
+| public per-patch seam (+ tied-cohort layers) | `meds_canopy_radiation`: `canopy_radiation` |
+| types | `meds_canopy_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `ground_optics_state_t` |
+| fast-loop join (PAR renorm, LW emission temperature, snow on the ground) | `meds_fast_dynamics`: `apply_rt_forcing` |

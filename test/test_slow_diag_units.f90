@@ -1,16 +1,15 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_slow_diag_units -- the units contract of the SLOW per-patch diagnostic rows (#239).      !
+! test_slow_diag_units -- the units contract of the SLOW per-patch diagnostic rows.             !
 !                                                                                          !
 ! The patch diagnostic block is (value, weight) and the reader returns value/weight. The weight  !
 ! is Sum(dt) in SECONDS -- accumulate_patch_diag adds cfg%dt_fast every fast step -- so EVERY      !
 ! row, fast or slow, must contribute (its rate, in the units the registry declares) x (dt in       !
-! SECONDS). The fast rows do that with flux*dt_fast and always have. The slow rows, added later,   !
-! contributed a bare per-step AMOUNT against a comment that described the rule correctly, and so   !
-! emitted a per-SECOND rate under a per-YEAR label -- every one of them read a factor              !
-! yr_sec = 3.1557e7 too small, for six shipped variables.                                          !
+! SECONDS). The fast rows do that with flux*dt_fast. A slow row that contributes a bare per-step   !
+! AMOUNT instead emits a per-SECOND rate under a per-YEAR label, a factor yr_sec = 3.1557e7 too    !
+! small.                                                                                           !
 !                                                                                          !
-! Nothing else in the suite could see it: a diagnostic is downstream of every conservation ledger, !
+! Nothing else in the suite can see that: a diagnostic is downstream of every conservation ledger, !
 ! and the slow ledger's own litter term reads patch%litter_in directly rather than this slot.      !
 !                                                                                          !
 ! So this test asserts the one identity the per-year label MEANS, against an oracle outside the    !
@@ -32,7 +31,7 @@
 ! really did span the slow step. A fixture whose fast window is shorter than its slow step would   !
 ! make every later check pass for the wrong reason.                                                 !
 !                                                                                          !
-! Last, the same identity in a SLOW-ONLY run (#299), where the slow step weighs the block itself.  !
+! Last, the same identity in a SLOW-ONLY run, where the slow step weighs the block itself.         !
 !==========================================================================================!
 program test_slow_diag_units
    use meds_kinds,               only : wp, ik
@@ -54,7 +53,7 @@ program test_slow_diag_units
    use meds_test_support,        only : banner, build_test_config, check, check_close, check_true, &
                                         test_report
    implicit none
-   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
 
    integer(ik), parameter :: nsl = 10_ik
    type(meds_config_t)  :: cfg
@@ -63,7 +62,7 @@ program test_slow_diag_units
    real(wp)             :: x(8), pool0, pool1, elapsed_yr, frac_expected
    integer(ik)          :: np
 
-   call banner('slow per-patch diagnostic units (#239)')
+   call banner('slow per-patch diagnostic units')
 
    cfg = build_test_config()
    cfg%fast_biophysics_on = .true.
@@ -150,7 +149,7 @@ program test_slow_diag_units
                                        ' 1/yr  vs configured hazard ', cfg%patch_disturbance_rate, ' 1/yr)'
    end block
 
-   !=== 5. A SLOW-ONLY RUN (#299). No fast loop weighs the block or sets its patch count, so the  !
+   !=== 5. A SLOW-ONLY RUN. No fast loop weighs the block or sets its patch count, so the         !
    !    slow step does both: the slow rows read their rates exactly as with a fast loop, and the    !
    !    fast rows are not slow rows (the output layer reports those as missing). ----------------!
    block

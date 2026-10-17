@@ -1,11 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_soil_biogeochem -- unit tests for the P0 SLOW soil-carbon matrix kernels                !
-! (meds_soil_biogeochem), mirroring the design test plan (MEDS_BIOGEOCHEMISTRY_DESIGN.md §8):   !
+! test_soil_biogeochem -- unit tests for the SLOW soil-carbon matrix kernels                              !
+! (meds_soil_biogeochem; docs/science/soil_carbon.md):                                                    !
 !   1. MASS CLOSURE  : dC == litter_in - Rh for one soil_carbon_step (EULER and EXPM), with Rh       !
-!                      recomputed INDEPENDENTLY from er*xi_int*K*X0. (The old `audit%resid ~ 0`     !
-!                      assertions here were vacuous -- rh_today is DEFINED as litter_in - dC, so    !
-!                      the residual was identically zero for any inputs. Field and assertions gone.)!
+!                      recomputed INDEPENDENTLY from er*xi_int*K*X0. rh_today is DEFINED as               !
+!                      litter_in - dC, so a residual built from it is identically zero for any            !
+!                      inputs (docs/science/soil_carbon.md §9).                                           !
 !   2. Rh COMPLEMENT : Rh = sum er_j*xi_j*K_j*X_j = -1^T A xi K X; column check sum_i a_ij = -er_j.  !
 !   3. SCALAR PLACE  : A*(xi*K*X) conserves mass to Rh; the wrong xi*(A*K*X) does not (per-pool xi).   !
 !   4. SCHEME TOPO   : scheme 0 = 3-active (struct->slow); scheme 5 = 5-active clay/sand topology.      !
@@ -14,8 +14,10 @@
 !   6. RESIDENCE/CAP : X_c = X_ss at equilibrium, X_p = 0; a perturbed pool relaxes toward X_c.           !
 !   7. LITTER+LIGNIN : build_litter_input maps pre-split streams; lignin is a proportional passive tracer.!
 !   8. T/THETA RESP  : Q10 doubling per 10 K; ED2 cap at 45 C; moisture peak; Rh=0 at X=0; N off => f=1.  !
-!   9. FAST/SLOW SEAM: matrix single-pool Rh == fast meds_cas_biophysics Rh (matched chemistry); the          !
-!                      accumulated xi_int path closes rh_today==today_rh, the daily-mean path does NOT.    !
+!   9. FAST/SLOW SEAM: the accumulated xi_int path closes rh_today==today_rh, the daily-mean path does    !
+!                      NOT (Jensen; docs/science/soil_carbon.md §6).                                      !
+!  10. NECROMASS     : necromass_to_litter's split matches the hand formula and conserves mass.           !
+!  PLAUSIBILITY      : soil_carbon_bad_pool passes round-off and real soils, catches the rest.            !
 !==========================================================================================!
 program test_soil_biogeochem
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
@@ -110,7 +112,7 @@ contains
          call check_true('EULER rh_today >= 0', rh >= 0.0_wp, rh)
          !----- INDEPENDENT (non-tautological) mass check: dC == litter_in - Rh, with Rh recomputed    !
          !      from er*xi_int*K*X0 (NOT from rh_today = litter_in - dC, which is closure-by-definition).!
-         !      This would catch a dropped-litter or misattributed-transfer bug that audit%resid can't. !
+         !      This catches a dropped-litter or misattributed-transfer bug that a residual cannot.    !
          call pack_pool_vector(p, x1)
          rh_indep = 0.0_wp
          do j = 1_ik, n_soil_pool
@@ -286,11 +288,12 @@ contains
       call pack_pool_vector(pss, xss)
       ! inert pools held at 0 (default scheme); finite everywhere:
       if (scheme == DECOMP_SCHEME_ED2) then
-         !----- §8.5 guard (MEANINGFUL, not vacuous): the FULL 7x7 A*diag(xi*K) is SINGULAR because the  !
-         !      inert (micr, passive) COLUMNS are identically zero (K_micr=K_pass=0), so a full solve      !
-         !      would hit a zero pivot -- the active-block {K>0} solve is REQUIRED and still returns a      !
-         !      finite X_ss (checked just below). Asserting the inert columns vanish is what proves the     !
-         !      active-block path is genuinely exercised (a full-solve regression could not satisfy this).  !
+         !----- Singular-system guard (docs/science/soil_carbon.md §8): the FULL 7x7 A*diag(xi*K) is        !
+         !      SINGULAR because the inert (micr, passive) COLUMNS are identically zero (K_micr=K_pass=0),  !
+         !      so a full solve would hit a zero pivot -- the active-block {K>0} solve is REQUIRED and      !
+         !      still returns a finite X_ss (checked just below). Asserting the inert columns vanish is     !
+         !      what proves the active-block path is genuinely exercised (a full-solve regression could not !
+         !      satisfy this).                                                                              !
          block
             real(wp)    :: mcol_inert
             integer(ik) :: ii
@@ -383,7 +386,7 @@ contains
       real(wp) :: exp_lab_grnd, exp_lab_soil, exp_str_grnd, exp_str_soil
       print '(a)', '-- test 7: litter mapping + lignin tracer --'
 
-      ! per-cohort split: leaf splits labile/structural by f_labile_leaf and lies above ground (#399);
+      ! per-cohort split: leaf splits labile/structural by f_labile_leaf and lies above ground;
       ! fineroot is below-ground; wood (CWD) is mostly structural via f_labile_stem, split by agf.
       exp_lab_grnd = leaf1*flab_leaf1 + wood1*flab_stem1*agf1                            &
                    + leaf2*flab_leaf2 + wood2*flab_stem2*agf2
@@ -432,8 +435,8 @@ contains
                       p%struct_grnd_lignin/p%struct_grnd_carbon > 0.2_wp, p%struct_grnd_lignin/p%struct_grnd_carbon)
 
       ! (c) EXPM at a LARGE accelerated-spin-up step: lignin must decay in lockstep with its host
-      ! carbon (exp(-d_s)), so f_lignin stays conserved and 0 <= L <= C. Before the solver-consistent
-      ! survival fix, the linear (1 - d_s) drove L NEGATIVE here (d_s = 3.0 => L = 0.8*(1-3) = -1.6).
+      ! carbon (exp(-d_s)), so f_lignin stays conserved and 0 <= L <= C. The linear survival (1 - d_s)
+      ! would drive L NEGATIVE here (d_s = 3.0 => L = 0.8*(1-3) = -1.6; docs/science/soil_carbon.md §6).
       opts = decomp_opts_t() ; opts%step_solver = DECOMP_STEP_EXPM
       pools = soil_carbon_t() ; pools%struct_grnd_carbon = 2.0_wp ; pools%struct_grnd_lignin = 0.8_wp  ! f_lignin=0.4
       c_before = pools%struct_grnd_carbon ; l_before = pools%struct_grnd_lignin ; f_lig_before = l_before/c_before
@@ -450,13 +453,13 @@ contains
    end subroutine test_litter_and_lignin
 
    !=======================================================================================!
-   ! 10. NECROMASS_TO_LITTER (meds_column_state_types; MEDS_SLOW_DYNAMICS_DESIGN.md Part II B1): !
+   ! 10. NECROMASS_TO_LITTER (meds_litter_partition; docs/science/soil_carbon.md §5):               !
    !     the driver-side (and core-side termination/disturbance) necromass -> litter-destination !
    !     split. (a) reproduces test_litter_and_lignin's own two-cohort hand formula EXACTLY when   !
    !     called per-cohort with storage_c=0 (no wood/storage in a turnover-shed call), catching any !
    !     drift between the kernel and this helper. (b) EXHAUSTIVE MASS CONSERVATION: the six        !
    !     outputs must sum to the total necromass in for an arbitrary (leaf,root,wood,storage) input  !
-   !     -- the split has nowhere else for carbon to go. (c) each tissue lies where it grew (#399):  !
+   !     -- the split has nowhere else for carbon to go. (c) each tissue lies where it grew:        !
    !     leaves all above ground; storage split by aboveground_frac like wood. (d) add_necromass    !
    !     records the carbon by origin, fruit and seed falling with the canopy, and the origins sum to !
    !     the pool streams.                                                                          !
@@ -571,8 +574,8 @@ contains
    end subroutine test_temperature_moisture
 
    !=======================================================================================!
-   ! 9. Fast/slow seam -- matrix single-pool Rh == fast meds_cas_biophysics Rh (matched chemistry);      !
-   !    the accumulated xi_int path closes rh_today==today_rh; the daily-mean path does NOT (Jensen). !
+   ! 9. Fast/slow seam -- the accumulated xi_int path closes rh_today==today_rh; the daily-mean     !
+   !    path does NOT (Jensen; docs/science/soil_carbon.md §6).                                     !
    !=======================================================================================!
    subroutine test_fast_slow_seam()
       type(soil_carbon_t) :: pools
@@ -586,12 +589,10 @@ contains
       pools = soil_carbon_t() ; pools%fast_soil_carbon = 4.0_wp ; xpool = 4.0_wp
       theta = 0.45_wp ; theta_dry = 0.1_wp ; theta_sat = 0.6_wp
 
-      ! ---- (a) used to compare the matrix against a matched empirical Rh kernel. Both empirical
-      !      forms were deleted as unreachable (#153) -- there is one production Rh authority, so
-      !      there is nothing to reconcile the matrix AGAINST here. The seam that does exist is
+      ! ---- There is one production Rh authority, the matrix, so the fast/slow seam that exists is
       !      rh_seam_gap (the matrix against the fast loop's accumulation of the SAME matrix), and
-      !      test_biogeochem_dynamics asserts it. Part (b) below is unaffected: it builds its own
-      !      Q10 and moisture factors inline, and it is the half that measures something.
+      !      test_biogeochem_dynamics asserts it. Part (b) below builds its own Q10 and moisture
+      !      factors inline.
       dopts = decomp_opts_t() ; dopts%decomp_scheme = DECOMP_SCHEME_CENTURY5   ! Q10 temp form
       dopts%rh_q10 = 1.5_wp ; dopts%rh_t_ref = 288.15_wp ; dopts%k_fast = 12.0_wp
       k2 = dopts%k_fast / yr_day
@@ -625,11 +626,10 @@ contains
    !---------------------------------------------------------------------------------------!
    ! POOL PLAUSIBILITY -- the predicate that answers the question conservation cannot.            !
    !                                                                                          !
-   ! A 50-year coupled spin-up drove one patch to 7e7 kgC/m2 of litter carbon with NEGATIVE       !
-   ! structural and slow pools, and the slow-loop ledger reported "every phase closes within      !
-   ! tolerance on all three currencies" for the whole run -- correctly, because the runaway         !
-   ! CONSERVED carbon. Nothing else looked either: 45 tests green, and no shipped config turned     !
-   ! soil carbon on, so the code path had no consumer.                                              !
+   ! A runaway that CONSERVES carbon closes every budget: a coupled spin-up can drive a patch !
+   ! to 7e7 kgC/m2 of litter carbon with NEGATIVE structural and slow pools while the         !
+   ! slow-loop ledger reports every phase closed on all three currencies                      !
+   ! (docs/science/soil_carbon.md §9).                                                        !
    !                                                                                          !
    ! These assertions are the guard against that class, so they check the BOUNDARIES rather than    !
    ! the happy path: round-off negatives must pass (the daily Euler step produces them), real        !
@@ -662,7 +662,7 @@ contains
 
       !----- A REAL negative must FAIL, and name the right pool. --------------------------------!
       p = soil_carbon_t()
-      p%struct_grnd_carbon = -5.6e3_wp                       ! the value the real runaway produced
+      p%struct_grnd_carbon = -5.6e3_wp                       ! the size of a runaway's negative pool
       k = soil_carbon_bad_pool(p)
       call check_true('a genuinely negative pool is caught', k == IP_STRUCT_GRND, real(k, wp))
       call check_true('the offending pool is named', trim(soil_carbon_pool_name(k)) == 'struct_grnd', &
@@ -670,7 +670,7 @@ contains
 
       !----- Above the divergence CEILING must fail. --------------------------------------------!
       p = soil_carbon_t()
-      p%fast_grnd_carbon = 7.15e7_wp                         ! ditto
+      p%fast_grnd_carbon = 7.15e7_wp                         ! the size of a runaway's litter pool
       k = soil_carbon_bad_pool(p)
       call check_true('a diverged pool is caught by the ceiling', k == IP_FAST_GRND, real(k, wp))
 

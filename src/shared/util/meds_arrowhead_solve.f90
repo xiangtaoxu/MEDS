@@ -17,11 +17,12 @@
 ! apart from the blocks, which it leaves as they were, and takes additions to the diagonals (a   !
 ! Newton matrix's storage terms), so the same blocks can be factored again with other additions. !
 !                                                                                          !
-! The soil-plant water solve (meds_spac_solver) is one such system -- the pond and the soil      !
-! layers are the core, each cohort a block whose wood meets the soil and whose leaves meet only  !
-! the wood (a root store, when it comes, will be a block's first unknown in the wood's place) --  !
-! but nothing here knows that (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.3). Factor once, then solve for !
-! as many right-hand sides as needed: the solver's error estimate reuses the last factorisation. !
+! The soil-plant water solve (meds_spac_solver; docs/science/soil_plant_water.md §3) is one     !
+! such system -- the pond and the soil layers are the core, each cohort a block whose wood      !
+! meets the soil and whose leaves meet only the wood (a root store would be a block's first     !
+! unknown in the wood's place; see docs/ROADMAP.md) -- but nothing here knows that. Factor      !
+! once, then solve for as many right-hand sides as needed: the solver's error estimate          !
+! reuses the last factorisation.                                                                !
 !==========================================================================================!
 module meds_arrowhead_solve
    use meds_kinds, only : wp, ik

@@ -16,7 +16,7 @@ would compute from the same inputs:
   synthesize_lwdown
 
 A forcing file stores the humidity its source measured (RHair, Tdew or Qair) and the model converts
-it (docs/science/forcing.md sec. 7), so the tool needs the saturation curve only for work of its
+it (docs/science/forcing.md §7), so the tool needs the saturation curve only for work of its
 own. The writer of the file itself is scripts/meds_forcing_file.py.
 
 Dependencies: numpy.
@@ -38,7 +38,8 @@ LW_CLOUD_A = 0.22          # [-] the model's default cloud coefficient ([forcing
 
 
 # ---------------------------------------------------------------------------------------------
-# Humidity and pressure (meds_therm_lib, meds_forcing_kernels, meds_lapse_rate).
+# Humidity and pressure (meds_therm_lib, meds_forcing_kernels, meds_lapse_rate): docs/science/forcing.md
+# eq. (11), and the isothermal limit of eq. (13).
 # ---------------------------------------------------------------------------------------------
 def sat_vapor_pressure(t_k):
     """Saturation vapour pressure [Pa] over liquid water at t_k [K]: Bolton (1980)."""
@@ -71,8 +72,8 @@ def pressure_at_height(p_pa, t_k, dz):
 
 
 # ---------------------------------------------------------------------------------------------
-# Solar geometry on the UTC clock (meds_forcing_kernels, meds_time). `stamps` are numpy
-# datetime64 values in UTC; the day of year is the UTC date's, as in the model.
+# Solar geometry on the UTC clock (meds_forcing_kernels, meds_time; docs/science/forcing.md eqs. (2)-(4)
+# and (6)). `stamps` are numpy datetime64 values in UTC; the day of year is the UTC date's, as in the model.
 # ---------------------------------------------------------------------------------------------
 def _day_of_year_and_seconds(stamps):
     stamps = np.asarray(stamps, dtype="datetime64[s]")
@@ -128,7 +129,7 @@ def clearness_index(sw_total, cosz):
 
 
 # ---------------------------------------------------------------------------------------------
-# Longwave synthesis (meds_forcing_kernels, #182).
+# Longwave synthesis (meds_forcing_kernels; docs/science/forcing.md eq. (17)).
 # ---------------------------------------------------------------------------------------------
 def clear_sky_emissivity(t_k, q, p_pa, form="brutsaert"):
     """Brutsaert (1975) from the vapour pressure of q, or Idso & Jackson (1969); bounded [0.5, 1]."""

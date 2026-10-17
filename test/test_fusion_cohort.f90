@@ -15,6 +15,7 @@ program test_fusion_cohort
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
    use meds_diagnostic_reduce, only : total_nplant, total_agb
+   use meds_site_diag_types,  only : cohort_diag_alloc, cohort_diag_value, CD_LEAF_TEMP, CD_WOOD_TEMP
    use meds_allometry,       only : storage_carbon_target
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
@@ -24,7 +25,8 @@ program test_fusion_cohort
    real(wp)            :: agb_tot, n0, agb0, dbh_avg
    real(wp)            :: wr, wd, leafmass_exp, woodmass_exp, ltemp_exp, wtemp_exp
    real(wp)            :: cl1, cw1, cl2, cw2, clf, cwf, e_leaf0, e_wood0
-   real(wp) :: np1, np2
+   real(wp) :: np1, np2, xdiag(4)
+   integer(ik) :: ndiag
    integer(ik)         :: j, pf
 
    call banner('cohort fusion/fission conservation')
@@ -40,17 +42,16 @@ program test_fusion_cohort
    !----- Seed distinct fast state + predict the merge. The tissue TEMPERATURES are intensive per   !
    !      unit HEAT CAPACITY, so they fuse on the capacity that carries them -- what that conserves  !
    !      is the tissue ENERGY, which is asserted directly below as well as through the formula.     !
-   !      They were leaf-area-weighted until 2026-09-09, which is roughly right for leaves and       !
-   !      wrong for wood (whose capacity follows wood carbon and the sapwood ring, not leaf area).   !
+   !      A leaf-area weighting is roughly right for leaves and wrong for wood (whose capacity       !
+   !      follows wood carbon and the sapwood ring, not leaf area).                                  !
    !      leaf_water_mass/wood_water_mass are EXTENSIVE like AGB (nplant-weighted, so the fused      !
    !      site-TOTAL water is conserved -- leaf-area-weighting them would not conserve it). ---------!
    site%cohort%leaf_water_mass(1) = 2.0_wp ; site%cohort%leaf_water_mass(2) = 5.0_wp
    site%cohort%wood_water_mass(1) = 3.0_wp ; site%cohort%wood_water_mass(2) = 7.0_wp
    site%cohort%leaf_temp(1) = 300.0_wp ; site%cohort%leaf_temp(2) = 305.0_wp
    site%cohort%wood_temp(1) = 298.0_wp ; site%cohort%wood_temp(2) = 306.0_wp
-   !----- The four per-plant flux accumulators are EXTENSIVE too, and were the fields the fusion   !
-   !      policy enumerated by hand with an "add any new one to this list" comment. Assert them,   !
-   !      so the declared policy in fuse_cohort_fast_state has a witness for every kind it names.  !
+   !----- The four per-plant flux accumulators are EXTENSIVE too. Assert them, so the declared     !
+   !      policy in fuse_cohort_fast_state has a witness for every kind it names.                  !
    site%cohort%gpp_accum(1)       = 1.0_wp ; site%cohort%gpp_accum(2)       = 4.0_wp
    site%cohort%leaf_resp_accum(1) = 0.2_wp ; site%cohort%leaf_resp_accum(2) = 0.9_wp
    site%cohort%stem_resp_accum(1) = 0.1_wp ; site%cohort%stem_resp_accum(2) = 0.6_wp
@@ -68,6 +69,13 @@ program test_fusion_cohort
    wtemp_exp = (cw1*298.0_wp + cw2*306.0_wp) / (cw1 + cw2)
    e_leaf0   = cl1*300.0_wp + cl2*305.0_wp
    e_wood0   = cw1*298.0_wp + cw2*306.0_wp
+   !----- The cohort DIAGNOSTIC block, holding one sample of the same tissue temperatures, must fuse  !
+   !      them on the same weights as the prognostic state, so the two agree after the merge. --------!
+   call cohort_diag_alloc(site%cohort%diag, site%cohort%cap, .true.)
+   site%cohort%diag%n = 2_ik
+   site%cohort%diag%v(CD_LEAF_TEMP, 1:2) = [300.0_wp, 305.0_wp]
+   site%cohort%diag%v(CD_WOOD_TEMP, 1:2) = [298.0_wp, 306.0_wp]
+   site%cohort%diag%w(1:2) = 1.0_wp
    call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
    call check_close(site%cohort%nplant(1), 0.8_wp, 1.0e-12_wp, 'fused nplant must be summed')
    call check_close(site%cohort%nplant(1)*site%cohort%agb(1), agb_tot, 1.0e-12_wp,                  &
@@ -83,6 +91,12 @@ program test_fusion_cohort
                     'leaf_temp not heat-capacity-weighted on cohort fusion')
    call check_close(site%cohort%wood_temp(1), wtemp_exp, 1.0e-9_wp,                                 &
                     'wood_temp not heat-capacity-weighted on cohort fusion')
+   call cohort_diag_value(site%cohort%diag, CD_LEAF_TEMP, xdiag, ndiag, 0.0_wp)
+   call check_close(xdiag(1), site%cohort%leaf_temp(1), 1.0e-9_wp,                                  &
+                    'diagnostic leaf temperature fuses as the prognostic one (leaf heat capacity)')
+   call cohort_diag_value(site%cohort%diag, CD_WOOD_TEMP, xdiag, ndiag, 0.0_wp)
+   call check_close(xdiag(1), site%cohort%wood_temp(1), 1.0e-9_wp,                                  &
+                    'diagnostic wood temperature fuses as the prognostic one (wood heat capacity)')
    !----- The formulae above are the MEANS to this end: the merged tissue must hold the energy the  !
    !      two cohorts held. Asserted separately so a future change of weighting is judged on what   !
    !      it conserves, not on whether it matches today's expression. The LEAF capacity is additive !
@@ -145,8 +159,8 @@ program test_fusion_cohort
    call finalize_init(site)
    n0   = total_nplant(site)
    agb0 = total_agb(site)
-   !----- REVIEW 2026-09 (item 1B #1): the interception films are per m2 GROUND. A split that copies !
-   !      them verbatim into both daughters doubles the patch's film water. -------------------------!
+   !----- The interception films are per m2 GROUND. A split that copies them verbatim into both     !
+   !      daughters doubles the patch's film water. ------------------------------------------------!
    site%cohort%leaf_surf_water(1) = 0.30_wp ; site%cohort%wood_surf_water(1) = 0.05_wp
    call split_cohorts(site, cfg)
    call check(site%cohort%n >= 2_ik, 'split did not create a second cohort')
@@ -155,7 +169,7 @@ program test_fusion_cohort
    call check_close(sum(site%cohort%leaf_surf_water(1:site%cohort%n) + site%cohort%wood_surf_water(1:site%cohort%n)), &
                     0.35_wp, 1.0e-12_wp, 'split broke canopy film water conservation (ground-referenced field)')
 
-   !=== 4. Carbon pools/traits thread correctly through the sort reorder (PR3 lockstep). =====!
+   !=== 4. Carbon pools/traits thread correctly through the lockstep sort reorder. ==========!
    !     3 PFTs (sla 16/13/10) are inserted then height-sorted (reordered); re-deriving with   !
    !     each cohort's THREADED p_sla / p_aboveground_frac must reproduce its own PFT's         !
    !     on-allometry pools -- a mis-threaded per-cohort trait would misalign them.             !
@@ -173,16 +187,16 @@ program test_fusion_cohort
                        1.0e-9_wp, 'wood_carbon*aboveground_frac(pft) /= agb after reorder')
    end do
 
-   !=== 5. CARBON-mode fusion conserves the FOUR prognostic pools (BUG2): the storage buffer is  !
+   !=== 5. CARBON-mode fusion conserves the FOUR prognostic pools: the storage buffer is         !
    !     nplant-weighted and CARRIED, not snapped back onto allometry (set_cohort_size_from_carbon !
-   !     path). Pre-fix, fuse called the empirical set_cohort_size and reset the pools. ===========!
+   !     path); the empirical set_cohort_size would reset the pools from size. ====================!
    block
       real(wp) :: lc_t, fc_t, wc_t, nc_t, nr5, nd5, alloc_store
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
       call finalize_init(site)
-      !----- Push one cohort's storage OFF allometry (the starvation buffer the bug destroyed). --!
+      !----- Push one cohort's storage OFF allometry (the starvation buffer a reset would lose). -!
       site%cohort%nonstructural_carbon(1) = 3.0_wp * site%cohort%nonstructural_carbon(1)
       nr5 = site%cohort%nplant(1) ; nd5 = site%cohort%nplant(2)
       lc_t = nr5*site%cohort%leaf_carbon(1)          + nd5*site%cohort%leaf_carbon(2)
@@ -202,12 +216,12 @@ program test_fusion_cohort
       alloc_store = storage_carbon_target(cfg%pft%storage_cushion(1), site%cohort%leaf_carbon(1),   &
                                           site%cohort%fineroot_carbon(1))
       call check(abs(site%cohort%nonstructural_carbon(1) - alloc_store) > 1.0e-6_wp,               &
-                 'carbon fuse must CARRY off-allometry storage, not snap it to allometry (BUG2)')
+                 'carbon fuse must CARRY off-allometry storage, not snap it to allometry')
    end block
 
-   !=== 6. Fusion of cohorts with different SLA conserves leaf AREA (#389): sla blends on leaf    !
+   !=== 6. Fusion of cohorts with different SLA conserves leaf AREA: sla blends on leaf          !
    !     carbon, the quantity it converts, so sum(nplant*leaf_carbon*sla) is what the fused        !
-   !     cohort shows. A leaf-area-weighted sla gave sum(LA*sla)/sum(LA) instead. =================!
+   !     cohort shows. A leaf-area-weighted sla would give sum(LA*sla)/sum(LA) instead. ===========!
    block
       real(wp) :: lai0
       call init_bare_ground(site, cfg, 1_ik)
@@ -222,7 +236,7 @@ program test_fusion_cohort
       call check_close(site%cohort%nplant(1)*site%cohort%leaf_area(1), lai0, 1.0e-12_wp,              &
                        'fusion of cohorts with different SLA must conserve leaf area')
       !----- The same at any size: two LEAFLESS cohorts, whose leaf carbon has decayed to ~1e-193   !
-      !      (the BCI case). A blend that skipped weights below 1e-30 kept one SLA here. ----------!
+      !      (as in a BCI run). A blend that skipped weights below 1e-30 would keep one SLA here. -!
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
@@ -237,7 +251,7 @@ program test_fusion_cohort
                  'fusion of leafless cohorts with different SLA must conserve their leaf area too')
    end block
 
-   !=== 7. Geometry has ONE writer (#389): a cohort placed on the allometry from its dbh carries  !
+   !=== 7. Geometry has ONE writer: a cohort placed on the allometry from its dbh carries        !
    !     exactly the geometry its carbon gives, so a restart that re-derives it gets the same bits. !
    block
       real(wp) :: g0(5)
@@ -261,7 +275,7 @@ program test_fusion_cohort
                  'a NaN density is out of bounds, and checked first')
    end block
 
-   !=== 9. The growth window's sum is the buffer's (#396): once a large sample has been evicted, a !
+   !=== 9. The growth window's sum is the buffer's: once a large sample has been evicted, a       !
    !     window of zeros averages exactly zero; and a recruit in a reused slot starts empty. ======!
    block
       type(cohort_deriv_block) :: deriv

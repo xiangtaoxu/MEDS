@@ -22,8 +22,8 @@
 ! that responds to temperature or water.                                                     !
 !                                                                                          !
 ! plant_carbon_allocation builds wood up to the limit returned here; the carbon it cannot use    !
-! leaves the plant as root exudate, charged the same growth respiration as tissue               !
-! (docs/science/plant_carbon_allocation.md).                                                    !
+! leaves the plant as root exudate, charged the same growth respiration as tissue              !
+! (docs/science/plant_carbon_allocation.md §2 "Sink limitation of wood growth", eq. (4)).      !
 !==========================================================================================!
 module meds_sink_limitation
    use meds_kinds,     only : wp

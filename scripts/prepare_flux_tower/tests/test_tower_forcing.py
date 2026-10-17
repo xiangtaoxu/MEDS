@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests of the flux-tower forcing tool (MEDS_FLUX_TOWER_FORCING_PLAN.md sec. 11).
+"""Tests of the flux-tower forcing tool.
 
 Every input is synthetic, made here from a known sun and a known humidity, so each check has an
 answer that does not come from the code under test. Run with:

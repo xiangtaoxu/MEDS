@@ -1,14 +1,15 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_output_integrate -- the netCDF-free temporal-reduction kernels + the extract switchboard. !
-! Covers MEDS_IO_DESIGN.md test 1 (integrator arithmetic + zero-sample guard) and test 3         !
-! (fixed-within-window slab integration + extract_variable over a synthetic site).                !
+! Covers the integrator arithmetic and its zero-sample guard, and fixed-within-window slab !
+! integration with extract_variable over a synthetic site (docs/science/diagnostics.md     !
+! §4).                                                                                     !
 !                                                                                          !
 ! nvfortran note: the slab test mutates the site's agb through the OPAQUE setter below (a          !
 ! separate module scope) between steps -- mirroring production, where state changes happen deep    !
 ! inside vegetation_dynamics/update_demography. Mutating an allocatable component INLINE between    !
-! two extract_variable() calls lets nvfortran -O2 wrongly CSE the reads (the CLAUDE.md issue #7     !
-! allocatable-component aliasing blind spot); an opaque mutation defeats it, as production does.     !
+! two extract_variable() calls lets nvfortran -O2 wrongly CSE the reads (an allocatable-component   !
+! aliasing blind spot); an opaque mutation defeats it, as production does.                           !
 !==========================================================================================!
 module test_output_integrate_support
    use meds_kinds,            only : wp, ik
@@ -135,7 +136,7 @@ contains
       logical              :: valid(64), vslab(64)
       type(diag_params_t)  :: dp
       integer(ik)          :: n_out, i
-      !----- A fixed 3-cohort / 1-patch site (slot set constant across the window, §4.4). -----!
+      !----- A fixed 3-cohort / 1-patch site (slot set constant across the window). ----------!
       call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik, allometry_t())
       site%cohort%n = 3_ik
       site%cohort%nplant(1:3)     = [1.0_wp, 1.0_wp, 1.0_wp]
@@ -183,7 +184,7 @@ contains
       call check(n_out == 0_ik, 'scalar extract n_out=0')
       call check_close(scal, 6.0_wp, 1.0e-12_wp, 'extract site agb')
 
-      !----- Leaf temperature is the cohort block's within-step mean (N-11). A cohort with no   !
+      !----- Leaf temperature is the cohort block's within-step mean. A cohort with no         !
       !      samples -- recruited after the fast loop -- is fill on the cohort axis and out of the !
       !      leaf-area-weighted site mean; a mean over nothing is missing, not 0 K. -------------!
       call cohort_diag_alloc(site%cohort%diag, 64_ik, .true.)
@@ -279,7 +280,7 @@ contains
       call check(bufs%pending(1)%nslab(k_soil) == 2_ik, 'FAST soil slab length 2')
       call check_close(bufs%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
       call check_close(bufs%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
-      !----- Per-cohort slab path (P2): leaf_temp_cohort_fast slot means + n_cohort. -----!
+      !----- Per-cohort slab path: leaf_temp_cohort_fast slot means + n_cohort. -----!
       k_leaf = find_var_index(files%reg, 'leaf_temp_cohort_fast')
       call check(bufs%pending(1)%n_cohort == 2_ik, 'FAST n_cohort = 2')
       call check_close(bufs%pending(1)%slab(1,k_leaf), 289.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 1')
@@ -292,7 +293,7 @@ contains
       call check(k_hgt > 0_ik, 'height_cohort_fast registered')
       call check_close(bufs%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
       call check_close(bufs%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
-      !----- The patch axis (#270): each patch's own mean, and each patch's soil column in the      !
+      !----- The patch axis: each patch's own mean, and each patch's soil column in the            !
       !      soil-by-patch layout, with the inactive layers as fill. -----!
       k_cas_p = find_var_index(files%reg, 'cas_temp_patch_fast')
       call check(k_cas_p > 0_ik, 'cas_temp_patch_fast registered')
@@ -355,8 +356,8 @@ contains
    end subroutine test_slab_sized_after_overrides
 
    !----- A tier whose only patch output is soil by patch still records its patch count: the slab  !
-   !      is patch-major, so it holds nslab / n_soil_layer_max patches. Before, only a DIM_PATCH    !
-   !      variable set the count, and such a record wrote with one patch and every value as fill. -!
+   !      is patch-major, so it holds nslab / n_soil_layer_max patches. If only a DIM_PATCH         !
+   !      variable set the count, such a record would write one patch and every value as fill. ---!
    subroutine test_soil_patch_record()
       type(meds_config_t)    :: cfg
       type(output_files_t)   :: files
@@ -386,9 +387,9 @@ contains
       end associate
    end subroutine test_soil_patch_record
 
-   !----- Two polygons' buffers for one file set (MEDS_POLYGON_RUNTIME_PLAN.md R2): each          !
-   !      reduces only its own samples, and closing one leaves the other's window open. Folds are  !
-   !      interleaved the way a region's month loop would interleave its polygons.  ----------------!
+   !----- Two polygons' buffers for one file set: each reduces only its own samples, and closing !
+   !      one leaves the other's window open. Folds are interleaved the way a region's month     !
+   !      loop would interleave its polygons. ---------------------------------------------------!
    subroutine test_two_buffers()
       type(meds_config_t)   :: cfg
       type(output_files_t)  :: files
@@ -419,10 +420,11 @@ contains
       call check_close(a%queue(1)%rec(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'polygon a''s queued record is untouched')
    end subroutine test_two_buffers
 
-   !----- The slow tick across a month boundary (#294). The step from 31 January to 1 February     !
-   !      is January's: it folds into January, which then closes. The stand is restructured only   !
-   !      after that tick (advance_boundary), so January's cohort slab holds one slot set, and     !
-   !      February opens on 1 February with the new one. ------------------------------------------!
+   !----- The slow tick across a month boundary (docs/science/diagnostics.md §4, Which steps a    !
+   !      record holds). The step from 31 January to 1 February is January's: it folds into       !
+   !      January, which then closes. The stand is restructured only after that tick              !
+   !      (advance_boundary), so January's cohort slab holds one slot set, and February opens on  !
+   !      1 February with the new one. -----------------------------------------------------------!
    subroutine test_boundary_step()
       type(meds_config_t)    :: cfg
       type(output_files_t)   :: files

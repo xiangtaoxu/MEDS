@@ -4,7 +4,7 @@
 
 The species parameters, drivers and sweeps live in this script. The photosynthesis and stomatal
 kernels are the compiled Fortran that also runs inside the coupled model, reached through
-`meds.plant.leaf`.
+`meds.plant.leaf`; their equations are docs/science/leaf_gas_exchange.md §1-§3.
 
   (a)   A-Ci demand curve for F. insipida (Fig 1b), from the paper's in-situ Vcmax and Jmax.
   (b-f) Vcmax, Jmax, gs, Anet and Rlight against leaf temperature for four species (Fig 2),

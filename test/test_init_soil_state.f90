@@ -2,12 +2,12 @@
 !==========================================================================================!
 ! test_init_soil_state -- [init].soil_temp and soil_theta reach every soil layer of every patch. !
 !                                                                                          !
-! The initial soil state was two constants in the fast context. A run without a spin-up starts   !
-! from it, so the keys matter only if they reach the column: this asserts the path from the      !
-! config through build_fast_context to init_fast_reservoirs, and pins the defaults to the old     !
-! constants so that no existing config changes. A column with a texture per layer (the soil maps) !
-! builds each layer's own curve and starts each layer at its own field capacity. A bare-ground     !
-! start is empty unless a PFT's nbg_init_density seeds it, at min_cohort_height.                  !
+! A run without a spin-up starts from the initial soil state, so the keys matter only if   !
+! they reach the column: this asserts the path from the config through build_fast_context  !
+! to init_fast_reservoirs, and pins the defaults (288 K, theta = 0.30). A column with a    !
+! texture per layer (the soil maps) builds each layer's own curve and starts each layer at !
+! its own field capacity. A bare-ground start is empty unless a PFT's nbg_init_density     !
+! seeds it, at min_cohort_height.                                                          !
 !==========================================================================================!
 program test_init_soil_state
    use meds_kinds,            only : wp, ik
@@ -28,7 +28,7 @@ program test_init_soil_state
    call banner('[init].soil_temp and soil_theta reach the soil column')
    cfg = build_test_config()
 
-   !=== 1. The defaults are the constants the fast context used to carry. ====================!
+   !=== 1. The defaults: 288 K and theta = 0.30. ===========================================!
    call check_close(cfg%init_soil_temp,  288.0_wp, 1.0e-14_wp, 'default soil_temp changed (was 288 K)')
    call check_close(cfg%init_soil_theta, 0.30_wp,  1.0e-14_wp, 'default soil_theta changed (was 0.30)')
 

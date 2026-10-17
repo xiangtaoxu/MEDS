@@ -110,9 +110,9 @@ contains
    ! file without the column is one site. `dbh` drives the allometry (set_cohort_size), so      !
    ! `height` and `cohort_id` are provenance: height, when present, must be positive.          !
    !                                                                                          !
-   ! A file whose first data line is seven numbers is read positionally as                      !
-   ! `site_id, patch_id, cohort_id, dbh, height, pft, nplant`, which is how census files        !
-   ! without a header were written.                                                            !
+   ! A file whose first data line is seven numbers is read positionally as                    !
+   ! `site_id, patch_id, cohort_id, dbh, height, pft, nplant`, the layout of a census file    !
+   ! without a header.                                                                        !
    !                                                                                          !
    ! Blank lines and lines beginning with '#' are ignored. found=.false. (the site is left      !
    ! unbuilt) if the file cannot be opened or holds no row for the selected site, so the caller !

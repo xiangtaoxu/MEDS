@@ -41,16 +41,21 @@ program test_column_dynamics
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
-   integer(ik), parameter :: n = 1_ik, nsl = 10_ik, nstep = 576_ik    ! 96 x 900 s = 24 h
+   integer(ik), parameter :: n = 1_ik, nsl = 10_ik
    real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   !----- Durations and times of day are written in hours and turned into steps here, so a change of  !
+   !      dt_fast keeps what each test covers: the march puts step i at (i - 1/2)*dt_fast after       !
+   !      midnight, and the sun follows the clock. ---------------------------------------------------!
+   integer(ik), parameter :: steps_per_hour = nint(3600.0_wp / dt_fast, ik)
+   integer(ik), parameter :: nstep = 24_ik * steps_per_hour      ! one day
    !----- Seed moisture + rain-pulse rate, VARIABLES so RUN 7 can drive the column to saturation.  !
-   !      Initialized to RUN 1-6's values, which therefore stay byte-identical. --------------------!
+   !      Initialized to the values RUNS 1-6 run on. ----------------------------------------------!
    real(wp) :: theta_seed = theta0, rain_pulse = 1.5e-4_wp
    real(wp) :: pond_peak, theta_peak_col
    !----- RUN 8 (snow): seed mass for the pack (0 = no pack, the default for RUNS 1-7) plus the  !
    !      diagnostics integrate_day fills while it is on. ---------------------------------------!
    real(wp) :: snow_seed = 0.0_wp, snow_swe_end, snow_temp_end
-   real(wp) :: shed_seed = 0.0_wp   !< [kg/m2/s] daily turnover shed water handed to the ground (REVIEW 2026-09)
+   real(wp) :: shed_seed = 0.0_wp   !< [kg/m2/s] daily turnover shed water handed to the ground (RUN 8b)
    real(wp) :: rain_rate = 0.0_wp   !< [kg/m2/s] all-day liquid precipitation (RUN 9b), 0 = off
    real(wp) :: e_col_snow, e_col_rain, snow_mass_total, fusion_expect
    logical  :: cold_air = .false.   !< RUN 9b: the sub-freezing air of the snowfall runs, without snowfall
@@ -60,11 +65,11 @@ program test_column_dynamics
    logical  :: iso_dark = .false.
    real(wp) :: h_first, gah_first
    real(wp) :: snow_swe_split
-   !----- RUN 9 (snowfall with the snow STORE off): the snowfall rate is a VARIABLE so the sub-      !
-   !      freezing air and the frozen-rainfall flux can be toggled INDEPENDENTLY -- the run compares    !
-   !      snowfall-on against snowfall-off at the SAME air temperature, so an evaporation difference        !
-   !      cannot masquerade as the water this test is looking for. Default matches RUN 8's rate, so   !
-   !      RUN 8 is untouched. `col_water_end` is the whole-column liquid store (soil + pond).         !
+   !----- RUN 9 (snowfall conservation): the snowfall rate is a VARIABLE so the sub-freezing air and  !
+   !      the frozen-rainfall flux can be toggled INDEPENDENTLY -- the run compares snowfall-on       !
+   !      against snowfall-off at the SAME air temperature, so an evaporation difference cannot       !
+   !      masquerade as the water this test is looking for. Default is RUN 8's rate. `col_water_end`  !
+   !      is the whole-column water store (soil + pond + pack).                                       !
    real(wp) :: snowf_rate = 2.0e-5_wp, col_water_end
    real(wp) :: cw_on, cw_off, cw_split_gain, cw_gain, snowf_total
    integer(ik) :: isch
@@ -81,7 +86,7 @@ program test_column_dynamics
    type(fast_workspace_t) :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
    real(wp) :: ct_night, ct_noon, co2_night, co2_noon, tleaf_noon, tleaf_night
-   real(wp) :: ustar_noon, dtheta_noon      ! #97: midday turbulence regime (see the check below)
+   real(wp) :: ustar_noon, dtheta_noon      ! midday turbulence regime (see the check below)
    real(wp) :: ss_min, ss_max, sd_min, sd_max, th_min, th_max, gpp_noon, nee_noon
    real(wp) :: psileaf_noon, psileaf_night, psileaf_single
    real(wp) :: surf_water_peak     !< RUN 6: running max of leaf+wood interception film over the day
@@ -93,17 +98,13 @@ program test_column_dynamics
    ageom%veg_height = 18.0_wp ; ageom%opencan_frac = 0.0_wp ; ageom%snowfac = 0.0_wp
    aenv%u_ref = 2.0_wp ; aenv%zref = 30.0_wp ; aenv%press = 101325.0_wp ; aenv%rho_air = 1.2_wp
 
-   !----- Cohort SoA (single cohort): LAI = nplant*leaf_area = 0.3*10 = 3. -----------------!
-   !----- On-allometry fixture: born through the canonical path (init_cohort + set_cohort_size)  !
-   !      and gathered by the production gather, so every field is mutually consistent. The hand- !
-   !      built view this replaces was not: dbh 20 cm with a 16 m height and a leaf area of       !
-   !      10 m2/plant, an LAI that did not equal nplant*leaf_area, and `bwood` never set at all,   !
-   !      so the wood heat capacity ran on uninitialized memory. Golden values below moved with    !
-   !      the fixture; they describe a real 20 cm tree now: 224 stems/ha, which is the density   !
-   !      that gives the LAI ~3 the old view asserted while being consistent with the allometry.  !
+   !----- Cohort SoA (single cohort): a 20 cm tree at 224 stems/ha, which gives an LAI of ~3.    !
+   !      On-allometry fixture: born through the canonical path (init_cohort + set_cohort_size)  !
+   !      and gathered by the production gather, so every field -- height, leaf area, the wood   !
+   !      carbon the wood heat capacity is sized from -- is mutually consistent. ----------------!
    call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
-   !----- The hydraulics take the sapwood area in m2; the cohort keeps it in cm2. It used to pass  !
-   !      through unconverted, 10^4 times the stem's own cross-section. -------------------------!
+   !----- The hydraulics take the sapwood area in m2; the cohort keeps it in cm2. Passed through  !
+   !      unconverted it would be 10^4 times the stem's own cross-section. -----------------------!
    call check_true('the sapwood area reaches the hydraulics in m2, within the stem',             &
                    col_cohort%sap_area(1) > 0.0_wp .and. col_cohort%sap_area(1) <= pio4*0.2_wp**2, &
                    col_cohort%sap_area(1))
@@ -123,7 +124,7 @@ program test_column_dynamics
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
 
-   !----- A cohort's leaf PAR is its absorbed PAR per unit of its own leaf area (#346): a thin cohort's !
+   !----- A cohort's leaf PAR is its absorbed PAR per unit of its own leaf area: a thin cohort's   !
    !      leaves see the same light as a thick one's when each absorbs in proportion to its leaf   !
    !      area, and a leafless cohort sees none. ---------------------------------------------------!
    call check_true('leaf PAR of a thin cohort (LAI 0.05) is its own', abs(cohort_leaf_par(5.0_wp, 0.05_wp, 4.6_wp) &
@@ -135,16 +136,13 @@ program test_column_dynamics
                    cohort_leaf_par(0.0_wp, 0.0_wp, 4.6_wp))
 
    !=====================================================================================!
-   !  RUN 1 -- the full physical-sanity suite. This is now the ONLY soil-thermal coupling      !
-   !  there is: interior-face liquid-enthalpy advection used to sit behind                      !
-   !  col_config%advect_soil_heat and RUN 1 ran with it OFF, which is why RUN 2 existed to re-run     !
-   !  the same day with it ON. The flag is deleted (it was a conservation requirement, not an   !
-   !  accuracy knob, and ARK/RK45 never consulted it), so RUN 2's assertions are folded in      !
-   !  below and its slot is retired. RUN numbering is UNCHANGED -- "RUN 7" is referenced from   !
-   !  meds_fast_types, test_column_ark and test_column_rk45. -----------------------------------!
+   !  RUN 1 -- the full physical-sanity suite. The soil thermal column is coupled to the water  !
+   !  column by interior-face liquid-enthalpy advection, unconditionally: it is a conservation  !
+   !  requirement, not an accuracy knob. The RUN numbers stay fixed (RUN 2 is an empty slot)    !
+   !  because test_column_ark and test_column_rk45 cite them. ----------------------------------!
    !=====================================================================================!
    call integrate_day()
-   psileaf_single = psileaf_noon                 ! single-layer (root-frac-weighted BC) baseline for RUN 3
+   psileaf_single = psileaf_noon                 ! RUN 1's midday leaf psi (recorded, not compared)
 
    !----- 1. Conservation: all seven budgets closed every step. ----------------------------!
    call check_true('CAS energy budget closed', budget%cas_energy%n_fail    == 0_ik,                                   &
@@ -162,14 +160,14 @@ program test_column_dynamics
 
    !----- 2. Physical sanity. -------------------------------------------------------------!
    call check_true('CAS warmer near solar noon than at night', ct_noon > ct_night, ct_noon - ct_night)
-   !----- #97: guard the TURBULENCE REGIME itself, not just the state it produces. Every other        !
+   !----- Guard the TURBULENCE REGIME itself, not just the state it produces. Every other              !
    !      assertion in this file is an invariant (conservation, sign, ordering) and so passes in ANY   !
-   !      regime -- which is exactly why leaving `theta_atm` at its 298.15 K default went unnoticed    !
-   !      here. With a 282-294 K forcing against a fixed 298.15 K reference, MO manufactures a         !
-   !      permanent STABLE layer; correctly driven, midday is UNSTABLE and `ustar` sits off the floor. !
-   !      The stratification check is the DISCRIMINATING one -- verified to fail (-0.56 K) when the    !
-   !      set_aero_env_atm call in integrate_day is removed. The ustar check does not fire at this     !
-   !      test's wind/LAI but is kept: it bounds the decoupled regime the fixture used to sit in. -----!
+   !      regime, including one where `theta_atm` sits at its 298.15 K type default instead of the     !
+   !      forcing's air temperature. With a 282-294 K forcing against a fixed 298.15 K reference, MO   !
+   !      manufactures a permanent STABLE layer; correctly driven, midday is UNSTABLE and `ustar`      !
+   !      sits off the floor. The stratification check is the DISCRIMINATING one: it fails (-0.56 K)   !
+   !      when the set_aero_env_atm call in integrate_day is removed. The ustar check does not fire at !
+   !      this test's wind/LAI; it bounds the decoupled regime a fixed reference produces. ------------!
    call check_true('midday stratification is UNSTABLE (canopy warmer than ref air)', dtheta_noon > 0.0_wp,            &
            dtheta_noon)
    call check_true('midday ustar is off the MO floor (not decoupled)', ustar_noon > 1.5_wp * cfg%aero%ustmin,         &
@@ -185,35 +183,26 @@ program test_column_dynamics
    call check_true('leaf water potential under tension in daylight', psileaf_noon < 0.0_wp, psileaf_noon)
    call check_true('leaf more tensioned at midday than at night', psileaf_noon < psileaf_night,                       &
            psileaf_noon - psileaf_night)
-   !----- folded in from the retired RUN 2: with the interior faces advecting, soil temperatures  !
-   !      stay bounded at BOTH ends of the column. Forcing that advection off reached 361 K here. -!
+   !----- With the interior faces advecting, soil temperatures stay bounded at BOTH ends of the   !
+   !      column. With the faces lumped this day reaches a 361 K soil surface (297 K connected)   !
+   !      while the whole-column ledger still closes: the error is purely vertical                !
+   !      (docs/science/numerical_scheme.md §5b, "Every soil-water flow comes from one solve"). --!
    call check_true('soil surface temp stays bounded', ss_min > 270.0_wp .and. ss_max < 330.0_wp, ss_max)
    call check_true('deep soil temp stays bounded', sd_min > 270.0_wp .and. sd_max < 330.0_wp, sd_max)
 
    call test_report('test_column_dynamics')
 
    !=====================================================================================!
-   !  RUN 2 -- RETIRED, slot deliberately left empty.                                          !
-   !                                                                                           !
-   !  It re-ran RUN 1's day with col_config%advect_soil_heat = .true. to show the interior-face        !
-   !  advection conserves. With the flag deleted RUN 1 already runs that configuration, so this  !
-   !  was the identical day integrated twice; its two unique assertions (soil surface and deep   !
-   !  temperature bounded) moved into RUN 1. Kept as a numbered gap rather than renumbering       !
-   !  RUNS 3-8, because "RUN 7" is cross-referenced from four other files.                        !
-   !                                                                                             !
-   !  What it established, worth keeping: with the interior faces LUMPED the same scenario        !
-   !  reaches a soil surface of 361 K against 297 K with them connected, while the whole-column   !
-   !  ledger closes eitherway -- the error is purely vertical. That is the same blind spot that   !
-   !  hid issue #78 item 3; see docs/science/numerical_scheme.md sec 7. -------------------------!
+   !  RUN 2 -- an empty slot, so the later RUN numbers stay the ones other files cite.   !
    !=====================================================================================!
 
    !=====================================================================================!
-   !  RUN 3 -- per-layer root coupling is now UNCONDITIONAL (Phase 1 retired                 !
-   !           [hydraulics].multilayer_roots), so RUN 1 above ALREADY exercises it and there  !
-   !           is no single-BC side left to compare against. What is still worth asserting is  !
-   !           the invariant the placement must satisfy: the per-layer sink shares sum to 1,   !
-   !           so the COLUMN-TOTAL uptake is independent of how it is distributed vertically.  !
-   !           The vertical distribution itself is checked in test_root_share_drydown below.   !
+   !  RUN 3 -- per-layer root coupling. Roots always take up water layer by layer, so RUN 1   !
+   !           already exercises the placement and there is no single-BC side to compare      !
+   !           against. What is asserted is the invariant the placement must satisfy: the     !
+   !           per-layer sink shares sum to 1, so the COLUMN-TOTAL uptake is independent of   !
+   !           how it is distributed vertically. The vertical distribution itself is checked  !
+   !           in test_plant_hydraulics (test_root_profile).                                  !
    !=====================================================================================!
    call integrate_day()
    call check_true('PER-LAYER ROOTS: whole-column water still closes', budget%whole_water%n_fail  == 0_ik,            &
@@ -228,7 +217,7 @@ program test_column_dynamics
    call test_aero_order()
 
    !=====================================================================================!
-   !  RUN 5 -- goal (a) Layer 1: the sub-solver TOLERANCE UNIFICATION plumbing.            !
+   !  RUN 5 -- the TOLERANCE plumbing: one tolerance set reaches every sub-solver.       !
    !=====================================================================================!
    call test_tolerance_unification()
 
@@ -237,9 +226,9 @@ program test_column_dynamics
    !  the canopy-air top (zref), both referenced to that level, and the reported sensible heat  !
    !  is the flux the whole-column ledger exchanges. A dark column at the air's own temperature !
    !  has nothing driving a sensible flux, so its first step reports |H| far below              !
-   !  g_atm_heat*g*zref under both integrators. Before v0.3.1 the reference air's potential     !
-   !  temperature carried +(g/cp)*zref that the canopy air's did not, and H came out at about   !
-   !  -g_atm_heat*g*zref here.                                                                  !
+   !  g_atm_heat*g*zref under both integrators. Referencing only the air's potential            !
+   !  temperature to the ground, +(g/cp)*zref, would report H of about -g_atm_heat*g*zref       !
+   !  here (docs/science/canopy_aerodynamics.md §2, "The reference level").                     !
    !=====================================================================================!
    call test_reference_level()
    iso_dark = .true.
@@ -261,25 +250,21 @@ program test_column_dynamics
    col_config%integrator = build_integrator_opts(cfg)
 
    !=====================================================================================!
-   !  RUN 6 -- opt-in CANOPY-SURFACE WATER (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1): reruns the   !
-   !           SAME diurnal-cycle-plus-morning-rain-pulse forcing (RUN 1's day, istep 12-28)     !
-   !           with col_config%canopy_water_on = .true. whole_water must close exactly (the headline     !
-   !           gate, sec 8 gate 2) and the canopy must actually have intercepted some of the rain    !
-   !           (surf_water_peak > 0) -- proving the wiring, not just that the feature is a silent     !
-   !           no-op. The wetted-fraction transpiration-suppression ALGEBRA itself is unit-tested      !
-   !           directly in test_surface_energy.f90 (no direct test existed for veg_energy_balance   !
-   !           before P1); this run only needs to prove the WIRING (interception->film->CAS->ledgers). !
+   !  RUN 6 -- opt-in CANOPY-SURFACE WATER: reruns the SAME diurnal-cycle-plus-morning-rain-  !
+   !           pulse forcing (RUN 1's day, rain over 03:00-07:00) with                        !
+   !           col_config%canopy_water_on = .true. whole_water must close exactly and the     !
+   !           canopy must actually have intercepted some of the rain (surf_water_peak > 0),  !
+   !           proving the WIRING (interception->film->CAS->ledgers) rather than a silent     !
+   !           no-op. The wetted-fraction transpiration-suppression algebra itself is         !
+   !           unit-tested in test_surface_energy.f90.                                        !
    !                                                                                          !
-   !           whole_energy is checked against a LOOSE, explicit bound rather than n_fail==0: making    !
-   !           it close to machine precision needs the surface water's OWN prognostic temperature/       !
-   !           heat capacity (sec 3.4's own "d(leaf_energy)/dt gains the film's storage term"), which     !
-   !           is real thermal-inertia machinery this pass does not build -- this pass instead values      !
-   !           the store at ONE fixed reference (t_film_valuation) at both endpoints, which correctly closes      !
-   !           MASS and the LATENT-heat exchange (verified: film_evap*latent_heat_vap balances against      !
-   !           coh_rnet exactly, same identity test_surface_energy.f90 unit-tests) but leaves a residual      !
-   !           proportional to the water's SENSIBLE heat at the leaf/wood dt_temp offset uncounted -- the      !
-   !           same category of deferred upwind-temperature imprecision as sec 2's qloss/qwflux_wl         !
-   !           coupling (also explicitly P2-deferred energy-advection work, not this pass's gate).           !
+   !           whole_energy is checked against a LOOSE, explicit bound rather than n_fail==0: !
+   !           the film has no thermal state of its own and is valued at ONE fixed reference  !
+   !           (t_film_valuation) at both endpoints. That closes MASS and the LATENT-heat     !
+   !           exchange (film_evap*latent_heat_vap balances coh_rnet exactly, the identity    !
+   !           test_surface_energy.f90 unit-tests) but leaves the water's SENSIBLE heat at    !
+   !           the leaf/wood temperature offset uncounted. A film store with its own thermal  !
+   !           state is planned (see docs/ROADMAP.md).                                        !
    !=====================================================================================!
    col_config%canopy_water_on = .true.
    call integrate_day()
@@ -288,7 +273,7 @@ program test_column_dynamics
            real(budget%whole_water%n_fail, wp))
    call check_true('CANOPY WATER: the morning rain pulse was actually intercepted', surf_water_peak > 0.0_wp,         &
            surf_water_peak)
-   call check_true('CANOPY WATER: whole-column energy stays BOUNDED (known deferred sensible-heat approx)',           &
+   call check_true('CANOPY WATER: whole-column energy stays BOUNDED (film sensible heat not counted)',               &
            budget%whole_energy%worst < 5.0e6_wp, budget%whole_energy%worst)
    call test_report('test_column_dynamics')
 
@@ -296,33 +281,28 @@ program test_column_dynamics
    !  RUN 7 -- SATURATED column: exercises the two water-enthalpy paths RUNS 1-6 never take. !
    !                                                                                          !
    !  A sealed (bedrock) column seeded just below theta_sat under heavy rain must both          !
-   !  SATURATE -- firing meds_soil_water's post-solve theta clip, which moves water with no      !
-   !  face -- and OVERFLOW its ponding store, producing surface runoff. Neither happens in       !
-   !  RUNS 1-6 (free-draining, theta0 = 0.30, gentle pulse), so the enthalpy bookkeeping for      !
-   !  both was previously unexercised by any test:                                               !
-   !    * the clip's per-layer enthalpy compensation (soil_energy debited at the layer's OWN      !
-   !      temperature, paired into e_out), and                                                   !
-   !    * runoff, which must carry NO enthalpy term at all -- the ponding store is a mass         !
-   !      buffer with no enthalpy state, so debiting soil layer 1 for it (as the code used to)    !
-   !      removed ~1 MJ per kg the layer never received.                                          !
-   !  whole_energy closing to n_fail == 0 here is the assertion that both are booked with the     !
-   !  right sign and magnitude: an unpaired term of either kind shows up directly in the residual.!
+   !  SATURATE -- the water network then raises the layer's potential and drives the excess   !
+   !  to the pond and the next layer within the step -- and OVERFLOW its ponding store,       !
+   !  producing surface runoff. Neither happens in RUNS 1-6 (free-draining, theta0 = 0.30,    !
+   !  gentle pulse). Both paths move mass and enthalpy as a pair: the pond holds its own      !
+   !  enthalpy and runoff leaves at the pond's temperature, so no soil layer is debited for   !
+   !  water it never received (docs/science/numerical_scheme.md §5b, "The pond holds heat").  !
+   !  whole_energy closing to n_fail == 0 here is the assertion that both are booked with the !
+   !  right sign and magnitude: an unpaired term of either kind shows up directly in the      !
+   !  residual.                                                                               !
    !                                                                                          !
-   !  The interior faces advect liquid enthalpy, unconditionally -- and THIS run is what showed     !
-   !  why that must not be optional. Back when it sat behind a flag, lumping the interior faces      !
-   !  took this same scenario to a soil surface of 361 K against 297 K with them connected. The      !
-   !  boundary faces put liquid enthalpy into layer 1 and take it out of whichever layer the         !
-   !  clip fires in; with no interior advection there is no path between them, so layer 1 gains      !
-   !  the full infiltration enthalpy (~2.5e6 J/m2/step here) while a deeper layer sheds it. The      !
-   !  WHOLE-column ledger still closes -- the error is purely in the vertical distribution, which    !
-   !  is exactly what a column-vs-boundary sum cannot see, and is the same blind spot that hid      !
-   !  issue #78 item 3. A conservation requirement, not an accuracy knob; the flag is deleted.      !
+   !  The interior faces advect liquid enthalpy. Without that, the boundary faces would put   !
+   !  liquid enthalpy into layer 1 and take it out of a deeper layer with no path between     !
+   !  them, so layer 1 would gain the full infiltration enthalpy (~2.5e6 J/m2/step here)      !
+   !  while the deeper layer shed it. The WHOLE-column ledger would still close: the error is !
+   !  purely in the vertical distribution, which a column-vs-boundary sum cannot see. The     !
+   !  per-layer face check below is the one that can.                                         !
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
    col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
    call integrate_day()
-   call check_true('SATURATED: the column reached theta_sat (clip path is live)',                                     &
+   call check_true('SATURATED: the column reached theta_sat (saturation path is live)',                               &
            theta_peak_col >= 0.43_wp - 1.0e-12_wp, theta_peak_col)
    call check_true('SATURATED: ponding store filled and overflowed (runoff path is live)',                            &
            pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
@@ -330,14 +310,13 @@ program test_column_dynamics
            real(budget%whole_water%n_fail, wp))
    call check_true('SATURATED: whole-column energy still closes', budget%whole_energy%n_fail == 0_ik,                 &
            real(budget%whole_energy%n_fail, wp))
-   !----- The VERTICAL check the two above cannot make (#189): the mass the soil-ENERGY equation was    !
+   !----- The VERTICAL check the two above cannot make: the mass the soil-ENERGY equation was           !
    !      charged for, minus the mass the committed theta actually moved, per interior layer. Both      !
-   !      budgets above stayed at 0 fails through every historical instance of that error, including    !
-   !      one whose soil surface reached 345 K, because a misplacement between LAYERS still sums        !
-   !      correctly against the boundary.                                                               !
+   !      budgets above stay at 0 fails through that error, even when it takes the soil surface to      !
+   !      345 K, because a misplacement between LAYERS still sums correctly against the boundary.       !
    !                                                                                                    !
    !      This run is on the ARK path, which commits the water network's theta -- so its faces          !
-   !      genuinely ARE this column's own and the invariant holds by construction. What is asserted     !
+   !      ARE this column's own and the invariant holds by construction. What is asserted               !
    !      here is that construction: the network's own per-layer face closure, at the saturated        !
    !      corner where its pond and runoff paths are live. The RK45 statement of the same invariant is  !
    !      asserted in test_column_rk45. ----------------------------------------------------------------!
@@ -345,31 +324,27 @@ program test_column_dynamics
            budget%soil_face_mass%worst < 1.0e-8_wp, budget%soil_face_mass%worst)
    call check_true('SATURATED: the face check actually ran', budget%soil_face_mass%n_check > 0_ik,                    &
            real(budget%soil_face_mass%n_check, wp))
-   call check_true('SATURATED: soil surface temp stays physical through clip + runoff',                               &
+   call check_true('SATURATED: soil surface temp stays physical through saturation + runoff',                         &
            ss_min > 250.0_wp .and. ss_max < 340.0_wp, ss_max)
    call test_report('test_column_dynamics')
 
    !=====================================================================================!
-   !  RUN 8 -- SNOW ON. The split path's snow COUPLING had no integration test at all:          !
-   !  test_snow.f90 exercises the kernels standalone and nothing in the suite ever set           !
-   !  col_config%snow_on, so the operator-split snow stage inside column_fast_step -- accumulate ->     !
-   !  surface balance -> meltwater drain -> snowfac-blended ground -> sublimation into the CAS     !
-   !  -> the swe and snow_acc_enth terms in the whole-column ledgers -- was entirely uncovered.    !
+   !  RUN 8 -- SNOW ON: the snow stage's COUPLING, integrated. test_snow.f90 exercises the    !
+   !  kernels standalone; this run covers the stage both integrators share                    !
+   !  (advance_snow_stage: accumulate -> surface balance -> meltwater drain ->                !
+   !  snowfac-blended ground -> sublimation into the CAS) and the pack's mass and energy      !
+   !  terms in the whole-column ledgers.                                                      !
    !                                                                                          !
-   !  That matters beyond the usual reasons. MEDS_INTEGRATOR_PARITY.md [RETIRED] row 2 (C4) plans to HOIST   !
-   !  this stage out of column_fast_step into a routine all three integrators share, and migrating !
-   !  coupling code with no regression net is migrating blind -- "snow-off bit-identical" would     !
-   !  only prove the OFF path survived, which is the half that cannot break. The two budget         !
-   !  assertions below are the net: if the hoist ever drops the swe delta, the pack's rainfall        !
-   !  enthalpy, or the sublimation vapour, an unpaired term shows up directly in the residual.      !
+   !  A snow-free run only proves the snow-off path, which is the half that cannot break. The !
+   !  two budget assertions below are the regression net: a dropped swe delta, pack rainfall  !
+   !  enthalpy or sublimation vapour shows up directly in the residual as an unpaired term.   !
    !=====================================================================================!
    theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
    col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
-   !----- seeded deep enough that the pack SURVIVES the day under every scheme. At 20 kg/m2 it sat on !
-   !      a knife-edge: split ended at 1.44 kg/m2 while ARK/RK45 exhausted it exactly, so a "pack      !
-   !      still present" assertion was really testing the last ~7% of the melt energy rather than the  !
-   !      wiring. A surviving pack lets the schemes be compared on melt TOTAL, which is the quantity   !
-   !      that actually says whether they are driving the same stage. --------------------------------!
+   !----- seeded deep enough that the pack SURVIVES the day under every scheme. A pack that ends   !
+   !      near zero makes a "pack still present" assertion test the last few percent of the melt   !
+   !      energy rather than the wiring. A surviving pack lets the schemes be compared on melt     !
+   !      TOTAL, which is the quantity that says whether they are driving the same stage. ---------!
    snow_seed    = 60.0_wp
    snowfall_on  = .true.
    call integrate_day()
@@ -378,10 +353,10 @@ program test_column_dynamics
    call check_true('SNOW ON: pack + soil stay physical over a 24 h march', snow_physical, snow_temp_end)
    !----- The pack MELTS over this day rather than growing (75 W/m2 of ground shortwave with no       !
    !      longwave loss in this fixture beats 2e-5 kg/m2/s of snowfall), so assert the melt path is    !
-   !      live rather than accumulation. That is the better coverage of the two: melt is what routes   !
-   !      a PAIRED (mass, enthalpy) transfer into the soil top, which is exactly the seam a hoist is   !
-   !      most likely to drop. It stays strictly positive, so a pack is present for the whole march    !
-   !      and the snowfac-blended surface is exercised throughout. -----------------------------------!
+   !      live rather than accumulation. That is the better coverage of the two: melt is what routes a !
+   !      PAIRED (mass, enthalpy) transfer into the soil top, which is exactly the seam a coupling     !
+   !      error is most likely to drop. It stays strictly positive, so a pack is present for the whole !
+   !      march and the snowfac-blended surface is exercised throughout. ------------------------------!
    call check_true('SNOW ON: melt/sublimation drained the pack without exhausting it',                                &
            snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp, snow_swe_end)
    call check_true('SNOW ON: whole-column water closes with a pack', budget%whole_water%n_fail  == 0_ik,              &
@@ -390,11 +365,10 @@ program test_column_dynamics
            real(budget%whole_energy%n_fail, wp))
    call test_report('test_column_dynamics')
 
-   !----- C4: the SAME scenario under ARK and RK45. Before the hoist both imported the snow kernels   !
-   !      and never called them, so this run was silently snow-free under each. These assertions are  !
-   !      the SUFFICIENT half of the migration's success criterion -- snow-off bit-identity (which    !
-   !      the rest of the suite covers) only proves the OFF path survived, which is the half that     !
-   !      cannot break. ------------------------------------------------------------------------!
+   !----- The SAME scenario under ARK and RK45 explicitly. A scheme that imports the snow kernels  !
+   !      but never calls them runs silently snow-free, and these assertions catch that; snow-off  !
+   !      bit-identity (which the rest of the suite covers) only proves the OFF path, which is the !
+   !      half that cannot break. -----------------------------------------------------------------!
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
          cfg%time_integrator = INTEG_ARK  ; schnm = 'SNOW ARK '
@@ -403,7 +377,7 @@ program test_column_dynamics
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SNOW RK45'
          col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       end if
-      !----- re-arm the scenario: split's block above switches snow back OFF when it finishes, so     !
+      !----- re-arm the scenario: the block above switches snow back OFF when it finishes, so         !
       !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
       !      ledgers close trivially) and is the exact failure mode these assertions exist to catch.  !
       snow_seed = 60.0_wp ; snowfall_on = .true.
@@ -415,14 +389,15 @@ program test_column_dynamics
               real(budget%whole_water%n_fail, wp))
       call check_true(trim(schnm)//': whole-column energy closes with a pack', budget%whole_energy%n_fail == 0_ik,    &
               real(budget%whole_energy%n_fail, wp))
-      !----- and the three must AGREE on the pack, not merely each conserve on their own: a shared     !
-      !      stage fed different inputs by one caller would still close every ledger independently.    !
+      !----- and each must AGREE with the reference run above (the default scheme) on the pack, not    !
+      !      merely conserve on its own: a shared stage fed different inputs by one caller would       !
+      !      still close every ledger independently.                                                   !
       !----- compare the MELT TOTAL, not the remaining mass: melt is what the stage computed, while    !
       !      the remainder is melt subtracted from a common seed and so exaggerates small differences  !
       !      once the pack is nearly gone. 10% allows for the schemes genuinely driving the surface    !
       !      balance along different CAS trajectories, while a wiring error (a stage fed the wrong     !
       !      inputs, or not called) is order-100%. ------------------------------------------------!
-      call check_true(trim(schnm)//': melt total agrees with split (one shared stage, same inputs)',                  &
+      call check_true(trim(schnm)//': melt total agrees with the reference run (one shared stage, same inputs)',      &
               abs((60.0_wp - snow_swe_end) - (60.0_wp - snow_swe_split))               < 0.10_wp * (60.0_wp - snow_swe_split),&
               abs(snow_swe_end - snow_swe_split))
       print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
@@ -432,13 +407,12 @@ program test_column_dynamics
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
 
    !=====================================================================================!
-   !  RUN 8b -- SHED WATER UNDER A PACK (REVIEW 2026-09, the winter energy residual). The daily     !
-   !  leaf/root-turnover shed water (P4) is routed into the pond together with meltwater at the      !
-   !  melt temperature whenever a pack exists. Both whole-column ledgers used to ZERO the ground-    !
-   !  inflow enthalpy term under a pack, so the shed water's enthalpy entered the pond unbooked:     !
-   !  a per-patch CONSTANT residual of shed*dt*u_liq(t_melt) on every winter step (~1.8 J/m2 at    !
-   !  150 s in the Ithaca example, +6.75 MJ/m2 over a 50-year spin-up). Ask for closure at round-  !
-   !  off, not at the tolerance -- the point is that the term is now booked, on both schemes. =====!
+   !  RUN 8b -- SHED WATER UNDER A PACK. The daily leaf/root-turnover shed water is routed into   !
+   !  the pond together with meltwater at the melt temperature whenever a pack exists, and both   !
+   !  whole-column ledgers must book that ground-inflow enthalpy under a pack too. Left unbooked  !
+   !  it is a per-patch CONSTANT residual of shed*dt*u_liq(t_melt) on every winter step (~1.8     !
+   !  J/m2 at 150 s in the Ithaca example, +6.75 MJ/m2 over a 50-year spin-up), small enough to   !
+   !  pass the tolerance, so closure is asked at round-off, on both schemes. =====================!
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
          cfg%time_integrator = INTEG_ARK  ; schnm = 'SHED ARK '
@@ -464,10 +438,9 @@ program test_column_dynamics
    !  RUN 9 -- SNOWFALL IS CONSERVED, ON EVERY INTEGRATOR.                                      !
    !                                                                                          !
    !  Snowfall is a boundary water input like rain, and every kg of it must end up somewhere in  !
-   !  the column: the pack, the soil, or the pond. `build_column_frozen` used to drop it (it       !
-   !  routed only `forc%rainfall`, never `forc%snowfall`), so ARK and RK45 lost `snowfall*dt` every         !
-   !  sub-freezing step while the whole-column ledger counted it as an input                        !
-   !  (MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3e, E-4).                                                       !
+   !  the column: the pack, the soil, or the pond. A frozen pre-pass that routes only                !
+   !  `forc%rainfall`, never `forc%snowfall`, loses `snowfall*dt` every sub-freezing step while      !
+   !  the whole-column ledger counts it as an input.                                                 !
    !                                                                                          !
    !  RUN 8 cannot catch that. It asserts on the PACK -- melt totals and pack mass -- which stay     !
    !  right even when the routing of what LEAVES the pack is wrong. This run asserts on the whole    !
@@ -475,20 +448,20 @@ program test_column_dynamics
    !                                                                                          !
    !  THE ASSERTION IS A BOUNDARY-INPUT IDENTITY, NOT A LEDGER RESIDUAL, and that is deliberate.     !
    !  A per-step `snowfall*dt` sits below the whole-column closure tolerance even while it integrates   !
-   !  into a large seasonal error -- a forced month on the broken code ran to completion without     !
+   !  into a large seasonal error -- a forced month that drops it runs to completion without         !
    !  tripping the budget hard stop. So this run asks a question the ledger cannot: integrate the    !
    !  SAME day twice, snowfall on and off, holding the air temperature (and hence melt, sublimation  !
    !  and drainage) common, and require the column to gain what fell. A scheme that discards it      !
    !  gains ~0 -- an order-100% failure with no tolerance to tune. A pack is seeded in BOTH runs so   !
    !  that sublimation, a genuine boundary OUTPUT, is common to the pair and cancels in the           !
-   !  difference.                                                                                     !
+   !  difference. The first pass (the default scheme) is the reference the others are compared to.   !
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
    col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
    snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
-      case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ark'
+      case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ref'
       case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
       case default; cfg%time_integrator = INTEG_RK45   ; schnm = 'SNOWF r45'
       end select
@@ -513,7 +486,7 @@ program test_column_dynamics
       !      pack; the defect this guards against is order-100% (the water never arrives). ---------!
       call check_true(trim(schnm)//': snowfall is conserved into the column',                                         &
               abs(cw_gain - snowf_total) < 0.10_wp * snowf_total, cw_gain)
-      call check_true(trim(schnm)//': snowfall gain agrees with split',                                               &
+      call check_true(trim(schnm)//': snowfall gain agrees with the reference run',                                   &
               abs(cw_gain - cw_split_gain) < 0.10_wp * snowf_total, cw_gain - cw_split_gain)
       print '(3a,f8.4,a,f8.4,a)', '   (RUN 9 ', trim(schnm), ' column water gain=', &
             cw_gain, ' kg/m2  expected=', snowf_total, ' kg/m2)'
@@ -523,13 +496,14 @@ program test_column_dynamics
    snow_seed = 0.0_wp
 
    !=====================================================================================!
-   !  RUN 9b -- SUB-THRESHOLD SNOWFALL ONTO BARE GROUND ARRIVES AS ICE (REVIEW 2026-09).           !
+   !  RUN 9b -- SUB-THRESHOLD SNOWFALL ONTO BARE GROUND ARRIVES AS ICE.                              !
    !  Snowfall too light to start a pack (snowfall*dt < min_new_snow_mass) is routed to the ground   !
-   !  with the rain. It used to be valued as LIQUID at the canopy-air temperature, so the column   !
-   !  received the fusion enthalpy of that snow from nowhere -- ledger-consistent (the boundary    !
-   !  term used the same number), physically wrong. Integrate the SAME cold day twice, once with   !
-   !  the mass as sub-threshold snow and once as rain; the soil + pond must end the snow day       !
-   !  poorer by ~L_f per kg (melting the snow costs soil heat). The old code gives ~0 difference.  !
+   !  with the rain, as ice at the air temperature. Valued as LIQUID at the canopy-air temperature   !
+   !  the column would receive the fusion enthalpy of that snow from nowhere -- ledger-consistent    !
+   !  (the boundary term uses the same number), physically wrong. Integrate the SAME cold day        !
+   !  twice, once with the mass as sub-threshold snow and once as rain; the soil + pond must end     !
+   !  the snow day poorer by ~L_f per kg (melting the snow costs soil heat). Liquid valuation gives  !
+   !  ~0 difference.                                                                                 !
    !=====================================================================================!
    snow_seed = 0.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
    snowfall_on = .true. ; snowf_rate = 5.0e-6_wp          ! 7.5e-4 kg/m2 per 150 s step < min_new_snow_mass (1e-3)
@@ -569,8 +543,8 @@ contains
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
       !----- alloc_patch_biophys seeds leaf_water_mass/wood_water_mass at a scratch 0 (the real     !
-      !      lazy-init lives in meds_fast_dynamics.f90's site-level gather loop, which this driver-  !
-      !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
+      !      seed is reconcile_tissue_water_capacity, run by fast_dynamics, which this driver-level !
+      !      test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created          !
       !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
       !      empty pool. -------------------------------------------------------------------------!
       biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_curve, &
@@ -581,7 +555,7 @@ contains
       biophys%shed_water_rate = shed_seed
       !----- RUN 8: seed a snow pack when asked. snow_seed = 0 (RUNS 1-7) leaves nlayer = 0, which is  !
       !      exactly the no-pack state alloc_patch_biophys already produces, so those runs are          !
-      !      untouched. rho_snow = 250 kg/m3 matches meds_main's own seeding. ------------------------!
+      !      untouched. rho_snow = 250 kg/m3 matches the model's own initial-pack seeding. ------------!
       if (snow_seed > 0.0_wp) then
          biophys%snow%swe(1)         = snow_seed
          biophys%snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, snow_seed, 270.0_wp, 0.0_wp)
@@ -607,15 +581,16 @@ contains
          t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
 
          forc%abs_sw   = 500.0_wp * cosz                            ! leaf-absorbed shortwave [W/m2]
-         forc%abs_par  = forc%abs_sw                                 ! MVP: absorbed PAR == absorbed SW (par_per_w=2.1)
+         forc%abs_par  = forc%abs_sw                                 ! fixture: absorbed PAR == absorbed SW (par_per_w=2.1)
          forc%abs_lw   = 0.0_wp
          forc%abs_sw_ground = 75.0_wp * cosz
          forc%abs_lw_ground = 0.0_wp
          forc%rainfall   = 0.0_wp
-         if (istep >= 72_ik .and. istep <= 168_ik) forc%rainfall = rain_pulse    ! morning rain pulse
+         if (istep >= 3_ik * steps_per_hour .and. istep <= 7_ik * steps_per_hour) &
+            forc%rainfall = rain_pulse                   ! morning rain pulse, 03:00-07:00
          if (rain_rate > 0.0_wp) forc%rainfall = rain_rate                        ! RUN 9b: all-day rain
-         !----- RUN 8: steady light snowfall so the pack GROWS (tests the accumulate path and the    !
-         !      pack's rainfall-enthalpy boundary term). 0 for every other run. ----------------------!
+         !----- RUNS 8-9b: steady light snowfall (tests the accumulate path and the pack's          !
+         !      rainfall-enthalpy boundary term). 0 for every other run. ---------------------------!
          forc%snowfall = 0.0_wp
          if (snowfall_on) forc%snowfall = snowf_rate
          if (snowfall_on .or. cold_air) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
@@ -627,10 +602,11 @@ contains
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
          forc%co2_atm      = 400.0_wp
-         !----- Issue #97: `theta_atm` is the reference MO measures the canopy against, and it has a  !
-         !      plausible 298.15 K DEFAULT -- setting only forc%air_temp leaves the stability solve       !
-         !      comparing the canopy to a fixed 298.15 K, which inverts the sign of stratification    !
-         !      and can pin `ustar` on its floor. Go through the SAME routine fill_aenv uses. --------!
+         !----- `theta_atm` is the reference MO measures the canopy against, and it has a            !
+         !      plausible 298.15 K type DEFAULT -- setting only forc%air_temp leaves the stability   !
+         !      solve comparing the canopy to a fixed 298.15 K, which inverts the sign of            !
+         !      stratification and can pin `ustar` on its floor. set_aero_env_atm gives MO the       !
+         !      forcing's air temperature, through the SAME routine fill_aenv uses. -----------------!
          call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)
 
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
@@ -655,25 +631,25 @@ contains
                                .and. biophys%soil_e%soil_temp(k) < 340.0_wp
             end do
          end if
-         if (istep == 324_ik) then
+         if (istep == 13_ik * steps_per_hour + steps_per_hour / 2_ik) then     ! 13:30
             ct_noon = biophys%cas%can_temp ; tleaf_noon = biophys%leaf_temp(1) ; co2_noon = biophys%cas%can_co2
             ustar_noon = aero%ustar ; dtheta_noon = biophys%cas%can_temp - aenv%theta_atm
             gpp_noon = budget%gpp_last ; nee_noon = budget%nee_last
-            !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it   !
-            !      from the persisted leaf_water_mass. --------------------------------------------!
+            !----- psi is not persisted state: diagnose it from the persisted leaf_water_mass      !
+            !      (docs/science/plant_hydraulics.md §2, eqs. (4)-(5)). ---------------------------!
             psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_curve, &
                   col_cohort%bleaf(1))
          end if
-         if (istep == 12_ik) then
+         if (istep == steps_per_hour / 2_ik) then                             ! 00:30
             ct_night = biophys%cas%can_temp ; tleaf_night = biophys%leaf_temp(1) ; co2_night = biophys%cas%can_co2
             psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), &
                   col_config%hydraulics_table%pft(1)%leaf_curve, col_cohort%bleaf(1))
          end if
       end do
       snow_swe_end = biophys%snow%swe(1) ; snow_temp_end = biophys%snow%snow_temp(1)
-      !----- whole-column LIQUID store at the end of the march (soil layers + ponding), for RUN 9's  !
-      !      boundary-input accounting. Not a budget -- just the store the arriving water must land   !
-      !      in if it lands anywhere at all. ----------------------------------------------------!
+      !----- whole-column WATER store at the end of the march (soil layers + pond + pack), for        !
+      !      RUN 9's boundary-input accounting. Not a budget -- just the store the arriving water     !
+      !      must land in if it lands anywhere at all. -----------------------------------------------!
       col_water_end = biophys%soil_w%w_surface + biophys%snow%swe(1)
       do k = 1_ik, nsl
          col_water_end = col_water_end + biophys%soil_w%theta(k) * col_config%soil%dz(k) * rho_h2o
@@ -681,12 +657,12 @@ contains
    end subroutine integrate_day
 
 
-   !----- Guard the caller-side cohort-order fix. aero_bottom_to_top feeds canopy_aerodynamics the !
+   !----- Guard the caller-side cohort order. aero_bottom_to_top feeds canopy_aerodynamics the        !
    !      BOTTOM(1)->TOP(n) order it contracts for, starting from a height-DESCENDING column buffer  !
    !      (index 1 = tallest). So the TALL cohort (gather index 1 = canopy top) must come back with   !
    !      the top-of-canopy wind (=> higher boundary-layer gb); the short understory gets the         !
-   !      attenuated wind. The old direct call (gather order straight into the kernel) inverts this,   !
-   !      and reverting the fix must fail here.                                                        !
+   !      attenuated wind. Passing the gather order straight into the kernel inverts this and must    !
+   !      fail here.                                                                                  !
    subroutine test_aero_order()
       type(column_cohort_t) :: c2
       type(aero_out_t)      :: a2
@@ -707,8 +683,8 @@ contains
       call check_true('aero order: tall cohort gets higher leaf gb', a2%leaf_gbw(1) > a2%leaf_gbw(2),                 &
               a2%leaf_gbw(1) - a2%leaf_gbw(2))
       !----- The WOOD boundary layer follows the wood's own temperature (free convection is driven by  !
-      !      the surface-air difference), not the leaves'. The leaf and wood temperatures used to be   !
-      !      the same array, so a warm leaf raised the wood's conductance. ------------------------!
+      !      the surface-air difference), not the leaves'. Guards against passing one temperature      !
+      !      array for both, which lets a warm leaf raise the wood's conductance. ---------------------!
       block
          type(aero_out_t) :: a_ref, a_warm_leaf, a_warm_wood
          real(wp) :: tair(2), twarm(2)
@@ -731,7 +707,8 @@ contains
 
    !----- The reference level (RUN 5b). Canopy air at the temperature and humidity of the air at   !
    !      the canopy-air top is a neutral surface layer with no temperature scale, whatever zref is.  !
-   !      Before v0.3.1 this case solved as stable, with tstar = temp1*(g/cp)*zref.                    !
+   !      Referencing only the air to the ground would solve it as stable, with                       !
+   !      tstar = temp1*(g/cp)*zref (docs/science/canopy_aerodynamics.md §2, "The reference level").  !
    subroutine test_reference_level()
       type(column_cohort_t) :: c3
       type(aero_out_t)      :: a3
@@ -754,10 +731,10 @@ contains
       call check_true('reference level: equal canopy and reference air is neutral', a3%zeta == 0.0_wp, a3%zeta)
    end subroutine test_reference_level
 
-   !----- Goal (a) Layer 1. The fast loop has FOUR adaptive error estimates (the ARK march plus the  !
-   !      nested soil-water / soil-energy / plant-hydraulics sub-solvers), and before the unification  !
-   !      each carried its own tolerance -- two of them unreachable from config. build_tol_set is the   !
-   !      single authority; build_fast_context pushes its groups down into the sub-solver opts.         !
+   !----- One tolerance set for every adaptive error estimate in the fast loop (the ARK march plus       !
+   !      the nested sub-solvers). build_tol_set is the single authority; build_fast_context pushes      !
+   !      its groups down into the sub-solver opts, so no solver carries a tolerance config cannot       !
+   !      reach.                                                                                         !
    !      This is a PLUMBING test on purpose: a whole-model A/B cannot see it (a tolerance change that   !
    !      does not flip a substep decision is silently byte-identical), so the wiring is asserted here   !
    !      directly. It also pins the two accuracy dials, including the atol_scale companion -- rtol_all  !
@@ -767,7 +744,7 @@ contains
       type(fast_context_t)  :: fx
       type(tol_set_t)       :: t
       c = build_test_config()
-      !----- (a) DEFAULT: each group keeps the tolerance that governs it today (byte-identical). ------!
+      !----- (a) DEFAULT: each group is seeded from the config key that governs it. -------------------!
       t = build_tol_set(c)
       call check_true('tol: theta group seeded from [soil].rtol', t%rtol(GRP_THETA)  == c%soil%rtol,                  &
               t%rtol(GRP_THETA))
@@ -787,9 +764,9 @@ contains
               fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, fx%col_config%soil_water_opts%rtol)
       !----- [energy] has NO integrator tolerance to push into: the soil-thermal solve is one           !
       !      unconditionally-stable BE step, and the accuracy of the integrated soil energy belongs to   !
-      !      GRP_SE. What the dial must still reach is [energy].atol, the BUDGET-CLOSURE threshold --    !
-      !      it used to travel config -> tols(GRP_SOIL_T) -> config, and deleting that dead group        !
-      !      (#163) would have silently dropped the coupling. This is the assertion that catches that.   !
+      !      GRP_SE. What the dial must still reach is [energy].atol, the BUDGET-CLOSURE threshold,      !
+      !      which atol_scale scales directly, outside the tolerance groups. This assertion catches a    !
+      !      dropped path.                                                                               !
       call check_true('tol: atol_scale reaches the soil-energy BUDGET threshold',                                     &
               fx%col_config%energy%atol == c%energy%atol * 1.0e-2_wp, fx%col_config%energy%atol)
    end subroutine test_tolerance_unification
