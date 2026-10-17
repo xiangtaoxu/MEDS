@@ -565,21 +565,29 @@ program test_fast_loop
       end block
    end block
 
-   !=== 9. SPLIT INVARIANCE and the LEAFLESS LEAF (docs/science/vegetation_energy_dynamics.md, "A     !
+   !=== 9. SPLIT INVARIANCE and the LEAFLESS LEAF (docs/science/vegetation_energy_dynamics.md, "A      !
    !    thin tissue is a small tissue" and "A tissue with no area"). A thin stand -- 20 stems per      !
-   !    hectare of a 20 cm tree, wood area index ~0.01 -- as one cohort and as two cohorts at half the  !
+   !    hectare of a 20 cm tree, wood area index ~0.01 -- as one cohort and as two cohorts at half the !
    !    density, through the whole fast loop (two-stream, aerodynamics, water network, ARK) over a     !
    !    forced day window: the tissue temperatures, the canopy air and the per-plant GPP must agree.   !
    !    A floor in ground units on a tissue's coupling or heat capacity, which only the half-density   !
-   !    pair would cross, fails this. Then the same tree without leaves: its leaf temperature is its   !
-   !    wood's (a bud sits on its twig), and the budgets close. ==========================================!
+   !    pair would cross, fails this. The step controller is held off (rtol_all and atol_scale large)  !
+   !    so both stands take the same steps: its error norm (docs/science/numerical_scheme.md eq. (3))  !
+   !    counts the pair's states twice, each against the same atol, so under a stiff ground coupling   !
+   !    the two sub-step differently, by ~1e-3 K -- the integrator's error, not the physics'. Then the !
+   !    same tree without leaves: its leaf temperature is its wood's (a bud sits on its twig), and the !
+   !    budgets close. ================================================================================!
    block
       type(met_source_t) :: drv
       type(met_cursor_t) :: cur
       integer(ik)        :: icase, nfail(3)
       real(wp)           :: t_leaf(3), t_wood(3), t_cas(3), gpp(3), d_split
       real(wp), parameter :: NPLANT_THIN = 0.002_wp, DBH_THIN = 20.0_wp
+      real(wp), parameter :: HOLD_OFF = 1.0e6_wp     ! tolerances no step error reaches
+      real(wp)           :: rtol_all0, atol_scale0
       cfg%forcing%forcing_on = .true.
+      rtol_all0 = cfg%rtol_all ; atol_scale0 = cfg%atol_scale
+      cfg%rtol_all = HOLD_OFF ; cfg%atol_scale = HOLD_OFF
       call build_fast_context(cfg, ctx)
       do icase = 1_ik, 3_ik
          call init_bare_ground(site, cfg, 1_ik)
@@ -618,6 +626,7 @@ program test_fast_loop
       call check(site%cohort%leaf_area(1) == 0.0_wp, 'leafless: the cohort has no leaf area')
       call check(t_leaf(3) == t_wood(3), 'leafless: the leaf takes its wood''s temperature')
       call check(abs(t_wood(3) - t_cas(3)) > 1.0e-3_wp, 'leafless: the wood is not at the canopy air''s temperature')
+      cfg%rtol_all = rtol_all0 ; cfg%atol_scale = atol_scale0
    end block
 
    write(*,'(a)')          '   PASS'
