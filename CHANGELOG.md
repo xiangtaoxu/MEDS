@@ -265,6 +265,9 @@ before and after.
   A constant absorbing fraction of the root length scales the root length and the root-length
   density alike, which is exactly a rescaled specific root length: `specific_root_length` is the knob
   to fit. Uptake that grows less than linearly would be a root conductance in series (#356).
+- **`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` §2.4 no longer says the data report prints the share of
+  area whose canopy-air top is above the sensor** (#350): `scripts/calibrate_fast/report.py` does not;
+  the line says to read it from a run's `cas_depth_patch` and `area_patch`.
 
 ## [0.3.4] — 2026-10-13
 
