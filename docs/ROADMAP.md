@@ -136,8 +136,9 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   with a start-up transient on the first day after a restart (−1.83 against −0.28 MPa) and 0.17 MPa
   left in `psi_wood` on the 3-hour midday probe through the frozen uptake seam. The water network
   (2026-10) now solves leaf and wood water implicitly with the soil, which removes that seam; the
-  midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s. `psi_wood` and the restart
-  transient are still to be re-measured.
+  midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s, and at BCI (2012-08 to 2013-05)
+  the daily leaf and wood potentials agree to 0.004 MPa between 150 and 900 s
+  (`docs/science/numerical_scheme.md` §5a). The restart transient is still to be re-measured.
 
 ---
 
@@ -437,7 +438,11 @@ Gaps and residues found in the 2026-10-17 annotation review.
   `[allometry].ca_b1`/`ca_b2` are required, but `dbh_to_crown_area` is never called, and
   `crown_area_frac` (1.0 in every shipped config) only sets the in-canopy wind's crown cover. The open
   canopy of #410 uses the leaf and wood area instead.
-- **Numerics checks not yet scored on the water network.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) The stability threshold on
-  a forced multi-season run and across wind speeds; a consistent midpoint freeze to replace the
-  `forcing_sample_frac` trade; a drought season against `dt_fast` (`docs/science/numerical_scheme.md`
-  §7; #159 mentions the last).
+- **The per-step freeze's drought bias, and a consistent midpoint freeze.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) At 900 s
+  Palo Verde's February–April GPP and ET run 5.5–6 % high, linearly in `dt_fast`, because the gas
+  exchange and the transpiration demand are set from the step-start leaf potential
+  (`docs/science/numerical_scheme.md` §5a, §7 item 1); a predictor–corrector that re-evaluates the
+  gas exchange at the mid-step leaf potential and re-solves the water network once would remove it,
+  for about one extra pre-pass per step. Until then 300 s is the advice for dry-season leaf-habit
+  studies. The second item is a consistent midpoint freeze to replace the `forcing_sample_frac` trade
+  (§7 item 5). The stability in light wind is scored and passes (§5a′, §7 item 2).

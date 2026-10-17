@@ -455,6 +455,21 @@ before and after.
   `MEDS_POLYGON_RUNTIME_PLAN.md`'s header says the region runtime was merged into `beta` as #408.
 - **`examples/README.md`'s example 06 summary** said 983 cells, each a single-site run; it is 953
   cells run as two region runs, as example 06's README says.
+- **`dt_fast`: the drought-season bias and the light-wind stability, measured** (#415).
+  `numerical_scheme.md` §5a, which said a drought season was not scored, now gives it: on Palo Verde's
+  inventory configuration restarted on 2008-12-01, 900 s runs February–April GPP 5.5 % and ET 6.0 %
+  above 150 s, linearly in `dt_fast` (about 1 % at 300 s), the December–May season 1.7 % and the year
+  0.8 %, with shedding 1–2 days late; the per-step freeze is the cause, not the water solver. BCI
+  (example 04, 2012-08 to 2013-05) moves by GPP +0.08 %, LE −0.37 W m⁻², H +0.25 W m⁻² and daily ψ by
+  at most 0.004 MPa. The page recommends `dt_fast = 300 s` for runs whose purpose is dry-season
+  leaf-habit timing; 900 s stays the default. §5a′'s re-solved stability multiplier, −0.07 to −1.16
+  by stand height (from a base state spun up with the conductances frozen), is replaced by today's: on
+  a 30 m stand at noon |Φ′| ≤ 0.39 from 50 to 900 s at 2 and 10 m/s (+0.11 and +0.02 at 900 s), at
+  most 0.42 in every other case but a calm night (+0.91 to +0.43, a relaxation that does not
+  oscillate). §7 item 2 records light wind as scored: calm wind is 13 % of BCI's records and 900 s
+  shows no period-2 signal (lag-1 correlation of the canopy-air temperature's second difference
+  −0.06). §6, §7 item 1, the `dt_fast` comment in `meds_config_main.toml`, the ROADMAP's #415 and #162
+  items and `ed2_comparison.md`'s banner follow.
 
 ## [0.3.4] — 2026-10-13
 

@@ -57,7 +57,9 @@ dt_fast             = "900s"   # fast biophysics timestep, an ACCURACY setting, 
                                # air is stable at every dt_fast measured. 900 s is the edge of the
                                # measured range (a longer step warns). Leaf gas exchange is frozen over
                                # each step at the step-start leaf potential, and leaf water is solved
-                               # implicitly with the soil's to keep that lag small; see
+                               # implicitly with the soil's to keep that lag small. In a drought season
+                               # that lag still runs GPP and ET ~6 % high at 900 s (~1 % at 300 s), so
+                               # use 300 s when the timing of dry-season leaf habits is the point; see
                                # docs/science/numerical_scheme.md §5a and §6.
 # ---- The time integrator and its error control (docs/science/numerical_scheme.md). Every key
 #      is optional, at the default shown. ----
