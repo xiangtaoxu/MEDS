@@ -995,12 +995,10 @@ contains
    !                  normalization.                                                         !
    !                                                                                         !
    !  The diagnostic twins are fused from their own declared table (CDIAG_FUSE,              !
-   !  meds_site_diag_types) on the leaf-area and nplant weights the caller computes. Those   !
-   !  two tables do not share a weight for the intensive kind, deliberately: a per-LEAF-AREA !
-   !  diagnostic (transpiration per m2 of leaf, say) really is leaf-area weighted, while a   !
-   !  prognostic TEMPERATURE is per unit heat capacity, and treating them as one kind makes  !
-   !  the wood temperature wrong. Adding a fast-loop field is one line here; the compiler    !
-   !  will not remind you, so the line is the reminder.                                      !
+   !  meds_site_diag_types) on weights the caller computes: the tissue heat capacities for   !
+   !  the leaf and wood temperatures, as here, and leaf area for a per-LEAF-AREA diagnostic  !
+   !  (transpiration per m2 of leaf, say), which is not a temperature. Adding a fast-loop    !
+   !  field is one line here; the compiler will not remind you, so the line is the reminder. !
    !=========================================================================================!
    !----- THE per-field policy for the fast-loop cohort state, declared once. Three kinds, and    !
    !      the headings below are the declaration: INTENSIVE (weighted by the capacity that carries  !

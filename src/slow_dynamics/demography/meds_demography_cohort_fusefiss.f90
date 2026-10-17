@@ -185,6 +185,7 @@ contains
       real(wp) :: nr, nd, ntot, agb_tot, agb_new, wr, wd, wtot
       real(wp) :: lc_tot, fc_tot, wc_tot, nc_tot                !< pre-merge pool totals [kgC/m2]
       real(wp) :: cr, cd                                        !< the two cohorts' leaf carbon [kgC/m2]
+      real(wp) :: hlr, hld, hwr, hwd                            !< their leaf and wood heat capacities [J/m2/K]
 
       associate (cohort => site%cohort)
          nr      = cohort%nplant(recc)
@@ -203,16 +204,21 @@ contains
          !      area its two parents showed. ---------------------------------------------------------!
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
          cr = nr * cohort%leaf_carbon(recc) ; cd = nd * cohort%leaf_carbon(donc)
+         !----- The tissue heat capacities the diagnostic temperatures fuse on, taken BEFORE          !
+         !      fuse_cohort_fast_state blends the survivor's tissue water into them: the same          !
+         !      weights the prognostic temperatures fuse on. ----------------------------------------!
+         call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, hlr, hwr)
+         call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, hld, hwd)
          call fuse_cohort_fast_state(cohort, recc, donc, nr, nd)
          cohort%sla(recc)     = pair_mean(cohort%sla(recc),     cr, cohort%sla(donc),     cd)
          cohort%vcmax25(recc) = pair_mean(cohort%vcmax25(recc), wr, cohort%vcmax25(donc), wd)
          cohort%rd25(recc)    = pair_mean(cohort%rd25(recc),    wr, cohort%rd25(donc),    wd)
          cohort%llspan(recc)  = pair_mean(cohort%llspan(recc),  wr, cohort%llspan(donc),  wd)
-         !----- Fast-loop DIAGNOSTIC accumulators, handed leaf area (wr, wd) for the intensive        !
-         !      fields and nplant (nr, nd) for the extensive ones. Which of the two applies is        !
-         !      declared per field in meds_site_diag_types (CDIAG_FUSE), not decided here. -----------!
-         call cohort_diag_fuse(cohort%diag,  recc, donc, wr, wd, nr, nd, CDIAG_FUSE)
-         call cohort_diag_fuse(cohort%sdiag, recc, donc, wr, wd, nr, nd, CSDIAG_FUSE)
+         !----- Fast-loop DIAGNOSTIC accumulators, handed leaf area (wr, wd), nplant (nr, nd) and the  !
+         !      tissue heat capacities. Which weight applies is declared per field in                 !
+         !      meds_site_diag_types (CDIAG_FUSE), not decided here. ------------------------------------!
+         call cohort_diag_fuse(cohort%diag,  recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CDIAG_FUSE)
+         call cohort_diag_fuse(cohort%sdiag, recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CSDIAG_FUSE)
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          !----- Same convention for the predawn water status. Fusion requires the two cohorts to  !

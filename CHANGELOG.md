@@ -151,6 +151,20 @@ before and after.
   so a region's derived soil diagnostics (water potential, wetness) follow each cell's soil where they
   used to take polygon 1's for every polygon. Results are byte-identical.
 
+### Fixed
+
+- **A fused cohort's diagnostic leaf and wood temperatures weight on heat capacity** (#409). The cohort
+  diagnostic block blended them on leaf area, while the prognostic tissue temperatures blend on the
+  tissue's heat capacity; in an output window that contained a cohort fusion, the fused cohort's mean
+  temperature was therefore not the one its tissue energy implied, most for wood, whose heat capacity
+  does not scale with leaf area. They now fuse on the same leaf and wood heat capacities
+  (`FK_LEAF_HEAT`, `FK_WOOD_HEAT` in `meds_site_diag_types`), taken before the merge as the prognostic
+  fusion takes them. Only the output moves (`leaf_temp_cohort`, `wood_temp_cohort`,
+  `gx_leaf_temp_cohort_fast` and the `leaf_temp_site` / `wood_temp_site` rollups), and only in a
+  window with a fusion; the model state is unchanged. `test_diagnostic_reduce` checks each fusion
+  weight on its own, and `test_fusion_cohort` that the diagnostic and prognostic temperatures agree
+  after a merge.
+
 ### Documentation
 
 - **Source comments state rationale, not history, and cite the science pages** (#409). Every
@@ -190,7 +204,8 @@ before and after.
   anywhere but `CHANGELOG.md`, `docs/ROADMAP.md` and `docs/dev_plans/` fails the suite. `CLAUDE.md`'s
   documentation rule 1 now says so.
 - **`docs/ROADMAP.md` lists every open issue.** It lacked #342, #343, #349, #350, #369, #377, #379,
-  #381, #393, #394, #395 and #407; §12 lists the gaps the science pages name that have no issue yet.
+  #381, #393, #394, #395 and #407; the gaps the science pages name that had no issue are filed as
+  #410–#415 (ROADMAP §12).
 
 ## [0.3.4] — 2026-10-13
 

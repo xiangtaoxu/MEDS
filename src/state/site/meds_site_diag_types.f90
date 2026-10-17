@@ -41,12 +41,13 @@
 !     nothing: main sets `active` from the registry, and every entry point is a no-op      !
 !     while it is .false.                                                                  !
 !                                                                                          !
-!  6. FUSION BLENDS BY THE FIELD'S OWN KIND. Each field declares whether it is INTENSIVE   !
-!     (leaf-area-weighted -- a temperature, a conductance, a potential) or EXTENSIVE       !
-!     (nplant-weighted -- a per-plant flux) or GROUND-REFERENCED (summed -- already per m2 !
-!     of patch). Blending a temperature by nplant, or an extensive flux by leaf area, is   !
-!     the classic silent fusion bug; the kind is DATA here, so the blend cannot disagree   !
-!     with the quantity.                                                                   !
+!  6. FUSION BLENDS BY THE FIELD'S OWN KIND. Each field declares the weight that carries   !
+!     it: leaf area (INTENSIVE -- a conductance, a potential, a per-leaf-area flux), plant !
+!     number (EXTENSIVE -- a per-plant flux), the tissue's heat capacity (a leaf or wood   !
+!     temperature, as its prognostic twin fuses), or none (GROUND-REFERENCED: summed,      !
+!     already per m2 of patch). Blending a temperature by nplant, or an extensive flux by  !
+!     leaf area, is the classic silent fusion bug; the kind is DATA here, so the blend     !
+!     cannot disagree with the quantity.                                                   !
 !==========================================================================================!
 module meds_site_diag_types
    use meds_kinds,     only : wp, ik
@@ -65,9 +66,11 @@ module meds_site_diag_types
    public :: cohort_diag_value, patch_diag_value, patch_diag_slow_row
 
    !----- Fusion kinds (decision 6 above). ---------------------------------------------------!
-   integer(ik), parameter, public :: FK_INTENSIVE = 1_ik  !< leaf-area-weighted mean (temps, gs, psi)
+   integer(ik), parameter, public :: FK_INTENSIVE = 1_ik  !< leaf-area-weighted mean (gs, psi, per-leaf-area fluxes)
    integer(ik), parameter, public :: FK_EXTENSIVE = 2_ik  !< nplant-weighted mean (per-plant fluxes)
    integer(ik), parameter, public :: FK_GROUND    = 3_ik  !< summed (already per m2 of patch ground)
+   integer(ik), parameter, public :: FK_LEAF_HEAT = 4_ik  !< leaf-heat-capacity-weighted mean (leaf temperature)
+   integer(ik), parameter, public :: FK_WOOD_HEAT = 5_ik  !< wood-heat-capacity-weighted mean (wood temperature)
 
    !==========================================================================================!
    !  PER-COHORT diagnostic fields. Order is free; the parameters are the only thing that binds  !
@@ -108,18 +111,18 @@ module meds_site_diag_types
    integer(ik), parameter, public :: CD_PRESSURE     = 30_ik  !< [Pa] air pressure the leaf sees
    integer(ik), parameter, public :: N_CDIAG         = 30_ik
 
-   !----- Fusion kind per cohort field. Temperatures, conductances, potentials and the leaf-     !
-   !      area-normalized fluxes are INTENSIVE (leaf-area-weighted) -- the leaf and wood         !
-   !      temperatures included, although their prognostic twins fuse on heat capacity           !
-   !      (fuse_cohort_fast_state). The per-PLANT quantities (GPP rate, sapflow, uptake,         !
-   !      tissue water mass) are EXTENSIVE (nplant-weighted), matching how the prognostic        !
-   !      twins of these quantities are fused. The absorbed-radiation terms are per m2 of        !
-   !      GROUND, so two cohorts' contributions to the same patch simply add -- the same         !
-   !      convention leaf_surf_water follows. ---------------------------------------------------!
+   !----- Fusion kind per cohort field. The leaf and wood temperatures fuse on the heat capacity  !
+   !      of their tissue, as their prognostic twins do (fuse_cohort_fast_state), so a fused       !
+   !      cohort's mean temperature over the output window is the one its tissue energy implies.   !
+   !      Conductances, potentials and the leaf-area-normalized fluxes are INTENSIVE (leaf-area-   !
+   !      weighted). The per-PLANT quantities (GPP rate, sapflow, uptake, tissue water mass) are   !
+   !      EXTENSIVE (nplant-weighted), matching how their prognostic twins fuse. The absorbed-     !
+   !      radiation terms are per m2 of GROUND, so two cohorts' contributions to the same patch    !
+   !      simply add -- the same convention leaf_surf_water follows. -----------------------------!
    integer(ik), parameter, public :: CDIAG_FUSE(N_CDIAG) = [                                     &
         FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
         FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
-        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
+        FK_LEAF_HEAT, FK_WOOD_HEAT, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
         FK_INTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_GROUND,    FK_GROUND,                       &
         FK_GROUND,    FK_INTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE,                    &
         FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE ]
@@ -408,11 +411,13 @@ contains
    !      means, while the prognostic temperatures fuse on heat capacity                       !
    !      (fuse_cohort_fast_state). The dt weight `w` is a property of the window, not of      !
    !      either cohort (see below). ----------------------------------------------------------!
-   subroutine cohort_diag_fuse(d, recc, donc, li_r, li_d, np_r, np_d, kinds)
+   subroutine cohort_diag_fuse(d, recc, donc, li_r, li_d, np_r, np_d, hl_r, hl_d, hw_r, hw_d, kinds)
       type(cohort_diag_block), intent(inout) :: d
       integer(ik),             intent(in)    :: recc, donc
       real(wp),                intent(in)    :: li_r, li_d   !< leaf-area weights (nplant*leaf_area)
       real(wp),                intent(in)    :: np_r, np_d   !< nplant weights
+      real(wp),                intent(in)    :: hl_r, hl_d   !< [J/m2/K] leaf heat capacities, before the merge
+      real(wp),                intent(in)    :: hw_r, hw_d   !< [J/m2/K] wood heat capacities, before the merge
       integer(ik),             intent(in)    :: kinds(:)     !< CDIAG_FUSE or CSDIAG_FUSE
       integer(ik) :: f
       if (.not. d%active) return
@@ -422,6 +427,10 @@ contains
             d%v(f, recc) = pair_mean(d%v(f, recc), li_r, d%v(f, donc), li_d)
          case (FK_EXTENSIVE)
             d%v(f, recc) = pair_mean(d%v(f, recc), np_r, d%v(f, donc), np_d)
+         case (FK_LEAF_HEAT)
+            d%v(f, recc) = pair_mean(d%v(f, recc), hl_r, d%v(f, donc), hl_d)
+         case (FK_WOOD_HEAT)
+            d%v(f, recc) = pair_mean(d%v(f, recc), hw_r, d%v(f, donc), hw_d)
          case default   ! FK_GROUND -- already per m2 of the SAME patch ground, so they add
             d%v(f, recc) = d%v(f, recc) + d%v(f, donc)
          end select

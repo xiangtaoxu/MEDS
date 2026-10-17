@@ -15,6 +15,7 @@ program test_fusion_cohort
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
    use meds_diagnostic_reduce, only : total_nplant, total_agb
+   use meds_site_diag_types,  only : cohort_diag_alloc, cohort_diag_value, CD_LEAF_TEMP, CD_WOOD_TEMP
    use meds_allometry,       only : storage_carbon_target
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
@@ -24,7 +25,8 @@ program test_fusion_cohort
    real(wp)            :: agb_tot, n0, agb0, dbh_avg
    real(wp)            :: wr, wd, leafmass_exp, woodmass_exp, ltemp_exp, wtemp_exp
    real(wp)            :: cl1, cw1, cl2, cw2, clf, cwf, e_leaf0, e_wood0
-   real(wp) :: np1, np2
+   real(wp) :: np1, np2, xdiag(4)
+   integer(ik) :: ndiag
    integer(ik)         :: j, pf
 
    call banner('cohort fusion/fission conservation')
@@ -67,6 +69,13 @@ program test_fusion_cohort
    wtemp_exp = (cw1*298.0_wp + cw2*306.0_wp) / (cw1 + cw2)
    e_leaf0   = cl1*300.0_wp + cl2*305.0_wp
    e_wood0   = cw1*298.0_wp + cw2*306.0_wp
+   !----- The cohort DIAGNOSTIC block, holding one sample of the same tissue temperatures, must fuse  !
+   !      them on the same weights as the prognostic state, so the two agree after the merge. --------!
+   call cohort_diag_alloc(site%cohort%diag, site%cohort%cap, .true.)
+   site%cohort%diag%n = 2_ik
+   site%cohort%diag%v(CD_LEAF_TEMP, 1:2) = [300.0_wp, 305.0_wp]
+   site%cohort%diag%v(CD_WOOD_TEMP, 1:2) = [298.0_wp, 306.0_wp]
+   site%cohort%diag%w(1:2) = 1.0_wp
    call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
    call check_close(site%cohort%nplant(1), 0.8_wp, 1.0e-12_wp, 'fused nplant must be summed')
    call check_close(site%cohort%nplant(1)*site%cohort%agb(1), agb_tot, 1.0e-12_wp,                  &
@@ -82,6 +91,12 @@ program test_fusion_cohort
                     'leaf_temp not heat-capacity-weighted on cohort fusion')
    call check_close(site%cohort%wood_temp(1), wtemp_exp, 1.0e-9_wp,                                 &
                     'wood_temp not heat-capacity-weighted on cohort fusion')
+   call cohort_diag_value(site%cohort%diag, CD_LEAF_TEMP, xdiag, ndiag, 0.0_wp)
+   call check_close(xdiag(1), site%cohort%leaf_temp(1), 1.0e-9_wp,                                  &
+                    'diagnostic leaf temperature fuses as the prognostic one (leaf heat capacity)')
+   call cohort_diag_value(site%cohort%diag, CD_WOOD_TEMP, xdiag, ndiag, 0.0_wp)
+   call check_close(xdiag(1), site%cohort%wood_temp(1), 1.0e-9_wp,                                  &
+                    'diagnostic wood temperature fuses as the prognostic one (wood heat capacity)')
    !----- The formulae above are the MEANS to this end: the merged tissue must hold the energy the  !
    !      two cohorts held. Asserted separately so a future change of weighting is judged on what   !
    !      it conserves, not on whether it matches today's expression. The LEAF capacity is additive !
