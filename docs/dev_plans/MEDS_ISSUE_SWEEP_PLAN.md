@@ -270,6 +270,8 @@ that differs from this plan to be recorded here.
 | L6 | Phase 2, M1 | **#74 closed** as measured and negligible: dew is 0.01–0.5 % of ET at BCI (≤ 5 mm yr⁻¹). The plan had it deferred. | Nothing to carry to ED-MORE. |
 | L7 | Phase 2, M1 | **#356 measured:** after the 2017-04-17 storm, big trees take up 13–14× their peak sapflow (≈ 1 t in 15 min) from a −0.5 MPa drive; site ratio 4.1. The build stays deferred as planned (it needs refits); the design is recorded on the issue. | As planned. |
 | L8 | Phase 2, M1 | **New issue #433:** under ERA5-Land forcing at BCI, intercepted-water evaporation is ~34 % of rain and ~75 % of ET (11 % of rain on the tower forcing). A question for later, not this sweep. | Found while measuring #74. |
+| L9 | Phase 2, M4 | **#419 confirmed, and widened:** `c_sapw` = 2700 J kg⁻¹ K⁻¹ is a fresh-wood value (100 % moisture), applied to dry mass with the water added on top, so the water is counted twice. Phase 3 takes the wood's thermal water from the water network's store (sapwood share), sets `c_sapw` to ED2's dry 1217, and counts heartwood dry. Midday H at BCI +20–27 W m⁻², night H −4 to −11, daily means unchanged. **Example 04 is refitted** after the batch, since its diurnal H is in the calibration. | The plan refitted example 04 only if BCI moved beyond noise; this does. |
+| L10 | Phase 2, M4 | **New bug #434, fixed in Phase 3 with #419:** fine-root turnover drains ~10× too much water from the wood store (≈ 3.6 kg m⁻² per 9 months at BCI against ≈ 0.4 held by the fine roots). | Same code and same wood-water accounting as #419. |
 
 ## Appendix — every open issue
 
