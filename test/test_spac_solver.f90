@@ -21,6 +21,8 @@
 !  10. SATURATED       : rain on a saturated column ponds, spills, and conserves.                   !
 !  11. ACCURACY        : the default tolerances track a tight-tolerance run.                       !
 !  12. VANISHING STORES: a near-leafless leaf and a trace pond stay in range, and water closes.   !
+!  13. CAMPBELL        : on a Campbell clay the soil potentials are the Campbell curve's, finite  !
+!                        and below zero; the stand takes up water, and every step closes.         !
 !==========================================================================================!
 program test_spac_solver
    use meds_test_assert, only : check_true, check_close, check_int, test_report
@@ -32,7 +34,8 @@ program test_spac_solver
                                 spac_jacobian_error, POND, WOOD, LEAF
    use meds_hydr_lib,      only : xylem_max_conductance, rhizosphere_conductance, build_hydro_table
    use meds_water_retention, only : tissue_water_relations, soil_water_relations, SOIL_RETENTION_VG,       &
-                                    water_curve_t, rwc_from_psi, pv_psi_tlp, soil_psi_from_theta
+                                    SOIL_RETENTION_CAMPBELL, water_curve_t, rwc_from_psi, pv_psi_tlp,       &
+                                    soil_psi_from_theta
    use meds_plant_types,   only : hydro_params_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
@@ -62,6 +65,7 @@ program test_spac_solver
    call test_saturated()
    call test_accuracy()
    call test_vanishing_stores()
+   call test_campbell()
    call test_report('test_spac_solver')
 
 contains
@@ -476,6 +480,60 @@ contains
       call check_true('vanishing stores: the pond never holds less than nothing', pond_min >= 0.0_wp, pond_min)
       call check_close('vanishing stores: water conserved', total_water(spac) - w0, flows, 1.0e-10_wp * w0)
    end subroutine test_vanishing_stores
+
+   !=======================================================================================!
+   !----- Two transpiring days without rain on a Campbell clay (psi_sat = -0.26 m, b = 5.65), on   !
+   !      the van Genuchten clay's layers. The column carries one parameter pair whose meaning the !
+   !      family sets, so the network must read (psi_sat, b) through it: each layer's potential is !
+   !      the Campbell curve's at its water content, finite and below zero, the stand draws water  !
+   !      from the soil, and every step closes. No layer reaches saturation, where the curve reads !
+   !      zero and the network a head above air entry. The fixture's soil is swapped for the test  !
+   !      and put back after it. ------------------------------------------------------------!
+   subroutine test_campbell()
+      type(spac_solver_t) :: spac
+      type(soil_params_t) :: vg_soil
+      real(wp), parameter :: theta_sat = 0.44_wp, theta_res = 0.0_wp, psi_sat = -0.26_wp, b = 5.65_wp
+      real(wp) :: bottoms(n_soil_layer_max), theta(soil%n_active), psi_curve(soil%n_active)
+      real(wp) :: w0, w1, dt, hour, flows, worst, worst_psi, uptake
+      integer(ik) :: step, nfail, nsl
+      logical :: below_zero
+      vg_soil = soil
+      nsl = vg_soil%n_active
+      call geometric_layer_bottoms(1.44_wp, nsl, 3.0_wp, bottoms)
+      call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, bottoms, theta_sat, theta_res, 4.54e-6_wp,      &
+                                  psi_sat, b, -3.37_wp, soil)
+      theta = 0.30_wp
+      call make_stand(spac, 4_ik, theta, 0.0_wp, 0.95_wp, 0.9_wp, 0.0_wp)
+      dt = 900.0_wp ; worst = 0.0_wp ; worst_psi = 0.0_wp ; uptake = 0.0_wp ; nfail = 0_ik
+      below_zero = .true.
+      do step = 1_ik, 192
+         hour = mod(real(step, wp) * dt / 3600.0_wp, 24.0_wp)
+         spac%e_demand = 5.0e-5_wp * max(0.0_wp, sin(pi * (hour - 6.0_wp) / 12.0_wp))                        &
+                        * spac%nplant * spac%bleaf / sum(spac%nplant * spac%bleaf)
+         spac%rain = 0.0_wp
+         w0 = total_water(spac)
+         call spac_advance(spac, soil, sopts, forc, hyd, dt)
+         w1 = total_water(spac)
+         flows = -spac%drain - spac%evap - spac%spill - sum(spac%transp)
+         worst = max(worst, abs((w1 - w0) - flows) / max(w0, 1.0_wp))
+         nfail = nfail + spac%nfail
+         uptake = uptake + sum(spac%uptake)
+         !----- Each layer's potential against the Campbell curve at the water it holds, which the  !
+         !      sub-step commits from its flows: the two agree to the Newton tolerance. ------------!
+         theta = spac%water_soil(2:nsl+1) / (rho_h2o * soil%dz(1:nsl))
+         psi_curve = grav_head * soil_psi_from_theta(SOIL_RETENTION_CAMPBELL, theta, theta_sat, theta_res,    &
+                                                     psi_sat, b)
+         worst_psi = max(worst_psi, maxval(abs(spac%psi_soil(2:nsl+1) - psi_curve) / abs(psi_curve)))
+         below_zero = below_zero .and. all(spac%psi_soil(2:nsl+1) < 0.0_wp)                                 &
+                                 .and. all(spac%psi_soil(2:nsl+1) > -huge(1.0_wp))
+      end do
+      soil = vg_soil
+      call check_true('Campbell: every soil potential is finite and below zero', below_zero)
+      call check_true('Campbell: every soil potential is the Campbell curve''s', worst_psi < 1.0e-5_wp, worst_psi)
+      call check_true('Campbell: the stand takes up water from the soil', uptake > 0.0_wp, uptake)
+      call check_true('Campbell: every step closes to round-off', worst < 1.0e-13_wp, worst)
+      call check_int('Campbell: no sub-step forced through', nfail, 0_ik)
+   end subroutine test_campbell
 
    !=======================================================================================!
    !     Small helpers.                                                                     !

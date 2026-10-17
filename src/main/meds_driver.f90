@@ -39,7 +39,7 @@ module meds_driver
                                            ensure_output_dir, DRIVER_OK, DRIVER_FINISHED,         &
                                            DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS,      &
                                            N_PATCH_INIT
-   use meds_io,                     only : state_write_state, io_read_state
+   use meds_io,                     only : state_write_state, io_read_state, state_file_refusal
    use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_manager,         only : output_serialize, output_close
    use meds_toml,                   only : toml_write_record
@@ -90,7 +90,7 @@ contains
       logical,           intent(out)   :: ok
       logical, optional, intent(in)    :: verbose
       type(meds_time_t) :: restart_time
-      logical           :: init_ok, fast_state_found
+      logical           :: found, fast_state_found
       character(len=:), allocatable :: msg
       type(output_buffers_t) :: fresh_bufs      !< default-initialised, never written: the reset value
 
@@ -132,58 +132,57 @@ contains
       end if
 
       !----- 2. Initial community per [init].init_mode (0 bare | 1 census | 2 restart); the file  !
-      !         for the non-selected mode is ignored. Unusable input -> bare ground. A successful  !
-      !         restart also recovers the calendar date to continue from.  ------------------------!
-      init_ok = .false. ; fast_state_found = .false. ; run%now = run%cfg%start_time
+      !         for the non-selected mode is ignored. A census or state file that cannot start   !
+      !         the run stops it, naming the mode and the file: a run that asked for a stand     !
+      !         never starts from bare ground instead. A restart also recovers the calendar date !
+      !         to continue from.  ---------------------------------------------------------------!
+      fast_state_found = .false. ; run%now = run%cfg%start_time
       select case (run%cfg%init_mode)
       case (INIT_RESTART)
          call io_read_state(run%poly%site, run%cfg, trim(run%cfg%init_restart_file), restart_time,   &
-                            init_ok, fast_found=fast_state_found,                                &
+                            found, fast_found=fast_state_found,                                  &
                             restructure_pending=run%poly%restructure_pending,                    &
                             restructure_new_year=run%poly%restructure_new_year)
-         if (init_ok) then
-            run%now = restart_time
-            if (run%verbose) then
-               write(*,'(4a)') ' init  : restart (mode 2) ', trim(run%cfg%init_restart_file),   &
-                               ' @ ', time_to_string(run%now)
-               if (fast_state_found) then
-                  write(*,'(a)') '         (CAS/soil/snow fast reservoirs restored -- exact restart)'
-               else
-                  write(*,'(a)') '         (state file predates fast-reservoir persistence -- re-seeding)'
-               end if
-               if (run%poly%restructure_pending)                                                  &
-                  write(*,'(a)') '         (the boundary''s restructuring is pending: it runs before the first step)'
+         if (.not. found) then
+            write(*,'(4a)') ' init  : restart (mode 2): the state file ', trim(run%cfg%init_restart_file), &
+                            ' ', state_file_refusal(trim(run%cfg%init_restart_file), region=.false.)
+            return
+         end if
+         run%now = restart_time
+         if (run%verbose) then
+            write(*,'(4a)') ' init  : restart (mode 2) ', trim(run%cfg%init_restart_file),      &
+                            ' @ ', time_to_string(run%now)
+            if (fast_state_found) then
+               write(*,'(a)') '         (CAS/soil/snow fast reservoirs restored -- exact restart)'
+            else
+               write(*,'(a)') '         (state file predates fast-reservoir persistence -- re-seeding)'
             end if
-         else if (run%verbose) then
-            write(*,'(3a)') ' init  : restart (mode 2) ', trim(run%cfg%init_restart_file),      &
-                            ' not usable -- falling back to bare ground'
+            if (run%poly%restructure_pending)                                                     &
+               write(*,'(a)') '         (the boundary''s restructuring is pending: it runs before the first step)'
          end if
       case (INIT_CENSUS)
-         call init_from_census(run%poly%site, run%cfg, trim(run%cfg%init_census_file), init_ok)
-         if (run%verbose) then
-            if (init_ok) then
-               write(*,'(2a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file)
-               write(*,'(a,i0,a,i0,a)') '         read ', run%poly%site%patch%n, ' patches, ',      &
-                                        run%poly%site%cohort%n, ' cohorts'
-            else
-               write(*,'(3a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file),     &
-                               ' not usable -- falling back to bare ground'
-            end if
+         call init_from_census(run%poly%site, run%cfg, trim(run%cfg%init_census_file), found, why=msg)
+         if (.not. found) then
+            write(*,'(4a)') ' init  : census (mode 1): the census file ', trim(run%cfg%init_census_file), &
+                            ' ', msg
+            return
          end if
-      end select
-      !----- A census stand is restructured by the slow step's own operators before the first step: !
-      !      it arrives with a cohort per measured size and a patch per plot cell.  ------------------!
-      if (run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
+         if (run%verbose) then
+            write(*,'(2a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file)
+            write(*,'(a,i0,a,i0,a)') '         read ', run%poly%site%patch%n, ' patches, ',         &
+                                     run%poly%site%cohort%n, ' cohorts'
+         end if
+         !----- A census stand is restructured by the slow step's own operators before the first  !
+         !      step: it arrives with a cohort per measured size and a patch per plot cell.  -------!
          call restructure_census_stand(run%poly%site, run%cfg)
          if (run%verbose) write(*,'(a,i0,a,i0,a,i0,a)') '         restructured to ',              &
                run%poly%site%patch%n, ' patches, ', run%poly%site%cohort%n, ' cohorts (at most ',  &
                max_cohort_count(run%poly%site), ' in a patch)'
-      end if
-      if (.not. init_ok) then
+      case default
          call init_bare_ground(run%poly%site, run%cfg, N_PATCH_INIT)
          call seed_bare_ground(run%poly%site, run%cfg)
          if (run%verbose) write(*,'(a)') ' init  : bare ground (mode 0)'
-      end if
+      end select
 
       !----- 2a. Census start with plasticity ON: census cohorts sit in an established stand but   !
       !          carry NO trait history, so acclimate their leaf traits to the current light        !
@@ -191,11 +190,11 @@ contains
       !          starts at top-of-canopy; a state restart already read the plastic traits from file, !
       !          unless [init].reacclimate_traits asks for this run's PFT file instead (a calibration   !
       !          trial that restarts from a shared state with changed traits).                       !
-      if (run%cfg%trait_plasticity_on .and. run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
+      if (run%cfg%trait_plasticity_on .and. run%cfg%init_mode == INIT_CENSUS) then
          call update_overtopping_lai(run%poly%site)
          call advance_plant_traits(run%poly%site, run%cfg, run%cfg%dt_years, instantaneous=.true.)
       end if
-      if (run%cfg%init_reacclimate_traits .and. run%cfg%init_mode == INIT_RESTART .and. init_ok) then
+      if (run%cfg%init_reacclimate_traits .and. run%cfg%init_mode == INIT_RESTART) then
          call reacclimate_plant_traits(run%poly%site, run%cfg)
          if (run%verbose) write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
       end if
@@ -215,9 +214,8 @@ contains
       end if
       call polygon_prepare(run%cfg, run%met_src, run%poly, run%cfg%forcing%latitude_deg,          &
                            run%cfg%forcing%longitude_deg, run%cfg%forcing%elevation_m,            &
-                           keep_fast_state=run%cfg%init_mode == INIT_RESTART .and. init_ok .and.  &
-                                           fast_state_found,                                     &
-                           keep_soil_carbon=run%cfg%init_mode == INIT_RESTART .and. init_ok,      &
+                           keep_fast_state=fast_state_found,                                     &
+                           keep_soil_carbon=run%cfg%init_mode == INIT_RESTART,                   &
                            patch_threads=run%cfg%n_threads, verbose=run%verbose)
 
       run%step_days      = max(1_ik, nint(run%cfg%dt_slow / day_sec, ik))

@@ -115,17 +115,19 @@ contains
    ! without a header.                                                                        !
    !                                                                                          !
    ! Blank lines and lines beginning with '#' are ignored. found=.false. (the site is left      !
-   ! unbuilt) if the file cannot be opened or holds no row for the selected site, so the caller !
-   ! can fall back to bare ground. An unknown or duplicated column, a missing required one, a  !
-   ! malformed row, a non-positive value, or a patch whose rows disagree on patch_area stops    !
-   ! the run. The file is read twice (patches, then cohorts), so no row buffer is needed.      !
+   ! unbuilt) if the file cannot be opened or holds no row for the selected site, and `why`     !
+   ! says which, so the caller can stop and say so. An unknown or duplicated column, a missing  !
+   ! required one, a malformed row, a non-positive value, or a patch whose rows disagree on     !
+   ! patch_area stops the run. The file is read twice (patches, then cohorts), so no row buffer !
+   ! is needed.                                                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine init_from_census(site, cfg, path, found, use_site_id)
+   subroutine init_from_census(site, cfg, path, found, use_site_id, why)
       type(site_t),        intent(out) :: site
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
       logical,             intent(out) :: found
       integer(ik), intent(in), optional :: use_site_id
+      character(len=:), allocatable, intent(out), optional :: why   !< why found = .false.; '' when found
 
       integer,     parameter :: LINELEN = 1024
       character(len=LINELEN) :: line
@@ -139,8 +141,10 @@ contains
       character(len=24)      :: pid_str
 
       found = .false.
+      if (present(why)) why = 'cannot be opened'
       open(newunit=u, file=path, status='old', action='read', iostat=ios)
       if (ios /= 0) return
+      if (present(why)) why = 'holds no cohort for the site'
 
       target_known = present(use_site_id)
       if (target_known) sel_site = use_site_id
@@ -196,6 +200,7 @@ contains
 
       call finalize_init(site)
       found = .true.
+      if (present(why)) why = ''
    end subroutine init_from_census
 
    !---------------------------------------------------------------------------------------!

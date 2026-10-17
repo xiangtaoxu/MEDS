@@ -33,7 +33,7 @@ module meds_region
                                            years_between
    use meds_site_state_types,       only : site_free
    use meds_io,                     only : state_file_t, state_file_open, state_file_put, state_file_close, &
-                                           state_file_polygons, io_read_state
+                                           state_file_polygons, io_read_state, state_file_refusal
    use meds_vegetation_dynamics,    only : reacclimate_plant_traits
    use meds_init,                   only : init_bare_ground, seed_bare_ground
    use meds_forcing_types,          only : met_source_t, met_cells_t
@@ -158,22 +158,29 @@ contains
          return
       end if
 
-      !----- A restart (init_mode = 2): each polygon's row of the region state file, by its id. The  !
-      !      file must hold exactly this region's polygons. -----------------------------------------!
+      !----- A restart (init_mode = 2): each polygon's row of the region state file, by its id, the  !
+      !      cell's index on the forcing grid. The file holds every polygon of the region and may     !
+      !      hold more: a region whose cell failed resumes with that cell masked out. -----------------!
       if (cfg%init_mode == INIT_RESTART) then
+         msg = state_file_refusal(trim(cfg%init_restart_file), region=.true.)
+         if (len(msg) > 0) then
+            write(*,'(4a)') ' region: the state file ', trim(cfg%init_restart_file), ' ', msg
+            return
+         end if
          call state_file_polygons(trim(cfg%init_restart_file), file_ids, found)
          if (.not. found) then
-            write(*,'(3a)') ' region: ', trim(cfg%init_restart_file), ' is not a region state file'
+            write(*,'(3a)') ' region: the state file ', trim(cfg%init_restart_file), ' names no polygons'
             return
          end if
          allocate(slot(n))
          do p = 1_ik, n
             slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
+            if (slot(p) == 0_ik) then
+               write(*,'(a,i0,3a)') ' region: polygon ', ids(p), ' is not in the state file ',          &
+                                    trim(cfg%init_restart_file), ', which must hold every polygon of the region'
+               return
+            end if
          end do
-         if (size(file_ids) /= n .or. any(slot == 0_ik)) then
-            write(*,'(3a)') ' region: the polygons of ', trim(cfg%init_restart_file), ' are not this region''s'
-            return
-         end if
       end if
 
       call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,                  &
@@ -200,6 +207,11 @@ contains
                call io_read_state(poly%site, pcfg, trim(cfg%init_restart_file), restart_time, found,   &
                                   fast_found=fast_found, restructure_pending=poly%restructure_pending, &
                                   restructure_new_year=poly%restructure_new_year, polygon=slot(p))
+               if (.not. found) then
+                  write(*,'(5a)') ' region: cannot read ', trim(poly%label), '''s row of the state file ', &
+                                  trim(cfg%init_restart_file)
+                  return
+               end if
                reg%now = restart_time
                if (pcfg%init_reacclimate_traits) call reacclimate_plant_traits(poly%site, pcfg)
             else
