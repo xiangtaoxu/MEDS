@@ -394,10 +394,12 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   `polygon` axis leads each variable, `polygon_id` names the rows, the cohort and patch axes are as
   long as the largest polygon's, and `n_cohort`, `n_patch` and `n_window` mark each polygon's live
   part (the rest is the fill value); `lat` and `lon` are its cell's centre. A region restarted from
-  it (`init_mode = 2`, `restart_file`) finds each polygon's row by its id, and the file must hold
-  exactly the region's polygons. A restart file that cannot be opened, or a site's, stops the region,
-  naming the file. A restart continues exactly: a region run in two halves, across a recycle wrap,
-  writes the second half as the whole run does. Site state files are unchanged.
+  it (`init_mode = 2`, `restart_file`) finds each polygon's row by its id, the cell's index on the
+  forcing grid. The file must hold every polygon of the region and may hold more, so a region whose
+  cell failed resumes from its last state file with that cell masked out (`[region].cell_mask`); the
+  other polygons run on as they would have. A restart file that cannot be opened, or a site's, stops
+  the region, naming the file. A restart continues exactly: a region run in two halves, across a
+  recycle wrap, writes the second half as the whole run does. Site state files are unchanged.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
   (a NaN, a cohort or soil-carbon state out of bounds) is reported and stops, and the others

@@ -158,8 +158,9 @@ contains
          return
       end if
 
-      !----- A restart (init_mode = 2): each polygon's row of the region state file, by its id. The  !
-      !      file must hold exactly this region's polygons. -----------------------------------------!
+      !----- A restart (init_mode = 2): each polygon's row of the region state file, by its id, the  !
+      !      cell's index on the forcing grid. The file holds every polygon of the region and may     !
+      !      hold more: a region whose cell failed resumes with that cell masked out. -----------------!
       if (cfg%init_mode == INIT_RESTART) then
          msg = state_file_refusal(trim(cfg%init_restart_file), region=.true.)
          if (len(msg) > 0) then
@@ -174,11 +175,12 @@ contains
          allocate(slot(n))
          do p = 1_ik, n
             slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
+            if (slot(p) == 0_ik) then
+               write(*,'(a,i0,3a)') ' region: polygon ', ids(p), ' is not in the state file ',          &
+                                    trim(cfg%init_restart_file), ', which must hold every polygon of the region'
+               return
+            end if
          end do
-         if (size(file_ids) /= n .or. any(slot == 0_ik)) then
-            write(*,'(3a)') ' region: the polygons of ', trim(cfg%init_restart_file), ' are not this region''s'
-            return
-         end if
       end if
 
       call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,                  &

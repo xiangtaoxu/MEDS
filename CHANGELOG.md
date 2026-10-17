@@ -107,7 +107,7 @@ before and after.
   - the variables are compressed, since most polygons fill only part of the padded axes.
 
   `init_mode = 2` restarts a region from such a file, finding each polygon's row by its id; the file
-  must hold exactly the region's polygons. The
+  must hold every polygon of the region, and may hold more (#431, below). The
   site's and the region's files are written by the same calls (`state_file_open`, `state_file_put`,
   `state_file_close`) and read by `io_read_state`, which takes a polygon's row. Site state files are
   unchanged. A region no longer refuses `init_mode = 2` or `write_state`; a census start is still
@@ -117,6 +117,16 @@ before and after.
   Optional, 0 by default, which is today's empty start. A positive value gives each patch of a
   bare-ground start one cohort of that PFT with that many plants per m², at `min_cohort_height` on the
   polygon's own height curve (`seed_bare_ground`). The PFT parameter table records it.
+- **A region resumes without a failed cell** (#431). A region restart needed a state file holding
+  exactly the region's polygons, and `meds_main` stops a region at its first failed polygon, so a
+  long region run whose cell failed could not mask that cell and resume. A region now restarts from
+  a state file whose polygons include its own: each polygon finds its row by its id, the cell's
+  index on the forcing grid, as before, and the file may hold more. Masking the failed cell
+  (`[region].cell_mask`) and resuming from the last state file then runs the other polygons on as
+  they would have run. A polygon missing from the file stops the run, naming it. Byte-identical when
+  the two sets are equal. `test_region` resumes its three-polygon state file with one cell masked
+  out: each polygon's stand is its row of the file, and its output equals the full resume's, bit for
+  bit.
 
 ### Changed
 
