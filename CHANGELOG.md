@@ -226,6 +226,9 @@ before and after.
   `--archive` or `ERA5LAND_ARCHIVE`, with no default (and now accepts a relative `--meds-main`).
   The comments that named the authors' copies of the soil maps and Chave's E map name the maps instead.
   Results are unchanged: the runs read the same files.
+- **The root `meds_output_pft_parameters.csv` is deleted** (#430): a run's PFT table from July,
+  read by nothing. `.gitignore` now ignores `*_pft_parameters.csv`, the table every run that writes
+  its state leaves beside the state files.
 
 ## [0.3.4] — 2026-10-13
 
