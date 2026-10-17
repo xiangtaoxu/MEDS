@@ -8,13 +8,13 @@ restarted from a state file; joined by month, the later-starting file's months t
   agb20                  the stand's 20th year (months 229-240) [dry Mg/ha]
   last ten stand years (June 2011 - May 2021):
     gpp, et, runoff      annual GPP [kgC m-2 yr-1], evapotranspiration and runoff [mm yr-1]
-    agb, height, wd, n10 AGB [dry Mg/ha], canopy height (the tallest cohort) [m], AGB-weighted wood density
-                         [g cm-3], trees >= 10 cm [ha-1]
+    agb, height, wd      AGB [dry Mg/ha], canopy height (the tallest cohort) [m], AGB-weighted wood density [g cm-3]
+    n1, n10              trees >= 1 cm and >= 10 cm in diameter [ha-1]
     lai_max, lai_min     the mean of each June-May year's highest and lowest monthly LAI
 plus its polygon_id, lat, lon, soil_depth, bottom_bc and chave_e from the files, and its mean annual rainfall
 2003-2022 [mm], read from the ED_ERA5land archive at its cell (the weather it ran on, recycled).
 
-Usage: python summarize_regions.py [--era5-archive DIR]
+Usage: python summarize_regions.py [--era5-archive DIR]   (or set ERA5LAND_ARCHIVE)
 """
 import argparse
 import glob
@@ -88,11 +88,13 @@ def annual_rain(archive, rows, cols):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE", "/ibstorage/SharedData/ED_ERA5land"))
+    ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
     args = ap.parse_args(argv)
+    if not args.era5_archive:
+        raise SystemExit("ERROR: give the archive (for the rainfall): --era5-archive or ERA5LAND_ARCHIVE")
     wd_pft = wood_density()
     keys = ("polygon_id", "lat", "lon", "row", "col", "soil_depth", "bottom_bc", "chave_e", "agb_traj", "agb20", "gpp",
-            "et", "runoff", "agb", "height", "wd", "n10", "lai_max", "lai_min")
+            "et", "runoff", "agb", "height", "wd", "n1", "n10", "lai_max", "lai_min")
     out = {k: [] for k in keys}
     for rdir in sorted(glob.glob(os.path.join(OUT, "region*"))):
         d = Region(sorted(glob.glob(os.path.join(rdir, "*-M.nc"))))
@@ -100,7 +102,7 @@ def main(argv=None):
             print(f"skipped {rdir}: {d.n_covered} of {N_MONTHS} months")
             d.close()
             continue
-        ge10 = np.asarray(d["dbh_lower"][:]) >= 10.0                          # the classes of trees >= 10 cm
+        lower = np.asarray(d["dbh_lower"][:])                                 # the classes' lower edges [cm]
         for k in ("polygon_id", "lat", "lon", "row", "col", "soil_depth", "bottom_bc", "chave_e"):
             out[k].append(np.asarray(d[k][:]))
         agb_pft = d["agb_pft"][:].filled(np.nan) * 20.0                       # kgC/m2 -> dry Mg/ha
@@ -116,7 +118,9 @@ def main(argv=None):
         out["agb"].append(agb[LAST].mean(axis=0))
         out["height"].append(np.nanmean(d["canopy_height_site"][:].filled(np.nan)[LAST], axis=0))
         out["wd"].append(np.nanmean(wd, axis=0))
-        out["n10"].append(np.nanmean(d["nplant_size"][:].filled(np.nan)[LAST][:, :, ge10].sum(axis=2), axis=0) * 1e4)
+        nplant = d["nplant_size"][:].filled(np.nan)[LAST]                     # (month, polygon, class) [plant/m2]
+        for k, edge in (("n1", 1.0), ("n10", 10.0)):
+            out[k].append(np.nanmean(nplant[:, :, lower >= edge].sum(axis=2), axis=0) * 1e4)
         out["lai_max"].append(lai.max(axis=1).mean(axis=0))
         out["lai_min"].append(lai.min(axis=1).mean(axis=0))
         d.close()

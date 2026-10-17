@@ -19,10 +19,11 @@ Steps:
 
 Usage:
   python make_cell_mask.py                                     # output/cell_mask.nc
-  python run_regions.py --regions 2 --threads 128 --cost cell_hours.csv --submit "sbatch -p R256C128 --exclusive --mem=0"
+  python run_regions.py --regions 2 --threads 128 --cost cell_hours.csv --submit "sbatch --exclusive"
   python run_regions.py --regions 1 --years 1 --threads 8      # a quick check, here
 
-Needs numpy, netCDF4 and a built meds_main (--meds-main, default ../../build-ifx/meds_main).
+Needs numpy, netCDF4, a built meds_main (--meds-main, default ../../build-ifx/meds_main) and the data paths
+(--era5-archive, --soil-maps, --chave-e-map, or ERA5LAND_ARCHIVE, ED_SOIL_MAPS and CHAVE_E_MAP).
 """
 import argparse
 import os
@@ -179,15 +180,17 @@ def main(argv=None):
     ap.add_argument("--threads", type=int, default=40, help="threads per region (its polygons share them)")
     ap.add_argument("--cost", default="", help="CSV of lat, lon, cost to balance the regions by (default: counts)")
     ap.add_argument("--stack", default="512M", help="OMP_STACKSIZE: each worker thread's stack")
-    ap.add_argument("--submit", default="", help='a batch command for each region, e.g. "sbatch -p R128C40"; '
+    ap.add_argument("--submit", default="", help='a batch command for each region, e.g. "sbatch --exclusive"; '
                                                  'empty: run them here, one after another')
     ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-ifx", "meds_main")))
-    ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE", "/ibstorage/SharedData/ED_ERA5land"))
-    ap.add_argument("--soil-maps", default=os.environ.get("ED_SOIL_MAPS", "/ibstorage/ED-Data/ED-SoilMaps/output"))
-    ap.add_argument("--chave-e-map", default=os.environ.get("CHAVE_E_MAP",
-                                                            "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"))
+    ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
+    ap.add_argument("--soil-maps", default=os.environ.get("ED_SOIL_MAPS"), help="the ED soil maps (v2)")
+    ap.add_argument("--chave-e-map", default=os.environ.get("CHAVE_E_MAP"), help="Chave's E on the forcing grid")
     ap.add_argument("--setup-only", action="store_true", help="write the configs, run nothing")
     args = ap.parse_args(argv)
+    if not (args.era5_archive and args.soil_maps and args.chave_e_map):
+        raise SystemExit("ERROR: give the data paths: --era5-archive, --soil-maps and --chave-e-map, or set "
+                         "ERA5LAND_ARCHIVE, ED_SOIL_MAPS and CHAVE_E_MAP")
     if not os.path.exists(MASK):
         raise SystemExit(f"ERROR: no {MASK}; run make_cell_mask.py first")
     os.makedirs(OUT, exist_ok=True)

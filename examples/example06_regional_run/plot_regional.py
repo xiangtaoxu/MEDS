@@ -7,11 +7,14 @@
                                 cells and months; both from monthly means, as the max and min of each June-May year
   regional_maps.png             last ten years: annual GPP, AGB, canopy height (the tallest cohort) and the
                                 AGB-weighted wood density
+  regional_tree_density.png     last ten years: trees >= 1 cm and >= 10 cm in diameter
+  regional_water.png            last ten years: evapotranspiration and runoff (surface runoff + drainage)
   regional_regrowth.png         (a) every cell's AGB from bare ground, coloured by mean annual rainfall; (b) AGB after
                                 20 years against rainfall, with Poorter et al. (2016, Nature 530: 211)'s 45 Neotropical
                                 chronosequences (poorter2016_agb20.csv)
-Usage: python plot_regional.py
+Usage: python plot_regional.py [--era5-archive DIR]   (or set ERA5LAND_ARCHIVE: its static file gives the land)
 """
+import argparse
 import os
 
 import matplotlib
@@ -20,11 +23,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 import netCDF4  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-from matplotlib.colors import ListedColormap, Normalize  # noqa: E402
+from matplotlib.colors import ListedColormap, LogNorm, Normalize  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "output")
-STATIC = os.path.join(os.environ.get("ERA5LAND_ARCHIVE", "/ibstorage/SharedData/ED_ERA5land"), "ED_ERA5land_static.nc")
 SURFACE, LAND_OFF = "#fcfcfb", "#dcdbd6"
 TEXT, TEXT2 = "#0b0b0b", "#52514e"
 S, N, W, E, NB = 5.0, 25.0, -100.0, -80.0, 67            # the box's cell centres; 67 blocks of 3 cells each way
@@ -57,22 +59,27 @@ def block_grid(lat, lon, val):
     return np.ma.masked_invalid(g)
 
 
-def land():
-    with netCDF4.Dataset(STATIC) as d:
+def land(archive):
+    """The land fraction around the box, from the archive's static file: the maps' background."""
+    with netCDF4.Dataset(os.path.join(archive, "ED_ERA5land_static.nc")) as d:
         glat, glon = d["lat"][:], d["lon"][:]
         ii = np.where((glat >= S - 0.2) & (glat <= N + 0.2))[0]
         jj = np.where((glon >= W - 0.2) & (glon <= E + 0.2))[0]
         return glat[ii], glon[jj], d["land_fraction"][ii, jj].filled(0.0)
 
 
-def map_panel(ax, background, grid, cmap, vmin, vmax, title):
+def truncated(name, lo=0.15):
+    """A sequential colormap without its palest end, which the near-white page would swallow."""
+    return ListedColormap(plt.get_cmap(name)(np.linspace(lo, 1.0, 256)))
+
+
+def map_panel(ax, background, grid, cmap, norm, title):
     """One map: land in grey, the cells' blocks in colour, the coastline."""
     llat, llon, lf = background
     ax.set_facecolor(SURFACE)
     ax.pcolormesh(llon, llat, (lf >= 0.5).astype(float), cmap=ListedColormap([SURFACE, LAND_OFF]), vmin=0, vmax=1,
                   shading="nearest", rasterized=True)
-    im = ax.imshow(grid, extent=EXTENT, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest",
-                   zorder=2)
+    im = ax.imshow(grid, extent=EXTENT, origin="lower", cmap=cmap, norm=norm, interpolation="nearest", zorder=2)
     ax.contour(llon, llat, lf, levels=[0.5], colors=TEXT2, linewidths=0.4, zorder=3)
     ax.set_xlim(W - 0.05, E + 0.05)
     ax.set_ylim(S - 0.05, N + 0.05)
@@ -104,7 +111,7 @@ def lai_vs_modis(z, background):
         for c, (key, title, unit, cmap, vmin, vmax) in enumerate(cols):
             ax = axes[r, c]
             v = val[f"{src}_{key}"]
-            im = map_panel(ax, background, block_grid(z["lat"], z["lon"], v), cmap, vmin, vmax,
+            im = map_panel(ax, background, block_grid(z["lat"], z["lon"], v), cmap, Normalize(vmin, vmax),
                            f"({next(letters)}) {title}\n{src_title}")
             note = f"median {np.nanmedian(v):.2f}"
             if src == "modis":
@@ -123,21 +130,49 @@ def lai_vs_modis(z, background):
           f"{np.nanmedian(val['modis_cover']):.2f}")
 
 
-def maps(z, background):
-    panels = [("gpp", "(a) Annual GPP", "kgC m⁻² yr⁻¹", "YlGn", 0, 4, "{:.2f}"),
-              ("agb", "(b) Aboveground biomass", "Mg ha⁻¹ (dry)", "viridis", 0, 350, "{:.0f}"),
-              ("height", "(c) Canopy height (tallest cohort)", "m", "cividis", 0, 50, "{:.1f}"),
-              ("wd", "(d) AGB-weighted wood density", "g cm⁻³", "YlOrBr", 0.35, 0.87, "{:.2f}")]
-    fig, axes = plt.subplots(2, 2, figsize=(12.6, 12.4), facecolor=SURFACE, constrained_layout=True)
-    for ax, (key, title, unit, cmap, vmin, vmax, fmt) in zip(axes.flat, panels):
-        im = map_panel(ax, background, block_grid(z["lat"], z["lon"], z[key]), cmap, vmin, vmax,
+def map_figure(z, background, panels, name):
+    """Maps of the summary's quantities, two to a row, each over the last ten simulated years. A panel is (key,
+    title, unit, colormap, norm, median format, colorbar extend)."""
+    rows = (len(panels) + 1) // 2
+    fig, axes = plt.subplots(rows, 2, figsize=(12.6, 6.2 * rows), facecolor=SURFACE, constrained_layout=True,
+                             squeeze=False)
+    for ax, (key, title, unit, cmap, norm, fmt, extend) in zip(axes.flat, panels):
+        im = map_panel(ax, background, block_grid(z["lat"], z["lon"], z[key]), cmap, norm,
                        f"{title}\nMEDS, last 10 simulated years (2011-06 to 2021-05)")
         ax.text(0.03, 0.04, "median " + fmt.format(np.nanmedian(z[key])), transform=ax.transAxes, color=TEXT2,
                 fontsize=12.5, zorder=4)
-        cb = fig.colorbar(im, ax=ax, orientation="horizontal", shrink=0.8, pad=0.02, aspect=35)
+        cb = fig.colorbar(im, ax=ax, orientation="horizontal", shrink=0.8, pad=0.02, aspect=35, extend=extend)
         cb.set_label(unit, color=TEXT2, fontsize=13)
         cb.outline.set_linewidth(0.4)
-    save_png(fig, "regional_maps.png")
+    save_png(fig, name)
+
+
+def maps(z, background):
+    map_figure(z, background, [
+        ("gpp", "(a) Annual GPP", "kgC m⁻² yr⁻¹", "YlGn", Normalize(0, 4), "{:.2f}", "neither"),
+        ("agb", "(b) Aboveground biomass", "Mg ha⁻¹ (dry)", "viridis", Normalize(0, 350), "{:.0f}", "neither"),
+        ("height", "(c) Canopy height (tallest cohort)", "m", "cividis", Normalize(0, 50), "{:.1f}", "neither"),
+        ("wd", "(d) AGB-weighted wood density", "g cm⁻³", "YlOrBr", Normalize(0.35, 0.87), "{:.2f}", "neither")],
+        "regional_maps.png")
+
+
+def tree_density(z, background):
+    map_figure(z, background, [
+        ("n1", "(a) Trees ≥ 1 cm in diameter", "trees ha⁻¹ (log scale)", truncated("Greens"), LogNorm(1e3, 1e5),
+         "{:,.0f}", "neither"),
+        ("n10", "(b) Trees ≥ 10 cm in diameter", "trees ha⁻¹", truncated("Greens"), Normalize(0, 1500), "{:,.0f}",
+         "max")],
+        "regional_tree_density.png")
+
+
+def water(z, background):
+    runoff = truncated("Blues")
+    runoff.set_under("#b2182b")                          # below zero: an aquifer gave the column more than it drained
+    map_figure(z, background, [
+        ("et", "(a) Evapotranspiration", "mm yr⁻¹", truncated("YlGnBu", 0.3), Normalize(400, 1800), "{:,.0f}", "max"),
+        ("runoff", "(b) Runoff (surface runoff + drainage)", "mm yr⁻¹ (red: below 0, net water from an aquifer)",
+         runoff, Normalize(0, 3000), "{:,.0f}", "both")],
+        "regional_water.png")
 
 
 def regrowth(z):
@@ -176,8 +211,15 @@ def regrowth(z):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
+    args = ap.parse_args()
+    if not args.era5_archive:
+        raise SystemExit("ERROR: give the archive (its static file is the maps' land): --era5-archive or ERA5LAND_ARCHIVE")
     z = np.load(os.path.join(OUT, "cells_summary.npz"))
-    background = land()
+    background = land(args.era5_archive)
     lai_vs_modis(z, background)
     maps(z, background)
+    tree_density(z, background)
+    water(z, background)
     regrowth(z)

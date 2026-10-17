@@ -6,8 +6,8 @@ density and hydraulic traits: deciduous with soft wood (Ds), deciduous (D), brev
 evergreen (E). This example tries the same with MEDS. One parameter set for the four PFTs, set at Palo
 Verde (Costa Rica) in [example 05](../example05_forest_regeneration/README.md), regrows a forest from bare
 ground in 953 cells of their box, run as two MEDS region runs. The last ten years are set against MODIS
-leaf area, and the same runs give the region's productivity, biomass, canopy height, water use and
-regrowth ([Additional results](#additional-results)).
+leaf area, and the same runs give the region's productivity, biomass, canopy height, tree density, water
+use and regrowth ([Additional results](#additional-results)).
 
 ![Leaf area and its seasonality, MEDS against MODIS](lai_seasonality_vs_modis.png)
 
@@ -31,9 +31,9 @@ into 3 × 3-cell blocks from its south-west corner. In each block the cell with 
 the northern and then the eastern. A candidate must be a cell MEDS can run: valid forcing in the archive
 and a value in every map the run reads. **953 cells**, written as a 0/1 mask on the forcing grid.
 
-**The regions.** The cells run as two region runs, each a box of the mask on one node: 606 cells
-(13.15–25.05° N, 100.05–87.95° W) and 347 (7.25–23.05° N, 87.95–79.95° W). The split balances their cost,
-not their counts: a wet cell grows many more cohorts and costs up to fifty times a dry one, so the
+**The regions.** The cells run as two region runs, each a box of the mask on a machine of its own: 606
+cells (13.15–25.05° N, 100.05–87.95° W) and 347 (7.25–23.05° N, 87.95–79.95° W). The split balances their
+cost, not their counts: a wet cell grows many more cohorts and costs up to fifty times a dry one, so the
 southern region holds fewer, costlier cells.
 
 **Each cell** runs example 05's Palo Verde configuration, with its own location's inputs:
@@ -57,21 +57,22 @@ southern region holds fewer, costlier cells.
 
 Needs a built `meds_main`, numpy, netCDF4 and matplotlib, the ED_ERA5land archive, the ED soil maps and
 Chave's E map; the MODIS step also needs an environment with GDAL's HDF4 reader and the MCD15A2H tiles.
-The paths default to the lab's and can be set by `--era5-archive`, `--soil-maps`, `--chave-e-map` or the
-environment (`ERA5LAND_ARCHIVE`, `ED_SOIL_MAPS`, `CHAVE_E_MAP`, `MODIS_LAI_CODE`).
+The scripts take the data paths from `--era5-archive`, `--soil-maps` and `--chave-e-map`, or from the
+environment: `ERA5LAND_ARCHIVE`, `ED_SOIL_MAPS`, `CHAVE_E_MAP`, and `MODIS_LAI_CODE` for the MODIS LAI
+pipeline's code.
 
 1. `python make_cell_mask.py` — the 953 cells: `output/cell_mask.nc` and `output/cells.csv`.
-2. `python run_regions.py --regions 2 --threads 128 --cost cell_hours.csv --submit "sbatch -p R256C128
-   --exclusive --mem=0"` — writes the PFT file and one config per region (`output/region01/config.toml`,
-   ...) and submits each region to a node; without `--submit` they run here, one after another. `--cost`
-   balances the regions by each cell's cost, here `cell_hours.csv`: the hours each cell took to run 150
-   years alone on one core of the cluster's older nodes (columns `lat, lon, cost`; a cell it lacks costs
-   the median). Without it the regions get equal counts. `--years 1` makes a quick check of every cell's
+2. `python run_regions.py --regions 2 --threads 128 --cost cell_hours.csv --submit "sbatch --exclusive"`
+   — writes the PFT file and one config per region (`output/region01/config.toml`, ...) and submits each
+   region as a batch job of its own; without `--submit` they run here, one after another. `--cost`
+   balances the regions by each cell's cost, here `cell_hours.csv`: the hours each cell took to run the
+   150 years alone on one core in an earlier run (columns `lat, lon, cost`; a cell it lacks costs the
+   median). Without it the regions get equal counts. `--years 1` makes a quick check of every cell's
    inputs.
 3. `python summarize_regions.py` — per-cell summaries of the last ten years and the regrowth
    (`output/cells_summary.npz`), with each cell's 2003–2022 rainfall read from the archive.
 4. `python modis_monthly_lai.py --workers 9` (GDAL environment) — MODIS monthly LAI at the cells.
-5. `python plot_regional.py` — the three figures.
+5. `python plot_regional.py` — the five figures.
 
 **Thread stack.** A region steps each polygon on an OpenMP worker thread, and a worker thread's stack is
 `OMP_STACKSIZE` — 4 MB by default with ifx — not the process's (which a site run uses). A grown stand's
@@ -87,8 +88,8 @@ and `summarize_regions.py` joins a region's monthly files by month.
 
 ## Speed and resources
 
-Each region ran alone on one node of the lab's cluster: an Intel Xeon Gold 6430, 2 sockets × 32 cores × 2
-hardware threads = 128 threads, up to 3.4 GHz, 251 GB of memory. Each region used 128 OpenMP threads
+Each region ran alone on a machine with an Intel Xeon Gold 6430 (2 sockets × 32 cores × 2 hardware
+threads = 128 threads, up to 3.4 GHz) and 251 GB of memory. Each region used 128 OpenMP threads
 (`OMP_PLACES=threads`, `OMP_PROC_BIND=close`, `OMP_STACKSIZE=512M`); the second hardware thread of each
 core adds about 10–18 % over 64 threads.
 
@@ -103,12 +104,12 @@ core adds about 10–18 % over 64 threads.
 | Reading the forcing | 15 min (from 1921) | 17 min |
 
 Both regions together took about 5,500 hardware-thread hours. A region's threads take its polygons
-costliest first, and every month ends when its slowest polygon does, so a region with few, costly polygons
-keeps fewer threads busy. Memory grows with the stands, about 4 GB per region at the end; the virtual size
-(75 GB) is the threads' reserved stacks. The first pass through the 20-year weather window reads each
-month from the archive (about a minute per model year); after it the node's page cache serves the
-re-reads (6–13 s per model year). A region's state file (250–360 MB) takes 10–15 s to write. The monthly
-output is 100–180 MB per region.
+costliest first, and every month ends when its slowest polygon does, so a region with few, costly
+polygons keeps fewer threads busy. Memory grows with the stands, about 4 GB per region at the end; the
+virtual size (75 GB) is the threads' reserved stacks. The first pass through the 20-year weather window
+reads each month from the archive (about a minute per model year); after it the operating system's page
+cache serves the re-reads (6–13 s per model year). A region's state file (250–360 MB) takes 10–15 s to
+write. The monthly output is 100–180 MB per region.
 
 ## Additional results
 
@@ -122,6 +123,15 @@ about 215 Mg ha⁻¹ above 1,500 mm. Brevi-deciduous trees hold most of the biom
 and wood density falls with rainfall (0.74 to 0.61 g cm⁻³) as the soft-wooded Ds gains a share (2 % of
 the AGB in the driest tenth, 30 % in the wettest).
 
+![Trees at least 1 cm and at least 10 cm in diameter across the region](regional_tree_density.png)
+
+The last ten years: (a) trees at least 1 cm in diameter per hectare (log scale) and (b) trees at least
+10 cm. Small stems dominate the counts: a cell holds a median 14,400 stems ≥ 1 cm per hectare and 630
+≥ 10 cm, about 23 to 1. The dry cells hold the most small stems (a median 33,700 ha⁻¹ in the driest
+tenth against 11,200 in the wettest): the 94 cells above 50,000 ha⁻¹ are dense, low stands (a median 9
+m tall, 840 mm of rain), most in the north of the box. Trees ≥ 10 cm vary little with rainfall (medians
+640 and 580 ha⁻¹) and are fewest, below 200 ha⁻¹, in 68 dry cells.
+
 ![AGB regrowth trajectories and biomass after 20 years against rainfall](regional_regrowth.png)
 
 (a) Each cell's AGB from the bare-ground start in 1871, coloured by its mean annual rainfall (ERA5-Land,
@@ -133,9 +143,14 @@ diameter-growth caps, set for Palo Verde's old stand, probably hold the young tr
 that start high are the hottest, driest cells, where a 1.5 m recruit on Chave's curve is up to 3.6 cm in
 diameter.
 
-**Water.** Over the last ten years the cells evaporate a median 68 % of their rain (1,040 mm a year) and
-lose 34 % as runoff (550 mm), from 80 mm in the driest tenth to 2,140 mm in the wettest. On the 61 cells
-over an aquifer the bottom boundary feeds the column in the dry season: their ET is higher (median
-1,480 mm), and in 22 of them more water rises from the water table than drains to it over the decade,
-so their runoff is negative. These are dry sites over shallow groundwater, which the aquifer keeps leafy
-through the dry season.
+![Evapotranspiration and runoff across the region](regional_water.png)
+
+The last ten years: (a) evapotranspiration and (b) runoff, the pond's spill plus the drainage through
+the soil column's bottom, in mm a year. A cell evaporates a median 68 % of its rain (1,040 mm) and loses
+34 % as runoff (550 mm). ET rises with rainfall, from 660 mm in the driest tenth to 1,370 mm in the
+wettest, but takes a falling share of it (94 % to 37 %); runoff follows the rain (r = 0.97), from 80 mm
+to 2,140 mm, and is highest on the Caribbean slope of Costa Rica and Panama. On the 61 cells over an
+aquifer the bottom boundary feeds the column in the dry season, and their ET is higher (median 1,480
+mm). Red marks the 22 of them where more water rose from the water table than drained to it over the
+decade (western Cuba, the Tabasco lowlands and the Yucatán's coast): dry sites over shallow groundwater,
+which the aquifer keeps leafy through the dry season.

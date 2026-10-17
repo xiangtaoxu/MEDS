@@ -5,18 +5,20 @@ composite, monthly means of those, then the maximum and minimum of the monthly m
 June 2011 - May 2021 (the years MEDS's last ten simulated years used), averaged over the years.
 
 Per 500 m pixel the retrievals pass the MODIS pipeline's own stage-A filter and 3-point running median
-(/ibstorage/ED-Data/MODIS-LAI/code/lai_extremes_tiles.py: read_kept, despike). A composite's cell mean counts when at
+(the MODIS LAI pipeline's lai_extremes_tiles.py: read_kept, despike). A composite's cell mean counts when at
 least MIN_PIX_FRAC of the cell's pixels were kept; a month needs one such composite; a June-May year needs
 MIN_MONTHS months; the multi-year means need MIN_YEARS years.
 Writes output/modis_monthly_cells.npz (monthly cell LAI, 120 months x cells, with each cell's polygon_id) and
 output/modis_monthly_cells.csv (per cell: polygon_id, modis_max_m, modis_min_m, modis_cover_m = mean min / mean max,
-n_years, n_pixels). Needs the MCD15A2H tiles and the MODIS pipeline's code (MODIS_LAI_CODE, default below).
+n_years, n_pixels). Needs the MCD15A2H tiles and the MODIS LAI pipeline's code, whose folder MODIS_LAI_CODE names.
 Usage (an environment with GDAL's HDF4 reader): python modis_monthly_lai.py [--workers 9]
        python modis_monthly_lai.py --reduce-only   (any env with numpy: redo the per-cell values from the .npz)"""
 import argparse, csv, datetime as dt, multiprocessing as mp, os, re, sys
 import numpy as np
 
-CODE = os.environ.get("MODIS_LAI_CODE", "/ibstorage/ED-Data/MODIS-LAI/code")
+CODE = os.environ.get("MODIS_LAI_CODE")
+if not CODE:
+    raise SystemExit("ERROR: set MODIS_LAI_CODE to the MODIS LAI pipeline's code folder")
 sys.path.insert(0, CODE)
 import config as C                                                   # noqa: E402
 from download_lai import R_EARTH, TILE_M, X_MIN, Y_MAX, tiles_in_box  # noqa: E402

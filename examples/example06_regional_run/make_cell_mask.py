@@ -11,16 +11,15 @@ Writes output/cell_mask.nc: `mask` (1 at a chosen cell, else 0) on the archive's
 every region of the run (run_regions.py); and output/cells.csv, the chosen cells' polygon_id (row * 3600 + col on the
 grid, as MEDS numbers its polygons), lat and lon, for the steps that read no netCDF (modis_monthly_lai.py).
 
-Usage: python make_cell_mask.py
+Usage: python make_cell_mask.py [--era5-archive DIR] [--soil-maps DIR] [--chave-e-map FILE]
+       (or set ERA5LAND_ARCHIVE, ED_SOIL_MAPS and CHAVE_E_MAP)
 """
+import argparse
 import os
 import numpy as np
 import netCDF4 as nc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ARCHIVE = "/ibstorage/SharedData/ED_ERA5land"
-MAPS = "/ibstorage/ED-Data/ED-SoilMaps/output"
-CHAVE_E = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
 BOX = (25.0, -100.0, 5.0, -80.0)            # N, W, S, E
 VEG_MIN = 0.8
 
@@ -35,7 +34,16 @@ def read(path, names, rows, cols):
     return out
 
 
-def main():
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
+    ap.add_argument("--soil-maps", default=os.environ.get("ED_SOIL_MAPS"), help="the ED soil maps (v2)")
+    ap.add_argument("--chave-e-map", default=os.environ.get("CHAVE_E_MAP"), help="Chave's E on the forcing grid")
+    args = ap.parse_args(argv)
+    if not (args.era5_archive and args.soil_maps and args.chave_e_map):
+        raise SystemExit("ERROR: give the data paths: --era5-archive, --soil-maps and --chave-e-map, or set "
+                         "ERA5LAND_ARCHIVE, ED_SOIL_MAPS and CHAVE_E_MAP")
+    ARCHIVE, MAPS, CHAVE_E = args.era5_archive, args.soil_maps, args.chave_e_map
     st = nc.Dataset(f"{ARCHIVE}/ED_ERA5land_static.nc")
     st.set_auto_mask(False)
     lat, lon = st["lat"][:], st["lon"][:]
