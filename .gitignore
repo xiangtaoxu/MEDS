@@ -95,6 +95,7 @@ examples/example02_canopy_phenology/data/
 examples/example05_forest_regeneration/data/
 examples/example05_forest_regeneration/output/
 examples/example05_forest_regeneration/palo_verde/output/
+examples/example06_regional_run/output/
 
 # User pre-existing WIP design (kept on disk, never committed)
 docs/dev_plans/MEDS_CAPI_REORG_DESIGN.md

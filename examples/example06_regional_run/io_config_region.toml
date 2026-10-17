@@ -1,0 +1,13 @@
+# Example 06's output: monthly, one file set per region, each variable with a `polygon` axis. The run config turns
+# every output group and the cohort and patch axes off, so only these are written. nplant_size is on the run's
+# dbh_class_edges, [0, 1, 5, 10, 20, 50, 100, 1000] cm (run_regions.py).
+[variables]
+lai_site           = "M"
+lai_pft            = "M"
+agb_pft            = "M"
+canopy_height_site = "M"
+gpp_site           = "M"
+gpp_pft            = "M"
+nplant_size        = "M"
+et_site            = "M"
+runoff_site        = "M"

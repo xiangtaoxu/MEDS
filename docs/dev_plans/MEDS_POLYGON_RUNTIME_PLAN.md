@@ -758,6 +758,12 @@ review's items.
 >   node off by a median 7 % (at most 25 %) in example 06. `soil_depth`, `bottom_bc`, `deep_temp` and
 >   (with Chave) `chave_e` are static `(polygon)` variables, as each polygon runs them.
 >
+> **RP7, the full pilot (2026-10-15 to 17):** example 06 as two region runs on cbsuxu09/10 (606 and 347
+> cells, 128 threads each, about 26 h each); the free-draining cells reproduce the v0.3.4 site runs
+> (median ratios 0.99-1.00, r about 0.99 for GPP, AGB and LAI) and the 61 aquifer cells differ by design.
+> It found two faults, both fixed: a worker thread's default stack (OMP_STACKSIZE) overflows in grown
+> stands, and the state file's default chunking made a 606-polygon checkpoint take hours.
+>
 > **RP7, the small pilot** (`~/claude_workspace/meds_runs/region_pilot`, one exclusive R128C40 node),
 > ran example 06's cells as region runs: its cell mask, the v2 soil maps, Chave's E and
 > `nbg_init_density = 3`.

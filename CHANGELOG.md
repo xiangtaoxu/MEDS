@@ -55,6 +55,15 @@ before and after.
   runs on synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
   `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
   per-layer start.
+- **Example 06 runs as region runs.** Its 953 cells (each 3 x 3 block's most natural cell with valid
+  forcing and complete maps, `make_cell_mask.py`) run as two MEDS region runs, one per node
+  (`run_regions.py`: example 05's Palo Verde configuration and PFTs with each cell's inputs from the
+  `[maps]` files, the regions balanced by `cell_hours.csv`, `OMP_STACKSIZE=512M`), instead of 983
+  site runs with forcing cut per cell. Each layer takes its own soil curve, and the bottom boundary is
+  the soil map's class (61 cells over an aquifer). `summarize_regions.py`, `modis_monthly_lai.py` and
+  `plot_regional.py` make the figures from the region files; the output adds ET, runoff and plant
+  density in seven diameter classes. The README gives the run's speed and memory: two regions of 606
+  and 347 cells, about 26 h each on a 128-thread node, 4 GB each.
 - **A region's state file is chunked one polygon per chunk.** Each polygon writes its own rows, and
   netCDF's default chunks spanned up to ~120 polygons, so once a row's chunks outgrew HDF5's chunk
   cache every polygon's write decompressed and recompressed them: example 06's 606-polygon region
