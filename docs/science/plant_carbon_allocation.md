@@ -69,8 +69,8 @@ senescence of `leaf_turnover_step` (`plant_phenology.md` §5, eq. (9)), and $R$ 
 **Each pool loses the full loss either way.** Crediting storage while removing only the litter
 share would *create* carbon. The split is exact by construction.
 
-Background turnover is resorbed like senescence: `leaf_lifespan_toc` and `fineroot_turnover_rate` are
-tissue lifespans (loss rates), not litterfall, so the litter is the unresorbed share of the loss.
+Background turnover is resorbed like senescence: `leaf_turnover_rate_toc` and `fineroot_turnover_rate`
+are tissue loss rates, not litterfall, so the litter is the unresorbed share of the loss.
 
 **Default $`f_r = 0.3`$.** Most measured resorption is of N and P rather than C, so the carbon
 fraction is uncertain and is a per-PFT key; examples 03–05 set it to 0, as calibrated. Resorption moves
@@ -248,7 +248,7 @@ This is the *only* plant-flux call on the slow carbon path.
 | `leaf_demand`, `fineroot_demand` | allometric deficit (`meds_allometry.size2leaf_carbon`, using the **plastic** `cohort%sla`) **flush-capped** by the phenology flush rate |
 | `storage_demand`, `storage`, `repro_frac` | cohort SoA (`nonstructural_carbon`) + PFT traits (`storage_cushion`, `reproduction_investment_fraction`) |
 | `growth_resp_frac` | PFT trait `growth_resp_factor` |
-| this step's **shed** (litter) | `cohort_carbon_demand` calls `meds_phenology.leaf_turnover_step` (background turnover at `1/llspan` while flushing and no leaves drop, plus senescence down to `min_leaf_cover`) and turns fine roots over on the same `turnover_gate`, for the carbon amounts it pre-subtracts from the pools |
+| this step's **shed** (litter) | `cohort_carbon_demand` calls `meds_phenology.leaf_turnover_step` (background turnover at the cohort's `leaf_turnover_rate` while flushing and no leaves drop, plus senescence down to `min_leaf_cover`) and turns fine roots over on the same `turnover_gate`, for the carbon amounts it pre-subtracts from the pools |
 
 **Outputs the driver disposes of:**
 

@@ -185,6 +185,17 @@ its height reaches `[pft].reproduction_height_fraction` (default 0.33) of the lo
 height of a 100 cm tree on that curve (capped at `hgt_max`), so its maturity height follows the local
 allometry.
 
+Leaves are parameterized by their turnover: `[pft].leaf_turnover_rate_toc` [yr⁻¹, > 0] is the share
+of a top-of-canopy cohort's leaf carbon its background turnover replaces a year, and with
+`[trait_dynamics].trait_plasticity_on` it slows in shade (`docs/science/plant_traits.md` eq. (1)).
+Three keys named after a leaf lifespan are refused, each with its replacement:
+- `[pft].leaf_lifespan_toc` [yr]: set `leaf_turnover_rate_toc` to its reciprocal (a 2-yr lifespan is
+  a rate of 0.5);
+- `[derived].kplastic_llspan`: `kplastic_leaf_turnover` is its negative (≤ 0, the rate falls in shade);
+- `[trait_dynamics].fineroot_lifespan_plastic`: `fineroot_turnover_plastic`.
+
+A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.
+
 ## How a run starts
 
 `[init].init_mode` selects one of three, and the files for the unselected modes are ignored rather
@@ -211,7 +222,7 @@ prints the counts before and after.
 
 **A restart can take this run's leaf traits** instead of the state file's:
 `[init].reacclimate_traits = true` (restart only; default false). The plastic traits (`sla`,
-`vcmax25`, `rd25`, leaf lifespan) are then set as a census start sets them from this run's PFT file:
+`vcmax25`, `rd25`, `leaf_turnover_rate`) are then set as a census start sets them from this run's PFT file:
 acclimated to each cohort's leaf area above it, as the state file holds it, with
 `[trait_dynamics].trait_plasticity_on`, and the PFT's top-of-canopy values without it. Leaf area stays
 as read, and leaf carbon scales by the SLA's change, with storage taking up the difference; a lower

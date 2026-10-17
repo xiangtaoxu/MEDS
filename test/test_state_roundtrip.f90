@@ -1,6 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
-!----- State restart round-trip: the per-cohort PLASTIC leaf traits (sla/vcmax25/rd25/llspan) ----!
-!----- must be written to and recovered from a state checkpoint, not reset to top-of-canopy.  ----!
+!----- State restart round-trip: the per-cohort PLASTIC leaf traits (sla/vcmax25/rd25 and the ----!
+!----- leaf turnover rate) must be written to and recovered from a state checkpoint, not reset ----!
+!----- to top-of-canopy; a file holding the rate as a leaf lifespan (`llspan`) still reads. -------!
 program test_state_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
@@ -8,14 +9,25 @@ program test_state_roundtrip
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_io,               only : state_write_state, io_read_state
    use meds_time,             only : meds_time_t
+   use meds_netcdf_c,     only : NC_NOERR, nc_open_f, nc_inq_varid_f, nc_put_vara_double, nc_close, cstr
    use meds_test_support, only : banner, build_test_config, check, check_close
+   use iso_c_binding,     only : c_int, c_size_t, c_double, c_char
    implicit none
+
+   integer(c_int), parameter :: NC_WRITE = 1_c_int        ! netcdf.h: open for writing
+   interface
+      integer(c_int) function nc_rename_var(ncid, varid, name) bind(c, name="nc_rename_var")
+         import :: c_int, c_char
+         integer(c_int), value, intent(in) :: ncid, varid
+         character(kind=c_char), intent(in) :: name(*)
+      end function nc_rename_var
+   end interface
 
    type(meds_config_t) :: cfg
    type(site_t)        :: site, site2
    type(meds_time_t)   :: now, rt
    logical             :: found, fast_ok, owed, owed_year
-   real(wp)            :: sla_set, vc_set, rd_set, ll_set
+   real(wp)            :: sla_set, vc_set, rd_set, turnover_set
    integer(ik)         :: i
 
    call banner('state roundtrip: plastic traits')
@@ -26,10 +38,10 @@ program test_state_roundtrip
    call check(site%cohort%n >= 1_ik, 'have at least one cohort to checkpoint')
 
    !----- Stamp distinct, NON-top-of-canopy plastic traits on every cohort. ----------------!
-   sla_set = 99.0_wp ; vc_set = 42.0_wp ; rd_set = 3.5_wp ; ll_set = 7.0_wp
+   sla_set = 99.0_wp ; vc_set = 42.0_wp ; rd_set = 3.5_wp ; turnover_set = 0.7_wp
    do i = 1_ik, site%cohort%n
       site%cohort%sla(i)     = sla_set ; site%cohort%vcmax25(i) = vc_set
-      site%cohort%rd25(i)    = rd_set  ; site%cohort%llspan(i)  = ll_set
+      site%cohort%rd25(i)    = rd_set  ; site%cohort%leaf_turnover_rate(i) = turnover_set
       !----- Per-cohort hydraulics/temperature, stamped to distinct NON-sentinel values so a           !
       !      round-trip that fails to persist them (leaving the lazy-init 0 / LEAF_TEMP_INIT) is caught. !
       site%cohort%leaf_water_mass(i) = 0.0123_wp + 0.001_wp * real(i, wp)
@@ -89,7 +101,8 @@ program test_state_roundtrip
       call check_close(site2%cohort%sla(i),     sla_set, 1.0e-9_wp, 'sla recovered from state')
       call check_close(site2%cohort%vcmax25(i), vc_set,  1.0e-9_wp, 'vcmax25 recovered from state')
       call check_close(site2%cohort%rd25(i),    rd_set,  1.0e-9_wp, 'rd25 recovered from state')
-      call check_close(site2%cohort%llspan(i),  ll_set,  1.0e-9_wp, 'llspan recovered from state')
+      call check_close(site2%cohort%leaf_turnover_rate(i), turnover_set, 1.0e-9_wp,              &
+                       'leaf_turnover_rate recovered from state')
       call check_close(site2%cohort%leaf_water_mass(i), site%cohort%leaf_water_mass(i), 1.0e-12_wp, &
                         'leaf_water_mass recovered from state (not re-seeded)')
       call check_close(site2%cohort%wood_water_mass(i), site%cohort%wood_water_mass(i), 1.0e-12_wp, &
@@ -147,6 +160,34 @@ program test_state_roundtrip
    call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found,                     &
                       restructure_pending=owed, restructure_new_year=owed_year)
    call check(found .and. .not. owed .and. .not. owed_year, 'a checkpoint with nothing owed reads so')
+
+   !----- A state file written while the trait was a leaf lifespan holds `llspan` [yr] in place of  !
+   !      `leaf_turnover_rate`: the reader takes the rate as its reciprocal. The file just written is  !
+   !      made into one by renaming the variable and writing a 4-yr lifespan into it. --------------!
+   block
+      integer(c_int)              :: ncid, vid
+      integer(c_size_t)           :: start(1), count(1)
+      real(c_double), allocatable :: lifespan(:)
+      character(kind=c_char)      :: new_name(7)
+      call check(nc_open_f('./test_sr-S-20000101000000.nc', NC_WRITE, ncid) == NC_NOERR,             &
+                 'the state file opens for writing')
+      call check(nc_inq_varid_f(ncid, 'leaf_turnover_rate', vid) == NC_NOERR,                        &
+                 'the state file holds leaf_turnover_rate')
+      new_name = cstr('llspan')
+      call check(nc_rename_var(ncid, vid, new_name) == NC_NOERR, 'the variable is renamed llspan')
+      allocate(lifespan(site%cohort%n)) ; lifespan = 4.0_c_double
+      start = 0_c_size_t ; count = int(site%cohort%n, c_size_t)
+      call check(nc_put_vara_double(ncid, vid, start, count, lifespan) == NC_NOERR,                  &
+                 'a 4-yr lifespan is written into it')
+      call check(nc_close(ncid) == NC_NOERR, 'the state file closes')
+   end block
+   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found)
+   call check(found, 'a state file with llspan reads')
+   do i = 1_ik, site2%cohort%n
+      call check_close(site2%cohort%leaf_turnover_rate(i), 0.25_wp, 1.0e-15_wp,                     &
+                       'llspan [yr] is read as the leaf turnover rate 1/llspan [1/yr]')
+      call check_close(site2%cohort%sla(i), sla_set, 1.0e-9_wp, 'the other traits read as before')
+   end do
 
    write(*,'(a)') '   PASS'
 end program test_state_roundtrip

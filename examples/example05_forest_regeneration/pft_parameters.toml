@@ -24,12 +24,12 @@ include_pft        = [1, 1, 1]
 #      Fort Sherman (Xu et al. 2017, Ecology Letters 20:1097, Appendix 3) and seedlings in gaps at the
 #      Barro Colorado Nature Monument (Kitajima et al. 2013, Annals of Botany 112:685), where leaves
 #      live from about 0.3 yr (light wood) to 0.4-2.4 yr (dense wood), and canopy sun leaves at the PNM
-#      crane 0.2-0.9 yr (Kitajima et al. 1997, 2005). Leaves turn over at 1 / their lifespan; LMA is the
-#      crane PFTs' 100-120 g/m2; Vcmax25 is example 04's calibrated BCI leaf for all three PFTs. SLA is
-#      carbon-based: 2000 / LMA. Fine-root carbon equals leaf carbon (ED2's q = 1), and fine roots turn
-#      over at 1.5 / the leaf lifespan, slower in the shade as the leaves are
-#      ([trait_dynamics].fineroot_lifespan_plastic).
-leaf_lifespan_toc  = [0.5, 0.7, 0.9]         # [yr]
+#      crane 0.2-0.9 yr (Kitajima et al. 1997, 2005). Leaves turn over at 1 / their lifespan, here 0.5,
+#      0.7 and 0.9 yr; LMA is the crane PFTs' 100-120 g/m2; Vcmax25 is example 04's calibrated BCI leaf
+#      for all three PFTs. SLA is carbon-based: 2000 / LMA. Fine-root carbon equals leaf carbon (ED2's
+#      q = 1), and fine roots turn over 1.5 times as fast as the leaves, slower in the shade as the
+#      leaves are ([trait_dynamics].fineroot_turnover_plastic).
+leaf_turnover_rate_toc = [2.0, 1.4286, 1.1111]   # [1/yr] 1 / (0.5, 0.7, 0.9 yr)
 sla                = [20.0, 18.18, 16.67]    # [m2/kgC] LMA 100, 110, 120 g/m2
 vcmax25            = [32.3321, 32.3321, 32.3321]   # [umol/m2/s] example 04's calibrated leaf
 root_to_leaf_ratio = [1.0, 1.0, 1.0]
@@ -93,7 +93,7 @@ storage_cushion        = [0.5, 0.5, 0.5]  # [--] storage target, x (leaf + fine-
                                           #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3, 0.3, 0.3]
 retained_carbon_fraction = [0.0, 0.0, 0.0]   # [--] no resorption, as the example's calibration assumes (default 0.3)
-fineroot_turnover_rate = [3.0, 2.143, 1.667]  # [1/yr] 1.5 / leaf_lifespan_toc
+fineroot_turnover_rate = [3.0, 2.143, 1.667]  # [1/yr] 1.5 x leaf_turnover_rate_toc
 wood_carbon_density    = [300.0, 300.0, 300.0]
 f_labile_leaf          = [0.70, 0.70, 0.70]
 f_labile_stem          = [0.05, 0.05, 0.05]
@@ -147,13 +147,13 @@ mort_beta  = [15.0890, 19.3890, 58.7932]      # [yr/cm]
 # Light plasticity, trait = top-of-canopy value x exp(k x overtopping LAI) (docs/science/plant_traits.md
 # eq. (1)): Ma et al. (2025, JGR Biogeosciences) from BCI's crane, saplings against canopy leaves --
 # k_Vcmax = -(0.00242 Vcmax25 + 0.06212), k_Rd = -(0.18974 Rd25 + 0.11744) with Rd25 = 0.015 Vcmax25,
-# k_SLA 0.199 -- and half of their k_LL 0.240: shade lengthens leaf life 1.5 times in Kitajima et al.
-# (2013)'s seedling gardens and 2 times from canopy to understory in Xu et al. (2017), against 3.3 times
-# at LAI 5 with 0.240.
+# k_SLA 0.199 -- and the leaf turnover rate at minus half of their leaf-lifespan slope k_LL 0.240: shade
+# lengthens leaf life 1.5 times in Kitajima et al. (2013)'s seedling gardens and 2 times from canopy to
+# understory in Xu et al. (2017), against 3.3 times at LAI 5 with 0.240.
 kplastic_vcmax  = [-0.1404, -0.1404, -0.1404]
 kplastic_rd     = [-0.2095, -0.2095, -0.2095]
 kplastic_sla    = [0.199, 0.199, 0.199]
-kplastic_llspan = [0.120, 0.120, 0.120]
+kplastic_leaf_turnover = [-0.120, -0.120, -0.120]
 
 # The Barro Colorado height curve (Cano et al. 2019, Biogeosciences 16:847, eq. 7), as in example 03;
 # leaf area and biomass follow from the height.

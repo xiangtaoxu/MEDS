@@ -199,9 +199,11 @@ contains
          !      declared convention. The dynamic leaf traits stay here: they are slow-loop state,      !
          !      not fast, and they must be set BEFORE the survivor's geometry is re-derived because    !
          !      sla maps its leaf_carbon <-> leaf_area. Each trait blends on the quantity it is per: !
-         !      vcmax25, rd25 and llspan are per leaf area, so leaf area weights them; sla is leaf    !
-         !      area per leaf CARBON, so leaf carbon weights it and the fused cohort shows the leaf    !
-         !      area its two parents showed. ---------------------------------------------------------!
+         !      vcmax25 and rd25 are per leaf area, so leaf area weights them; sla is leaf area per    !
+         !      leaf CARBON, so leaf carbon weights it and the fused cohort shows the leaf area its    !
+         !      two parents showed; leaf_turnover_rate is the share of the leaf CARBON lost a year,    !
+         !      so leaf carbon weights it and the fused cohort turns over the leaf carbon its two      !
+         !      parents did (docs/science/plant_traits.md §5). -------------------------------------!
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
          cr = nr * cohort%leaf_carbon(recc) ; cd = nd * cohort%leaf_carbon(donc)
          !----- The tissue heat capacities the diagnostic temperatures fuse on, taken BEFORE          !
@@ -213,7 +215,8 @@ contains
          cohort%sla(recc)     = pair_mean(cohort%sla(recc),     cr, cohort%sla(donc),     cd)
          cohort%vcmax25(recc) = pair_mean(cohort%vcmax25(recc), wr, cohort%vcmax25(donc), wd)
          cohort%rd25(recc)    = pair_mean(cohort%rd25(recc),    wr, cohort%rd25(donc),    wd)
-         cohort%llspan(recc)  = pair_mean(cohort%llspan(recc),  wr, cohort%llspan(donc),  wd)
+         cohort%leaf_turnover_rate(recc) = pair_mean(cohort%leaf_turnover_rate(recc), cr,                &
+                                                     cohort%leaf_turnover_rate(donc), cd)
          !----- Fast-loop DIAGNOSTIC accumulators, handed leaf area (wr, wd), nplant (nr, nd) and the  !
          !      tissue heat capacities. Which weight applies is declared per field in                 !
          !      meds_site_diag_types (CDIAG_FUSE), not decided here. ------------------------------------!

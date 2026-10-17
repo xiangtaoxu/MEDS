@@ -20,10 +20,10 @@ ark_adaptive        = true
 ark_rtol            = 1.0e-3
 canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
-# Each cohort's Vcmax25, Rd25, SLA and leaf lifespan follow the leaf area above it.
+# Each cohort's Vcmax25, Rd25, SLA and leaf turnover rate follow the leaf area above it.
 [trait_dynamics]
 trait_plasticity_on = true
-fineroot_lifespan_plastic = true      # fine roots, like leaves, turn over more slowly in the shade
+fineroot_turnover_plastic = true      # fine roots, like leaves, turn over more slowly in the shade
 
 #----- The demography (example 03). -------------------------------------------------------------------
 [demography]

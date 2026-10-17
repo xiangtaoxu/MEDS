@@ -89,6 +89,36 @@ program test_config_keys
    call check(index(report%line(2), 'allometry.ca_b1') > 0 .and. index(report%line(2), 'retired') > 0  &
               .and. index(report%line(2), 'closed-crown') > 0, 'the crown-area allometry says the crowns close')
 
+   !----- Leaves are parameterized by their turnover rate: the lifespan key, its plasticity slope  !
+   !      and the fine-root switch named after it are refused, each with its conversion. ---------!
+   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
+   write(u,'(a)') '[pft]'
+   write(u,'(a)') 'leaf_lifespan_toc = [2.0]'
+   write(u,'(a)') '[derived]'
+   write(u,'(a)') 'kplastic_llspan = [0.12]'
+   close(u)
+   call toml_parse_file('test_config_keys.toml', t, ok)
+   call check(ok, 'the lifespan-key config parses')
+   report = key_report_t()
+   call check_config_keys(t, PFT_KEYS, report)
+   call check(report%n == 2_ik, 'both retired lifespan keys are reported')
+   call check(index(report%line(1), 'pft.leaf_lifespan_toc') > 0 .and. index(report%line(1), 'retired') > 0 &
+              .and. index(report%line(1), 'leaf_turnover_rate_toc [1/yr] = 1 / the lifespan') > 0,          &
+              'the lifespan key gives the rate as its reciprocal')
+   call check(index(report%line(2), 'derived.kplastic_llspan') > 0 .and. index(report%line(2), 'retired') > 0 &
+              .and. index(report%line(2), 'kplastic_leaf_turnover = -kplastic_llspan') > 0,                 &
+              'the lifespan slope gives the rate''s slope with its sign')
+   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
+   write(u,'(a)') '[trait_dynamics]'
+   write(u,'(a)') 'fineroot_lifespan_plastic = true'
+   close(u)
+   call toml_parse_file('test_config_keys.toml', t, ok)
+   report = key_report_t()
+   call check_config_keys(t, MAIN_KEYS, report)
+   call check(report%n == 1_ik .and. index(report%line(1), 'retired') > 0 .and.                        &
+              index(report%line(1), 'trait_dynamics.fineroot_turnover_plastic') > 0,                   &
+              'the fine-root switch names its new key')
+
    open(newunit=u, file='test_config_keys.toml', status='old')
    close(u, status='delete')
    write(*,'(a)') 'test_config_keys: ALL PASSED'

@@ -72,7 +72,7 @@ leaf_angle_mean    = [45.0]   # [deg] mean leaf inclination (spherical: mean 57.
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0]
 growth_resp_factor     = [0.3]
-leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
+leaf_turnover_rate_toc = [0.5]   # [1/yr]
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
 # Necromass -> litter-destination split (values match the reference meds_config_pft.toml's

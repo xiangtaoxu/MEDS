@@ -60,8 +60,14 @@ run's leaf-area cycle has been scored against an observation yet. That is the be
 - **The water cue on the model's own predawn potential** — *Planned.* A dry-forest run (Guanacaste)
   with the cue on, since the cue needs the shed → ψ feedback; example02 drives it with a
   soil-moisture surrogate.
-- **`leaf_lifespan_toc` → `leaf_turnover_rate_toc`** — *Planned.* [#379](https://github.com/xiangtaoxu/MEDS/issues/379) The background turnover rate is
-  the model's parameter; leaf lifespan is emergent (plan D2).
+- **Leaf turnover as a rate, and phenology that up-regulates it** — [#379](https://github.com/xiangtaoxu/MEDS/issues/379).
+  *The rename is done in beta:* the PFT key is `leaf_turnover_rate_toc` [yr⁻¹], the cohort trait
+  `leaf_turnover_rate`, its shade slope `kplastic_leaf_turnover` and the fine-root switch
+  `fineroot_turnover_plastic`; the lifespan keys are refused with their conversion. *The new turnover
+  form is deferred* (planned): senescence as an up-regulation of each PFT's baseline turnover,
+  (1 + a · shed tendency), in place of the absolute `shed_rate_max`, and a light cue relative to the
+  cohort's own light. It changes example 02's and example 06's seasonality, so it waits for the next
+  refit of example 02 and rerun of example 06.
 
 - **Drought-driven fine-root dieback** — *Candidate.* Fine roots age on the leaves' turnover gate and
   share their resorption (#387), but they are not shed with the leaves: root length sets the

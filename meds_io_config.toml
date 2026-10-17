@@ -33,7 +33,7 @@
 # sla_cohort = "M"                                    # [structure, cohort] specific leaf area (m2/kgC)
 # vcmax25_cohort = "M"                                # [structure, cohort] max carboxylation rate at 25 degC (umol/m2/s)
 # rd25_cohort = "M"                                   # [structure, cohort] leaf dark respiration at 25 degC (umol/m2/s)
-# llspan_cohort = "M"                                 # [structure, cohort] leaf lifespan (yr)
+# leaf_turnover_rate_cohort = "M"                     # [structure, cohort] baseline leaf turnover rate (1/yr)
 # leaf_flush_tendency_cohort = "M"                    # [structure, cohort] smoothed leaf flush tendency (-)
 # leaf_shed_tendency_cohort = "M"                     # [structure, cohort] smoothed leaf senescence tendency (-)
 # dmax_psi_leaf_cohort = "D M"                        # [structure, cohort] predawn (daily-max) leaf water potential (MPa)

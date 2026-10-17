@@ -83,14 +83,15 @@ contains
       real(c_double),        intent(in)  :: lai_above(n)
       real(c_double),        intent(out) :: vcmax25(n), rd25(n)
       integer(ik) :: i, pf
-      real(wp)    :: sla_t, vc_t, rd_t, ll_t
+      real(wp)    :: sla_t, vc_t, rd_t, turnover_t
       associate (t => g_cfg%pft)
          do i = 1_ik, int(n, ik)
             pf = int(pft(i), ik)
             if (g_cfg%trait_plasticity_on) then
                call light_plastic_traits(real(lai_above(i), wp), t%sla(pf), t%vcmax25(pf), t%rd25(pf),  &
-                                         t%leaf_lifespan_toc(pf), t%kplastic_sla(pf), t%kplastic_vm0(pf), &
-                                         t%kplastic_rd(pf), t%kplastic_llspan(pf), sla_t, vc_t, rd_t, ll_t)
+                                         t%leaf_turnover_rate_toc(pf), t%kplastic_sla(pf), t%kplastic_vm0(pf), &
+                                         t%kplastic_rd(pf), t%kplastic_leaf_turnover(pf), sla_t, vc_t, rd_t,   &
+                                         turnover_t)
             else
                vc_t = t%vcmax25(pf) ; rd_t = t%rd25(pf)
             end if

@@ -33,8 +33,8 @@ _REAL = {"dbh": 0, "height": 1, "nplant": 2, "agb": 3, "leaf_area": 4,
                                      # unless the output lists a site NPP total (which keeps them)
          #----- [kgC/plant] maintenance respiration over the last slow step, against that GPP (a run's own)
          "leaf_resp": 11, "stem_resp": 12, "root_resp": 13,
-         #----- [kgC/plant] the live pools, and [yr] the leaf lifespan the turnover runs on
-         "leaf_carbon": 14, "fineroot_carbon": 15, "storage_carbon": 16, "llspan": 17,
+         #----- [kgC/plant] the live pools, and [1/yr] the baseline leaf turnover rate
+         "leaf_carbon": 14, "fineroot_carbon": 15, "storage_carbon": 16, "leaf_turnover_rate": 17,
          #----- [kgC/plant/yr] the rest of the last slow step's allocation; NaN as npp is
          "npp_leaf": 18, "npp_fineroot": 19, "npp_storage": 20, "npp_repro": 21,
          "growth_resp": 22, "exudate": 23}
