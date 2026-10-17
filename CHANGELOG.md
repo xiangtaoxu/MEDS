@@ -171,6 +171,17 @@ before and after.
   round-off on the shipped runs (worst 2.5×10⁻¹³ kgC m⁻² in the ledger's remainder), and results are
   byte-identical. `test_carbon_growth` checks that a 1 % overdraw is reported, not floored, and that
   re-acclimation conserves the cohort's carbon.
+- **The energy ledgers' absolute floor is 10⁻³ W m⁻²** (#413), from 10⁻² W m⁻² (0.9 J m⁻² per
+  900 s step, from 9). The looser floor was kept for a whole-column residual under a melting snow pack
+  of up to 0.7 J m⁻² per 150 s step that the per-store ledgers did not see; that residual was the dew
+  condensate's enthalpy valued at two temperatures, fixed on 2026-09-08 with #119 (the condensate is
+  now valued at one temperature on both sides), and the note that it was open outlived the fix. The
+  whole-column residual today is at most 7.3×10⁻⁷ J m⁻² per step in `test_column_dynamics` RUN 8 on
+  ARK (8.3×10⁻⁷ on RK45) and 1.3×10⁻⁶ J m⁻² in Ithaca Jan–Mar runs at 150 s and 900 s; the worst step
+  in the 1147 archived v0.3.4 example run logs is 7.8×10⁻⁴ J m⁻². RUN 8's whole-column energy checks,
+  which asked only that no step breach the floor, now ask for closure below 10⁻³ J m⁻² per step, as
+  RUN 8b and 9b do. Every test passes on ifx Release, ifx Debug and gfortran, and results are
+  byte-identical.
 
 ### Removed
 
@@ -293,6 +304,39 @@ before and after.
   always reads its files, and one used after another re-reads its own. The module docstring no
   longer says the fast calibration uses it. `python/tests/test_canopy.py` rewrites a config at one
   path and sees the change.
+- **One value for the hydrostatic head: `grav_head` is `rho_h2o·grav`** (#416). `grav_head` converts
+  a water head [m] to a potential [MPa] for the soil curves and faces, root uptake, the crown's gravity
+  and the pedotransfer functions. It was the literal 9.804×10⁻³ MPa m⁻¹, 0.03 % below ρ_w g =
+  9.80665×10⁻³ MPa m⁻¹ with standard gravity, the product its comment named; it is now that product
+  (`meds_constants`, `plant_hydraulics.md`). Potentials move by about 3×10⁻⁴ relative and fluxes by
+  far less. Palo Verde's inventory run (2008-07, one month at 900 s): mean leaf ψ −0.16219 →
+  −0.16223 MPa (−2.0×10⁻⁴), wood ψ −2.5×10⁻⁴, soil ψ −2.7×10⁻⁴; GPP −2×10⁻⁶, ET −3×10⁻⁶. Example
+  04 at BCI (20 days on ARK): GPP, LE and H within 3×10⁻⁸. Example 05's regeneration from bare
+  ground at BCI (1600–1601): GPP and LAI −0.13 %, AGB −0.2 %. A five-day RK45 run of example 04
+  moves LE +0.4 % and H −0.4 %, which is RK45's adaptive step sequence reacting to the last bits
+  (every shipped config runs ARK). `test_water_processes` checks that `grav_head` is ρ_w g and that
+  10 m of water is 98.0665 kPa.
+- **Γ* as a mole fraction no longer rises as the pressure falls** (#342). `gstar25` = 4.275 Pa is
+  Bernacchi et al. (2001)'s 42.75 µmol mol⁻¹ written as a partial pressure at 100 kPa, and the leaf
+  kernel divided it by the local pressure, so Γ* in µmol mol⁻¹ grew as 1/P: +0.7 % at BCI, +11 % at
+  1000 m and +43 % at 3000 m, where it cut dim-light photosynthesis by about 4 % and 14 %. Γ* is
+  proportional to the O₂ partial pressure, so as a mole fraction it does not depend on pressure; it is
+  now `gstar25` over that 100 kPa (`leaf_gas_exchange.md` eq. (3)), while Kc and Ko, partial
+  pressures, still divide by the local pressure. One routine owns the conversion,
+  `rubisco_kinetics` in `meds_leaf_gas_exchange`, which the solver calls and the C API
+  (`meds_rubisco_kinetics`) and Python (`meds.plant.leaf.rubisco_kinetics`) expose; the Python leaf
+  test and example 01's A–Ci curve use it in place of their own copies, and the calibration priors'
+  library-free copy takes the same reference pressure (it used 101.325 kPa) and is tested against the
+  kernel; at a BCI-like daytime climate (99.3 kPa, 26 °C) that moves the EEO prior centres from
+  vcmax25 47.8 to 46.7 and g1 2.795 to 2.796, against the priors' log-sd of 0.5. Results at the compare cases: example 04 at BCI (99.3 kPa, 20 days on ARK) GPP +0.24 %,
+  LE +0.09 %, H −0.09 %; Palo Verde's inventory run (99.1 kPa, 2008-07) GPP +0.35 %, NPP +0.59 %,
+  ET +0.09 %, H −0.19 %; example 05's regeneration at BCI (ERA5-Land, 99.9 kPa, 1600–1601) GPP
+  +0.20 %, AGB +0.25 %. Example 01 at 101.325 kPa: Γ 47.0 → 47.7 µmol mol⁻¹ and the peak A_net of
+  each species 0.4–0.8 % lower (F. insipida 21.39 → 21.27), its optimum temperatures unchanged; its
+  outputs are regenerated with the batch's rerun. Tests: `test_leaf_physiology` (Γ* in µmol mol⁻¹
+  is the same at 101.3 and 70 kPa, at 25 and 35 °C, and 42.75 at 25 °C; Kc and Ko scale as 1/P),
+  `test_c_api_leaf`, `python/tests/test_leaf.py` (the same, and the primitives compose to the solver
+  at 70 kPa) and `test_calibrate_fast`.
 
 ### Documentation
 
@@ -411,6 +455,21 @@ before and after.
   `MEDS_POLYGON_RUNTIME_PLAN.md`'s header says the region runtime was merged into `beta` as #408.
 - **`examples/README.md`'s example 06 summary** said 983 cells, each a single-site run; it is 953
   cells run as two region runs, as example 06's README says.
+- **`dt_fast`: the drought-season bias and the light-wind stability, measured** (#415).
+  `numerical_scheme.md` §5a, which said a drought season was not scored, now gives it: on Palo Verde's
+  inventory configuration restarted on 2008-12-01, 900 s runs February–April GPP 5.5 % and ET 6.0 %
+  above 150 s, linearly in `dt_fast` (about 1 % at 300 s), the December–May season 1.7 % and the year
+  0.8 %, with shedding 1–2 days late; the per-step freeze is the cause, not the water solver. BCI
+  (example 04, 2012-08 to 2013-05) moves by GPP +0.08 %, LE −0.37 W m⁻², H +0.25 W m⁻² and daily ψ by
+  at most 0.004 MPa. The page recommends `dt_fast = 300 s` for runs whose purpose is dry-season
+  leaf-habit timing; 900 s stays the default. §5a′'s re-solved stability multiplier, −0.07 to −1.16
+  by stand height (from a base state spun up with the conductances frozen), is replaced by today's: on
+  a 30 m stand at noon |Φ′| ≤ 0.39 from 50 to 900 s at 2 and 10 m/s (+0.11 and +0.02 at 900 s), at
+  most 0.42 in every other case but a calm night (+0.91 to +0.43, a relaxation that does not
+  oscillate). §7 item 2 records light wind as scored: calm wind is 13 % of BCI's records and 900 s
+  shows no period-2 signal (lag-1 correlation of the canopy-air temperature's second difference
+  −0.06). §6, §7 item 1, the `dt_fast` comment in `meds_config_main.toml`, the ROADMAP's #415 and #162
+  items and `ed2_comparison.md`'s banner follow.
 
 ## [0.3.4] — 2026-10-13
 

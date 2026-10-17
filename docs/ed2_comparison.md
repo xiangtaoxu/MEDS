@@ -10,7 +10,9 @@
 > - **Leaf water potential converges at 900 s.** Soil and plant water are solved together, implicitly
 >   ([`soil_plant_water.md`](science/soil_plant_water.md)); the midday leaf potential agrees between
 >   75 and 900 s ([`numerical_scheme.md`](science/numerical_scheme.md) §5a), so a study of it needs
->   no shorter `dt_fast`.
+>   no shorter `dt_fast`. A drought season does: 900 s runs Palo Verde's driest months' GPP and ET
+>   about 6 % high, and 300 s is the advice for dry-season leaf-habit timing (§5a). The canopy air is
+>   stable at 900 s in light wind as in strong (§5a′, §7).
 > - **Roots and sapwood.** Each cohort roots to a depth set by its height, and its sapwood's
 >   conductivity follows its wood density ([`plant_hydraulics.md`](science/plant_hydraulics.md) §3–§4).
 > - **Setup.** Height can follow Chave et al. (2014) ([`configuration.md`](configuration.md), "The PFT

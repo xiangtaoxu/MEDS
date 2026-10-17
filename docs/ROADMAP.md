@@ -35,7 +35,7 @@ to ED-MORE; which issue is in which phase, and why, is in
 | [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
 | [#393](https://github.com/xiangtaoxu/MEDS/issues/393) | Leafless cohorts with no storage never die (9 % of BCI cohorts) | Nothing in the mortality law sees a cohort's carbon state, so a cohort that has lost its leaves and its storage persists while its leaf carbon decays geometrically. A carbon deficit destroys no tissue either: it is netted from the CO₂ the cohort owes (`docs/science/plant_carbon_allocation.md` §2). |
 | [#395](https://github.com/xiangtaoxu/MEDS/issues/395) | `reconcile_tissue_water_capacity` creates and destroys tissue water without booking it | It computes the seeded and the discarded water (`seeded`, `discarded`), but no caller books them. |
-| [#416](https://github.com/xiangtaoxu/MEDS/issues/416) | `grav_head` (9.804×10⁻³ MPa/m) is not `rho_h2o·grav` (9.80665×10⁻³) | Every head-to-pressure conversion, soil and plant alike, uses `grav_head`; `grav` appears only where the acceleration itself is meant (the Kelvin factor of soil evaporation, the aerodynamics, the lapse rate). The two differ by 0.03 %. |
+| [#416](https://github.com/xiangtaoxu/MEDS/issues/416) | `grav_head` (9.804×10⁻³ MPa/m) is not `rho_h2o·grav` (9.80665×10⁻³) | *Done in beta.* `grav_head` is `rho_h2o·grav·10⁻⁶` (9.80665×10⁻³ MPa/m). Every head-to-pressure conversion, soil and plant alike, uses it; `grav` appears only where the acceleration itself is meant (the Kelvin factor of soil evaporation, the aerodynamics, the lapse rate). |
 | [#427](https://github.com/xiangtaoxu/MEDS/issues/427) | Campbell retention: the predawn-potential seed reads van Genuchten parameters | The seed of a new cohort's predawn potential reads 0 MPa (a wet soil) and divides by zero; the water network itself reads the right pair. Van Genuchten runs, every shipped config, are unaffected. |
 | [#428](https://github.com/xiangtaoxu/MEDS/issues/428) | A missing census or restart file silently starts a site run from bare ground | The only notice needs `verbose`; a region stops, but calls a missing file "not a region state file". |
 | [#429](https://github.com/xiangtaoxu/MEDS/issues/429) | `meds.canopy.Canopy` ignores a config rewritten at the same path | It caches the open model by path, so a loop that rewrites one trial config keeps the first one's parameters. |
@@ -136,8 +136,9 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   with a start-up transient on the first day after a restart (−1.83 against −0.28 MPa) and 0.17 MPa
   left in `psi_wood` on the 3-hour midday probe through the frozen uptake seam. The water network
   (2026-10) now solves leaf and wood water implicitly with the soil, which removes that seam; the
-  midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s. `psi_wood` and the restart
-  transient are still to be re-measured.
+  midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s, and at BCI (2012-08 to 2013-05)
+  the daily leaf and wood potentials agree to 0.004 MPa between 150 and 900 s
+  (`docs/science/numerical_scheme.md` §5a). The restart transient is still to be re-measured.
 
 ---
 
@@ -266,10 +267,10 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 - **A root radial conductance in series.** *Planned.* [#356](https://github.com/xiangtaoxu/MEDS/issues/356) The soil-to-root path is the
   rhizosphere's Gardner conductance alone; a radial root conductance in series is a different flow
   law for that path in `meds_hydr_lib`.
-- **Γ* with surface pressure.** *Candidate.* [#342](https://github.com/xiangtaoxu/MEDS/issues/342) `gstar25` is a partial pressure at 100 kPa, so
-  Γ* as a mole fraction rises as the pressure falls, where it should not depend on pressure. Negligible
-  at BCI (Γ* +0.7 %, A −0.1 %), but example 06's domain already holds high sites: 29 % of its cells are
-  above 1000 m.
+- **Γ* with surface pressure.** *Done in beta.* [#342](https://github.com/xiangtaoxu/MEDS/issues/342) `gstar25` is a partial pressure at 100 kPa,
+  and dividing it by the local pressure made Γ* as a mole fraction rise as the pressure fell. It is now
+  divided by that reference pressure (`leaf_gas_exchange.md` eq. (3)), so Γ* does not depend on
+  pressure; example 06's domain, 29 % of whose cells are above 1000 m, is not rerun in the sweep.
 - **Cohort-level sunlit and shaded leaves.** *Open question.* [#343](https://github.com/xiangtaoxu/MEDS/issues/343) Every leaf of a cohort
   photosynthesises at the cohort's mean light, as in ED2; FATES and CLM5 split each leaf layer into
   sunlit and shaded fractions.
@@ -417,10 +418,6 @@ Gaps and residues found in the 2026-10-17 annotation review.
   reproductive tissue, and no substrate or moisture limitation of maintenance respiration
   (`docs/science/plant_respiration.md` §7). The stem's unused size scaler is gone; stem respiration
   grows with size through its surface or sapwood basis.
-- **An unattributed energy residual under a melting snow pack.** *Open question.* [#413](https://github.com/xiangtaoxu/MEDS/issues/413) The whole-column
-  ledger carries a sign-oscillating residual of up to about 5×10⁻³ W m⁻² (0.7 J m⁻² per 150 s step,
-  about −14 J m⁻² over a day) while the canopy-air, soil, pack and pond ledgers each close to 10⁻⁹; it
-  is why the energy floor in `meds_budget_check` is 10⁻² W m⁻².
 - **The canopy reflects too much near-infrared at realistic leaf optics.** *Open question.* [#414](https://github.com/xiangtaoxu/MEDS/issues/414) The fast
   calibration's albedo target stays off (`scripts/calibrate_fast/calibration_reference.toml`) because
   meeting it would move a leaf's optics past its evidence; the canopy structure has to change instead.
@@ -441,7 +438,11 @@ Gaps and residues found in the 2026-10-17 annotation review.
   `[allometry].ca_b1`/`ca_b2` are required, but `dbh_to_crown_area` is never called, and
   `crown_area_frac` (1.0 in every shipped config) only sets the in-canopy wind's crown cover. The open
   canopy of #410 uses the leaf and wood area instead.
-- **Numerics checks not yet scored on the water network.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) The stability threshold on
-  a forced multi-season run and across wind speeds; a consistent midpoint freeze to replace the
-  `forcing_sample_frac` trade; a drought season against `dt_fast` (`docs/science/numerical_scheme.md`
-  §7; #159 mentions the last).
+- **The per-step freeze's drought bias, and a consistent midpoint freeze.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) At 900 s
+  Palo Verde's February–April GPP and ET run 5.5–6 % high, linearly in `dt_fast`, because the gas
+  exchange and the transpiration demand are set from the step-start leaf potential
+  (`docs/science/numerical_scheme.md` §5a, §7 item 1); a predictor–corrector that re-evaluates the
+  gas exchange at the mid-step leaf potential and re-solves the water network once would remove it,
+  for about one extra pre-pass per step. Until then 300 s is the advice for dry-season leaf-habit
+  studies. The second item is a consistent midpoint freeze to replace the `forcing_sample_frac` trade
+  (§7 item 5). The stability in light wind is scored and passes (§5a′, §7 item 2).

@@ -57,7 +57,9 @@ dt_fast             = "900s"   # fast biophysics timestep, an ACCURACY setting, 
                                # air is stable at every dt_fast measured. 900 s is the edge of the
                                # measured range (a longer step warns). Leaf gas exchange is frozen over
                                # each step at the step-start leaf potential, and leaf water is solved
-                               # implicitly with the soil's to keep that lag small; see
+                               # implicitly with the soil's to keep that lag small. In a drought season
+                               # that lag still runs GPP and ET ~6 % high at 900 s (~1 % at 300 s), so
+                               # use 300 s when the timing of dry-season leaf habits is the point; see
                                # docs/science/numerical_scheme.md §5a and §6.
 # ---- The time integrator and its error control (docs/science/numerical_scheme.md). Every key
 #      is optional, at the default shown. ----
@@ -423,9 +425,10 @@ use_boundary_layer = false         # couple via the leaf boundary-layer conducta
 # the C3 rates are leaf_gas_exchange.md eqs. (2)-(3).
 kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
 ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC
-gstar25 = 4.275      # [Pa]      CO2 compensation point (no Rd) at 25 degC AND 20.9% O2
-                     #           (Bernacchi 2001). Gamma* is proportional to O2, so it is
-                     #           scaled by o2_mol_frac/0.209 -- exactly 1 at the default.
+gstar25 = 4.275      # [Pa]      CO2 compensation point (no Rd) at 25 degC, 20.9% O2 and 100 kPa
+                     #           (Bernacchi 2001's 42.75 umol/mol). Gamma* is proportional to the
+                     #           O2 partial pressure, so as a mole fraction it is gstar25/100 kPa
+                     #           scaled by o2_mol_frac/0.209 at any surface pressure (eq. (3)).
 ea_kc     = 79430.0  # [J/mol]   activation energies
 ea_ko     = 36380.0
 ea_gstar  = 37830.0

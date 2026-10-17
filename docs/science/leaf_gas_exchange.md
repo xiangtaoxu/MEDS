@@ -52,18 +52,28 @@ $`\theta J^2 - (I_2 + J_{max})J + I_2 J_{max}=0`$ (smaller root), with
 $`I_2 = \tfrac12\,\phi_{\text{PSII}}\,\alpha_{\text{leaf}}\,\mathrm{PAR}`$.
 
 **$`\Gamma^*`$ is proportional to the oxygen partial pressure**, because it is set by Rubisco's
-specificity for CO₂ over O₂: $`\Gamma^* = \tfrac{1}{2} O / S_{c/o}`$. MEDS therefore scales it off
-the O₂ its reference value was measured at,
+specificity for CO₂ over O₂: $`\Gamma^* = \tfrac{1}{2} O / S_{c/o}`$. The O₂ partial pressure is
+the O₂ mole fraction times the air's pressure, as the CO₂ one is, so $`\Gamma^*`$ as a mole fraction
+depends on the O₂ mole fraction and **not on pressure**. MEDS computes it as a mole fraction from the
+O₂ and the pressure its reference value is stated at,
 
 ```math
-\Gamma^*(T, O) = \Gamma^*_{25}\,f_{\mathrm{Arr}}(T)\;\frac{O}{O_\mathrm{ref}},
-\qquad O_\mathrm{ref} = 0.209 \qquad(3)
+\Gamma^*(T, O) = \frac{\Gamma^*_{25}}{P_\mathrm{ref}}\,f_{\mathrm{Arr}}(T)\;\frac{O}{O_\mathrm{ref}},
+\qquad O_\mathrm{ref} = 0.209,\quad P_\mathrm{ref} = 100\ \mathrm{kPa} \qquad(3)
 ```
 
-so `o2_mol_frac` reaches **both** places oxygen enters the C3 demand — the Michaelis term
-$`K_c(1 + O/K_o)`$ and the compensation point. The shipped `gstar25` = 4.275 Pa is Bernacchi et al.
-(2001), measured at 21 % O₂, so the factor is exactly 1 in any default run. It matters for
-palaeo-atmosphere work (Carboniferous/Permian O₂ is reconstructed near 30–35 %) and for the low-O₂
+The shipped `gstar25` = 4.275 Pa is Bernacchi et al. (2001)'s 42.75 µmol mol⁻¹ at 21 % O₂, written
+as a partial pressure at 100 kPa, so $`\Gamma^*`$ at 25 °C is 42.75 µmol mol⁻¹ at any elevation.
+$`K_c`$ and $`K_o`$, the Michaelis constants of dissolved CO₂ and O₂, are partial pressures and are
+divided by the local pressure; $`O/K_o`$ is then the ratio of the two partial pressures
+(`rubisco_kinetics` in `meds_leaf_gas_exchange`, `meds.plant.leaf.rubisco_kinetics` in Python).
+Dividing `gstar25` by the local pressure instead would raise $`\Gamma^*`$ by 11 % at 1000 m and by
+43 % at 3000 m, cutting gross photosynthesis in dim light, where photorespiration sets the quantum
+yield, by about 4 % and 14 % (25 °C, 400 µmol mol⁻¹, PAR 100).
+
+The O₂ factor makes `o2_mol_frac` reach **both** places oxygen enters the C3 demand — the Michaelis
+term $`K_c(1 + O/K_o)`$ and the compensation point — and is exactly 1 in any default run. It matters
+for palaeo-atmosphere work (Carboniferous/Permian O₂ is reconstructed near 30–35 %) and for the low-O₂
 sensitivity experiment that is the standard way to isolate photorespiration: measured on a
 midday tropical leaf, halving O₂ raises $`A_\mathrm{net}`$ by 22 % and 35 % O₂ cuts it by 24 %.
 
@@ -111,7 +121,8 @@ with it. Either way the loss is a systematic offset rather than a regime effect,
 $V_{cmax}$ would reproduce a measured assimilation rate**. The shipped $V_{cmax,25}$ presets sit
 mid-range for their PFT descriptions and are not tuned to offset a smoothing loss.
 
-Kernels: `assimilation_demand_c3`, `assimilation_demand_c4`, `electron_transport_j`, `combine_limits`.
+Kernels: `rubisco_kinetics`, `assimilation_demand_c3`, `assimilation_demand_c4`, `electron_transport_j`,
+`combine_limits`.
 
 ---
 
@@ -390,6 +401,7 @@ Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently.
 
 | Concept | Routine (`meds_leaf_gas_exchange`) |
 |---|---|
+| Rubisco kinetics $K_c$, $K_o$, $`\Gamma^*`$ in µmol mol⁻¹, eq. (3) | `rubisco_kinetics` |
 | C3 / C4 demand | `assimilation_demand_c3`, `assimilation_demand_c4` |
 | electron transport $J$ | `electron_transport_j` |
 | Leuning / Medlyn / Katul-$\lambda$ | `stomata_gs_leuning`, `stomata_gs_medlyn`, `katul_lambda` |
