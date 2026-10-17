@@ -108,12 +108,12 @@ program test_time
               'stamp carries the time of day')
    call check(time_to_string(meds_time_t(2000_ik,1_ik,1_ik)) == '2000-01-01 00:00:00', 'human string')
 
-   !=== ONE declination behind both solar consumers (#152). ================================!
-   !     solar_cosz and daylength each used to carry their own standard approximation -- Cooper  !
-   !     and White (1997) -- which differ by a 1.25-day phase offset. Both now read              !
-   !     solar_declination, and this asserts it by INVERTING each consumer back to a declination !
-   !     rather than by re-implementing the formula, so a future divergence is caught even if     !
-   !     someone changes the formula itself.                                                      !
+   !=== ONE declination behind both solar consumers. =======================================!
+   !     solar_cosz and daylength both read solar_declination, Cooper's form                  !
+   !     (docs/science/forcing.md eq. (4)); two standard approximations -- Cooper and White   !
+   !     (1997) -- differ by a 1.25-day phase offset. This asserts the shared use by          !
+   !     INVERTING each consumer back to a declination rather than by re-implementing the     !
+   !     formula, so a divergence is caught even if someone changes the formula itself.       !
    block
       real(wp)    :: decl, cz, dl, lat, decl_from_cosz, decl_from_dl, arg
       integer(ik) :: d, doy

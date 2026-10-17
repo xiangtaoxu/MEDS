@@ -15,10 +15,12 @@
 !     (2006, SSSA J. 70:1569) eq. 22.                                                      !
 !                                                                                          !
 ! The result is the van Genuchten-Mualem curve meds_water_retention evaluates. The science !
-! page (docs/science/soil_biophysics.md) has the equations and the tests behind the choice.!
+! page has the equations and the tests behind the choice: docs/science/soil_biophysics.md  !
+! §Hydraulic parameters from soil texture.                                                 !
 !                                                                                          !
 ! The layer's thermal properties come from the same texture, by CLM5's mineral-soil        !
-! formulas (soil_thermal_from_texture).                                                    !
+! formulas (soil_thermal_from_texture; docs/science/soil_biophysics.md §The column from   !
+! the soil maps).                                                                          !
 !==========================================================================================!
 module meds_pedotransfer
    use meds_kinds,           only : wp
@@ -62,10 +64,11 @@ module meds_pedotransfer
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! The van Genuchten curve and Ks of one soil layer. Hodnett & Tomasella fit every       !
-   ! parameter as a polynomial in percent, with sand, silt, clay and organic carbon in %,  !
-   ! CEC in cmol(c)/kg and bulk density in g/cm3. Alpha comes out per kPa and is turned    !
-   ! into per metre of water head, the unit of MEDS's soil potential.                      !
+   ! The van Genuchten curve and Ks of one soil layer (docs/science/soil_biophysics.md     !
+   ! eqs. (6)-(8)). Hodnett & Tomasella fit every parameter as a polynomial in percent,    !
+   ! with sand, silt, clay and organic carbon in %, CEC in cmol(c)/kg and bulk density in  !
+   ! g/cm3. Alpha comes out per kPa and is turned into per metre of water head, the unit   !
+   ! of MEDS's soil potential.                                                             !
    !---------------------------------------------------------------------------------------!
    elemental subroutine soil_hydraulics_from_texture(texture, theta_sat, theta_res, vg_alpha, vg_n, ksat)
       type(soil_texture_t), intent(in)  :: texture
@@ -113,12 +116,12 @@ contains
    end subroutine soil_hydraulics_from_texture
 
    !---------------------------------------------------------------------------------------!
-   ! The thermal properties of one soil layer, by CLM5's mineral-soil formulas: the solids' !
-   ! conductivity and heat capacity weight sand and clay (silt is left out, as in CLM5),   !
-   ! and the dry soil's conductivity follows the bulk density the porosity implies. The     !
-   ! heat capacity is per m3 of layer and holds the solids only: MEDS counts the water     !
-   ! and ice itself. theta_sat is the layer's porosity, as soil_hydraulics_from_texture     !
-   ! gives it.                                                                              !
+   ! The thermal properties of one soil layer, by CLM5's mineral-soil formulas             !
+   ! (docs/science/soil_biophysics.md eq. (9)): the solids' conductivity and heat capacity !
+   ! weight sand and clay (silt is left out, as in CLM5), and the dry soil's conductivity  !
+   ! follows the bulk density the porosity implies. The heat capacity is per m3 of layer   !
+   ! and holds the solids only: MEDS counts the water and ice itself. theta_sat is the     !
+   ! layer's porosity, as soil_hydraulics_from_texture gives it.                           !
    !---------------------------------------------------------------------------------------!
    elemental subroutine soil_thermal_from_texture(texture, theta_sat, k_solid, k_dry, dry_cvol)
       type(soil_texture_t), intent(in)  :: texture

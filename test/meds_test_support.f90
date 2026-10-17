@@ -2,24 +2,8 @@
 !==========================================================================================!
 ! meds_test_support -- the in-code test CONFIGURATION fixture, plus a re-export of the      !
 ! assertion helpers so a test needs one `use` rather than two. The assertions themselves live !
-! in meds_test_assert, which depends on nothing but a kind; see that module for why.           !
-!                                                                                          !
-! TWO assertion families, deliberately. They differ in FAILURE BEHAVIOUR, not just in         !
-! signature, and both are wanted (#191):                                                       !
-!                                                                                          !
-!   * FATAL, condition-first -- check(cond, msg) / check_close(got, expect, rtol, msg).        !
-!     Stops at the first failure. Right for a test whose later assertions are meaningless      !
-!     once an early one fails (a roundtrip that did not round-trip).                            !
-!   * ACCUMULATING, name-first -- check(name, got, expect, atol), check_true, check_close,      !
-!     check_int. Counts failures and keeps going, so one run reports EVERY failure. Right for    !
-!     a sweep of independent cases. The program ends with test_report(), which error-stops on    !
-!     a nonzero count.                                                                           !
-!                                                                                          !
-! `check` and `check_close` are GENERIC over the two families: the first dummy argument is       !
-! logical/real in the fatal form and character in the accumulating form, which is what makes      !
-! them distinguishable. Every pre-existing call site therefore keeps working unchanged -- this     !
-! consolidation moved 19 local copies into one implementation each, it did not renumber ~859       !
-! call sites.                                                                                       !
+! in meds_test_assert, which depends on nothing but a kind; see that module for why, and for  !
+! the two assertion families (fatal and accumulating).                                     !
 !==========================================================================================!
 module meds_test_support
    use meds_kinds,      only : wp, ik
@@ -34,7 +18,7 @@ module meds_test_support
    implicit none
    private
 
-   !----- Re-exported so the 24 tests that link the full support library need no import change. !
+   !----- Re-exported, so a test that links the full support library needs one `use`. -----!
    public :: check, check_close, check_true, check_int, banner
    public :: test_report, test_reset, test_failures
    public :: build_test_config
@@ -129,18 +113,18 @@ contains
          p%wai_b2                 = [ 2.0947_wp, 2.0947_wp, 2.0947_wp ]
          p%sapwood_area_b1        = [ 1.582_wp, 1.582_wp, 1.582_wp ]
          p%sapwood_area_b2        = [ 1.764_wp, 1.764_wp, 1.764_wp ]
-         !----- Canopy-element geometry (was hard-coded in the fast loop; same values). -------!
+         !----- Canopy-element geometry. --------------------------------------------------!
          p%leaf_width             = [ 0.04_wp, 0.04_wp, 0.04_wp ]
          p%branch_diameter        = [ 0.02_wp, 0.02_wp, 0.02_wp ]
          p%crown_area_frac        = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%huber_value            = [ 1.0e-4_wp, 1.5e-4_wp, 2.0e-4_wp ]
          p%aboveground_frac       = [ 0.7_wp, 0.7_wp, 0.7_wp ]
-         !----- Non-leaf maintenance respiration (was hard-coded in the fast driver). ---------!
+         !----- Non-leaf maintenance respiration. -----------------------------------------!
          p%is_woody               = [ .true., .true., .true. ]
          p%stem_resp_factor25     = [ 0.06_wp, 0.06_wp, 0.06_wp ]
          p%root_resp_factor25     = [ 0.30_wp, 0.30_wp, 0.30_wp ]
-         !----- Canopy optics (was hard-coded in the fast driver; same values). ---------------!
+         !----- Canopy optics. ------------------------------------------------------------!
          p%leaf_reflect_vis  = [ 0.10_wp, 0.10_wp, 0.10_wp ]
          p%leaf_transmit_vis = [ 0.05_wp, 0.05_wp, 0.05_wp ]
          p%leaf_reflect_nir  = [ 0.45_wp, 0.45_wp, 0.45_wp ]
@@ -157,7 +141,7 @@ contains
          p%leaf_angle_std    = [ 20.0_wp, 20.0_wp, 20.0_wp ]
          p%storage_cushion        = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%growth_resp_factor     = [ 0.3_wp, 0.3_wp, 0.3_wp ]
-         p%leaf_lifespan_toc      = [ 1.0_wp, 2.0_wp, 1.0_wp/0.33_wp ]   ! = 1/old leaf_turnover_rate
+         p%leaf_lifespan_toc      = [ 1.0_wp, 2.0_wp, 1.0_wp/0.33_wp ]   ! [yr] = 1 / leaf turnover rate
          p%fineroot_turnover_rate = [ 1.0_wp, 0.8_wp, 0.6_wp ]
          p%wood_carbon_density    = [ 200.0_wp, 300.0_wp, 425.0_wp ]
          p%f_labile_leaf          = [ 0.80_wp, 0.70_wp, 0.60_wp ]

@@ -18,7 +18,7 @@
 ! The third test binds the canopy-air open-volume terms to the store they are supposed to        !
 ! explain: resize the control volume, and the three declared terms must equal the three store    !
 ! changes EXACTLY. That is the one declaration in the skeleton that does real arithmetic rather   !
-! than passing a quantity through, and the run it was written against closes it to 1e-17.         !
+! than passing a quantity through, and a production run closes it to 1e-17.                      !
 !==========================================================================================!
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
@@ -140,10 +140,10 @@ program test_slow_ledger
    hand   = slow_fast_carbon_handover(site, cfg)
    call check_close(hand, expect, 1.0e-14_wp, 'handover = area * sum(nplant * (gpp - maintenance resp))')
 
-   !=== 5. A CULL hands its water to the ground channel and reports its heat. =================!
-   !       Before this, cohort_compact simply dropped both (review item 1B #7). The assertion is  !
-   !       the TRANSFER, not the disappearance: what leaves the cohort must arrive in the patch's !
-   !       shed channel, and the reported heat must be the capacity the cohort actually had.      !
+   !=== 5. A CULL hands its water to the ground channel, and the store sees its heat go. =======!
+   !       The assertion is the TRANSFER, not the disappearance: what leaves the cohort must     !
+   !       arrive in the patch's shed channel, and the tissue heat store must fall by what the   !
+   !       cohort carried.                                                                       !
    call check_cull()
 
    !=== 6. A recruit is born at its PATCH's temperature, not at the global constant. ===========!
@@ -161,10 +161,9 @@ program test_slow_ledger
    call check_tissue_thermal_mass()
 
    !=== 9. Mortality's water LEAVES the tissue and ARRIVES in the shed channel, exactly. ======!
-   !       This identity broke twice while it was being written -- once by not routing the water  !
-   !       at all, once by scaling the loss with the SURVIVORS' density instead of the density     !
-   !       DROP -- and in both cases every other assertion in this file still passed. It is the    !
-   !       one property that pins the basis.                                                        !
+   !       It guards two errors every other assertion in this file passes through: not routing the !
+   !       water at all, and scaling the loss with the SURVIVORS' density instead of the density   !
+   !       DROP. It is the one property that pins the basis.                                        !
    call check_mortality_water()
    call check_litter_patch_lockstep()
    call check_litter_without_soil_carbon()
@@ -177,8 +176,8 @@ program test_slow_ledger
 contains
 
    !----- The recruit pool is credited EVERY step, and what it holds is the reproduction carbon   !
-   !       the parents were debited for. Two assertions, because the fix has two halves: the      !
-   !       CADENCE (it used to be credited only on month boundaries, from that one day's rate     !
+   !       the parents were debited for. Two assertions, one per half of the contract: the       !
+   !       CADENCE (credited every step, not sampled on month boundaries from one day's rate      !
    !       scaled up to stand for the month) and the CARBON LINK (the credit must follow          !
    !       recruit_carbon_efficiency, which is what makes pool x carbon_min the debited carbon). ---!
    !       A third: under recruit_shade_decay the credit falls as exp(-k * LAI) of the patch.      !
@@ -189,7 +188,7 @@ contains
       call check(p1 > 0.0_wp, 'recruit pool: credited on an ordinary step, not only at month end')
       !----- Six steps credit about twice what three do. NOT exactly twice: the stand grows       !
       !      between steps, so later steps produce a little more reproduction carbon. The point   !
-      !      is that every step contributes -- under the old monthly sampling p1 and p2 were both !
+      !      is that every step contributes -- a monthly sampling would leave p1 and p2 both      !
       !      identically zero, since neither run crosses a month boundary.  --------------------!
       call check(abs(p2 - 2.0_wp * p1) <= 0.01_wp * p2,                                            &
                  'recruit pool: six steps credit ~twice what three do (it integrates, not samples)')
@@ -241,21 +240,19 @@ contains
    !---------------------------------------------------------------------------------------!
    ! THE LITTER ACCUMULATOR MUST RIDE THE PATCH ARRAY.                                           !
    !                                                                                          !
-   ! `lit` used to be a LOCAL array in vegetation_dynamics, sized to the patch count on entry --  !
-   ! and apply_patch_disturbance CREATES a patch partway through that same routine. The consumer  !
-   ! (advance_biogeochem_dynamics) then looped to the NEW patch count and read past the end,       !
-   ! feeding undefined memory into the CENTURY litter input. A 50-year spin-up reached 1.8e9        !
-   ! kgC/m2 on a gap patch born that step.                                                          !
+   ! restructure_stand (apply_patch_disturbance) CREATES patches after vegetation_dynamics has   !
+   ! filled the step's litter, and the consumer (advance_biogeochem_dynamics) loops to the NEW   !
+   ! patch count. An accumulator sized to the patch count when it was filled is read past its    !
+   ! end, feeding undefined memory into the CENTURY litter input (1.8e9 kgC/m2 on a gap patch    !
+   ! born that step, over a 50-year spin-up).                                                    !
    !                                                                                          !
-   ! Nothing caught it. The whole suite was green; the slow ledger closed on every phase and         !
-   ! currency, because the ledger DECLARED the same out-of-bounds read as a boundary term and so     !
-   ! balanced perfectly against the garbage. Only `-check bounds` saw it, and only a config with     !
-   ! soil carbon on ever reached the code.                                                            !
+   ! The slow ledger cannot catch that: it DECLARES the same out-of-bounds read as a boundary    !
+   ! term and so balances perfectly against the garbage. Only `-check bounds` sees it.           !
    !                                                                                          !
-   ! So the assertion is the INVARIANT that was violated -- the accumulator is at least as long as   !
-   ! the patch array, after the operators that change the patch count have run -- plus the quieter   !
-   ! half: a FUSION must carry the litter across area-weighted rather than dropping or duplicating   !
-   ! it (the old local array silently misattributed one patch's litter to another).                   !
+   ! So the assertion is the INVARIANT -- the accumulator is patch state, at least as long as    !
+   ! the patch array after the operators that change the patch count have run -- plus the        !
+   ! quieter half: a FUSION must carry the litter across area-weighted rather than dropping or   !
+   ! duplicating it (a local array misattributes one patch's litter to another).                 !
    !---------------------------------------------------------------------------------------!
    subroutine check_litter_patch_lockstep()
       type(meds_config_t) :: c
@@ -300,8 +297,8 @@ contains
    end subroutine check_litter_patch_lockstep
 
    !----- With the soil-carbon pools off, the litter is still recorded and still declared leaving at !
-   !      the growth phase (#316): the same litter, and the same growth-phase residual, as with them    !
-   !      on. Before, it was neither recorded nor declared, and the phase read it as a carbon leak. ---!
+   !      the growth phase: the same litter, and the same growth-phase residual, as with them on.     !
+   !      Undeclared, the phase would read it as a carbon leak. -----------------------------------!
    subroutine check_litter_without_soil_carbon()
       real(wp) :: lit_on, lit_off, res_on, res_off
       call grow_one_step(.true.,  lit_on,  res_on)
@@ -432,8 +429,7 @@ contains
       real(wp) :: lab0, lab1, wood0, wood1, n0, dd, dty
       !----- Each variant runs on a FRESH stand. vegetation_dynamics COMMITS growth, so calling it !
       !      twice on one site compares two different forests and the second comparison passes for !
-      !      the wrong reason -- which is exactly what happened before this was rebuilt, and the    !
-      !      mutation that should have failed it did not.  ---------------------------------------!
+      !      the wrong reason (a mutation that should fail it does not).  -------------------------!
       call run_variant(0.3_wp, 1.0_wp, co2_on,  dummy)
       call run_variant(0.0_wp, 1.0_wp, co2_off, dummy)
       call check(co2_on > 0.0_wp, 'routing: growth respiration reaches patch%slow_co2_rate')
@@ -470,7 +466,7 @@ contains
       call check_close(dd, 0.2_wp * dty, 1.0e-9_wp, 'sink limit: a binding absolute limit grows dbh by rate x dt')
    end subroutine check_routing
 
-   !----- One slow step on a FRESH stand, returning the two quantities this PR routes. ------------!
+   !----- One slow step on a FRESH stand, returning the two routed quantities (CO2 rate, litter). --!
    subroutine run_variant(g_resp, repro_eff, co2_rate, litter_total, starve, max_rgr,              &
                           lab_soil, wood, nplant0, immortal, max_agr, ddbh, dt_yr)
       real(wp), intent(in)  :: g_resp, repro_eff
@@ -497,7 +493,7 @@ contains
       !      is reached. The allocator's priority order is leaf/root growth, then storage, then    !
       !      reproduction, then wood -- with the default ~1 yr lifespan this cohort's daily leaf   !
       !      replacement is 14x the photosynthate below and `avail` reaches zero before any seed   !
-      !      is made, which is how the first version of this test passed while asserting nothing.  !
+      !      is made, so the seed-loss assertion would pass while asserting nothing.               !
       c%pft%leaf_lifespan_toc(:) = 100.0_wp
       if (present(max_rgr)) c%pft%max_relative_growth_rate(:) = max_rgr
       if (present(max_agr)) c%pft%max_absolute_growth_rate(:) = max_agr
@@ -532,7 +528,7 @@ contains
       if (present(lab_soil)) lab_soil = st%patch%litter_in(1)%labile_soil
       if (present(wood))     wood     = st%cohort%wood_carbon(1)
       co2_rate     = st%patch%slow_co2_rate(1)
-      !----- The litter accumulator is patch state now, so it is read off the site rather than
+      !----- The litter accumulator is patch state, so it is read off the site rather than
       !      returned: st%patch%litter_in(1), in lockstep with patch 1.
       litter_total = st%patch%litter_in(1)%labile_grnd + st%patch%litter_in(1)%labile_soil          &
                    + st%patch%litter_in(1)%struct_grnd + st%patch%litter_in(1)%struct_soil
@@ -557,7 +553,7 @@ contains
       call check_close(w_shed, expect_w, 1.0e-12_wp, 'cull: reports the tissue + film water it carried')
       call check_close(site%patch%shed_water_rate(1) - shed_before, w_before / cfg%dt_slow,       &
                        1.0e-12_wp, 'cull: the water reaches the patch shed channel, not the void')
-      !----- The cull's tissue HEAT is no longer reported by the operator: it is one part of the  !
+      !----- The cull's tissue HEAT is not reported by the operator: it is one part of the        !
       !      phase's thermal-mass change, which the driver brackets with slow_tissue_heat. Assert !
       !      that the store SEES the loss, which is what makes that bracket able to declare it.   !
       heat_after = slow_tissue_heat(site)
@@ -571,7 +567,7 @@ contains
       call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, birth_temp=268.0_wp)
       call check_close(site%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
       call check_close(site%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
-      !----- and the default is still the constant, for a setup call with no environment yet. ----!
+      !----- and the default is the constant, for a setup call with no environment yet. ----------!
       call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp)
       call check(site%cohort%leaf_temp(m) > 280.0_wp, 'birth: absent a patch temperature, the constant stands')
    end subroutine check_birth_temp

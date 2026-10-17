@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_met_file_source -- the MEDS forcing FILE source (format = "ED_default",                 !
-! MEDS_FORCING_DESIGN.md section 4): a multi-grid netCDF file whose records the run needs are  !
+! docs/science/forcing.md §1): a multi-grid netCDF file whose records the run needs are        !
 ! read into memory at open, so no step reads the file. It opens the file (file_source_open)   !
 ! and hands the shared ingest one record's values as stored (file_source_record).             !
 !==========================================================================================!
@@ -55,7 +55,7 @@ contains
 
       st = nc_inq_dimlen_f(ncid, 'grid', dlen) ; call nc_check(st, 'met_open: grid dim')
       src%ngrid = int(dlen, ik)
-      !----- bind this polygon to a grid slice: explicit index, or nearest [site] lat/lon (§4.1). !
+      !----- bind this polygon to a grid slice: explicit index, or nearest [site] lat/lon. ------!
       if (src%fcfg%grid_match == GRIDMATCH_NEAREST) then
          call resolve_grid_index(src)                        ! sets src%grid_index in 1..ngrid
       else                                                   ! GRIDMATCH_EXPLICIT
@@ -81,7 +81,7 @@ contains
       !----- cache the whole time axis (seconds since base_time). ----------------------------!
       call read_time_axis(src)
 
-      !----- The wind VECTOR (§7.1, §15.4): a file carrying u10 and v10 supplies it, and the speed  !
+      !----- The wind VECTOR: a file carrying u10 and v10 supplies it, and the speed               !
       !      is then derived from the components; a file with Wind alone gives the speed only.     !
       block
          integer(c_int) :: vu, vv
@@ -95,24 +95,24 @@ contains
          why = 'met_open: the forcing file''s humidity is ambiguous or absent (see the message above)' ; return
       end if
 
-      !----- V4 (#185): the file's own record spacing against [forcing].dt_forcing, and the two   !
-      !      global attributes the prep script writes against the config that claims to describe    !
-      !      the same file. A file that disagreed with its config would otherwise be silently       !
+      !----- The file's own record spacing against [forcing].dt_forcing, and the global          !
+      !      attributes the prep script writes against the config that claims to describe the      !
+      !      same file. A file that disagreed with its config would otherwise be silently           !
       !      mis-timed or mis-partitioned. ------------------------------------------------------------!
       call validate_file_against_config(src, ncid, stat)
       if (stat /= MET_OK) then
          why = 'met_open: the forcing file contradicts [forcing] (see the message above)' ; return
       end if
 
-      !----- V2/V3: check the DECLARED recycle window against this file's actual record stamps.  !
-      !      Cannot live in the config sanity check (V1, whole-year span) -- it needs the time      !
-      !      axis, which is only known here. -------------------------------------------------------!
+      !----- Check the DECLARED recycle window against this file's actual record stamps. It      !
+      !      cannot live in the config check of the whole-year span -- it needs the time axis,     !
+      !      which is only known here. --------------------------------------------------------------!
       call validate_recycle_window(src, stat)
       if (stat /= MET_OK) then
          why = 'met_open: forcing file does not match the declared [forcing] recycle window' ; return
       end if
 
-      !----- The records the run can read, into memory, so no step reads the file (R1): the recycle !
+      !----- The records the run can read, into memory, so no step reads the file: the recycle     !
       !      window, or the run period (the whole file when neither is known, as in unit tests). Only  !
       !      those: a file written in 1 x 1 chunks makes a whole-file read cost HDF5 metadata for      !
       !      every chunk. ----------------------------------------------------------------------------!
@@ -166,7 +166,7 @@ contains
          rec%wind   = series_value(src, FLD_WIND,  irec)
       end if
       rec%rainf    = series_value(src, FLD_RAINF, irec)              ! total rainfall rate [kg/m2/s]
-      !----- LWdown is OPTIONAL when we are synthesizing it (#182): a source without longwave is    !
+      !----- LWdown is OPTIONAL when we are synthesizing it: a source without longwave is          !
       !      exactly the case lwdown_source = "synthesize" exists for, so demanding the variable      !
       !      would defeat the feature. Read it when present either way -- it costs nothing and keeps  !
       !      the record complete for diagnostics.  ---------------------------------------------------!
@@ -187,7 +187,7 @@ contains
    end subroutine file_source_record
 
    !----- Resolve src%grid_index by nearest great-circle distance from [site] lat/lon to the file's !
-   !      latitude(grid)/longitude(grid) coordinate vectors (multi-polygon P2 subset, §4.1).        !
+   !      latitude(grid)/longitude(grid) coordinate vectors.                                        !
    subroutine resolve_grid_index(src)
       type(met_source_t), intent(inout)  :: src
       integer(c_int)    :: st, vlat, vlon
@@ -223,9 +223,10 @@ contains
       call nc_check(st, 'read_time_axis: time values')
    end subroutine read_time_axis
 
-   !----- The humidity form of a MEDS forcing file: exactly one of its three variables (D2). A file  !
-   !      with none cannot drive the canopy air; a file with two leaves the reader to pick one, and   !
-   !      the two may disagree through the provider's own saturation curve. ------------------------!
+   !----- The humidity form of a MEDS forcing file: exactly one of its three variables            !
+   !      (docs/science/forcing.md §1). A file with none cannot drive the canopy air; a file with   !
+   !      two leaves the reader to pick one, and the two may disagree through the provider's own    !
+   !      saturation curve. -----------------------------------------------------------------------!
    subroutine detect_humidity(src, ncid, stat)
       type(met_source_t), intent(inout) :: src
       integer(c_int),     intent(in)    :: ncid

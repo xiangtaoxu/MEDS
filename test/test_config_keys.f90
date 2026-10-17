@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_config_keys -- a config may hold only the keys its reference lists (N-10).            !
+! test_config_keys -- a config may hold only the keys its reference lists.                  !
 !                                                                                          !
 ! The check (meds_config_keys) reports a retired key with what replaced it, and any other     !
 ! unknown key with the listed key it most likely meant: a misspelling, or a key that moved     !

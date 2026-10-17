@@ -4,13 +4,14 @@
 ! `meds_main` program can drive it. `meds_main` is a thin shell over it, and the C-API shim        !
 ! `meds_c_api_run` is a second caller, which lets Python drive the full coupled model              !
 ! (`meds.model`). The site is one polygon (meds_polygon); a region of polygons is meds_region.     !
+! The sequence of a run is docs/science/order_of_processes.md §1.                                  !
 !                                                                                          !
 !   type(meds_run_t) :: run                                                                      !
 !   call driver_open('meds_config_main.toml', run, ok)                                            !
 !   do while (.not. driver_done(run)) ; call driver_step(run, status) ; end do                     !
 !   call driver_finalize(run) ; call driver_free(run)                                              !
 !                                                                                          !
-! A NaN state or an impossible soil-carbon pool is a STATUS RETURN, not an `error stop`. This       !
+! A NaN state or a state out of its bounds is a STATUS RETURN, not an `error stop`. This            !
 ! module is compiled into a shared library that a Python interpreter dlopens, and `error stop`     !
 ! there takes the interpreter down with it -- no traceback, no chance to inspect the state that    !
 ! went bad. `meds_main` turns the status into an `error stop`.                                     !
@@ -184,7 +185,7 @@ contains
          if (run%verbose) write(*,'(a)') ' init  : bare ground (mode 0)'
       end if
 
-      !----- 2a. Census restart with plasticity ON: census cohorts sit in an established stand but !
+      !----- 2a. Census start with plasticity ON: census cohorts sit in an established stand but   !
       !          carry NO trait history, so acclimate their leaf traits to the current light        !
       !          environment INSTANTANEOUSLY (after the competition sweep). Bare ground legitimately !
       !          starts at top-of-canopy; a state restart already read the plastic traits from file, !
@@ -289,7 +290,8 @@ contains
       is_new_month = is_new_year .or. (run%now%month /= run%prev%month)
 
       !----- I/O before the compute phase: the step's forcing is loaded here, so nothing below reads  !
-      !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
+      !      a file (docs/science/order_of_processes.md §1). A no-op unless a new archive month       !
+      !      starts.                                                                                  !
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_src, run%prev)
 
       call polygon_step(run%met_src, run%out_files, run%out_bufs(1), run%poly, run%prev,      &
@@ -302,7 +304,7 @@ contains
             call print_summary(run%poly%site, datestr(1:10))
          end if
       end if
-      !----- A failed step (NaN, impossible soil carbon) still writes the output up to it. ---------!
+      !----- A failed step (NaN, a state out of bounds) still writes the output up to it. ----------!
       if (status /= DRIVER_OK) then
          if (run%cfg%output%enabled) call output_serialize(run%out_files, run%out_bufs)
          return
@@ -313,9 +315,9 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! driver_io_phase -- the file work of a closed month, done outside the compute phase so a step !
-   ! makes no netCDF call (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1): write the queued output records, !
-   ! then the yearly checkpoint. The next month's forcing is loaded by met_prefetch before the     !
-   ! next step.                                                                                     !
+   ! makes no netCDF call (docs/science/order_of_processes.md §6): write the queued output        !
+   ! records, then the yearly checkpoint. The next month's forcing is loaded by met_prefetch      !
+   ! before the next step.                                                                        !
    !---------------------------------------------------------------------------------------!
    subroutine driver_io_phase(run, is_new_year)
       type(meds_run_t), intent(inout) :: run

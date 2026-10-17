@@ -11,6 +11,7 @@
 !   4. ROOTS          : ED2's root profile and rooting depth; Gardner's root conductance.        !
 !   5. SEAM           : growth at conserved water lowers psi; the capacity clamp on a shrink.    !
 !   6. LEAFLESS       : a leafless cohort's leaf node sits at the wood less the crown head.      !
+! The laws are docs/science/plant_hydraulics.md §2-§4 (eqs. (3)-(15)).                     !
 !==========================================================================================!
 program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
@@ -41,8 +42,6 @@ program test_plant_hydraulics
    call test_report('test_plant_hydraulics')
 
 contains
-
-   !----- Assertion. -----------------------------------------------------------------------!
 
    !----- A pioneer-like default trait set + cohort environment. ---------------------------!
    subroutine defaults(p, o)
@@ -221,14 +220,14 @@ contains
    end subroutine test_root_profile
 
    !=======================================================================================!
-   ! Biomass fast/slow SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is conserved across a     !
-   ! slow-loop biomass update, so a day of wood growth at FIXED water mass reads as a drier wood,  !
-   ! which then draws more water from the soil (the network's uptake follows its potential). ----!
+   ! Biomass fast/slow SEAM: mass, not psi, is conserved across a slow-loop biomass update, so a !
+   ! day of wood growth at FIXED water mass reads as a drier wood, which then draws more water   !
+   ! from the soil (the network's uptake follows its potential). --------------------------------!
    !=======================================================================================!
    subroutine test_growth_seam()
       type(hydro_params_t) :: p ; type(hydro_opts_t) :: o
       real(wp) :: bwood0, bwood1, psi_wood0, psi_wood1, w0
-      print '(a)', '-- Biomass fast/slow seam (P3): mass-conserving growth --'
+      print '(a)', '-- Biomass fast/slow seam: mass-conserving growth --'
       call defaults(p, o)
       bwood0    = 7.0_wp
       psi_wood0 = psi_from_rwc(0.90_wp, p%wood_curve%pi0, p%wood_curve%elastic_mod)
@@ -276,7 +275,7 @@ contains
    end subroutine test_cohort_roots
 
    !=======================================================================================!
-   ! Saturation-CEILING clamp (P3, the guard mass-conservation needs): a persisted mass can only   !
+   ! Saturation-CEILING clamp (the guard mass conservation needs): a persisted mass can only       !
    ! exceed the current capacity after biomass SHRINKS (e.g. the phenology dormant-canopy leaf       !
    ! snap-to-bare), never after it grows. clamp_water_to_capacity must be an exact no-op on growth,   !
    ! must cap exactly at the new ceiling on a shrink, and must reduce a fully-bare tissue to exactly  !
@@ -286,7 +285,7 @@ contains
       real(wp), parameter :: pi0 = -1.0_wp, eps = 8.0_wp, af = 0.20_wp, ws = 1.0_wp
       type(water_curve_t), parameter :: curve = water_curve_t(pi0, eps, af, ws)
       real(wp) :: biomass0, biomass_shrunk, biomass_grown, w0, ceiling_shrunk, w_capped
-      print '(a)', '-- Biomass fast/slow seam (P3): saturation-ceiling clamp --'
+      print '(a)', '-- Biomass fast/slow seam: saturation-ceiling clamp --'
       biomass0 = 7.0_wp
       w0 = water_content(psi_from_rwc(0.97_wp, pi0, eps), curve, biomass0)   ! near-saturated
 

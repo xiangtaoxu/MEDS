@@ -66,9 +66,9 @@ interval_years  = 50
 override_derived = false
 
 [leaf_physiology]
-# Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
-# (not yet coupled to demographic growth). MODEL-CHOICE keys are run-level; the per-PFT
-# biochemical traits (Vcmax25, g1, pathway, ...) live in the PFT config file.
+# Leaf-level photosynthesis + stomatal conductance, unused here: the fast loop is off and growth is a
+# census law. MODEL-CHOICE keys are run-level; the per-PFT biochemical traits (Vcmax25, g1, pathway,
+# ...) live in the PFT config file.
 stomatal_model     = "medlyn"      # "leuning" | "medlyn" | "katul"
 temp_response_form = "peaked"      # "arrhenius" | "peaked" (high-temperature deactivation)
 colimitation       = "quadratic"   # "min" | "quadratic" (smoothed co-limitation)
@@ -91,10 +91,11 @@ ds_jmax   = 640.0
 ds_rd     = 490.0
 o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
-phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
+phi_psii         = 0.85    # [--] electron yield of linear transport in low light (J's initial slope
+                           #   is 0.5*phi_psii electrons per absorbed photon)
 
-#----- Demographics only: no soil biogeochemistry. The in-type default is ON as of v0.2.0, so this
-#      has to be said rather than left out. ------
+#----- Demographics only: no soil biogeochemistry. The default is on, so this has to be said rather
+#      than left out. ------
 [soil_carbon]
 soil_carbon_on = false
 

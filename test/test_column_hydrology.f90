@@ -1,8 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_column_hydrology -- the soil column's water: the retention curves, canopy interception,   !
-! the soil's boundary processes, and the column itself, solved as the soil-plant water network  !
-! with no cohorts (its soil-only configuration, MEDS_SPAC_WATER_NETWORK_PLAN.md §11).           !
+! test_column_hydrology -- the soil column's water: the retention curves, canopy           !
+! interception, the soil's boundary processes, and the column itself, solved as the        !
+! soil-plant water network with no cohorts (docs/science/soil_plant_water.md §1; the       !
+! processes are docs/science/soil_biophysics.md §The soil water column, §Boundary          !
+! conditions and §Canopy interception).                                                    !
 !                                                                                          !
 !   1. CONSTITUTIVE  : van Genuchten and Campbell round trips and moisture capacity.           !
 !   2. INTERCEPTION  : the canopy film's capture, capacity and drip.                            !
@@ -119,7 +121,7 @@ contains
       call check_true('drip when full', dr > 0.0_wp, dr)
       call check_true('capacity respected', lw <= 0.25_wp + 1.0e-12_wp, lw)
       call check_true('sigma_w saturates to 1', abs(sw - 1.0_wp) < 1.0e-9_wp, sw)
-      !----- #333: a film already ABOVE capacity (leaf area lost under a full film) drips the excess:  !
+      !----- A film already ABOVE capacity (leaf area lost under a full film) drips the excess:       !
       !      storage capped, and throughfall + storage change = rain -- nothing discarded. ---------!
       lw = 0.30_wp                                       ! capacity is 0.25: 0.05 too much
       call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.1_wp, 0.5_wp, 1.0_wp,&
@@ -234,7 +236,7 @@ contains
    !----- Rain (or sub-threshold snow routed to the ground) below the triple point joins the pond:  !
    !      what the pond received in enthalpy is what it gave the soil, kept, and lost as runoff,    !
    !      and the water that infiltrated carried its own enthalpy -- an effective temperature below  !
-   !      the melt plateau, not u_liq at the plateau, which once created energy all winter. -------!
+   !      the melt plateau, not u_liq at the plateau, which would create energy all winter. -------!
    subroutine test_pond_subfreezing_inflow()
       type(soil_params_t)   :: params
       type(soil_opts_t)     :: opts

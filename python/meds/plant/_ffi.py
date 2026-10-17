@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Internal ctypes bridge to libmeds.so. NOT part of the public API.
 
-This is the only module that touches ctypes; everything user-facing lives in `meds.plant`
-(dataclasses + enums). The struct field order below MUST match the bind(c) mirror types in
+This module holds the leaf gas exchange's ctypes code; everything user-facing lives in
+`meds.plant.leaf` (dataclasses + enums), and `meds.plant.pheno` binds its own phenology entries on
+the same library. The struct field order below MUST match the bind(c) mirror types in
 src/c_api/meds_c_api_leaf.f90 exactly.
 
 Locating and loading the library is `meds._libmeds`'s job, not this module's -- there is ONE
-libmeds.so behind every sub-package now (structure-plan decision #1), so there is one search.
+libmeds.so behind every sub-package, so there is one search.
 """
 import ctypes
 from ctypes import c_double, c_int, byref, POINTER

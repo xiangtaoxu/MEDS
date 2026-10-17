@@ -1,11 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_forcing_kernels -- the PURE/ELEMENTAL meteorological-forcing math (design MEDS_FORCING_ !
-! DESIGN.md section 5): per-variable temporal interpolation, the interval-mean-conserving        !
-! solar-zenith shortwave disaggregation, the total->4-stream shortwave partition, humidity        !
-! from dewpoint / RH, and the rainfall phase split. Depends ONLY on meds_shared (meds_kinds,          !
-! meds_constants, meds_therm_lib, meds_time) -- REUSES meds_therm_lib%sat_vapor_pressure (no re-invented   !
-! esat) and meds_time%solar_cosz (no re-invented solar geometry). GPU-safe (leaf math over scalars). !
+! meds_forcing_kernels -- the PURE/ELEMENTAL meteorological-forcing math (docs/science/forcing.md !
+! §3-§7 and §11): per-variable temporal interpolation, the interval-mean-conserving solar-zenith   !
+! shortwave disaggregation, the total->4-stream shortwave partition, humidity from dewpoint / RH,  !
+! the rainfall phase split, the longwave synthesis and the grid match. Depends only on meds_shared !
+! (meds_kinds, meds_constants, meds_therm_lib, meds_time) and the forcing config's enumerations    !
+! (meds_forcing_config): the saturation curve is meds_therm_lib%sat_vapor_pressure and the solar   !
+! geometry meds_time%solar_cosz, the model's own. GPU-safe (leaf math over scalars).               !
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
@@ -36,19 +37,19 @@ module meds_forcing_kernels
    !----- Weiss & Norman (1985) band-specific SW partition constants (after ED2's ---------------!
    !      short_bdown_weissnorman, radiate_utils.f90). Empirical/physical -> module parameters.  !
    !      The sun's beam above the atmosphere is 600 W/m2 visible and 720 W/m2 near-infrared, and   !
-   !      1320 W/m2 scales the water-vapour absorption, as WN85 publish them (eqs. 1, 4, 6). Run on  !
-   !      measured shortwave at Hyytiala, Harvard Forest and BCI, the scheme then gives PPFD within  !
-   !      4% of the towers' quantum sensors (docs/science/forcing.md section 6; #369).             !
-   real(wp), parameter :: WN_VIS_TOA = 600.0_wp    !< [W/m2] visible beam above the atmosphere (WN85 eq.1)
-   real(wp), parameter :: WN_NIR_TOA = 720.0_wp    !< [W/m2] near-infrared beam above the atmosphere (WN85 eq.4)
-   real(wp), parameter :: WN_W10_TOA = 1320.0_wp   !< [W/m2] scale of the NIR water-vapour absorption (WN85 eq.6)
-   real(wp), parameter :: WN_PAR_BEAM_EXPEXT = -0.185_wp   !< visible-beam atmospheric extinction (WN85 eq.1)
-   real(wp), parameter :: WN_NIR_BEAM_EXPEXT = -0.060_wp   !< NIR-beam atmospheric extinction (WN85 eq.4)
-   real(wp), parameter :: WN_PAR2DIFF_SUN    = 0.400_wp    !< visible beam->diffuse potential fraction (WN85 eq.3)
-   real(wp), parameter :: WN_NIR2DIFF_SUN    = 0.600_wp    !< NIR beam->diffuse potential fraction (WN85 eq.5)
-   real(wp), parameter :: WN_W10_A = -1.1950_wp, WN_W10_B = 0.4459_wp, WN_W10_C = -0.0345_wp  !< NIR water absorption (WN85 eq.6)
-   real(wp), parameter :: WN_PAR_ACT_A = 0.90_wp, WN_PAR_ACT_B = 0.70_wp   !< visible actual-beam fraction (WN85 eq.11)
-   real(wp), parameter :: WN_NIR_ACT_A = 0.88_wp, WN_NIR_ACT_B = 0.68_wp   !< NIR actual-beam fraction (WN85 eq.12)
+   !      1320 W/m2 scales the water-vapour absorption, as WN85 publish them (WN85 eqs. 1, 4, 6).  !
+   !      Run on measured shortwave at Hyytiala, Harvard Forest and BCI, the scheme then gives PPFD  !
+   !      within 4% of the towers' quantum sensors (docs/science/forcing.md §6).                  !
+   real(wp), parameter :: WN_VIS_TOA = 600.0_wp    !< [W/m2] visible beam above the atmosphere (WN85 eq. 1)
+   real(wp), parameter :: WN_NIR_TOA = 720.0_wp    !< [W/m2] near-infrared beam above the atmosphere (WN85 eq. 4)
+   real(wp), parameter :: WN_W10_TOA = 1320.0_wp   !< [W/m2] scale of the NIR water-vapour absorption (WN85 eq. 6)
+   real(wp), parameter :: WN_PAR_BEAM_EXPEXT = -0.185_wp   !< visible-beam atmospheric extinction (WN85 eq. 1)
+   real(wp), parameter :: WN_NIR_BEAM_EXPEXT = -0.060_wp   !< NIR-beam atmospheric extinction (WN85 eq. 4)
+   real(wp), parameter :: WN_PAR2DIFF_SUN    = 0.400_wp    !< visible beam->diffuse potential fraction (WN85 eq. 3)
+   real(wp), parameter :: WN_NIR2DIFF_SUN    = 0.600_wp    !< NIR beam->diffuse potential fraction (WN85 eq. 5)
+   real(wp), parameter :: WN_W10_A = -1.1950_wp, WN_W10_B = 0.4459_wp, WN_W10_C = -0.0345_wp  !< NIR water absorption (WN85 eq. 6)
+   real(wp), parameter :: WN_PAR_ACT_A = 0.90_wp, WN_PAR_ACT_B = 0.70_wp   !< visible actual-beam fraction (WN85 eq. 11)
+   real(wp), parameter :: WN_NIR_ACT_A = 0.88_wp, WN_NIR_ACT_B = 0.68_wp   !< NIR actual-beam fraction (WN85 eq. 12)
    real(wp), parameter :: WN_FVIS_DIFF = 0.52_wp, WN_FNIR_DIFF = 0.48_wp   !< dawn all-diffuse visible/NIR fractions
    real(wp), parameter :: WN_TWOTHIRDS = 2.0_wp / 3.0_wp
    real(wp), parameter :: WN_COSZ_MIN  = 0.017452406437_wp  !< cos(89 deg): below this the sun is grazing -> all diffuse
@@ -56,7 +57,8 @@ module meds_forcing_kernels
 contains
 
    !=======================================================================================!
-   !  TEMPORAL INTERPOLATION between the two bracketing records (weight w_next in [0,1]).      !
+   !  TEMPORAL INTERPOLATION between the two bracketing records (weight w_next in [0,1];       !
+   !  docs/science/forcing.md §3).                                                             !
    !=======================================================================================!
    elemental function interpolate_forcing(policy, prev, next, w_next) result(val)
       integer(ik), intent(in) :: policy        !< INTERP_LINEAR | INTERP_STEP
@@ -70,7 +72,9 @@ contains
       end select
    end function interpolate_forcing
 
-   !----- Wind interpolates as SQUARED quantities (kinetic-energy-conserving, ED2 vels). ----!
+   !----- Wind interpolates as SQUARED quantities (kinetic-energy-conserving, ED2 vels;     !
+   !      docs/science/forcing.md eq. (1)). No floor here: the aerodynamics floors the speed   !
+   !      at aerodynamics.ubmin where it uses it. --------------------------------------------!
    elemental function interpolate_wind_energy(prev, next, w_next) result(u)
       real(wp), intent(in) :: prev, next, w_next
       real(wp) :: u
@@ -78,9 +82,9 @@ contains
    end function interpolate_wind_energy
 
    !=======================================================================================!
-   !  SOLAR TIME + ZENITH. Every forcing clock is UTC (MEDS_FLUX_TOWER_FORCING_PLAN.md D1), so     !
-   !  local apparent solar seconds are the UTC seconds plus the longitude and the equation of      !
-   !  time (design §5.1):                                                                         !
+   !  SOLAR TIME + ZENITH. Every forcing clock is UTC (docs/science/forcing.md §1), so local       !
+   !  apparent solar seconds are the UTC seconds plus the longitude and the equation of time      !
+   !  (docs/science/forcing.md eqs. (2)-(4)):                                                     !
    !     t_solar = t_utc + longitude*240 s/deg + eot(doy)                                          !
    !=======================================================================================!
    pure function equation_of_time(t) result(eot_sec)
@@ -109,7 +113,7 @@ contains
    end function met_solar_cosz
 
    !=======================================================================================!
-   !  SHORTWAVE DISAGGREGATION (design §5.1, the load-bearing method). Reconstruct an           !
+   !  SHORTWAVE DISAGGREGATION (docs/science/forcing.md eqs. (5)-(6)). Reconstruct an           !
    !  instantaneous flux F(now) = F_avg*cosz(now)/<cosz>_win from an interval-mean F_avg so its   !
    !  time-average over the SAME window returns F_avg. The factor is 1/<cosz>_win -- the           !
    !  RECIPROCAL OF THE MEAN COSINE (night sub-samples clamped to 0), NOT <sec z> (which is         !
@@ -151,12 +155,13 @@ contains
    end function disaggregate_sw
 
    !=======================================================================================!
-   !  SHORTWAVE PARTITION: total SWdown -> the four (beam/diffuse) x (PAR/NIR) streams (§5.6).   !
-   !  ERA5-Land ships only total SW, so this is P0-required. SWPART_CLEARIDX (default): the         !
-   !  diffuse fraction from the Erbs (1982) clearness-index correlation (kt = SW/(S0*cosz)); PAR    !
-   !  vs NIR by fixed energy fractions (diffuse is PAR-enriched). SWPART_WEISS_NORMAN: the           !
-   !  band-specific, pressure-dependent Weiss & Norman (1985) split (ED2 short_bdown_weissnorman).   !
-   !  BOTH conserve total energy exactly (the four streams sum to sw).                                !
+   !  SHORTWAVE PARTITION: total SWdown -> the four (beam/diffuse) x (PAR/NIR) streams           !
+   !  (docs/science/forcing.md §6). ERA5-Land ships only total SW, so every run on it needs     !
+   !  this. SWPART_CLEARIDX (default): the diffuse fraction from the Erbs (1982) clearness-index  !
+   !  correlation (kt = SW/(S0*cosz), eq. (7)); PAR vs NIR by fixed energy fractions (diffuse is  !
+   !  PAR-enriched). SWPART_WEISS_NORMAN: the band-specific, pressure-dependent Weiss & Norman    !
+   !  (1985) split (ED2 short_bdown_weissnorman; eqs. (8)-(10)). BOTH conserve total energy      !
+   !  exactly (the four streams sum to sw).                                                       !
    !=======================================================================================!
    pure subroutine partition_shortwave(swdown_total, cosz, psurf_pa, scheme,                   &
                                        par_beam, par_diffuse, nir_beam, nir_diffuse)
@@ -193,6 +198,7 @@ contains
    !  clear sky; the ratio of observed-to-potential total sets the actual beam fraction per band    !
    !  (cloudier -> more diffuse). Conserves energy EXACTLY: par_full + nir_full = ratio*(pot) = sw, !
    !  and beam + diffuse = full within each band. Grazing sun (cosz <= WN_COSZ_MIN) -> all diffuse.  !
+   !  docs/science/forcing.md eqs. (8)-(10).                                                          !
    !=======================================================================================!
    pure subroutine weiss_norman_partition(sw, cosz, psurf_pa, par_beam, par_diffuse, nir_beam, nir_diffuse)
       real(wp), intent(in)  :: sw, cosz, psurf_pa
@@ -212,30 +218,32 @@ contains
       log10secz = log10(secz)
       prat      = psurf_pa / p_std
 
-      !----- potential (clear-sky) visible beam + diffuse (WN85 eq.1, eq.3, eq.9). The diffuse   !
-      !      term keeps ED2's form, which scales the beam it subtracts by cosz once more than    !
-      !      other implementations of eq.3 do (#369). ----------------------------------------!
+      !----- potential (clear-sky) visible beam + diffuse (WN85 eqs. 1, 3, 9;                  !
+      !      docs/science/forcing.md eq. (8)). The diffuse term keeps ED2's form, which scales  !
+      !      the beam it subtracts by cosz once more than other implementations of WN85 eq. 3   !
+      !      do (docs/science/forcing.md §6). ---------------------------------------------------!
       par_beam_pot = WN_VIS_TOA * exp(WN_PAR_BEAM_EXPEXT * prat * secz) * cosz
       par_diff_pot = WN_PAR2DIFF_SUN * (WN_VIS_TOA - par_beam_pot) * cosz
       par_full_pot = par_beam_pot + par_diff_pot
 
-      !----- potential NIR: water-vapour absorption w10, then beam + diffuse (WN85 eq.6,4,5,10). !
+      !----- potential NIR: water-vapour absorption w10, then beam + diffuse (WN85 eqs. 6, 4, 5, !
+      !      10; docs/science/forcing.md eq. (9)). --------------------------------------------!
       w10          = WN_W10_TOA * 10.0_wp ** (WN_W10_A + log10secz * (WN_W10_B + WN_W10_C * log10secz))
       nir_beam_pot = (WN_NIR_TOA * exp(WN_NIR_BEAM_EXPEXT * prat * secz) - w10) * cosz
       nir_diff_pot = WN_NIR2DIFF_SUN * (WN_NIR_TOA - nir_beam_pot - w10) * cosz
       nir_full_pot = nir_beam_pot + nir_diff_pot
 
-      !----- scale the potential to the OBSERVED total; beam fraction shrinks under cloud (eq.7/8). !
-      !      NOTE (ED2-faithful edge): in a narrow band just above the grazing cutoff (cosz ~           !
-      !      0.0175-0.029) the NIR water absorption w10 exceeds the attenuated NIR beam, so            !
-      !      nir_full_pot < 0 and the scaled nir_diffuse can go slightly NEGATIVE (with PAR > sw)       !
-      !      while the four streams still sum to sw EXACTLY. ED2's short_bdown_weissnorman does the     !
-      !      same; the window is extreme twilight where SW is tiny, and WN is opt-in (Erbs is default). !
+      !----- scale the potential to the OBSERVED total; beam fraction shrinks under cloud (WN85 eqs. !
+      !      7-8). ED2-faithful edge (docs/science/forcing.md §6): just above the grazing cutoff       !
+      !      (cosz ~ 0.0175-0.029) w10 exceeds the attenuated NIR beam, so nir_full_pot < 0 and the     !
+      !      scaled nir_diffuse can go slightly NEGATIVE (with PAR > sw) while the four streams still   !
+      !      sum to sw EXACTLY; ED2 does the same, and SW is tiny there. -------------------------------!
       ratio    = sw / max(par_full_pot + nir_full_pot, tiny_num)
       par_full = ratio * par_full_pot
       nir_full = ratio * nir_full_pot
 
-      !----- actual beam fractions per band (WN85 eq.11/12; clipped to [0,1]). ----------------!
+      !----- actual beam fractions per band, clipped to [0,1] (WN85 eqs. 11-12;               !
+      !      docs/science/forcing.md eq. (10)). ---------------------------------------------!
       aux_par   = min(WN_PAR_ACT_A, max(0.0_wp, ratio))
       aux_nir   = min(WN_NIR_ACT_A, max(0.0_wp, ratio))
       fvis_beam = min(1.0_wp, max(0.0_wp,                                                       &
@@ -250,12 +258,12 @@ contains
    end subroutine weiss_norman_partition
 
    !=======================================================================================!
-   !  LONGWAVE SYNTHESIS (#182), for a forcing source that carries no downwelling longwave.    !
+   !  LONGWAVE SYNTHESIS, for a forcing source that carries no downwelling longwave.           !
    !                                                                                          !
    !      LWdown = eps_clear * sigma * Tair^4 * (1 + a*(1 - kt))                                !
    !                                                                                          !
    !  with eps_clear a clear-sky emissivity and the bracket a cloud correction driven by the    !
-   !  SW clearness index kt (design MEDS_FORCING_DESIGN.md sec 5.7).                            !
+   !  SW clearness index kt (docs/science/forcing.md eq. (17)).                                 !
    !=======================================================================================!
 
    !----- Clearness index kt = SW / (S0 cosz), clamped to [0,1]. Exposed because the longwave  !
@@ -325,8 +333,9 @@ contains
    end function erbs_diffuse_fraction
 
    !=======================================================================================!
-   !  HUMIDITY. Both forms reuse meds_therm_lib%sat_vapor_pressure (Bolton 1980) -- IDENTICAL to     !
-   !  the formatter script, so file-built Qair reconciles with any reader-side humidity math.     !
+   !  HUMIDITY (docs/science/forcing.md eq. (11)). Both forms use meds_therm_lib%sat_vapor_pressure !
+   !  over liquid water (Bolton 1980), the curve of the rest of MEDS and of the flux-tower         !
+   !  formatter, so the reader adds no saturation curve of its own.                               !
    !=======================================================================================!
    !----- Specific humidity from dewpoint: actual e = e_sat AT the dewpoint. -----------------!
    elemental function dewpoint_to_specific_humidity(td_k, p_pa) result(q)
@@ -345,8 +354,9 @@ contains
    end function rh_to_specific_humidity
 
    !=======================================================================================!
-   !  PRECIP PHASE (ED2 Jin 1999 style, simplified): a linear rain/snow ramp across a band      !
-   !  centered on the triple point. Mass-conserving (rainf + snowfall = total).                     !
+   !  PRECIP PHASE (ED2 Jin 1999 style, simplified; docs/science/forcing.md eq. (12)): a linear  !
+   !  rain/snow ramp across a band centered on the triple point. Mass-conserving                  !
+   !  (rainf + snowfall = total).                                                                 !
    !=======================================================================================!
    elemental subroutine precip_phase(precip_total, tair_k, rainf, snowfall)
       real(wp), intent(in)  :: precip_total, tair_k
@@ -358,10 +368,10 @@ contains
    end subroutine precip_phase
 
    !=======================================================================================!
-   !  GRID MATCH (multi-polygon P2 subset): great-circle distance + nearest-cell argmin.        !
+   !  GRID MATCH: great-circle distance + nearest-cell argmin (docs/science/forcing.md §1).      !
    !  great_circle_distance ports ED2 dist_gc (great_circle.f90); nearest_grid_index ports the    !
    !  match_poly_grid argmin loop; strict '<' keeps the lowest index on ties. The ED_ERA5land site  !
-   !  selection also compares the distance against [forcing].max_distance_km (§15.5), so the radius  !
+   !  selection also compares the distance against [forcing].max_distance_km, so the radius         !
    !  sets that limit; the mean Earth radius keeps it within 0.5% of the true distance.              !
    !=======================================================================================!
    pure function great_circle_distance(lon1_deg, lat1_deg, lon2_deg, lat2_deg) result(dist_m)

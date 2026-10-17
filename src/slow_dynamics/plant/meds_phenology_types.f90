@@ -2,10 +2,10 @@
 !==========================================================================================!
 ! meds_phenology_types -- the derived types of the PHENOLOGY kernel.                            !
 !                                                                                          !
-! Split out of meds_plant_types when the plant library split by timescale: phenology runs on !
-! the DAILY tier, everything else that module held (leaf gas exchange, hydraulics, non-leaf   !
-! maintenance respiration) runs sub-daily. Keeping one types module would have made the slow   !
-! plant kernels depend on the fast ones and back again -- a genuine cycle, not a style point.  !
+! Kept apart from the fast plant types (meds_plant_types) because phenology runs on the DAILY   !
+! tier, while leaf gas exchange, hydraulics and non-leaf maintenance respiration run sub-daily. !
+! One shared types module would make the slow plant kernels depend on the fast ones and back    !
+! again -- a genuine cycle, not a style point.                                                  !
 !                                                                                          !
 ! Pure DATA: no methods, no hidden state.                                                    !
 !==========================================================================================!
@@ -58,10 +58,11 @@ module meds_phenology_types
    end type pheno_state_t
 
    !----- Flat per-PFT trait set (filled by the driver from cfg%pft). ----------------------!
-   !      Every switch is sigma(s (x - x*)): a centre x* and a signed sharpness s [1/units of x];
-   !      its 0.12-0.88 transition spans x* +- 2/|s|. The defaults below are the ones a PFT     !
-   !      without a [phenology] section keeps (both masks CUE_NONE: always flushing, no       !
-   !      senescence), so only the rates and the timescales act.                              !
+   !      Every switch is sigma(s (x - x*)): a centre x* and a signed sharpness s               !
+   !      [1/units of x] (docs/science/plant_phenology.md eq. (2)); its 0.12-0.88 transition    !
+   !      spans x* +- 2/|s|. The defaults below are the ones a PFT without a [phenology]        !
+   !      section keeps (both masks CUE_NONE: always flushing, no senescence), so only the      !
+   !      rates and the timescales act.                                                         !
    type :: pheno_params_t
       integer(ik) :: flush_cue_mask      = CUE_NONE         !< cues of the flush side
       integer(ik) :: shed_cue_mask       = CUE_NONE         !< cues of the shed side

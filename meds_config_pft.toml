@@ -1,6 +1,7 @@
 # MEDS PFT configuration -- all PFT-specific parameters, plus the allometry and mortality-hazard
-# (Camac) coefficients (shared for now; PFT-specific later). Named by [init].pft_config in the
-# main config. EVERY key is REQUIRED; a missing key is a hard error.
+# (Camac) coefficients (one set for all PFTs). Named by [init].pft_config in the main config. A key
+# that is set is REQUIRED, and a missing one is a hard error; a commented-out key is OPTIONAL and
+# shows its default.
 #
 # The number of PFTs is the length of [pft].wood_density; every per-PFT array must match it.
 
@@ -19,16 +20,16 @@ include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
 min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)
 # reproduction_height_fraction = 0.33        # [--] OPTIONAL (default 0.33): reproduce from this share of the
 #                                           #      local maximum height, the height of a 100 cm tree
-# Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4). pathway: 1 = C3, 2 = C4.
-# (Used by the leaf gas-exchange model; not yet coupled to demographic growth.)
-photosynthetic_pathway = [1, 1, 2]                  # pioneer C3, climax C3, a C4 grass
+# Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4; docs/science/leaf_gas_exchange.md).
+# pathway: 1 = C3, 2 = C4.
+photosynthetic_pathway = [1, 1, 2]                  # PFTs 1 and 2 C3, PFT 3 C4
 vcmax25            = [60.0, 45.0, 40.0]             # [umol/m2/s] max carboxylation at 25 degC
 jmax_vcmax_ratio   = [1.8, 1.7, 4.0]                # [--] Jmax25/Vcmax25 (C4 ratio high; J unused for C4)
 tpu_vcmax_ratio    = [0.167, 0.167, 0.167]          # [--] TPU25/Vcmax25 (C3 product limit)
 rd_vcmax_ratio     = [0.015, 0.015, 0.025]          # [--] Rd25/Vcmax25 (leaf respiration)
 kp25               = [1.0e-9, 1.0e-9, 0.7]          # [mol/m2/s] C4 PEPcase slope (>0; ~unused for C3)
 stomatal_g0        = [0.01, 0.01, 0.04]             # [mol/m2/s] cuticular/residual conductance
-stomatal_g1        = [4.0, 3.0, 1.6]                # Medlyn [kPa^0.5] (Leuning would use ~8-12)
+stomatal_g1        = [4.0, 3.0, 1.6]                # Medlyn [kPa^0.5], eq. (6) (Leuning, eq. (5), would use ~8-12)
 stomatal_d0        = [1500.0, 1500.0, 1500.0]       # [Pa] Leuning humidity sensitivity
 quantum_yield_c4   = [0.0, 0.0, 0.04]               # [mol CO2/mol photon] C4 light slope (0 for C3)
 theta_j            = [0.70, 0.70, 0.85]             # [--] curvature of the J hyperbola ONLY (C3 co-limitation is theta_*_c3;
@@ -36,43 +37,47 @@ theta_j            = [0.70, 0.70, 0.85]             # [--] curvature of the J hy
                                                     #   gets the cohort's mean light, and averaging a leaf's curve over the
                                                     #   light its leaves really see bends it more than one leaf's (a leaf's
                                                     #   own value moves with its light and CO2: 0.6-0.95, Ogren & Evans
-                                                    #   1993). Revisit with sunlit/shaded leaves (#343)
-theta_cj_c3        = [0.98, 0.98, 0.98]            # [--] C3 Ac/Aj co-limitation curvature (#118; NOT theta_j)
-theta_ip_c3        = [0.95, 0.95, 0.95]            # [--] C3 (Ac,Aj)/Ap co-limitation curvature (#118)
+                                                    #   1993). Sunlit and shaded leaves would change it (see docs/ROADMAP.md)
+theta_cj_c3        = [0.98, 0.98, 0.98]            # [--] C3 Ac/Aj co-limitation curvature (NOT theta_j: leaf_gas_exchange.md §2)
+theta_ip_c3        = [0.95, 0.95, 0.95]            # [--] C3 (Ac,Aj)/Ap co-limitation curvature
 theta_cj_c4        = [0.80, 0.80, 0.80]             # [--] C4 co-limitation curvature 1 (C4 only)
 theta_ic_c4        = [0.95, 0.95, 0.95]             # [--] C4 co-limitation curvature 2 (C4 only)
 katul_lambda25     = [600.0, 800.0, 350.0]          # [umol CO2/mol H2O] Katul marginal water-use efficiency
 wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-stress exponent
-wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity (beta_stomata=exp(sref*(psi-psi_onset)))
-# wstress_psi_open  = [-1.714, -1.714, -1.714]      # [MPa] OPTIONAL current leaf potential where the fast limb on Vcmax/Jmax/TPU starts (default: the turgor-loss point)
-# wstress_psi_close = [-3.43, -3.43, -3.43]         # [MPa] OPTIONAL ... and where it has shut them (default: twice the turgor-loss point)
+wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity:
+                                                    #   beta_stomata = exp(sref*(psi-psi_onset)), eq. (10)
+# wstress_psi_open  = [-1.714, -1.714, -1.714]      # [MPa] OPTIONAL current leaf potential where the fast limb on
+                                                    #   Vcmax/Jmax/TPU starts (default: the turgor-loss point), eq. (9)
+# wstress_psi_close = [-3.43, -3.43, -3.43]         # [MPa] OPTIONAL ... and where it has shut them (default: twice
+                                                    #   the turgor-loss point)
 # stomata_psi_onset = [-0.857, -0.857, -0.857]      # [MPa] OPTIONAL predawn leaf potential where the stomatal stress begins
                                                     #   (beta_stomata = 1 above it). Absent: half the PFT's leaf turgor-loss
                                                     #   point, the recommended value (-0.857 at the [hydraulics] leaf_pi0 and
-                                                    #   leaf_elastic_mod). It clears the gravity head of a tree up to ~85 m in wet soil.
+                                                    #   leaf_elastic_mod). It clears the gravity head of a tree up to ~85 m in
+                                                    #   wet soil.
 # leaf_surf_water_max = [0.1, 0.1, 0.1]             # [kg/m2 leaf] OPTIONAL film capacity of a leaf (intercepted rain and dew)
 # wood_surf_water_max = [0.1, 0.1, 0.1]             # [kg/m2 wood] OPTIONAL film capacity of the woody surface. Absent: 0.1 each,
                                                     #   CLM5's dewmx. Used with [fast].canopy_water_on; a cohort holds
                                                     #   leaf_surf_water_max*LAI + wood_surf_water_max*WAI before it drips.
-# Carbon-dynamics traits (meds_plant_carbon_dynamics). All state is CARBON; conversions folded in here.
-# Consumed once the carbon-allocation engine is wired; size2leaf_carbon/size2wood_carbon use sla/aboveground_frac.
+# Carbon traits (docs/science/plant_carbon_allocation.md). All state is CARBON; conversions are folded in
+# here. size2leaf_carbon/size2wood_carbon (meds_allometry) use sla/aboveground_frac.
 sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf area (pioneer high -> climax low)
 
 #----- WOOD AREA INDEX allometry: wai = nplant * wai_b1 * dbh**wai_b2  (ED2 b1WAI/b2WAI, broadleaf).
-#      Replaces the old wai = 0.20*lai placeholder, which tied wood AREA to LEAF area. WAI feeds the
-#      wood boundary layer, the wood longwave emission area, the wood sensible-heat coefficient and
-#      -- through cap/area -- the wood thermal timescale, so the placeholder mis-scaled all four.
+#      Wood AREA follows stem size, not leaf area. WAI feeds the wood boundary layer, the wood
+#      longwave emission area, the wood sensible-heat coefficient and -- through cap/area -- the
+#      wood thermal timescale.
 wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
 wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
 
 #----- SAPWOOD-AREA allometry: sapwood_area = sapwood_area_b1 * dbh**sapwood_area_b2 [cm2], and the
-#      sapwood FRACTION of basal area (capped at 1) sets bsap. Replaces bsap = 0.10*wood_carbon.
-#      Also used as the proxy for thermally-active wood -- see meds_allometry%sapwood_fraction.
+#      sapwood FRACTION of basal area (capped at 1) sets bsap. Also used as the proxy for
+#      thermally-active wood -- see meds_allometry%sapwood_fraction.
 sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
 sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
 
-#----- Canopy-element geometry for the aerodynamic boundary layers. These were hard-coded
-#      constants in the fast loop (0.04 m, 0.02 m, 1.0); the values below reproduce them.
+#----- Canopy-element geometry for the aerodynamic boundary layers
+#      (docs/science/canopy_aerodynamics.md §4).
 leaf_width         = [0.04, 0.04, 0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02, 0.02, 0.02]     # [m]  characteristic branch diameter
 crown_area_frac    = [1.0, 1.0, 1.0]      # [--] crown area as a fraction of the patch
@@ -80,15 +85,16 @@ root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
 aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
 
-#----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above). These were
-#      three run-uniform literals in the fast driver, so every PFT respired stem and root alike.
+#----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above):
+#      docs/science/plant_respiration.md eqs. (3)-(4).
 is_woody           = [1, 1, 1]     # 1 = woody (0 = grass: no stem respiration)
 stem_resp_factor25 = [0.06, 0.06, 0.06]  # [umol CO2/m2 stem/s @25C] per stem surface (cylinder + branches)
 # stem_resp_sapwood25 = [0.0, 0.0, 0.0]  # [umol CO2/m3 sapwood/s @25C] per sapwood volume, added to the
 #                                         # surface term; optional, default 0 (set the surface rate to 0 to use it alone)
 root_resp_factor25 = [0.30, 0.30, 0.30]  # [umol CO2/kgC fine root/s @25C]
 
-#----- CANOPY OPTICS (the two-stream's per-PFT table). Shortwave as reflectance + transmittance
+#----- CANOPY OPTICS (the two-stream's per-PFT table; docs/science/canopy_radiation_transfer.md
+#      §1-§2). Shortwave as reflectance + transmittance
 #      per band; LONGWAVE as EMISSIVITY, because that is the number anyone has for a leaf -- the
 #      band's reflectance is 1 - emissivity and its transmittance is 0 (a leaf is opaque at
 #      thermal wavelengths). Validated at load: reflect + transmit is the single-scatter albedo
@@ -110,7 +116,8 @@ leaf_angle_std     = [20.0, 20.0, 20.0]   # [deg] its standard deviation
 storage_cushion        = [3.0, 3.0, 3.0]            # [--] storage target as a multiple of the leaf +
                                                     #      fine-root target (three full flushes); also the
                                                     #      starting storage of an inventory cohort
-growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
+growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost: the fraction of the carbon built
+                                                    #      that is respired (plant_carbon_allocation.md eq. (5))
 # retained_carbon_fraction = [0.3, 0.3, 0.3]       # [--] OPTIONAL (default 0.3): share of all leaf and fine-root
 #                                                  #      loss resorbed to storage rather than littered
 # OPTIONAL carbon traits; absent, each is 0 for every PFT.
@@ -122,12 +129,13 @@ growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fr
 leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
-# Necromass -> litter-destination split (meds_column_state_types%necromass_to_litter). aboveground_frac
+# Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter). aboveground_frac
 # (above) doubles as the litter above/below-ground split for leaf/storage and wood streams.
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05, 0.05, 0.05]         # [--] labile fraction of wood/CWD necromass
 struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of the structural-litter stream
-# OPTIONAL per-PFT plant hydraulics. Each overrides the [hydraulics] value of the main file for the
+# OPTIONAL per-PFT plant hydraulics (docs/science/plant_hydraulics.md, "Parameters"). Each overrides
+# the [hydraulics] value of the main file for the
 # PFTs it lists, so one trait can be made per-PFT without restating the others; absent, every PFT
 # takes the [hydraulics] value (shown here).
 # leaf_pi0           = [-1.5, -1.5, -1.5]          # [MPa] leaf osmotic potential at full turgor
@@ -188,7 +196,8 @@ height_allometry = "power"  # "power" (b1Ht, b2Ht above), "gmm" or "chave2014" (
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
 # mortality-hazard parameters instead of deriving them from wood density, and the light-plasticity
 # slopes instead of deriving them from vcmax25 and leaf_lifespan_toc (a cohort's trait is its PFT's
-# top-of-canopy value times exp(k * LAI above it), k in 1/(m2/m2)). Each key is optional:
+# top-of-canopy value times exp(k * LAI above it), k in 1/(m2/m2); docs/science/plant_traits.md
+# eqs. (1), (3)-(4)). Each key is optional:
 # [derived]
 # mort_gamma = [...]   # length = number of PFTs
 # mort_alpha = [...]
@@ -217,7 +226,8 @@ height_allometry = "power"  # "power" (b1Ht, b2Ht above), "gmm" or "chave2014" (
 # Every switch is sigma(s (x - x*)): a centre x* and a signed sharpness s; it rises from 0.12 to
 # 0.88 over x* +- 2/|s|, and s < 0 turns it on as x falls. The flush signal is the PRODUCT of the
 # flush cues' switches; the shed signal is the larger of the seasonal trigger (the product of the
-# TEMP and LIGHT switches) and the WATER switch. A mask of 0 always flushes / never senesces.
+# TEMP and LIGHT switches) and the WATER switch (plant_phenology.md eqs. (2), (6)-(7)). A mask of 0
+# always flushes / never senesces.
 #
 # Example below: PFT 1 a temperate deciduous tree (TEMP and LIGHT on both sides), PFTs 2 and 3
 # always flushing and never senescing.

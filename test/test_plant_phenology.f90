@@ -3,7 +3,8 @@
 ! test_plant_phenology -- unit tests for the phenology kernel, leaf_turnover_step and gate. !
 !                                                                                          !
 ! The kernel turns daily cues into two smoothed tendencies (leaf_flush_tendency,            !
-! leaf_shed_tendency) and the potential rates rate_max * tendency. The tests:                !
+! leaf_shed_tendency) and the potential rates rate_max * tendency                            !
+! (docs/science/plant_phenology.md eqs. (1)-(9)). The tests:                               !
 !                                                                                          !
 !   1. NO CUES             : both masks empty => flush potential = flush_rate_max, shed 0.    !
 !   2. TEMPERATE DECIDUOUS : warmth x light flush, cold x short-day shed (the hours of light   !

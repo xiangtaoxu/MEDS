@@ -8,15 +8,17 @@
 ! layer and for the Python mirror alike.                                                    !
 !                                                                                          !
 ! One daily update (docs/science/plant_phenology.md):                                        !
-!   (1) ACCUMULATE the cue memory: warmth above flush_base_temp from midwinter, cold below    !
-!       shed_base_temp from midsummer, predawn leaf psi above and below the turgor-loss point, !
-!       and the running-mean hours of light (PAR at the cohort's top above par_min).           !
-!   (2) SWITCH each cue through sigma(s (x - x*)), one centre and one signed sharpness each.   !
-!   (3) COMBINE: flush = the product of its cues' switches (every cue must permit flushing);   !
-!       shed = the larger of the seasonal trigger (temperature x light) and the water        !
-!       trigger.                                                                               !
-!   (4) SMOOTH each signal into its tendency over a timescale; the potential relative rates    !
-!       are rate_max * tendency.                                                               !
+!   (1) ACCUMULATE the cue memory: warmth above flush_base_temp from midwinter, cold below        !
+!       shed_base_temp from midsummer, predawn leaf psi above and below the turgor-loss point,    !
+!       and the running-mean hours of light (PAR at the cohort's top above par_min).              !
+!       Eqs. (3)-(5).                                                                             !
+!   (2) SWITCH each cue through sigma(s (x - x*)), one centre and one signed sharpness each       !
+!       (eq. (2)).                                                                                !
+!   (3) COMBINE: flush = the product of its cues' switches (every cue must permit flushing);      !
+!       shed = the larger of the seasonal trigger (temperature x light) and the water             !
+!       trigger; eqs. (6)-(7).                                                                    !
+!   (4) SMOOTH each signal into its tendency over a timescale (eq. (8)); the potential relative   !
+!       rates are rate_max * tendency (eq. (1)).                                                  !
 ! Pure, scalar, arithmetic only: device- and SIMD-friendly, and reentrant.                     !
 !==========================================================================================!
 module meds_phenology
@@ -170,6 +172,7 @@ contains
    !                                                                                         !
    !  A dormant canopy (flush ~ 0) that senescence would leave below bare_leaf_cover snaps to  !
    !  bare, when its floor lies below that threshold (a deciduous PFT).                        !
+   !  docs/science/plant_phenology.md eq. (9) and §5.                                          !
    !=======================================================================================!
    pure subroutine leaf_turnover_step(leaf, leaf_full, leaf_flush_tendency, leaf_shed_tendency,   &
                                       flush_rate_max, shed_rate_max, leaf_turnover_rate,          &

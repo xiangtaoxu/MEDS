@@ -95,8 +95,8 @@ def test_defaults_come_from_the_base_then_the_record():
 
 
 def test_a_setting_comes_from_the_base_then_the_record_and_flags_read_text():
-    """The record holds a logical as text: "false" must read as false (it once switched off the
-    Kattge & Knorr values, as if the model's own acclimation were on)."""
+    """The record holds a logical as text: "false" must read as false (read as true, it would switch
+    off the Kattge & Knorr values, as if the model's own acclimation were on)."""
     cal = Calibration.__new__(Calibration)
     cal.base = RunConfig({"leaf_physiology": {}}, {"pft": {"vcmax25": [40.0, 50.0]}})
     cal.record = {("main", "leaf_physiology.thermal_acclimation", 0): (False, "false"),

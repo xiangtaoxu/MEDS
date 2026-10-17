@@ -10,8 +10,8 @@
 !                                                                                          !
 ! Both fits are dry mass or its equivalent, and MEDS keeps carbon: Chave's 0.0673 kg dry mass     !
 ! becomes 0.0673/C2B kgC, and ED2's size2bl uses c14f15_bl_xx(1)/(SLA*C2B). Taken without the      !
-! division, AGB is dry mass labelled as carbon and leaf area is twice ED2's; the shipped values    !
-! carried exactly that until the fix.                                                              !
+! division, AGB is dry mass labelled as carbon and leaf area is twice ED2's; this test guards     !
+! against both.                                                                                   !
 !==========================================================================================!
 program test_allometry_defaults
    use meds_kinds,        only : wp

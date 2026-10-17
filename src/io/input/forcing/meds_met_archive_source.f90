@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_archive_source -- the ED_ERA5land ARCHIVE source (MEDS_FORCING_DESIGN.md section    !
-! 15): monthly files of hourly ERA5-Land fields over a grid of cells, laid end to end as one    !
+! meds_met_archive_source -- the ED_ERA5land ARCHIVE source (docs/science/forcing.md §1-§2):   !
+! monthly files of hourly ERA5-Land fields over a grid of cells, laid end to end as one         !
 ! hourly axis over the months a run needs. It opens the archive (archive_source_open), loads   !
 ! a month before the step that reads it (archive_prefetch), and hands the shared ingest one    !
 ! record's values as stored (archive_source_record). File I/O is meds_era5land_reader's.      !
@@ -32,7 +32,7 @@ module meds_met_archive_source
 contains
 
    !=======================================================================================!
-   !  OPEN the ED_ERA5land archive (§15): its cells and month axis (open_archive), the        !
+   !  OPEN the ED_ERA5land archive: its cells and month axis (open_archive), the              !
    !  declared recycle window checked against that axis, and the axis's first month loaded,  !
    !  with the window's first day kept for the recycle seam. A rejection returns its status   !
    !  and the reason; the caller closes the source.                                           !
@@ -55,13 +55,13 @@ contains
    end subroutine archive_source_open
 
    !=======================================================================================!
-   !  PREFETCH (R1) from the archive: load what the step starting at `step_start` reads. A    !
-   !  daily step from midnight reads one archive                                             !
-   !  month plus the record before it: 00:00 on the 1st, which lives in the previous month's    !
-   !  file, or the window's last record at the recycle wrap. Moving into the next month, that   !
-   !  record comes from the outgoing buffer, so a run loads each month once. A step the recycle  !
-   !  seam falls inside also reads the window's first day, which met_open keeps. validate_config !
-   !  restricts format = "era5land" to daily steps from midnight, the shape this assumes.       !
+   !  PREFETCH from the archive: load what the step starting at `step_start` reads. A daily    !
+   !  step from midnight reads one archive month plus the record before it: 00:00 on the 1st,  !
+   !  which lives in the previous month's file, or the window's last record at the recycle     !
+   !  wrap. Moving into the next month, that record comes from the outgoing buffer, so a run   !
+   !  loads each month once. A step the recycle seam falls inside also reads the window's first !
+   !  day, which met_open keeps. validate_config restricts format = "ED_ERA5land" to daily      !
+   !  steps from midnight, the shape this assumes.                                              !
    !=======================================================================================!
    subroutine archive_prefetch(src, step_start)
       type(met_source_t), intent(inout)  :: src
@@ -94,7 +94,7 @@ contains
       if (.not. month_loaded(src, k)) call load_axis_month(src, k)
    end subroutine archive_prefetch
 
-   !----- One record's values at the cursor's cell, as the archive stores them (§15.4): the     !
+   !----- One record's values at the cursor's cell, as the archive stores them: the            !
    !      dewpoint, whose humidity comes from the model's own saturation curve in the shared    !
    !      ingest, the wind components, whose speed is the vector's at each stamp, and the total   !
    !      shortwave. The archive never carries the four shortwave streams (archive_source_open    !
@@ -119,10 +119,10 @@ contains
    end subroutine archive_source_record
 
    !=======================================================================================!
-   !  ED_ERA5land OPEN (§15): resolve the paths, bind the site to its cell (whose orography       !
-   !  replaces a hand-copied grid_elevation), and lay the months the run needs end to end as one  !
-   !  hourly axis. Every month file is checked for existence here, so a gap in the archive stops  !
-   !  the run before it starts rather than decades into it.                                       !
+   !  ED_ERA5land OPEN: resolve the paths, take a region's cells or bind the site to its cell     !
+   !  (whose orography is the grid elevation the terrain lapse starts from), and lay the months   !
+   !  the run needs end to end as one hourly axis. Every month file is checked for existence      !
+   !  here, so a gap in the archive stops the run before it starts rather than decades into it.   !
    !=======================================================================================!
    subroutine open_archive(src, run_start, run_end, stat, cells)
       type(met_source_t),          intent(inout)  :: src
@@ -147,7 +147,7 @@ contains
          stat = MET_ERR_ATTR_MISMATCH ; return
       end if
 
-      !----- The cells: a region's, selected by its caller, or the site's own (§15.5). ------------!
+      !----- The cells: a region's, selected by its caller, or the site's own. -------------------!
       est = ERA_OK
       if (present(cells)) then
          src%cells = cells
@@ -184,7 +184,7 @@ contains
          call archive_month_of(time_advance_seconds(f%recycle_end, -src%dt_forcing), .false., y1, m1)
       else
          if (.not. (present(run_start) .and. present(run_end)))                                     &
-            error stop 'met_open: format = "era5land" without recycling needs the run period'
+            error stop 'met_open: format = "ED_ERA5land" without recycling needs the run period'
          call archive_month_of(run_start, .false., y0, m0)
          call archive_month_of(run_end,   .true.,  y1, m1)
       end if
@@ -225,7 +225,7 @@ contains
          stat = MET_ERR_ARCHIVE ; return
       end if
 
-      !----- The first month file describes the archive; check it against the config (#185). ---!
+      !----- The first month file describes the archive; check it against the config. ----------!
       path = era5land_path(src%file_template, f%data_path, 'Tair', y0, m0)
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) then

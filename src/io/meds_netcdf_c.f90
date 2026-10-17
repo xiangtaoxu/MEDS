@@ -5,7 +5,8 @@
 ! netCDF-Fortran is not available for the ifx/nvfortran toolchains on this machine (its     !
 ! .mod files are gfortran-only and compiler-specific), but the netCDF C library is. C        !
 ! linkage is compiler-agnostic, so we bind the handful of C entry points we need directly.   !
-! Only the subset used by meds_io is declared. Higher-level logic lives in meds_io.          !
+! Only the subset MEDS uses is declared; the higher-level logic lives in the callers (the     !
+! state file, the forcing and map readers, the output stream).                               !
 !                                                                                          !
 ! Pitfalls baked in here: C is 0-based (callers pass 0-based start); nc_def_var lists dimIDs !
 ! slowest-varying FIRST (so [time, cohort]); sizes are C size_t (c_size_t); C strings are     !
@@ -145,7 +146,7 @@ module meds_netcdf_c
          integer(c_int), value, intent(in) :: ncid
       end function nc_close
 
-      !----- Read side (used by the state-restart reader, meds_io::io_read_state). ----------!
+      !----- Read side (the state reader, the forcing and map readers). --------------------!
       integer(c_int) function nc_open(path, omode, ncidp) bind(c, name="nc_open")
          import :: c_char, c_int
          character(kind=c_char), intent(in)  :: path(*)
@@ -185,7 +186,7 @@ module meds_netcdf_c
          real(c_float),         intent(out) :: vals(*)
       end function nc_get_vara_float
 
-      !----- Dimension + attribute inquiry (used by the met-forcing reader, meds_met_driver). !
+      !----- Dimension + attribute inquiry (the forcing, map and state readers). -----------!
       integer(c_int) function nc_inq_dimid(ncid, name, idp) bind(c, name="nc_inq_dimid")
          import :: c_char, c_int
          integer(c_int), value,  intent(in)  :: ncid
@@ -243,9 +244,9 @@ contains
    !---------------------------------------------------------------------------------------!
    ! String-argument wrappers. They bind cstr() to a NAMED local before the bind(c) call, so !
    ! an array-valued FUNCTION RESULT is never passed straight into a C call -- the nvfortran   !
-   ! array-temp miscompile trap (CLAUDE.md issue #7: silently wrong at -O2). meds_io calls      !
-   ! these `_f` forms with plain character(len=*) arguments; the raw bind(c) forms stay for      !
-   ! the numeric calls (which already pass named array sections).                              !
+   ! array-temp miscompile trap (CLAUDE.md, the first compiler trap: silently wrong at -O2).   !
+   ! Callers use these `_f` forms with plain character(len=*) arguments; the raw bind(c) forms !
+   ! stay for the numeric calls (which already pass named array sections).                    !
    !---------------------------------------------------------------------------------------!
    integer(c_int) function nc_create_f(path, cmode, ncidp) result(st)
       character(len=*), intent(in)  :: path
@@ -287,7 +288,7 @@ contains
    end function nc_put_att_text_f
 
    !----- Single-value numeric attribute (e.g. _FillValue). Binds cstr + the value to NAMED    !
-   !      locals before the bind(c) call (the nvfortran array-temp discipline, CLAUDE.md #7).   !
+   !      locals before the bind(c) call (the nvfortran array-temp discipline above).          !
    integer(c_int) function nc_put_att_double_f(ncid, varid, name, xtype, val) result(st)
       integer(c_int),   intent(in) :: ncid, varid, xtype
       character(len=*), intent(in) :: name

@@ -58,7 +58,7 @@ def test_evergreen_is_a_leaf_cover_floor_not_a_flag():
 def test_drought_deciduous_sheds_when_dry_and_reflushes():
     _lib_or_skip()
     # Palo Verde's days: about 12.4 h of light in the wet season, 11.5 h in the dry season.
-    p = pheno.drought_deciduous()                             # turgor-loss point -2.09 MPa
+    p = pheno.drought_deciduous()                             # turgor-loss point -1.355 MPa
     ph = pheno.Phenology(p)
     for _ in range(60):
         wet = ph.step(predawn_leaf_psi=-0.3, par_hours=12.4)
@@ -119,4 +119,4 @@ def test_daylength_is_the_model_formula():
 
 def test_unknown_preset_override_is_rejected():
     with pytest.raises(TypeError):
-        pheno.temperate_deciduous(k_flush_max=0.1)            # a retired name
+        pheno.temperate_deciduous(k_flush_max=0.1)            # not a Params field

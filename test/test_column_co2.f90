@@ -1,18 +1,19 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_column_co2 -- unit tests for the P0 column CO2 balance (the well-mixed canopy-air-space  !
-! CO2 box). The box is advanced by the production kernel meds_cas_biophysics::cas_column_step_     !
-! implicit; the local co2_step helper feeds it the raw scalar inputs and assembles the budget       !
-! diagnostics (nee/nep/loss2atm/storage/resid) from its result. Test plan:                           !
+! test_column_co2 -- unit tests for the column CO2 balance (the well-mixed                 !
+! canopy-air-space CO2 box, docs/science/canopy_air_space_biophysics.md eq. (1)). The box  !
+! is advanced by the production kernel meds_cas_biophysics::cas_column_step_implicit; the  !
+! local co2_step helper feeds it the raw scalar inputs and assembles the budget            !
+! diagnostics (nee/nep/loss2atm/storage/resid) from its result. Test plan:                 !
 !   1. RESID ~ 0 : the closed CO2 budget residual vanishes for a spread of inputs.                 !
 !   2. STEADY STATE : f_bio = 0 and can_co2 = co2_atm  =>  no change, loss2atm = 0.                  !
 !   3. ATM RELAXATION : f_bio = 0, can_co2 /= co2_atm  =>  L-stable relaxation toward co2_atm.        !
 !   4. STEADY Ca : constant source  =>  can_co2 -> co2_atm + f_bio/gatm_co2 (analytic fixed point).    !
 !   5. SIGN discipline : GPP-only lowers can_co2 (nep>0); respiration-only raises it (nee>0, vents).    !
 !   6. CONSERVATION identity : d(storage) = dt*(nee - loss2atm), assembled independently.               !
-!   7. HETEROTROPHIC response : Q10 doubling, ED2 cap, moisture hump, zero pool.                         !
-!   8. NEP identity : nep = -nee exactly.                                                                 !
-!   9-12. DAMM (P1) : Harvard-Forest hand value ~2.15, moisture unimodality, Arrhenius Vmax, anoxia limit.!
+!   7. NEP identity : nep = -nee exactly.                                                                 !
+! Heterotrophic respiration is the CENTURY soil-carbon matrix, tested in test_soil_biogeochem and   !
+! test_biogeochem_dynamics.                                                                         !
 !==========================================================================================!
 program test_column_co2
    use meds_test_assert, only : check, check_true, test_report
@@ -21,8 +22,8 @@ program test_column_co2
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    implicit none
 
-   !----- Local CO2 budget: the diagnostics the retired canopy_air_co2_update returned, now        !
-   !      derived in co2_step from the production cas_column_step_implicit result (see below).      !
+   !----- Local CO2 budget diagnostics, derived in co2_step from the production                  !
+   !      cas_column_step_implicit result (see below).                                              !
    type :: co2_budget_t
       real(wp) :: nee = 0.0_wp, nep = 0.0_wp, loss2atm = 0.0_wp, storage = 0.0_wp, resid = 0.0_wp
    end type co2_budget_t
@@ -35,12 +36,6 @@ program test_column_co2
    call test_sign_discipline()
    call test_conservation_identity()
    call test_nep_identity()
-   !----- The five Rh subtests that used to run here (Q10, the ED2 capped exponential, and four
-   !      DAMM cases) went with the kernels they exercised (#153). They were the only consumers of
-   !      code no production path could reach, which is exactly what made the kernels worth
-   !      deleting rather than wiring: a test whose subject is unreachable measures nothing about
-   !      the model. Production Rh is the CENTURY matrix, asserted in test_soil_biogeochem and
-   !      test_biogeochem_dynamics. The implementations are on branch archive/damm-hr.
 
    call test_report('test_column_co2')
 
@@ -56,7 +51,7 @@ contains
    end function ccapcan_of
 
    !----- Advance the CO2 twin via the PRODUCTION kernel cas_column_step_implicit, then assemble  !
-   !      the budget diagnostics from its result (what the retired canopy_air_co2_update returned). !
+   !      the budget diagnostics from its result.                                                   !
    !      The enthalpy/vapour twins are held inert (nonzero air_mass_capacity avoids a 0/0).        !
    subroutine co2_step(can_co2, can_depth, can_shv, gpp, plant_resp, hetero,                    &
                        ustar, temp2, co2_atm, rho_air, dt, budget)
@@ -137,9 +132,10 @@ contains
                                  400.0_wp, 1.2_wp, 1.0e9_wp, b)
       call check_true('huge dt: L-stable, no overshoot below atm', cc_big >= 400.0_wp, cc_big)
       call check('huge dt: converges to atm', cc_big, 400.0_wp, 1.0e-3_wp)
-      !----- BUG8: the M-O scalar-transfer coefficient temp2 (c3) scales the atm<->CAS conductance. !
-      !      Halving it must SLOW the approach to co2_atm, leaving the CAS farther from the atm      !
-      !      after one step. On the old hardcoded c3=1 both runs would be identical.  ---------------!
+      !----- The M-O scalar-transfer coefficient temp2 (c3) scales the atm<->CAS conductance        !
+      !      (docs/science/canopy_aerodynamics.md eq. (5)). Halving it must SLOW the approach to      !
+      !      co2_atm, leaving the CAS farther from the atm after one step; a kernel that ignored     !
+      !      temp2 would give two identical runs. ---------------------------------------------------!
       block
          real(wp) :: cc_full, cc_half
          cc_full = 500.0_wp
@@ -206,7 +202,7 @@ contains
    end subroutine test_conservation_identity
 
 
-   !----- 9. nep = -nee exactly. --------------------------------------------------------------!
+   !----- 7. nep = -nee exactly. --------------------------------------------------------------!
    subroutine test_nep_identity()
       type(co2_budget_t) :: b
       real(wp) :: cc

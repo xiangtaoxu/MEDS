@@ -28,10 +28,12 @@ alongside the stand picture.
 The frames are written to an animated GIF (default ~1 s per frame).
 
 Usage:
-    python plot_forest_structure.py STATE.nc [-o OUT.gif] [--fps N] [--lai-scale M] [--min-thick T]
+    python plot_forest_structure.py STAND.nc [-o OUT.gif] [--fps N] [--lai-scale M] [--min-thick T]
 
-Requires the `meds` conda environment (numpy, matplotlib, netCDF4, Pillow). The netCDF must
-carry `global_patch_id` and per-cohort `leaf_area` (MEDS writes these from -DMEDS_ENABLE_IO=ON).
+Requires the `meds` conda environment (numpy, matplotlib, netCDF4, Pillow). The netCDF must be in
+the ragged cohort/patch stand layout of example 03's _write_nc.py: per-cohort `pft`, `height`,
+`nplant`, `leaf_area` and `owner_patch`, per-patch `patch_area`, `patch_age`, `dist_type` and
+`global_patch_id`, and the site's `total_lai`.
 """
 import argparse
 import numpy as np

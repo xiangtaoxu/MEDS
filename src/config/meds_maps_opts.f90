@@ -1,13 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_maps_opts -- the [maps] block, as a low-level config leaf: the static maps a run  !
-! reads its soil and its height allometry's site index from (MEDS_POLYGON_RUNTIME_PLAN.md §14, !
-! RP3). Each map is on the forcing grid; meds_surface_maps reads it at the run's cells.        !
+! meds_maps_opts -- the [maps] block, as a low-level config leaf: the static maps a run    !
+! reads its soil and its height allometry's site index from (docs/configuration.md, "Input !
+! maps"). Each map is on the forcing grid; meds_surface_maps reads it at the run's cells.  !
 !                                                                                          !
-! A region run needs the three soil maps: every polygon takes its own soil column from its    !
-! cell. A site run may use them too, at its forcing cell, or set [soil_column] by hand -- not  !
-! both. A key a map provides is refused when the map is set, so a run never holds two values   !
-! for one quantity.                                                                            !
+! A region run needs the three soil maps: every polygon takes its own soil column from its !
+! cell. A site run may use them too, at its forcing cell, or set [soil_column] by hand --  !
+! not both. A key a map provides is refused when the map is set, so a run never holds two  !
+! values for one quantity.                                                                 !
 !==========================================================================================!
 module meds_maps_opts
    implicit none

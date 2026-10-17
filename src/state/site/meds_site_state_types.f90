@@ -43,12 +43,12 @@ module meds_site_state_types
    public :: cohort_tissue_heat_capacity, cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
-   !----- Mirrors of meds_fast_frozen's tissue constants (see cohort_tissue_heat_capacity), plus  !
-   !      the tissue specific heats. The fast loop reads the latter from `veg_thermal_params_t`,   !
-   !      which nothing has ever overridden -- these are its initializers. They live here because  !
-   !      meds_demography and the slow driver need them and may not link meds_fast_kernels, and    !
-   !      one shared set beats three private copies. (They are hard-coded parameters that ought to !
-   !      be config, like the optics were before #131; not this PR's scope.)  ---------------------!
+   !----- Mirrors of meds_fast_frozen's tissue constants (see cohort_tissue_heat_capacity),      !
+   !      plus the tissue specific heats (docs/science/vegetation_energy_dynamics.md eq.         !
+   !      (8)). The fast loop reads the latter from `veg_thermal_params_t`, which no config      !
+   !      sets -- these are its initializers. They live here because meds_demography and the     !
+   !      slow driver need them and may not link meds_fast_kernels, and one shared set beats     !
+   !      three private copies. They are hard-coded parameters, not config keys. ----------------!
    real(wp), parameter, public :: C2B_WOOD        = 2.0_wp   !< carbon -> biomass (carbon fraction 0.5)
    real(wp), parameter, public :: WOOD_MOIST_FRAC = 1.0_wp   !< [kg water/kg dry] fresh-sapwood moisture
    real(wp), parameter, public :: TISSUE_C_LEAF   = 3200.0_wp !< [J/kg/K] dry leaf specific heat
@@ -65,7 +65,7 @@ module meds_site_state_types
    real(wp), parameter :: DMAX_PSI_LEAF_UNSET = 1.0_wp
    !----- Reset value for the running daily MAX. Must be VERY NEGATIVE, not the UNSET sentinel:      !
    !      the accumulator is a max() against psi_leaf <= 0, so seeding it with the POSITIVE sentinel  !
-   !      would pin it there forever and the daily max would never update. (It did, until measured.)  !
+   !      would pin it there forever and the daily max would never update.                            !
    real(wp), parameter :: DMAX_PSI_LEAF_ACCUM_RESET = -1.0e30_wp
 
    !----- Initial phenology tendencies of a freshly created cohort: born flushing, not senescing   !
@@ -80,7 +80,7 @@ module meds_site_state_types
    ! carbon pools; every slow operator moves only those. The geometry (dbh, height, basal_area, !
    ! agb, leaf_area and the wood caches) is a function of the pools, stored so the hot kernels  !
    ! stay arithmetic-only, and written only by set_cohort_size_from_carbon -- after every       !
-   ! operator that moves carbon, never integrated or read back on its own (#389).               !
+   ! operator that moves carbon, never integrated or read back on its own.                      !
    !---------------------------------------------------------------------------------------!
    type :: cohort_block
       !----- The site's allometry coefficients (cfg%allom of the config that built the site, set by  !
@@ -121,20 +121,21 @@ module meds_site_state_types
       !      growth_avg = accum/count is the SMA (GROWTH_AVG_UNSET until the first sample). A      !
       !      PROGNOSTIC history (not derivable from dbh).                                         !
       real(wp),    allocatable :: growth_avg(:)
-      !----- PLANT WATER STATUS driving the stomatal stress limb (issue #95). dmax_psi_leaf is    !
-      !      YESTERDAY's daily-MAXIMUM leaf water potential. The daily max occurs near dawn, after    !
+      !----- PLANT WATER STATUS driving the stomatal stress limb                                      !
+      !      (docs/science/leaf_gas_exchange.md §4.2, eq. (10)). dmax_psi_leaf is YESTERDAY's         !
+      !      daily-MAXIMUM leaf water potential. The daily max occurs near dawn, after                !
       !      transpiration has stopped and the plant has relaxed toward the soil, so it is the        !
-      !      model's analogue of measured PREDAWN leaf water potential -- exactly what               !
-      !      leaf_env_t%psi_soil is documented to carry ("soil/predawn water potential"), and what    !
-      !      the fast loop feeds leaf_gas_exchange as beta_stomata's driver.                          !
-      !                                                                                          !
-      !      PER-COHORT, not per-patch. An earlier draft made it per-patch on the argument that       !
-      !      overnight every cohort relaxes to the same soil -- which is TRUE ONLY IN WET SOIL, and   !
-      !      therefore only where this feature does not matter. The wood<->soil relaxation time is    !
-      !      tau_w = C_wood/rhizo ~ 9 s at theta 0.25 but ~4.8 DAYS at theta 0.10, so under drought   !
-      !      cohorts do not equilibrate overnight at all. Add the gravity head (~0.3 MPa between a    !
-      !      30 m tree and a sapling), differing rooting depth and per-PFT vulnerability, and a patch !
-      !      mean would let a stressed canopy tree hide behind an unstressed sapling. -----------!
+      !      model's analogue of measured PREDAWN leaf water potential -- what the fast loop          !
+      !      passes the leaf kernel as leaf_env_t%psi, beta_stomata's driver.                         !
+      !                                                                                               !
+      !      PER-COHORT, not per-patch. A per-patch value would rest on the argument that             !
+      !      overnight every cohort relaxes to the same soil -- which is TRUE ONLY IN WET SOIL,       !
+      !      and therefore only where this feature does not matter. The wood<->soil relaxation        !
+      !      time is tau_w = C_wood/rhizo ~ 9 s at theta 0.25 but ~4.8 DAYS at theta 0.10, so         !
+      !      under drought cohorts do not equilibrate overnight at all. Add the gravity head          !
+      !      (~0.3 MPa between a 30 m tree and a sapling), differing rooting depth and per-PFT        !
+      !      vulnerability, and a patch mean would let a stressed canopy tree hide behind an          !
+      !      unstressed sapling. ---------------------------------------------------------------------!
       !      WHY TWO FIELDS AND NOT ONE. They are a DOUBLE BUFFER, and within a day their roles are   !
       !      exact opposites: `dmax_psi_leaf` is READ every fast step by the leaf kernel and written   !
       !      once, at the daily rollover; `dmax_psi_leaf_accum` is WRITTEN every fast step and read    !
@@ -149,7 +150,7 @@ module meds_site_state_types
       !                                                                                          !
       !      A merged field also changes the physics: the kernel would read TODAY's partial max, which  !
       !      early in the morning is barely distinguishable from instantaneous psi_leaf -- the tight    !
-      !      sub-step feedback loop that is deliberately deferred, arriving by accident.                !
+      !      sub-step feedback loop the design avoids, arriving by accident.                            !
       !                                                                                          !
       !      A genuine ONE-field design exists, but it is a different algorithm, not a merge: SAMPLE    !
       !      psi_leaf once a day at true predawn instead of accumulating a max. That trades this 8      !
@@ -195,26 +196,27 @@ module meds_site_state_types
       !      intensive quantities). leaf_temp is a warm-start for the VPD lag. -----------------!
       real(wp),    allocatable :: leaf_temp(:)      !< [K]   cohort leaf temperature
       real(wp),    allocatable :: wood_temp(:)      !< [K]   cohort wood/branch temperature (own energy store)
-      !----- Leaf/wood INTERNAL (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic  !
-      !      state (MEDS_ED2_RK45_DESIGN.md sec 4; replaces the former persisted psi, which is now   !
-      !      diagnosed from mass via psi_from_water_content wherever needed). EXTENSIVE per plant    !
-      !      (like AGB): fusion conserves the nplant-weighted TOTAL, not a leaf-area-weighted mean    !
-      !      (meds_demography_cohort_fusefiss.f90). Genuine sub-slow-step hydraulic memory. A fresh/reused  !
-      !      slot is seeded 0 (a CORE-layer sentinel -- computing the true water_content(PSI_INIT)    !
-      !      seed needs plant-hydraulics PFT traits, unavailable across the shared/core DAG wall;      !
-      !      the fast driver's first touch of a sentinel cohort seeds it properly, see                !
-      !      meds_fast_dynamics.f90). ---------------------------------------------------------------!
+      !----- Leaf/wood INTERNAL (xylem/symplast) water mass [kg/plant] -- the prognostic             !
+      !      hydraulic state; psi is diagnosed from mass via psi_from_water_content wherever         !
+      !      needed (docs/science/plant_hydraulics.md §2). EXTENSIVE per plant (like AGB):           !
+      !      fusion conserves the nplant-weighted TOTAL, not a leaf-area-weighted mean               !
+      !      (fuse_cohort_fast_state). Genuine sub-slow-step hydraulic memory. A fresh/reused        !
+      !      slot is seeded 0, a sentinel: computing the true water_content(PSI_INIT) seed needs     !
+      !      plant-hydraulics PFT traits, which the state layer cannot reach, so the fast            !
+      !      driver's first touch of a sentinel cohort seeds it properly                             !
+      !      (meds_fast_dynamics.f90). --------------------------------------------------------------!
       real(wp),    allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water (0 = uninitialized)
       real(wp),    allocatable :: wood_water_mass(:) !< [kg/plant] internal wood water (0 = uninitialized)
-      !----- Leaf/wood SURFACE (interception film) water [kg/m2 GROUND] -- DISTINCT store from the   !
-      !      internal water above (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1): rain intercepted onto the     !
-      !      canopy, evaporating through the boundary layer (no stomata) rather than through the        !
-      !      xylem. Already ground-area-referenced (matches how intercept_canopy_layer's own            !
-      !      leaf_water/rain_above/rainfall are all per m2 of the WHOLE patch, not per plant), so fusion   !
-      !      SUMS it (like two ground-area contributions adding up), NOT nplant-weights it -- the        !
-      !      opposite convention from leaf_water_mass/wood_water_mass just above. A fresh/reused slot    !
-      !      seeds a TRUE 0 (bone dry is a real initial condition here, not a sentinel -- no PFT-trait   !
-      !      lookup is needed to seed it, unlike the internal water mass). ---------------------------!
+      !----- Leaf/wood SURFACE (interception film) water [kg/m2 GROUND] -- a store DISTINCT from     !
+      !      the internal water above (docs/science/soil_biophysics.md, "Canopy interception"):      !
+      !      rain intercepted onto the canopy, evaporating through the boundary layer (no            !
+      !      stomata) rather than through the xylem. Already ground-area-referenced (matches how     !
+      !      intercept_canopy_layer's own leaf_water/rain_above/rainfall are all per m2 of the       !
+      !      WHOLE patch, not per plant), so fusion SUMS it (like two ground-area contributions      !
+      !      adding up), NOT nplant-weights it -- the opposite convention from                       !
+      !      leaf_water_mass/wood_water_mass just above. A fresh/reused slot seeds a TRUE 0          !
+      !      (bone dry is a real initial condition here, not a sentinel -- no PFT-trait lookup       !
+      !      is needed to seed it, unlike the internal water mass). ---------------------------------!
       real(wp),    allocatable :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
       real(wp),    allocatable :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       real(wp),    allocatable :: gpp_accum(:)      !< [kgC/plant] GROSS GPP accumulated over the slow step
@@ -280,11 +282,11 @@ module meds_site_state_types
       type(soil_energy_column_t), allocatable :: soil_e(:)   !< soil thermal column per patch
       type(soil_column_t),        allocatable :: soil_w(:)   !< soil water column per patch
       type(snow_column_t),        allocatable :: snow(:)     !< temporary-surface-water / snow store per patch
-      !----- PROGNOSTIC slow biogeochemistry reservoir (owned here so it rides the patch lockstep    !
-      !      alongside the fast reservoirs above; written DAILY by the slow soil-carbon step,          !
-      !      area-weighted on fusion; docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part II §8.1). ------!
+      !----- PROGNOSTIC slow biogeochemistry reservoir (owned here so it rides the patch             !
+      !      lockstep alongside the fast reservoirs above; written DAILY by the slow soil-carbon     !
+      !      step, area-weighted on fusion; docs/science/soil_carbon.md). ---------------------------!
       type(soil_carbon_t),        allocatable :: soil_carbon(:) !< soil-carbon pools per patch
-      !----- Daily fast->slow accumulator for the soil-carbon matrix (B2): reset each slow step,   !
+      !----- Daily fast->slow accumulator for the soil-carbon matrix: reset each slow step,           !
       !      accumulated once per (patch, fast sub-step) by column_prepass, consumed by the daily     !
       !      soil_carbon_step. Rides the SAME lockstep as soil_carbon (area-weighted on fusion). ------!
       type(xi_accum_t),           allocatable :: xi_accum(:)   !< [day]/[kgC/m2] per patch
@@ -292,36 +294,36 @@ module meds_site_state_types
       !      the top of the step by the vegetation driver, accumulated by turnover and mortality,   !
       !      consumed by advance_biogeochem_dynamics as the matrix source term u.                    !
       !                                                                                          !
-      !      It lives HERE, on the patch block, for one specific reason: it used to be a local       !
-      !      array in the vegetation driver sized to the patch count at the START of the step, and   !
-      !      patch DISTURBANCE creates a gap partway through that same step. The consumer indexed it !
-      !      by the new count and read past the end -- undefined memory into the litter input, which  !
-      !      drove a 50-year spin-up to 1.8e9 kgC/m2. Nothing detected it: the slow ledger DECLARED   !
-      !      the same out-of-bounds read as a boundary term, so the budget balanced against the       !
-      !      garbage. As a patch field it now rides the same lockstep as soil_carbon -- reordered on  !
-      !      sort, packed on terminate, area-weighted on fusion and inherited by a gap -- which also  !
-      !      fixes the quieter half: on a FUSION the old local array misattributed one patch's litter !
-      !      to another, silently and conservatively.  --------------------------------------------!
+      !      It lives HERE, on the patch block, because patch DISTURBANCE creates a gap partway      !
+      !      through the step: a driver-local array sized to the patch count at the START of the     !
+      !      step would be read past its end -- undefined memory into the litter input -- and on     !
+      !      a FUSION would misattribute one patch's litter to another. As a patch field it          !
+      !      rides the same lockstep as soil_carbon -- reordered on sort, packed on terminate,       !
+      !      area-weighted on fusion and inherited by a gap. A slow ledger that declares the         !
+      !      read as a boundary term would balance against the garbage, so the placement, not        !
+      !      the ledger, is what keeps it right. ----------------------------------------------------!
       type(litter_input_t),       allocatable :: litter_in(:)  !< [kgC/m2/day] this step's litter
-      !----- Daily slow->fast bridge for leaf/root-turnover shed water (P4, MEDS_ED2_RK45_DESIGN.md): !
-      !      SET (not accumulated) once per slow step by meds_vegetation_dynamics from this step's net  !
-      !      leaf/fineroot carbon LOSS (proportional water shed, keeping the remaining tissue's rwc      !
-      !      unchanged); consumed once per day by the fast loop's gather as a FROZEN additive input to   !
-      !      the ground-water pathway (like rainfall/throughfall), held constant across every dt_fast       !
-      !      sub-step of that day -- same "frozen daily quantity" convention as soil_carbon/xi_accum,      !
-      !      but area-weighted like `age` on fusion (not blended from donors on a disturbance gap: a       !
-      !      brand-new gap patch has no cohorts of its own that contributed to today's rate). -------------!
+      !----- Daily slow->fast bridge for leaf/root-turnover shed water: SET (not accumulated)        !
+      !      once per slow step by meds_vegetation_dynamics from this step's net leaf/fineroot       !
+      !      carbon LOSS (proportional water shed, keeping the remaining tissue's rwc                !
+      !      unchanged); consumed once per day by the fast loop's gather as a FROZEN additive        !
+      !      input to the ground-water pathway (like rainfall/throughfall), held constant across     !
+      !      every dt_fast sub-step of that day -- same "frozen daily quantity" convention as        !
+      !      soil_carbon/xi_accum, but area-weighted like `age` on fusion (not blended from          !
+      !      donors on a disturbance gap: a brand-new gap patch has no cohorts of its own that       !
+      !      contributed to today's rate). ----------------------------------------------------------!
       real(wp),    allocatable :: shed_water_rate(:)   !< [kg/m2 ground/s] today's shed tissue water
-      !----- The CO2 the SLOW tier owes the canopy air, as a frozen daily RATE the fast loop adds  !
-      !      to nee_biotic -- the carbon analogue of shed_water_rate, and set the same way. Two    !
-      !      terms, both computed once per slow step by the allocator and both previously going    !
-      !      nowhere: GROWTH RESPIRATION (debited from the plant, never exhaled) and, with the      !
-      !      opposite sign, the STARVATION DEFICIT (exhaled by the fast loop, debited from no pool  !
-      !      because there was nothing left to debit). Signed, so it can be negative on a day the   !
-      !      correction outweighs the growth.  ----------------------------------------------------!
+      !----- The CO2 the SLOW tier owes the canopy air, as a frozen daily RATE the fast loop       !
+      !      adds to nee_biotic (docs/science/plant_respiration.md eq. (7)) -- the carbon          !
+      !      analogue of shed_water_rate, and set the same way. Two terms, both computed once      !
+      !      per slow step by the allocator, that would otherwise go nowhere: GROWTH               !
+      !      RESPIRATION (debited from the plant, never exhaled) and, with the opposite sign,      !
+      !      the STARVATION DEFICIT (exhaled by the fast loop, debited from no pool because        !
+      !      there is nothing left to debit). Signed, so it can be negative on a day the           !
+      !      correction outweighs the growth. -----------------------------------------------------!
       real(wp),    allocatable :: slow_co2_rate(:)     !< [umol/m2 ground/s] growth resp - starvation over-report
-      !----- Adaptive-controller warm start, PER PATCH (issue #106). It is controller state belonging !
-      !      to a column, so it lives beside that column's other per-patch reservoirs and rides the     !
+      !----- Adaptive-controller warm start, PER PATCH. It is controller state belonging to a           !
+      !      column, so it lives beside that column's other per-patch reservoirs and rides the          !
       !      patch lockstep (sort/fuse/compact/new-patch). Holding it on the shared per-patch scratch   !
       !      instead makes it loop-carried -- patch 1 cold-starts and the rest inherit whatever step    !
       !      their predecessor left -- which makes the answer depend on patch ORDER and, once the patch !
@@ -369,12 +371,13 @@ module meds_site_state_types
       !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
       real(wp)           :: pheno_tair_sum = 0.0_wp
       integer(ik)        :: pheno_tair_n   = 0_ik
-      !----- GROWTH TEMPERATURE for thermal acclimation (#176): an exponential running mean of the  !
-      !      daily-mean air temperature, window [leaf_physiology].acclim_window_days (~30 d), which  !
-      !      is what Kattge & Knorr (2007) fitted dS against. PROGNOSTIC and slow, so it is written  !
-      !      to the state file: rebuilding a month of memory after every restart would make the      !
-      !      acclimated optimum jump. Negative means "not yet seeded" -- the first slow step adopts  !
-      !      that day's mean outright rather than relaxing from an arbitrary origin.                 !
+      !----- GROWTH TEMPERATURE for thermal acclimation (docs/science/leaf_gas_exchange.md eq.       !
+      !      (4)): an exponential running mean of the daily-mean air temperature, window             !
+      !      [leaf_physiology].acclim_window_days (~30 d), which is what Kattge & Knorr (2007)       !
+      !      fitted dS against. PROGNOSTIC and slow, so it is written to the state file:             !
+      !      rebuilding a month of memory after every restart would make the acclimated optimum      !
+      !      jump. Negative means "not yet seeded" -- the first slow step adopts that day's mean     !
+      !      outright rather than relaxing from an arbitrary origin. --------------------------------!
       real(wp)           :: t_growth_avg = -1.0_wp       !< [K] running-mean growth temperature
       !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
       !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
@@ -385,12 +388,12 @@ module meds_site_state_types
       !      runoff) and the bottom flux (drainage; negative when an aquifer feeds the column). --------!
       real(wp)           :: runoff_surf_accum = 0.0_wp
       real(wp)           :: drainage_accum    = 0.0_wp
-      !----- Integrator WORK accumulators (MEDS_NUMERICS_SCOPING.md section 5.3): summed over patches   !
-      !      and fast sub-steps within a slow step, reset alongside et_accum. These are the COST axis   !
-      !      of the scheme benchmark -- wall-clock is too coarse and too machine-dependent to rank      !
-      !      integrators, whereas step/sub-solver counts are exact and reproducible. Transient          !
-      !      (diagnostic only, never restarted). Real-valued so the output integrators can average      !
-      !      them over a period like any other diagnostic. --------------------------------------------!
+      !----- Integrator WORK accumulators: summed over patches and fast sub-steps within a slow      !
+      !      step, reset alongside et_accum. These are the COST axis of a scheme comparison --       !
+      !      wall-clock is too coarse and too machine-dependent to rank integrators, whereas         !
+      !      step/sub-solver counts are exact and reproducible. Transient (diagnostic only,          !
+      !      never restarted). Real-valued so the output integrators can average them over a         !
+      !      period like any other diagnostic. ------------------------------------------------------!
       real(wp)           :: work_integ_steps = 0.0_wp   !< accepted integrator sub-steps
       real(wp)           :: work_integ_rej   = 0.0_wp   !< rejected integrator steps
       !----- The soil-plant water network's work. A nonzero work_water_nfail is also a correctness     !
@@ -400,12 +403,13 @@ module meds_site_state_types
       real(wp)           :: work_water_newton = 0.0_wp   !< Newton iterations
       real(wp)           :: work_water_reject = 0.0_wp   !< rejected sub-steps
       real(wp)           :: work_water_nfail  = 0.0_wp   !< sub-steps taken although unconverged
-      !----- INTEGRATOR-HEALTH accumulators (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). Same cadence and     !
-      !      area weighting as the work counters above, but these measure CORRECTNESS rather than       !
-      !      cost: how often a scheme had to leave its own model to stay standing, and how much         !
-      !      mass/energy that cost outside the conservation ledger. Without them a run cannot report    !
-      !      whether it actually ran the integrator it was configured for. --------------------------!
-      real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid on split
+      !----- INTEGRATOR-HEALTH accumulators. Same cadence and area weighting as the work             !
+      !      counters above, but these measure CORRECTNESS rather than cost: how often a scheme      !
+      !      had to leave its own model to stay standing, and how much mass/energy that cost         !
+      !      outside the conservation ledger. Without them a run cannot report whether it            !
+      !      actually ran the integrator it was configured for (docs/science/numerical_scheme.md     !
+      !      §3, `rk45`). ---------------------------------------------------------------------------!
+      real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid with the ARK
       real(wp)           :: work_clamp_stage = 0.0_wp   !< stage-input clamp activations (throwaway states)
    end type site_t
 
@@ -953,12 +957,12 @@ contains
    end subroutine copy_cohort_slot
 
    !---------------------------------------------------------------------------------------!
-   ! Rescale the per-cohort fields that are referenced to the PATCH GROUND AREA [kg/m2 ground]  !
-   ! rather than to the plant: the canopy interception films. Every operation that changes the  !
-   ! ground area a cohort's density refers to must apply the same factor to these fields as it  !
-   ! applies to nplant -- cohort fission (0.5 each daughter), patch fusion (area weights), and   !
-   ! the survivor copy into a disturbance gap. Copying them verbatim after halving nplant       !
-   ! doubled the site's film water on every split (2026-09 review, item 1B #1/#2).              !
+   ! Rescale the per-cohort fields that are referenced to the PATCH GROUND AREA [kg/m2     !
+   ! ground] rather than to the plant -- the canopy interception films. Every operation    !
+   ! that changes the ground area a cohort's density refers to must apply the same factor  !
+   ! to these fields as it applies to nplant -- cohort fission (0.5 each daughter), patch  !
+   ! fusion (area weights), and the survivor copy into a disturbance gap. Copying them     !
+   ! verbatim after halving nplant would double the site's film water on every split.      !
    !---------------------------------------------------------------------------------------!
    pure subroutine scale_cohort_ground_fields(cohort, i, factor)
       type(cohort_block), intent(inout) :: cohort
@@ -972,28 +976,31 @@ contains
    end subroutine scale_cohort_ground_fields
 
    !=========================================================================================!
-   !  THE PER-FIELD FUSION POLICY OF THE FAST-LOOP-OWNED COHORT STATE -- declared once, here.  !
-   !                                                                                          !
-   !  These twelve fields are written by the fast loop and read back by it; the slow loop only  !
-   !  has to carry them correctly through a fusion. Each is one of three kinds, and getting the  !
-   !  kind wrong is invisible: the AGB assert still passes, the conservation ledgers still close, !
-   !  and the answer is quietly wrong. That is not hypothetical -- PR #119 fixed exactly this for  !
-   !  the film-water pair, by hand, after it shipped.                                              !
-   !                                                                                          !
-   !    FK_INTENSIVE  a per-mass property (a temperature). Weighted by the HEAT CAPACITY that     !
-   !                  carries it, which is what conserves the tissue's energy through the merge.  !
-   !    FK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux). nplant-    !
-   !                  weighted mean, so the site total (nplant * value, summed) is conserved.      !
-   !    FK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts over the  !
-   !                  same ground simply ADD; weighting would double-count the normalization.       !
-   !                                                                                          !
-   !  The diagnostic twins are fused from their own declared table (CDIAG_FUSE,                   !
-   !  meds_site_diag_types) on the leaf-area and nplant weights the caller computes. Those two     !
-   !  tables no longer share a weight for the intensive kind, and that is deliberate: a per-LEAF-  !
-   !  AREA diagnostic (transpiration per m2 of leaf, say) really is leaf-area weighted, while a    !
-   !  prognostic TEMPERATURE is per unit heat capacity. Treating them as one kind is what made the !
-   !  wood temperature wrong. Adding a fast-loop field is one line here; the compiler will not     !
-   !  remind you, so the line is the reminder.                                                     !
+   !  THE PER-FIELD FUSION POLICY OF THE FAST-LOOP-OWNED COHORT STATE -- declared once,      !
+   !  here.                                                                                  !
+   !                                                                                         !
+   !  These fields are written by the fast loop and read back by it; the slow loop only has  !
+   !  to carry them correctly through a fusion. Each is one of three kinds, and getting the  !
+   !  kind wrong is invisible: the AGB assert still passes, the conservation ledgers still   !
+   !  close, and the answer is quietly wrong.                                                !
+   !                                                                                         !
+   !    FK_INTENSIVE  a per-mass property (a temperature). Weighted by the HEAT CAPACITY     !
+   !                  that carries it, which is what conserves the tissue's energy through   !
+   !                  the merge.                                                             !
+   !    FK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux).      !
+   !                  nplant-weighted mean, so the site total (nplant * value, summed) is    !
+   !                  conserved.                                                             !
+   !    FK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts    !
+   !                  over the same ground simply ADD; weighting would double-count the      !
+   !                  normalization.                                                         !
+   !                                                                                         !
+   !  The diagnostic twins are fused from their own declared table (CDIAG_FUSE,              !
+   !  meds_site_diag_types) on the leaf-area and nplant weights the caller computes. Those   !
+   !  two tables do not share a weight for the intensive kind, deliberately: a per-LEAF-AREA !
+   !  diagnostic (transpiration per m2 of leaf, say) really is leaf-area weighted, while a   !
+   !  prognostic TEMPERATURE is per unit heat capacity, and treating them as one kind makes  !
+   !  the wood temperature wrong. Adding a fast-loop field is one line here; the compiler    !
+   !  will not remind you, so the line is the reminder.                                      !
    !=========================================================================================!
    !----- THE per-field policy for the fast-loop cohort state, declared once. Three kinds, and    !
    !      the headings below are the declaration: INTENSIVE (weighted by the capacity that carries  !
@@ -1011,11 +1018,11 @@ contains
       real(wp) :: clr, cwr, cld, cwd
       !----- INTENSIVE: tissue temperatures, weighted by the HEAT CAPACITY that carries them.    !
       !                                                                                          !
-      !      These were LEAF-AREA weighted. For leaves that is roughly right, since leaf heat    !
-      !      capacity tracks leaf carbon and leaf area tracks it through sla. For WOOD it is not  !
-      !      even approximately right: wood heat capacity follows wood carbon and the sapwood     !
-      !      ring, which have no reason to scale with leaf area -- so fusing two cohorts of       !
-      !      different wood:leaf ratio moved the tissue energy by ~1e4 J an event (plan §10.2.4). !
+      !      Leaf-area weighting would be roughly right for leaves, since leaf heat capacity         !
+      !      tracks leaf carbon and leaf area tracks it through sla. For WOOD it is not even         !
+      !      approximately right: wood heat capacity follows wood carbon and the sapwood ring,       !
+      !      which have no reason to scale with leaf area -- so fusing two cohorts of different      !
+      !      wood:leaf ratio on leaf area would move the tissue energy by ~1e4 J an event.           !
       !                                                                                          !
       !      Capacity weighting conserves `cap x T` EXACTLY for the additive part, because the    !
       !      merged capacity IS the sum: leaf_carbon, wood_carbon and the tissue waters are all   !
@@ -1107,7 +1114,7 @@ contains
    ! file without pools): the four carbon pools a plant of that dbh holds, then the geometry   !
    ! derived from those pools by set_cohort_size_from_carbon, exactly as after every other     !
    ! carbon change. Geometry has that one writer, so a cohort's geometry is always the same    !
-   ! function of its carbon and a restart that re-derives it gets the same bits (#389).        !
+   ! function of its carbon and a restart that re-derives it gets the same bits.               !
    !---------------------------------------------------------------------------------------!
    subroutine set_cohort_size(cohort, i)
       type(cohort_block), intent(inout) :: cohort
@@ -1124,20 +1131,23 @@ contains
    end subroutine set_cohort_size
 
    !=========================================================================================!
-   ! cohort_tissue_heat_capacity -- one cohort's leaf and wood heat capacity [J/m2 ground/K].     !
-   !                                                                                          !
-   ! WHY IT LIVES HERE. Three consumers need the same number and none of them may link the        !
-   ! others: the slow ledger values the tissue energy store with it, the demography operators      !
-   ! need it to say how much heat a dying cohort takes with it, and the fast loop's frozen record  !
-   ! builds the same quantity to relax the tissue against. This is the state layer, which all       !
-   ! three already import, so it is the one place all three can share.                              !
-   !                                                                                          !
-   ! It reproduces meds_fast_frozen's construction exactly, including two choices worth naming:     !
-   ! the WOOD's thermal water is the SAPWOOD ring at a fixed moisture fraction, NOT the hydraulic    !
-   ! store `wood_water_mass` (heartwood is taken as dry, which is what makes it heartwood), and both !
-   ! dry capacities are floored at `hcap_min` so a bare-canopy cohort stays thermally resolvable.    !
-   ! The fast loop still builds its own copy -- that duplication is recorded in plan §10.2.7 as the  !
-   ! next thing to unify; this function is the half of it that three libraries can already reach.    !
+   ! cohort_tissue_heat_capacity -- one cohort's leaf and wood heat capacity [J/m2           !
+   ! ground/K].                                                                              !
+   !                                                                                         !
+   ! WHY IT LIVES HERE. Three consumers need the same number and none of them may link the   !
+   ! others: the slow ledger values the tissue energy store with it, the demography          !
+   ! operators need it to say how much heat a dying cohort takes with it, and the fast       !
+   ! loop's frozen record builds the same quantity to relax the tissue against. This is the  !
+   ! state layer, which all three already import, so it is the one place all three can       !
+   ! share.                                                                                  !
+   !                                                                                         !
+   ! It reproduces meds_fast_frozen's construction exactly, including two choices worth      !
+   ! naming: the WOOD's thermal water is the SAPWOOD ring at a fixed moisture fraction, NOT  !
+   ! the hydraulic store `wood_water_mass` (heartwood is taken as dry, which is what makes   !
+   ! it heartwood), and both dry capacities are floored at `hcap_min` so a bare-canopy       !
+   ! cohort stays thermally resolvable. The fast loop builds its own copy                    !
+   ! (docs/science/vegetation_energy_dynamics.md eq. (8)); this function is the half of that !
+   ! pair that three libraries can reach.                                                    !
    !=========================================================================================!
    pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_sapw, hcap_min, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
@@ -1169,7 +1179,7 @@ contains
    ! applier floors the pools, mortality never takes nplant below `negligible`, the fast loop    !
    ! clamps the films into [0, capacity] -- so a violation is an operator bug. The driver checks !
    ! this every step and names the field, so the bug is caught the step it happens instead of   !
-   ! through a quantity derived from it, somewhere else, years later (#389). The geometry is not !
+   ! through a quantity derived from it, somewhere else, years later. The geometry is not       !
    ! checked: it is a function of these. Returns the first bad field's index, 0 if none.        !
    !---------------------------------------------------------------------------------------!
    pure function cohort_bad_field(cohort, i) result(k)
@@ -1296,7 +1306,7 @@ contains
    subroutine set_cohort_size_from_carbon(cohort, i)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
-      !----- The carbon->geometry flip is now the single shared kernel carbon_to_structure       !
+      !----- The carbon->geometry flip is the single shared kernel carbon_to_structure             !
       !       (meds_allometry); this per-slot wrapper just packs/unpacks the SoA fields.           !
       call carbon_to_structure(cohort%allom, cohort%wood_carbon(i), cohort%leaf_carbon(i),        &
                                cohort%p_wood_density(i), cohort%p_hgt_max(i),                     &

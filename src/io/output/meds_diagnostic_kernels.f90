@@ -2,15 +2,15 @@
 !==========================================================================================!
 ! meds_diagnostic_kernels -- pure/elemental DERIVED diagnostic quantities.                  !
 !                                                                                          !
-! Stage [1] of the diagnostic wall (MEDS_IO_V01_PLAN.md section 3.1): quantities that are not      !
+! Stage [1] of the diagnostic wall (docs/science/diagnostics.md §1): quantities that are not        !
 ! stored anywhere in state but are a closed-form function of things that are. Plain arguments      !
 ! only -- no site_t, no config aggregator -- so every routine here is directly unit-testable.      !
 !                                                                                          !
 ! CONTENT RULE. Anything a physics library already owns is CALLED, never re-implemented:           !
-! soil_psi_from_theta / psi_from_water_content live in meds_hydr_lib, internal_energy_to_temp and the moist-  !
-! air thermodynamics in meds_therm_lib, the allometry in meds_allometry. This module holds only     !
-! diagnostics that no physics kernel owns. Where a thin re-export is more readable than making      !
-! every caller `use` two modules, the wrapper is marked as such and simply forwards.                !
+! soil_psi_from_theta / psi_from_water_content live in meds_water_retention, internal_energy_to_temp !
+! and the moist-air thermodynamics in meds_therm_lib, the allometry in meds_allometry. This module   !
+! holds only diagnostics that no physics kernel owns. Where a thin re-export is more readable than  !
+! making every caller `use` two modules, the wrapper is marked as such and simply forwards.         !
 !                                                                                          !
 ! PLACEMENT. src/io/ (the meds_io_prep target, which links meds_demography only -- no netCDF), NOT  !
 ! src/shared/functions/. Accepted consequence: nothing BELOW io in the library DAG can call these.   !
@@ -95,7 +95,7 @@ contains
    end function soil_wetness
 
    !----- Soil matric potential [MPa] from volumetric moisture. A thin re-export of            !
-   !      meds_hydr_lib's retention curve (which returns metres of head) with the unit          !
+   !      meds_water_retention's curve (which returns metres of head) with the unit             !
    !      conversion the output layer wants, so a caller needs one `use`, not two.              !
    !      head [m] -> MPa via the shared `grav_head` (rho_w*g), the SAME constant plant           !
    !      hydraulics uses -- so a soil psi reported here and a psi_soil the roots saw are on one   !
@@ -109,9 +109,9 @@ contains
    end function soil_matric_potential
 
    !=======================================================================================!
-   !  Atmosphere / canopy air                                                               !
+   !  Atmosphere / canopy air: air_vpd and specific_humidity_to_vpd are meds_therm_lib's,    !
+   !  re-exported above (CONTENT RULE).                                                     !
    !=======================================================================================!
-
 
    !=======================================================================================!
    !  Generic                                                                               !
@@ -138,7 +138,7 @@ contains
    !  Size-class binning (DIM_SIZE)                                                          !
    !=======================================================================================!
 
-   !----- 1-based DBH class of one plant, ED2-style (MEDS_IO_V01_PLAN.md section 8 D4).       !
+   !----- 1-based DBH class of one plant, ED2-style (docs/science/diagnostics.md §3).        !
    !                                                                                          !
    !      `edges` holds n_class+1 ASCENDING boundaries. Bin k is the half-open interval          !
    !      [edges(k), edges(k+1)), EXCEPT the last, which is closed at the top so the largest      !

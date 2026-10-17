@@ -57,13 +57,13 @@ program test_containers
 
    !----- Termination removes a sub-threshold cohort and keeps CSR consistent. ------------!
    !                                                                                          !
-   !      THE DIAGNOSTIC BLOCKS RIDE THE SAME COMPACTION, COUNT INCLUDED (#247). They are      !
-   !      armed here because a cull is the operator that SHRINKS the cohort array, and a block !
-   !      whose `n` stayed at the pre-cull value claimed more live slots than the array has.    !
-   !      extract_variable sizes its scratch buffer from cohort%n and cohort_diag_value filled  !
-   !      1..d%n into it, so the stale count was an out-of-bounds WRITE -- silent in Release,   !
-   !      a SIGSEGV some steps later. It was invisible only because the reference stand never   !
-   !      shrinks (Ithaca goes 114 -> 125 cohorts over three years).  -------------------------!
+   !      THE DIAGNOSTIC BLOCKS RIDE THE SAME COMPACTION, COUNT INCLUDED. They are armed   !
+   !      here because a cull is the operator that SHRINKS the cohort array, and a block   !
+   !      whose `n` stays at the pre-cull value claims more live slots than the array has. !
+   !      extract_variable sizes its scratch buffer from cohort%n and cohort_diag_value    !
+   !      fills 1..d%n into it, so a stale count is an out-of-bounds WRITE -- silent in    !
+   !      Release, a SIGSEGV some steps later. A stand that never shrinks cannot show it   !
+   !      (the Ithaca reference goes 114 -> 125 cohorts over three years). ----------------!
    call cohort_diag_alloc(site%cohort%diag,  site%cohort%cap, .true.)
    call cohort_diag_alloc(site%cohort%sdiag, site%cohort%cap, .true., nfield=N_CSDIAG)
    site%cohort%diag%n  = site%cohort%n

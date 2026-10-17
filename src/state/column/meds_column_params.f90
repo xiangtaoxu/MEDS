@@ -1,22 +1,24 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_column_params -- everything about a column that is NOT state: the compile-time           !
-! dimensions, the fresh-cohort initial values, and the static per-column parameter bundles       !
-! (geometry, texture, thermal properties) with their `pure` assemblers.                          !
+! meds_column_params -- everything about a column that is NOT state: the compile-time      !
+! dimensions, the fresh-cohort initial values, and the static per-column parameter bundles !
+! (geometry, texture, thermal properties) with their `pure` assemblers.                    !
 !                                                                                          !
-! These describe the same stores meds_column_state_types holds, but they are fixed or derived    !
-! once per column and never integrated, which is the line the plan's placement rule 3 draws.     !
-! Three kinds sit here, and they are worth telling apart:                                        !
-!   * DIMENSIONS  (n_soil_layer_max, n_snow_layer_max) -- compile-time ceilings,                  !
-!     not settings. They are what keep the columns allocatable-free and GPU-eligible.            !
-!   * BIRTH VALUES (LEAF_TEMP_INIT, PSI_INIT) -- the state a fresh cohort starts from.           !
-!   * DERIVED BUNDLES (soil_params_t, soil_thermal_params_t) -- assembled per column at run time  !
-!     from scalar geometry and texture inputs. NOT config: they stand to the `[soil]` settings    !
-!     as leaf_photo_table_t stands to the PFT table, which is why they live beside the stores     !
-!     they describe rather than in src/config.                                                    !
+! These describe the same stores meds_column_state_types holds, but they are fixed or      !
+! derived once per column and never integrated, which is the line src/README.md's rule 3   !
+! draws (parameters are not state). Three kinds sit here, and they are worth telling       !
+! apart:                                                                                   !
+!   * DIMENSIONS (n_soil_layer_max, n_snow_layer_max) -- compile-time ceilings, not        !
+!     settings. They are what keep the columns allocatable-free and GPU-eligible.          !
+!   * BIRTH VALUES (LEAF_TEMP_INIT, PSI_INIT) -- the state a fresh cohort starts from.     !
+!   * DERIVED BUNDLES (soil_params_t, soil_thermal_params_t) -- assembled per column at    !
+!     run time from scalar geometry and texture inputs. NOT config: they stand to          !
+!     `[soil_column]` as leaf_photo_table_t stands to the PFT table, which is why they     !
+!     live beside the stores they describe rather than in src/config.                      !
 !                                                                                          !
-! The builders are state-free constructors -- they read plain scalar texture/geometry inputs   !
-! and the shared retention curve, never soil state -- so this module stays below the kernels.  !
+! The builders are state-free constructors -- they read plain scalar texture/geometry      !
+! inputs and the shared retention curve, never soil state -- so this module stays below    !
+! the kernels.                                                                             !
 !==========================================================================================!
 module meds_column_params
    use meds_kinds,            only : wp, ik
@@ -32,14 +34,15 @@ module meds_column_params
    public :: curve_a, curve_n
 
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
-   integer(ik), parameter :: n_snow_layer_max = 1_ik        !< MVP single bulk layer; P1 raises to ED2 nzs~8
+   integer(ik), parameter :: n_snow_layer_max = 1_ik        !< one bulk layer (multi-layer snow: see docs/ROADMAP.md)
 
-   !----- The soil layers every column cuts at its own depth: bottoms [m, down] at         !
+   !----- The soil layers every column cuts at its own depth                               !
+   !      (docs/science/soil_biophysics.md, "The soil layers"): bottoms [m, down] at       !
    !      SoilGrids 2.0's depths to 1 m (0-5, 5-15, 15-30, 30-60, 60-100 cm), its          !
    !      100-200 cm interval split at 1.5 m, then thickening to 27 m (each layer at       !
    !      most twice the one above). Every column's top layer is 5 cm, a shallow soil      !
    !      gets few layers rather than thin ones, per-layer soil maps match the layers      !
-   !      one to one, and every column shares one depth axis. ---------------------------- !
+   !      one to one, and every column shares one depth axis. -----------------------------!
    real(wp), parameter :: SOIL_LAYER_TEMPLATE(15) = [0.05_wp, 0.15_wp, 0.30_wp, 0.60_wp, 1.00_wp,     &
                           1.50_wp, 2.00_wp, 3.00_wp, 4.50_wp, 6.50_wp, 9.00_wp, 12.0_wp, 16.0_wp, 21.0_wp, 27.0_wp]
    !----- A remainder below the cut thinner than this share of the list layer it           !
@@ -84,10 +87,9 @@ module meds_column_params
 contains
 
    !=======================================================================================!
-   !  Per-column soil PARAMETER assemblers. Both are `pure` -- they take plain scalar texture/    !
-   !  geometry inputs and fill a parameter struct; they depend on NO soil STATE (theta/energy),  !
-   !  so they are state-free constructors, not part of the fast loop. Per-layer texture + TOML    !
-   !  wiring land at P3; these standalone builders keep the kernels testable now.                  !
+   !  Per-column soil PARAMETER assemblers. Both are `pure` -- they take plain scalar      !
+   !  texture/geometry inputs and fill a parameter struct; they depend on NO soil STATE    !
+   !  (theta/energy), so they are state-free constructors, not part of the fast loop.      !
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
@@ -205,12 +207,11 @@ contains
    end subroutine build_soil_therm_params
 
    !=======================================================================================!
-   !  Retention-curve parameter accessors: (alpha, n) for van Genuchten, (psi_sat, b) for       !
-   !  Campbell. They live HERE, beside soil_params_t, because they are a property of that type   !
-   !  -- which family its two generic curve parameters mean. They were previously private        !
-   !  duplicates inside meds_soil_water; every consumer (the water network, the diagnostic        !
-   !  psi read-off) now shares this ONE mapping, so a family added later cannot be taught to       !
-   !  one caller and not the other.                                                                !
+   !  Retention-curve parameter accessors: (alpha, n) for van Genuchten, (psi_sat, b) for  !
+   !  Campbell. They live HERE, beside soil_params_t, because they are a property of that  !
+   !  type -- which family its two generic curve parameters mean. Every consumer (the      !
+   !  water network, the diagnostic psi read-off) shares this ONE mapping, so a family     !
+   !  added later cannot be taught to one caller and not the other.                        !
    !=======================================================================================!
    pure function curve_a(params, k) result(a)
       type(soil_params_t), intent(in) :: params

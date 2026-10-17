@@ -2,7 +2,8 @@
 !----- The soil pedotransfer function (meds_pedotransfer): Hodnett & Tomasella (2002)'s worked !
 !      example, Ottoni et al. (2019)'s Ks of it, coarse fragments, the residual-water floor, and !
 !      the elemental call over a profile against the call per layer, and CLM5's thermal          !
-!      properties of a soil (soil_thermal_from_texture).                                          !
+!      properties of a soil (soil_thermal_from_texture); docs/science/soil_biophysics.md         !
+!      eqs. (6)-(9). ---------------------------------------------------------------------------!
 program test_pedotransfer
    use meds_kinds,        only : wp
    use meds_constants,    only : grav_head

@@ -4,7 +4,7 @@
 ! psychrometrics (saturation vapour pressure + specific humidity and their temperature slopes),  !
 ! the phase-change energy inverter, moist-air enthalpy/density, AND the SOIL thermal properties   !
 ! (Johansen conductivity + volumetric heat capacity -- the thermal twin of the soil retention      !
-! curves in meds_hydr_lib). Placed in the shared foundation so every fast-loop biophysics       !
+! curves in meds_water_retention). Placed in the shared foundation so every fast-loop biophysics !
 ! process shares ONE formula instead of re-deriving it. `pure`/`elemental`; the Bolton (1980) and   !
 ! Johansen coefficients are universal empirical constants, not tunable model parameters.             !
 !==========================================================================================!
@@ -33,30 +33,31 @@ module meds_therm_lib
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! SATURATION VAPOUR PRESSURE, over liquid water OR over ice (#89).                          !
+   ! SATURATION VAPOUR PRESSURE, over liquid water OR over ice                                 !
+   ! (docs/science/snow_biophysics.md eq. (1)).                                               !
    !                                                                                          !
-   ! Magnus/Bolton pair, sharing the triple-point constant so the two branches meet EXACTLY:    !
+   ! Magnus/Bolton pair, sharing the triple-point constant so the two branches meet EXACTLY:  !
    !                                                                                          !
-   !     e_liq(Tc) = 611.2 exp( 17.67 Tc / (Tc + 243.5) )      (Bolton 1980)                    !
-   !     e_ice(Tc) = 611.2 exp( 21.87 Tc / (Tc + 265.5) )      (Magnus form over ice)           !
+   !     e_liq(Tc) = 611.2 exp( 17.67 Tc / (Tc + 243.5) )      (Bolton 1980)                  !
+   !     e_ice(Tc) = 611.2 exp( 21.87 Tc / (Tc + 265.5) )      (Magnus form over ice)         !
    !                                                                                          !
-   ! WHY A BLEND AND NOT A BRANCH ON TEMPERATURE. `fliq` is the liquid fraction the store        !
-   ! already carries prognostically (internal_energy_to_temp returns it), so the weighting is    !
-   ! a state the model tracks rather than a threshold invented here. It also keeps e_sat         !
-   ! CONTINUOUS through the melt plateau: a `T < 0` branch would put a step of up to 10 % of      !
-   ! e_sat into the right-hand side at the triple point, and this model's adaptive controller     !
-   ! has already been broken once by exactly that kind of jump (see veg_energy_balance's P6       !
-   ! note). Because both forms give 611.2 Pa at Tc = 0, the blend is continuous there for any     !
-   ! fliq, so a store that freezes or melts moves smoothly between the curves.                   !
+   ! WHY A BLEND AND NOT A BRANCH ON TEMPERATURE. `fliq` is the liquid fraction the store     !
+   ! already carries prognostically (internal_energy_to_temp returns it), so the weighting is !
+   ! a state the model tracks rather than a threshold invented here. It also keeps e_sat      !
+   ! CONTINUOUS through the melt plateau: a `T < 0` branch would put a step of up to 10 % of  !
+   ! e_sat into the right-hand side at the triple point, and a jump in the right-hand side is !
+   ! what breaks an adaptive step controller. Because both forms give 611.2 Pa at Tc = 0, the !
+   ! blend is continuous there for any fliq, so a store that freezes or melts moves smoothly  !
+   ! between the curves.                                                                      !
    !                                                                                          !
-   ! `fliq` ABSENT means pure liquid, which is what every caller did before #89 -- so omitting    !
-   ! it is bit-identical. Supply it only where the surface's phase is genuinely known (snow,      !
-   ! frozen soil). Dewpoint conversions and diagnostic VPD must NOT supply it: dewpoint is        !
-   ! DEFINED over liquid, so an ice branch there would mis-convert the forcing.                   !
+   ! `fliq` ABSENT means pure liquid. Supply it only where the surface's phase is genuinely   !
+   ! known (snow, frozen soil). Dewpoint conversions and diagnostic VPD must NOT supply it:   !
+   ! dewpoint is DEFINED over liquid, so an ice branch there would mis-convert the forcing    !
+   ! (docs/science/forcing.md §7).                                                            !
    !                                                                                          !
-   ! Accuracy of the ice form against Murphy & Koop (2005): 0.1 % at -10 C, 0.4 % at -20 C,       !
-   ! 0.9 % at -30 C. The error it removes is an order larger -- using the liquid curve over ice    !
-   ! overstates e_sat by 10 % at -10 C, 22 % at -20 C and 34 % at -30 C.                           !
+   ! The ice form is within 0.1 % of Murphy & Koop (2005) at -10 C and 0.9 % at -30 C; the    !
+   ! liquid curve over ice would overstate e_sat by 10 % at -10 C, 22 % at -20 C and 34 % at  !
+   ! -30 C.                                                                                   !
    !---------------------------------------------------------------------------------------!
    elemental function sat_vapor_pressure(t_k, fliq) result(esat)
       real(wp), intent(in)           :: t_k
@@ -71,7 +72,8 @@ contains
       end if
    end function sat_vapor_pressure
 
-   !----- Saturation specific humidity [kg/kg] at temperature t_k [K] and pressure p_pa [Pa]. !
+   !----- Saturation specific humidity [kg/kg] at temperature t_k [K] and pressure p_pa [Pa]:  !
+   !      q = 0.622 e / (p - 0.378 e), the conversion of docs/science/forcing.md eq. (11). ------!
    elemental function sat_specific_humidity(t_k, p_pa, fliq) result(qs)
       real(wp), intent(in)           :: t_k, p_pa
       real(wp), intent(in), optional :: fliq
@@ -151,7 +153,7 @@ contains
    end function temp_to_internal_energy
 
    !----- Specific enthalpy of water vapour [J/kg] (thermal + phase baseline; any vapour       !
-   !      flux automatically transports its latent heat, design 4b). ------------------------!
+   !      flux automatically transports its latent heat; MEDS_ENERGY_BALANCE_DESIGN.md §4b). ---!
    elemental function enthalpy_vapor(t_k) result(h)
       real(wp), intent(in) :: t_k
       real(wp)             :: h
@@ -211,7 +213,8 @@ contains
       rho = p_pa / (r_dry * t_k * (1.0_wp + 0.608_wp * shv))   ! r_dry from meds_constants (single authority)
    end function air_density
 
-   !----- Canopy-air specific enthalpy [J/kg] from temperature + specific humidity (4b). -----!
+   !----- Canopy-air specific enthalpy [J/kg] from temperature + specific humidity             !
+   !      (MEDS_ENERGY_BALANCE_DESIGN.md §4b). ---------------------------------------------!
    elemental function cas_enthalpy_of_temp(t_k, shv) result(enth)
       real(wp), intent(in) :: t_k, shv
       real(wp)             :: enth
@@ -226,8 +229,9 @@ contains
    end function cas_temp_of_enthalpy
 
    !=======================================================================================!
-   !  SOIL thermal properties (design MEDS_ENERGY_BALANCE_DESIGN.md, 4c/8). Both `elemental`; !
-   !  fliq = liquid fraction of the soil water, so freeze/thaw enters ice-aware.              !
+   !  SOIL thermal properties (docs/science/soil_biophysics.md §The soil thermal column; the  !
+   !  conductivity is eq. (11) there). Both `elemental`; fliq = liquid                        !
+   !  fraction of the soil water, so freeze/thaw enters ice-aware.                            !
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
@@ -241,7 +245,7 @@ contains
       !      by liquid fraction, so the interpolation weight is ice-aware like kappa_sat below. ------!
       k_e = fliq * (log10(s_r) + 1.0_wp) + (1.0_wp - fliq) * s_r
       k_e = min(max(k_e, 0.0_wp), 1.0_wp)                                     ! Kersten number, clamped
-      !----- Saturated geometric mean, ice-aware (fixes ED2's liquid-only kappa_sat). -----!
+      !----- Saturated geometric mean, ice-aware (ED2's kappa_sat is liquid-only). --------!
       kappa_sat = k_solid ** (1.0_wp - theta_sat)                                            &
                   * k_water ** (theta_sat * fliq) * k_ice ** (theta_sat * (1.0_wp - fliq))
       kappa = k_e * kappa_sat + (1.0_wp - k_e) * k_dry
@@ -267,7 +271,7 @@ contains
 
    !=======================================================================================!
    !  Vapour-pressure deficit. Thermodynamics, not a diagnostic: the fast loop accumulates    !
-   !  a dt-weighted CAS VPD (#264) and the output layer reads it back, so both need the SAME  !
+   !  a dt-weighted CAS VPD and the output layer reads it back, so both need the SAME         !
    !  formula, which cannot live in src/io/output: a kernel may not depend on the output.   !
    !=======================================================================================!
 
@@ -281,7 +285,8 @@ contains
    !----- VPD [Pa] from the canopy-air-space prognostic twins (temperature + SPECIFIC       !
    !      humidity) at a given pressure: e = q*p / (0.622 + 0.378*q), the exact inverse of    !
    !      q = 0.622 e / (p - 0.378 e) that sat_specific_humidity and every forcing conversion  !
-   !      use, so a saturated forcing record reads back as VPD = 0. ------------------------!
+   !      use (docs/science/forcing.md eq. (11)), so a saturated forcing record reads back as  !
+   !      VPD = 0. --------------------------------------------------------------------------!
    pure elemental real(wp) function specific_humidity_to_vpd(temp, shv, pressure) result(vpd)
       real(wp), intent(in) :: temp      !< [K]
       real(wp), intent(in) :: shv       !< [kg/kg] specific humidity

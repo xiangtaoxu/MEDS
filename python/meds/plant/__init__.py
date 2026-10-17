@@ -2,7 +2,7 @@
 """meds.plant — a Pythonic front end to the MEDS plant-ecophysiology model (libmeds.so).
 
 The plant module goes beyond a single leaf process, so it is split into submodules (one per process
-family), all backed by the one plant C-API shared library:
+family), all backed by the one shared library, libmeds.so:
 
     meds.plant.leaf   — leaf gas exchange: FvCB C3 / Collatz C4 photosynthesis + Leuning / Medlyn /
                         Katul stomatal conductance, Arrhenius / peaked temperature response, and the
@@ -19,7 +19,7 @@ Both are exposed with dataclasses + enums so callers never touch ctypes:
     ph = pheno.Phenology(pheno.temperate_deciduous())
     day = ph.step(temp_day=290.0, par_hours=13.0, doy=150)     # day.leaf_cover, day.senescence
 
-Importing `meds.plant` is cheap; the compiled library (see meds.plant._ffi) loads lazily on first use.
+Importing `meds.plant` is cheap; the compiled library (see meds._libmeds) loads lazily on first use.
 """
 from __future__ import annotations
 

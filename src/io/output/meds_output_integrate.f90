@@ -6,12 +6,12 @@
 ! period (normalize_*), and re-seed for the next (reset_buffer).                                      !
 !                                                                                          !
 ! Links meds_output_types + meds_output_config + the demographic state/reductions ONLY -- no C        !
-! bindings, so the stepper edge that calls these pulls no netCDF (the §2 DAG-hygiene wall).            !
+! bindings, so the stepper edge that calls these pulls no netCDF (src/README.md, The library graph).  !
 !                                                                                          !
-! P0 SIMPLIFICATION (honest, and exact for the P0 operators): each ACTIVE tier integrates raw state    !
-! independently every step; there is NO inter-tier chaining/feeder map. For AGG_MEAN/TMEAN/SUM/MIN/    !
-! MAX/LAST a direct dt-weighted reduction over the coarse period equals the chained roll-up            !
-! (§4.1 "chaining exactness"), so the result is identical. Design §3-§4.                               !
+! NO CHAINING: each ACTIVE tier integrates raw state independently every step; there is NO inter-tier  !
+! feeder map. For AGG_MEAN/TMEAN/SUM/MIN/MAX/LAST a direct dt-weighted reduction over the coarse       !
+! period equals the chained roll-up, so the result is identical (docs/science/diagnostics.md §4; the   !
+! design record is MEDS_IO_DESIGN.md §4.1).                                                            !
 !==========================================================================================!
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
@@ -75,12 +75,10 @@ module meds_output_integrate
    !  variable's scale (cohort / patch / site / PFT / size) is a property of its `dim`, not of a    !
    !  separate source id -- which is what lets one field emit every scale from one registry line.   !
    !                                                                                          !
-   !  THE RANGES ARE LOAD-BEARING, NOT COSMETIC. The previous flat numbering had SRC_F_GPP_RATE      !
-   !  == SRC_S_SOILC_FAST_GRND == 312 (and five more collisions in the same block). Those were       !
-   !  invisible only because the two ids were consumed by different switchboards -- but a user who    !
-   !  moved a FAST variable onto the daily tier via meds_io_config.toml (`gpp_rate_fast = "F D"`)      !
-   !  would have had the daily record silently filled with a soil-carbon pool. Disjoint ranges +       !
-   !  the src_class() dispatcher make that class of collision impossible to reintroduce.               !
+   !  THE RANGES ARE LOAD-BEARING, NOT COSMETIC. Different switchboards consume the ids (the site    !
+   !  one, SRC_S_*, and the fast one, SRC_F_*); in one flat numbering a FAST id could equal a site    !
+   !  id, and a variable resolved by the wrong switchboard would fill its record silently from        !
+   !  another field. Disjoint ranges + the src_class() dispatcher make that collision impossible.     !
    !==========================================================================================!
    integer(ik), parameter :: SRCK_NONE   = 0_ik
    integer(ik), parameter :: SRCK_COHORT = 1_ik   !< 1000-1999 : per-cohort field
@@ -117,7 +115,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_PHENO_FLUSH     = 1025_ik
    integer(ik), parameter :: FLD_C_PHENO_SHED      = 1026_ik
    !----- Leaf and wood temperature are not read here at the output tick: one sample per window,  !
-   !      at the boundary's local hour, biases them (#264). Their time means are rows of the      !
+   !      at the boundary's local hour, biases them. Their time means are rows of the             !
    !      cohort block (FLD_C_DIAG0 + CD_LEAF_TEMP, CD_WOOD_TEMP), sampled every sub-step. ------!
    !----- DERIVED cohort fields (computed by meds_diagnostic_kernels / from the deriv bundle). --!
    integer(ik), parameter :: FLD_C_ONE             = 1050_ik !< constant 1 (stem counts on any axis)
@@ -147,7 +145,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_COHORT_COUNT    = 2005_ik
    integer(ik), parameter :: FLD_P_GLOBAL_ID       = 2006_ik
    !----- The canopy-air, soil-top and surface-water STATES are not read here at the output tick:  !
-   !      one sample per window, at the boundary's local hour, biases them (#264). Their time means  !
+   !      one sample per window, at the boundary's local hour, biases them. Their time means         !
    !      are rows of the patch block (FLD_P_DIAG0 + PD_*), accumulated through the step. ---------!
    integer(ik), parameter :: FLD_P_CAS_DEPTH       = 2014_ik
    integer(ik), parameter :: FLD_P_SWE             = 2016_ik
@@ -189,7 +187,7 @@ module meds_output_integrate
 
    !----- FAST-tier staged sources (SRCK_FAST): read from the fast loop's staging, never from      !
    !      site state (which at replay time is the end-of-slow-step snapshot). Two are rows of the   !
-   !      blocks' own tables: the forcing echo (MEDS_FORCING_DESIGN.md §6.7), SRC_F_PY0 + PY_*, and   !
+   !      blocks' own tables: the forcing echo (docs/science/diagnostics.md §5), SRC_F_PY0 + PY_*, and !
    !      the patch block's fast rows, SRC_F_PD0 + PD_*, as a site mean or per patch by the dim. --!
    integer(ik), parameter :: SRC_F_PY0           = 5100_ik
    integer(ik), parameter :: SRC_F_PD0           = 5200_ik
@@ -275,7 +273,7 @@ contains
       end select
    end subroutine integrate_scalar
 
-   !----- Fold a slab of n samples (direct slot index; slot set fixed within a window, §4.4).  !
+   !----- Fold a slab of n samples (direct slot index; slot set fixed within a window).        !
    !                                                                                          !
    !      `valid` (optional) marks slots that had NOTHING to report this step -- an empty patch, !
    !      a PFT with no members, a size class with no stems, a soil column with no texture. Those !
@@ -362,21 +360,18 @@ contains
    end subroutine normalize_slab
 
    !=======================================================================================!
-   !  Extract (copy the current value of one variable out of live state; NO pointers, §3.3). !
+   !  Extract (copy the current value of one variable out of live state; NO pointers).      !
    !                                                                                        !
-   !  nvfortran caveat (CLAUDE.md issue #7 family): nvfortran -O2 does not always see a store  !
-   !  to site%<allocatable component> as affecting a subsequent extract_variable(site,...)     !
-   !  read, so it can wrongly CSE two extracts across an INLINE mutation. Production is safe --  !
-   !  state changes happen through opaque routines (vegetation_dynamics/update_demography) that !
-   !  the optimizer cannot see through, and output_integrate extracts each variable ONCE per     !
-   !  step. Do NOT extract twice across an inline component store (see test_output_integrate).    !
+   !  nvfortran caveat (an optimizer trap like those in CLAUDE.md): nvfortran -O2 does not    !
+   !  always see a store to site%<allocatable component> as affecting a subsequent             !
+   !  extract_variable(site,...) read, so it can wrongly CSE two extracts across an INLINE     !
+   !  mutation. Production is safe -- state changes happen through opaque routines            !
+   !  (vegetation_dynamics, the calendar restructuring) that the optimizer cannot see through, !
+   !  and output_integrate extracts each variable ONCE per step. Do NOT extract twice across   !
+   !  an inline component store (see test_output_integrate).                                  !
    !=======================================================================================!
-   !----- Which entity a source id names, from its numeric range (see the SOURCE CODE SPACE     !
-   !      block at the top). This one function is what makes the id ranges enforceable rather      !
-   !      than a convention -- every dispatch below asks it, so a mis-ranged id fails loudly here   !
-   !      instead of silently resolving to a neighbour's field.                                     !
    !----- A diagnostic-block row whose block this run does not fill: a block that is off, or a fast  !
-   !      row of the patch block in a slow-only run (#299). Its variables read as missing, not as a   !
+   !      row of the patch block in a slow-only run. Its variables read as missing, not as a        !
    !      0 nothing computed. ----------------------------------------------------------------------!
    pure logical function not_simulated(site, src) result(ns)
       type(site_t), intent(in) :: site
@@ -394,6 +389,10 @@ contains
       end if
    end function not_simulated
 
+   !----- Which entity a source id names, from its numeric range (see the SOURCE CODE SPACE     !
+   !      block at the top). This one function is what makes the id ranges enforceable rather      !
+   !      than a convention -- every dispatch below asks it, so a mis-ranged id fails loudly here   !
+   !      instead of silently resolving to a neighbour's field.                                     !
    pure integer(ik) function src_class(src) result(k)
       integer(ik), intent(in) :: src
       if      (src >= 1000_ik .and. src < 2000_ik) then ; k = SRCK_COHORT
@@ -535,19 +534,14 @@ contains
    !      the manager has no soil parameters wired (dp%soil_ready = .false.) rather than         !
    !      inventing a texture -- a plausible wrong psi is worse than an honest fill value.        !
    !                                                                                          !
-   !      nlayer IS dp%n_soil (#246). It used to be n_soil_layer_max -- the compile-time ceiling !
-   !      -- against a comment that already said "ACTIVE". Every soil variable was therefore     !
-   !      emitted over all 20 slots of a 10-layer column, and the DIM_SOIL branch of             !
-   !      extract_variable marks every slot it is handed as valid, so the padding was written as  !
-   !      data instead of being left for netCDF to fill. Two consequences: reducing over the soil !
-   !      axis gave a 136 K column (ten real layers averaged with ten zeros), and                 !
-   !      soil_matric_potential was evaluated on padding whose theta_sat is 0 -- a divide by zero !
-   !      that a Debug build (-fpe0) aborts on and a Release build turns into NaN in the file.    !
-   !                                                                                          !
-   !      Bounding it here is the whole fix: the reducers below then mark only live slots valid,  !
+   !      nlayer IS dp%n_soil, never the compile-time ceiling n_soil_layer_max. The DIM_SOIL      !
+   !      branch of extract_variable marks every slot it is handed as valid, so a padded count    !
+   !      would write the padding as data: a 10-layer column reduced over 20 slots reads as a     !
+   !      136 K column (ten real layers averaged with ten zeros), and soil_matric_potential on    !
+   !      padding whose theta_sat is 0 divides by zero -- a Debug build (-fpe0) aborts, a Release !
+   !      build writes NaN. Bounded here, the reducers below mark only live slots valid,          !
    !      normalize_slab leaves the rest at MISSING_VALUE, and the serializer writes only the     !
-   !      live extent -- which is exactly how the cohort and patch axes have always handled their !
-   !      own padding.  ------------------------------------------------------------------------!
+   !      live extent, as for the cohort and patch axes.  -------------------------------------!
    pure subroutine layer_source_field(site, dp, src, col, nlayer, ok)
       type(site_t),        intent(in)  :: site
       type(diag_params_t), intent(in)  :: dp
@@ -598,11 +592,8 @@ contains
    !  FLD_C_AGB serves agb_cohort (raw), agb_patch, agb_site, agb_pft and agb_size, and the       !
    !  ONLY difference between those five registry rows is dim + weight + mean.                    !
    !                                                                                          !
-   !  nvfortran caveat (CLAUDE.md issue #7 family): nvfortran -O2 does not always see a store     !
-   !  to site%<allocatable component> as affecting a subsequent extract_variable(site,...) read,   !
-   !  so it can wrongly CSE two extracts across an INLINE mutation. Production is safe -- state     !
-   !  changes happen through opaque routines the optimizer cannot see through, and output_integrate !
-   !  extracts each variable ONCE per step. Do NOT extract twice across an inline component store.   !
+   !  The nvfortran CSE caveat of the Extract block above applies here too: do NOT extract twice    !
+   !  across an inline component store.                                                            !
    !=======================================================================================!
    subroutine extract_variable(site, dp, v, scalar_out, slab_out, valid_out, n_out)
       type(site_t),        intent(in)  :: site
@@ -739,7 +730,7 @@ contains
    !  bufs%queue for main to serialize.                                                    !
    !                                                                                       !
    !  The stand's calendar restructuring runs after this tick (advance_boundary), so every !
-   !  window holds one cohort/patch slot set (§4.4) and the restructuring's events reach   !
+   !  window holds one cohort/patch slot set and the restructuring's events reach          !
    !  the period that begins.                                                              !
    !=======================================================================================!
    subroutine output_integrate(files, bufs, site, prev, dt, is_new_day, is_new_month, is_new_year)
@@ -755,7 +746,7 @@ contains
       logical     :: vslab(max(files%max_slab, 1_ik))
       if (.not. files%enabled) return
       !----- The cohort and patch slabs are output.cohort_max and patch_max long. Stop at the step the  !
-      !      stand outgrows one, not when its record is written, up to a month later (#312 O9). --------!
+      !      stand outgrows one, not when its record is written, up to a month later. ------------------!
       if (files%cohort_axis .and. site%cohort%n > files%cohort_max) call cap_exceeded('cohort', site%cohort%n, files%cohort_max)
       if (files%patch_axis  .and. site%patch%n  > files%patch_max)  call cap_exceeded('patch',  site%patch%n,  files%patch_max)
       !----- fold the step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately from the    !
@@ -790,7 +781,7 @@ contains
       error stop 'output: a live count exceeds its output cap (see the message above)'
    end subroutine cap_exceeded
 
-   !----- Normalize a tier's buffers into its pending record + reset them (staging, §4.5). -----!
+   !----- Normalize a tier's buffers into its pending record + reset them (staging). ----------!
    subroutine close_tier(files, bufs, t)
       type(output_files_t),   intent(in)    :: files
       type(output_buffers_t), intent(inout) :: bufs
@@ -886,8 +877,7 @@ contains
    !  staged sub-step: a patch-block row's site mean or a forcing row. Slab (soil / cohort /    !
    !  patch) sources are resolved in output_integrate_fast.                                    !
    !                                                                                          !
-   !  THIS IS NOT A SECOND SWITCHBOARD FOR THE SAME THING, and it was once slated for deletion  !
-   !  on the belief that it was (#172, closed 2026-09-13 on the measurement below).              !
+   !  THIS IS NOT A SECOND SWITCHBOARD FOR THE SAME THING.                                      !
    !                                                                                          !
    !  The FAST tier is ALREADY on the general machinery: it shares the registry                  !
    !  (reg%idx_freq(:,1)), the buffers (buf(:,1)), close_tier, and the pending/serialize path.    !

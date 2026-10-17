@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_surface_maps -- the one module that reads static per-cell maps (MEDS_POLYGON_RUNTIME_PLAN.md  !
-! §14, RP2), on the synthetic archive's 4 x 18 grid.                                                  !
+! test_surface_maps -- the one module that reads static per-cell maps (docs/configuration.md §Input  !
+! maps), on the synthetic archive's 4 x 18 grid.                                                      !
 !                                                                                          !
 ! A 2-D map is read at a box's cells, each at its own (row, col); a cell the map leaves empty reads  !
 ! as NaN. A layered map gives every layer at every cell. A map off the forcing grid, a missing       !
@@ -9,9 +9,10 @@
 ! at or above its threshold, drops the empty one, and leaves the kept cells grouped by chunk the way !
 ! the forcing reader needs them.                                                                    !
 !                                                                                          !
-! The [maps] inputs (RP3): a run cell the soil maps leave empty is named; every value is read at  !
+! The [maps] inputs: a run cell the soil maps leave empty is named; every value is read at        !
 ! its own cell; a column layer takes the map layers it overlaps, weighted by the overlap, and below  !
-! the deepest map layer that layer's soil; the bottom boundary and the thermal anchor follow the map. !
+! the deepest map layer that layer's soil; the bottom boundary and the thermal anchor follow the map !
+! (the anchor's distance is docs/science/soil_biophysics.md eq. (13)).                                !
 ! The work directory is the first argument.                                                          !
 !==========================================================================================!
 program test_surface_maps
@@ -191,7 +192,7 @@ program test_surface_maps
       call check_true('a layer on one map layer takes that layer''s soil', close(sc%layer_theta_sat(2), ts) &
                       .and. close(sc%layer_ksat(2), ks))
    end associate
-   call check_true('a leaky bottom runs as free_drain (#401)', bc_class_at(1_ik, 0_ik) == 2_ik .and.      &
+   call check_true('a leaky bottom runs as free_drain', bc_class_at(1_ik, 0_ik) == 2_ik .and.      &
                    cfg%soil%bottom_bc == SOIL_BC_FREE_DRAIN)
    call check_true('the thermal anchor: the map''s temperature, d/sqrt(2) below the bottom node',          &
                    close(cfg%energy%deep_temp, deep_temp_at(1_ik, 0_ik)) .and.                            &

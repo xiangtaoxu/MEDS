@@ -1,12 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_era5land_reader -- file access for the global per-variable monthly ED_ERA5land archive !
-! (MEDS_FORCING_DESIGN.md sections 14-15): path templates, the static file, site and box cell  !
-! selection (§15.5), and a month of every domain cell read one chunk column at a time into a   !
-! float32 buffer (§15.3). The unit conversions live in the reader (meds_met_driver), which      !
-! turns every nonzero status here into a hard error; returning a status instead of stopping is  !
-! what lets the tests exercise the rejections. MEDS never gap-fills: a NaN in a selected cell   !
-! is an error, never a fill.                                                                     !
+! meds_era5land_reader -- file access for the global per-variable monthly ED_ERA5land archive   !
+! (docs/science/forcing.md §1; the files' layout is MEDS_FORCING_DESIGN.md §14): path           !
+! templates, the static file, site and box cell selection, and a month of every domain cell     !
+! read one chunk column at a time into a float32 buffer. The conversions to the model's fields  !
+! (humidity from the dewpoint, wind speed from its components) live in the met source           !
+! (meds_met_archive_source, meds_met_driver). Every caller turns a nonzero status here into a   !
+! hard error; returning a status instead of stopping is what lets the tests exercise the        !
+! rejections. MEDS never gap-fills: a NaN in a selected cell is an error, never a fill.         !
 !==========================================================================================!
 module meds_era5land_reader
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
@@ -40,10 +41,10 @@ module meds_era5land_reader
    character(len=10), parameter :: ERA_VAR_UNITS(ERA_NVAR) =                                       &
       ['K         ', 'K         ', 'Pa        ', 'm s-1     ', 'm s-1     ', 'kg m-2 s-1',           &
        'W m-2     ', 'W m-2     ']
-   !----- The archive's time coordinate is seconds since this instant (§14.2). -------------------!
+   !----- The archive's time coordinate is seconds since this instant. ---------------------------!
    type(meds_time_t), parameter :: ERA_EPOCH = meds_time_t(1970_ik, 1_ik, 1_ik, 0_ik, 0_ik, 0_ik)
 
-   integer(ik), parameter :: CHUNK = 16_ik       !< the archive's spatial chunk edge (§14.2)
+   integer(ik), parameter :: CHUNK = 16_ik       !< the archive's spatial chunk edge
    real(wp),    parameter :: GRID_TOL = 1.0e-4_wp !< [deg] slack for "these coordinates are equal"
    real(wp),    parameter :: STAMP_TOL = 0.5_wp  !< [s] slack for "this record is that stamp"
 
@@ -61,7 +62,7 @@ contains
 
    !=======================================================================================!
    !  Paths. Tokens {data_path}, {var}, {yyyy} and {mm}; the defaults are the archive's own    !
-   !  flat layout (§14.1).                                                                     !
+   !  flat layout.                                                                            !
    !=======================================================================================!
    function era5land_path(template, data_path, var, year, month) result(path)
       character(len=*), intent(in) :: template, data_path, var
@@ -121,10 +122,11 @@ contains
    end function era5land_month_hours
 
    !=======================================================================================!
-   !  SITE (§15.5): the cell containing the site by regular-grid arithmetic; if it has no data, !
-   !  the nearest valid cell by great-circle distance, lowest (row-major) index on a tie, up to  !
-   !  max_km. Rows farther than max_km in latitude alone cannot qualify, so only the rows within !
-   !  that band are read, across all longitudes (which handles the antimeridian for free).       !
+   !  SITE (docs/science/forcing.md §1): the cell containing the site by regular-grid          !
+   !  arithmetic; if it has no data, the nearest valid cell by great-circle distance, lowest     !
+   !  (row-major) index on a tie, up to max_km. Rows farther than max_km in latitude alone       !
+   !  cannot qualify, so only the rows within that band are read, across all longitudes (which  !
+   !  handles the antimeridian for free).                                                        !
    !=======================================================================================!
    subroutine era5land_select_site(static_path, site_lat, site_lon, max_km, dom, distance_km, stat)
       character(len=*),   intent(in)  :: static_path
@@ -172,10 +174,10 @@ contains
    end subroutine era5land_select_site
 
    !=======================================================================================!
-   !  BOX (§15.5): the valid cells whose centres lie in [south, north] x [west, east], in       !
-   !  row-major order north to south and west to east. A box with west > east crosses the       !
-   !  antimeridian: its columns run from west to the grid's east edge, then on from the west    !
-   !  edge to east. nwse = [north, west, south, east] in degrees.                                !
+   !  BOX (docs/configuration.md, Regional runs): the valid cells whose centres lie in          !
+   !  [south, north] x [west, east], in row-major order north to south and west to east. A box  !
+   !  with west > east crosses the antimeridian: its columns run from west to the grid's east   !
+   !  edge, then on from the west edge to east. nwse = [north, west, south, east] in degrees.   !
    !=======================================================================================!
    subroutine era5land_select_box(static_path, nwse, dom, stat, land_fraction_min)
       character(len=*),   intent(in)  :: static_path
@@ -183,7 +185,7 @@ contains
       type(met_cells_t), intent(out) :: dom
       integer(ik),        intent(out) :: stat
       !----- Keep only cells whose static land fraction is at least this (a region's selection      !
-      !      rule, MEDS_POLYGON_RUNTIME_PLAN.md §5); absent, every valid cell is kept. ------------!
+      !      rule, docs/configuration.md, Regional runs); absent, every valid cell is kept. -------!
       real(wp), optional, intent(in)  :: land_fraction_min
       integer(c_int) :: ncid, st
       real(wp), allocatable :: lat(:), lon(:), valid(:,:), elev(:,:), lfrac(:,:)
@@ -324,10 +326,10 @@ contains
    end subroutine group_by_chunk
 
    !=======================================================================================!
-   !  MONTH LOAD (§15.3): every variable of one archive month for every domain cell. Each file's  !
-   !  grid, stamps and units are checked against what the reader assumes; each touched chunk     !
-   !  column is one hyperslab read of (month hours, <=16, <=16). `message` names the offending   !
-   !  file, cell or hour on a nonzero status.                                                     !
+   !  MONTH LOAD (docs/science/forcing.md §1): every variable of one archive month for every    !
+   !  domain cell. Each file's grid, stamps and units are checked against what the reader        !
+   !  assumes; each touched chunk column is one hyperslab read of (month hours, <=16, <=16).     !
+   !  `message` names the offending file, cell or hour on a nonzero status.                      !
    !=======================================================================================!
    subroutine era5land_load_month(template, data_path, dom, year, month, buf, stat, message)
       character(len=*),   intent(in)    :: template, data_path
@@ -401,7 +403,8 @@ contains
          st = nc_close(ncid)
       end do
 
-      !----- MEDS never gap-fills (§5.5): the static mask promises data in every selected cell.    !
+      !----- MEDS never gap-fills (docs/science/forcing.md §10): the static mask promises data in !
+      !      every selected cell.                                                                   !
       !      ieee_is_nan, not x /= x: a vectorized self-comparison may signal "invalid" on a quiet   !
       !      NaN, which a -fpe0 build traps before the message below can name the cell. The first NaN  !
       !      is found through an integer mask: nvfortran 25.11 has no findloc for LOGICAL arrays.    !
@@ -460,7 +463,7 @@ contains
       call read_axis(ncid, 'lat', lat, st)
       if (st == NC_NOERR) call read_axis(ncid, 'lon', lon, st)
       if (st == NC_NOERR) then
-         if (size(lat) >= 2 .and. size(lon) >= 2) then            ! a regular grid (§14.2)
+         if (size(lat) >= 2 .and. size(lon) >= 2) then            ! a regular grid
             if (all(abs((lat(2:) - lat(:size(lat) - 1)) - (lat(2) - lat(1))) <= GRID_TOL) .and.        &
                 all(abs((lon(2:) - lon(:size(lon) - 1)) - (lon(2) - lon(1))) <= GRID_TOL)) stat = ERA_OK
          end if

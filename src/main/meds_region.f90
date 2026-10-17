@@ -1,7 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_region -- a region run: every selected forcing cell of a contiguous box as its own        !
-! polygon, in one process (MEDS_POLYGON_RUNTIME_PLAN.md §4-6, R2).                               !
+! polygon, in one process (docs/science/order_of_processes.md §1; the configuration is           !
+! docs/configuration.md §Regional runs).                                                         !
 !                                                                                          !
 !   type(meds_region_t) :: reg                                                                   !
 !   call region_open('meds_config_main.toml', reg, ok)                                            !
@@ -13,14 +14,14 @@
 ! takes, reading its own cell of the shared month buffer; then the I/O phase writes every          !
 ! polygon's queued records into the region files, one hyperslab per variable per record. Nothing  !
 ! inside the polygon loop touches a file, so the polygons of a month run side by side on           !
-! [run].n_threads threads, each with a single-threaded patch loop (#183 R3).                       !
+! [run].n_threads threads, each with a single-threaded patch loop.                                 !
 !                                                                                          !
 ! Each polygon sits at its cell's centre, at the cell's orography, in UTC, and starts from bare    !
-! ground (OR8) or from its row of a region state file. The region's files hold every variable and  !
-! tier, each polygon's slice behind a `polygon` axis, cohort and patch axes padded to the largest   !
-! polygon's (OR13). With [state].write_state the region writes one state file, every polygon in it !
-! (meds_io, OR14), every interval_years and at the end. Once a polygon has failed, the end of the   !
-! run writes nothing more.                                                                         !
+! ground or from its row of a region state file. The region's files hold every variable and tier,  !
+! each polygon's slice behind a `polygon` axis, cohort and patch axes padded to the largest        !
+! polygon's. With [state].write_state the region writes one state file, every polygon in it        !
+! (meds_io), every interval_years and at the end. Once a polygon has failed, the end of the run    !
+! writes nothing more.                                                                             !
 !==========================================================================================!
 module meds_region
    use meds_kinds,                  only : wp, ik
@@ -111,13 +112,13 @@ contains
 
       !----- A region steps each polygon on an OpenMP worker thread, whose stack is OMP_STACKSIZE (4 MB  !
       !      by default with ifx), not the process's. A grown stand's automatic arrays overflow 4 MB after !
-      !      a few decades of regrowth and the run dies with SIGSEGV (example 06, 2026-10-15; the          !
-      !      stack-ceiling note in CMakeLists.txt). Say so at open when neither variable sets it. ---------!
+      !      a few decades of regrowth and the run dies with SIGSEGV (the stack-ceiling note in            !
+      !      CMakeLists.txt). Say so at open when neither variable sets it. ------------------------------!
       if (cfg%n_threads > 1_ik .and. .not. (env_set('OMP_STACKSIZE') .or. env_set('KMP_STACKSIZE')))  &
          write(*,'(2a)') ' WARNING: region: OMP_STACKSIZE is not set, and a grown stand overflows a worker ', &
                          'thread''s default stack (4 MB with ifx); set it, e.g. OMP_STACKSIZE=512M'
 
-      !----- The cells: the box's valid cells with enough land, in row-major order (§5). ---------!
+      !----- The cells: the box's valid cells with enough land, in row-major order. --------------!
       static = era5land_static_file(cfg%forcing)
       call era5land_select_box(static, cfg%region%box_nwse, cells, st, cfg%region%land_fraction_min)
       if (st == ERA_ERR_NO_CELL) then
@@ -128,7 +129,7 @@ contains
          write(*,'(2a)') ' region: cannot read valid, elevation and land_fraction from ', trim(static)
          return
       end if
-      !----- The cell mask (§14 RP2): of those cells, the ones the mask keeps. --------------------!
+      !----- The cell mask: of those cells, the ones the mask keeps. ------------------------------!
       if (len_trim(cfg%region%cell_mask) > 0) then
          n = cells%ncell
          call apply_cell_mask(cells, trim(cfg%region%cell_mask), trim(cfg%region%cell_mask_var),       &
@@ -248,7 +249,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! region_step_month -- one month of the whole region: load the month's forcing for every cell, !
-   ! advance each polygon through it, then write the queued output (§4). The month runs from the  !
+   ! advance each polygon through it, then write the queued output. The month runs from the       !
    ! current date to the next month boundary, or to end_time.                                      !
    !                                                                                          !
    ! The polygons run side by side on [run].n_threads threads. They share only what they read      !
@@ -342,7 +343,7 @@ contains
       end associate
    end subroutine region_step_month
 
-   !----- The region's state file: every polygon's row, at the current date (meds_io, OR14). The    !
+   !----- The region's state file: every polygon's row, at the current date (meds_io). The          !
    !      cohort and patch axes are the largest polygon's. The polygons share the calendar, so they   !
    !      owe the same boundary restructuring. ---------------------------------------------------------!
    subroutine region_write_state(reg)
@@ -396,7 +397,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! region_finalize -- the terminal state file, the per-polygon status table (state,             !
    ! conservation), close every file and the forcing source. DRIVER_ERR_AREA if any polygon's      !
-   ! patch areas no longer sum to 1. Once a polygon has failed, it writes nothing more: no state   !
+   ! patch areas do not sum to 1. Once a polygon has failed, it writes nothing more: no state      !
    ! file and no partial periods, so a closed chunk file is never made again from scratch.         !
    !---------------------------------------------------------------------------------------!
    subroutine region_finalize(reg, status)

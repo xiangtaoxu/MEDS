@@ -1,30 +1,28 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_rk4_oracle -- TEST-SUPPORT ONLY: the independent cross-validation oracle for the       !
-! production ARK path (meds_fast_ark) -- NOT production, reachable only from test/test_column_derivs.f90. !
-! Two tiers, both retained as verification infrastructure (do not delete; see                       !
-! docs/dev_plans/archive/MEDS_DRIVER_REORG_DESIGN.md §3.3):                                                  !
+! meds_fast_rk4_oracle -- TEST-SUPPORT ONLY: the independent cross-validation oracle for   !
+! the production schemes -- NOT production, reachable only from                            !
+! test/test_column_derivs.f90. Kept as verification infrastructure; do not delete it.      !
 !                                                                                          !
-!   * rk4_column_step -- the fully-EXPLICIT classical RK4 reference integrator over the pure RHS     !
-!     meds_fast_time_derivs%column_derivs. It shares NO code with the split's/ARK''s backward-Euler   !
-!     machinery, so agreement between it and any implicit integrator rules out a shared-bug false     !
-!     pass. It is NOT a production integrator -- the fast loop is stiff (stiffness ratio ~6.5e5), so   !
-!     RK4 is stable only for dt below ~2.785*tau_fast (the ~17 s plant-hydraulic mode among the        !
-!     INTEGRATED reservoirs; leaf energy is diagnostic, not integrated). Used as an oracle at small dt.!
+!   * rk4_column_step -- the fully-EXPLICIT classical RK4 reference integrator over the    !
+!     pure RHS meds_fast_time_derivs%column_derivs. It shares NO code with the ARK's       !
+!     backward-Euler machinery, so agreement between it and an implicit integrator rules   !
+!     out a shared-bug false pass. It is NOT a production integrator: the column is stiff, !
+!     and explicit RK4 is stable only for dt below ~2.785 times the fastest integrated     !
+!     time constant (leaf energy is diagnostic, not integrated), so it is an oracle at     !
+!     small dt.                                                                            !
 !                                                                                          !
-! There is ONE oracle here, and that is the point. The first-order gamma=1 "IMEX-Euler tier" that     !
-! used to sit beside it was retired (#198): it returned no reference trajectory, so it was not an      !
-! oracle, and it composed column_be_stage -- the production scheme's own kernel -- so its              !
-! independence was in the tableau, not in the machinery it was supposed to check. What it was          !
-! genuinely useful for is degrading the production scheme in one known way and watching what fails,    !
-! and that probe now lives in test_column_derivs (be_euler_step), which is the code that degrades it.  !
+! There is ONE oracle here, and that is the point. A first-order tier composed from        !
+! column_be_stage, the production scheme's own kernel, would be independent only in its    !
+! tableau, not in the machinery it is meant to check. Degrading the production scheme in   !
+! one known way and watching what fails is a different probe, and it lives in              !
+! test_column_derivs (be_euler_step), the code that degrades it.                           !
 !==========================================================================================!
 module meds_fast_rk4_oracle
-   !----- The import list IS the independence claim. Nothing here reaches the implicit machinery:  !
-   !      no column_be_stage, no newton_surface_solve, no advance_plant_water. The oracle sees       !
-   !      the pure right-hand side and the state algebra, and nothing else, which is what makes       !
-   !      agreement between it and an implicit scheme rule out a shared-bug false pass. Retiring the   !
-   !      IMEX-Euler tier (#198) is what let meds_fast_be_stage leave this list.                        !
+   !----- The import list IS the independence claim. Nothing here reaches the implicit machinery:      !
+   !      no column_be_stage, no newton_surface_solve, no advance_plant_water. The oracle sees         !
+   !      the pure right-hand side and the state algebra, and nothing else, which is what makes        !
+   !      agreement between it and an implicit scheme rule out a shared-bug false pass. ---------------!
    use meds_kinds,            only : wp, ik
    use meds_fast_time_derivs, only : column_derivs
    use meds_fast_types,       only : column_config_t, column_state_t, column_frozen_t, column_tend_t
@@ -37,9 +35,9 @@ module meds_fast_rk4_oracle
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! rk4_column_step -- one classical 4th-order Runge-Kutta step of the whole column state over the  !
-   ! pure RHS column_derivs, with the frozen forcing `frozen` held constant across the four stages (the  !
-   ! explicit part of the additive split). Commits into y_out; y is unchanged.                        !
+   ! rk4_column_step -- one classical 4th-order Runge-Kutta step of the whole column state            !
+   ! over the pure RHS column_derivs, with the frozen record `frozen` held constant across            !
+   ! the four stages. Commits into y_out; y is unchanged.                                             !
    !---------------------------------------------------------------------------------------!
    subroutine rk4_column_step(y, frozen, col_config, n, nsl, dt, y_out, freeze_theta)
       type(column_state_t),  intent(in)  :: y
@@ -48,9 +46,8 @@ contains
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
-      logical, optional,     intent(in)  :: freeze_theta   !< zero the soil-water tendency (theta held fixed):
-                                                           !< makes the oracle solve the SAME reduced system the
-                                                           !< ARK stepper does (soil water operator-split OUT).
+      logical, optional,     intent(in)  :: freeze_theta   !< zero the soil-water tendency, holding theta
+                                                           !< at its start value.
 
       type(column_tend_t)  :: k1, k2, k3, k4
       type(column_state_t) :: y_stage

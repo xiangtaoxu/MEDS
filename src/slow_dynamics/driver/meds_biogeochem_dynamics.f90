@@ -1,18 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_biogeochem_dynamics -- the slow-loop BIOGEOCHEMISTRY driver (MEDS_SLOW_DYNAMICS_DESIGN.md !
-! Part II, B2): the peer of meds_vegetation_dynamics under meds_slow_dynamics. Per patch, it       !
-! advances the CENTURY soil-carbon matrix ONE daily step: the litter accumulated by the             !
-! vegetation driver this step (`lit`, already routed through build_litter_input) plus the fast       !
-! loop's day-integrated environmental scalar (`site%patch%xi_accum`, accumulated once per (patch,     !
-! sub-step) by column_prepass over the SAME frozen pool the fast loop's heterotrophic_respiration_     !
-! matrix respired against) drive soil_carbon_step, which commits the pool change once, at day-end.      !
+! meds_biogeochem_dynamics -- the slow-loop BIOGEOCHEMISTRY driver, the peer of                     !
+! meds_vegetation_dynamics under meds_slow_dynamics (docs/science/order_of_processes.md §4).        !
+! Per patch, it advances the CENTURY soil-carbon matrix ONE daily step: the litter accumulated      !
+! by the vegetation driver this step (`site%patch%litter_in`, routed through build_litter_input)    !
+! plus the fast loop's day-integrated environmental scalar (`site%patch%xi_accum`, accumulated      !
+! once per (patch, sub-step) by the fast loop over the SAME frozen pool the fast loop's             !
+! heterotrophic_respiration_matrix respired against) drive soil_carbon_step, which commits the      !
+! pool change once, at day-end (docs/science/soil_carbon.md §6).                                    !
 !                                                                                          !
-! THE DOUBLE-COUNTING CONTRACT (design section 9): the fast loop respires the FROZEN daily pool      !
-! (biophys%soil_carbon, seeded once per patch per day in meds_fast_dynamics, never mutated there); this   !
-! module is the SOLE writer of the real site%patch%soil_carbon. So the day's total fast Rh equals      !
-! the pool debit BY CONSTRUCTION -- rh_seam_gap = soil_carbon_step's rh_today - the fast loop's         !
-! accumulated rh_fast_accum is an ASSERTION GUARD (should be ~0), not a live correction.                 !
+! THE DOUBLE-COUNTING CONTRACT (docs/science/soil_carbon.md §7): the fast loop respires the FROZEN  !
+! daily pool (biophys%soil_carbon, seeded once per patch per day in meds_fast_dynamics, never       !
+! mutated there); this module is the SOLE writer of the real site%patch%soil_carbon. So the day's   !
+! total fast Rh equals the pool debit BY CONSTRUCTION: rh_seam_gap, soil_carbon_step's rh_today     !
+! minus the fast loop's accumulated rh_fast_accum, is an ASSERTION GUARD (should be ~0), not a      !
+! live correction.                                                                                  !
 !==========================================================================================!
 module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
@@ -34,7 +36,8 @@ contains
    ! Advance the slow soil-carbon matrix one daily step, per patch. `lit` is vegetation_       !
    ! dynamics's per-patch litter accumulator (turnover + continuous-mortality carbon; cull-     !
    ! termination and disturbance-kill litter were already added directly onto site%patch%        !
-   ! soil_carbon by the core engine -- see meds_demography_cohort_fusefiss/meds_demography_patch_fusefiss).   !
+   ! soil_carbon by the demography operators -- see meds_demography_cohort_fusefiss and           !
+   ! meds_demography_patch_fusefiss).                                                              !
    ! `seam` (optional) accumulates the per-RUN worst of the three soil-carbon seam diagnostics --   !
    ! the fast/slow Rh reconciliation gap, the lignin passive-tracer residual, and lambda, the        !
    ! largest fraction of any pool a single slow step withdraws (mirrors fast_dynamics's              !
@@ -44,21 +47,15 @@ contains
       type(site_t),          intent(inout) :: site
       type(meds_config_t),   intent(in)    :: cfg
       !----- The litter arriving today is site%patch%litter_in -- patch state, in lockstep with the
-      !      patch array. It used to be a caller-supplied array sized BEFORE patch disturbance ran,
-      !      and the loops below (both of them, including the ledger declaration) indexed it by the
-      !      post-disturbance patch count. Bounds checking reports it as `Subscript #1 of the array
-      !      LIT has value 12 which is greater than the upper bound of 11`; without bounds checking
-      !      it is undefined memory going straight into the CENTURY source term u.
+      !      patch array, so it always has the post-disturbance patch count the loops below run over.
       !----- The seam diagnostics, accumulated as per-RUN worsts (intent(inout), reset by the driver !
-      !      at open). One record rather than an optional real per number: worst_rh_seam_gap spent its !
-      !      whole life unreported partly because adding the next one meant a second argument through  !
-      !      three layers of driver.  ------------------------------------------------------------!
+      !      at open): one record rather than an optional real per number. --------------------------!
       type(soilc_seam_t), optional, intent(inout) :: seam
-      !----- The site ledger (plan §10.2). The litter the vegetation driver declared LEAVING the   !
-      !      live pools arrives here; declaring the same quantity at both ends turns the litter    !
-      !      seam into something the ledger TESTS rather than something it has to be told to       !
-      !      ignore. Rh is not declared: it leaves the CENTURY pools into the canopy air, and BOTH  !
-      !      are stores this ledger carries, so it is an internal transfer.  -----------------------!
+      !----- The slow ledger (meds_slow_ledger). The litter the vegetation driver declared          !
+      !      LEAVING the live pools arrives here; declaring the same quantity at both ends turns    !
+      !      the litter seam into something the ledger TESTS rather than something it has to be     !
+      !      told to ignore. Rh is not declared: it leaves the CENTURY pools into the canopy air,   !
+      !      and BOTH are stores this ledger carries, so it is an internal transfer. ---------------!
       type(slow_ledger_t), optional, intent(inout) :: ledger
       real(wp)             :: u(n_soil_pool), lignin_in(2), xi_int(n_soil_pool), rh_today
       type(soilc_audit_t)  :: audit
@@ -84,9 +81,9 @@ contains
             xi_int(IP_PASSIVE)     = xa%passive
             call soil_carbon_step(site%patch%soil_carbon(ip), u, lignin_in, xi_int, cfg%soil_carbon, &
                                   rh_today, audit)
-            !----- The assertion guard (design section 9): with the frozen-pool identity, rh_today   !
-            !      (the matrix's own pool debit) should equal the fast loop's independently            !
-            !      accumulated Rh to within floating-point/adaptive-substep error. -------------------!
+            !----- The assertion guard (docs/science/soil_carbon.md §7): with the frozen-pool          !
+            !      identity, rh_today (the matrix's own pool debit) should equal the fast loop's       !
+            !      independently accumulated Rh to within floating-point/adaptive-substep error. ------!
             audit%rh_fast_accum = xa%rh_fast_accum
             audit%rh_seam_gap   = rh_today - xa%rh_fast_accum
             if (present(seam)) then
@@ -99,7 +96,7 @@ contains
             end if
             !----- LEDGER: heterotrophic respiration is the MIRROR of the GPP handover. The matrix  !
             !      debits the real pools HERE, inside the slow step; the fast loop already credited !
-            !      that carbon to the canopy air yesterday, against the FROZEN copy of the pools    !
+            !      that carbon to the canopy air in this step's fast loop, against the FROZEN pools !
             !      (the double-counting contract in this module's header). One end of the transfer  !
             !      is inside this ledger's window and the other is outside it, so the debit must be !
             !      declared or it reads as the soil losing carbon to nowhere. Declaring rh_today --  !

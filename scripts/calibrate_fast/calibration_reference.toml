@@ -92,7 +92,7 @@ list         = [ { name = "example", start = "2015-09-11", role = "cal" } ]
 # whose deficit stays under min_deficit_mm gives none, and without any the drought keys are fixed.
 [seasonal_runs]
 days           = 120
-targets        = ["le"]          # LE only: a GPP with a biased respiration set the strongest stress when it scored them
+targets        = ["le"]          # LE only: scored on GPP too, a tower GPP with a biased respiration sets the strongest stress
 max_runs       = 2               # 0 = no seasonal runs
 min_deficit_mm = 100.0
 # EXAMPLE: the calibration's own runs (name, start, days); empty = the rule.
@@ -129,9 +129,9 @@ seed              = 1
 # H, LE, GPP and u* are daytime targets (incoming shortwave above [tower].daytime_sw): at night they are set mostly by
 # the model's numerical floors and by stable-air measurement problems.
 [targets.albedo]
-on        = false                # Off for now (owner, 2026-10-04): at realistic leaf optics the model's canopy reflects too
-                                 #   much NIR, so the albedo can be met only by moving a leaf's optics past its evidence.
-                                 #   Back on once the canopy's structure is revisited.
+on        = false                # Off: at realistic leaf optics the model's canopy reflects too much NIR, so the albedo
+                                 #   can be met only by moving a leaf's optics past its evidence. It stays off until the
+                                 #   canopy's structure can meet it (see docs/ROADMAP.md).
 sigma_abs = 0.01
 min_sw    = 200.0                # [W m-2] only records with this much incoming shortwave (a ratio of small numbers is noise)
 min_solar_elevation = 20.0       # [deg] low-sun albedo is the least reliable

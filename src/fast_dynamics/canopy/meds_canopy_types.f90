@@ -1,17 +1,18 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_canopy_types -- the argument records of the canopy kernels: radiative transfer and    !
-! aerodynamics. Pure DATA, no methods, no hidden state.                                      !
+! meds_canopy_types -- the argument records of the canopy kernels: radiative transfer and  !
+! aerodynamics. Pure DATA, no methods, no hidden state.                                    !
 !                                                                                          !
-! RT: the precomputed per-PFT optics table, the per-band incident forcing, the returned      !
-! per-cohort absorbed radiation, and the ground optical state that closes the two-stream's    !
-! lower boundary. Aerodynamics: the free-atmosphere + canopy-air forcing, the canopy geometry, !
-! and the returned conductances and in-canopy wind profile.                                    !
+! RT: the precomputed per-PFT optics table, the per-band incident forcing, the returned    !
+! per-cohort absorbed radiation, and the ground optical state that closes the two-stream's !
+! lower boundary (docs/science/canopy_radiation_transfer.md). Aerodynamics: the            !
+! free-atmosphere + canopy-air forcing, the canopy geometry, and the returned conductances !
+! and in-canopy wind profile (docs/science/canopy_aerodynamics.md).                        !
 !                                                                                          !
-! Split out of the former meds_canopy_types/meds_soil_types, which held four domains' worth of records in  !
-! one 581-line module -- the last instance of the grab-bag decision #8 exists to prevent. The   !
-! run-config bundles these kernels switch on (aero_cfg_t, the selector codes) live one layer     !
-! down in meds_biophysics_opts; the prognostic stores live in state/column.                      !
+! Each kernel domain keeps its own records module (the plant and soil records are in       !
+! meds_plant_types and meds_soil_types), not one grab-bag. The run-config bundles these    !
+! kernels switch on (aero_cfg_t, the selector codes) live one layer down in                !
+! meds_biophysics_opts; the prognostic stores live in state/column.                        !
 !==========================================================================================!
 module meds_canopy_types
    use meds_kinds,     only : wp, ik
@@ -31,11 +32,12 @@ module meds_canopy_types
    integer(ik), parameter :: N_RAD_BAND_DEFAULT = 3_ik
 
    !---------------------------------------------------------------------------------------!
-   ! Precomputed per-PFT optics. omega = rho + tau (single-scatter albedo); g = bf*(rho-tau)/  !
-   ! omega is the SCOPE leaf-angle asymmetry, so the diffuse backscatter is beta = 0.5*(1+g)   !
-   ! and the direct-beam upscatter is beta0 = 0.5*(1 + g/k), k = G(mu)/mu. Leaf and wood are   !
-   ! stored separately and blended per cohort by clumping-corrected area. `lidf` (per PFT) is    !
-   ! kept so the mu-dependent G(mu) can be evaluated each timestep.                              !
+   ! Precomputed per-PFT optics (docs/science/canopy_radiation_transfer.md eqs. (4)-(6)).  !
+   ! omega = rho + tau (single-scatter albedo); g = bf*(rho-tau)/omega is the SCOPE        !
+   ! leaf-angle asymmetry, so the diffuse backscatter is beta = 0.5*(1+g) and the          !
+   ! direct-beam upscatter is beta0 = 0.5*(1 + g/k), k = G(mu)/mu. Leaf and wood are       !
+   ! stored separately and blended per cohort by clumping-corrected area. `lidf` (per PFT) !
+   ! is kept so the mu-dependent G(mu) can be evaluated each timestep.                     !
    !---------------------------------------------------------------------------------------!
    type :: rad_pft_optics_t
       integer(ik) :: n_pft  = 0_ik
@@ -82,8 +84,9 @@ module meds_canopy_types
    end type rad_flux_t
 
    !---------------------------------------------------------------------------------------!
-   ! Ground / surface optical state -- the two-stream lower boundary (bare-soil placeholder;   !
-   ! only the soil fields are consulted now, the rest are reserved for the full surface model). !
+   ! Ground / surface optical state -- the two-stream lower boundary                       !
+   ! (docs/science/canopy_radiation_transfer.md §4): the bare-soil values, which the       !
+   ! driver blends toward the snowpack's before the solve.                                 !
    !---------------------------------------------------------------------------------------!
    type :: ground_optics_state_t
       integer(ik)           :: n_band = 0_ik
@@ -193,9 +196,9 @@ contains
       out%wood_gbw = 0.0_wp
    end subroutine alloc_aero_out
 
-   !----- Grow-only capacity check for aero_out_t (mirrors ensure_column_cohort_capacity,       !
-   !      MEDS_NUMERICS_SCOPING.md BB1 phase 1): aero is a per-call scratch (canopy_aerodynamics  !
-   !      overwrites every active element each call), so reusing over-sized capacity is safe.    !
+   !----- Grow-only capacity check for aero_out_t (mirrors ensure_column_cohort_capacity): aero  !
+   !      is a per-call scratch (canopy_aerodynamics overwrites every active element each call), !
+   !      so reusing over-sized capacity is safe. -----------------------------------------------!
    subroutine ensure_aero_out_capacity(out, n_coh)
       type(aero_out_t), intent(inout) :: out
       integer(ik),       intent(in)    :: n_coh
@@ -209,31 +212,29 @@ contains
    end subroutine ensure_aero_out_capacity
 
    !---------------------------------------------------------------------------------------!
-   ! Fill `aero_env_t`'s ATMOSPHERIC reference state from the met driver's ACTUAL air        !
-   ! temperature. THE one place the potential-temperature conversion lives.                  !
-   !                                                                                          !
-   ! WHY THIS EXISTS (issue #97). `theta_atm` is the reference the Monin-Obukhov solve measures !
-   ! the canopy against, and `aero_env_t` gives it a plausible 298.15 K DEFAULT. Setting only    !
-   ! `forc%air_temp` therefore leaves MO comparing the canopy to a fixed 298.15 K -- which is not an  !
-   ! error, just wrong: with a 282-294 K forcing it manufactures a permanent STABLE layer and     !
-   ! FLOORS `ustar` at 0.1, a ~44x suppression of turbulent exchange with the wrong sign of       !
-   ! stratification. Every column test and every hand-built probe had exactly this omission, and  !
-   ! the artifact is convincing -- it looks like a cadence-dependent decoupling bifurcation in    !
-   ! the integrator, not like a missing assignment.                                               !
-   !                                                                                          !
-   ! The defect was that fixtures assembled `aenv` by a DIFFERENT route than production, so the   !
-   ! fix is a shared routine rather than a corrected copy: `meds_fast_dynamics::fill_aenv` and    !
-   ! every test now go through this. `zref` must already be set.                                  !
-   !                                                                                          !
-   ! THE REFERENCE LEVEL. zref is the canopy-air top: met_to_cas_top moves the forcing there,       !
-   ! conserving potential temperature, and the canopy air exchanges enthalpy with that air on its    !
-   ! actual temperature (the whole-column ledger, meds_fast_be_stage). Both potential temperatures   !
-   ! are therefore referenced to zref, where each equals its actual temperature: theta_atm =         !
-   ! air_temp here and can_theta = can_temp in set_aero_env_canopy. Referencing theta_atm to the     !
-   ! ground instead (air_temp + (g/cp)*zref, as before v0.3.1) against a can_theta that was not, put !
-   ! (g/cp)*zref of stable stratification into every stability solve and lowered the reported       !
-   ! sensible heat by g_atm_heat*g*zref -- ~100 W/m2 at a 40 m canopy -- while the ledger exchanged   !
-   ! the actual difference.                                                                        !
+   ! Fill `aero_env_t`'s ATMOSPHERIC reference state from the met driver's ACTUAL air      !
+   ! temperature. THE one place the potential-temperature conversion lives.                !
+   !                                                                                       !
+   ! WHY ONE ROUTINE. `theta_atm` is the reference the Monin-Obukhov solve measures the    !
+   ! canopy against, and `aero_env_t` gives it a plausible 298.15 K DEFAULT. A caller that !
+   ! sets only the forcing's air temperature leaves MO comparing the canopy to a fixed     !
+   ! 298.15 K -- not an error, just wrong: with a 282-294 K forcing it manufactures a      !
+   ! permanent STABLE layer and FLOORS `ustar` at 0.1, a ~44x suppression of turbulent     !
+   ! exchange with the wrong sign of stratification, and the artifact looks like a         !
+   ! cadence-dependent decoupling in the integrator, not like a missing assignment.        !
+   ! Production (`meds_fast_dynamics::fill_aenv`) and the column tests all fill `aenv`     !
+   ! through this routine, so a fixture cannot assemble it by a different route.           !
+   !                                                                                       !
+   ! THE REFERENCE LEVEL (docs/science/canopy_aerodynamics.md §2, "The reference level").  !
+   ! zref is the canopy-air top: met_to_cas_top moves the forcing there, conserving        !
+   ! potential temperature, and the canopy air exchanges enthalpy with that air on its     !
+   ! actual temperature (the whole-column ledger, meds_fast_be_stage). Both potential      !
+   ! temperatures are therefore referenced to zref, where each equals its actual           !
+   ! temperature: theta_atm = air_temp here and can_theta = can_temp in                    !
+   ! set_aero_env_canopy. Referencing theta_atm to the ground (air_temp + (g/cp)*zref)     !
+   ! against a can_theta that is not would put (g/cp)*zref of stable stratification into   !
+   ! every stability solve and lower the reported sensible heat by g_atm_heat*g*zref --    !
+   ! ~100 W/m2 at a 40 m canopy -- while the ledger exchanges the actual difference.       !
    !---------------------------------------------------------------------------------------!
    pure subroutine set_aero_env_atm(aenv, air_temp, shv_atm, co2_atm)
       type(aero_env_t), intent(inout) :: aenv

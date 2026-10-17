@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""tower_checks.py -- the validation gates of a tower forcing build (MEDS_FLUX_TOWER_FORCING_PLAN.md
-sec. 9). Each gate checks a DECLARATION of the site TOML against the data and stops the build on a
-disagreement; V5 only reports.
+"""tower_checks.py -- the validation gates of a tower forcing build (scripts/prepare_flux_tower/README.md,
+"What it checks"). Each gate checks a DECLARATION of the site TOML against the data and stops the build
+on a disagreement; V5 only reports.
 
   V1  the time axis is uniform at the declared timestep, sorted, without duplicates
   V2  the sun: under the declared clock and stamp convention, the shortwave envelope lines up with

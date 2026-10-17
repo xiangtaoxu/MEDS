@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """MEDS — Modular Ecosystem Dynamics Simulator (Python interface).
 
-Three sub-modules backed by ONE compiled library (``libmeds.so``, see ``meds._libmeds``), and one
-that needs no library:
+Four sub-modules backed by ONE compiled library (``libmeds.so``, see ``meds._libmeds``), and one
+(``meds.config``) that needs no library:
 
     meds.plant       — plant ecophysiology kernels: leaf gas exchange (``meds.plant.leaf``) and
                        the leaf-phenology signal kernel (``meds.plant.pheno``). Stateless.
@@ -16,7 +16,8 @@ that needs no library:
     meds.canopy      — the canopy's kernels over a frozen stand (the leaf solve over many leaves,
                        the two-stream), parameterized by a run's own configuration.
 
-``meds.model`` is the whole model; the other two are pieces of it exposed for their own sake.
+``meds.model`` is the whole model; ``meds.plant``, ``meds.demography`` and ``meds.canopy`` are pieces
+of it exposed for their own sake.
 
 Importing `meds` is cheap and does NOT load any compiled library; each sub-module loads the
 shared library lazily on first import, so `import meds` works even without it built.

@@ -1,9 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_met_driver -- unit tests for the P0 meteorological-forcing library (meds_forcing):       !
+! test_met_driver -- unit tests for the meteorological-forcing library (docs/science/forcing.md): !
 ! the pure disaggregation kernels, the CONST backend, and a NetCDF round-trip (write a small     !
-! (time,grid) MEDS forcing file, read it back through the reader). Mirrors the design test plan   !
-! (MEDS_FORCING_DESIGN.md section 9). House style: check/check_true/nfail/error stop 1.            !
+! (time,grid) MEDS forcing file, read it back through the reader).                               !
 ! Argument 1 (from CMake): the shipped CO2 series, data/co2/, checked by test_co2_series.          !
 !==========================================================================================!
 program test_met_driver
@@ -67,7 +66,7 @@ program test_met_driver
 contains
 
    !----- The site's cursor into an opened source: record-by-record access goes through a cursor   !
-   !      (MEDS_POLYGON_RUNTIME_PLAN.md R2); a site run has one, at cell 1 and the [site] location. -!
+   !      (docs/science/forcing.md §2); a site run has one, at cell 1 and the [site] location. ------!
    subroutine site_cursor(src, cur, fc)
       type(met_source_t),     intent(in)  :: src
       type(met_cursor_t),     intent(out) :: cur
@@ -76,11 +75,11 @@ contains
                            fc%elevation_m)
    end subroutine site_cursor
 
-   !----- LONGWAVE SYNTHESIS (#182). The clear-sky emissivities are closed-form, so these are     !
-   !      known-answer checks against Brutsaert (1975) and Idso & Jackson (1969) evaluated by      !
-   !      hand -- not against the code's own output. What they pin beyond arithmetic: the cloud    !
-   !      term only ever ADDS, the night sentinel is distinguishable from an overcast sky, and     !
-   !      both emissivity forms stay inside physical bounds.                                       !
+   !----- LONGWAVE SYNTHESIS (docs/science/forcing.md §11, eq. (17)). The clear-sky emissivities   !
+   !      are closed-form, so these are known-answer checks against Brutsaert (1975) and Idso &    !
+   !      Jackson (1969) evaluated by hand -- not against the code's own output. What they pin     !
+   !      beyond arithmetic: the cloud term only ever ADDS, the night sentinel is distinguishable  !
+   !      from an overcast sky, and both emissivity forms stay inside physical bounds.             !
    subroutine test_lwdown_synthesis()
       real(wp) :: eps, lw_clear, lw_cloudy, kt
       real(wp), parameter :: SIG = 5.670374419e-8_wp
@@ -215,7 +214,7 @@ contains
       print '(a)', '-- test 5: cosz reconstruction (interval-mean conserving) --'
       t = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
       ! A SUNRISE window (10-11 UTC ~ 05-06 local at Ithaca), where cosz rises steeply from ~0.07 --
-      ! this is where ED2's <sec z> mistake is worst (design §9). Solar noon is ~17 UTC here.
+      ! this is where ED2's <sec z> mistake is worst (docs/science/forcing.md §5). Solar noon is ~17 UTC here.
       f_avg = 500.0_wp ; win_start = 10.0_wp*3600.0_wp ; dt_win = 3600.0_wp
       n = 12_ik ; dt_sub = dt_win / real(n, wp)
       factor = cosz_reconstruct_factor(t, win_start, dt_sub, dt_win, LAT, LON)  ! = 1/<cosz>
@@ -298,7 +297,8 @@ contains
       call check_true('an instant from a Wind-only file has no vector', .not. met_night%has_wind_vector)
       call met_close(src)
 
-      !----- A file carrying u10 and v10 supplies the vector, and the speed comes from it (§7.1). -!
+      !----- A file carrying u10 and v10 supplies the vector, and the speed comes from it         !
+      !      (docs/science/forcing.md §1). ----------------------------------------------------!
       call write_synthetic_forcing(NCFILE, base, with_components=.true.)
       fc%grid_index = 1_ik
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
@@ -322,10 +322,11 @@ contains
       call test_edge_paths(base)
    end subroutine test_netcdf_roundtrip
 
-   !----- 7b. A SUNRISE HOUR KEEPS ITS LIGHT. The shortwave partition's sun is the interval's mean   !
-   !      cosz, so an hour that is lit only after its midpoint still splits its shortwave into the     !
-   !      four streams, and the instants inside it average back to the hour's mean (#371). The site   !
-   !      longitude is searched so that one hour of the file has a dark midpoint and a lit end. ------!
+   !----- 7b. A SUNRISE HOUR KEEPS ITS LIGHT. The shortwave partition's sun is the interval's mean    !
+   !      cosz, so an hour that is lit only after its midpoint still splits its shortwave into the    !
+   !      four streams, and the instants inside it average back to the hour's mean                    !
+   !      (docs/science/forcing.md §5-§6). The site longitude is searched so that one hour of the     !
+   !      file has a dark midpoint and a lit end. ----------------------------------------------------!
    subroutine test_sunrise_interval()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
@@ -366,10 +367,9 @@ contains
       call write_synthetic_forcing(NCFILE, base)
    end subroutine test_sunrise_interval
 
-   !----- 13. THE FILE AND THE CONFIG MUST AGREE (#185). Three things the reader used to take on   !
-   !      trust: the record spacing (dt_forcing was read straight from the config and never checked !
-   !      against the file at all), and the two self-describing global attributes the prep script    !
-   !      writes and nothing read. A file that disagreed with its config was silently mis-timed or   !
+   !----- 13. THE FILE AND THE CONFIG MUST AGREE. The reader checks three things against the        !
+   !      config: the record spacing (dt_forcing), and the two self-describing global attributes the !
+   !      prep script writes. A file that disagrees with its config would be silently mis-timed or   !
    !      mis-partitioned -- no later check can see either, because both produce a plausible run.    !
    subroutine test_file_config_agreement()
       type(met_source_t)     :: src
@@ -390,7 +390,7 @@ contains
       call check_true('a matching config opens (MET_OK)', st == MET_OK, real(st, wp))
       call met_close(src)
 
-      !----- dt_forcing lying about the cadence. THIS is the one nothing checked: dt_forcing places !
+      !----- dt_forcing lying about the cadence. It matters everywhere: dt_forcing places          !
       !      interval midpoints, disaggregates shortwave and brackets the recycle seam. -------------!
       fc%dt_forcing = 1800.0_wp
       call met_open(src, fc, stat=st)
@@ -416,7 +416,7 @@ contains
       fc%sw_partition = SWPART_CLEARIDX
    end subroutine test_file_config_agreement
 
-   !----- 8. Edge paths the review flagged (regression tests for the CLAMP_HOLD + recycle fixes). !
+   !----- 8. Edge paths: the CLAMP_HOLD start and the recycle-window checks. ---------------------!
    subroutine test_edge_paths(base)
       type(meds_time_t), intent(in) :: base
       type(met_source_t)     :: src
@@ -435,7 +435,7 @@ contains
       tair1 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(1.0_wp-15.0_wp)/24.0_wp)
 
       ! (a) CLAMP_HOLD: start before the first record holds rec1; then MARCHING into [t0,t1) must
-      !     interpolate (the bug held rec1 for the whole first interval).
+      !     interpolate, not hold rec1 for the whole first interval.
       fc%start_clamp = CLAMP_HOLD ; fc%recycle = .false.
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       now = time_advance_seconds(base, -12.0_wp*3600.0_wp)          ! 12 h before the first record
@@ -448,9 +448,9 @@ contains
       call met_close(src)
 
       ! (b) A 25-record (24 h span) file CANNOT be recycled: a sub-year window drifts both
-      !     hour-of-day and day-of-year on every wrap. This used to fall through to an
-      !     absolute-seconds span-wrap SILENTLY, which is exactly how a 29-yr production run came
-      !     to be driven by ~10 h-anti-phased sub-daily shortwave. It must now be REJECTED.
+      !     hour-of-day and day-of-year on every wrap: an absolute-seconds span-wrap would
+      !     SILENTLY drive a multi-decade run with sub-daily shortwave ~10 h out of phase. It must
+      !     be REJECTED (docs/science/forcing.md §9).
       fc%start_clamp = CLAMP_ERROR ; fc%recycle = .true.
       fc%recycle_start = base
       fc%recycle_end   = time_advance_seconds(base, 24.0_wp*3600.0_wp)   ! 1 day, not a whole year
@@ -477,9 +477,9 @@ contains
    end subroutine test_edge_paths
 
    !----- The recycle mapping must preserve hour-of-day and day-of-year EXACTLY, for an anchor    !
-   !      anywhere in the calendar -- not only Jan-1. This is the regression for the met-recycle    !
-   !      phase bug: the old classifier accepted only Jan-1 00:00 files and silently span-wrapped    !
-   !      everything else, which shifts hour-of-day whenever the span is not a whole number of days. !
+   !      anywhere in the calendar -- not only Jan-1. A classifier that accepts only Jan-1 00:00    !
+   !      files and span-wraps everything else shifts hour-of-day whenever the span is not a whole  !
+   !      number of days (docs/science/forcing.md §9, eq. (16)).                                     !
    subroutine test_recycle_anchor_phase()
       character(len=*), parameter :: YF = 'test_met_anchorfile_tmp.nc'
       type(met_source_t)     :: src
@@ -523,7 +523,7 @@ contains
       character(len=*),  intent(in) :: path
       type(meds_time_t), intent(in) :: base
       logical, optional, intent(in) :: with_components   !< also write u10 = 3, v10 = -4 (speed 5, not Wind's 3)
-      logical, optional, intent(in) :: with_co2air       !< also write CO2air, which the reader rejects (#184)
+      logical, optional, intent(in) :: with_co2air       !< also write CO2air, which the reader rejects
       real(wp), optional, intent(in) :: sw_flat          !< every record's SWdown [W/m2], night and day
       integer, parameter :: NT = 25, NG = 2
       integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(7), vu, vw, vc
@@ -563,10 +563,11 @@ contains
             st = nc_def_var_f(ncid, 'v10', NC_DOUBLE, 2, dims2, vw) ; call nc_check(st, 'write: var v10')
          end if
       end if
-      !----- The two SELF-DESCRIBING global attributes the prep script writes. The fixture has to    !
-      !      carry them or it is not the file the reader validates against, and the #185 checks      !
-      !      would be skipped here while firing in production -- the fixture-must-mirror-the-driver  !
-      !      trap. This file is hourly, ERA5-Land-style, with total shortwave.                        !
+      !----- The two SELF-DESCRIBING global attributes the prep script writes. The fixture has to      !
+      !      carry them or it is not the file the reader validates against, and the file/config        !
+      !      agreement checks would be skipped here while firing in production -- the                  !
+      !      fixture-must-mirror-the-driver trap. This file is hourly, ERA5-Land-style, with total     !
+      !      shortwave.                                                                                !
       st = nc_put_att_text_f(ncid, NC_GLOBAL, 'avg_convention', int(len_trim('end'), c_size_t), 'end')
       call nc_check(st, 'write: avg_convention')
       st = nc_put_att_text_f(ncid, NC_GLOBAL, 'sw_input_kind', int(len_trim('total'), c_size_t), 'total')
@@ -762,7 +763,7 @@ contains
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       call check('n_cycle_years = 1', real(src%n_cycle_years,wp), 1.0_wp, 0.5_wp)
       call check('cycle anchor year = 2021', real(src%cycle_anchor%year,wp), 2021.0_wp, 0.5_wp)
-      call check('cycle first record = #1', real(src%irec_cycle_first,wp), 1.0_wp, 0.5_wp)
+      call check('cycle first record = record 1', real(src%irec_cycle_first,wp), 1.0_wp, 0.5_wp)
       !----- recycle identity: model 2023-07-01 reads the 2021-07-01 record (day-of-year exact). --!
       call met_advance(src, cur, meds_time_t(2021_ik,7_ik,1_ik)) ; m_ref = met_instant(src, cur, meds_time_t(2021_ik,7_ik,1_ik))
       call met_advance(src, cur, meds_time_t(2023_ik,7_ik,1_ik)) ; m_map = met_instant(src, cur, meds_time_t(2023_ik,7_ik,1_ik))
@@ -774,9 +775,10 @@ contains
       call met_close(src)
    end subroutine test_multiyear_cycling
 
-   !----- 15. Prescribed CO2 (#184): co2_const on every backend, or a MEDS CO2 file read on MODEL  !
-   !      time -- each value at its period's middle, linear between middles, the end values held  !
-   !      over the outer half-periods, a run the file does not cover rejected at open.             !
+   !----- 15. Prescribed CO2 (docs/science/forcing.md §12, eq. (18)): co2_const on every backend,   !
+   !      or a MEDS CO2 file read on MODEL time -- each value at its period's middle, linear        !
+   !      between middles, the end values held over the outer half-periods, a run the file does not !
+   !      cover rejected at open.                                                                   !
    subroutine test_co2_series(default_file)
       character(len=*), intent(in) :: default_file      !< the shipped series ('' -> its check is skipped)
       character(len=*), parameter :: CF = 'test_met_co2_tmp.txt', YF = 'test_met_co2_year_tmp.nc'
@@ -785,9 +787,9 @@ contains
       type(forcing_config_t) :: fc
       type(met_forcing_t)    :: met, m_ref, m_map
       integer(ik)            :: st
-      print '(a)', '-- test 15: prescribed CO2 (#184) --'
+      print '(a)', '-- test 15: prescribed CO2 --'
 
-      !----- "const": co2_const, the CONST backend included (it used to return the type's 420). -!
+      !----- "const": co2_const, the CONST backend included (not the type's 420 default). -------!
       fc%backend = MET_BACKEND_CONST ; fc%co2_const = 284.3_wp
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       met = met_instant(src, cur, meds_time_t(2020_ik, 7_ik, 1_ik))
@@ -880,7 +882,7 @@ contains
                          meds_time_t(2001_ik,1_ik,1_ik), src, cur, st)
       call check_true('bad file: a missing file is rejected', st == MET_ERR_CO2_FILE, real(st, wp))
 
-      !----- THE regression this exists for: recycled met repeats, the CO2 does not. Model       !
+      !----- The point of reading CO2 on model time: recycled met repeats, the CO2 does not. Model !
       !      2023-07-02 12:00 reads the 2021 met record but the 2023 CO2. ---------------------------!
       call write_yearfile(YF, 2021_ik)
       call write_text(CF, [character(len=48) :: 'timestep 1 year', 'units umol/mol', '2021 400',    &

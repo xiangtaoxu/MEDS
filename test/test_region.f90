@@ -1,21 +1,21 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_region -- a region run is its site runs (MEDS_POLYGON_RUNTIME_PLAN.md §10.3, R2).          !
+! test_region -- a region run is its site runs (docs/configuration.md §Regional runs).     !
 !                                                                                          !
-! On the synthetic ED_ERA5land archive, a region over a box that crosses 180 degrees, holds a      !
-! no-data cell and a mostly-water column, runs its three polygons for twelve days across a month   !
-! boundary. Then each polygon is run again as a site at its cell (centre, orography, UTC). The     !
-! region's files must hold, in every variable's `polygon = p` slice, exactly the site run's        !
-! series, bit for bit, on every tier, cohort and patch variables included, with the fill value past !
-! the polygon's own count (§14 RP6); and the polygon axis must carry the cells' ids and             !
-! coordinates. The region is run again on four threads                                              !
-! and must give the same files. A region run in two halves, the second restarted from the first's   !
-! state file, must write the second half's files exactly as the whole run does (§14 RP4). Every run  !
-! takes its soil from the archive's [maps] files (§14    !
-! RP3), so the three polygons have their own soil depth, layers and bottom boundaries, and each site  !
-! run must find the same soil at its cell; the region files carry each polygon's own layers and map  !
-! inputs. Last, meds_main (the second argument)                                                     !
-! must refuse each config that breaks a region-mode rule (§9), with that rule's message.            !
+! On the synthetic ED_ERA5land archive, a region over a box that crosses 180 degrees,      !
+! holds a no-data cell and a mostly-water column, runs its three polygons for twelve days  !
+! across a month boundary. Then each polygon is run again as a site at its cell (centre,   !
+! orography, UTC). The region's files must hold, in every variable's `polygon = p` slice,  !
+! exactly the site run's series, bit for bit, on every tier, cohort and patch variables    !
+! included, with the fill value past the polygon's own count; and the polygon axis must    !
+! carry the cells' ids and coordinates. The region is run again on four threads and must   !
+! give the same files. A region run in two halves, the second restarted from the first's   !
+! state file, must write the second half's files exactly as the whole run does. Every run  !
+! takes its soil from the archive's [maps] files (docs/configuration.md §Input maps), so   !
+! the three polygons have their own soil depth, layers and bottom boundaries, and each     !
+! site run must find the same soil at its cell; the region files carry each polygon's own  !
+! layers and map inputs. Last, meds_main (the second argument) must refuse each config     !
+! that breaks a region-mode rule, with that rule's message.                                !
 !                                                                                          !
 ! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that          !
 ! directory): an override block is prepended -- meds_toml returns the FIRST match of a              !
@@ -51,7 +51,8 @@ program test_region
    real(wp),    parameter :: ELEV(NP) = [117.0_wp, 100.0_wp, 217.0_wp]
    integer(ik), parameter :: ROW(NP) = [1_ik, 1_ik, 2_ik], COL(NP) = [17_ik, 0_ik, 17_ik]
    !----- Their soil (meds_test_era5land_archive): 1.95, 1.10 and 2.25 m deep, so 7, 5 and 7 layers on  !
-   !      the default ones; sealed (bedrock), leaky (free_drain until #401) and aquifer bottoms. ------!
+   !      the default ones; sealed (bedrock), leaky (run as free_drain: there is no leaky bottom      !
+   !      boundary, see docs/ROADMAP.md) and aquifer bottoms. ------------------------------------------!
    integer(ik), parameter :: N_LAYER(NP) = [7_ik, 5_ik, 7_ik]
    real(wp),    parameter :: COLUMN_DEPTH(NP) = [1.95_wp, 1.10_wp, 2.25_wp]
    integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER]
@@ -137,7 +138,7 @@ program test_region
                    count_prefix('region-D-') == 2_ik .and. count_prefix('region-M-') == 2_ik .and.     &
                    count_prefix('region-F-') == count_prefix('site18-F-') .and. count_prefix('region-F-') > 0_ik)
 
-   !----- The same region on four threads (#183 R3): the polygons run side by side, and every file   !
+   !----- The same region on four threads: the polygons run side by side, and every file            !
    !      must still equal the site runs bit for bit, slice by slice. In a build without OpenMP this  !
    !      is the serial run again. --------------------------------------------------------------------!
    call derive(trim(work)//'/regt.toml', '[run]'//nl()//'n_threads = 4'//nl()//'[output]'//nl()//     &
@@ -161,7 +162,7 @@ program test_region
    end do
    call check_true('on four threads every region file still equals the site runs', nbad == 0_ik)
 
-   !----- A region in two halves (§14 RP4), on the archive's 2021 recycled: 2022-12-25 to 2023-01-01  !
+   !----- A region in two halves, on the archive's 2021 recycled: 2022-12-25 to 2023-01-01            !
    !      writing its state file, then on from it to 2023-01-06. The seam crosses the recycle wrap and  !
    !      the year boundary. The second half writes January's files exactly as the whole run does. ---!
    call derive(trim(work)//'/whole.toml', recycled('whole', '"2023-01-06"', .false.), region=.true.)
@@ -202,7 +203,7 @@ program test_region
    call driver_finalize(run, st) ; call driver_free(run)
    call driver_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
    call check_true('a reused run opens owing no restructuring', ok .and. .not. run%poly%restructure_pending)
-   !----- ...and its canopy air starts at the bare-ground floor, not the type's default depth (#306). -!
+   !----- ...and its canopy air starts at the bare-ground floor, not the type's default depth. ------!
    call check_true('a bare-ground stand opens at the canopy-air floor',                               &
                    all(run%poly%site%patch%cas(1:run%poly%site%patch%n)%can_depth                     &
                        == run%cfg%aero%min_canopy_depth))
@@ -229,7 +230,7 @@ program test_region
    inquire(file=trim(work)//'/out/fail-M-202102.nc', exist=ex)
    call check_true('after a failure the end of the run writes nothing more', .not. ex)
 
-   !----- The cell mask (§14 RP2): a 0/1 map that drops polygon 35 leaves 18 and 53, in their order. --!
+   !----- The cell mask: a 0/1 map that drops polygon 35 leaves 18 and 53, in their order. ----------!
    mask = 1.0_wp
    mask(18, 2, 1) = 0.0_wp                                   ! (row 1, col 17): polygon 35
    call write_map(trim(work)//'/archive/keep.nc', 'keep', mask, -1.0_wp)
@@ -243,8 +244,9 @@ program test_region
    if (ok) call region_free(reg)
    call write_map(trim(work)//'/archive/offgrid.nc', 'keep', mask, -1.0_wp, lat_shift=0.05_wp)
 
-   !----- Region-mode rules (MEDS_POLYGON_RUNTIME_PLAN.md §9): each bad config is refused with its  !
-   !      own message. The bad keys come first, so they win over the good region block. -------------!
+   !----- Region-mode rules (docs/configuration.md §Regional runs, Rules): each bad config is      !
+   !      refused with its own message. The bad keys come first, so they win over the good region  !
+   !      block. -------------------------------------------------------------------------------------!
    call refused('the [site] location is refused in a region', region_block(), .false., .false.,     &
                 'do not apply to [run].mode = "region"')
    call refused('forcing.max_distance_km is refused in a region',                                  &
@@ -260,7 +262,7 @@ program test_region
    call refused('output.strict_caps is refused: the caps always stop the run',                     &
                 '[output]'//nl()//'strict_caps = true'//nl()//site_block(1_ik), .false., .false.,     &
                 'is retired: a run always stops at the step')
-   !----- An io_config override is held to the FAST guard as the defaults are (#374): a variable  !
+   !----- An io_config override is held to the FAST guard as the defaults are: a variable         !
    !      without a FAST-staged source on the F stream, and a FAST-staged one on a coarse tier. ------!
    call write_text(trim(work)//'/io_f_coarse.toml', '[variables]'//nl()//'anet_cohort = "F D"')
    call refused('an io_config override may not put a coarse variable on the F stream',            &
@@ -285,19 +287,20 @@ program test_region
                 .true., .false., '[run].mode must be "site" or "region"')
    call refused('the [io] block is refused, naming [state]', '[io]'//nl()//'write_state = false'//nl()// &
                 site_block(1_ik), .false., .false., 'the [io] block is now [state]')
-   !----- The root profile is a plant trait: the old [soil_column] key is refused, naming [hydraulics]. -!
+   !----- The root profile is a plant trait: [soil_column].root_beta is refused, naming [hydraulics]. -!
    call refused('soil_column.root_beta is refused, naming [hydraulics]',                            &
                 '[soil_column]'//nl()//'root_beta = 2.0'//nl()//site_block(1_ik), .false., .false.,  &
                 'is retired: the root profile is a plant trait: set [hydraulics].root_beta')
-   !----- The whole-plant conductance is gone: k_plant_max is refused, naming the sapwood's. -------!
+   !----- There is no whole-plant conductance key: k_plant_max is refused, naming the sapwood's. ---!
    call refused('hydraulics.k_plant_max is refused, naming the sapwood conductance',                 &
                 '[hydraulics]'//nl()//'k_plant_max = 3.0e-4'//nl()//site_block(1_ik), .false., .false., &
                 'is retired: the plant''s conductance is its sapwood''s')
    call refused('leaf_physiology.low_water_potential_control is retired',                           &
                 '[leaf_physiology]'//nl()//'low_water_potential_control = "linear_decline"'//nl()// &
                 site_block(1_ik), .false., .false., 'is retired: the linear decline of gs')
-   !----- The forcing-format rules (MEDS_FLUX_TOWER_FORCING_PLAN.md §5): the old format names stop  !
-   !      naming their replacements, every clock is UTC, and the terrain-lapse keys need the lapse. --!
+   !----- The forcing-format rules (docs/configuration.md §The forcing file): a retired format name  !
+   !      stops the run, naming its replacement, every clock is UTC, and the terrain-lapse keys need  !
+   !      the lapse. ---------------------------------------------------------------------------------!
    call refused('format = "netcdf" is refused, naming ED_default',                                  &
                 '[forcing]'//nl()//'format = "netcdf"'//nl()//site_block(1_ik), .false., .false.,     &
                 'is now "ED_default"')
@@ -313,8 +316,9 @@ program test_region
    call refused('the lapse keys are refused with the lapse off',                                    &
                 '[site]'//nl()//'apply_elevation_lapse = false'//nl()//site_block(1_ik), .false., .false., &
                 'apply only with site.apply_elevation_lapse = true')
-   !----- The [maps] files (§14 RP3): a region needs the soil maps, a key they provide is refused,  !
-   !      a run cell they leave empty is named, and Chave's E serves only the Chave heights. ----------!
+   !----- The [maps] files (docs/configuration.md §Input maps): a region needs the soil maps, a   !
+   !      key they provide is refused, a run cell they leave empty is named, and Chave's E serves !
+   !      only the Chave heights. ----------------------------------------------------------------!
    call refused('a region needs the soil maps', '[maps]'//nl()//'soil_depth_map = ""'//nl()//        &
                 'soil_texture_map = ""'//nl()//'soil_chemistry_map = ""'//nl()//'[energy]'//nl()//       &
                 'deep_temp = 284.75'//nl()//region_block(), .true., .false., 'needs the soil maps')
@@ -735,7 +739,7 @@ contains
       call nc_check(nc_close(ncid), 'close')
    end subroutine check_polygon_axis
 
-   !----- Each polygon's own layers and map inputs (§14 RP3). Its row of soil_z is its site run's     !
+   !----- Each polygon's own layers and map inputs. Its row of soil_z is its site run's              !
    !      soil_z down to its own bottom layer, and the fill value below. Its soil_z_bnds run from the !
    !      surface, layer to layer, down to its soil depth, with each node midway. Polygons 1 and 3     !
    !      both have seven layers, ending at 1.95 and 2.25 m, so their bottom nodes differ. --------------!

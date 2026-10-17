@@ -1,48 +1,52 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_site_diag_types -- the per-COHORT and per-PATCH fast-loop DIAGNOSTIC accumulators.    !
+! meds_site_diag_types -- the per-COHORT and per-PATCH fast-loop DIAGNOSTIC accumulators.  !
 !                                                                                          !
-! Stage [2] of the diagnostic wall (MEDS_IO_V01_PLAN.md sections 3.1, 3.4). The problem it solves:  !
-! the fast loop computes ~40 per-cohort and per-patch quantities every dt_fast -- leaf                !
-! assimilation, stomatal conductance, tissue water potentials, sapflow, absorbed radiation,           !
-! turbulent fluxes, runoff, budget residuals -- and, before this, kept three of them. Sub-daily        !
-! resolution existed ONLY inside the fast loop's sub-step, so everything else was recomputed and       !
-! discarded ~48 times a day. These blocks are where it lands instead.                                   !
+! Stage [2] of the diagnostic wall, CAPTURE (docs/science/diagnostics.md §1). The problem  !
+! it solves: the fast loop computes ~40 per-cohort and per-patch quantities every dt_fast  !
+! -- leaf assimilation, stomatal conductance, tissue water potentials, sapflow, absorbed   !
+! radiation, turbulent fluxes, runoff, budget residuals -- and sub-daily resolution exists !
+! only inside the fast loop's sub-step, so without a home they would be recomputed and     !
+! discarded ~48 times a day. These blocks are where they land instead.                     !
 !                                                                                          !
-! SIX DESIGN DECISIONS, stated because this is where the change could have gone wrong:                  !
+! SIX DESIGN DECISIONS:                                                                    !
 !                                                                                          !
-!  1. dt-WEIGHTED SUMS, normalized on read. Every field accumulates x*dt and `w` accumulates dt; the    !
-!     reader divides. That is correct under the adaptive integrator (unequal sub-steps) and under        !
-!     AGG_TMEAN chaining for free, where a plain running mean would not be.                              !
+!  1. dt-WEIGHTED SUMS, normalized on read. Every field accumulates x*dt and `w`           !
+!     accumulates dt; the reader divides. That is correct under the adaptive integrator    !
+!     (unequal sub-steps) and under AGG_TMEAN chaining for free, where a plain running     !
+!     mean would not be.                                                                   !
 !                                                                                          !
-!  2. RESET ONCE PER SLOW STEP -- the same lifecycle as gpp_accum / et_accum / xi_accum. No second        !
-!     reset cadence is invented.                                                                          !
+!  2. RESET ONCE PER SLOW STEP -- the same lifecycle as gpp_accum / et_accum / xi_accum.   !
+!     No second reset cadence is invented.                                                 !
 !                                                                                          !
-!  3. TRANSIENT: never written to the restart file. A checkpoint is prognostic state at an instant;       !
-!     a time-averaged diagnostic is not state. This is what keeps the change out of state_write_state.       !
+!  3. TRANSIENT: never written to the restart file. A checkpoint is prognostic state at an !
+!     instant; a time-averaged diagnostic is not state.                                    !
 !                                                                                          !
-!  4. THEY STILL RIDE THE LOCKSTEP. The reset is per slow step, but the slow step re-sorts the cohorts  !
-!     after the fast loop has filled these and before the output tick reads them, and the calendar        !
-!     restructuring (fuse / split / cull / recruit / disturb) permutes the axis at a boundary. So slot i  !
-!     must keep meaning cohort i across every permutation. That obligation is REAL and is the main cost  !
-!     of this design.                                                                                    !
+!  4. THEY STILL RIDE THE LOCKSTEP. The reset is per slow step, but the slow step re-sorts !
+!     the cohorts after the fast loop has filled these and before the output tick reads    !
+!     them, and the calendar restructuring (fuse / split / cull / recruit / disturb)       !
+!     permutes the axis at a boundary. So slot i must keep meaning cohort i across every   !
+!     permutation. That obligation is REAL and is the main cost of this design.            !
 !                                                                                          !
-!     It is discharged by STORAGE LAYOUT rather than by discipline: the fields are rows of ONE 2-D        !
-!     array v(N_CDIAG, cap), so every lockstep operation is a single whole-array statement that            !
-!     cannot omit a field. Adding a diagnostic is a new index parameter plus a fill line -- ZERO           !
-!     edits to the reorder machinery. Compare the alternative (25 separate allocatables), which would      !
-!     have needed 25 new lines in each of cohort_alloc / ensure_capacity / move_alloc_block /              !
-!     cohort_reorder / copy_cohort_slot -- precisely the "forgot to reallocate" class CLAUDE.md names      !
-!     as the reason the centralized reorder exists.                                                         !
+!     It is discharged by STORAGE LAYOUT rather than by discipline: the fields are rows of !
+!     ONE 2-D array v(N_CDIAG, cap), so every lockstep operation is a single whole-array   !
+!     statement that cannot omit a field. Adding a diagnostic is a new index parameter     !
+!     plus a fill line -- ZERO edits to the reorder machinery. The alternative, one        !
+!     allocatable per field, would need a new line per field in each of cohort_alloc /     !
+!     cohort_ensure_capacity / move_alloc_block / cohort_reorder / copy_cohort_slot --     !
+!     precisely the "forgot to reallocate" class CLAUDE.md names as the reason the         !
+!     centralized reorder exists.                                                          !
 !                                                                                          !
-!  5. ALLOCATED ONLY ON DEMAND. A run that reports no per-cohort ecophysiology pays nothing: main          !
-!     sets `active` from the registry, and every entry point is a no-op while it is .false.                 !
+!  5. ALLOCATED ONLY ON DEMAND. A run that reports no per-cohort ecophysiology pays        !
+!     nothing: main sets `active` from the registry, and every entry point is a no-op      !
+!     while it is .false.                                                                  !
 !                                                                                          !
-!  6. FUSION BLENDS BY THE FIELD'S OWN KIND. Each field declares whether it is INTENSIVE (leaf-area-        !
-!     weighted -- a temperature, a conductance, a potential) or EXTENSIVE (nplant-weighted -- a per-plant   !
-!     flux) or GROUND-REFERENCED (summed -- already per m2 of patch). Blending a temperature by nplant, or  !
-!     an extensive flux by leaf area, is the classic silent fusion bug; the kind is DATA here, so the       !
-!     blend cannot disagree with the quantity.                                                               !
+!  6. FUSION BLENDS BY THE FIELD'S OWN KIND. Each field declares whether it is INTENSIVE   !
+!     (leaf-area-weighted -- a temperature, a conductance, a potential) or EXTENSIVE       !
+!     (nplant-weighted -- a per-plant flux) or GROUND-REFERENCED (summed -- already per m2 !
+!     of patch). Blending a temperature by nplant, or an extensive flux by leaf area, is   !
+!     the classic silent fusion bug; the kind is DATA here, so the blend cannot disagree   !
+!     with the quantity.                                                                   !
 !==========================================================================================!
 module meds_site_diag_types
    use meds_kinds,     only : wp, ik
@@ -104,12 +108,14 @@ module meds_site_diag_types
    integer(ik), parameter, public :: CD_PRESSURE     = 30_ik  !< [Pa] air pressure the leaf sees
    integer(ik), parameter, public :: N_CDIAG         = 30_ik
 
-   !----- Fusion kind per cohort field. Temperatures, conductances, potentials and the leaf-area- !
-   !      normalized fluxes are INTENSIVE (leaf-area-weighted). The per-PLANT quantities (GPP rate, !
-   !      sapflow, uptake, tissue water mass) are EXTENSIVE (nplant-weighted), matching how the      !
-   !      prognostic twins of exactly these quantities are already fused. The absorbed-radiation      !
-   !      terms are per m2 of GROUND, so two cohorts' contributions to the same patch simply add --   !
-   !      the same convention leaf_surf_water follows.  -----------------------------------------!
+   !----- Fusion kind per cohort field. Temperatures, conductances, potentials and the leaf-     !
+   !      area-normalized fluxes are INTENSIVE (leaf-area-weighted) -- the leaf and wood         !
+   !      temperatures included, although their prognostic twins fuse on heat capacity           !
+   !      (fuse_cohort_fast_state). The per-PLANT quantities (GPP rate, sapflow, uptake,         !
+   !      tissue water mass) are EXTENSIVE (nplant-weighted), matching how the prognostic        !
+   !      twins of these quantities are fused. The absorbed-radiation terms are per m2 of        !
+   !      GROUND, so two cohorts' contributions to the same patch simply add -- the same         !
+   !      convention leaf_surf_water follows. ---------------------------------------------------!
    integer(ik), parameter, public :: CDIAG_FUSE(N_CDIAG) = [                                     &
         FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
         FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
@@ -187,35 +193,37 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_LITTER_STRUCT   = 23_ik !< [kgC/m2/yr] structural litter + CWD
    integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 24_ik !< [plant/m2/yr] recruitment density flux
    integer(ik), parameter, public :: PD_DISTURB_AREA    = 25_ik !< [1/yr] area fraction disturbed
-   !----- TOP-OF-CANOPY radiative fluxes (#171). Kept as FLUXES, not as a time-averaged albedo:    !
-   !      a period-mean albedo is the mean of a RATIO, which is not the ratio of the means, and at  !
-   !      night the shortwave ratio is 0/0. The albedo a reader wants is sum(up)/sum(down) over the  !
-   !      period, which these four make computable -- and which is what a satellite product is.      !
+   !----- TOP-OF-CANOPY radiative fluxes. Kept as FLUXES, not as a time-averaged albedo: a        !
+   !      period-mean albedo is the mean of a RATIO, which is not the ratio of the means, and     !
+   !      at night the shortwave ratio is 0/0. The albedo a reader wants is sum(up)/sum(down)     !
+   !      over the period (docs/science/canopy_radiation_transfer.md eq. (15)), which these       !
+   !      make computable -- and which is what a satellite product is. ---------------------------!
    integer(ik), parameter, public :: PD_SW_IN_VIS       = 26_ik !< [W/m2] incident VIS at canopy top
    integer(ik), parameter, public :: PD_SW_IN_NIR       = 27_ik !< [W/m2] incident NIR at canopy top
    integer(ik), parameter, public :: PD_SW_UP_VIS       = 28_ik !< [W/m2] upwelling VIS leaving the canopy top
    integer(ik), parameter, public :: PD_SW_UP_NIR       = 29_ik !< [W/m2] upwelling NIR leaving the canopy top
    integer(ik), parameter, public :: PD_LW_UP           = 30_ik !< [W/m2] upwelling LW (surface emission included)
    integer(ik), parameter, public :: PD_SW_UP           = 31_ik !< [W/m2] upwelling shortwave, both bands (VIS + NIR)
-   !----- MORTALITY CARBON BY PATHWAY (#169). The output already carried mortality RATES and the    !
-   !      total litter flux, but nothing separated the three ways a MEDS plant can die, so a user   !
-   !      could not tell a stand thinning continuously from one being knocked over. The three are    !
-   !      mutually exclusive and jointly exhaustive -- every kilogram of carbon that leaves the live !
-   !      pools as a whole-individual death passes through exactly one of them -- so they SUM to the !
-   !      total, which is the property test_mortality_pathways asserts.                              !
-   !                                                                                          !
-   !      Written UNCONDITIONALLY, unlike the litter each pathway also generates: two of the three   !
-   !      litter sites sit behind [soil_carbon].soil_carbon_on, and how much biomass died is a       !
-   !      DEMOGRAPHIC question that does not stop being asked when the soil pools are switched off.  !
-   !      Whole-individual death carries every pool (leaf + fine root + wood + storage), as the      !
-   !      litter partitioning does.                                                                  !
+   !----- MORTALITY CARBON BY PATHWAY: the three ways a MEDS plant can die, kept apart so a       !
+   !      user can tell a stand thinning continuously from one being knocked over. The three      !
+   !      are mutually exclusive and jointly exhaustive -- every kilogram of carbon that          !
+   !      leaves the live pools as a whole-individual death passes through exactly one of         !
+   !      them -- so they SUM to the total, which is the property test_mortality_pathways         !
+   !      asserts.                                                                                !
+   !                                                                                              !
+   !      Written UNCONDITIONALLY, unlike the litter each pathway also generates: two of the      !
+   !      three litter sites sit behind [soil_carbon].soil_carbon_on, and how much biomass        !
+   !      died is a DEMOGRAPHIC question that does not stop being asked when the soil pools       !
+   !      are switched off. Whole-individual death carries every pool (leaf + fine root +         !
+   !      wood + storage), as the litter partitioning does. --------------------------------------!
    integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 32_ik !< [kgC/m2/yr] continuous hazard mortality
    integer(ik), parameter, public :: PD_MORT_C_CULL       = 33_ik !< [kgC/m2/yr] cohorts culled below the tracking floor
    integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 34_ik !< [kgC/m2/yr] canopy killed by patch disturbance
-   !----- Fast-varying CAS / surface state, accumulated dt-weighted rather than read at the    !
-   !      output tick (#264). A state read at the tick is ONE instantaneous sample per output    !
-   !      window, taken at whatever local time the boundary falls on, so its bias is a function  !
-   !      of the site's longitude -- measured at +1.4 K for the top soil layer at Ithaca.        !
+   !----- Fast-varying CAS / surface state, accumulated dt-weighted rather than read at the      !
+   !      output tick. A state read at the tick is ONE instantaneous sample per output           !
+   !      window, taken at whatever local time the boundary falls on, so its bias is a           !
+   !      function of the site's longitude -- measured at +1.4 K for the top soil layer at       !
+   !      Ithaca. -------------------------------------------------------------------------------!
    integer(ik), parameter, public :: PD_CAS_VPD       = 35_ik  !< [Pa]
    integer(ik), parameter, public :: PD_W_SURFACE     = 36_ik  !< [kg/m2] ponded surface water
    !----- The patch's own forcing: the sample moved to its canopy-air top (docs/science/forcing.md  !
@@ -223,24 +231,27 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_WIND_CAS_TOP  = 37_ik  !< [m/s] wind speed at the canopy-air top
    integer(ik), parameter, public :: PD_TAIR_CAS_TOP  = 38_ik  !< [K]   air temperature at the canopy-air top
    integer(ik), parameter, public :: PD_Z_CAS_TOP     = 39_ik  !< [m]   that top: the canopy-air depth the fast loop used
-   !----- The SKIN temperature (#275), in the land-model sense (CLM's TSKIN): the black-body       !
-   !      temperature of the longwave leaving the canopy top, what an infrared thermometer or a     !
-   !      satellite land-surface temperature sees. MEDS has no skin layer of its own -- snow-free,   !
-   !      the ground surface is the top soil layer (PD_SOIL_TEMP_TOP) -- and over a forest this is   !
-   !      mostly the canopy. It is a fourth root, so it is formed per sub-step, like the VPD. -------!
+   !----- The SKIN temperature, in the land-model sense (CLM's TSKIN): the black-body             !
+   !      temperature of the longwave leaving the canopy top, what an infrared thermometer or     !
+   !      a satellite land-surface temperature sees (docs/science/diagnostics.md §4, "The         !
+   !      skin temperature"). MEDS has no skin layer of its own -- snow-free, the ground          !
+   !      surface is the top soil layer (PD_SOIL_TEMP_TOP) -- and over a forest this is           !
+   !      mostly the canopy. It is a fourth root, so it is formed per sub-step, like the VPD. ----!
    integer(ik), parameter, public :: PD_SKIN_TEMP     = 40_ik  !< [K] (longwave up / sigma)^(1/4)
-   !----- Litter by the tissue it came from, completing PD_LITTER_LEAF / PD_LITTER_FINEROOT (#399): !
-   !      with root_exudate_site they sum to the carbon entering the soil pools. ---------------!
+   !----- Litter by the tissue it came from, completing PD_LITTER_LEAF / PD_LITTER_FINEROOT:     !
+   !      with root_exudate_site they sum to the carbon entering the soil pools                  !
+   !      (docs/science/soil_carbon.md §5). -----------------------------------------------------!
    integer(ik), parameter, public :: PD_LITTER_WOOD   = 41_ik  !< [kgC/m2/yr] wood + storage of dead plants
    integer(ik), parameter, public :: PD_LITTER_REPRO  = 42_ik  !< [kgC/m2/yr] fruit and seed that made no recruit
    integer(ik), parameter, public :: N_PDIAG            = 42_ik
 
    !==========================================================================================!
-   !  PER-POLYGON diagnostic fields: quantities that are the same everywhere in the polygon, so   !
-   !  they are accumulated ONCE, not per patch. The prefixes: CD_ cohort (fast loop), CS_ cohort   !
-   !  (slow loop), PD_ patch, PY_ polygon. The forcing echo (MEDS_FORCING_DESIGN.md §6.7) is the    !
-   !  forcing the fast loop used, after the reader's shortwave partition, rain/snow split and      !
-   !  optional height and lapse corrections, dt-weighted over the sub-steps.                       !
+   !  PER-POLYGON diagnostic fields: quantities that are the same everywhere in the polygon,  !
+   !  so they are accumulated ONCE, not per patch. The prefixes: CD_ cohort (fast loop), CS_  !
+   !  cohort (slow loop), PD_ patch, PY_ polygon. The forcing echo (the `forcing` group,      !
+   !  docs/science/diagnostics.md §5) is the forcing the fast loop used, after the reader's   !
+   !  shortwave partition, rain/snow split and optional height and lapse corrections, dt-     !
+   !  weighted over the sub-steps.                                                            !
    !==========================================================================================!
    integer(ik), parameter, public :: PY_SW_IN          =  1_ik !< [W/m2] incident shortwave at canopy top
    integer(ik), parameter, public :: PY_PRECIP         =  2_ik !< [kg/m2/s] total precipitation (rain + snow)
@@ -278,7 +289,7 @@ module meds_site_diag_types
       integer(ik) :: n = 0_ik, cap = 0_ik
       logical     :: active = .false.
       !----- Whether the fast loop fills the block. A slow-only run fills only the slow operators'  !
-      !      rows (patch_diag_slow_row); the rest are not simulated and read as missing (#299). ----!
+      !      rows (patch_diag_slow_row); the rest are not simulated and read as missing. -----------!
       logical     :: fast_rows = .true.
       real(wp), allocatable :: v(:,:)        !< (N_PDIAG, cap) running Sum(x*dt)
       real(wp), allocatable :: w(:)          !< (cap)          running Sum(dt)
@@ -354,16 +365,14 @@ contains
    !----- Permute the live prefix in lockstep with the cohort SoA. ONE statement -- it cannot   !
    !      omit a field, which is the whole point of the 2-D layout (decision 4).                 !
    !                                                                                          !
-   !      THE COUNT RIDES THE LOCKSTEP TOO (#247). `m` is the post-operator cohort count, and    !
-   !      cohort_reorder sets cohort%n = m right after calling this; leaving d%n at the old      !
-   !      value made the block claim more live slots than the cohort array has. Everything       !
-   !      downstream believes d%n: cohort_diag_value fills 1..d%n into a caller buffer that      !
-   !      extract_variable sizes from cohort%n, so after any operator that SHRINKS the array     !
-   !      -- a cull is the common one -- that write ran off the end. It is an out-of-bounds      !
-   !      WRITE, silent in Release, and it was invisible only because the reference stand never  !
-   !      shrinks: Ithaca goes 114 -> 125 cohorts over three years. Enabling phenology (#245)    !
-   !      makes culls routine and the run dies in its first December.                            !
-   !      Assigned BEFORE the m <= 0 bail, so emptying the block records the emptying.  --------!
+   !      THE COUNT RIDES THE LOCKSTEP TOO. `m` is the post-operator cohort count, and         !
+   !      cohort_reorder sets cohort%n = m right after calling this; a block that kept its     !
+   !      old d%n would claim more live slots than the cohort array has. Everything            !
+   !      downstream believes d%n: cohort_diag_value fills 1..d%n into a caller buffer         !
+   !      that extract_variable sizes from cohort%n, so after any operator that SHRINKS        !
+   !      the array -- a cull is the common one -- that write would run off the end: an        !
+   !      out-of-bounds WRITE, silent in Release. Assigned BEFORE the m <= 0 bail, so          !
+   !      emptying the block records the emptying. --------------------------------------------!
    subroutine cohort_diag_reorder(d, perm, m)
       type(cohort_diag_block), intent(inout) :: d
       integer(ik),             intent(in)    :: perm(:), m
@@ -391,12 +400,14 @@ contains
       d%v(:, i) = 0.0_wp ; d%w(i) = 0.0_wp
    end subroutine cohort_diag_clear_slot
 
-   !----- Blend the donor into the survivor on cohort fusion, each field by its own kind.     !
-   !                                                                                          !
-   !      `w_int` / `w_ext` are the SAME weights fuse_2_cohorts uses for the prognostic twins of !
-   !      these quantities (leaf area for the intensive ones, nplant for the extensive ones), so  !
-   !      a diagnostic and its prognostic counterpart can never be fused on different weights.    !
-   !      The dt weight `w` is carried across too, so a fused cohort's period mean stays correct.  !
+   !----- Blend the donor into the survivor on cohort fusion, each field by its own kind.      !
+   !                                                                                           !
+   !      `li_*` (leaf area) and `np_*` (nplant) are the weights the caller,                   !
+   !      fuse_2_cohorts, computes. The extensive rows share their weight with their           !
+   !      prognostic twins; the intensive rows, temperatures included, are leaf-area           !
+   !      means, while the prognostic temperatures fuse on heat capacity                       !
+   !      (fuse_cohort_fast_state). The dt weight `w` is a property of the window, not of      !
+   !      either cohort (see below). ----------------------------------------------------------!
    subroutine cohort_diag_fuse(d, recc, donc, li_r, li_d, np_r, np_d, kinds)
       type(cohort_diag_block), intent(inout) :: d
       integer(ik),             intent(in)    :: recc, donc
@@ -420,14 +431,13 @@ contains
       !      halve every normalized mean).  -------------------------------------------------!
    end subroutine cohort_diag_fuse
 
-   !----- Read one field's live prefix, normalized by the dt weight. Slots with no samples     !
-   !      return 0 (the caller's `valid` mask, not this, decides _FillValue).                   !
-   !----- Extract one field, normalized by its own weight. `n` is what the caller may READ, and  !
-   !      it is bounded by the caller's array as well as by the block (#247): a kernel that      !
-   !      writes past a caller's buffer on a count mismatch should not be possible, and this     !
-   !      costs nothing on the once-per-step diagnostic path. With the lockstep fix above the    !
-   !      clamp never bites; it is what turns the next instance of that class into a short read  !
-   !      instead of memory corruption.  ------------------------------------------------------!
+   !----- Extract one field, normalized by its own weight. `n` is what the caller may          !
+   !      READ, and it is bounded by the caller's array as well as by the block: a kernel      !
+   !      that writes past a caller's buffer on a count mismatch should not be possible,       !
+   !      and this costs nothing on the once-per-step diagnostic path. With the count          !
+   !      riding the lockstep (cohort_diag_reorder) the clamp never bites; it is what          !
+   !      turns the next instance of that class into a short read instead of memory            !
+   !      corruption. -------------------------------------------------------------------------!
    pure subroutine cohort_diag_value(d, field, x, n, empty)
       type(cohort_diag_block), intent(in)  :: d
       integer(ik),             intent(in)  :: field
@@ -437,9 +447,9 @@ contains
       integer(ik) :: i
       n = 0_ik
       if (.not. d%active) return
-      !----- A cohort with no samples reads `empty`: one recruited in the slow step, after the fast  !
-      !      loop, or a slot past the block's count. Reading 0 instead made a recruit's leaf         !
-      !      temperature 0 K and pulled every canopy mean towards 0. -------------------------------!
+      !----- A cohort with no samples reads `empty`: one recruited in the slow step, after the      !
+      !      fast loop, or a slot past the block's count. Reading 0 instead would make a            !
+      !      recruit's leaf temperature 0 K and pull every canopy mean towards 0. ------------------!
       x = empty
       n = min(d%n, int(size(x), ik))
       do i = 1_ik, n
@@ -496,7 +506,7 @@ contains
       if (allocated(d%w)) d%w = 0.0_wp
    end subroutine patch_diag_reset
 
-   !----- The patch analogue, and the count rides it for the same reason (#247). ------------!
+   !----- The patch analogue, and the count rides it for the same reason. ------------------!
    subroutine patch_diag_reorder(d, perm, m)
       type(patch_diag_block), intent(inout) :: d
       integer(ik),            intent(in)    :: perm(:), m
@@ -584,8 +594,8 @@ contains
       integer(ik) :: i
       n = 0_ik
       if (.not. d%active) return
-      x = 0.0_wp                         ! slots with no entry read 0 (see cohort_diag_value)
-      n = min(d%n, int(size(x), ik))     ! bounded by the caller's array too (#247)
+      x = 0.0_wp                         ! slots with no entry read 0
+      n = min(d%n, int(size(x), ik))     ! bounded by the caller's array too (see cohort_diag_value)
       do i = 1_ik, n
          if (d%w(i) > tiny_num) x(i) = d%v(field, i) / d%w(i)
       end do

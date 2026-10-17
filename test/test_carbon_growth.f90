@@ -50,7 +50,7 @@ program test_carbon_growth
    call check(.not. has_nan(site), 'carbon-mode step produced NaN')
 
    !----- has_nan sees the fast loop's states too: a non-finite canopy air or leaf temperature is  !
-   !      what the integrators commit when even their smallest step fails (#352). -----------------!
+   !      what the integrators commit when even their smallest step fails. ------------------------!
    block
       real(wp) :: keep
       if (allocated(site%patch%cas)) then
@@ -70,11 +70,10 @@ program test_carbon_growth
 
    !=== 2b. The cached WOOD geometry must describe TODAY's tree, not the one 30 steps ago. ======!
    !        wood_area / sapwood_carbon / sapwood_area are derived once per size change rather    !
-   !        than recomputed every dt_fast, which is what let the fast loop stop gathering into a  !
-   !        scratch buffer. That trade is only safe while every path that moves dbh, basal_area   !
-   !        or wood_carbon re-derives them -- growth included, which is the one the appliers do    !
-   !        by tendency rather than by re-deriving geometry. Assert it directly: a stale cache is  !
-   !        invisible in a conservation ledger and shows up only as a slowly wrong tree.           !
+   !        than recomputed every dt_fast, so the fast loop reads them in place. That is only     !
+   !        safe while every path that moves dbh, basal_area or wood_carbon re-derives them,      !
+   !        growth included. Assert it directly: a stale cache is invisible in a conservation     !
+   !        ledger and shows up only as a slowly wrong tree.                                      !
    block
       real(wp) :: wa_fresh, fs_fresh
       wa_fresh = dbh_to_wai(site%cohort%dbh(1), 1.0_wp, site%cohort%p_wai_b1(1), site%cohort%p_wai_b2(1))
@@ -102,7 +101,8 @@ program test_carbon_growth
       call check(site%cohort%sla(1)     > sla0, 'shaded cohort: SLA acclimates upward')
       call check(site%cohort%vcmax25(1) < vc0,  'shaded cohort: Vcmax acclimates downward')
       ! PFT 3 (climax) has leaf lifespan ~3 yr > the ~2.6-yr ED2 crossover, so kplastic_llspan is
-      ! capped at 0 => a long-lived PFT keeps ONE lifespan through the canopy (no shortening).
+      ! capped at 0 (docs/science/plant_traits.md eq. (4)) => a long-lived PFT keeps ONE lifespan
+      ! through the canopy (no shortening).
       call check_close(site%cohort%llspan(1), ll0, 1.0e-12_wp, 'long-lived PFT: leaf lifespan is canopy-invariant (capped)')
       ! SLA rose => the leaf pool overshot allometry; the excess was resorbed to storage.
       call check(site%cohort%nonstructural_carbon(1) > ns0, 'SLA overshoot resorbed to storage')
@@ -110,9 +110,9 @@ program test_carbon_growth
                        1.0e-9_wp, 'leaf_area stays leaf_carbon*sla after resorption')
    end block
 
-   !=== 4. shed_turnover_water (P4): a NET leaf/root LOSS sheds water in the SAME proportion as   !
-   !    the carbon loss (remaining tissue's rwc unchanged), credited to the patch's shed_water_rate; !
-   !    a NET GAIN touches nothing (P3's own mass-conserving seam handles that direction instead). ===!
+   !=== 4. shed_turnover_water: a NET leaf/root LOSS sheds water in the SAME proportion as the    !
+   !    carbon loss (remaining tissue's rwc unchanged), credited to the patch's shed_water_rate;   !
+   !    a NET GAIN touches nothing (the tissue keeps its water mass; its capacity grows). ========!
    block
       type(carbon_flux_block) :: npp
       real(wp) :: leaf_water0, wood_water0, leaf_carbon0, fineroot_carbon0, nplant0
@@ -146,7 +146,7 @@ program test_carbon_growth
                        nplant0 * (expect_leaf_shed + expect_wood_shed) / cfg%dt_slow, 1.0e-9_wp,    &
                        'shed_turnover_water: patch rate = nplant-weighted shed amount / dt_slow')
 
-      !----- (b) Net GAIN: touches nothing (mass conserved, P3's own seam handles the psi response). !
+      !----- (b) Net GAIN: touches nothing (mass conserved; the larger capacity reads a lower rwc). !
       site%cohort%leaf_water_mass(1) = leaf_water0    ! reset
       site%cohort%wood_water_mass(1) = wood_water0
       npp%leaf(1)     = 0.01_wp * leaf_carbon0
@@ -168,7 +168,7 @@ program test_carbon_growth
                        'shed_turnover_water: full leaf-carbon loss sheds ALL leaf water')
    end block
 
-   !=== The applier advances only the carbon and derives the geometry from it (#389): a cohort   !
+   !=== The applier advances only the carbon and derives the geometry from it: a cohort         !
    !    that sheds every leaf ends with leaf area exactly 0, never a round-off negative, and its     !
    !    dbh and AGB are the allometry of its committed wood carbon.  ===============================!
    block
@@ -186,7 +186,7 @@ program test_carbon_growth
       site%deriv%dln_nplant_dt(1)             = 0.0_wp
       call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
       call check(site%cohort%leaf_carbon(1) == 0.0_wp, 'applier: a full shed leaves no leaf carbon')
-      call check(site%cohort%leaf_area(1) == 0.0_wp, 'applier: and exactly no leaf area (#389)')
+      call check(site%cohort%leaf_area(1) == 0.0_wp, 'applier: and exactly no leaf area')
       call carbon_to_structure(site%cohort%allom, site%cohort%wood_carbon(1), site%cohort%leaf_carbon(1),              &
                                site%cohort%p_wood_density(1), site%cohort%p_hgt_max(1),             &
                                site%cohort%p_aboveground_frac(1), site%cohort%sla(1),               &

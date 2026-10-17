@@ -1,10 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_slow_dynamics -- the THIN slow-tier coordinator (MEDS_SLOW_DYNAMICS_DESIGN.md Part II,   !
-! section 10a). Sequences the slow-tier domain drivers as PEERS -- vegetation dynamics, then     !
-! biogeochemistry -- and owns the shared per-patch slow-state application (update_patch_states,  !
-! hoisted out of meds_vegetation_dynamics) between them. It stays a coordinator, not a numerical   !
-! stepper: every actual computation lives in the domain drivers it calls.                          !
+! meds_slow_dynamics -- the THIN slow-tier coordinator (docs/science/order_of_processes.md       !
+! §4). Sequences the slow-tier domain drivers as PEERS -- vegetation dynamics, then              !
+! biogeochemistry -- and owns the shared per-patch slow-state application                        !
+! (update_patch_states) between them. It stays a coordinator, not a numerical stepper: every     !
+! actual computation lives in the domain drivers it calls.                                       !
 !==========================================================================================!
 module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
@@ -39,9 +39,10 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       type(meds_time_t),   intent(in), optional :: step_start   !< the slow step's start (its day of year)
       type(soilc_seam_t),  intent(inout), optional :: seam   !< per-run seam diagnostics (see the biogeochem driver)
-      !----- The site conservation ledger (plan §10.2). Optional so a test, a probe or the C-API   !
-      !      can advance a slow step without one; every entry point is a no-op when it is absent   !
-      !      or inactive. `rho_air` values the canopy-air store and comes from the fast context.   !
+      !----- The site conservation ledger (meds_slow_ledger). Optional so a test, a probe or the   !
+      !      C-API can advance a slow step without one; every entry point is a no-op when it is    !
+      !      absent or inactive. `rho_air` values the canopy-air store and comes from the fast     !
+      !      context.                                                                              !
       type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp),            intent(in),    optional :: rho_air
       real(wp),            intent(in),    optional :: latitude_deg   !< the polygon's (default [site])
@@ -63,8 +64,8 @@ contains
       call refresh_canopy_depth(site, cfg, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
 
-      !----- `seam` is intent(inout) and accumulates over the run, so unlike the old intent(out) real !
-      !      there is nothing to define here when soil carbon is off -- it simply stays as it was.  ---!
+      !----- `seam` is intent(inout) and accumulates over the run, so when soil carbon is off it     !
+      !      simply stays as it was. ----------------------------------------------------------------!
       if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, seam, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
@@ -99,7 +100,7 @@ contains
    ! refresh_canopy_depth -- per-patch CAS depth = tallest cohort height + freeboard, floored.  !
    !                                                                                          !
    ! The ONLY writer of cas%can_depth, called by the slow step, at a calendar boundary and once   !
-   ! when a polygon is prepared (#306). The depth sets the canopy air's mass and heat capacity,    !
+   ! when a polygon is prepared. The depth sets the canopy air's mass and heat capacity,          !
    ! so it sets how fast the canopy air responds and the freeze-cadence stability limit on         !
    ! dt_fast, and the forcing is moved to its top. A fixed depth would be 4x too much canopy air   !
    ! over a 1 m regenerating gap and ~1.8x too little under a 35 m tropical canopy.                !
@@ -132,9 +133,7 @@ contains
          if (book) then
             !----- Growing the canopy ENTRAINS air from just above; shrinking DETRAINS it. The     !
             !      intensive state is the invariant, so the extensive content moves, and that is   !
-            !      a genuine exchange with the atmosphere -- a DECLARED boundary term, not a leak. !
-            !      The hook has existed on cas_set_depth since the field was made prognostic; this !
-            !      is the first caller to ask for it (plan §10.2.4). ----------------------------!
+            !      a genuine exchange with the atmosphere -- a DECLARED boundary term, not a leak. ----!
             call cas_set_depth(site%patch%cas(ip), depth_new, rho_air=rho,                         &
                                de_open=de, dw_open=dw, dc_open=dc)
             call slow_ledger_declare(ledger,                                                       &

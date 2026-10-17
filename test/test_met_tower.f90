@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_met_tower -- the contract an ED_default forcing file built from flux-tower data relies on !
-! (MEDS_FLUX_TOWER_FORCING_PLAN.md §5 and §9 V6):                                            !
+! (docs/science/forcing.md §1, §7 and §8):                                                  !
 !                                                                                          !
 !   1. the three humidity forms, each converted with the model's own curve, and the files that   !
 !      carry none, two, or a percentage refused;                                                  !
@@ -351,7 +351,7 @@ contains
       call met_close(src)
    end subroutine test_flux_interval
 
-   !----- 5. The round trip of a tower file (V6). ------------------------------------------------!
+   !----- 5. The round trip of a tower file. -----------------------------------------------------!
    subroutine test_tower_round_trip()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur

@@ -1,16 +1,17 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_config_keys -- which keys a config may hold (N-10).                                    !
+! meds_config_keys -- which keys a config may hold (docs/configuration.md).                !
 !                                                                                          !
-! The two reference configs, meds_config_main.toml and meds_config_pft.toml, list every key   !
-! MEDS reads, set or commented out at its default. A run checks each of its two files against !
-! its reference: a key the reference does not list stops the run, because a key that parses   !
-! and does nothing is worse than one that is absent -- `dt_forcing = 7200` (the key is         !
-! `timestep`) used to run silently at the file's own spacing. A retired key is named with what  !
-! replaced it; any other unknown key with the listed key it most likely meant.                  !
+! The two reference configs, meds_config_main.toml and meds_config_pft.toml, list every    !
+! key MEDS reads, set or commented out at its default. A run checks each of its two files  !
+! against its reference: a key the reference does not list stops the run, because a key    !
+! that parses and does nothing is worse than one that is absent -- `dt_forcing = 7200`     !
+! (the key is `timestep`) would otherwise run silently at the file's own spacing. A        !
+! retired key is named with what replaced it; any other unknown key with the listed key it !
+! most likely meant.                                                                       !
 !                                                                                          !
-! The lists come from the references at build time (cmake/meds_config_keys.cmake), and the     !
-! test check_config_keys.cmake holds the references equal to the keys the loader reads.         !
+! The lists come from the references at build time (cmake/meds_config_keys.cmake), and the !
+! test check_config_keys.cmake holds the references equal to the keys the loader reads.    !
 !==========================================================================================!
 module meds_config_keys
    use meds_kinds, only : ik
@@ -23,8 +24,8 @@ module meds_config_keys
    integer, parameter :: KEY_LEN = 64            !< meds_toml's key length
    include 'meds_config_keys.inc'                ! MAIN_KEYS, PFT_KEYS
 
-   !----- Keys MEDS used to read. Each is refused with what replaced it, so a config written    !
-   !      against an older MEDS says what to change rather than only that something is wrong. ---!
+   !----- Retired keys. Each is refused with what replaced it, so a config written against       !
+   !      an older MEDS says what to change rather than only that something is wrong. -----------!
    character(len=*), parameter :: GROWTH_CURVE_GONE = 'growth is carbon-driven, by the NPP the '// &
                                                       'cohort allocates; the empirical growth curve is gone'
    character(len=*), parameter :: PHENO_SHARP = 'every phenology switch is sigma(s (x - x*)) with one '// &

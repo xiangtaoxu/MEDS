@@ -1,13 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_io_config_example -- the shipped meds_io_config.toml must list EVERY registered variable   !
-! (#241).                                                                                        !
 !                                                                                          !
 ! That file is a GENERATED artifact (`meds_main --dump-io-config`) which is nonetheless TRACKED,   !
 ! because it is the shipped example of the per-variable override surface that                      !
 ! docs/science/diagnostics.md points users at. It is a pure function of the registry, so it can    !
-! only ever be right or stale -- and it went stale across five pull requests, ending up short by   !
-! twenty variables, because nothing compared the two.                                              !
+! only ever be right or stale, and nothing else compares the two.                                  !
 !                                                                                          !
 ! It degrades QUIETLY, which is why: an unknown name in the file is a hard error, but a MISSING    !
 ! name is not an error at all -- that variable simply keeps its registry-default streams. A user   !
@@ -33,7 +31,7 @@ program test_io_config_example
    integer(ik)                   :: k, n_missing
    logical                       :: ok
 
-   call banner('the shipped meds_io_config.toml example is complete (#241)')
+   call banner('the shipped meds_io_config.toml example is complete')
 
    !----- CMake passes the SOURCE-tree path; ctest runs from the build tree. -------------!
    call get_command_argument(1, arg)

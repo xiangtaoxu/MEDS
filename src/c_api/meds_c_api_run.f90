@@ -2,11 +2,12 @@
 !==========================================================================================!
 ! meds_c_api_run -- the ISO_C_BINDING shim that exposes the FULL COUPLED MODEL (`meds.model`). !
 !                                                                                          !
-! The other three shims expose pieces: `meds_c_api_leaf` and `meds_c_api_phenology` are stateless !
-! kernels, and `meds_c_api_demography` drives the slow loop alone (no biophysics, no forcing, no !
-! output streams). This one drives what the `meds_main` EXECUTABLE drives -- coupled fast + slow, !
-! live met forcing, netCDF output, both conservation ledgers -- by holding a `meds_run_t` from    !
-! `meds_driver` and handing the caller the OPEN / STEP / FINALIZE seam.                            !
+! The other shims expose pieces: `meds_c_api_leaf`, `meds_c_api_phenology` and                    !
+! `meds_c_api_canopy` the kernels, and `meds_c_api_demography` the slow loop alone (no            !
+! biophysics, no forcing, no output streams). This one drives what the `meds_main` EXECUTABLE     !
+! drives -- coupled fast + slow, live met forcing, netCDF output, both conservation ledgers -- by !
+! holding a `meds_run_t` from `meds_driver` and handing the caller the OPEN / STEP / FINALIZE     !
+! seam.                                                                                           !
 !                                                                                          !
 ! The caller owns the time loop: a Python process opens a run, steps it, reads the site state as   !
 ! it goes, and finalizes it. `python -m meds.model CONFIG` is that loop, and                       !
@@ -17,8 +18,7 @@
 ! Conventions match the other shims: `site_t` and friends never cross the boundary. A run is an     !
 ! opaque integer handle into a module-`save` registry; scalars return by value; arrays COPY into a  !
 ! caller-allocated buffer. The bind(c) entry points are also PUBLIC Fortran so `test_c_api_run`     !
-! can call them -- an untestable shim is exactly how `meds_c_api_demography` came to stop compiling !
-! without anyone noticing.                                                                            !
+! can call them -- a shim no test calls can stop compiling without anyone noticing.                 !
 !                                                                                          !
 ! `driver_step` RETURNS a NaN status rather than `error stop`ping, which is what makes this safe to  !
 ! call from an interpreter: a bad state surfaces as a Python exception, not a dead process.           !

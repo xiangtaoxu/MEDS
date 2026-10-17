@@ -9,8 +9,9 @@ whose PAR exceeds each value of a grid of par_min, and writes them to drivers/er
 run_phenology.py turns a count into hours (x 0.25) and interpolates between grid values.
 
 The CSVs are committed: the archive (/ibstorage/SharedData/ED_ERA5land on the Cornell BioHPC
-cluster) is not public in this form. Regenerating needs a MEDS build that includes #371 (a sunrise or
-sunset hour keeps its light) and the archive:
+cluster) is not public in this form. Regenerating needs the archive and a MEDS build whose shortwave
+split uses the interval-mean sun, so a sunrise or sunset hour still splits its light
+(docs/science/forcing.md §6):
 
     python make_era5_par_hours.py --meds-main ../../build-ifx/meds_main --archive /path/to/ED_ERA5land
 """

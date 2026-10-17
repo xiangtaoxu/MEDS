@@ -2,21 +2,21 @@
 !==========================================================================================!
 ! meds_plant_trait_dynamics -- within-lifetime CHANGES to a plant's leaf traits.            !
 !                                                                                          !
-! First cut: LIGHT-driven plasticity of the four cohort-level leaf traits SLA, Vcmax25, Rd25,  !
-! and leaf lifespan (llspan), porting ED2's update_cohort_plastic_trait (Lloyd et al. 2010     !
-! canopy trait gradients). Each trait acclimates to the cumulative LAI ABOVE the cohort (its    !
-! light-competition proxy) toward a target trait_toc*exp(kplastic*cum_lai_above), and the live   !
-! cohort trait RELAXES toward that target only as fast as leaves are REPLACED (turnover-limited: !
-! a leaf's trait is fixed once it flushes). Thermal acclimation is a deferred sibling             !
-! (docs/ROADMAP.md section 7).                                                                    !
+! LIGHT-driven plasticity of the four cohort-level leaf traits SLA, Vcmax25, Rd25 and leaf       !
+! lifespan (llspan), porting ED2's update_cohort_plastic_trait (Lloyd et al. 2010 canopy trait   !
+! gradients). Each trait acclimates to the cumulative LAI ABOVE the cohort (its light-           !
+! competition proxy) toward a target trait_toc*exp(kplastic*cum_lai_above), and the live cohort  !
+! trait RELAXES toward that target only as fast as leaves are REPLACED (turnover-limited: a      !
+! leaf's trait is fixed once it flushes). Thermal acclimation is site-level, in leaf gas         !
+! exchange; per-cohort thermal acclimation is open (see docs/ROADMAP.md).                        !
 !                                                                                          !
 !   * light_plastic_traits  -- the light-acclimated TARGET traits (pure geometry of the gradient). !
 !   * update_plastic_trait  -- one replacement-weighted step of a live trait toward its target      !
 !       (or an INSTANTANEOUS jump for a census restart, where no trait history exists).             !
 !                                                                                          !
 ! Stateless, elemental, scalar arithmetic (GPU/SoA-safe); the orchestration + per-cohort state   !
-! live in the driver (meds_vegetation_dynamics) and core SoA. See                                !
-! docs/dev_plans/archive/MEDS_PLANT_TRAIT_DYNAMICS_DESIGN.md.                                             !
+! live in the driver (meds_vegetation_dynamics) and the cohort SoA. docs/science/plant_traits.md !
+! eqs. (1)-(2).                                                                                  !
 !==========================================================================================!
 module meds_plant_trait_dynamics
    use meds_kinds,     only : wp
@@ -36,6 +36,7 @@ contains
    ! exponential canopy-light gradient exp(clamp(kplastic * cum_lai_above)). kplastic < 0        !
    ! (Vcmax/Rd) => the trait falls in shade; kplastic > 0 (SLA, llspan) => it rises. cum_lai is  !
    ! floored at 0 (a top-of-canopy cohort sees no shade => targets equal the _toc values).       !
+   ! docs/science/plant_traits.md eq. (1).                                                      !
    !---------------------------------------------------------------------------------------!
    elemental pure subroutine light_plastic_traits(cum_lai_above, sla_toc, vcmax25_toc, rd25_toc,  &
             llspan_toc, kplastic_sla, kplastic_vm0, kplastic_rd, kplastic_llspan,                  &
@@ -63,7 +64,7 @@ contains
    ! fraction of leaves replaced this step, f = 1 - exp(-dt/llspan), using the cohort's CURRENT    !
    ! leaf lifespan (a long-lived / shaded canopy acclimates slowly). When `instant` (a CENSUS      !
    ! restart, which carries no trait history) the trait jumps straight to the target. dt and       !
-   ! llspan are both in years.                                                                    !
+   ! llspan are both in years. docs/science/plant_traits.md eq. (2).                              !
    !---------------------------------------------------------------------------------------!
    elemental pure function update_plastic_trait(current, target, llspan, dt_yr, instant) result(updated)
       real(wp), intent(in) :: current, target, llspan, dt_yr

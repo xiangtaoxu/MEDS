@@ -17,8 +17,9 @@ and enums, so callers never touch ctypes.
     leaf.peaked(60.0, 65330.0, 200000.0, 650.0, 308.15)          # Vcmax(T), peaked Arrhenius
     leaf.arrhenius(0.9, 46390.0, 308.15)                         # Rd(T), plain Arrhenius
 
-Leaf PHENOLOGY is the sibling submodule `meds.plant.pheno` (both backed by the one plant C-API).
-Requires the compiled shared library (see meds.plant._ffi for the one-time CMake build).
+Leaf PHENOLOGY is the sibling submodule `meds.plant.pheno` (both backed by libmeds.so). Requires the
+compiled shared library (python/README.md has the one-time CMake build). The equations are in
+docs/science/leaf_gas_exchange.md.
 """
 from __future__ import annotations
 
@@ -169,14 +170,15 @@ def gas_exchange(par, leaf_temp, vpd, ca, params, *,
     when boundary_layer=True]. `params` is a Params (see c3_params / c4_params). Returns a Flux.
 
     `psi` [MPa, <=0] is the SUPPLY-side water potential driving the Sabot stomatal limb
-    (beta_stomata = min(1, exp(sref_stomata * psi))), as distinct from `psi_leaf`, the
+    (beta_stomata = min(1, exp(sref_stomata * psi)): docs/science/leaf_gas_exchange.md eq. (10) with
+    psi_onset = 0, which the C API does not pass), as distinct from `psi_leaf`, the
     current demand-side tension driving the fast capacity limb on Vcmax/Jmax/TPU (always applied,
-    1 at psi_open falling to 0 at psi_close). Sabot et al. (2022)
+    1 at psi_open falling to 0 at psi_close; eq. (9)). Sabot et al. (2022)
     write it as soil/predawn potential; MEDS supplies the cohort's own predawn (previous-day
     daily-max) LEAF potential, which is both what the underlying field measurement is and the
     plant's own integration over its rooted profile. The two coincide only in wet soil -- under
     drought the wood<->soil relaxation time is ~4.8 days, so they diverge exactly where this limb
-    matters. Renamed from `psi_soil` (issue #99), which claimed more than the kernel knows.
+    matters, which is why the argument is `psi` and not a soil potential (§4.2).
     """
     env = dict(par=par, leaf_temp=leaf_temp, vpd=vpd, ca=ca,
                pressure=pressure, psi_leaf=psi_leaf, gb=gb, psi=psi)
@@ -206,7 +208,8 @@ def gas_exchange_batch(par, leaf_temp, vpd, ca, params, *,
 
 def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
                     colimitation=Colimitation.MINIMUM, theta_cj=0.98, theta_ip=0.95) -> C3Rates:
-    """Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (stomata bypassed, NO temperature scaling).
+    """Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (stomata bypassed, NO temperature scaling):
+    docs/science/leaf_gas_exchange.md eq. (2).
 
     The caller passes already-in-situ values: vcmax [umol/m2/s], j (the electron-transport RATE, from
     electron_transport_j), tpu, and the mole-fraction [umol/mol] kinetics gstar (compensation point
@@ -215,8 +218,9 @@ def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
     min(Ac,Aj,Ap) envelope (the black "limiting rate" curve), or QUADRATIC for the smoothed version.
 
     theta_cj and theta_ip are the two CO-LIMITATION curvatures -- Ac/Aj, then (Ac,Aj)/Ap. They are not
-    theta_j, the electron-transport hyperbola's curvature; passing theta_j here is what issue #118 was
-    about, and at 0.85 it costs about 29% of assimilation against the sharp min().
+    theta_j, the electron-transport hyperbola's curvature: theta_j = 0.85 here costs 25-30 % of
+    assimilation against the sharp min() (docs/science/leaf_gas_exchange.md §2, "The co-limitation
+    curvatures are not theta_J").
 
     This composes with electron_transport_j (J from Jmax) and arrhenius (kinetics at leaf T) to draw an
     A-Ci demand curve from Vcmax/Jmax directly, with no capacity temperature-correction.

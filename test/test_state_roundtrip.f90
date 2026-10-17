@@ -30,20 +30,20 @@ program test_state_roundtrip
    do i = 1_ik, site%cohort%n
       site%cohort%sla(i)     = sla_set ; site%cohort%vcmax25(i) = vc_set
       site%cohort%rd25(i)    = rd_set  ; site%cohort%llspan(i)  = ll_set
-      !----- P6: per-cohort hydraulics/temperature, stamped to distinct NON-sentinel values so a       !
+      !----- Per-cohort hydraulics/temperature, stamped to distinct NON-sentinel values so a           !
       !      round-trip that fails to persist them (leaving the lazy-init 0 / LEAF_TEMP_INIT) is caught. !
       site%cohort%leaf_water_mass(i) = 0.0123_wp + 0.001_wp * real(i, wp)
       site%cohort%wood_water_mass(i) = 0.0456_wp + 0.001_wp * real(i, wp)
       site%cohort%leaf_temp(i)       = 291.5_wp + real(i, wp)
       site%cohort%wood_temp(i)       = 289.5_wp + real(i, wp)
-      !----- #95: the predawn-psi stomatal feedback. Stamped NEGATIVE and distinct so a round-trip that !
+      !----- The predawn-psi stomatal feedback. Stamped NEGATIVE and distinct so a round-trip that     !
       !      drops them is caught -- both sentinels are the opposite sign (DMAX_PSI_LEAF_UNSET = +1,       !
       !      DMAX_PSI_LEAF_ACCUM_RESET = -1e30), so a silent fallback cannot masquerade as a recovered value.  !
       site%cohort%dmax_psi_leaf(i)   = -0.75_wp - 0.01_wp * real(i, wp)
       site%cohort%dmax_psi_leaf_accum(i) = -0.40_wp - 0.01_wp * real(i, wp)
-      !----- PHENOLOGY MEMORY (#150). Set every column to a distinct, non-birth value: the point   !
-      !      is that a restart must not resurrect the cohort at flush tendency 1 / shed 0 / all     !
-      !      accumulators zero, which is what it did before these were written.  -------------------!
+      !----- PHENOLOGY MEMORY. Set every column to a distinct, non-birth value: the point is that  !
+      !      a restart must not resurrect the cohort at flush tendency 1 / shed 0 / all             !
+      !      accumulators zero, which is what a restart that does not write them does. -------------!
       site%cohort%leaf_flush_tendency(i) = 0.30_wp + 0.01_wp * real(i, wp)
       site%cohort%leaf_shed_tendency(i)  = 0.70_wp - 0.01_wp * real(i, wp)
       site%cohort%growing_degree_days(i) = 123.0_wp + real(i, wp)
@@ -53,10 +53,10 @@ program test_state_roundtrip
       site%cohort%light_hours_mean(i) = 10.0_wp + 0.1_wp * real(i, wp)
    end do
 
-   !----- P5 (MEDS_ED2_RK45_DESIGN.md): stamp distinct, non-default FAST reservoir values on every  !
-   !      patch -- a bare-ground site never calls init_fast_reservoirs (that is meds_main's own,      !
-   !      fast_biophysics_on-gated step), so these still sit at patch_alloc's raw defaults (theta=0,   !
-   !      soil_energy=0 -> 0 K) unless stamped here, exactly the discontinuity the fix closes. --------!
+   !----- Stamp distinct, non-default FAST reservoir values on every patch -- a bare-ground site     !
+   !      never calls init_fast_reservoirs (that is meds_main's own, fast_biophysics_on-gated step),  !
+   !      so these still sit at patch_alloc's raw defaults (theta=0, soil_energy=0 -> 0 K) unless     !
+   !      stamped here, and a restart that dropped them would restart from those defaults. ----------!
    call check(site%patch%n >= 1_ik, 'have at least one patch to checkpoint')
    do i = 1_ik, site%patch%n
       site%patch%cas(i)%can_enthalpy      = 3.1e5_wp ; site%patch%cas(i)%can_shv = 0.011_wp
@@ -68,9 +68,8 @@ program test_state_roundtrip
       site%patch%snow(i)%swe(1)           = 4.0_wp   ; site%patch%snow(i)%snow_energy(1) = -1.0e5_wp
       site%patch%snow(i)%snow_depth(1)    = 0.02_wp  ; site%patch%snow(i)%snow_temp(1)   = 270.0_wp
       site%patch%snow(i)%snow_fliq(1)     = 0.0_wp   ; site%patch%snow(i)%nlayer         = 1_ik
-      !----- REVIEW 2026-09: a ponded store WITH enthalpy, and the daily shed-water seam rate. The    !
-      !      writer used to put an unassigned buffer column as the pond enthalpy, and never wrote the  !
-      !      shed rate at all. -------------------------------------------------------------------!
+      !----- A ponded store WITH enthalpy, and the daily shed-water seam rate: the writer must put   !
+      !      the pond's own enthalpy column, and the shed rate, in the file. ----------------------!
       site%patch%soil_w(i)%w_surface      = 1.5_wp   ; site%patch%soil_w(i)%w_surface_enth = 1.5_wp * 9.0e5_wp
       site%patch%shed_water_rate(i)       = 3.0e-8_wp
    end do
@@ -99,7 +98,7 @@ program test_state_roundtrip
                         'leaf_temp recovered from state (not reset to LEAF_TEMP_INIT)')
       call check_close(site2%cohort%wood_temp(i), site%cohort%wood_temp(i), 1.0e-9_wp, &
                         'wood_temp recovered from state')
-      !----- #95: without these a mid-drought restart re-seeds predawn psi from surface soil (reads as   !
+      !----- Without these a mid-drought restart re-seeds predawn psi from surface soil (reads as       !
       !      UNSTRESSED, silently re-opening stomata the run had closed), and a restart at any time but  !
       !      midnight discards the part of today's maximum already seen. --------------------------------!
       call check_close(site2%cohort%dmax_psi_leaf(i), site%cohort%dmax_psi_leaf(i), 1.0e-12_wp, &

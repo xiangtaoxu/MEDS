@@ -34,7 +34,8 @@ recruit_carbon_efficiency          = [1.0e-3]
 seed_rain_recruits = [0.01]      # [plant/m2/yr]
 include_pft        = [1]
 min_cohort_height       = 2.0    # [m] shared scalar (recruit/birth size)
-reproduction_height_fraction = 0.47440838365101196   # [--] reproduce from this share of the local maximum height (20 m: the power curve's 100 cm tree is 42.16 m)
+reproduction_height_fraction = 0.47440838365101196   # [--] reproduce from this share of the local maximum height
+                                                     #      (20 m: the power curve's 100 cm tree is 42.16 m)
 # Leaf photosynthesis / stomatal traits (C3).
 photosynthetic_pathway = [1]
 vcmax25            = [32.3321]
@@ -46,9 +47,9 @@ stomatal_g0        = [0.000334162]
 stomatal_g1        = [2.81978]        # Medlyn [kPa^0.5]
 stomatal_d0        = [1500.0]
 quantum_yield_c4   = [0.0]
-theta_j            = [0.70]       # the effective curvature of a mean-light cohort (#351; CLM5, ED2)
-theta_cj_c3        = [0.98]                        # [--] C3 Ac/Aj co-limitation curvature (#118; NOT theta_j)
-theta_ip_c3        = [0.95]                        # [--] C3 (Ac,Aj)/Ap co-limitation curvature (#118)
+theta_j            = [0.70]       # the effective curvature of a mean-light cohort (CLM5, ED2)
+theta_cj_c3        = [0.98]                        # [--] C3 Ac/Aj co-limitation curvature (NOT theta_j)
+theta_ip_c3        = [0.95]                        # [--] C3 (Ac,Aj)/Ap co-limitation curvature
 theta_cj_c4        = [0.80]
 theta_ic_c4        = [0.95]
 katul_lambda25     = [800.0]
@@ -84,9 +85,10 @@ leaf_clumping      = [0.80]    # [--] leaf clumping factor in (0,1]
 wood_clumping      = [0.50]    # [--] wood clumping factor in (0,1]
 leaf_angle_mean    = [54.9255]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
-storage_cushion        = [0.5]  # [--] x (leaf + fine root): 0.5 keeps the earlier 1 x leaf carbon (root_to_leaf_ratio 1)
+storage_cushion        = [0.5]  # [--] storage target, x (leaf + fine-root target):
+                                #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3]
-retained_carbon_fraction = [0.0]   # [--] no resorption: the calibration predates it (default 0.3)
+retained_carbon_fraction = [0.0]   # [--] no resorption, as the example's calibration assumes (default 0.3)
 leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]

@@ -13,7 +13,7 @@
 ! return a potential or a water content, with floors that keep a diagnostic finite. The water   !
 ! relations (*_water_relations) give the soil-plant water solver (meds_spac_solver) a store's    !
 ! potential, water and conductivity with their derivatives, in the variable it solves for, with  !
-! no floors (MEDS_SPAC_WATER_NETWORK_PLAN.md §12.1 D1).                                         !
+! no floors (docs/science/soil_plant_water.md §2).                                              !
 !                                                                                          !
 ! How water moves between the stores -- the rhizosphere, the xylem and its vulnerability curve,  !
 ! the root profile -- is in meds_hydr_lib, and between soil layers in meds_soil_water.            !
@@ -56,8 +56,9 @@ module meds_water_retention
    !      K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2. The one place it is set. -1 after Schaap & Leij     !
    !      (2000, SSSA J. 64:843), as ED2 uses with van Genuchten (soil_hydro_scheme 2). With        !
    !      Mualem's 0.5 a soil of n near 1.4 conducts less than ED2's 1.16e-13 m/s from about       !
-   !      -0.7 MPa, far wetter than UNSODA's measurements; -1 keeps it above that to about -2 MPa.  !
-   !      A film-flow term for drier soil is #390. ------------------------------------------------!
+   !      -0.7 MPa, far wetter than UNSODA's measurements; -1 keeps it above that to about -2 MPa   !
+   !      (docs/science/soil_biophysics.md eq. (2)). Drier soil has no film-flow term (see          !
+   !      docs/ROADMAP.md). -----------------------------------------------------------------------!
    real(wp), parameter :: VG_PORE_CONNECTIVITY = -1.0_wp
 
    !----- Read-off floors, which keep a diagnostic finite; the solver's curves have none. -----!
@@ -95,7 +96,8 @@ module meds_water_retention
 contains
 
    !=======================================================================================!
-   !     Pressure-volume (Bartlett / Tyree-Hammel) constitutive curves.                     !
+   !     Pressure-volume (Bartlett / Tyree-Hammel) constitutive curves                      !
+   !     (docs/science/plant_hydraulics.md §2, eqs. (3)-(6)).                               !
    !=======================================================================================!
 
    !----- Turgor loss point [MPa] (Bartlett eqn 1). ---------------------------------------!
@@ -169,11 +171,11 @@ contains
       c = w_sat_sym*cr
    end function capacitance
 
-   !----- Exact inverse of water_content: water potential [MPa] from total tissue water [kg,      !
-   !      per plant] (MEDS_ED2_RK45_DESIGN.md sec 4 -- diagnoses psi from the prognostic mass      !
-   !      state). Recovers the symplastic RWC by removing the constant apoplastic reservoir, then   !
-   !      composes the existing exact psi_from_rwc inverse -- every constituent already exists,     !
-   !      this only inverts water_content's own forward map (w = (1-apo)*w_sat*rwc + apo*w_sat).    !
+   !----- Exact inverse of water_content: water potential [MPa] from total tissue water [kg,        !
+   !      per plant], which diagnoses psi from the prognostic water mass. Recovers the symplastic   !
+   !      RWC by removing the constant apoplastic reservoir, then composes the exact psi_from_rwc   !
+   !      inverse -- it only inverts water_content's own forward map (w = (1-apo)*w_sat*rwc +       !
+   !      apo*w_sat, docs/science/plant_hydraulics.md eq. (5)).                                     !
    elemental real(wp) function psi_from_water_content(w, curve, biomass) result(psi)
       real(wp),            intent(in) :: w, biomass
       type(water_curve_t), intent(in) :: curve
@@ -183,16 +185,17 @@ contains
       psi   = psi_from_rwc(rwc, curve%pi0, curve%elastic_mod)
    end function psi_from_water_content
 
-   !----- Cap tissue water mass at the saturation ceiling W_sat = water_sat*biomass (rwc=1): the     !
-   !      slow/fast SEAM guard (MEDS_ED2_RK45_DESIGN.md P3). Mass, not psi, is the seam-continuous     !
-   !      quantity across a biomass update -- a persisted leaf/wood_water_mass carries forward         !
-   !      UNCHANGED into new biomass, so a capacity GROWTH simply reads as a lower rwc/psi next touch  !
-   !      (the physically-correct signal that draws more water from the soil, not a defect to patch    !
-   !      over). Only a capacity SHRINK needs a guard: a discontinuous biomass drop (e.g. the           !
-   !      phenology dormant-canopy leaf snap-to-bare in meds_vegetation_dynamics%update_biomass_        !
-   !      turnover) can leave more mass than the new, smaller ceiling admits -- a tissue state that     !
-   !      is not reachable (rwc>1 has no valid inverse on the turgid PV branch). The caller bookkeeps  !
-   !      the released excess (w - result) rather than silently retaining a supersaturated pool.        !
+   !----- Cap tissue water mass at the saturation ceiling W_sat = water_sat*biomass (rwc=1): the       !
+   !      slow/fast SEAM guard (meds_fast_reconcile; docs/science/order_of_processes.md §3). Mass,     !
+   !      not psi, is the seam-continuous quantity across a biomass update -- a persisted              !
+   !      leaf/wood_water_mass carries forward UNCHANGED into new biomass, so a capacity GROWTH        !
+   !      simply reads as a lower rwc/psi next touch (the physically-correct signal that draws more    !
+   !      water from the soil, not a defect to patch over). Only a capacity SHRINK needs a guard: a    !
+   !      discontinuous biomass drop (e.g. a dormant canopy's snap to bare in                          !
+   !      meds_phenology%leaf_turnover_step) can leave more mass than the new, smaller ceiling         !
+   !      admits -- a tissue state that is not reachable (rwc>1 has no valid inverse on the turgid     !
+   !      PV branch). The caller bookkeeps the released excess (w - result) rather than silently       !
+   !      retaining a supersaturated pool.                                                             !
    elemental real(wp) function clamp_water_to_capacity(w, curve, biomass) result(w_capped)
       real(wp),            intent(in) :: w, biomass
       type(water_curve_t), intent(in) :: curve
@@ -200,7 +203,8 @@ contains
    end function clamp_water_to_capacity
 
    !=======================================================================================!
-   !  SOIL retention curves: van Genuchten-Mualem (default) or Campbell / Clapp-Hornberger.     !
+   !  SOIL retention curves: van Genuchten-Mualem (default) or Campbell / Clapp-Hornberger     !
+   !  (docs/science/soil_biophysics.md §The soil water column, eq. (2)).                        !
    !  par_a/par_n carry {alpha [1/m], n} for van Genuchten and {psi_sat [m, < 0], b} for         !
    !  Campbell; heads are in metres of water, below zero when unsaturated. Four kernels at the   !
    !  end of this section hold the curve, and every soil-water routine -- the read-offs here and !
@@ -315,10 +319,10 @@ contains
       end if
    end subroutine soil_water_relations
 
-   !----- The unknown of a layer holding theta [m3/m3]: the inverse of soil_water_relations's water. A     !
-   !      layer at or below residual -- which an earlier model's floor could leave -- starts just  !
-   !      inside the curve, at SE_START. A Campbell layer at exactly saturation starts at its      !
-   !      air-entry point, the one potential its water content can name. -----------------------!
+   !----- The unknown of a layer holding theta [m3/m3]: the inverse of soil_water_relations's      !
+   !      water. A layer at or below residual starts just inside the curve, at SE_START. A         !
+   !      Campbell layer at exactly saturation starts at its air-entry point, the one potential its!
+   !      water content can name. -----------------------------------------------------------------!
    elemental function soil_unknown_from_theta(c, theta) result(tau)
       type(soil_layer_curve_t), intent(in) :: c
       real(wp),                 intent(in) :: theta

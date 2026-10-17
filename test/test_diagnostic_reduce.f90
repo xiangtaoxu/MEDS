@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_diagnostic_reduce -- the WEIGHTED scale-aggregation layer (MEDS_IO_V01_PLAN.md section 3.3   !
-! and test plan items 2, 3, 3b, 4, 6).                                                        !
+! test_diagnostic_reduce -- the WEIGHTED scale-aggregation layer                              !
+! (docs/science/diagnostics.md §2, eqs. (1)-(3)).                                             !
 !                                                                                          !
 ! What these tests are FOR. The reducer's whole job is to apply the right weight to the right   !
 ! quantity, and the two ways that goes wrong are both silent: an EXTENSIVE quantity aggregated    !
@@ -207,7 +207,8 @@ contains
    !  A cohort with NO SAMPLES (missing x: recruited after the fast loop) is left out: of a   !
    !  mean's numerator AND denominator, so the mean is that of the sampled cohorts, and of a    !
    !  sum, which it would only have added 0 to. A patch whose cohorts are all unsampled has     !
-   !  nothing to report (N-11). Counting it as 0 pulled a canopy temperature towards 0 K.       !
+   !  nothing to report. Counting it as 0 would pull a canopy temperature towards 0 K           !
+   !  (docs/science/diagnostics.md §2).                                                         !
    !=======================================================================================!
    subroutine test_unsampled_cohorts()
       type(site_t) :: site
@@ -251,7 +252,7 @@ contains
    !=======================================================================================!
    !  SOIL COLUMNS. The area-weighted site column, and the FLATTENED 2-D (layer, patch) slab   !
    !  whose stride is the COMPILE-TIME layer ceiling. The closure below -- area-weighted mean    !
-   !  over the patch axis of the 2-D slab == the site column -- is the P1 acceptance test, and   !
+   !  over the patch axis of the 2-D slab == the site column -- is the acceptance test, and      !
    !  it is what proves the flattening index is right. Varying the ACTIVE layer count while the  !
    !  stride stays fixed is the specific mis-mapping it has to rule out.                         !
    !=======================================================================================!
@@ -286,7 +287,7 @@ contains
       call check(.not. vld(nlayer + 1_ik), 'inactive layers of patch 1 are invalid -> _FillValue')
       call check(vld(n_soil_layer_max + 1_ik), 'patch 2 active layers are valid')
 
-      !----- The P1 acceptance identity, computed the way a reader would.  --------------------!
+      !----- The acceptance identity, computed the way a reader would.  -----------------------!
       do k = 1_ik, nlayer
          wmean = site%patch%area(1) * flat(k)                                                    &
                + site%patch%area(2) * flat(n_soil_layer_max + k)
@@ -352,7 +353,7 @@ contains
       call cohort_diag_clear_slot(d, 5_ik)
       call check(d%v(CD_SAPFLOW, 5_ik) == 0.0_wp, 'clear_slot zeroes a reused slot')
       call check(d%w(5_ik) == 0.0_wp,             'clear_slot zeroes the weight')
-      !----- ...and reads as the caller's "no samples" value, not as 0 K (N-11). -----!
+      !----- ...and reads as the caller's "no samples" value, not as 0 K. -----!
       d%n = 5_ik
       call cohort_diag_value(d, CD_LEAF_TEMP, x, n, -1.0_wp)
       call check(x(5) == -1.0_wp .and. x(1) == 320.0_wp, 'a slot with no samples reads the empty value')

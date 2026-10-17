@@ -1,14 +1,16 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_column_state_types -- the PROGNOSTIC per-patch stores of the fast (sub-daily) loop: the !
-! canopy-air-space thermal twins, the soil water and soil energy columns, the snow store, the  !
-! slow soil-carbon pools, and the daily fast->slow decomposition accumulator -- plus the        !
-! area-weighted blends that mix two of each when patches fuse or a disturbance gap is carved.    !
+! meds_column_state_types -- the PROGNOSTIC per-patch stores of the fast (sub-daily) loop: !
+! the canopy-air-space thermal twins, the soil water and soil energy columns, the snow     !
+! store, the slow soil-carbon pools, and the daily fast->slow decomposition accumulator -- !
+! plus the area-weighted blends that mix two of each when patches fuse or a disturbance    !
+! gap is carved.                                                                           !
 !                                                                                          !
-! This is BOUNDARY state: the biophysics kernels mutate it and the demographic state hub owns  !
-! it per patch and threads it through the lockstep reorder. That is why it is its own layer     !
-! rather than a member of either side. Parameters that describe these same stores live next     !
-! door in meds_column_params -- a parameter is not state (see the plan's placement rule 3).     !
+! This is BOUNDARY state: the biophysics kernels mutate it and the demographic state hub   !
+! owns it per patch and threads it through the lockstep reorder. That is why it is its own !
+! layer rather than a member of either side. Parameters that describe these same stores    !
+! live next door in meds_column_params -- a parameter is not state (src/README.md, rule    !
+! 3).                                                                                      !
 !==========================================================================================!
 module meds_column_state_types
    use meds_kinds,            only : wp, ik
@@ -22,7 +24,7 @@ module meds_column_state_types
 
    public :: cas_state_t, cas_set_depth
    public :: soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
-   public :: xi_accum_t   !< daily fast->slow accumulator for the soil-carbon matrix (B2)
+   public :: xi_accum_t   !< daily fast->slow accumulator for the soil-carbon matrix
    public :: litter_input_t  !< per-patch, per-day litter arriving at the CENTURY pools
    public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon, blend_xi_accum
    public :: blend_litter_input
@@ -32,14 +34,15 @@ module meds_column_state_types
    type :: soil_column_t
       real(wp) :: theta(n_soil_layer_max) = 0.0_wp   !< [m3/m3] volumetric soil moisture (PROGNOSTIC)
       real(wp) :: w_surface = 0.0_wp                 !< [kg/m2] ponded surface water
-      !----- ENTHALPY of the ponded water (issue #78 item 4), PROGNOSTIC so that every pond seam is a   !
-      !      PAIRED (mass, enthalpy) transfer, the same discipline the snow pack follows. A mass-only   !
-      !      pond lets water cross a seam and shed its enthalpy at the source layer's temperature while !
-      !      the water itself still holds that heat on the surface: both sides of the books agree and   !
-      !      the column loses energy that has not gone anywhere.                                        !
-      !      EXTENSIVE [J/m2], not volumetric, so the transfers are plain additions; temperature is a    !
-      !      read-off of internal_energy_to_temp with dry_hcap = 0, exactly as for snow -- which means freeze/thaw  !
-      !      of ponded water comes for free. ---------------------------------------------------------!
+      !----- ENTHALPY of the ponded water, PROGNOSTIC so that every pond seam is a PAIRED (mass,       !
+      !      enthalpy) transfer, the same discipline the snow pack follows                             !
+      !      (docs/science/numerical_scheme.md §5b, "The pond holds heat"). A mass-only pond lets      !
+      !      water cross a seam and shed its enthalpy at the source layer's temperature while the      !
+      !      water itself still holds that heat on the surface: both sides of the books agree and      !
+      !      the column loses energy that has not gone anywhere. EXTENSIVE [J/m2], not volumetric,     !
+      !      so the transfers are plain additions; temperature is a read-off of                        !
+      !      internal_energy_to_temp with dry_hcap = 0, exactly as for snow -- which means             !
+      !      freeze/thaw of ponded water comes for free. ----------------------------------------------!
       real(wp) :: w_surface_enth = 0.0_wp            !< [J/m2] ponded-water internal energy (PROGNOSTIC)
    end type soil_column_t
 
@@ -50,14 +53,15 @@ module meds_column_state_types
       real(wp) :: soil_fliq(n_soil_layer_max)   = 1.0_wp    !< [-]    diagnosed liquid fraction
    end type soil_energy_column_t
 
-   !----- Temporary-surface-water / SNOW store: a stacked mass+energy reservoir between the CAS      !
-   !      and soil_energy(1). PROGNOSTIC = water-equivalent mass (swe) + EXTENSIVE internal energy    !
-   !      (J/m2, unlike soil_energy's J/m3); temperature + liquid fraction are read-offs of           !
-   !      internal_energy_to_temp (dry_hcap=0). nlayer=0 is the "no snow" state (store present but empty).        !
+   !----- Temporary-surface-water / SNOW store: a stacked mass+energy reservoir between the       !
+   !      CAS and soil_energy(1) (docs/science/snow_biophysics.md). PROGNOSTIC = water-           !
+   !      equivalent mass (swe) + EXTENSIVE internal energy (J/m2, unlike soil_energy's           !
+   !      J/m3); temperature + liquid fraction are read-offs of internal_energy_to_temp           !
+   !      (dry_hcap=0). nlayer=0 is the "no snow" state (store present but empty). ---------------!
    type :: snow_column_t
       real(wp) :: swe(n_snow_layer_max)         = 0.0_wp   !< [kg/m2] water-equivalent mass  (PROGNOSTIC)
       real(wp) :: snow_energy(n_snow_layer_max) = 0.0_wp   !< [J/m2]  extensive internal energy (PROGNOSTIC)
-      real(wp) :: snow_depth(n_snow_layer_max)  = 0.0_wp   !< [m]     geometric depth (PROGNOSTIC, = swe/rho_snow in P0)
+      real(wp) :: snow_depth(n_snow_layer_max)  = 0.0_wp   !< [m]     geometric depth (= swe/rho_snow, the fixed density)
       real(wp) :: snow_temp(n_snow_layer_max)   = 273.16_wp !< [K]    diagnosed each step (read-off)
       real(wp) :: snow_fliq(n_snow_layer_max)   = 0.0_wp   !< [-]     diagnosed liquid fraction (read-off)
       integer(ik) :: nlayer                     = 0_ik     !< active layer count (0 = no snow)
@@ -69,18 +73,20 @@ module meds_column_state_types
       real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg] specific humidity (PROGNOSTIC twin)
       real(wp) :: can_co2      = 400.0_wp                   !< [umol/mol] dry-air CO2 mixing ratio (PROGNOSTIC third twin)
       real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
-      !----- CAS DEPTH is PROGNOSTIC-ish: a per-patch geometry state the SLOW loop owns, set from   !
-      !      the tallest cohort plus a freeboard. It used to be this hardcoded 20 m and NOTHING ever !
-      !      assigned it -- the aerodynamics computed the right value and threw it away -- so cas_mass_capacity   !
-      !      and cas_molar_capacity were a fixed 24 kg/m2 and 0.83 mol/m2 for every stand, 4x too much air over a  !
-      !      1 m regenerating gap and ~1.8x too little over a 35 m tropical canopy. -----------------!
+      !----- CAS DEPTH is PROGNOSTIC-ish: a per-patch geometry state the SLOW loop owns, set from     !
+      !      the tallest cohort plus a freeboard (aero_cfg_t%canopy_freeboard, floored at             !
+      !      min_canopy_depth). It sizes cas_mass_capacity and cas_molar_capacity: one fixed          !
+      !      depth would hold 4x too much air over a 1 m regenerating gap and ~1.8x too little        !
+      !      over a 35 m tropical canopy. The 20 m here is only the value before the slow loop        !
+      !      first sets it. --------------------------------------------------------------------------!
       real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (slow loop owns it)
    end type cas_state_t
 
-   !----- Per-patch, per-day litter input -- ALREADY PARTITIONED to pool destinations (§2.2, §5.4). !
-   !      The driver sums each cohort's leaf/fineroot/wood/storage necromass into these bins USING    !
-   !      that cohort's PFT f_labile_leaf/f_labile_stem and agf; the kernel maps them straight onto u. !
-   !      Units [kgC/m2/day].                                                                          !
+   !----- Per-patch, per-day litter input -- ALREADY PARTITIONED to pool destinations               !
+   !      (docs/science/soil_carbon.md §5). The driver sums each cohort's                           !
+   !      leaf/fineroot/wood/storage necromass into these bins USING that cohort's PFT              !
+   !      f_labile_leaf/f_labile_stem and aboveground_frac (necromass_to_litter); the kernel        !
+   !      maps them straight onto u. Units [kgC/m2/day]. -------------------------------------------!
    type :: litter_input_t
       real(wp) :: labile_grnd  = 0.0_wp      !< -> X(1) fast_grnd  (labile leaf, fruit; above-ground storage + wood)
       real(wp) :: labile_soil  = 0.0_wp      !< -> X(2) fast_soil  (labile fine root; below-ground storage + wood)
@@ -88,7 +94,7 @@ module meds_column_state_types
       real(wp) :: struct_soil  = 0.0_wp      !< -> X(4) struct_soil (structural fineroot + belowground CWD)
       real(wp) :: lignin_grnd  = 0.0_wp      !< lignin flux to struct_grnd (sets f_lignin of incoming litter)
       real(wp) :: lignin_soil  = 0.0_wp      !< lignin flux to struct_soil
-      ! optional N twin (driver-split by tissue C:N), present only when n_cycle_on:
+      ! nitrogen twin: carried, but zero, because no kernel reads n_cycle_on (soil_carbon.md §10)
       real(wp) :: n_labile_grnd = 0.0_wp, n_labile_soil = 0.0_wp
       real(wp) :: n_struct_grnd = 0.0_wp, n_struct_soil = 0.0_wp
       ! the same carbon by the tissue it came from (diagnostic; the soil reads the pool streams
@@ -103,22 +109,22 @@ module meds_column_state_types
    end type litter_input_t
 
    !==========================================================================================!
-   !  Slow, stateful per-patch soil-carbon pools (written DAILY by meds_soil_biogeochem%          !
-   !  soil_carbon_step; READ-ONLY, frozen across the day, by the fast loop's heterotrophic         !
-   !  respiration). Lives here (not in meds_biogeochem_types, its conceptual home) so `patch_block` !
-   !  (src/core, links `shared` ONLY) can carry it with no core->biogeochemistry library edge --    !
-   !  the SAME reason cas_state_t/soil_column_t/soil_energy_column_t/snow_column_t live here.       !
-   !  meds_biogeochem_types re-exports this name so the biogeochemistry kernels compile unchanged.  !
-   !  The matrix state vector X, ordered litter -> SOM -> passive (n_soil_pool=7 in                 !
-   !  meds_biogeochem_types); fast_soil_carbon KEEPS its name/index(2) so meds_fast_ark's frozen-    !
-   !  pool Rh reads it as a bare scalar. Lignin is a passive tracer of the structural pools           !
-   !  (0 <= L <= C), outside the carbon-mass vector. The optional N twin is present only when         !
-   !  opts%n_cycle_on (P1/P2); C-only default (all N fields 0).                                        !
+   !  Slow, stateful per-patch soil-carbon pools (docs/science/soil_carbon.md §2), written    !
+   !  DAILY by meds_soil_biogeochem%soil_carbon_step and READ-ONLY, frozen across the day, by !
+   !  the fast loop's heterotrophic respiration. Lives here (not in meds_biogeochem_types,    !
+   !  its conceptual home) so the site state's patch_block can carry it with no state->soil-  !
+   !  kernel library edge -- the SAME reason                                                  !
+   !  cas_state_t/soil_column_t/soil_energy_column_t/snow_column_t live here. The matrix      !
+   !  state vector X, ordered litter -> SOM -> passive (n_soil_pool=7 in                      !
+   !  meds_biogeochem_types); pack_pool_vector / unpack_pool_vector marshal the named fields  !
+   !  to and from the array the kernels use. Lignin is a passive tracer of the structural     !
+   !  pools (0 <= L <= C), outside the carbon-mass vector. The nitrogen twin is carried but   !
+   !  stays zero (no kernel reads n_cycle_on; §10).                                           !
    !==========================================================================================!
    type :: soil_carbon_t
       ! carbon pools [kgC/m2] -- the matrix state vector X, ordered litter -> SOM -> passive
       real(wp) :: fast_grnd_carbon    = 0.0_wp   !< X(1) metabolic litter, above-ground (flammable)
-      real(wp) :: fast_soil_carbon    = 0.0_wp   !< X(2) metabolic litter, below-ground  (the P0 pool)
+      real(wp) :: fast_soil_carbon    = 0.0_wp   !< X(2) metabolic litter, below-ground
       real(wp) :: struct_grnd_carbon  = 0.0_wp   !< X(3) structural litter + CWD, above
       real(wp) :: struct_soil_carbon  = 0.0_wp   !< X(4) structural litter + CWD, below
       real(wp) :: microbial_carbon    = 0.0_wp   !< X(5) microbial SOM        (scheme-5 only)
@@ -127,25 +133,26 @@ module meds_column_state_types
       ! lignin sub-state of the structural pools [kgC/m2] (fraction f_lignin = L/C brakes decomposition)
       real(wp) :: struct_grnd_lignin  = 0.0_wp
       real(wp) :: struct_soil_lignin  = 0.0_wp
-      ! optional nitrogen twin [kgN/m2] -- present only when opts%n_cycle_on (P1/P2); C-only default
+      ! nitrogen twin [kgN/m2] -- carried, but zero (no kernel reads n_cycle_on)
       real(wp) :: fast_grnd_n = 0.0_wp, fast_soil_n = 0.0_wp
       real(wp) :: struct_grnd_n = 0.0_wp, struct_soil_n = 0.0_wp
       real(wp) :: mineralized_n = 0.0_wp
    end type soil_carbon_t
 
    !==========================================================================================!
-   !  Daily fast->slow accumulator for the soil-carbon matrix (MEDS_SLOW_DYNAMICS_DESIGN.md      !
-   !  Part II, B2): the per-pool day-INTEGRAL of the environmental decomposition scalar,          !
-   !  `xi_int_j = INT_day xi_j dt` [day] (annotated per the author's request -- kept as `xi_int`,  !
-   !  not renamed), accumulated once per (patch, fast sub-step) by column_prepass over the SAME     !
-   !  frozen pool the fast loop's heterotrophic_respiration_matrix respires against. Reset to 0      !
-   !  at the start of each slow step (mirrors cohort%gpp_accum's reset in fast_dynamics), consumed    !
-   !  by the daily soil_carbon_step, which decrements each donor pool by dvec_j = xi_int_j*K_j.       !
-   !  `rh_fast_accum` is the day's ACCUMULATED fast-loop Rh (audit-only cross-check against            !
-   !  soil_carbon_step's own rh_today -- design section 9's rh_seam_gap). Named fields (not an        !
-   !  n_soil_pool-sized array) for the SAME reason soil_carbon_t uses named fields: this lives in       !
-   !  state/column so patch_block can carry it with no state->biogeochemistry library edge;            !
-   !  edge; meds_soil_biogeochem's pack/unpack_pool_vector marshal to/from the array form kernels use.  !
+   !  Daily fast->slow accumulator for the soil-carbon matrix (docs/science/soil_carbon.md    !
+   !  §7, eq. (5)): the per-pool day-INTEGRAL of the environmental decomposition scalar,      !
+   !  `xi_int_j = INT_day xi_j dt` [day], accumulated once per (patch, fast sub-step) from    !
+   !  the column pre-pass (patch_heterotrophic_respiration) over the SAME frozen pool the     !
+   !  fast loop's heterotrophic_respiration_matrix respires against. Reset to 0 at the start  !
+   !  of each slow step (mirrors cohort%gpp_accum's reset in fast_dynamics), consumed by the  !
+   !  daily soil_carbon_step, which decrements each donor pool by dvec_j = xi_int_j*K_j.      !
+   !  `rh_fast_accum` is the day's ACCUMULATED fast-loop Rh (audit-only cross-check against   !
+   !  soil_carbon_step's own daily Rh: the rh_seam_gap of §7). Named fields (not an           !
+   !  n_soil_pool-sized array) for the SAME reason soil_carbon_t uses named fields: this      !
+   !  lives in state/column so patch_block can carry it with no state->soil-kernel library    !
+   !  edge; meds_soil_biogeochem's pack/unpack_pool_vector marshal to/from the array form     !
+   !  kernels use.                                                                            !
    !==========================================================================================!
    type :: xi_accum_t
       real(wp) :: fast_grnd   = 0.0_wp   !< INT_day xi_1 dt [day]
@@ -177,12 +184,12 @@ contains
    !     (a1+a2) . d_new . v_new = a1.d1.v1 + a2.d2.v2 ,   (a1+a2).d_new = a1.d1 + a2.d2          !
    !     =>  v_new = (a1.d1.v1 + a2.d2.v2) / (a1.d1 + a2.d2)                                      !
    !                                                                                          !
-   ! Weighting on AREA alone -- what this did until now -- drops the covariance term              !
-   ! w1.w2.(d1-d2).(v1-v2), so fusing a tall patch with a gap corrupted the canopy air's energy,   !
-   ! humidity AND CO2 together, all three by the same relative error. It was exact only when the   !
-   ! two depths matched, which is precisely the case that does not need a blend. Measured at        !
-   ! ~1e4 J per patch-fusion event before this (plan §10.2.4, review item 1B #9).                   !
-   !                                                                                          !
+   ! Weighting on AREA alone drops the covariance term w1.w2.(d1-d2).(v1-v2), so fusing a    !
+   ! tall patch with a gap would corrupt the canopy air's energy, humidity AND CO2 together, !
+   ! all three by the same relative error -- of order 1e4 J per patch-fusion event. It is    !
+   ! exact only when the two depths match, which is precisely the case that does not need a  !
+   ! blend.                                                                                  !
+   !                                                                                         !
    ! rho cancels: it is site-uniform, so it never has to be passed in. `can_depth` stays AREA-      !
    ! weighted -- it is the merged volume over the merged ground, which is what a depth is -- and    !
    ! that value equals the total mass weight, so the two are computed once.                         !
@@ -272,18 +279,17 @@ contains
    end function blend_soil_carbon
 
    !----- Area-weighted mix of two per-patch litter accumulators (patch fusion / disturbance seed).!
-   !                                                                                          !
-   !      This exists because the litter accumulator USED TO BE a local array in the vegetation !
-   !      driver, sized to the patch count at the START of the slow step -- while patch          !
-   !      disturbance CREATES a patch later in the same step. The consumer then indexed it by     !
-   !      the NEW patch count and read past the end of the array, feeding undefined memory        !
-   !      straight into the CENTURY litter input; one 50-year spin-up reached 1.8e9 kgC/m2 that   !
-   !      way. Every OTHER per-patch quantity survives a patch operator because the patch block   !
-   !      owns it and the reorder/pack/blend paths carry it. This one now does too.                !
-   !                                                                                          !
+   !                                                                                               !
+   !      The litter accumulator is per-patch state the patch block owns, so like every other      !
+   !      per-patch quantity it survives a patch operator through the reorder/pack/blend           !
+   !      paths. A driver-local array sized to the patch count at the START of the slow step       !
+   !      would not: patch disturbance CREATES a patch later in the same step, and the             !
+   !      consumer would read past the array's end, feeding undefined memory into the CENTURY      !
+   !      litter input.                                                                            !
+   !                                                                                               !
    !      Every field is a per-area rate [kgC/m2/day], so an area-weighted mean is what conserves  !
-   !      the site-wide litter flux -- the same rule as blend_soil_carbon, which is where this      !
-   !      litter is headed.                                                                         !
+   !      the site-wide litter flux -- the same rule as blend_soil_carbon, which is where this     !
+   !      litter is headed.                                                                        !
    pure function blend_litter_input(w1, a, w2, b) result(c)
       real(wp),             intent(in) :: w1, w2
       type(litter_input_t), intent(in) :: a, b

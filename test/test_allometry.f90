@@ -10,7 +10,7 @@ program test_allometry
    implicit none
 
    real(wp), parameter :: rho  = 0.60_wp
-   real(wp), parameter :: hcap = 46.0_wp        ! per-PFT asymptotic height cap (an argument now)
+   real(wp), parameter :: hcap = 46.0_wp        ! per-PFT asymptotic height cap, passed as an argument
    real(wp), parameter :: sla  = 13.0_wp        ! [m2/kgC] specific leaf area
    real(wp), parameter :: agf  = 0.70_wp        ! aboveground fraction of woody carbon
    real(wp) :: dbh, h, agb, dbh_back, wood_c
@@ -57,11 +57,11 @@ program test_allometry
    dbh_back = agb_to_dbh(allom, agb, rho, hcap)
    call check_close(dbh_back, dbh, 1.0e-8_wp, 'agb_to_dbh inverse failed (capped)')
 
-   !=== Carbon-pool targets: EXACT re-expressions of the size allometry (behavior-preserving). =!
+   !=== Carbon-pool targets: EXACT re-expressions of the size allometry. =====================!
    do i = 1_ik, 3_ik
       dbh = dvec(i)
       h   = dbh_to_height(allom, dbh, hcap)
-      !----- leaf_carbon * SLA reproduces the leaf area exactly (LAI unchanged). ---------------!
+      !----- leaf_carbon * SLA reproduces the leaf area exactly. -------------------------------!
       call check_close(size2leaf_carbon(allom, dbh, h, sla) * sla, dbh_to_leaf_area(allom, dbh, h), 1.0e-12_wp, &
                        'size2leaf_carbon * sla /= leaf_area')
       !----- aboveground_frac * wood_carbon reproduces the Chave AGB exactly. ------------------!

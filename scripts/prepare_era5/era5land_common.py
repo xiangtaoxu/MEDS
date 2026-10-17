@@ -9,7 +9,8 @@ Post-processing turns raw files into model-ready NetCDF:
   build_era5land_archive.py  the global per-variable monthly ED_ERA5land_ archive (the forcing MEDS reads)
   postprocess_era5land.py    NetCDF box files with ERA5-Land's own names (a portable box extract)
   make_forcing_file.py       a MEDS single forcing file, from the archive or from box files
-The archive layout is specified in docs/dev_plans/archive/MEDS_FORCING_DESIGN.md sections 13-14.
+The archive is described in docs/science/forcing.md §1; its file layout in detail is
+docs/dev_plans/archive/MEDS_FORCING_DESIGN.md §14.
 What more than one script needs is defined here once: the variable tables with their units and
 conversions, the de-accumulation rule, the time conventions, source file naming and grid decoding.
 """
@@ -46,7 +47,7 @@ VARIABLES = {
 GRID_STEP = 0.1   # [deg] ERA5-Land native grid spacing
 PROCESSING_VERSION = "1.0"   # recorded in the archive's files and manifest; raise it when their content changes
 
-# The archive's variables (MEDS_FORCING_DESIGN.md section 13.2). Each comes from exactly one raw
+# The archive's variables (docs/science/forcing.md §1). Each comes from exactly one raw
 # variable, so every archive variable-month can be built independently. make_forcing_file.py converts
 # box files by the same entries and writes their CF attributes, so both products agree.
 #   archive name -> dict(raw, kind, factor, clip_negative, digits, bounds, CF attributes)
@@ -163,7 +164,7 @@ def epoch_seconds(stamps):
     return [(s - EPOCH).total_seconds() for s in stamps]
 
 
-# --- de-accumulation (MEDS_FORCING_DESIGN.md section 7.3) --------------------------------------------
+# --- de-accumulation (docs/science/forcing.md §1, "The 00Z trap") ------------------------------------
 def deaccumulate(acc, hour_is_01, clip_negative):
     """Hourly amounts from an ERA5-Land field accumulated since 00 UTC, along axis 0 (hourly valid
     times, ascending, end-stamped); hour_is_01 flags the 01:00 stamps. The 01:00 value is the day's
@@ -171,7 +172,7 @@ def deaccumulate(acc, hour_is_01, clip_negative):
     day's last hour, because the 00:00 stamp holds the whole previous day. A first sample that is not
     01:00 has nothing to difference and is NaN. GRIB packing noise can make a difference slightly
     negative, and clip_negative sets those to 0: only negatives, since a positive threshold such as
-    1e-5 m zeroes 0.95 % of all rain and 55 % of wet hours (MEDS_FORCING_DESIGN.md section 7.3).
+    1e-5 m zeroes 0.95 % of all rain and 55 % of wet hours (MEDS_FORCING_DESIGN.md §7.3).
     No-data (NaN) stays NaN, and acc's dtype is kept."""
     acc = np.asarray(acc)
     out = np.empty_like(acc)
@@ -350,10 +351,10 @@ def read_manifest(data_path):
 
 # --- HTTP (anonymous GDEX downloads) ----------------------------------------------------------------
 # Transient network failures are retried with a growing wait: a reset or timed-out connection, a
-# transfer that stops short, or a server-side error (HTTP 5xx or 429). A month is about 100 files, and
-# a single refused connection used to abort all of them. When GDEX is busy it refuses new connections
-# for minutes at a time, and every task that failed then started the next one straight away, which
-# kept it refusing. So the waits run to several minutes. A missing file (HTTP 404) still fails at once.
+# transfer that stops short, or a server-side error (HTTP 5xx or 429). A month is about 100 files, so
+# one refused connection must not abort all of them. When GDEX is busy it refuses new connections for
+# minutes at a time, and a task that starts again straight away keeps it refusing, so the waits run to
+# several minutes. A missing file (HTTP 404) still fails at once.
 RETRY_WAITS = (15, 30, 60, 120, 240, 480)
 
 

@@ -1,4 +1,6 @@
-# Example 06 (draft): daily cohort records for leaf habits and the carbon budget; hourly leaf potential.
+# SPDX-License-Identifier: Apache-2.0
+# Output of meds_config_inventory.toml: daily (D) and monthly (M) cohort records for the leaf habits and the
+# carbon budget, PFT and site totals also yearly (Y); hourly (F) leaf potential.
 [variables]
 nplant_cohort              = "D M"
 dbh_cohort                 = "D M"

@@ -2,13 +2,11 @@
 !==========================================================================================!
 ! meds_plant_carbon_allocation -- how a plant spends (or fails to pay) its daily carbon.    !
 !                                                                                          !
-! The stateless, ELEMENTAL kernel that distributes one cohort's daily carbon budget to tissue  !
-! GROWTH. It is the mechanistic replacement for the phenomenological growth engine, covering    !
-! the science of ED2's growth_balive + structural_growth UNIFIED into one daily step, and it    !
-! follows FATES PARTEH Hypothesis-1 ("Allometrically Guided, Carbon Only"): every pool has an    !
-! allometric target, the net gain fills toward the targets in PRIORITY order, and the residual   !
-! advances stature (wood). See docs/science/plant_carbon_allocation.md +                          !
-! docs/dev_plans/archive/MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md.                                       !
+! The stateless, ELEMENTAL kernel that distributes one cohort's daily carbon budget to tissue      !
+! GROWTH. It covers the science of ED2's growth_balive + structural_growth UNIFIED into one        !
+! daily step, and it follows FATES PARTEH Hypothesis-1 ("Allometrically Guided, Carbon Only"):     !
+! every pool has an allometric target, the net gain fills toward the targets in PRIORITY order,    !
+! and the residual advances stature (wood). docs/science/plant_carbon_allocation.md §1-§3, §5.     !
 !                                                                                          !
 !   * plant_carbon_allocation -- MASTER. Net carbon = GPP - maintenance respiration; distribute  !
 !       it (plus storage where allowed) down the priority ladder to GROWTH, charging GROWTH        !
@@ -17,23 +15,26 @@
 !       Tissue LOSS (turnover / shed) is applied UPSTREAM by the driver (cohort_carbon_demand):    !
 !       the pools handed in are already net of this step's shed, and the driver forms the net      !
 !       per-pool change (growth - shed) + the litter. So this kernel only ever ADDS carbon.        !
-!   * growth_respiration -- construction respiration = g x (carbon allocated to NEW growth). It     !
-!       lives here (with the growth it charges, not with maintenance respiration) and takes the     !
-!       realized growth npp_growth, opening the door to a more mechanistic form later.              !
+!   * growth_respiration -- construction respiration = g x (carbon allocated to NEW growth). It    !
+!       lives here (with the growth it charges, not with maintenance respiration) and takes the    !
+!       realized growth npp_growth (docs/science/plant_carbon_allocation.md eq. (5)).              !
 !                                                                                          !
 ! ALL quantities are CARBON [kgC/plant]; every biomass<->carbon conversion is done once at param   !
 ! initialization, so the kernel never converts. Everything is elemental + scalar arithmetic, so    !
-! the driver maps it straight over the cohort Structure-of-Arrays (GPU/SIMD-safe, issue-#7 N/A).   !
+! the driver maps it straight over the cohort Structure-of-Arrays (GPU/SIMD-safe).                 !
 !                                                                                          !
-! Carbon closure (holds every call, growth side):                                               !
+! Carbon closure (holds every call, growth side; docs/science/plant_carbon_allocation.md           !
+! eq. (6)):                                                                                        !
 !   (growth_leaf + growth_fineroot + growth_wood + growth_repro + npp_store + exudate) - deficit   !
 !        == (gpp - resp_maint) - growth_resp                                                       !
 ! `exudate` is the carbon a sink limit on wood growth (meds_sink_limitation) turns into root       !
 ! exudate instead of wood; like tissue it costs (1+g), so growth_resp covers it. It is zero        !
 ! without a limit.                                                                                  !
 ! The driver then subtracts this step's shed (litter) from leaf/fine-root to get the net pool      !
-! change. `deficit` (unpaid maintenance once storage is exhausted) + `starving` flag a cohort the  !
-! STATEFUL updater must resolve by destroying tissue; this pure kernel never mutates a pool.       !
+! change. `deficit` (unpaid maintenance once storage is exhausted) + `starving` flag a cohort      !
+! whose maintenance no pool paid for: the driver nets `deficit` out of the CO2 the cohort owes     !
+! the canopy air (docs/science/plant_respiration.md §6). No tissue is destroyed, and this pure     !
+! kernel never mutates a pool.                                                                     !
 !==========================================================================================!
 module meds_plant_carbon_allocation
    use meds_kinds, only : wp
@@ -52,7 +53,8 @@ contains
    ! zero growth demand and a just-shed canopy is refilled here within the same step.             !
    !                                                                                          !
    ! Priority: maintenance debt (from storage, if net < 0) > leaf/fine-root growth (NPP then       !
-   ! storage) > storage refill (NPP only) > reproduction > wood (residual). Storage funds leaf/    !
+   ! storage) > storage refill (NPP only) > reproduction > wood (residual), the ladder of          !
+   ! docs/science/plant_carbon_allocation.md §2, with net = eq. (1). Storage funds leaf/           !
    ! fine-root growth EVEN WHEN net < 0 (spring leaf-out is storage-funded), after the maintenance !
    ! debt is paid; a plant that cannot even cover maintenance (starving) has no reserves to grow.  !
    !---------------------------------------------------------------------------------------!
@@ -78,7 +80,7 @@ contains
       real(wp), intent(out) :: deficit          !< [kgC/plant] unpaid maintenance after storage exhausted (>= 0)
       logical,  intent(out) :: starving         !< .true. => storage could not cover the maintenance debt
       !----- The SINK limit (growth_sink_limitation): the most wood the step can build. Pass both or !
-      !      neither; without them wood takes the whole residual, as it always has. ---------------!
+      !      neither; without them wood takes the whole residual. -----------------------------------!
       real(wp), intent(in),  optional :: wood_growth_max  !< [kgC/plant] sink-limited wood growth this step
       real(wp), intent(out), optional :: exudate          !< [kgC/plant] residual the sink cannot use (>= 0)
       real(wp) :: net, g, cost, avail, store_left, draw, debt, store_hcap_per_dt, c_repro, c_wood, c_exudate
@@ -146,7 +148,7 @@ contains
    ! Fund a tissue demand [kgC] from NPP first, then (if any remains) from storage; each unit   !
    ! of tissue built consumes (1+g) carbon, of which g is GROWTH respiration. Accumulate the     !
    ! tissue into `built`, the storage carbon drawn into `draw`, and the respired carbon into     !
-   ! `growth_resp`. elemental (called only from the elemental master).                          !
+   ! `growth_resp` (docs/science/plant_carbon_allocation.md §3). Called only from the master.   !
    !---------------------------------------------------------------------------------------!
    elemental pure subroutine fill_carbon_demand(demand, g, cost, avail, store_left, draw, built, growth_resp)
       real(wp), intent(in)    :: demand, g, cost
@@ -174,8 +176,9 @@ contains
    ! Growth (construction) respiration [kgC/plant] = g x the carbon allocated to NEW growth this !
    ! step. It lives here (with the growth it charges, not with maintenance respiration), and     !
    ! takes the REALIZED growth npp_growth -- not the pre-allocation balance -- so it charges only !
-   ! what was actually built. A single, simple form today; the seam is where a more mechanistic   !
-   ! (tissue- or temperature-dependent) construction cost would go.                              !
+   ! what was actually built: docs/science/plant_carbon_allocation.md eq. (5), the same as        !
+   ! plant_respiration.md eq. (6). This one simple form is where a more mechanistic (tissue- or   !
+   ! temperature-dependent) construction cost would go.                                           !
    !---------------------------------------------------------------------------------------!
    elemental pure function growth_respiration(npp_growth, growth_resp_factor) result(rg)
       real(wp), intent(in) :: npp_growth          !< [kgC/plant] carbon allocated to NEW growth this step

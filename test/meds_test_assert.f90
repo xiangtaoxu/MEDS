@@ -3,7 +3,7 @@
 ! meds_test_assert -- the shared assertion helpers for the CTest programs.                 !
 !                                                                                          !
 ! SEPARATE from meds_test_support on purpose. `build_test_config` needs the config, PFT and !
-! demography layers; assertions need nothing but a kind. Nine tests deliberately link one     !
+! demography layers; assertions need nothing but a kind. Many tests deliberately link one     !
 ! narrow library each (`meds_shared`, `meds_config`, `meds_fast_kernels`, `meds_forcing`) to   !
 ! keep those layers standalone-buildable, and they must be able to assert without dragging     !
 ! the whole model in. That is why this module exists and why it uses meds_kinds only.           !
@@ -20,8 +20,7 @@
 !                                                                                          !
 ! `check` and `check_close` are GENERIC over the two families: the first dummy is logical/real   !
 ! in the fatal form and character in the accumulating form, which is what makes them              !
-! distinguishable. Every pre-existing call site therefore kept working unchanged -- consolidating  !
-! 23 local copies into one implementation each did not renumber ~1000 call sites.                   !
+! distinguishable.                                                                         !
 !==========================================================================================!
 module meds_test_assert
    use meds_kinds, only : wp, ik
@@ -33,7 +32,7 @@ module meds_test_assert
 
    !----- Failure counter for the ACCUMULATING family. Module state on purpose: it is what      !
    !      lets a test call the helpers from any internal procedure without threading a counter   !
-   !      through every one, which is how all 23 local copies worked. ----------------------------!
+   !      through every one. --------------------------------------------------------------!
    integer(ik) :: n_fail = 0_ik
 
    interface check
@@ -74,9 +73,8 @@ contains
 
    !=======================================================================================!
    !  ACCUMULATING family -- counts failures, reports every one, error-stops in test_report. !
-   !  The reporting format is the most informative of the 19 copies this replaces: the ok     !
-   !  line carries the value, and the FAIL line carries got, expected AND the tolerance that   !
-   !  was breached, which the terser copies dropped.                                            !
+   !  The ok line carries the value; the FAIL line carries got, expected and the tolerance !
+   !  that was breached.                                                                   !
    !=======================================================================================!
    subroutine check_named(name, got, expect, atol)
       character(len=*), intent(in) :: name
@@ -90,8 +88,7 @@ contains
       end if
    end subroutine check_named
 
-   !----- atol ABSENT reproduces the 1e-9 relative-with-unit-floor tolerance the three-argument  !
-   !      local copies used; it is not a new default. -------------------------------------------!
+   !----- atol ABSENT: 1e-9 relative, with a 1e-9 absolute floor where |expect| < 1. ------!
    subroutine check_close_named(name, got, expect, atol)
       character(len=*),   intent(in) :: name
       real(wp),           intent(in) :: got, expect

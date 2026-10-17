@@ -1,12 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_surface_energy -- unit tests for the leaf/wood, ground, and canopy-air-space kernels.  !
-!   1. LEAF/WOOD energy CONSERVATION to ~round-off over a march.                                !
-!   2. LEAF RELAXATION: with no radiation and no evaporation, a leaf relaxes to can_temp.        !
+!   1. WOOD THERMAL TIMESCALE from the real allometry: the wood store carries memory at dt_fast.   !
+!   2. EXACT RELAXATION: veg_energy_balance's closed-form tissue step, its two limits and its      !
+!      energy identity (docs/science/vegetation_energy_dynamics.md eqs. (3)-(7)).                  !
 !   3. GROUND fluxes: with t_cas = t_ground and no soil evaporation, H = LE = 0.                   !
-!   4. CAS enthalpy update CONSERVES and moves can_temp toward the warmer atmosphere.             !
-!   5. veg_energy_balance's sec 3.4 (P1) wetted-canopy extension (f_wet/le_slope_wet/            !
-!      le_ref_wet/film_evap) -- no direct unit test existed anywhere for this kernel before.        !
+!   4. CAS enthalpy update CONSERVES and moves can_temp toward the warmer atmosphere.              !
+!   5. veg_energy_balance's wetted-canopy extension (f_wet/le_slope_wet/le_ref_wet/film_evap).     !
+!   6. Energy closure of a diagnostic tissue across the coupling floor (veg_coupling_floor).       !
 !==========================================================================================!
 program test_surface_energy
    use meds_test_assert, only : check, check_true, test_report
@@ -41,15 +42,14 @@ contains
    !=======================================================================================!
    ! WOOD THERMAL TIMESCALE, measured from the REAL allometry.                               !
    !                                                                                          !
-   ! The earlier version of this test was CIRCULAR: it hardwired the same wai = 0.20*lai and   !
-   ! bsap = 0.10*wood_carbon placeholders the driver used, so it re-measured the placeholder   !
-   ! and reported tau_wood = 55-199 s -- "every cohort stiff but only ~3.6x of spread". Both    !
-   ! placeholders are gone; wai now comes from the ED2 WAI allometry (a STEM-SIZE power law)    !
-   ! and bsap from the sapwood fraction of basal area.                                          !
+   ! wai comes from the ED2 WAI allometry (a STEM-SIZE power law) and bsap from the sapwood   !
+   ! fraction of basal area, the masses the model sizes the store from                        !
+   ! (docs/science/vegetation_energy_dynamics.md eq. (8)). A test that hardwired fixed shares !
+   ! of leaf area or wood carbon would only re-measure those shares.                          !
    !                                                                                          !
-   ! That changes the answer qualitatively, because tau_wood ~ cap/(coupling) ~ (wood mass) /   !
-   ! (wood AREA), and tying wood area to LEAF area made the ratio nearly size-independent. With !
-   ! a stem-size WAI the ratio grows with stem size, as a length scale should.                  !
+   ! The allometry matters qualitatively, because tau_wood ~ cap/(coupling) ~ (wood mass) /   !
+   ! (wood AREA), and tying wood area to LEAF area makes the ratio nearly size-independent.   !
+   ! With a stem-size WAI the ratio grows with stem size, as a length scale should.           !
    !=======================================================================================!
    subroutine test_wood_stiffness_spread()
       type(veg_thermal_params_t) :: tp
@@ -86,7 +86,7 @@ contains
          cap    = max(dbio_w * tp%c_sapw, tp%veg_hcap_min) + dbio_sap * cp_liq
          drdt   = 8.0_wp * WOOD_EMISS * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
          tau    = cap / drdt
-         !----- the EXACT endpoint memory the kernel now uses, not backward Euler's 1/(1+x) ----!
+         !----- the EXACT endpoint memory the kernel uses (eq. (4)), not backward Euler's 1/(1+x) !
          w_end  = exp(-DT_FAST / tau)
          print '(a,i0,a,f6.2,a,f6.3,a,f6.3,a,f10.1,a,f8.1,a,f7.4)', '   cohort ', i, ': dbh = ', &
                dbh(i), '  wai = ', wai, '  f_sap = ', f_sap, '  cap = ', cap,                    &
@@ -97,15 +97,11 @@ contains
             f_sap_big = f_sap ; sap_big = dbio_sap
          end if
       end do
-      !----- WHAT THIS MEASURES. tau_wood = 1200-1600 s and w_end = 0.23-0.32 at dt_fast = 1800 s, !
-      !      so wood carries GENUINE memory at production cadence -- the whole reason the store      !
-      !      exists. Every earlier answer here was an artefact of the MASS, not of the method:       !
-      !        * wai = 0.20*lai, bsap = 0.10*wood_carbon  -> tau =   55-199 s (and the old version   !
-      !          of this test hardwired the same placeholders, so it re-measured them);              !
-      !        * real WAI + sapwood ring as the WHOLE thermal mass -> tau = 74-102 s, w_end ~ 1e-8;  !
-      !        * all wood, but with b1WAI written 2x too high     -> tau = 631-942 s.                !
-      !      The b1WAI correction (ED2 writes 0.0192*0.5) halves WAI, hence halves the coupling,     !
-      !      and it dominates over removing the heartwood water. ------------------------------!
+      !----- WHAT THIS MEASURES. tau_wood = 1200-1600 s and w_end = 0.23-0.32 at dt_fast = 1800 s,     !
+      !      so wood carries GENUINE memory at production cadence -- the whole reason the store        !
+      !      exists. tau_wood is set by the MASS, not by the method: the sapwood ring as the WHOLE     !
+      !      thermal mass gives tau = 74-102 s (w_end ~ 1e-8), and ED2's b1WAI (written 0.0192*0.5)    !
+      !      halves WAI, hence the coupling, which dominates over leaving out the heartwood water. ----!
       call check_true('tau_wood is O(1e3 s)', tau_min > 1000.0_wp .and. tau_max < 2500.0_wp, tau_max)
       call check_true('wood carries GENUINE memory at dt_fast = 1800 s (w_end > 0.2)',              &
            exp(-DT_FAST / tau_min) > 0.2_wp, exp(-DT_FAST / tau_min))
@@ -131,9 +127,10 @@ contains
    !                                                                                          !
    ! Under the Category-0 freeze the tissue equation is linear with tau = cap/denom, so the     !
    ! step has a closed form and the kernel uses it: endpoint weight exp(-x), flux weight        !
-   ! (1-exp(-x))/x, x = denom/store_hcap_per_dt. These four checks pin the properties that makes it        !
-   ! usable -- the two limits, the conservation identity, and (the one that matters) that        !
-   ! marching it is EXACT, not merely convergent.                                                !
+   ! (1-exp(-x))/x, x = denom/store_hcap_per_dt (docs/science/vegetation_energy_dynamics.md     !
+   ! eqs. (3)-(7)). These checks pin the properties that make it usable -- the two limits, the  !
+   ! conservation identity, the small-x branch, and (the one that matters) that marching it is  !
+   ! EXACT, not merely convergent.                                                              !
    !=======================================================================================!
    subroutine test_veg_exponential()
       type(veg_thermal_params_t) :: tp
@@ -147,8 +144,9 @@ contains
       denom = h + les + lws
       dt    = 1800.0_wp
 
-      !----- (a) store_hcap_per_dt -> 0 is the DIAGNOSTIC limit, exactly. This is the property that lets the   !
-      !          selector be deleted: diagnostic is a limit of one formula, not a second branch. ----!
+      !----- (a) store_hcap_per_dt -> 0 is the DIAGNOSTIC limit, exactly. This is why there is no     !
+      !          diagnostic/prognostic selector: diagnostic is a limit of one formula, not a second   !
+      !          branch. -----------------------------------------------------------------------------!
       call veg_energy_balance(sw, lw, h, les, lws, ler, t_cas, t_cas, 0.0_wp, t_cas,             &
                                  dtt, ts, tr, dh, drn)
       dt_diag_ref = (sw + lw - ler) / denom
@@ -214,8 +212,8 @@ contains
    end subroutine test_ground_balance
 
    subroutine test_cas()
-      !----- Migrated onto the production cas_column_step_implicit (enthalpy twin; the retired      !
-      !      canopy_air_update advanced the same box math). Vapour + CO2 twins held inert (0        !
+      !----- Runs the production cas_column_step_implicit (enthalpy twin;                           !
+      !      docs/science/canopy_air_space_biophysics.md eq. (2)). Vapour + CO2 twins held inert (0 !
       !      sources / 0 vapour conductance; a nonzero molar capacity avoids a 0/0 in the unused    !
       !      CO2 branch). The closed-budget residual is assembled here from the production result.   !
       type(cas_column_t) :: column
@@ -255,12 +253,12 @@ contains
    end subroutine test_cas
 
    subroutine test_veg_energy_diagnostic_wetted()
-      !----- Direct unit test of the sec 3.4 (P1) wet/dry extension -- veg_energy_balance had NO   !
-      !      direct test anywhere before this (only ever exercised via the full column integration     !
-      !      tests). f_wet splits the single latent pathway into a (1-f_wet) DRY (stomatal) share and   !
-      !      an f_wet WET (boundary-layer film) share; le_slope_dry/le_ref_dry model the former,          !
-      !      le_slope_w/le_ref_w the latter -- two DIFFERENT conductances, so the three properties        !
-      !      below are non-trivial (a bug that swapped or mixed them would still "look" plausible).       !
+      !----- Direct unit test of veg_energy_balance's wet/dry extension (the column tests exercise it   !
+      !      only through the full integration). f_wet splits the single latent pathway into a          !
+      !      (1-f_wet) DRY (stomatal) share and an f_wet WET (boundary-layer film) share;               !
+      !      le_slope_dry/le_ref_dry model the former, le_slope_w/le_ref_w the latter -- two DIFFERENT  !
+      !      conductances, so the three properties below are non-trivial (a bug that swapped or mixed   !
+      !      them would still "look" plausible).                                                        !
       real(wp) :: dt_temp, t_store, transp, dh, drnet, film_evap
       real(wp) :: dt_temp2, t_store2, transp2, dh2, drnet2
       real(wp), parameter :: abs_sw = 400.0_wp, abs_lw = -50.0_wp, h_coeff = 12.0_wp
@@ -269,8 +267,8 @@ contains
       real(wp), parameter :: le_slope_w   = 20.0_wp, le_ref_w   = 40.0_wp   ! boundary-layer (wet) pathway
       print '(a)', 'test_veg_energy_diagnostic_wetted:'
 
-      !----- 1. ABSENT f_wet must be bit-identical to explicitly passing f_wet=0 -- the contract every   !
-      !      existing caller (ARK's surface_derivs, the split's own wood branch pre-P1) relies on.  -----!
+      !----- 1. ABSENT f_wet must be bit-identical to explicitly passing f_wet=0 -- the contract that   !
+      !      lets a caller with no film omit the wet extension. ----------------------------------------!
       call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
                                  t_cas, t_emit, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet)
       call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
@@ -298,9 +296,8 @@ contains
       !      net of LW emission (drnet) splits EXACTLY into sensible + BOTH latent pathways, each at the    !
       !      CONSTANT latent_heat_vap (not enthalpy_vapor(T)) -- the identity the surface path relies        !
       !      on to make the CAS's temperature-dependent vapour-enthalpy credit balance against a store's     !
-      !      liquid-enthalpy debit (formerly coh_qsoil for transpiration -- the leaf now pays the full vapour
-      ! enthalpy itself; the analogous surface-water accounting
-      !      for film_evap). ------------------------------------------------------------------------------!
+      !      liquid-enthalpy debit (for transpiration the leaf pays the full vapour enthalpy itself; the     !
+      !      surface-water accounting does the same for film_evap). -----------------------------------------!
       call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
                                  t_cas, t_emit, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet,      &
                                  0.4_wp, le_slope_w, le_ref_w, film_evap)
@@ -336,7 +333,7 @@ contains
       !          not leaf area, and it is the term that keeps the numerator alive as the denominator       !
       !          collapses.  The wetted test never passes q_extra at all;                                  !
       !        * leaf AND wood: wood has no latent pathway, so its denominator is h_coeff + lw_slope        !
-          !      alone and it crosses the floor at a LARGER area index than the leaf on the same cohort;   !
+      !          alone and it crosses the floor at a LARGER area index than the leaf on the same cohort;   !
       !        * store_hcap_per_dt 0 and veg_hcap_min/dt_fast: the PROGNOSTIC-leaf path calls this same kernel, and   !
       !          for the small cohorts that trip the floor cap is pinned at veg_hcap_min, contributing      !
       !          only ~0.011 W/m2/K -- so the storage term must not be assumed to rescue the balance.       !
