@@ -106,7 +106,7 @@ machine precision — the invariant that makes the coupled surface model trustwo
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
 | Canopy air space | `cas_state_t` | `can_enthalpy`, `can_shv`, `can_co2`, `can_depth` | `can_temp` |
-| Soil water | `soil_water_column_t` | `theta(:)`, `w_surface`, `w_surface_enth` [J m⁻²] | `psi_soil` |
+| Soil water | `soil_water_column_t` | `theta(:)`, `w_surface`, `w_surface_energy` [J m⁻²] | `psi_soil` |
 | Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 | Snow / surface water | `snow_column_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
 | Leaf / wood tissue | `patch_biophys_t` | `leaf_temp`, `wood_temp` (heat store, exact exponential relaxation) | — |

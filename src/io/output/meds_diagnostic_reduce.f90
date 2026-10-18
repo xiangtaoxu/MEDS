@@ -413,7 +413,7 @@ contains
       real(wp)    :: x(max(site%patch%n, 1_ik))
       integer(ik) :: ip
       logical     :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_e(ip)%soil_temp(1) ; end do
+      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_energy(ip)%soil_temp(1) ; end do
       call reduce_patch_to_site(site, x, .false., tbar, ok)
    end function mean_soil_temp_top
 
@@ -508,7 +508,7 @@ contains
       real(wp)    :: col(n_soil_layer_max, max(site%patch%n, 1_ik))
       integer(ik) :: ip
       do ip = 1_ik, site%patch%n
-         col(1:n_soil_layer_max, ip) = site%patch%soil_e(ip)%soil_temp(1:n_soil_layer_max)
+         col(1:n_soil_layer_max, ip) = site%patch%soil_energy(ip)%soil_temp(1:n_soil_layer_max)
       end do
       call reduce_patch_column_to_site(site, col, n_soil_layer_max, out, n)
    end subroutine site_soil_temp_column
@@ -521,7 +521,7 @@ contains
       real(wp)    :: col(n_soil_layer_max, max(site%patch%n, 1_ik))
       integer(ik) :: ip
       do ip = 1_ik, site%patch%n
-         col(1:n_soil_layer_max, ip) = site%patch%soil_w(ip)%theta(1:n_soil_layer_max)
+         col(1:n_soil_layer_max, ip) = site%patch%soil_water(ip)%theta(1:n_soil_layer_max)
       end do
       call reduce_patch_column_to_site(site, col, n_soil_layer_max, out, n)
    end subroutine site_soil_water_column

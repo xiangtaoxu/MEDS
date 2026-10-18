@@ -29,10 +29,10 @@ module meds_patch_state_vars
    public :: snow_column_t, soil_water_column_t, soil_energy_column_t, soil_carbon_t
    public :: xi_accum_t   !< daily fast->slow accumulator for the soil-carbon matrix
    public :: litter_input_t  !< per-patch, per-day litter arriving at the CENTURY pools
-   public :: blend_cas, blend_snow, blend_soil_w, blend_soil_e, blend_soil_carbon, blend_xi_accum
+   public :: blend_cas, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon, blend_xi_accum
    public :: blend_litter_input
                                                                     !< area-weighted mix (patch fusion / disturbance seed)
-   public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block, cohort_birth_state
+   public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block, patch_physical_state
 
    !----- Prognostic per-patch canopy-air-space thermal state (three implicit twins). -------!
    type :: cas_state_t
@@ -76,7 +76,7 @@ module meds_patch_state_vars
       !      so the transfers are plain additions; temperature is a read-off of                        !
       !      internal_energy_to_temp with dry_hcap = 0, exactly as for snow -- which means             !
       !      freeze/thaw of ponded water comes for free. ----------------------------------------------!
-      real(wp) :: w_surface_enth = 0.0_wp            !< [J/m2] ponded-water internal energy (PROGNOSTIC)
+      real(wp) :: w_surface_energy = 0.0_wp            !< [J/m2] ponded-water internal energy (PROGNOSTIC)
    end type soil_water_column_t
 
    !----- Prognostic per-patch soil THERMAL column (internal energy; temp/fliq diagnosed). --!
@@ -200,8 +200,8 @@ module meds_patch_state_vars
       !==========================================================================================!
       ! 6. SOIL WATER AND HEAT                                                                   !
       !==========================================================================================!
-      type(soil_water_column_t),  allocatable :: soil_w(:)      !< soil water column per patch
-      type(soil_energy_column_t), allocatable :: soil_e(:)      !< soil thermal column per patch
+      type(soil_water_column_t),  allocatable :: soil_water(:)      !< soil water column per patch
+      type(soil_energy_column_t), allocatable :: soil_energy(:)      !< soil thermal column per patch
       !==========================================================================================!
       ! 7. SOIL CARBON                                                                           !
       !==========================================================================================!
@@ -393,29 +393,29 @@ contains
       c%nlayer      = max(a%nlayer, b%nlayer)                 ! caller collapses to 0 if blended swe < tiny
    end function blend_snow
 
-   pure function blend_soil_w(w1, a, w2, b) result(c)
+   pure function blend_soil_water(w1, a, w2, b) result(c)
       real(wp),                  intent(in) :: w1, w2
       type(soil_water_column_t), intent(in) :: a, b
       type(soil_water_column_t)             :: c
       c%theta     = w1 * a%theta     + w2 * b%theta
       c%w_surface = w1 * a%w_surface + w2 * b%w_surface
       !----- EXTENSIVE, so it blends additively per area exactly like the mass it belongs to. ---------!
-      c%w_surface_enth = w1 * a%w_surface_enth + w2 * b%w_surface_enth
-   end function blend_soil_w
+      c%w_surface_energy = w1 * a%w_surface_energy + w2 * b%w_surface_energy
+   end function blend_soil_water
 
-   pure function blend_soil_e(w1, a, w2, b) result(c)
+   pure function blend_soil_energy(w1, a, w2, b) result(c)
       real(wp),                  intent(in) :: w1, w2
       type(soil_energy_column_t), intent(in) :: a, b
       type(soil_energy_column_t)             :: c
       c%soil_energy = w1 * a%soil_energy + w2 * b%soil_energy
       c%soil_temp   = w1 * a%soil_temp   + w2 * b%soil_temp
       c%soil_fliq   = w1 * a%soil_fliq   + w2 * b%soil_fliq
-   end function blend_soil_e
+   end function blend_soil_energy
 
    !----- Area-weighted mix of two soil-carbon columns (patch fusion / disturbance seed). Every    !
    !      field is a plain per-area density [kgC/m2] (no diagnosed/re-derived fields, unlike        !
    !      temp/fliq elsewhere), so a straight area-weighted average of all nine fields conserves    !
-   !      total site-wide soil carbon exactly, mirroring blend_soil_w/blend_soil_e.                 !
+   !      total site-wide soil carbon exactly, mirroring blend_soil_water/blend_soil_energy.                 !
    pure function blend_soil_carbon(w1, a, w2, b) result(c)
       real(wp),             intent(in) :: w1, w2
       type(soil_carbon_t),  intent(in) :: a, b
@@ -432,7 +432,7 @@ contains
    end function blend_soil_carbon
 
    !----- Area-weighted mix of two daily xi accumulators (patch fusion / disturbance seed) --   !
-   !      same rationale as blend_cas/blend_soil_w: an intra-day fusion should blend the         !
+   !      same rationale as blend_cas/blend_soil_water: an intra-day fusion should blend the         !
    !      partial-day accumulation exactly like the other per-patch fast reservoirs. -----------!
    pure function blend_xi_accum(w1, a, w2, b) result(c)
       real(wp),         intent(in) :: w1, w2
@@ -505,7 +505,7 @@ contains
       !----- 5. Snow ----------------------------------------------------------------------------!
       allocate(patch%snow(cap))                             ! default-initialised by its type
       !----- 6. Soil water and heat -------------------------------------------------------------!
-      allocate(patch%soil_w(cap), patch%soil_e(cap))        ! default-initialised by its type
+      allocate(patch%soil_water(cap), patch%soil_energy(cap))        ! default-initialised by its type
       !----- 7. Soil carbon ---------------------------------------------------------------------!
       allocate(patch%soil_carbon(cap))                      ! default-initialised by its type
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
@@ -553,8 +553,8 @@ contains
       !----- 5. Snow ----------------------------------------------------------------------------!
       tmp%snow(1:m) = patch%snow(1:m)
       !----- 6. Soil water and heat -------------------------------------------------------------!
-      tmp%soil_w(1:m) = patch%soil_w(1:m)
-      tmp%soil_e(1:m) = patch%soil_e(1:m)
+      tmp%soil_water(1:m) = patch%soil_water(1:m)
+      tmp%soil_energy(1:m) = patch%soil_energy(1:m)
       !----- 7. Soil carbon ---------------------------------------------------------------------!
       tmp%soil_carbon(1:m) = patch%soil_carbon(1:m)
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
@@ -582,8 +582,8 @@ contains
       !----- 5. Snow ----------------------------------------------------------------------------!
       call move_alloc(tmp%snow, patch%snow)
       !----- 6. Soil water and heat -------------------------------------------------------------!
-      call move_alloc(tmp%soil_w, patch%soil_w)
-      call move_alloc(tmp%soil_e, patch%soil_e)
+      call move_alloc(tmp%soil_water, patch%soil_water)
+      call move_alloc(tmp%soil_energy, patch%soil_energy)
       !----- 7. Soil carbon ---------------------------------------------------------------------!
       call move_alloc(tmp%soil_carbon, patch%soil_carbon)
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
@@ -620,8 +620,8 @@ contains
       !----- 5. Snow ----------------------------------------------------------------------------!
       patch%snow(1:m) = patch%snow(perm(1:m))
       !----- 6. Soil water and heat -------------------------------------------------------------!
-      patch%soil_w(1:m) = patch%soil_w(perm(1:m))
-      patch%soil_e(1:m) = patch%soil_e(perm(1:m))
+      patch%soil_water(1:m) = patch%soil_water(perm(1:m))
+      patch%soil_energy(1:m) = patch%soil_energy(perm(1:m))
       !----- 7. Soil carbon ---------------------------------------------------------------------!
       patch%soil_carbon(1:m) = patch%soil_carbon(perm(1:m))
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
@@ -644,7 +644,7 @@ contains
       patch%cap = 0_ik
       if (allocated(patch%area)) deallocate(patch%global_id, patch%dist_type, patch%area, patch%age,           &
                                             patch%cohort_offset, patch%cohort_count, patch%recruit_pool,       &
-                                            patch%cas, patch%snow, patch%soil_w, patch%soil_e,                 &
+                                            patch%cas, patch%snow, patch%soil_water, patch%soil_energy,                 &
                                             patch%soil_carbon, patch%shed_water_rate, patch%slow_co2_rate,     &
                                             patch%xi_accum, patch%litter_in, patch%adapt_dt_last)
    end subroutine free_patch_block
@@ -655,7 +655,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! The state a new cohort is born in, from its patch's canopy air `cas` and soil water      !
-   ! `soil_w`: the canopy-air temperature [K] and the water potential of the top soil layer   !
+   ! `soil_water`: the canopy-air temperature [K] and the water potential of the top soil layer   !
    ! [MPa] (top_soil_psi, the value the stomatal predawn potential is seeded with), so the    !
    ! cohort starts in equilibrium with where it stands. A patch whose fast state has not been !
    ! seeded yet -- at setup, or in a run without the fast loop -- has neither, and gives the  !
@@ -663,9 +663,9 @@ contains
    ! the starting soil water. init_fast_reservoirs re-seeds the setup cohorts from their      !
    ! patch once it has seeded it. `soil` is the column's parameters (soil_column_params).     !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cohort_birth_state(cas, soil_w, cfg, soil, temp, psi)
+   pure subroutine patch_physical_state(cas, soil_water, cfg, soil, temp, psi)
       type(cas_state_t),         intent(in)  :: cas      !< the patch's canopy air
-      type(soil_water_column_t), intent(in)  :: soil_w   !< the patch's soil water
+      type(soil_water_column_t), intent(in)  :: soil_water   !< the patch's soil water
       type(meds_config_t),       intent(in)  :: cfg
       type(soil_params_t),       intent(in)  :: soil
       real(wp),                  intent(out) :: temp, psi
@@ -673,13 +673,13 @@ contains
       !----- A seeded canopy air has a temperature: the type's default is 0 K. ----------------!
       if (cas%can_temp > 0.0_wp) then
          temp = cas%can_temp
-         psi  = top_soil_psi(soil, soil_w%theta(1))
+         psi  = top_soil_psi(soil, soil_water%theta(1))
       else
          temp = cfg%init_soil_temp
          call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta)
          psi  = top_soil_psi(soil, theta(1))
       end if
-   end subroutine cohort_birth_state
+   end subroutine patch_physical_state
 
 
 end module meds_patch_state_vars

@@ -865,7 +865,7 @@ contains
                if (j == 0_ik) then ; same = .false. ; return ; end if
                base = (row*np_ + j - 1_ik)*nsoil
                same = same .and. pt%area(i) == area(row*np_ + j)                                    &
-                           .and. all(pt%soil_w(i)%theta(1:nsoil) == theta(base + 1_ik : base + nsoil))
+                           .and. all(pt%soil_water(i)%theta(1:nsoil) == theta(base + 1_ik : base + nsoil))
             end do
          end associate
       end do

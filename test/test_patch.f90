@@ -56,17 +56,17 @@ program test_patch
    !      sliver is usually a fresh gap). Dropping it and renormalizing the survivors would       !
    !      destroy that content outright; it is merged into the largest survivor, so the site      !
    !      total must come through untouched. ------------------------------------------------------!
-   site%patch%soil_w(1)%theta(1) = 0.20_wp
-   site%patch%soil_w(2)%theta(1) = 0.20_wp
-   site%patch%soil_w(3)%theta(1) = 0.45_wp        ! the slivers are much wetter
-   site%patch%soil_w(4)%theta(1) = 0.50_wp
+   site%patch%soil_water(1)%theta(1) = 0.20_wp
+   site%patch%soil_water(2)%theta(1) = 0.20_wp
+   site%patch%soil_water(3)%theta(1) = 0.45_wp        ! the slivers are much wetter
+   site%patch%soil_water(4)%theta(1) = 0.50_wp
    n0 = total_nplant(site)
-   w_before = sum(site%patch%area(1:4) * [(site%patch%soil_w(ip)%theta(1), ip = 1, 4)])
+   w_before = sum(site%patch%area(1:4) * [(site%patch%soil_water(ip)%theta(1), ip = 1, 4)])
    call terminate_patches(site, cfg)
    call check(site%patch%n == 2_ik, 'sub-threshold patch not removed')
    call check_close(total_area(site), 1.0_wp, 1.0e-9_wp, 'areas not renormalized to 1')
    w_after = sum(site%patch%area(1:site%patch%n)                                                   &
-                 * [(site%patch%soil_w(ip)%theta(1), ip = 1, site%patch%n)])
+                 * [(site%patch%soil_water(ip)%theta(1), ip = 1, site%patch%n)])
    call check_close(w_after, w_before, 1.0e-12_wp,                                                 &
                     'terminate_patches must MERGE the sliver, not discard its content')
    call check_close(total_nplant(site), n0, 1.0e-12_wp,                                            &
@@ -80,9 +80,9 @@ program test_patch
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 12.0_wp)   ! identical cohort in each patch
    call add_cohort(site, cfg, 2_ik, 1_ik, 0.5_wp, 12.0_wp)   ! -> identical light profiles -> fuse
    call finalize_init(site)
-   site%patch%soil_w(1)%theta(1)       = 0.20_wp   ; site%patch%soil_w(2)%theta(1)       = 0.40_wp
+   site%patch%soil_water(1)%theta(1)       = 0.20_wp   ; site%patch%soil_water(2)%theta(1)       = 0.40_wp
    site%patch%cas(1)%can_enthalpy      = 1000.0_wp ; site%patch%cas(2)%can_enthalpy      = 2000.0_wp
-   site%patch%soil_e(1)%soil_energy(3) = 1.0e6_wp  ; site%patch%soil_e(2)%soil_energy(3) = 3.0e6_wp
+   site%patch%soil_energy(1)%soil_energy(3) = 1.0e6_wp  ; site%patch%soil_energy(2)%soil_energy(3) = 3.0e6_wp
    !----- DIFFERENT canopy depths, or this fixture cannot tell the two weightings apart. The      !
    !      canopy air is intensive per kg of AIR, and the air mass is area x depth, so the merged  !
    !      value is mass-weighted: (0.75*30*1000 + 0.25*10*2000)/(0.75*30 + 0.25*10) = 1100, not   !
@@ -93,8 +93,8 @@ program test_patch
               + site%patch%area(2) * site%patch%cas(2)%can_depth * site%patch%cas(2)%can_enthalpy
    call new_fuse_patches(site, cfg)
    call check(site%patch%n == 1_ik, 'reservoir patches should fuse to one')
-   call check_close(site%patch%soil_w(1)%theta(1),       0.25_wp,   1.0e-9_wp, 'soil water not area-weighted on fusion')
-   call check_close(site%patch%soil_e(1)%soil_energy(3), 1.5e6_wp,  1.0e-3_wp, 'soil energy not area-weighted on fusion')
+   call check_close(site%patch%soil_water(1)%theta(1),       0.25_wp,   1.0e-9_wp, 'soil water not area-weighted on fusion')
+   call check_close(site%patch%soil_energy(1)%soil_energy(3), 1.5e6_wp,  1.0e-3_wp, 'soil energy not area-weighted on fusion')
    call check_close(site%patch%cas(1)%can_depth,         25.0_wp,   1.0e-9_wp, 'CAS depth not area-weighted on fusion')
    call check_close(site%patch%cas(1)%can_enthalpy,      1100.0_wp, 1.0e-9_wp, 'CAS enthalpy not AIR-MASS-weighted on fusion')
    !----- and the point of that weighting: the extensive content survives the merge. -------------!
@@ -103,11 +103,11 @@ program test_patch
 
    call init_bare_ground(site, cfg, 2_ik)
    site%patch%age(1) = 1.0_wp ; site%patch%age(2) = 5.0_wp             ! patch 2 is older
-   site%patch%soil_w(1)%theta(1) = 0.11_wp ; site%patch%soil_w(2)%theta(1) = 0.55_wp
+   site%patch%soil_water(1)%theta(1) = 0.11_wp ; site%patch%soil_water(2)%theta(1) = 0.55_wp
    call finalize_init(site)
    call sort_patches(site)                                             ! sorts age-descending: older first
    call check_close(site%patch%age(1), 5.0_wp, 1.0e-12_wp, 'sort did not put the older patch first')
-   call check_close(site%patch%soil_w(1)%theta(1), 0.55_wp, 1.0e-12_wp, 'reservoir did not follow its patch through sort')
+   call check_close(site%patch%soil_water(1)%theta(1), 0.55_wp, 1.0e-12_wp, 'reservoir did not follow its patch through sort')
 
    !=== The tolerance ceiling: dissimilar patches stay apart even above max_patch. ===========!
    !    A closed stand and a sparse understory, and max_patch = 1 asking for one patch. Under the !

@@ -38,7 +38,7 @@ reorganized by model hierarchy, with no change to any result (#448).
 - **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
   restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
   temperature, holding the water their tissues hold at the potential of the patch's top soil layer
-  (`cohort_birth_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
+  (`patch_physical_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
   but a recruit started at 288.15 K, and every cohort, recruits included, at −0.1 MPa: a census run
   starting in an Ithaca January began with every tree about 20 K warmer than its air, and a recruit in
   dry soil was born wetter than its soil. Until the fast loop seeds a patch, the run's `[init]` state
@@ -66,11 +66,15 @@ reorganized by model hierarchy, with no change to any result (#448).
   and every list of a block's fields follows the same order.
   - The cohort block carries the site's PFT table instead of 16 per-cohort copies of PFT traits
     (the `p_*` fields and `gather_pft_params` are gone).
-  - The patch arrays have one reorder, `patch_reorder`, which `sort_patches` and `patch_compact` call.
+  - The patch arrays have one reorder, `reorder_patch_block`, which `sort_patches` and
+    `patch_compact` call.
   - `soil_column_t` is `soil_water_column_t`; the slow driver's pool-change type moves to
     `meds_vegetation_dynamics` as `pool_change_block`.
-  - `patch_birth_state` is `cohort_birth_state`: it returns the state a new cohort is born in,
-    read from its patch.
+  - The patch's soil stores are `soil_water` and `soil_energy` (were `soil_w` and `soil_e`), mixed by
+    `blend_soil_water` and `blend_soil_energy`. The pond's heat is `w_surface_energy` (was
+    `w_surface_enth`), named like the snow and soil stores; the restart file keeps its variable names.
+  - `patch_birth_state` is `patch_physical_state`: it returns the canopy-air temperature and the top
+    soil layer's water potential a new cohort is born into.
   - The block routines are named for what they do to the block: `alloc_cohort_block`,
     `expand_cohort_block`, `move_cohort_block`, `reorder_cohort_block`, `compact_cohort_block`,
     `free_cohort_block` and `copy_cohort`, and their patch twins `alloc_patch_block`,

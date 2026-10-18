@@ -27,7 +27,7 @@ contains
    subroutine set_site_soil_temp(site, t)
       type(site_t), intent(inout) :: site
       real(wp),     intent(in)    :: t
-      site%patch%soil_e(1)%soil_temp(:) = t
+      site%patch%soil_energy(1)%soil_temp(:) = t
    end subroutine set_site_soil_temp
 end module test_ro_support
 

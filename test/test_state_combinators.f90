@@ -44,7 +44,7 @@ program test_state_combinators
    call check_close(out%cas_shv,        a%cas_shv        - b%cas_shv,        1.0e-14_wp, 'state_sub: cas_shv')
    call check_close(out%cas_co2,        a%cas_co2        - b%cas_co2,        1.0e-14_wp, 'state_sub: cas_co2')
    call check_close(out%w_surface,      a%w_surface      - b%w_surface,      1.0e-14_wp, 'state_sub: w_surface (pond)')
-   call check_close(out%w_surface_enth, a%w_surface_enth - b%w_surface_enth, 1.0e-14_wp, 'state_sub: w_surface_enth')
+   call check_close(out%w_surface_energy, a%w_surface_energy - b%w_surface_energy, 1.0e-14_wp, 'state_sub: w_surface_energy')
    call check_close(out%soil_energy(NSL), a%soil_energy(NSL) - b%soil_energy(NSL), 1.0e-14_wp, 'state_sub: soil_energy')
    call check_close(out%theta(NSL),       a%theta(NSL)       - b%theta(NSL),       1.0e-14_wp, 'state_sub: theta')
    call check_close(out%leaf_water_mass(N), a%leaf_water_mass(N) - b%leaf_water_mass(N), 1.0e-14_wp, &
@@ -64,7 +64,7 @@ program test_state_combinators
    call check(allocated(out%leaf_surf_water) .and. allocated(out%wood_surf_water),                  &
               'zero_like: canopy-film fields allocated')
    call check_close(maxval(abs([out%cas_enthalpy, out%cas_shv, out%cas_co2, out%w_surface,          &
-                                out%w_surface_enth, maxval(abs(out%soil_energy)),                   &
+                                out%w_surface_energy, maxval(abs(out%soil_energy)),                   &
                                 maxval(abs(out%theta)), maxval(abs(out%leaf_water_mass)),           &
                                 maxval(abs(out%wood_water_mass)), maxval(abs(out%leaf_surf_water)), &
                                 maxval(abs(out%wood_surf_water))])), 0.0_wp, 1.0e-30_wp,            &
@@ -76,7 +76,7 @@ program test_state_combinators
    call state_err_diff(a, b, b, a, N, NSL, out)   ! (a-b) - (b-a) = 2(a-b), so the estimate is non-zero
    call check(abs(out%cas_enthalpy) > 0.0_wp, 'state_err_diff: CAS enthalpy must be IN the estimate')
    call check_close(out%w_surface,          0.0_wp, 1.0e-30_wp, 'state_err_diff: pond excluded (declared)')
-   call check_close(out%w_surface_enth,     0.0_wp, 1.0e-30_wp, 'state_err_diff: pond enthalpy excluded (declared)')
+   call check_close(out%w_surface_energy,     0.0_wp, 1.0e-30_wp, 'state_err_diff: pond enthalpy excluded (declared)')
    call check_close(out%leaf_water_mass(N), 0.0_wp, 1.0e-30_wp, 'state_err_diff: tissue water excluded (declared)')
    call check_close(out%leaf_surf_water(N), 0.0_wp, 1.0e-30_wp, 'state_err_diff: canopy film excluded (declared)')
 
@@ -107,7 +107,7 @@ program test_state_combinators
       real(wp) :: pond0, pond_enth0
       call fill_state(acc, 1.0_wp)
       call fill_tend(k)
-      pond0 = acc%w_surface ; pond_enth0 = acc%w_surface_enth
+      pond0 = acc%w_surface ; pond_enth0 = acc%w_surface_energy
       call state_accum(acc, 2.0_wp, k, N, NSL)
       call check_close(acc%cas_enthalpy, 11.0_wp + 2.0_wp*k%d_cas_enthalpy, 1.0e-13_wp, 'state_accum: cas_enthalpy')
       call check_close(acc%cas_shv,      12.0_wp + 2.0_wp*k%d_cas_shv,      1.0e-13_wp, 'state_accum: cas_shv')
@@ -126,7 +126,7 @@ program test_state_combinators
                        1.0e-13_wp, 'state_accum: wood_surf_water')
       !----- the EXCLUSION, asserted: unchanged, not zeroed.  ------------------------------------!
       call check_close(acc%w_surface,      pond0,      1.0e-14_wp, 'state_accum: pond PASSED THROUGH untouched')
-      call check_close(acc%w_surface_enth, pond_enth0, 1.0e-14_wp, 'state_accum: pond enthalpy untouched')
+      call check_close(acc%w_surface_energy, pond_enth0, 1.0e-14_wp, 'state_accum: pond enthalpy untouched')
    end block
 
    !=== 7. state_extrap blends EVERY field, pond included. ==================================!
@@ -146,7 +146,7 @@ program test_state_combinators
                        1.0e-13_wp, 'state_extrap: wood_surf_water')
       call check_close(ex%w_surface, (1.0_wp-BB)*a%w_surface + BB*b%w_surface,                    &
                        1.0e-13_wp, 'state_extrap: pond IS blended')
-      call check_close(ex%w_surface_enth, (1.0_wp-BB)*a%w_surface_enth + BB*b%w_surface_enth,     &
+      call check_close(ex%w_surface_energy, (1.0_wp-BB)*a%w_surface_energy + BB*b%w_surface_energy,     &
                        1.0e-13_wp, 'state_extrap: pond enthalpy IS blended')
    end block
 
@@ -164,13 +164,13 @@ program test_state_combinators
                bio%leaf_surf_water(N), bio%wood_surf_water(N))
       bio%leaf_water_mass = 0.0_wp ; bio%wood_water_mass = 0.0_wp
       bio%leaf_surf_water = 0.0_wp ; bio%wood_surf_water = 0.0_wp
-      bio%soil_e%soil_energy = 0.0_wp ; bio%soil_w%theta = 0.0_wp
+      bio%soil_energy%soil_energy = 0.0_wp ; bio%soil_water%theta = 0.0_wp
       call unpack_column_state(a, N, NSL, bio)
       call check_close(bio%cas%can_enthalpy, a%cas_enthalpy, 1.0e-14_wp, 'unpack: cas_enthalpy committed')
       call check_close(bio%cas%can_shv,      a%cas_shv,      1.0e-14_wp, 'unpack: cas_shv committed')
       call check_close(bio%cas%can_co2,      a%cas_co2,      1.0e-14_wp, 'unpack: cas_co2 committed')
-      call check_close(bio%soil_e%soil_energy(NSL), a%soil_energy(NSL), 1.0e-14_wp, 'unpack: soil_energy committed')
-      call check_close(bio%soil_w%theta(NSL),       a%theta(NSL),       1.0e-14_wp, 'unpack: theta committed')
+      call check_close(bio%soil_energy%soil_energy(NSL), a%soil_energy(NSL), 1.0e-14_wp, 'unpack: soil_energy committed')
+      call check_close(bio%soil_water%theta(NSL),       a%theta(NSL),       1.0e-14_wp, 'unpack: theta committed')
       call check_close(bio%leaf_water_mass(N), a%leaf_water_mass(N), 1.0e-14_wp, 'unpack: leaf_water_mass committed')
       call check_close(bio%wood_water_mass(N), a%wood_water_mass(N), 1.0e-14_wp, 'unpack: wood_water_mass committed')
       call check_close(bio%leaf_surf_water(N), a%leaf_surf_water(N), 1.0e-14_wp, 'unpack: leaf_surf_water committed')
@@ -218,7 +218,7 @@ contains
       y%cas_shv        = 12.0_wp * s
       y%cas_co2        = 13.0_wp * s
       y%w_surface      = 14.0_wp * s
-      y%w_surface_enth = 15.0_wp * s
+      y%w_surface_energy = 15.0_wp * s
       y%soil_energy = 0.0_wp ; y%theta = 0.0_wp
       do j = 1_ik, NSL
          y%soil_energy(j) = (20.0_wp + real(j, wp)) * s
@@ -256,7 +256,7 @@ contains
       call check_close(x%cas_shv,            y%cas_shv,            1.0e-14_wp, tag//': cas_shv')
       call check_close(x%cas_co2,            y%cas_co2,            1.0e-14_wp, tag//': cas_co2')
       call check_close(x%w_surface,          y%w_surface,          1.0e-14_wp, tag//': w_surface (pond)')
-      call check_close(x%w_surface_enth,     y%w_surface_enth,     1.0e-14_wp, tag//': w_surface_enth')
+      call check_close(x%w_surface_energy,     y%w_surface_energy,     1.0e-14_wp, tag//': w_surface_energy')
       call check_close(x%soil_energy(NSL),   y%soil_energy(NSL),   1.0e-14_wp, tag//': soil_energy')
       call check_close(x%theta(NSL),         y%theta(NSL),         1.0e-14_wp, tag//': theta')
       call check_close(x%leaf_water_mass(N), y%leaf_water_mass(N), 1.0e-14_wp, tag//': leaf_water_mass')

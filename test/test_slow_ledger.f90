@@ -24,7 +24,7 @@ program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
    use meds_site_state_vars,    only : site_t
-   use meds_patch_state_vars,   only : cas_set_depth, cohort_birth_state
+   use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
                                        soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
@@ -71,10 +71,10 @@ program test_slow_ledger
 
    !----- Give every reservoir a non-zero value, so a perturbation below is a change to a store !
    !      that already exists rather than the creation of one. --------------------------------!
-   site%patch%soil_w(1)%theta(1:soil%n_active)      = 0.30_wp
-   site%patch%soil_e(1)%soil_energy(1:soil%n_active) = 5.0e7_wp
-   site%patch%soil_w(1)%w_surface      = 2.0_wp
-   site%patch%soil_w(1)%w_surface_enth = 8.0e5_wp
+   site%patch%soil_water(1)%theta(1:soil%n_active)      = 0.30_wp
+   site%patch%soil_energy(1)%soil_energy(1:soil%n_active) = 5.0e7_wp
+   site%patch%soil_water(1)%w_surface      = 2.0_wp
+   site%patch%soil_water(1)%w_surface_energy = 8.0e5_wp
    site%patch%snow(1)%swe(1)           = 5.0_wp
    site%patch%snow(1)%snow_energy(1)   = -1.0e6_wp
    site%patch%cas(1)%can_shv      = 0.008_wp
@@ -95,9 +95,9 @@ program test_slow_ledger
    call moves_water ('canopy vapour',     perturb_shv,          RHO * 20.0_wp * 0.001_wp)
    call moves_water ('tissue water',      perturb_tissue_water, site%cohort%nplant(1) * 0.01_wp)
    call moves_water ('interception film', perturb_film,         0.01_wp)
-   call moves_energy('soil energy',       perturb_soil_e,       1.0e6_wp * soil%dz(1))
-   call moves_energy('pond enthalpy',     perturb_pond_enth,    1.0e5_wp)
-   call moves_energy('snow enthalpy',     perturb_snow_enth,    1.0e5_wp)
+   call moves_energy('soil energy',       perturb_soil_energy,  1.0e6_wp * soil%dz(1))
+   call moves_energy('pond energy',       perturb_pond_energy,  1.0e5_wp)
+   call moves_energy('snow energy',       perturb_snow_energy,  1.0e5_wp)
    call moves_energy('canopy enthalpy',   perturb_cas_enth,     RHO * 20.0_wp * 1.0e4_wp)
    call moves_carbon('live pools',        perturb_live_c,       site%cohort%nplant(1) * 0.5_wp)
    call moves_carbon('CENTURY pools',     perturb_necromass,    1.0_wp)
@@ -736,7 +736,7 @@ contains
       call check(heat_after < heat_before, 'cull: the tissue heat store falls when a cohort goes')
    end subroutine check_cull
 
-   !----- A cohort is born in its patch's state (cohort_birth_state): at the canopy-air temperature, !
+   !----- A cohort is born in its patch's state (patch_physical_state): at the canopy-air temperature, !
    !      its tissues at the top soil layer's potential. A patch not seeded yet gives the run's       !
    !      starting state from [init]. ------------------------------------------------------------------!
    subroutine check_birth_temp()
@@ -746,9 +746,9 @@ contains
       m = site%cohort%n + 1_ik
       t_save = site%patch%cas(1)%can_temp
       site%patch%cas(1)%can_temp = 268.0_wp        ! a cold, seeded patch
-      call cohort_birth_state(site%patch%cas(1), site%patch%soil_w(1), cfg, soil, t_birth, psi_birth)
+      call patch_physical_state(site%patch%cas(1), site%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
       call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
-      call check_close(psi_birth, top_soil_psi(soil, site%patch%soil_w(1)%theta(1)), 1.0e-12_wp,   &
+      call check_close(psi_birth, top_soil_psi(soil, site%patch%soil_water(1)%theta(1)), 1.0e-12_wp,   &
                        'birth: a seeded patch gives its top soil layer''s potential')
       call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics, t_birth, psi_birth)
       call check_close(site%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
@@ -759,7 +759,7 @@ contains
                        'birth: the leaves hold the water of that potential')
       !----- A patch not seeded yet (its canopy air at the type's 0 K) gives the starting state. ----!
       site%patch%cas(1)%can_temp = 0.0_wp
-      call cohort_birth_state(site%patch%cas(1), site%patch%soil_w(1), cfg, soil, t_birth, psi_birth)
+      call patch_physical_state(site%patch%cas(1), site%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
       call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta_start)
       call check_close(t_birth, cfg%init_soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
       call check_close(psi_birth, top_soil_psi(soil, theta_start(1)), 1.0e-12_wp,                       &
@@ -832,9 +832,9 @@ contains
       call check(abs(d) > 0.0_wp, 'store: '//name//' reaches the '//currency//' total')
    end subroutine moves
 
-   subroutine perturb_theta()        ; site%patch%soil_w(1)%theta(1) = site%patch%soil_w(1)%theta(1) + 0.01_wp
+   subroutine perturb_theta()        ; site%patch%soil_water(1)%theta(1) = site%patch%soil_water(1)%theta(1) + 0.01_wp
    end subroutine perturb_theta
-   subroutine perturb_pond()         ; site%patch%soil_w(1)%w_surface = site%patch%soil_w(1)%w_surface + 1.0_wp
+   subroutine perturb_pond()         ; site%patch%soil_water(1)%w_surface = site%patch%soil_water(1)%w_surface + 1.0_wp
    end subroutine perturb_pond
    subroutine perturb_swe()          ; site%patch%snow(1)%swe(1) = site%patch%snow(1)%swe(1) + 1.0_wp
    end subroutine perturb_swe
@@ -844,12 +844,15 @@ contains
    end subroutine perturb_tissue_water
    subroutine perturb_film()         ; site%cohort%leaf_surf_water(1) = site%cohort%leaf_surf_water(1) + 0.01_wp
    end subroutine perturb_film
-   subroutine perturb_soil_e()       ; site%patch%soil_e(1)%soil_energy(1) = site%patch%soil_e(1)%soil_energy(1) + 1.0e6_wp
-   end subroutine perturb_soil_e
-   subroutine perturb_pond_enth()    ; site%patch%soil_w(1)%w_surface_enth = site%patch%soil_w(1)%w_surface_enth + 1.0e5_wp
-   end subroutine perturb_pond_enth
-   subroutine perturb_snow_enth()    ; site%patch%snow(1)%snow_energy(1) = site%patch%snow(1)%snow_energy(1) + 1.0e5_wp
-   end subroutine perturb_snow_enth
+   subroutine perturb_soil_energy()
+      site%patch%soil_energy(1)%soil_energy(1) = site%patch%soil_energy(1)%soil_energy(1) + 1.0e6_wp
+   end subroutine perturb_soil_energy
+   subroutine perturb_pond_energy()
+      site%patch%soil_water(1)%w_surface_energy = site%patch%soil_water(1)%w_surface_energy + 1.0e5_wp
+   end subroutine perturb_pond_energy
+   subroutine perturb_snow_energy()
+      site%patch%snow(1)%snow_energy(1) = site%patch%snow(1)%snow_energy(1) + 1.0e5_wp
+   end subroutine perturb_snow_energy
    subroutine perturb_cas_enth()     ; site%patch%cas(1)%can_enthalpy = site%patch%cas(1)%can_enthalpy + 1.0e4_wp
    end subroutine perturb_cas_enth
    subroutine perturb_cas_co2()      ; site%patch%cas(1)%can_co2 = site%patch%cas(1)%can_co2 + 50.0_wp

@@ -516,7 +516,7 @@ module meds_fast_types
       !      combinator. While it has no stage RHS it stays OUT of state_wrms_grouped, like the     !
       !      canopy-surface films below, or the error controller would score a frozen quantity. ----!
       real(wp) :: w_surface      = 0.0_wp         !< [kg/m2] ponded surface water
-      real(wp) :: w_surface_enth = 0.0_wp         !< [J/m2]  enthalpy of the ponded water
+      real(wp) :: w_surface_energy = 0.0_wp         !< [J/m2]  enthalpy of the ponded water
       !----- Canopy-SURFACE water: the interception film on the leaf/wood boundary layer, DISTINCT  !
       !      from the internal (xylem/symplast) water above -- the film evaporates with no stomatal !
       !      resistance, the internal water feeds transpiration through stomata. [kg/m2 GROUND]     !
@@ -542,7 +542,7 @@ module meds_fast_types
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
       real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground (the pond's inflow)
       real(wp) :: t_infil       = 0.0_wp          !< [K]       temperature of the infiltrating (pond) water
-      real(wp) :: w_surface_enth1 = 0.0_wp        !< [J/m2]    end-of-step pond ENTHALPY
+      real(wp) :: w_surface_energy1 = 0.0_wp        !< [J/m2]    end-of-step pond ENTHALPY
       real(wp) :: t_pond_inflow      = 0.0_wp          !< [K]       temperature of the water entering the pond
       real(wp) :: runoff_enth   = 0.0_wp          !< [W/m2]    enthalpy leaving with surface runoff
       real(wp) :: t_film_valuation     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
@@ -740,8 +740,8 @@ module meds_fast_types
    !      and per-cohort state by the fast driver (meds_fast_dynamics) and written back after. -----!
    type :: patch_biophys_t
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
-      type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
-      type(soil_water_column_t)  :: soil_w            !< soil water column (theta; psi_soil diagnosed)
+      type(soil_energy_column_t) :: soil_energy            !< soil thermal column (internal energy; temp diagnosed)
+      type(soil_water_column_t)  :: soil_water            !< soil water column (theta; psi_soil diagnosed)
       type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
       !----- FROZEN slow soil-carbon pool (docs/science/soil_carbon.md §7): a read-only snapshot of     !
       !      site%patch%soil_carbon(ip), seeded ONCE at the top of the slow step and held constant      !
@@ -933,7 +933,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Grow-only capacity check for the per-cohort arrays of patch_biophys_t (mirrors                !
-   ! ensure_column_cohort_capacity). It does NOT touch biophys%cas/soil_e/soil_w/snow/soil_carbon: !
+   ! ensure_column_cohort_capacity). It does NOT touch biophys%cas/soil_energy/soil_water/snow/soil_carbon: !
    ! every caller overwrites those with the site's persisted per-patch reservoirs                  !
    ! (site%patch%cas(ip) etc.) immediately after allocating, so their alloc_patch_biophys seed     !
    ! values are always discarded; only leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/        !

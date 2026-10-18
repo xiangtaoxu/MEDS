@@ -514,8 +514,8 @@ contains
       !      clean. ------------------------------------------------------------------------------------!
       budget%clamp_stage_n = 0_ik ; budget%theta_ood_max = 0.0_wp
       !----- state^n ponding store, captured BEFORE the unpack below overwrites it. ------------------!
-      w_surface0 = biophys%soil_w%w_surface
-      e_pond0    = biophys%soil_w%w_surface_enth
+      w_surface0 = biophys%soil_water%w_surface
+      e_pond0    = biophys%soil_water%w_surface_energy
       if (present(stiff_bail)) stiff_bail = .false.
 
       cond_dep = 0.0_wp ; cond_dep_enth = 0.0_wp ; face_acc = 0.0_wp
@@ -591,10 +591,10 @@ contains
       if (cond_dep > 0.0_wp) then
          !----- at the b-weighted STAGE enthalpy the CAS was debited, not u_liq(T_end). ---------------!
          call deposit_condensate(y_out, col_config%soil%dz(1), cond_dep, cond_dep_enth)
-         biophys%soil_e%soil_energy(1) = y_out%soil_energy(1) ; biophys%soil_w%theta(1) = y_out%theta(1)
+         biophys%soil_energy%soil_energy(1) = y_out%soil_energy(1) ; biophys%soil_water%theta(1) = y_out%theta(1)
       end if
-      call diagnose_soil_temps(y_out, col_config%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_e%soil_temp, &
-            biophys%soil_e%soil_fliq)
+      call diagnose_soil_temps(y_out, col_config%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
+            biophys%soil_energy%soil_fliq)
       !----- The pond is the water network's, as theta is (docs/science/soil_plant_water.md): the         !
       !      stages moved theta at the network's steady rate, so the committed theta is the               !
       !      network's, and the pond, its runoff and their enthalpy are the network's too. The            !
@@ -603,11 +603,11 @@ contains
       !      mask the pond keeps its state^n value, like theta. ------------------------------------------!
       if (col_config%mask%soil_water) then
          w_pond_rk    = frozen%hydrology%w_surface1
-         e_pond_rk    = frozen%hydrology%w_surface_enth1
+         e_pond_rk    = frozen%hydrology%w_surface_energy1
          runoff_rk    = frozen%hydrology%runoff_surf * dt_fast
          over_enth_rk = frozen%hydrology%runoff_enth * dt_fast
-         biophys%soil_w%w_surface      = w_pond_rk
-         biophys%soil_w%w_surface_enth = e_pond_rk
+         biophys%soil_water%w_surface      = w_pond_rk
+         biophys%soil_water%w_surface_energy = e_pond_rk
       else
          w_pond_rk = w_surface0 ; e_pond_rk = e_pond0 ; runoff_rk = 0.0_wp ; over_enth_rk = 0.0_wp
       end if
@@ -748,8 +748,8 @@ contains
       logical :: railed
       real(wp), parameter :: T_LO = 185.0_wp, T_HI = 345.0_wp
       railed =      biophys%cas%can_temp <= T_LO .or. biophys%cas%can_temp >= T_HI                          &
-               .or. any(biophys%soil_e%soil_temp(1:nsl) <= T_LO)                                        &
-               .or. any(biophys%soil_e%soil_temp(1:nsl) >= T_HI)
+               .or. any(biophys%soil_energy%soil_temp(1:nsl) <= T_LO)                                        &
+               .or. any(biophys%soil_energy%soil_temp(1:nsl) >= T_HI)
    end function rk45_state_railed
 
 end module meds_fast_rk45

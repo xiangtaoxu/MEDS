@@ -324,7 +324,7 @@ contains
 
       type(surface_state_t)      :: y_stage
       type(surface_tend_t)       :: surf_tend
-      type(soil_energy_column_t) :: soil_e
+      type(soil_energy_column_t) :: soil_energy
       type(energy_forcing_t)     :: eforc
       real(wp)                   :: t_ground, fliq1, wmass1, transp_i, e_drain, water_heat(nsl)
       integer(ik)                :: i
@@ -358,7 +358,7 @@ contains
       !      drainage at the bottom layer's -- the same numbers the ARK stage uses, and the ones the  !
       !      committed theta actually moved (docs/science/numerical_scheme.md §5b). The leaf pays the !
       !      full vapour enthalpy of what it transpires in surface_derivs, as ED2 does. --------------!
-      soil_e%soil_energy(1:nsl) = y%soil_energy(1:nsl)
+      soil_energy%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
       water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
       e_drain = f%drainage_rate * internal_energy_liquid(frozen%hydrology%t_bot)
@@ -369,7 +369,7 @@ contains
       !      against the theta it actually commits. Taken from eforc -- the assembled forcing -- so !
       !      the check keeps its meaning if the argument above changes. ----------------------------!
       f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store DOWNWARD
-      call soil_energy_time_deriv(soil_e, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, &
+      call soil_energy_time_deriv(soil_energy, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, &
                                   f%dedt, bottom_face=f%g_bottom)
 
       !----- 4. Per-cohort plant WATER MASS: the network's sapflow and uptake in, and out the         !

@@ -698,7 +698,7 @@ contains
       real(wp),           intent(in)    :: nplant, dbh
       !----- The shared [hydraulics] traits, which with the PFT's own give its tissue curves. -------!
       type(hydraulics_config_t), intent(in) :: hydraulics
-      !----- The state the cohort is born in, its patch's (cohort_birth_state): its leaves and wood !
+      !----- The state the cohort is born in, its patch's (patch_physical_state): its leaves and wood !
       !      start at birth_temp, holding the water their tissues hold at birth_psi. ---------------!
       real(wp),           intent(in)    :: birth_temp   !< [K]
       real(wp),           intent(in)    :: birth_psi    !< [MPa]

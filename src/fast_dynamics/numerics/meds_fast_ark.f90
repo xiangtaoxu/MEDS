@@ -323,18 +323,18 @@ contains
       !----- The bottom BCs are pure boundary conditions with no prognostic state behind them (drainage, !
       !      free to sealed, or a head-driven aquifer); the water network takes each as a boundary       !
       !      flow, and the ARK commits its theta. -----------------------------------------------------!
-      w_surface0 = biophys%soil_w%w_surface
+      w_surface0 = biophys%soil_water%w_surface
 
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
                                n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
-      !----- STATE^n pond enthalpy, snapshotted HERE, before anything commits to biophys%soil_w: the    !
-      !      pond commit below overwrites w_surface_enth with the network's end-of-step value, so a     !
+      !----- STATE^n pond enthalpy, snapshotted HERE, before anything commits to biophys%soil_water: the    !
+      !      pond commit below overwrites w_surface_energy with the network's end-of-step value, so a     !
       !      snapshot taken alongside e_soil0 further down would read the COMMITTED value, the store    !
       !      change would collapse to zero and the whole-column residual would equal -e_pond0.          !
-      !      build_column_frozen mutates biophys%snow and nothing in biophys%soil_w, so state^n is      !
+      !      build_column_frozen mutates biophys%snow and nothing in biophys%soil_water, so state^n is      !
       !      intact here. ------------------------------------------------------------------------------!
-      e_pond0 = biophys%soil_w%w_surface_enth
+      e_pond0 = biophys%soil_water%w_surface_energy
 
       !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
       if (col_config%integrator%adaptive) then
@@ -377,7 +377,7 @@ contains
       !----- pond: same treatment as theta -- the network's end-of-step pond, committed THROUGH the     !
       !      state vector so there is one authority. ------------------------------------------------!
       y_out%w_surface      = frozen%hydrology%w_surface1
-      y_out%w_surface_enth = frozen%hydrology%w_surface_enth1     ! paired with the mass
+      y_out%w_surface_energy = frozen%hydrology%w_surface_energy1     ! paired with the mass
 
       !----- PROCESS MASK (process_mask_t, meds_fast_types). The mask must mean the same thing under     !
       !      every scheme, so it is applied at the ARK's single state-commit point: a masked-off         !
@@ -405,14 +405,14 @@ contains
       !----- unpack into biophys + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
       call unpack_column_state(y_out, n, nsl, biophys)
       !----- The pond is part of the SOIL-WATER store, so it obeys the same soil_water mask as theta.     !
-      !      It is the only write to biophys%soil_w besides theta, so skipping it leaves the store at     !
+      !      It is the only write to biophys%soil_water besides theta, so skipping it leaves the store at     !
       !      state^n. ------------------------------------------------------------------------------------!
       if (col_config%mask%soil_water) then
-         biophys%soil_w%w_surface      = y_out%w_surface
-         biophys%soil_w%w_surface_enth = y_out%w_surface_enth
+         biophys%soil_water%w_surface      = y_out%w_surface
+         biophys%soil_water%w_surface_energy = y_out%w_surface_energy
       end if
-      call diagnose_soil_temps(y_out, col_config%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_e%soil_temp, &
-            biophys%soil_e%soil_fliq)
+      call diagnose_soil_temps(y_out, col_config%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
+            biophys%soil_energy%soil_fliq)
       call internal_energy_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
                         col_config%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
       y_stage%cas_enthalpy = y_out%cas_enthalpy ; y_stage%cas_shv = y_out%cas_shv ; y_stage%cas_co2 = y_out%cas_co2
@@ -485,8 +485,8 @@ contains
          cond_dep_mass = acc%whole_cond
          cond_dep_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (see column_bflux_t)
          call deposit_condensate(y_out, col_config%soil%dz(1), cond_dep_mass, cond_dep_enth)
-         biophys%soil_w%theta(1)       = y_out%theta(1)
-         biophys%soil_e%soil_energy(1) = y_out%soil_energy(1)
+         biophys%soil_water%theta(1)       = y_out%theta(1)
+         biophys%soil_energy%soil_energy(1) = y_out%soil_energy(1)
       end if
 
       !----- No separate wood-radiation term: surface_derivs' balance carries the wood's absorbed       !
@@ -495,7 +495,7 @@ contains
       cas_mass_capacity = frozen%cas%cas_mass_capacity ; cas_molar_capacity = frozen%cas%cas_molar_capacity
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
-      e_pond1 = frozen%hydrology%w_surface_enth1
+      e_pond1 = frozen%hydrology%w_surface_energy1
       e_soil0 = soil_energy_store(y%soil_energy,     col_config%soil%dz, nsl)
       e_soil1 = soil_energy_store(y_out%soil_energy, col_config%soil%dz, nsl)
       w_soil0 = soil_water_store(y%theta,     col_config%soil%dz, nsl)

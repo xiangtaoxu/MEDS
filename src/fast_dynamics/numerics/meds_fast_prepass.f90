@@ -88,11 +88,11 @@ contains
 
       !----- 1. aerodynamics from the current canopy-air state. ------------------------------------!
       call refresh_canopy_aerodynamics(col_config%aero, aenv, ageom, col_cohort, biophys%cas,           &
-                                       biophys%soil_e%soil_temp(1), biophys%leaf_temp,                 &
+                                       biophys%soil_energy%soil_temp(1), biophys%leaf_temp,                 &
                                        biophys%wood_temp, aero, tcas, qcas, press, rho, t_ground)
 
       !----- 2. root-zone environment (root + heterotrophic respiration drivers). ------------------!
-      call root_zone_environment(col_config%soil, root_frac, biophys%soil_e%soil_temp, biophys%soil_w%theta, &
+      call root_zone_environment(col_config%soil, root_frac, biophys%soil_energy%soil_temp, biophys%soil_water%theta, &
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
@@ -104,7 +104,7 @@ contains
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
       call canopy_maintenance_respiration(col_config%wood, col_config%root, col_config%soil, root_frac, col_cohort, &
-                                          biophys%wood_temp, biophys%soil_e%soil_temp, ra_stem, ra_root, &
+                                          biophys%wood_temp, biophys%soil_energy%soil_temp, ra_stem, ra_root, &
                                           stem_resp_coh, root_resp_coh)
 
       !----- 5. heterotrophic respiration. -------------------------------------------------------!
@@ -241,7 +241,7 @@ contains
                biophys%wood_water_mass(i), col_cohort%bsap(i) + col_cohort%broot(i), col_cohort%height(i),   &
                hyd_table%pft(col_cohort%pft(i)), hyd_opts)
       end do
-      dmax_psi_seed = top_soil_psi(soil, biophys%soil_w%theta(1))
+      dmax_psi_seed = top_soil_psi(soil, biophys%soil_water%theta(1))
       do i = 1_ik, n
          if (col_cohort%dmax_psi_leaf(i) > 0.0_wp) then
             dmax_psi_arr(i) = dmax_psi_seed                    ! UNSET sentinel -> seed from the soil

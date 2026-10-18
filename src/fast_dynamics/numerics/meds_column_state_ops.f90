@@ -80,7 +80,7 @@ contains
          v(o+2*i-1) = y%leaf_surf_water(i) ; v(o+2*i) = y%wood_surf_water(i)
       end do
       o = o + 2_ik*n
-      v(o+1) = y%w_surface ; v(o+2) = y%w_surface_enth
+      v(o+1) = y%w_surface ; v(o+2) = y%w_surface_energy
    end subroutine state_to_array
 
    !----- The inverse. The per-cohort arrays are allocated only when they are missing or of another !
@@ -104,7 +104,7 @@ contains
          y%leaf_surf_water(i) = v(o+2*i-1) ; y%wood_surf_water(i) = v(o+2*i)
       end do
       o = o + 2_ik*n
-      y%w_surface = v(o+1) ; y%w_surface_enth = v(o+2)
+      y%w_surface = v(o+1) ; y%w_surface_energy = v(o+2)
    end subroutine array_to_state
 
    !----- A tendency in the same layout. The pond has no tendency (it is passed through the stages  !
@@ -472,13 +472,13 @@ contains
       type(patch_biophys_t), intent(inout) :: biophys
       biophys%cas%can_enthalpy = y_out%cas_enthalpy ; biophys%cas%can_shv = y_out%cas_shv ; biophys%cas%can_co2 = y_out%cas_co2
       biophys%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
-      biophys%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
-      biophys%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
+      biophys%soil_energy%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
+      biophys%soil_water%theta(1:nsl)       = y_out%theta(1:nsl)
       biophys%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
       biophys%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
       biophys%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
       biophys%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
-      !----- w_surface / w_surface_enth are EXCLUDED, not forgotten. The pond is committed from the  !
+      !----- w_surface / w_surface_energy are EXCLUDED, not forgotten. The pond is committed from the  !
       !      water network by each scheme's commit (column_fast_step_ark/_rk45), so writing it here  !
       !      would commit it twice. THIS IS THE COMMIT PATH: a                                        !
       !      field genuinely omitted here is computed, balanced by every ledger, and then dropped on !
@@ -562,7 +562,7 @@ contains
       if (.not. mask%soil_water) then
          y_out%theta(1:nsl)   = y%theta(1:nsl)
          y_out%w_surface      = y%w_surface
-         y_out%w_surface_enth = y%w_surface_enth
+         y_out%w_surface_energy = y%w_surface_energy
       end if
       if (.not. mask%hydraulics) then
          y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)

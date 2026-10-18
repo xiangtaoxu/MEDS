@@ -319,15 +319,15 @@ contains
          !      over the layer thicknesses (identical to soil_water_store / soil_energy_store).   !
          w_soil = 0.0_wp ; e_soil = 0.0_wp
          do k = 1_ik, soil%n_active
-            w_soil = w_soil + site%patch%soil_w(ip)%theta(k)       * soil%dz(k) * rho_h2o
-            e_soil = e_soil + site%patch%soil_e(ip)%soil_energy(k) * soil%dz(k)
+            w_soil = w_soil + site%patch%soil_water(ip)%theta(k)       * soil%dz(k) * rho_h2o
+            e_soil = e_soil + site%patch%soil_energy(ip)%soil_energy(k) * soil%dz(k)
          end do
          store%water  = store%water  + a * w_soil
          store%energy = store%energy + a * e_soil
 
          !----- Pond and snow: both already extensive per m2 of patch ground. --------------------!
-         store%water  = store%water  + a * site%patch%soil_w(ip)%w_surface
-         store%energy = store%energy + a * site%patch%soil_w(ip)%w_surface_enth
+         store%water  = store%water  + a * site%patch%soil_water(ip)%w_surface
+         store%energy = store%energy + a * site%patch%soil_water(ip)%w_surface_energy
          store%water  = store%water  + a * sum(site%patch%snow(ip)%swe)
          store%energy = store%energy + a * sum(site%patch%snow(ip)%snow_energy)
 

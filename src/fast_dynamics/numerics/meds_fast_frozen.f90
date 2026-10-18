@@ -149,7 +149,7 @@ contains
       !      without a pack (docs/science/snow_biophysics.md §The snow store). ------------------------!
       call advance_snow_stage(biophys%snow, col_config%snow, max(-col_config%soil%z_node(1), tiny_num),    &
                               forc%abs_sw_ground, forc%abs_lw_ground, forc%snowfall, forc%rainfall, forc%air_temp,  &
-                              aero%ggnet, biophys%soil_e%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
+                              aero%ggnet, biophys%soil_energy%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
                               snow_st)
       frozen%snow = snow_st                       ! the stage's whole outcome, one record
 
@@ -334,7 +334,7 @@ contains
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- Phase of the evaporating surface, for the ice saturation branch                             !
       !      (docs/science/snow_biophysics.md eq. (1)). -------------------------------------------------!
-      hforc%ground_fliq        = biophys%soil_e%soil_fliq(1)
+      hforc%ground_fliq        = biophys%soil_energy%soil_fliq(1)
       !----- Temperature that VALUES the ground inflow: under a pack, the meltwater's; on bare ground,     !
       !      the effective liquid temperature of the rain + sub-threshold-snowfall mixture, both valued    !
       !      at the air temperature above the canopy (forc%air_temp), not at the canopy air's              !
@@ -392,16 +392,16 @@ contains
       frozen%hydrology%t_film_valuation = hforc%t_pond_inflow   ! one valuation for the boundary inflow AND the film
       if (snow_st%exists) frozen%hydrology%t_film_valuation = tsupercool_liq
       frozen%film%film_liquid_enthalpy = internal_energy_liquid(frozen%hydrology%t_film_valuation)
-      frozen%hydrology%t_bot           = biophys%soil_e%soil_temp(nsl)
+      frozen%hydrology%t_bot           = biophys%soil_energy%soil_temp(nsl)
       frozen%hydrology%w_surface1      = spac%water_soil(POND)
-      frozen%hydrology%w_surface_enth1 = spac%e_pond
+      frozen%hydrology%w_surface_energy1 = spac%e_pond
       frozen%hydrology%w_flux_frozen(1:nsl)   = 0.0_wp
       frozen%hydrology%w_flux_frozen(1:nsl-1) = spac%face(1:nsl-1) / (rho_h2o * dt_fast)
       allocate(frozen%hydrology%theta1(nsl))
       do k = 1_ik, nsl
          frozen%hydrology%theta1(k) = spac%water_soil(1_ik + k) / (rho_h2o * col_config%soil%dz(k))
       end do
-      frozen%hydrology%theta_rate(1:nsl) = (frozen%hydrology%theta1(1:nsl) - biophys%soil_w%theta(1:nsl)) / dt_fast
+      frozen%hydrology%theta_rate(1:nsl) = (frozen%hydrology%theta1(1:nsl) - biophys%soil_water%theta(1:nsl)) / dt_fast
 
       !----- PER-LAYER FACE CLOSURE: what each layer's water changed by, against the flows the            !
       !      soil energy will advect -- faces, root uptake, and at the top infiltration, exfiltration     !
@@ -416,7 +416,7 @@ contains
          if (k < nsl)    f_out = spac%face(k)
          if (k == nsl)   f_out = spac%drain
          if (k == 1_ik)  f_in  = spac%infil - spac%exfil - spac%evap
-         face_resid = face_resid + abs((frozen%hydrology%theta1(k) - biophys%soil_w%theta(k))              &
+         face_resid = face_resid + abs((frozen%hydrology%theta1(k) - biophys%soil_water%theta(k))              &
                                        * col_config%soil%dz(k) * rho_h2o - (f_in - f_out - sum(spac%uptake(k, 1:n))))
       end do
       budget%soil_face_mass%resid   = face_resid
@@ -431,7 +431,7 @@ contains
       !      nothing places its (zero) sink by its root profile. ---------------------------------------!
       frozen%roots%uptake = sum(spac%uptake(1:nsl, 1:n)) / dt_fast
       do k = 1_ik, nsl
-         u_liq_soil_k(k) = internal_energy_liquid(biophys%soil_e%soil_temp(k))
+         u_liq_soil_k(k) = internal_energy_liquid(biophys%soil_energy%soil_temp(k))
          frozen%roots%root_share(k) = sum(spac%uptake(k, 1:n))
          frozen%roots%root_heat(k)  = sum(spac%uptake(k, 1:n)) * u_liq_soil_k(k) / dt_fast
       end do
@@ -493,12 +493,12 @@ contains
       !----- Pack the prognostic state; plant water MASS is itself prognostic, so it is copied           !
       !      directly. ----------------------------------------------------------------------------------!
       y%cas_enthalpy = biophys%cas%can_enthalpy ; y%cas_shv = biophys%cas%can_shv ; y%cas_co2 = biophys%cas%can_co2
-      y%soil_energy(1:nsl) = biophys%soil_e%soil_energy(1:nsl)
-      y%theta(1:nsl)       = biophys%soil_w%theta(1:nsl)
+      y%soil_energy(1:nsl) = biophys%soil_energy%soil_energy(1:nsl)
+      y%theta(1:nsl)       = biophys%soil_water%theta(1:nsl)
       !----- The pond rides the state vector: the stages pass it through, and each scheme commits      !
       !      the network's end-of-step pond. ----------------------------------------------------------!
-      y%w_surface          = biophys%soil_w%w_surface
-      y%w_surface_enth     = biophys%soil_w%w_surface_enth
+      y%w_surface          = biophys%soil_water%w_surface
+      y%w_surface_energy     = biophys%soil_water%w_surface_energy
       y%leaf_water_mass(1:n) = biophys%leaf_water_mass(1:n)
       y%wood_water_mass(1:n) = biophys%wood_water_mass(1:n)
    end subroutine build_column_frozen
@@ -556,12 +556,12 @@ contains
       end do
       spac%rain       = hforc%precip_ground
       spac%t_rain     = hforc%t_pond_inflow
-      spac%t_soil(1:nsl) = biophys%soil_e%soil_temp(1:nsl)
+      spac%t_soil(1:nsl) = biophys%soil_energy%soil_temp(1:nsl)
       spac%w_pond_max = col_config%soil_water_opts%w_pond_max
       spac%rtol       = col_config%soil_water_opts%rtol
       spac%atol       = col_config%soil_water_opts%atol
-      call spac_set_state(spac, col_config%soil, col_config%hydraulics_table, biophys%soil_w%theta(1:nsl),      &
-                          biophys%soil_w%w_surface, biophys%soil_w%w_surface_enth,                              &
+      call spac_set_state(spac, col_config%soil, col_config%hydraulics_table, biophys%soil_water%theta(1:nsl),      &
+                          biophys%soil_water%w_surface, biophys%soil_water%w_surface_energy,                              &
                           biophys%leaf_water_mass(1:n), biophys%wood_water_mass(1:n))
       call spac_advance(spac, col_config%soil, col_config%soil_water_opts, hforc, col_config%hydraulics_table,    &
                         dt_fast)

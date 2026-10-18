@@ -5,7 +5,7 @@
 ! ORCHESTRATION only (docs/science/order_of_processes.md §3): for each patch it gathers    !
 ! the demographic cohort slice into the column_cohort_t buffer, assembles a                !
 ! patch_biophys_t working bundle from the state-hub-owned per-patch reservoirs             !
-! (cas/soil_e/soil_w), runs n_fast_per_slow sub-steps of the per-patch kernel              !
+! (cas/soil_energy/soil_water), runs n_fast_per_slow sub-steps of the per-patch kernel              !
 ! column_fast_step, and writes the evolved reservoirs back to the site. The static         !
 ! column_config_t + base met arrive via fast_context_t (the caller builds them -- no model !
 ! parameters are hard-coded here); per-cohort                                              !
@@ -203,7 +203,7 @@ contains
    end subroutine build_fast_context
 
    !----- Seed every patch's fast reservoirs to a horizontally-uniform equilibrium, and start the  !
-   !      patch's cohorts in equilibrium with it, as a recruit is born (cohort_birth_state): at the !
+   !      patch's cohorts in equilibrium with it, as a recruit is born (patch_physical_state): at the !
    !      canopy-air temperature, holding the water their tissues hold at the top soil layer's     !
    !      potential. Called once after the community is built (production) or before a fast-loop  !
    !      test. ----------------------------------------------------------------------------------!
@@ -214,9 +214,9 @@ contains
       real(wp)    :: psi
       nsl = ctx%col_config%soil%n_active
       do ip = 1_ik, site%patch%n
-         associate (cas => site%patch%cas(ip), se => site%patch%soil_e(ip), sw => site%patch%soil_w(ip))
+         associate (cas => site%patch%cas(ip), se => site%patch%soil_energy(ip), sw => site%patch%soil_water(ip))
             sw%theta(1:nsl)  = ctx%theta_init(1:nsl) ; sw%w_surface = 0.0_wp
-            sw%w_surface_enth = 0.0_wp        ! dry pond -> zero enthalpy
+            sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
             do k = 1_ik, nsl
                se%soil_energy(k) = temp_to_internal_energy(ctx%col_config%soil_thermal%soil_dry_heat_capacity(k),    &
                                    ctx%theta_init(k) * rho_h2o, ctx%soil_temp_init, 1.0_wp)
@@ -528,8 +528,8 @@ contains
          !      reseeding). Capacity was ensured above; every field below is unconditionally        !
          !      (re)assigned from the site, so no alloc_patch_biophys seed call is needed here. -----!
          biophys%cas    = site%patch%cas(ip)
-         biophys%soil_e = site%patch%soil_e(ip)
-         biophys%soil_w = site%patch%soil_w(ip)
+         biophys%soil_energy = site%patch%soil_energy(ip)
+         biophys%soil_water = site%patch%soil_water(ip)
          biophys%snow   = site%patch%snow(ip)
          biophys%adapt_dt_last = site%patch%adapt_dt_last(ip)   ! per-patch, not loop-carried
          !----- FROZEN slow soil-carbon pool: a read-only snapshot for TODAY, held constant across  !
@@ -600,7 +600,7 @@ contains
             !      apply_rt_forcing). ----------------------------------------------------------------!
             if (do_forcing) call apply_rt_forcing(forc, ncoh, col_cohort%pft, col_cohort%lai, col_cohort%wai,  &
                                  col_cohort%height, biophys%leaf_temp, biophys%wood_temp,                      &
-                                 biophys%soil_e%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
+                                 biophys%soil_energy%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
                                  ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, cfg%leaf_absorptance)
             call fill_aenv(aenv, biophys, met_top, z_top)
             !----- Slice to 1:ncoh (not the whole, possibly capacity-oversized backing array): the    !
@@ -697,10 +697,10 @@ contains
                                    aero%ustar, aero%ggnet, aero%rough, aero%displace,                &
                                    biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,   &
                                    gpp_patch, budget%nee_last, npp_patch,                            &
-                                   biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
+                                   biophys%soil_energy%soil_temp(1), budget%whole_energy%resid,           &
                                    budget%whole_water%resid, met_top%wind, met_top%tair_k, z_top,    &
                                    forc%sw_in_vis, forc%sw_in_nir, forc%sw_up_vis, forc%sw_up_nir,   &
-                                   forc%lw_up, biophys%soil_w%w_surface)
+                                   forc%lw_up, biophys%soil_water%w_surface)
             end if
             !----- FAST (sub-daily) output staging, by the patch's own slot (and the per-cohort slabs by  !
             !      the site's cohort slot), both DISJOINT across patches, so no reduction is needed here.  !
@@ -708,8 +708,8 @@ contains
             if (do_fast) then
                out_bufs%fast_patch(:, ip, isub) = prow
                kb = (ip - 1_ik) * nl
-               out_bufs%fast_soil_temp_patch(kb+1_ik:kb+nl, isub)  = biophys%soil_e%soil_temp(1:nl)
-               out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub) = biophys%soil_w%theta(1:nl)
+               out_bufs%fast_soil_temp_patch(kb+1_ik:kb+nl, isub)  = biophys%soil_energy%soil_temp(1:nl)
+               out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub) = biophys%soil_water%theta(1:nl)
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
                   out_bufs%fast_coh_ltemp(i,isub)  = biophys%leaf_temp(j)
@@ -756,8 +756,8 @@ contains
 
          !----- Write the evolved state back to the site: per-patch reservoirs + per-cohort water. !
          site%patch%cas(ip)    = biophys%cas
-         site%patch%soil_e(ip) = biophys%soil_e
-         site%patch%soil_w(ip) = biophys%soil_w
+         site%patch%soil_energy(ip) = biophys%soil_energy
+         site%patch%soil_water(ip) = biophys%soil_water
          site%patch%snow(ip)   = biophys%snow
          site%patch%adapt_dt_last(ip) = biophys%adapt_dt_last
          do j = 1_ik, ncoh
@@ -901,7 +901,7 @@ contains
       end if
 
       write(unit,'(a,",",i0,7(",",es13.6))') trim(time_to_string(t_sub)), ip,   &
-            sw_in, biophys%cas%can_temp, gpp_patch, le_flux, biophys%soil_e%soil_temp(1), leaf_temp_mean, wood_temp_mean
+            sw_in, biophys%cas%can_temp, gpp_patch, le_flux, biophys%soil_energy%soil_temp(1), leaf_temp_mean, wood_temp_mean
       flush(unit)
    end subroutine write_fast_probe
 
@@ -1103,7 +1103,7 @@ contains
       !      that could leave `theta_atm` at its 298.15 K default. ------------------------------!
       call set_aero_env_atm(aenv, met%tair_k, met%qair, met%co2)
       call set_aero_env_canopy(aenv, biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,           &
-                               biophys%soil_e%soil_temp(1))
+                               biophys%soil_energy%soil_temp(1))
    end subroutine fill_aenv
 
    !=======================================================================================!

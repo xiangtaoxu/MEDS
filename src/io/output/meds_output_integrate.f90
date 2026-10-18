@@ -556,28 +556,28 @@ contains
       select case (src)
       case (FLD_L_SOIL_TEMP)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_e(ip)%soil_temp(1:nlayer)
+            col(1:nlayer, ip) = site%patch%soil_energy(ip)%soil_temp(1:nlayer)
          end do
       case (FLD_L_SOIL_WATER)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_w(ip)%theta(1:nlayer)
+            col(1:nlayer, ip) = site%patch%soil_water(ip)%theta(1:nlayer)
          end do
       case (FLD_L_SOIL_FLIQ)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_e(ip)%soil_fliq(1:nlayer)
+            col(1:nlayer, ip) = site%patch%soil_energy(ip)%soil_fliq(1:nlayer)
          end do
       case (FLD_L_SOIL_PSI)
          if (.not. dp%soil_ready) then ; ok = .false. ; return ; end if
          do ip = 1_ik, np
             col(1:nlayer, ip) = soil_matric_potential(dp%retention,                            &
-                                   site%patch%soil_w(ip)%theta(1:nlayer),                      &
+                                   site%patch%soil_water(ip)%theta(1:nlayer),                      &
                                    dp%theta_sat(1:nlayer), dp%theta_res(1:nlayer),             &
                                    dp%par_a(1:nlayer), dp%par_n(1:nlayer))
          end do
       case (FLD_L_SOIL_WETNESS)
          if (.not. dp%soil_ready) then ; ok = .false. ; return ; end if
          do ip = 1_ik, np
-            col(1:nlayer, ip) = soil_wetness(site%patch%soil_w(ip)%theta(1:nlayer),            &
+            col(1:nlayer, ip) = soil_wetness(site%patch%soil_water(ip)%theta(1:nlayer),            &
                                              dp%theta_res(1:nlayer), dp%theta_sat(1:nlayer))
          end do
       case default ; ok = .false.

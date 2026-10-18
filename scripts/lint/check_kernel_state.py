@@ -28,7 +28,7 @@ FORBIDDEN_TYPES = ("site_t", "cohort_block", "patch_block")
 FORBIDDEN_MODULES = ("meds_site_state_vars", "meds_cohort_state_vars", "meds_diag_vars")
 PATCH_MODULE = "meds_patch_state_vars"
 ALLOWED = {"cas_state_t", "snow_column_t", "soil_water_column_t", "soil_energy_column_t", "soil_carbon_t",
-           "xi_accum_t", "litter_input_t", "blend_cas", "blend_snow", "blend_soil_w", "blend_soil_e",
+           "xi_accum_t", "litter_input_t", "blend_cas", "blend_snow", "blend_soil_water", "blend_soil_energy",
            "blend_soil_carbon", "blend_xi_accum", "blend_litter_input", "cas_set_depth"}
 USE = re.compile(r"^\s*use\s*(?:,\s*\w+\s*::\s*|::\s*|\s)\s*(\w+)\s*(,\s*only\s*:(.*))?$", re.I)
 

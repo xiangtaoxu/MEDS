@@ -43,9 +43,9 @@ program test_init_soil_state
    call init_fast_reservoirs(site, ctx)
    nsl = ctx%col_config%soil%n_active
    do ip = 1_ik, site%patch%n
-      call check(all(abs(site%patch%soil_e(ip)%soil_temp(1:nsl) - 298.65_wp) < 1.0e-12_wp),         &
+      call check(all(abs(site%patch%soil_energy(ip)%soil_temp(1:nsl) - 298.65_wp) < 1.0e-12_wp),         &
                  'a soil layer did not start at [init].soil_temp')
-      call check(all(abs(site%patch%soil_w(ip)%theta(1:nsl) - 0.25_wp) < 1.0e-12_wp),              &
+      call check(all(abs(site%patch%soil_water(ip)%theta(1:nsl) - 0.25_wp) < 1.0e-12_wp),              &
                  'a soil layer did not start at [init].soil_theta')
    end do
 
@@ -76,7 +76,7 @@ program test_init_soil_state
    call init_bare_ground(site, cfg, 3_ik)
    call finalize_init(site)
    call init_fast_reservoirs(site, ctx)
-   call check(all(site%patch%soil_w(2)%theta(1:n) == ctx%col_config%soil%theta_fc(1:n)),                    &
+   call check(all(site%patch%soil_water(2)%theta(1:n) == ctx%col_config%soil%theta_fc(1:n)),                    &
               'a patch''s soil did not start at field capacity')
 
    !=== 4. Bare ground is empty by default; nbg_init_density seeds each patch with each PFT. ======!

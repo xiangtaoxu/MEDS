@@ -74,7 +74,7 @@ program test_fast_loop
    call init_fast_reservoirs(site, ctx)
 
    t_cas0    = site%patch%cas(1)%can_temp
-   theta0_1  = site%patch%soil_w(1)%theta(1)
+   theta0_1  = site%patch%soil_water(1)%theta(1)
    !----- init_fast_reservoirs starts the cohort in its patch's state: holding the water its tissues !
    !      hold at the top soil layer's potential, so the fast loop's first touch reads a real store,  !
    !      not a sentinel to seed. --------------------------------------------------------------------!
@@ -84,7 +84,7 @@ program test_fast_loop
    !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
    call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
    t_cas1    = site%patch%cas(1)%can_temp
-   theta1_1  = site%patch%soil_w(1)%theta(1)
+   theta1_1  = site%patch%soil_water(1)%theta(1)
    mass1_leaf = site%cohort%leaf_water_mass(1)       ! lazy-init seeded THIS call, then evolved once
 
    call check(n_budget_fail == 0_ik, 'whole-column budgets closed on every patch (n_fail == 0)')
@@ -279,7 +279,7 @@ program test_fast_loop
                kb = (ip - 1_ik) * n_soil_layer_max
                own = own .and. ob%fast_patch(PD_CAS_TEMP, ip, nsub) == site%patch%cas(ip)%can_temp     &
                          .and. all(ob%fast_soil_temp_patch(kb+1_ik:kb+na, nsub)                        &
-                                   == site%patch%soil_e(ip)%soil_temp(1:na))
+                                   == site%patch%soil_energy(ip)%soil_temp(1:na))
                site_cas = site_cas + site%patch%area(ip) * ob%fast_patch(PD_CAS_TEMP, ip, nsub)
                !----- The skin temperature is the black-body temperature of the longwave up        !
                !      (docs/science/diagnostics.md §4, The skin temperature). ---------------------!

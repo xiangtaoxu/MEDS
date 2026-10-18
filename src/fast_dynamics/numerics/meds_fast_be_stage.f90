@@ -166,7 +166,7 @@ contains
       !      end-of-step pond is committed once per dt_fast in column_fast_step_ark, and the pond      !
       !      is outside the error norm. ---------------------------------------------------------------!
       y_out%w_surface      = y%w_surface
-      y_out%w_surface_enth = y%w_surface_enth
+      y_out%w_surface_energy = y%w_surface_energy
 
       !----- plant water MASS PASSED THROUGH (advanced by advance_plant_water, not here). ----!
       y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
