@@ -113,8 +113,28 @@ machine precision — the invariant that makes the coupled surface model trustwo
 | Plant water | `patch_biophys_t` | `leaf_water_mass`, `wood_water_mass` [kg plant⁻¹] | leaf and wood ψ |
 | Canopy surface water | `patch_biophys_t` | `leaf_surf_water`, `wood_surf_water` [kg m⁻²] | — |
 
-Area-weighted `blend_*` mixers conserve these intensively when patches fuse or a disturbance gap is
-carved (temp/fliq are re-diagnosed, never blended).
+### Mixing two patches
+
+When two patches fuse, or a disturbance carves a gap from its donors, each store of the new patch is
+mixed from the two by a `blend_*` function (`meds_patch_state_vars`). The weights are the area
+fractions $`w_i = a_i/(a_1+a_2)`$:
+
+- **Per ground area: area-weighted.** Soil water and soil energy per layer, the pond's mass and
+  energy, the snow's mass and energy, the soil-carbon pools, and the day's accumulators (`xi_accum`,
+  `litter_in`) are all amounts per m² of ground, so $`w_1 v_1 + w_2 v_2`$ keeps the site total.
+- **The canopy air: weighted by air mass.** Its enthalpy, humidity and CO₂ are per kg of air, and a
+  patch holds $`\rho\,a\,d`$ of air over depth $d$. The merged depth is area-weighted (the merged volume
+  over the merged ground), so conserving the content gives
+
+  ```math
+  v = \frac{a_1 d_1 v_1 + a_2 d_2 v_2}{a_1 d_1 + a_2 d_2} \qquad(1)
+  ```
+
+  where $\rho$, uniform over the site, cancels. Weighting on area alone would drop the covariance
+  term $`w_1 w_2 (d_1-d_2)(v_1-v_2)`$: fusing a tall patch with a gap would shift the canopy air's
+  energy, humidity and CO₂ by the same relative error, of order 10⁴ J per fusion.
+- **Diagnosed fields** (temperatures, liquid fractions) are mixed on the same weights only so that a
+  read before the caller re-diagnoses them from the blended energy is not far off.
 
 ## References
 - ED2 `../ED2/ED/src/dynamics/`: `rk4_derivs.f90`, `canopy_struct_dynamics.f90`, `soil_respiration.f90`,

@@ -792,6 +792,16 @@ each file's own alignment.
   (`leaf_hcap_per_dt` in `meds_fast_frozen`). Heat capacity depends on tissue water, which both loops
   write in several places, so it is not stored. Once temperature is diagnosed from energy in both
   loops, there should be one heat-capacity formula, called by both.
+- **The recruit bank in carbon (owner, 2026-10-18).** `recruit_pool(pft, patch)` holds recruits per m²
+  of patch ground. Each is valued at its PFT's `carbon_min`, the carbon of a plant at
+  `min_cohort_height`: the daily credit is the reproduction carbon times the recruit efficiency over
+  `carbon_min`, plus the seed rain, and a cohort of density `recruit_pool` is spawned once the pool
+  reaches `min_recruit_size`. The slow ledger counts the pool as `recruit_pool * carbon_min`. Holding
+  carbon instead (`recruit_carbon`, kgC m⁻²) makes the bank a carbon store like every other, counted
+  by the ledger as it is, and keeps it right if a recruit's carbon ever varies (a new height
+  allometry, a recruit size set by light); the threshold and the new cohort's density divide by
+  `carbon_min` once, at spawning. It changes results at round-off and the restart variable (an old
+  file's pool converts at `carbon_min`), so it is its own change.
 - **The TOML site file** (the location, ground and starting state split from the model settings): the
   owner will revisit.
 - **"column" elsewhere.** The fast loop's `column_cohort_t`, `meds_column_view`, `build_column_frozen`
@@ -889,3 +899,15 @@ line with `;`, so the four state files have none: each statement is on its own l
 comment stays with the last statement it followed. The rest of `src/` (about 1,100 lines in 70 files)
 and a lint that keeps `;` out follow in their own change. A tissue's heat capacity stays computed on
 demand; where it lives is part of the tissue-energy plan (§9). Bit-identical.
+
+**Patch-file review (2026-10-18).** The header says why the patch block keeps an array of each store
+rather than an array per field: a store is used whole and one patch at a time, and nothing hot reads a
+field across patches. The annotations are one line each; the mixing rules, with the canopy air's
+air-mass weights, are in `docs/science/column_biophysics.md` ("Mixing two patches", eq. (1)), the
+per-patch warm start and the pond's energy in `numerical_scheme.md`. `soil_w`, `soil_e` and their
+blends are `soil_water`, `soil_energy`, `blend_soil_water`, `blend_soil_energy` everywhere, the fast
+loop's working column included. The pond's heat is `w_surface_energy`, after the code's convention that
+a store's content is `*_energy` and the heat a flow carries is `*_enth`; the restart file keeps its
+variable names. `cohort_birth_state` is `patch_physical_state`. The recruit bank stays in plants per m²
+for now (§9). Bit-identical.
+

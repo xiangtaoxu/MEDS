@@ -160,7 +160,9 @@ how far the group drifted apart on the last stretch.
   they dilute it slightly — accepted deliberately: one norm with no per-scheme opt-outs means no
   scheme can leave a state it *integrates* unmeasured.
 - Warm-started: the last accepted sub-step size carries over to the next `dt_fast`, which keeps the
-  rejection rate under 20% (about 31% when every `dt_fast` starts cold).
+  rejection rate under 20% (about 31% when every `dt_fast` starts cold). Each patch keeps its own
+  (`adapt_dt_last`), so a patch's first sub-step depends neither on the patch run before it nor,
+  with the patch axis threaded, on the thread schedule.
 
 In symbols, with $h$ the sub-step, $f$ the right-hand side of the stiff block and $`\gamma = 1-1/\sqrt{2}`$,
 a step is two backward-Euler solves, the second from the base $`y_n + (Y_2-y_n)(1-\gamma)/\gamma`$:
@@ -393,6 +395,8 @@ pair: rain in at its own temperature, snowmelt in at the pack's, infiltration ou
 temperature, exfiltration from the top layer in at that layer's temperature, and runoff out at the
 pond's. A pond with no thermal state would shed the enthalpy of every kilogram crossing into it,
 and that energy would leave the column ledger while the water sat on the surface still holding it.
+The pond's energy (`w_surface_energy`, J m⁻²) is stored like the snow's, and its temperature and
+liquid fraction are read off it the same way, so a pond freezes and thaws with no code of its own.
 
 **A thin tissue closes its own balance.** A leaf or wood store's relaxation closes for any coupling,
 however small, since it is written on the start-of-step imbalance with no division by the coupling;
