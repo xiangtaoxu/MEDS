@@ -255,6 +255,11 @@ loader refuses a temperature outside 233–333 K and a water content outside
 (`[soil].theta_res`, `theta_sat`]. A column from the soil maps has a texture per layer, so
 each layer starts at its own field capacity instead, and `soil_theta` is refused.
 
+**A new cohort starts in its patch's state**, at setup and at every recruitment: at the canopy-air
+temperature, holding the water its tissues hold at the potential of the patch's top soil layer. At
+setup the fast loop has not seeded the patches yet, so a cohort starts at `soil_temp` and the starting
+soil water's potential, and is re-seeded from its patch once the patch is seeded.
+
 ## Output
 
 Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:

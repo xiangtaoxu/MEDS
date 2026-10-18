@@ -13,13 +13,14 @@
 !==========================================================================================!
 module meds_soil_column_config
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : n_soil_layer_max
-   use meds_water_retention,  only : soil_theta_from_psi, SOIL_RETENTION_VG
+   use meds_constants,        only : n_soil_layer_max, grav_head
+   use meds_water_retention,  only : soil_theta_from_psi, soil_psi_from_theta, SOIL_RETENTION_VG
    implicit none
    private
 
    public :: soil_column_config_t, soil_texture_layers_t, soil_params_t, soil_thermal_params_t
    public :: soil_column_layers, soil_column_texture, soil_column_params
+   public :: soil_column_start_theta, top_soil_psi
    public :: SOIL_LAYER_TEMPLATE, soil_layer_grid
    public :: build_soil_hydr_params, build_soil_therm_params
    public :: build_soil_hydr_params_layers, build_soil_therm_params_layers
@@ -168,6 +169,34 @@ contains
       if (present(therm)) call build_soil_therm_params_layers(n_layer, tex%k_solid, tex%k_dry,        &
                                                               tex%dry_cvol, therm)
    end subroutine soil_column_params
+
+   !---------------------------------------------------------------------------------------!
+   ! The water each layer starts the run with [m3/m3]: [init].soil_theta, or each layer's   !
+   ! field capacity for a column with a texture per layer (the soil maps).                  !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_column_start_theta(sc, soil, init_soil_theta, theta)
+      type(soil_column_config_t), intent(in)  :: sc
+      type(soil_params_t),        intent(in)  :: soil
+      real(wp),                   intent(in)  :: init_soil_theta   !< [m3/m3] [init].soil_theta
+      real(wp),                   intent(out) :: theta(n_soil_layer_max)
+      if (sc%n_layer_values > 0_ik) then
+         theta = soil%theta_fc
+      else
+         theta = init_soil_theta
+      end if
+   end subroutine soil_column_start_theta
+
+   !---------------------------------------------------------------------------------------!
+   ! The water potential [MPa] of the column's top layer at water content `theta_top`: the  !
+   ! predawn potential of a plant that has relaxed to the soil overnight. It seeds the      !
+   ! stomatal predawn potential and a new cohort's tissue water.                           !
+   !---------------------------------------------------------------------------------------!
+   pure real(wp) function top_soil_psi(soil, theta_top) result(psi)
+      type(soil_params_t), intent(in) :: soil
+      real(wp),            intent(in) :: theta_top   !< [m3/m3]
+      psi = grav_head * soil_psi_from_theta(soil%retention, theta_top, soil%theta_sat(1), soil%theta_res(1), &
+                                            soil%curve_par_a(1), soil%curve_par_n(1))
+   end function top_soil_psi
 
    !=======================================================================================!
    !  Per-column soil PARAMETER assemblers. Both are `pure` -- they take plain scalar      !

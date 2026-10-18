@@ -23,9 +23,10 @@
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
-   use meds_site_state_types,   only : site_t, carbon_flux_block, PSI_INIT
+   use meds_site_state_types,   only : site_t, carbon_flux_block, patch_birth_state
    use meds_column_state_types, only : cas_set_depth
-   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers
+   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
+                                       soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_site_state_types,   only : init_cohort, set_cohort_size_from_carbon
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
@@ -190,21 +191,25 @@ contains
 
    !----- Every water amount a slow step moves into or out of the tissue is declared, so the       !
    !       ledger's water residual is zero across each: (a) a recruitment, whose recruits are born   !
-   !       holding their water at PSI_INIT, drawn from outside like their carbon; (b) a canopy that  !
-   !       snaps to bare, whose leaf water goes to the ground with the leaves; (c) a store left      !
-   !       above its capacity, whose excess the settle before the fast loop sheds to the ground.     !
+   !       holding their patch's top-soil potential, drawn from outside like their carbon; (b) a     !
+   !       canopy that snaps to bare, whose leaf water goes to the ground with the leaves; (c) a      !
+   !       store left above its capacity, whose excess the settle before the fast loop sheds to the   !
+   !       ground.                                                                                   !
    subroutine check_tissue_water_ledger()
       type(meds_config_t) :: c
       type(site_t)        :: st
       type(slow_ledger_t) :: lg
       type(water_curve_t) :: leaf_curve, wood_curve
-      real(wp) :: shed0, excess, n_new, tol
+      real(wp) :: shed0, excess, n_new, tol, theta_start(n_soil_layer_max)
       integer(ik) :: p, ph(3)
+      type(soil_params_t) :: sp
 
       c = build_test_config()
       tol = 1.0e-12_wp
 
-      !----- (a) A recruitment: water in, declared, and the recruit's leaves at PSI_INIT. ----------!
+      !----- (a) A recruitment: water in, declared, and the recruit born in its patch's state -- here  !
+      !      a patch the fast loop has not seeded, so the run's starting state (check_birth_temp      !
+      !      covers a seeded one). -------------------------------------------------------------------!
       call init_bare_ground(st, c, 1_ik)
       st%patch%recruit_pool(:, 1) = 0.0_wp
       st%patch%recruit_pool(2, 1) = 5.0_wp * c%min_recruit_size
@@ -217,9 +222,13 @@ contains
       call check(abs(lg%resid_sum(SLOW_PHASE_RECRUIT)%water) <= tol * lg%decl_gross(SLOW_PHASE_RECRUIT)%water, &
                  'tissue water (a): the recruit phase''s water residual is zero')
       call pft_tissue_curves(c%hydraulics, c%pft, 2_ik, leaf_curve, wood_curve)
+      call soil_column_params(c%soil_column, sp)
+      call soil_column_start_theta(c%soil_column, sp, c%init_soil_theta, theta_start)
       call check_close(psi_from_water_content(st%cohort%leaf_water_mass(1), leaf_curve,            &
-                       st%cohort%leaf_carbon(1)), PSI_INIT, 1.0e-9_wp,                             &
-                       'tissue water (a): a recruit''s leaves are born at PSI_INIT')
+                       st%cohort%leaf_carbon(1)), top_soil_psi(sp, theta_start(1)), 1.0e-9_wp,     &
+                       'tissue water (a): a recruit''s leaves are born at the starting top-soil potential')
+      call check_close(st%cohort%leaf_temp(1), c%init_soil_temp, 1.0e-12_wp,                       &
+                       'tissue water (a): a recruit is born at the starting temperature')
 
       !----- (b) A dormant canopy sheds every leaf in one step, its water with it. ------------------!
       c%fast_biophysics_on = .true.
@@ -727,16 +736,35 @@ contains
       call check(heat_after < heat_before, 'cull: the tissue heat store falls when a cohort goes')
    end subroutine check_cull
 
+   !----- A cohort is born in its patch's state (patch_birth_state): at the canopy-air temperature,  !
+   !      its tissues at the top soil layer's potential. A patch not seeded yet gives the run's       !
+   !      starting state from [init]. ------------------------------------------------------------------!
    subroutine check_birth_temp()
       integer(ik) :: m
+      real(wp)    :: t_birth, psi_birth, t_save, theta_start(n_soil_layer_max)
+      type(water_curve_t) :: leaf_curve, wood_curve
       m = site%cohort%n + 1_ik
-      site%patch%cas(1)%can_temp = 268.0_wp        ! a cold patch: LEAF_TEMP_INIT would be 20 K out
-      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics, birth_temp=268.0_wp)
+      t_save = site%patch%cas(1)%can_temp
+      site%patch%cas(1)%can_temp = 268.0_wp        ! a cold, seeded patch
+      call patch_birth_state(site, 1_ik, cfg, soil, t_birth, psi_birth)
+      call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
+      call check_close(psi_birth, top_soil_psi(soil, site%patch%soil_w(1)%theta(1)), 1.0e-12_wp,   &
+                       'birth: a seeded patch gives its top soil layer''s potential')
+      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics, t_birth, psi_birth)
       call check_close(site%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
       call check_close(site%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
-      !----- and the default is the constant, for a setup call with no environment yet. ----------!
-      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics)
-      call check(site%cohort%leaf_temp(m) > 280.0_wp, 'birth: absent a patch temperature, the constant stands')
+      call pft_tissue_curves(cfg%hydraulics, cfg%pft, 1_ik, leaf_curve, wood_curve)
+      call check_close(psi_from_water_content(site%cohort%leaf_water_mass(m), leaf_curve,                &
+                       site%cohort%leaf_carbon(m)), psi_birth, 1.0e-9_wp,                               &
+                       'birth: the leaves hold the water of that potential')
+      !----- A patch not seeded yet (its canopy air at the type's 0 K) gives the starting state. ----!
+      site%patch%cas(1)%can_temp = 0.0_wp
+      call patch_birth_state(site, 1_ik, cfg, soil, t_birth, psi_birth)
+      call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta_start)
+      call check_close(t_birth, cfg%init_soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
+      call check_close(psi_birth, top_soil_psi(soil, theta_start(1)), 1.0e-12_wp,                       &
+                       'birth: unseeded, the starting soil water''s potential')
+      site%patch%cas(1)%can_temp = t_save
    end subroutine check_birth_temp
 
    !----- Assert a perturbation moves the named currency by `amount` (and moves it at all). ----!

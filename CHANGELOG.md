@@ -14,6 +14,57 @@ before and after.
 
 ## [Unreleased]
 
+The soil column's parameters become configuration, the ground becomes one block of the main config,
+and a new cohort starts in its patch's state instead of at two constants (#PR).
+
+**Upgrading from v0.3.5:**
+- **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
+  key stops the run, naming its new one:
+  - the `[soil_column]` keys (`depth`, `layer_bottoms`, `retention`, the hydraulic texture, `psi_fc`
+    and the thermal texture) move to `[soil]` under the same names;
+  - `[soil].bottom_bc` is now `[soil].water_bottom_bc`, and `[energy].bottom_bc` is
+    `[soil].thermal_bottom_bc`;
+  - `[energy].deep_temp` and `deep_depth` move to `[soil]`;
+  - `[soil].rtol` and `atol` are now `[fast].water_rtol` and `water_atol`, `[energy].atol` is
+    `[fast].soil_energy_budget_atol`, and `[energy].debug_error` is `[fast].debug_error`;
+  - `[soil].intercept_alpha` and `intercept_k` move to `[fast]`, beside `canopy_water_on`.
+
+  There are no `[soil_column]` and `[energy]` blocks any more. With the soil maps, `[soil]`'s column
+  keys, `water_bottom_bc`, `deep_temp` and `deep_depth` are refused, as their old spellings were.
+
+### Changed
+
+- **A new cohort starts in its patch's state** (#PR). A recruit, a cohort made at setup, and a
+  restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
+  temperature, holding the water their tissues hold at the potential of the patch's top soil layer
+  (`patch_birth_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
+  but a recruit started at 288.15 K, and every cohort, recruits included, at −0.1 MPa: a census run
+  starting in an Ithaca January began with every tree about 20 K warmer than its air, and a recruit in
+  dry soil was born wetter than its soil. Until the fast loop seeds a patch, the run's `[init]` state
+  stands in, and `init_fast_reservoirs` re-seeds the setup cohorts from their patch. In a two-year
+  census run of the reference config with the fast loop on, site GPP, LAI and AGB growth move by less
+  than 0.01 %, nplant by +0.09 % and the mortality rate by +0.7 %; the water the recruits draw from
+  outside the model about halves. Every slow-ledger phase still closes.
+- **The soil column's parameters are configuration** (#PR). `state/column/meds_column_params.f90` is
+  dissolved: the soil parameter bundles (`soil_params_t`, `soil_thermal_params_t`), their builders,
+  the layer template and `soil_layer_grid` join the soil-column block and `soil_column_params` (from
+  `meds_config`) in a new config leaf, `src/config/meds_soil_column_config.f90`; the array ceilings
+  `n_soil_layer_max` and `n_snow_layer_max` and the tissue heat constants go to `meds_constants`.
+  `meds_config` links `meds_shared` only, so config reads nothing from state. Outputs are unchanged
+  bit for bit.
+- **The ground is one block of the main config** (#PR), as listed under Upgrading. The Fortran option
+  types are unchanged: they stay grouped by the solver that reads them. Outputs are unchanged bit for
+  bit.
+
+### Removed
+
+- **`TISSUE_HCAP_MIN`** (#PR), the floor of 20 J K⁻¹ per m² of tissue under a tissue's dry heat
+  capacity. Per unit of tissue area it never binds: for leaves only above an SLA of 320 m² kgC⁻¹, and
+  a 1 cm sapling's dry wood holds about 150 J K⁻¹ against a floor of 0.2. Outputs are unchanged bit
+  for bit; `docs/science/vegetation_energy_dynamics.md` eq. (8) loses the floor.
+- **`LEAF_TEMP_INIT` and `PSI_INIT`** (#PR), the constant birth temperature and potential (see
+  Changed).
+
 ## [0.3.5] — 2026-10-17
 
 A **region production and open-issue sweep** release. Region runs become production runs: a cell

@@ -27,7 +27,6 @@ program test_column_dynamics
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
-   use meds_site_state_types, only : PSI_INIT
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config, &
                                         fast_workspace_t
@@ -51,6 +50,7 @@ program test_column_dynamics
    !----- Seed moisture + rain-pulse rate, VARIABLES so RUN 7 can drive the column to saturation.  !
    !      Initialized to the values RUNS 1-6 run on. ----------------------------------------------!
    real(wp) :: theta_seed = theta0, rain_pulse = 1.5e-4_wp
+   real(wp), parameter :: PSI_FIXTURE = -0.1_wp   !< [MPa] the fixture tissues' starting potential, a mild tension
    real(wp) :: pond_peak, theta_peak_col
    !----- RUN 8 (snow): seed mass for the pack (0 = no pack, the default for RUNS 1-7) plus the  !
    !      diagnostics integrate_day fills while it is on. ---------------------------------------!
@@ -545,12 +545,12 @@ contains
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
       !----- alloc_patch_biophys starts leaf_water_mass/wood_water_mass at a scratch 0, which the    !
-      !      production gather overwrites from the cohort block -- give them the water a cohort is   !
-      !      born with, water_content(PSI_INIT,...) (init_cohort), or psi_from_water_content would  !
+      !      production gather overwrites from the cohort block -- give them a physical store at a  !
+      !      mild tension, water_content(PSI_FIXTURE,...), or psi_from_water_content would          !
       !      diagnose an unphysical psi from an empty pool. -----------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_curve, &
+      biophys%leaf_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%leaf_curve, &
             col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_curve, &
+      biophys%wood_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%shed_water_rate = shed_seed

@@ -12,7 +12,9 @@ module meds_init
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_allometry,  only : height_to_dbh
    use meds_site_state_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
-                                          assign_cohort_id, assign_patch_id, init_cohort
+                                          assign_cohort_id, assign_patch_id, init_cohort,     &
+                                          patch_birth_state
+   use meds_soil_column_config,    only : soil_params_t, soil_column_params
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
                                                split_cohorts
    use meds_demography_patch_fusefiss,  only : sort_patches, new_fuse_patches, terminate_patches
@@ -84,9 +86,15 @@ contains
       integer(ik),         intent(in)    :: ip, ipft
       real(wp),            intent(in)    :: nplant, dbh
       integer(ik) :: m
+      type(soil_params_t) :: soil
+      real(wp)    :: t_birth, psi_birth
       call cohort_ensure_capacity(site%cohort, site%cohort%n + 1_ik)
       m = site%cohort%n + 1_ik
-      call init_cohort(site%cohort, m, cfg%pft, ipft, ip, nplant, dbh, cfg%hydraulics)
+      !----- Born in its patch's state (patch_birth_state); at setup the patch is not seeded yet, so  !
+      !      that is the run's starting state, and init_fast_reservoirs re-seeds it from the patch. -!
+      call soil_column_params(cfg%soil_column, soil)
+      call patch_birth_state(site, ip, cfg, soil, t_birth, psi_birth)
+      call init_cohort(site%cohort, m, cfg%pft, ipft, ip, nplant, dbh, cfg%hydraulics, t_birth, psi_birth)
       call assign_cohort_id(site, m)
       site%cohort%n = m
    end subroutine add_cohort

@@ -23,15 +23,15 @@ module meds_demography_cohort_fusefiss
    use meds_constants,  only : tiny_num
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL, pair_mean
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
-   use meds_site_state_types, only : LEAF_TEMP_INIT
    use meds_config,     only : meds_config_t
+   use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_site_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
    use meds_site_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity,      &
                                       cohort_tissue_water,                                          &
                                       set_cohort_size_from_carbon, assign_cohort_id,       &
-                                      fuse_cohort_fast_state
+                                      fuse_cohort_fast_state, patch_birth_state
    use meds_litter_partition, only : necromass_to_litter
    implicit none
    private
@@ -440,7 +440,8 @@ contains
       real(wp), optional,  intent(out)   :: heat_drawn    !< [J/m2 site]
       real(wp), optional,  intent(out)   :: water_drawn   !< [kg/m2 site]
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
-      real(wp)    :: recruit_dbh, c_min, endow, t_birth, cap_leaf, cap_wood, c_tot, e_tot, w_tot
+      real(wp)    :: recruit_dbh, c_min, endow, t_birth, psi_birth, cap_leaf, cap_wood, c_tot, e_tot, w_tot
+      type(soil_params_t) :: soil
 
       c_tot = 0.0_wp ; e_tot = 0.0_wp ; w_tot = 0.0_wp
       if (present(carbon_drawn)) carbon_drawn = 0.0_wp
@@ -467,6 +468,7 @@ contains
       end if
 
       call cohort_ensure_capacity(site%cohort, site%cohort%n + nspawn)
+      call soil_column_params(cfg%soil_column, soil)
       n_before = site%cohort%n
       m = site%cohort%n
       associate (cohort => site%cohort, patch => site%patch, pft => cfg%pft)
@@ -474,14 +476,11 @@ contains
             do pf = 1_ik, site%n_pft
                if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
                m = m + 1_ik
-               !----- Born at its PATCH's canopy-air temperature, not at the global LEAF_TEMP_INIT !
-               !      constant. Guarded: a canopy air that has never been stepped (a bare setup    !
-               !      call, a restart before the first fast window) reads as unset, and the        !
-               !      constant is the right answer there. ---------------------------------------!
-               t_birth = patch%cas(ip)%can_temp
-               if (t_birth < 100.0_wp) t_birth = LEAF_TEMP_INIT
+               !----- Born in its patch's state: at the canopy-air temperature, holding the water     !
+               !      its tissues hold at the top soil layer's potential (patch_birth_state). -------!
+               call patch_birth_state(site, ip, cfg, soil, t_birth, psi_birth)
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
-                                cfg%hydraulics, birth_temp=t_birth)
+                                cfg%hydraulics, t_birth, psi_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !
                !      carbon the pool actually paid for at `carbon_min` per plant. ---------------!
                c_min = min_cohort_carbon(cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
