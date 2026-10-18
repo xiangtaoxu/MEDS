@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
-   use meds_site_state_types,   only : site_t, site_alloc, site_free
+   use meds_site_state_vars,    only : site_t, site_alloc, site_free
    use meds_allometry,         only : allometry_t
    use meds_constants,     only : n_soil_layer_max
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
@@ -24,11 +24,9 @@ program test_diagnostic_reduce
                                        total_agb, total_lai, total_nplant
    use meds_diagnostic_kernels, only : dbh_class_index, soil_wetness, cohort_gsc, cohort_wue,    &
                                        safe_ratio
-   use meds_site_diag_types,    only : cohort_diag_block, cohort_diag_alloc, cohort_diag_reorder, &
-                                       cohort_diag_copy_slot, cohort_diag_fuse,                  &
-                                       cohort_diag_clear_slot, cohort_diag_value,                &
-                                       CDIAG_FUSE, N_CDIAG, CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW, &
-                                       CD_WOOD_TEMP, CD_GSW
+   use meds_diag_vars,          only : cohort_diag_block, cohort_diag_alloc, cohort_diag_reorder, cohort_diag_copy_slot, &
+                                       cohort_diag_fuse, cohort_diag_clear_slot, cohort_diag_value, CDIAG_FUSE, N_CDIAG, &
+                                       CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW, CD_WOOD_TEMP, CD_GSW
    use meds_output_types,       only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close
    implicit none

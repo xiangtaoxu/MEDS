@@ -35,7 +35,7 @@ module meds_fast_rk45
                                      soil_energy_store, plant_water_store, canopy_film_store,       &
                                      deposit_condensate, clamp_canopy_film, unpack_column_state,     &
                                      diagnose_soil_temps, transp_per_leaf_area
-   use meds_site_diag_types,  only : CD_TRANSP
+   use meds_diag_vars,        only : CD_TRANSP
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT

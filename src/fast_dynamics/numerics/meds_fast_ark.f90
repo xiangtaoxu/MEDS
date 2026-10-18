@@ -43,7 +43,7 @@ module meds_fast_ark
                                      assemble_soil_energy_forcing, apply_process_mask, transp_per_leaf_area
    use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
    use meds_fast_frozen, only : build_column_frozen
-   use meds_site_diag_types, only : CD_TRANSP
+   use meds_diag_vars,       only : CD_TRANSP
    use meds_fast_types, only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t, alloc_column_cohort, &
                                column_state_t, column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, &
                                stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full, &

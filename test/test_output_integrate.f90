@@ -13,7 +13,7 @@
 !==========================================================================================!
 module test_output_integrate_support
    use meds_kinds,            only : wp, ik
-   use meds_site_state_types, only : site_t
+   use meds_site_state_vars,  only : site_t
    implicit none
 contains
    !----- Opaque per-cohort agb setter (separate compilation scope; nvfortran cannot CSE across it). !
@@ -29,7 +29,7 @@ program test_output_integrate
    use test_output_integrate_support, only : set_cohort_agb
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_types, only : site_t, site_alloc, site_free
+   use meds_site_state_vars,  only : site_t, site_alloc, site_free
    use meds_allometry,        only : allometry_t
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,  &
                                      diag_params_t, slab_col,                                     &
@@ -41,9 +41,8 @@ program test_output_integrate
                                      extract_variable, output_integrate_fast, close_tier,        &
                                      extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PD0, SRC_F_PY0, &
                                      output_integrate
-   use meds_site_diag_types,  only : cohort_diag_alloc, CD_LEAF_TEMP,                             &
-                                     N_PYDIAG, PY_TAIR, PY_CO2, N_PDIAG, PD_CAS_TEMP, PD_LE, PD_H, &
-                                     PD_GPP, PD_SW_UP, PD_LW_UP
+   use meds_diag_vars,        only : cohort_diag_alloc, CD_LEAF_TEMP, N_PYDIAG, PY_TAIR, PY_CO2, N_PDIAG, PD_CAS_TEMP, PD_LE, &
+                                     PD_H, PD_GPP, PD_SW_UP, PD_LW_UP
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
                                      manager_setup, manager_finalize, build_freq_index,          &

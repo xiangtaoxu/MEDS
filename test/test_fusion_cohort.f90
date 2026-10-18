@@ -5,16 +5,16 @@ program test_fusion_cohort
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
-   use meds_site_state_types,           only : site_t, set_cohort_size, cohort_tissue_heat_capacity, &
-                                               set_cohort_size_from_carbon, cohort_bad_field,       &
-                                               cohort_field_name, cohort_deriv_block,               &
-                                               cohort_deriv_alloc, init_cohort
+   use meds_cohort_state_vars,          only : set_cohort_size, cohort_tissue_heat_capacity, set_cohort_size_from_carbon, &
+                                               cohort_bad_field, cohort_field_name, cohort_deriv_block, cohort_deriv_alloc, &
+                                               init_cohort
+   use meds_site_state_vars,            only : site_t
    use meds_demography_update, only : fill_cohort_deriv
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
    use meds_diagnostic_reduce, only : total_nplant, total_agb
-   use meds_site_diag_types,  only : cohort_diag_alloc, cohort_diag_value, CD_LEAF_TEMP, CD_WOOD_TEMP
+   use meds_diag_vars,        only : cohort_diag_alloc, cohort_diag_value, CD_LEAF_TEMP, CD_WOOD_TEMP
    use meds_allometry,       only : storage_carbon_target
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none

@@ -26,9 +26,10 @@ program test_mortality_pathways
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : yr_sec
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon
-   use meds_site_diag_types,     only : patch_diag_alloc, patch_diag_value,                       &
-                                        PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB
+   use meds_cohort_state_vars,   only : set_cohort_size_from_carbon
+   use meds_site_state_vars,     only : site_t
+   use meds_diag_vars,           only : patch_diag_alloc, patch_diag_value, PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, &
+                                        PD_MORT_C_DISTURB
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : apply_patch_disturbance

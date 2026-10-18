@@ -12,7 +12,7 @@
 program test_init_soil_state
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_types, only : site_t
+   use meds_site_state_vars,  only : site_t
    use meds_init,             only : init_bare_ground, seed_bare_ground, finalize_init
    use meds_soil_column_config, only : soil_column_layers
    use meds_constants,        only : n_soil_layer_max

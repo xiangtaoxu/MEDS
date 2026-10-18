@@ -1,21 +1,29 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_column_state_types -- the PROGNOSTIC per-patch stores of the fast (sub-daily) loop: !
-! the canopy-air-space thermal twins, the soil water and soil energy columns, the snow     !
-! store, the slow soil-carbon pools, and the daily fast->slow decomposition accumulator -- !
-! plus the area-weighted blends that mix two of each when patches fuse or a disturbance    !
-! gap is carved.                                                                           !
+! meds_patch_state_vars -- what one patch holds, and the block of all the site's patches.  !
 !                                                                                          !
-! This is BOUNDARY state: the biophysics kernels mutate it and the demographic state hub   !
-! owns it per patch and threads it through the lockstep reorder. That is why it is its own !
-! layer rather than a member of either side. The parameters that describe these stores   !
-! (soil_params_t) are derived from the config and live with it, in meds_soil_column_config !
-! -- a parameter is not state (src/README.md, rule 3).                                     !
+! One patch's stores, each its own type: the canopy-air-space twins, the soil water and    !
+! soil energy columns, the snow store, the slow soil-carbon pools, the daily fast->slow    !
+! decomposition accumulator and the litter input -- plus the area-weighted blends that     !
+! mix two of each when patches fuse or a disturbance gap is carved. The kernels take       !
+! these store types from here, one patch at a time, and nothing else from the state        !
+! layer. The parameters that describe the stores (soil_params_t) are derived from the      !
+! config and live with it, in meds_soil_column_config -- a parameter is not state          !
+! (src/README.md, rule 3).                                                                 !
+!                                                                                          !
+! `patch_block` holds every patch of the site as one Structure-of-Arrays, with a CSR map   !
+! into the cohort block (meds_cohort_state_vars).                                          !
+!                                                                                          !
+! The name follows ED2's ed_state_vars, which holds the same kind of types with their      !
+! allocate and copy routines. Unlike ED2 there is no global state (no edgrid_g): this      !
+! module defines the types and the routines on them, and the state is passed as an         !
+! argument.                                                                                !
 !==========================================================================================!
-module meds_column_state_types
+module meds_patch_state_vars
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, n_snow_layer_max
    use meds_therm_lib,        only : cas_molar_density
+   use meds_diag_vars,        only : patch_diag_block, patch_diag_grow
    implicit none
    private
 
@@ -29,6 +37,7 @@ module meds_column_state_types
    public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon, blend_xi_accum
    public :: blend_litter_input
                                                                     !< area-weighted mix (patch fusion / disturbance seed)
+   public :: patch_block, patch_alloc, patch_ensure_capacity
 
    !----- Prognostic per-patch soil WATER column (the value the hydrology kernel updates). --!
    type :: soil_column_t
@@ -108,14 +117,13 @@ module meds_column_state_types
    !==========================================================================================!
    !  Slow, stateful per-patch soil-carbon pools (docs/science/soil_carbon.md §2), written    !
    !  DAILY by meds_soil_biogeochem%soil_carbon_step and READ-ONLY, frozen across the day, by !
-   !  the fast loop's heterotrophic respiration. Lives here (not in meds_biogeochem_types,    !
-   !  its conceptual home) so the site state's patch_block can carry it with no state->soil-  !
-   !  kernel library edge -- the SAME reason                                                  !
-   !  cas_state_t/soil_column_t/soil_energy_column_t/snow_column_t live here. The matrix      !
-   !  state vector X, ordered litter -> SOM -> passive (n_soil_pool=7 in                      !
-   !  meds_biogeochem_types); pack_pool_vector / unpack_pool_vector marshal the named fields  !
-   !  to and from the array the kernels use. Lignin is a passive tracer of the structural     !
-   !  pools (0 <= L <= C), outside the carbon-mass vector. There is no nitrogen (§10).        !
+   !  the fast loop's heterotrophic respiration. Its conceptual home is                       !
+   !  meds_biogeochem_types, but the pools are what a patch holds, so they live here with the !
+   !  patch's other stores and the soil kernels take them from here. The matrix state vector  !
+   !  X, ordered litter -> SOM -> passive (n_soil_pool=7 in meds_biogeochem_types);           !
+   !  pack_pool_vector / unpack_pool_vector marshal the named fields to and from the array    !
+   !  the kernels use. Lignin is a passive tracer of the structural pools (0 <= L <= C),      !
+   !  outside the carbon-mass vector. There is no nitrogen (§10).                             !
    !==========================================================================================!
    type :: soil_carbon_t
       ! carbon pools [kgC/m2] -- the matrix state vector X, ordered litter -> SOM -> passive
@@ -141,9 +149,9 @@ module meds_column_state_types
    !  daily soil_carbon_step, which decrements each donor pool by dvec_j = xi_int_j*K_j.      !
    !  `rh_fast_accum` is the day's ACCUMULATED fast-loop Rh (audit-only cross-check against   !
    !  soil_carbon_step's own daily Rh: the rh_seam_gap of §7). Named fields (not an           !
-   !  n_soil_pool-sized array) for the SAME reason soil_carbon_t uses named fields: this      !
-   !  lives in state/column so patch_block can carry it with no state->soil-kernel library    !
-   !  edge; meds_soil_biogeochem's pack/unpack_pool_vector marshal to/from the array form     !
+   !  n_soil_pool-sized array) for the SAME reason soil_carbon_t uses named fields: the pool  !
+   !  count lives in meds_biogeochem_types, a soil-kernel module the state layer must not     !
+   !  use; meds_soil_biogeochem's pack/unpack_pool_vector marshal to/from the array form      !
    !  kernels use.                                                                            !
    !==========================================================================================!
    type :: xi_accum_t
@@ -156,6 +164,78 @@ module meds_column_state_types
       real(wp) :: passive     = 0.0_wp   !< INT_day xi_7 dt [day]
       real(wp) :: rh_fast_accum = 0.0_wp !< [kgC/m2] today's accumulated fast-loop Rh (audit-only)
    end type xi_accum_t
+
+   !---------------------------------------------------------------------------------------!
+   ! Patches of the site_t (SoA) with a CSR map into the cohort block.                        !
+   !---------------------------------------------------------------------------------------!
+   type :: patch_block
+      integer(ik) :: n   = 0_ik
+      integer(ik) :: cap = 0_ik
+      real(wp),    allocatable :: area(:)           !< fraction, sum = 1 (kept real64)
+      real(wp),    allocatable :: age(:)            !< [yr]
+      integer(ik), allocatable :: dist_type(:)      !< disturbance/land-use class
+      integer(ik), allocatable :: cohort_offset(:)           !< CSR: first cohort of patch (1-based)
+      integer(ik), allocatable :: cohort_count(:)         !< cohorts in patch
+      real(wp),    allocatable :: recruit_pool(:,:)  !< (pft, patch) carry-forward density
+      !----- Persistent identity (as for cohorts): stamped at creation, carried through       !
+      !      patch sort/fusion/compaction so a tracker can follow one patch across records.    !
+      integer(ik), allocatable :: global_id(:)
+      !----- PROGNOSTIC fast-biophysics reservoirs (owned here so they ride the patch lockstep  !
+      !      alongside area/age; mutated by the sub-daily fast loop, area-weighted on fusion).   !
+      type(cas_state_t),          allocatable :: cas(:)      !< canopy-air-space twins per patch
+      type(soil_energy_column_t), allocatable :: soil_e(:)   !< soil thermal column per patch
+      type(soil_column_t),        allocatable :: soil_w(:)   !< soil water column per patch
+      type(snow_column_t),        allocatable :: snow(:)     !< temporary-surface-water / snow store per patch
+      !----- PROGNOSTIC slow biogeochemistry reservoir (owned here so it rides the patch             !
+      !      lockstep alongside the fast reservoirs above; written DAILY by the slow soil-carbon     !
+      !      step, area-weighted on fusion; docs/science/soil_carbon.md). ---------------------------!
+      type(soil_carbon_t),        allocatable :: soil_carbon(:) !< soil-carbon pools per patch
+      !----- Daily fast->slow accumulator for the soil-carbon matrix: reset each slow step,           !
+      !      accumulated once per (patch, fast sub-step) by column_prepass, consumed by the daily     !
+      !      soil_carbon_step. Rides the SAME lockstep as soil_carbon (area-weighted on fusion). ------!
+      type(xi_accum_t),           allocatable :: xi_accum(:)   !< [day]/[kgC/m2] per patch
+      !----- Per-patch litter arriving at the CENTURY pools THIS slow step [kgC/m2/day]. Zeroed at !
+      !      the top of the step by the vegetation driver, accumulated by turnover and mortality,   !
+      !      consumed by advance_biogeochem_dynamics as the matrix source term u.                    !
+      !                                                                                          !
+      !      It lives HERE, on the patch block, because patch DISTURBANCE creates a gap partway      !
+      !      through the step: a driver-local array sized to the patch count at the START of the     !
+      !      step would be read past its end -- undefined memory into the litter input -- and on     !
+      !      a FUSION would misattribute one patch's litter to another. As a patch field it          !
+      !      rides the same lockstep as soil_carbon -- reordered on sort, packed on terminate,       !
+      !      area-weighted on fusion and inherited by a gap. A slow ledger that declares the         !
+      !      read as a boundary term would balance against the garbage, so the placement, not        !
+      !      the ledger, is what keeps it right. ----------------------------------------------------!
+      type(litter_input_t),       allocatable :: litter_in(:)  !< [kgC/m2/day] this step's litter
+      !----- Daily slow->fast bridge for leaf/root-turnover shed water: SET (not accumulated)        !
+      !      once per slow step by meds_vegetation_dynamics from this step's net leaf/fineroot       !
+      !      carbon LOSS (proportional water shed, keeping the remaining tissue's rwc                !
+      !      unchanged); consumed once per day by the fast loop's gather as a FROZEN additive        !
+      !      input to the ground-water pathway (like rainfall/throughfall), held constant across     !
+      !      every dt_fast sub-step of that day -- same "frozen daily quantity" convention as        !
+      !      soil_carbon/xi_accum, but area-weighted like `age` on fusion (not blended from          !
+      !      donors on a disturbance gap: a brand-new gap patch has no cohorts of its own that       !
+      !      contributed to today's rate). ----------------------------------------------------------!
+      real(wp),    allocatable :: shed_water_rate(:)   !< [kg/m2 ground/s] today's shed tissue water
+      !----- The CO2 the SLOW tier owes the canopy air, as a frozen daily RATE the fast loop       !
+      !      adds to nee_biotic (docs/science/plant_respiration.md eq. (7)) -- the carbon          !
+      !      analogue of shed_water_rate, and set the same way. Two terms, both computed once      !
+      !      per slow step by the allocator, that would otherwise go nowhere: GROWTH               !
+      !      RESPIRATION (debited from the plant, never exhaled) and, with the opposite sign,      !
+      !      the STARVATION DEFICIT (exhaled by the fast loop, debited from no pool because        !
+      !      there is nothing left to debit). Signed, so it can be negative on a day the           !
+      !      correction outweighs the growth. -----------------------------------------------------!
+      real(wp),    allocatable :: slow_co2_rate(:)     !< [umol/m2 ground/s] growth resp - starvation over-report
+      !----- Adaptive-controller warm start, PER PATCH. It is controller state belonging to a           !
+      !      column, so it lives beside that column's other per-patch reservoirs and rides the          !
+      !      patch lockstep (sort/fuse/compact/new-patch). Holding it on the shared per-patch scratch   !
+      !      instead makes it loop-carried -- patch 1 cold-starts and the rest inherit whatever step    !
+      !      their predecessor left -- which makes the answer depend on patch ORDER and, once the patch !
+      !      axis is threaded, on THREAD SCHEDULING. --------------------------------------------------!
+      real(wp),    allocatable :: adapt_dt_last(:)     !< [s] last accepted fast-loop controller step
+      !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (the patch twin of cohort%diag). -------!
+      type(patch_diag_block) :: diag
+   end type patch_block
 
 contains
 
@@ -359,4 +439,72 @@ contains
       cas%can_depth = depth_new
    end subroutine cas_set_depth
 
-end module meds_column_state_types
+   subroutine patch_alloc(patch, cap, n_pft)
+      type(patch_block), intent(inout) :: patch
+      integer(ik),       intent(in)    :: cap, n_pft
+      patch%cap = cap ; patch%n = 0_ik
+      allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap), patch%global_id(cap))
+      allocate(patch%cohort_offset(cap), patch%cohort_count(cap), patch%recruit_pool(n_pft, cap))
+      allocate(patch%cas(cap), patch%soil_e(cap), patch%soil_w(cap), patch%snow(cap))   !< default-initialised reservoirs
+      allocate(patch%soil_carbon(cap))                                                 !< default-initialised (0)
+      allocate(patch%xi_accum(cap))                                                    !< default-initialised (0)
+      allocate(patch%litter_in(cap))                                                   !< default-initialised (0)
+      allocate(patch%shed_water_rate(cap), patch%slow_co2_rate(cap), patch%adapt_dt_last(cap))
+      patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
+      patch%shed_water_rate = 0.0_wp ; patch%slow_co2_rate = 0.0_wp ; patch%adapt_dt_last = 0.0_wp
+      patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
+   end subroutine patch_alloc
+
+   !=======================================================================================!
+   !  patch_ensure_capacity -- the patch-SoA twin of cohort_ensure_capacity: ensure the    !
+   !  patch SoA can hold at least `need` patches, growing 1.5x if it must. Same n/cap      !
+   !  reserve model, no-op fast path, geometric growth, and move_alloc as in the           !
+   !  cohort routine. LOCKSTEP SITE: a new per-patch field must be copied here (1:n)       !
+   !  and move_alloc'd, then registered at sort_patches / patch_compact -- the patch       !
+   !  lockstep sites, since patches have no single reorder routine like cohorts do.        !
+   !=======================================================================================!
+   subroutine patch_ensure_capacity(patch, need, n_pft)
+      type(patch_block), intent(inout) :: patch
+      integer(ik),       intent(in)    :: need, n_pft
+      type(patch_block)                :: tmp
+      integer(ik)                       :: newcap, m
+      if (need <= patch%cap) return
+      newcap = max(need, (patch%cap * 3_ik) / 2_ik + 1_ik)
+      !----- Grow the diagnostic block in place; the move_alloc list below leaves it alone.  -----!
+      call patch_diag_grow(patch%diag, newcap)
+      call patch_alloc(tmp, newcap, n_pft)
+      m = patch%n ; tmp%n = m
+      tmp%area(1:m)           = patch%area(1:m)
+      tmp%age(1:m)            = patch%age(1:m)
+      tmp%dist_type(1:m)      = patch%dist_type(1:m)
+      tmp%cohort_offset(1:m)           = patch%cohort_offset(1:m)
+      tmp%cohort_count(1:m)         = patch%cohort_count(1:m)
+      tmp%recruit_pool(:,1:m) = patch%recruit_pool(:,1:m)
+      tmp%global_id(1:m)      = patch%global_id(1:m)
+      tmp%cas(1:m)            = patch%cas(1:m)
+      tmp%soil_e(1:m)         = patch%soil_e(1:m)
+      tmp%soil_w(1:m)         = patch%soil_w(1:m)
+      tmp%snow(1:m)           = patch%snow(1:m)
+      tmp%soil_carbon(1:m)    = patch%soil_carbon(1:m)
+      tmp%xi_accum(1:m)       = patch%xi_accum(1:m)
+      tmp%litter_in(1:m)      = patch%litter_in(1:m)
+      tmp%shed_water_rate(1:m) = patch%shed_water_rate(1:m)
+      tmp%slow_co2_rate(1:m)   = patch%slow_co2_rate(1:m)
+      tmp%adapt_dt_last(1:m)   = patch%adapt_dt_last(1:m)
+      patch%n = tmp%n ; patch%cap = tmp%cap
+      call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
+      call move_alloc(tmp%dist_type, patch%dist_type)
+      call move_alloc(tmp%cohort_offset, patch%cohort_offset)             ; call move_alloc(tmp%cohort_count, patch%cohort_count)
+      call move_alloc(tmp%recruit_pool, patch%recruit_pool)
+      call move_alloc(tmp%global_id, patch%global_id)
+      call move_alloc(tmp%cas, patch%cas) ; call move_alloc(tmp%soil_e, patch%soil_e)
+      call move_alloc(tmp%soil_w, patch%soil_w) ; call move_alloc(tmp%snow, patch%snow)
+      call move_alloc(tmp%soil_carbon, patch%soil_carbon)
+      call move_alloc(tmp%xi_accum, patch%xi_accum)
+      call move_alloc(tmp%litter_in, patch%litter_in)
+      call move_alloc(tmp%shed_water_rate, patch%shed_water_rate)
+      call move_alloc(tmp%slow_co2_rate,   patch%slow_co2_rate)
+      call move_alloc(tmp%adapt_dt_last,   patch%adapt_dt_last)
+   end subroutine patch_ensure_capacity
+
+end module meds_patch_state_vars

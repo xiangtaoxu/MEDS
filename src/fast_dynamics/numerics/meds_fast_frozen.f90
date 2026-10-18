@@ -18,7 +18,7 @@ module meds_fast_frozen
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple, C2B_WOOD
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
-   use meds_site_diag_types, only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
+   use meds_diag_vars,       only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
    use meds_water_retention, only : rwc_from_psi, wood_thermal_water
    use meds_hydr_lib, only : plc_retained, xylem_max_conductance, rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
@@ -39,7 +39,7 @@ module meds_fast_frozen
    use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy
    use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_opts, only : snow_params_t
-   use meds_column_state_types, only : snow_column_t
+   use meds_patch_state_vars,   only : snow_column_t
    use meds_ground_biophysics, only : snow_energy_step
    use meds_fast_types, only : snow_stage_t
    implicit none

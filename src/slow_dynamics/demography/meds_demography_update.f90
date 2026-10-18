@@ -26,8 +26,9 @@
 module meds_demography_update
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, lnexp_min, lnexp_max
-   use meds_site_state_types, only : site_t, patch_block, cohort_block, cohort_deriv_block,      &
-                                     set_cohort_size_from_carbon
+   use meds_cohort_state_vars, only : cohort_block, cohort_deriv_block, set_cohort_size_from_carbon
+   use meds_patch_state_vars, only : patch_block
+   use meds_site_state_vars,  only : site_t
    implicit none
    private
 

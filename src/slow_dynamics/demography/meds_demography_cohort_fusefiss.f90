@@ -25,13 +25,11 @@ module meds_demography_cohort_fusefiss
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_config,     only : meds_config_t
    use meds_soil_column_config, only : soil_params_t, soil_column_params
-   use meds_site_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
-   use meds_site_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
-                                      cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
-                                      scale_cohort_ground_fields, cohort_tissue_heat_capacity,      &
-                                      cohort_tissue_water,                                          &
-                                      set_cohort_size_from_carbon, assign_cohort_id,       &
-                                      fuse_cohort_fast_state, patch_birth_state
+   use meds_diag_vars,        only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
+   use meds_cohort_state_vars, only : cohort_reorder, cohort_compact, cohort_ensure_capacity, copy_cohort_slot, init_cohort, &
+                                      scale_cohort_ground_fields, cohort_tissue_heat_capacity, cohort_tissue_water, &
+                                      set_cohort_size_from_carbon, fuse_cohort_fast_state
+   use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, patch_birth_state
    use meds_litter_partition, only : necromass_to_litter
    implicit none
    private
@@ -192,7 +190,7 @@ contains
          ntot    = nr + nd
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
          !----- The fast-loop-owned state fuses by its DECLARED per-field policy, in one place  !
-         !      (meds_site_state_types%fuse_cohort_fast_state): heat-capacity-weighted for the         !
+         !      (meds_cohort_state_vars%fuse_cohort_fast_state): heat-capacity-weighted for the        !
          !      tissue temperatures, nplant-weighted for the per-plant amounts, summed for the         !
          !      ground-referenced film. Enumerating it here would let a field drift from its           !
          !      declared convention. The dynamic leaf traits stay here: they are slow-loop state,      !
@@ -218,7 +216,7 @@ contains
                                                      cohort%leaf_turnover_rate(donc), cd)
          !----- Fast-loop DIAGNOSTIC accumulators, handed leaf area (wr, wd), nplant (nr, nd) and the  !
          !      tissue heat capacities. Which weight applies is declared per field in                 !
-         !      meds_site_diag_types (CDIAG_FUSE), not decided here. ------------------------------------!
+         !      meds_diag_vars (CDIAG_FUSE), not decided here. ------------------------------------------!
          call cohort_diag_fuse(cohort%diag,  recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CDIAG_FUSE)
          call cohort_diag_fuse(cohort%sdiag, recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CSDIAG_FUSE)
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !

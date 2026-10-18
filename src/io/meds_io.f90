@@ -27,9 +27,10 @@ module meds_io
    use meds_config,   only : meds_config_t, growth_window_steps, pft_tissue_curves
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
-   use meds_site_state_types, only : site_t, patch_birth_state
-   use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr, &
-                                           set_cohort_size_from_carbon, set_cohort_tissue_water
+   use meds_site_state_vars,  only : site_t, patch_birth_state
+   use meds_cohort_state_vars,      only : gather_pft_params, set_cohort_size, set_cohort_size_from_carbon, &
+                                           set_cohort_tissue_water
+   use meds_site_state_vars,        only : site_alloc, rebuild_csr
    use meds_soil_column_config,     only : soil_params_t, soil_column_params
    use meds_demography_update,      only : update_overtopping_lai
    use meds_constants,     only : n_soil_layer_max, n_snow_layer_max

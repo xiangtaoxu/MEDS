@@ -31,7 +31,7 @@ module meds_region
    use meds_config_io,              only : load_meds_config
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
-   use meds_site_state_types,       only : site_free
+   use meds_site_state_vars,        only : site_free
    use meds_io,                     only : state_file_t, state_file_open, state_file_put, state_file_close, &
                                            state_file_polygons, io_read_state, state_file_refusal
    use meds_vegetation_dynamics,    only : reacclimate_plant_traits

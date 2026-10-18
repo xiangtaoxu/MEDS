@@ -13,7 +13,7 @@
 module meds_stepper
    use meds_kinds,                only : wp
    use meds_config,               only : meds_config_t
-   use meds_site_state_types, only : site_t
+   use meds_site_state_vars,  only : site_t
    use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics, settle_tissue_water
    use meds_biogeochem_types,     only : soilc_seam_t
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics

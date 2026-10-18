@@ -27,7 +27,7 @@ program test_column_rk45
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, build_soil_therm_params
-   use meds_site_diag_types, only : N_CDIAG, CD_PSI_PREDAWN
+   use meds_diag_vars,       only : N_CDIAG, CD_PSI_PREDAWN
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts

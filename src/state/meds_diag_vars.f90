@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_site_diag_types -- the per-COHORT and per-PATCH fast-loop DIAGNOSTIC accumulators.  !
+! meds_diag_vars -- the DIAGNOSTIC accumulators, per cohort, per patch and per polygon.    !
 !                                                                                          !
 ! Stage [2] of the diagnostic wall, CAPTURE (docs/science/diagnostics.md §1). The problem  !
 ! it solves: the fast loop computes ~40 per-cohort and per-patch quantities every dt_fast  !
@@ -49,7 +49,7 @@
 !     leaf area, is the classic silent fusion bug; the kind is DATA here, so the blend     !
 !     cannot disagree with the quantity.                                                   !
 !==========================================================================================!
-module meds_site_diag_types
+module meds_diag_vars
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
    use meds_numerics,  only : pair_mean
@@ -627,4 +627,4 @@ contains
       if (d%active .and. d%w > tiny_num) x = d%v(field) / d%w
    end function polygon_diag_value
 
-end module meds_site_diag_types
+end module meds_diag_vars

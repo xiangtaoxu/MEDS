@@ -13,7 +13,8 @@
 program test_fast_loop
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon
+   use meds_cohort_state_vars,   only : set_cohort_size_from_carbon
+   use meds_site_state_vars,     only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params, top_soil_psi
@@ -30,9 +31,8 @@ program test_fast_loop
    use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
-   use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, &
-                                        PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND, PD_CAS_TEMP,           &
-                                        PD_SKIN_TEMP, PD_LW_UP
+   use meds_diag_vars,           only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, PY_PAR_DIFFUSE, PY_RHO_AIR, &
+                                        PY_WIND, PD_CAS_TEMP, PD_SKIN_TEMP, PD_LW_UP
    use meds_constants,           only : stefan, n_soil_layer_max
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double

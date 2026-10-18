@@ -11,9 +11,8 @@ module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_allometry,  only : height_to_dbh
-   use meds_site_state_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
-                                          assign_cohort_id, assign_patch_id, init_cohort,     &
-                                          patch_birth_state
+   use meds_cohort_state_vars,     only : cohort_ensure_capacity, init_cohort
+   use meds_site_state_vars,       only : site_t, site_alloc, rebuild_csr, assign_cohort_id, assign_patch_id, patch_birth_state
    use meds_soil_column_config,    only : soil_params_t, soil_column_params
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
                                                split_cohorts

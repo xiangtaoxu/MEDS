@@ -23,12 +23,13 @@
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
-   use meds_site_state_types,   only : site_t, carbon_flux_block, patch_birth_state
-   use meds_column_state_types, only : cas_set_depth
+   use meds_cohort_state_vars,  only : carbon_flux_block
+   use meds_site_state_vars,    only : site_t, patch_birth_state
+   use meds_patch_state_vars,   only : cas_set_depth
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
                                        soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
-   use meds_site_state_types,   only : init_cohort, set_cohort_size_from_carbon
+   use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : fuse_2_patches
    use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand, shed_turnover_water

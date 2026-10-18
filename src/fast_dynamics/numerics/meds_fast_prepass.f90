@@ -17,18 +17,17 @@ module meds_fast_prepass
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, r_gas, kgCday_2_umols
    use meds_config,           only : meds_config_t
-   use meds_site_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
-                                     CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,                  &
-                                     CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
-                                     CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE, &
-                                     CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, CD_CA, CD_PRESSURE
+   use meds_diag_vars,        only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD, CD_BETA_STOM, CD_BETA_NONSTOM, &
+                                     CD_LEAF_TEMP, CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, CD_ABS_LW, &
+                                     CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE, CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, &
+                                     CD_CA, CD_PRESSURE
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_fast_types, only : patch_biophys_t
    use meds_soil_column_config, only : soil_params_t, top_soil_psi
    use meds_biophysics_opts, only : aero_cfg_t
-   use meds_column_state_types, only : cas_state_t, soil_carbon_t
+   use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
    use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, hydro_params_table_t, hydro_opts_t, &
                                 wood_params_t, root_params_t
    use meds_biogeochem_types, only : n_soil_pool

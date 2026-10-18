@@ -15,7 +15,7 @@
 !     wholesale -- it is the aggregation seam meds_fast_dynamics%build_fast_context fills, not a      !
 !     duplicate of them.                                                                             !
 !   * column_state_t is a FLAT re-packing of the same prognostic quantities the persistent per-store  !
-!     structs in meds_column_state_types hold (cas_state_t/soil_column_t/soil_energy_column_t) -- a    !
+!     structs in meds_patch_state_vars hold (cas_state_t/soil_column_t/soil_energy_column_t) -- a      !
 !     deliberate representation choice (the ARK needs a contiguous vector for state_axpy/              !
 !     state_wrms_grouped/tableau linear combinations), not a duplication to unify.                     !
 !==========================================================================================!
@@ -25,7 +25,7 @@ module meds_fast_types
    use meds_plant_types, only : hydro_params_table_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t
-   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   use meds_patch_state_vars,   only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_enthalpy_of_temp
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
@@ -35,7 +35,7 @@ module meds_fast_types
    use meds_config, only : hydraulics_config_t, pft_tissue_curves, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
    use meds_pft_params, only : pft_table_t, HYD_UNSET
-   use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
+   use meds_cohort_state_vars, only : DMAX_PSI_LEAF_UNSET
    implicit none
    private
 

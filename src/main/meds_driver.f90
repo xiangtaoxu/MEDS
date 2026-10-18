@@ -23,7 +23,7 @@ module meds_driver
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
                                            time_to_string, years_between
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
-   use meds_site_state_types,       only : site_t, site_free
+   use meds_site_state_vars,        only : site_t, site_free
    use meds_demography_update,      only : update_overtopping_lai
    use meds_init,                   only : init_bare_ground, seed_bare_ground, init_from_census,      &
                                            restructure_census_stand

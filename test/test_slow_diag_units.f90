@@ -37,10 +37,9 @@ program test_slow_diag_units
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : yr_sec, n_soil_layer_max
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t, reset_step_diagnostics
-   use meds_site_diag_types,     only : patch_diag_alloc, patch_diag_value, patch_diag_slow_row,  &
-                                        PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,     &
-                                        PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_LE, PD_GPP
+   use meds_site_state_vars,     only : site_t, reset_step_diagnostics
+   use meds_diag_vars,           only : patch_diag_alloc, patch_diag_value, patch_diag_slow_row, PD_LITTER_LEAF, &
+                                        PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_LE, PD_GPP
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params

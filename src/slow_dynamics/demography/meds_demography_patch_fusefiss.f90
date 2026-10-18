@@ -20,18 +20,14 @@ module meds_demography_patch_fusefiss
    use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL
    use meds_config,     only : meds_config_t, DIST_TREEFALL
-   use meds_site_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
-                                      cohort_ensure_capacity, copy_cohort_slot,                    &
-                                      scale_cohort_ground_fields,                                  &
-                                      patch_ensure_capacity, assign_cohort_id, assign_patch_id,     &
+   use meds_cohort_state_vars, only : cohort_compact, cohort_ensure_capacity, copy_cohort_slot, scale_cohort_ground_fields, &
                                       cohort_tissue_water
-   use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
-                                     patch_diag_inherit, PD_DISTURB_AREA,                        &
-                                     PD_MORT_C_DISTURB
+   use meds_patch_state_vars, only : patch_ensure_capacity
+   use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
+   use meds_diag_vars,        only : patch_diag_reorder, patch_diag_blend, patch_diag_inherit, PD_DISTURB_AREA, PD_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
-   use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
-                                      blend_litter_input, &
-                                      blend_xi_accum
+   use meds_patch_state_vars,   only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
+                                       blend_litter_input, blend_xi_accum
    use meds_litter_partition, only : necromass_to_litter
    implicit none
    private

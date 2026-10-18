@@ -3,7 +3,7 @@
 program test_init_census
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_types, only : site_t
+   use meds_site_state_vars,  only : site_t
    use meds_init,             only : init_from_census, restructure_census_stand
    use meds_diagnostic_reduce, only : total_nplant
    use meds_test_support, only : banner, build_test_config, check, check_close

@@ -32,26 +32,23 @@ module meds_fast_dynamics
    use meds_column_view, only : copy_column_cohort
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_buffers_t
-   use meds_site_diag_types,  only : N_CDIAG, N_PDIAG, patch_diag_block, polygon_diag_block,     &
-                                     PD_LE, PD_H, PD_RNET, PD_SW_GROUND, PD_LW_GROUND,           &
-                                     PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR, PD_LW_UP, &
-                                     PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP,     &
-                                     PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
-                                     PD_NPP, PD_RECO, PD_SW_UP, PD_SKIN_TEMP,                    &
-                                     PD_SOIL_TEMP_TOP, PD_CAS_VPD, PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, &
-                                     PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP,             &
-                                     PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
-                                     PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
-                                     PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
-                                     PY_RAINF, N_PYDIAG, cohort_diag_grow, patch_diag_grow
+   use meds_diag_vars,        only : N_CDIAG, N_PDIAG, patch_diag_block, polygon_diag_block, PD_LE, PD_H, PD_RNET, PD_SW_GROUND, &
+                                     PD_LW_GROUND, PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR, PD_LW_UP, PD_USTAR, &
+                                     PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP, PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, &
+                                     PD_TRANSP, PD_NPP, PD_RECO, PD_SW_UP, PD_SKIN_TEMP, PD_SOIL_TEMP_TOP, PD_CAS_VPD, &
+                                     PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, &
+                                     PD_Z_CAS_TOP, PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND, PY_LWDOWN, &
+                                     PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM, PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, &
+                                     PY_RHO_AIR, PY_RAINF, N_PYDIAG, cohort_diag_grow, patch_diag_grow
    use meds_constants,     only : n_soil_layer_max
-   use meds_column_state_types, only : xi_accum_t, snow_column_t
+   use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_forcing_kernels,  only : precip_phase
    use meds_met_driver,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
-   use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, set_cohort_tissue_water
+   use meds_cohort_state_vars, only : DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, set_cohort_tissue_water
+   use meds_site_state_vars,  only : site_t
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
@@ -721,7 +718,7 @@ contains
                end do
             end if
             !----- FOLD the per-(cohort, sub-step) and per-patch DIAGNOSTICS into the site's         !
-            !      dt-weighted accumulators (meds_site_diag_types). Sub-daily resolution exists ONLY !
+            !      dt-weighted accumulators (meds_diag_vars). Sub-daily resolution exists ONLY       !
             !      here, so this is where it is captured.                                            !
             !                                                                                        !
             !      THREAD SAFETY: cohort slots [i0:i1] and patch slot ip are DISJOINT across patches !

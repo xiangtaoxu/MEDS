@@ -21,9 +21,9 @@ module meds_vegetation_dynamics
                                          wood_thermal_water
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
-   use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET, &
-                                         set_cohort_size_from_carbon
-   use meds_site_state_types, only : site_t, cohort_wood_store_carbon
+   use meds_cohort_state_vars,     only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET, set_cohort_size_from_carbon
+   use meds_cohort_state_vars, only : cohort_wood_store_carbon
+   use meds_site_state_vars,  only : site_t
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
@@ -42,15 +42,10 @@ module meds_vegetation_dynamics
    use meds_sink_limitation,      only : growth_sink_limitation
    use meds_litter_partition, only : add_necromass
    use meds_biogeochem_types, only : litter_input_t
-   use meds_site_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
-                                        CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
-                                        CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, &
-                                        cohort_diag_grow,                                      &
-                                        PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
-                                        PD_LITTER_WOOD, PD_LITTER_REPRO,                       &
-                                        PD_MORT_C_BACKGROUND,                                &
-                                        PD_RECRUIT_NPLANT,                                     &
-                                        cohort_diag_reset
+   use meds_diag_vars,            only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF, CS_NPP_FINEROOT, CS_NPP_WOOD, &
+                                         CS_NPP_STORAGE, CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, &
+                                         cohort_diag_grow, PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_LITTER_WOOD, &
+                                         PD_LITTER_REPRO, PD_MORT_C_BACKGROUND, PD_RECRUIT_NPLANT, cohort_diag_reset
    implicit none
    private
 
@@ -76,7 +71,7 @@ contains
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
       !----- The per-patch litter accumulator is site%patch%litter_in, NOT a local array, so that it
       !      follows its patches when restructure_stand reorders, blends or creates them. See the
-      !      field's comment in meds_site_state_types.
+      !      field's comment in meds_patch_state_vars.
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (meds_slow_ledger)
       real(wp),            intent(in),    optional :: latitude_deg !< the polygon's (default [site])
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
@@ -705,7 +700,7 @@ contains
             !      maintenance and exudate, so the carbon budget closes from the output file. As      !
             !      RATES [kgC/plant/yr], so they are comparable across slow-step lengths. Written     !
             !      into a block that rides the cohort lockstep, NOT into a transient scratch (see     !
-            !      meds_site_diag_types). ------------------------------------------------------------!
+            !      meds_diag_vars). ------------------------------------------------------------      !
             if (cohort%sdiag%active) then
                cohort%sdiag%v(CS_NPP_LEAF,     j) = g_leaf     / dt_yr
                cohort%sdiag%v(CS_NPP_FINEROOT, j) = g_fineroot / dt_yr

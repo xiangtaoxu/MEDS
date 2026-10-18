@@ -27,7 +27,8 @@ module meds_c_api_demography
    use meds_constants,              only : tiny_num
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
-   use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
+   use meds_cohort_state_vars,       only : cohort_deriv_alloc
+   use meds_site_state_vars,         only : site_t, site_free
    use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts

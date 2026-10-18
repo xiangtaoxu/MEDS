@@ -5,8 +5,8 @@ program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_allometry, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
    use meds_config,                 only : meds_config_t, growth_window_steps
-   use meds_site_state_types, only : site_t, carbon_flux_block, cohort_deriv_alloc, cohort_bad_field,    &
-                                     cohort_field_name
+   use meds_cohort_state_vars, only : carbon_flux_block, cohort_deriv_alloc, cohort_bad_field, cohort_field_name
+   use meds_site_state_vars,  only : site_t
    use meds_demography_update, only : update_cohort_states
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_plant_carbon_allocation, only : plant_carbon_allocation

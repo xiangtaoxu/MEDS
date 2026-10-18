@@ -1,48 +1,40 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_site_state_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
+! meds_cohort_state_vars -- the state of every cohort of a site, as one flat               !
+! Structure-of-Arrays (`cohort_block`), and every routine that lists the cohort fields.    !
 !                                                                                          !
-! ALL cohorts of the WHOLE site_t live in one contiguous set of 1-D arrays (`cohort_block`),  !
-! so the dominant daily kernels are a single unit-stride sweep, ideal for SIMD and GPU.     !
-! Patch membership is a CSR map (`cohort_offset`,`cohort_count`) over the flat cohort arrays. Cohorts of   !
-! a patch occupy a contiguous slice, so per-patch operations (sort, fusion) work on slices.  !
+! ALL cohorts of the site live in one contiguous set of 1-D arrays, so the dominant daily  !
+! kernels are a single unit-stride sweep, ideal for SIMD and GPU. The patch block's CSR    !
+! map (meds_patch_state_vars) groups them: the cohorts of a patch occupy one slice.        !
 !                                                                                          !
-! Every structural change goes through ONE centralized routine, `cohort_reorder`, which     !
-! permutes EVERY per-cohort array in lockstep -- this is the single place to update when a   !
-! field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.         !
+! Every structural change goes through ONE centralized routine, `cohort_reorder`, which    !
+! permutes EVERY per-cohort array in lockstep -- this is the single place to update when   !
+! a field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.      !
+!                                                                                          !
+! The name follows ED2's ed_state_vars, which holds the same kind of types with their      !
+! allocate and copy routines. Unlike ED2 there is no global state (no edgrid_g): this      !
+! module defines the types and the routines on them, and the state is passed as an         !
+! argument.                                                                                !
 !==========================================================================================!
-module meds_site_state_types
-   use meds_site_diag_types,    only : cohort_diag_block, patch_diag_block, polygon_diag_block,                     &
-                                      cohort_diag_alloc, cohort_diag_free, cohort_diag_grow,     &
-                                      cohort_diag_reorder, cohort_diag_copy_slot,                &
-                                      cohort_diag_clear_slot, patch_diag_reorder,                &
-                                      patch_diag_copy_slot, patch_diag_clear_slot,               &
-                                      patch_diag_grow, patch_diag_alloc, patch_diag_free,        &
-                                      cohort_diag_reset, patch_diag_reset, polygon_diag_reset
+module meds_cohort_state_vars
+   use meds_diag_vars,  only : cohort_diag_block, cohort_diag_grow, cohort_diag_reorder,         &
+                               cohort_diag_copy_slot, cohort_diag_clear_slot
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : cp_liq, C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, n_soil_layer_max
-   use meds_water_retention, only : wood_thermal_water
+   use meds_constants,  only : cp_liq, C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
+   use meds_water_retention, only : wood_thermal_water, water_curve_t, water_content
    use meds_numerics,   only : pair_mean
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,           &
                                carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
-   use meds_config,        only : meds_config_t, hydraulics_config_t, pft_tissue_curves
-   use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
-   use meds_water_retention, only : water_curve_t, water_content
-   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
-                                      xi_accum_t, litter_input_t
+   use meds_config,     only : hydraulics_config_t, pft_tissue_curves
    implicit none
    private
 
-   public :: cohort_block, patch_block, site_t
-   public :: site_alloc, site_free
-   public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params, cohort_alloc
-   public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
+   public :: cohort_block, cohort_alloc, cohort_ensure_capacity, cohort_reorder, cohort_compact
+   public :: copy_cohort_slot, gather_pft_params, set_cohort_size, set_cohort_size_from_carbon, init_cohort
    public :: scale_cohort_ground_fields, fuse_cohort_fast_state
-   public :: set_cohort_size_from_carbon, carbon_flux_block, patch_birth_state
-   public :: cohort_deriv_block, cohort_deriv_alloc
-   public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
+   public :: cohort_deriv_block, cohort_deriv_alloc, carbon_flux_block
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
@@ -236,7 +228,7 @@ module meds_site_state_types
       !      with every other field) through sorts/fusion/compaction, so an external tracker  !
       !      can follow one cohort across output records until it fuses away or is culled.     !
       integer(ik), allocatable :: global_id(:)
-      !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (meds_site_diag_types). Not prognostic    !
+      !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (meds_diag_vars). Not prognostic          !
       !      state and never restarted, but they must ride this lockstep because restructuring       !
       !      happens INSIDE the slow step, between the fast loop filling them and the output tick     !
       !      reading them. Stored as one 2-D array so every permutation below is a single statement   !
@@ -248,78 +240,6 @@ module meds_site_state_types
       !      where that takes ~48, so one shared dt weight could not normalize both.  ---------------!
       type(cohort_diag_block) :: sdiag
    end type cohort_block
-
-   !---------------------------------------------------------------------------------------!
-   ! Patches of the site_t (SoA) with a CSR map into the cohort block.                        !
-   !---------------------------------------------------------------------------------------!
-   type :: patch_block
-      integer(ik) :: n   = 0_ik
-      integer(ik) :: cap = 0_ik
-      real(wp),    allocatable :: area(:)           !< fraction, sum = 1 (kept real64)
-      real(wp),    allocatable :: age(:)            !< [yr]
-      integer(ik), allocatable :: dist_type(:)      !< disturbance/land-use class
-      integer(ik), allocatable :: cohort_offset(:)           !< CSR: first cohort of patch (1-based)
-      integer(ik), allocatable :: cohort_count(:)         !< cohorts in patch
-      real(wp),    allocatable :: recruit_pool(:,:)  !< (pft, patch) carry-forward density
-      !----- Persistent identity (as for cohorts): stamped at creation, carried through       !
-      !      patch sort/fusion/compaction so a tracker can follow one patch across records.    !
-      integer(ik), allocatable :: global_id(:)
-      !----- PROGNOSTIC fast-biophysics reservoirs (owned here so they ride the patch lockstep  !
-      !      alongside area/age; mutated by the sub-daily fast loop, area-weighted on fusion).   !
-      type(cas_state_t),          allocatable :: cas(:)      !< canopy-air-space twins per patch
-      type(soil_energy_column_t), allocatable :: soil_e(:)   !< soil thermal column per patch
-      type(soil_column_t),        allocatable :: soil_w(:)   !< soil water column per patch
-      type(snow_column_t),        allocatable :: snow(:)     !< temporary-surface-water / snow store per patch
-      !----- PROGNOSTIC slow biogeochemistry reservoir (owned here so it rides the patch             !
-      !      lockstep alongside the fast reservoirs above; written DAILY by the slow soil-carbon     !
-      !      step, area-weighted on fusion; docs/science/soil_carbon.md). ---------------------------!
-      type(soil_carbon_t),        allocatable :: soil_carbon(:) !< soil-carbon pools per patch
-      !----- Daily fast->slow accumulator for the soil-carbon matrix: reset each slow step,           !
-      !      accumulated once per (patch, fast sub-step) by column_prepass, consumed by the daily     !
-      !      soil_carbon_step. Rides the SAME lockstep as soil_carbon (area-weighted on fusion). ------!
-      type(xi_accum_t),           allocatable :: xi_accum(:)   !< [day]/[kgC/m2] per patch
-      !----- Per-patch litter arriving at the CENTURY pools THIS slow step [kgC/m2/day]. Zeroed at !
-      !      the top of the step by the vegetation driver, accumulated by turnover and mortality,   !
-      !      consumed by advance_biogeochem_dynamics as the matrix source term u.                    !
-      !                                                                                          !
-      !      It lives HERE, on the patch block, because patch DISTURBANCE creates a gap partway      !
-      !      through the step: a driver-local array sized to the patch count at the START of the     !
-      !      step would be read past its end -- undefined memory into the litter input -- and on     !
-      !      a FUSION would misattribute one patch's litter to another. As a patch field it          !
-      !      rides the same lockstep as soil_carbon -- reordered on sort, packed on terminate,       !
-      !      area-weighted on fusion and inherited by a gap. A slow ledger that declares the         !
-      !      read as a boundary term would balance against the garbage, so the placement, not        !
-      !      the ledger, is what keeps it right. ----------------------------------------------------!
-      type(litter_input_t),       allocatable :: litter_in(:)  !< [kgC/m2/day] this step's litter
-      !----- Daily slow->fast bridge for leaf/root-turnover shed water: SET (not accumulated)        !
-      !      once per slow step by meds_vegetation_dynamics from this step's net leaf/fineroot       !
-      !      carbon LOSS (proportional water shed, keeping the remaining tissue's rwc                !
-      !      unchanged); consumed once per day by the fast loop's gather as a FROZEN additive        !
-      !      input to the ground-water pathway (like rainfall/throughfall), held constant across     !
-      !      every dt_fast sub-step of that day -- same "frozen daily quantity" convention as        !
-      !      soil_carbon/xi_accum, but area-weighted like `age` on fusion (not blended from          !
-      !      donors on a disturbance gap: a brand-new gap patch has no cohorts of its own that       !
-      !      contributed to today's rate). ----------------------------------------------------------!
-      real(wp),    allocatable :: shed_water_rate(:)   !< [kg/m2 ground/s] today's shed tissue water
-      !----- The CO2 the SLOW tier owes the canopy air, as a frozen daily RATE the fast loop       !
-      !      adds to nee_biotic (docs/science/plant_respiration.md eq. (7)) -- the carbon          !
-      !      analogue of shed_water_rate, and set the same way. Two terms, both computed once      !
-      !      per slow step by the allocator, that would otherwise go nowhere: GROWTH               !
-      !      RESPIRATION (debited from the plant, never exhaled) and, with the opposite sign,      !
-      !      the STARVATION DEFICIT (exhaled by the fast loop, debited from no pool because        !
-      !      there is nothing left to debit). Signed, so it can be negative on a day the           !
-      !      correction outweighs the growth. -----------------------------------------------------!
-      real(wp),    allocatable :: slow_co2_rate(:)     !< [umol/m2 ground/s] growth resp - starvation over-report
-      !----- Adaptive-controller warm start, PER PATCH. It is controller state belonging to a           !
-      !      column, so it lives beside that column's other per-patch reservoirs and rides the          !
-      !      patch lockstep (sort/fuse/compact/new-patch). Holding it on the shared per-patch scratch   !
-      !      instead makes it loop-carried -- patch 1 cold-starts and the rest inherit whatever step    !
-      !      their predecessor left -- which makes the answer depend on patch ORDER and, once the patch !
-      !      axis is threaded, on THREAD SCHEDULING. --------------------------------------------------!
-      real(wp),    allocatable :: adapt_dt_last(:)     !< [s] last accepted fast-loop controller step
-      !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (the patch twin of cohort%diag). -------!
-      type(patch_diag_block) :: diag
-   end type patch_block
 
    !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
    !      COMPUTES these (carbon or empirical) each step; update_cohort_states then advances the   !
@@ -333,73 +253,6 @@ module meds_site_state_types
       real(wp), allocatable :: d_wood_carbon_dt(:), d_nonstructural_carbon_dt(:)
       real(wp), allocatable :: dln_nplant_dt(:)
    end type cohort_deriv_block
-
-   type :: site_t
-      type(cohort_block) :: cohort
-      type(patch_block)  :: patch
-      !----- TRANSIENT fast-loop diagnostics that are the same across the polygon -- its forcing   !
-      !      (PY_* in meds_site_diag_types): one slot, the cohort and patch blocks' polygon twin. ---!
-      type(polygon_diag_block) :: diag
-      !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
-      !      step and update_cohort_states applies. Site-carried so it allocates once (resize-on-   !
-      !      grow) instead of per step; refilled every step, so it is NOT lockstep-reordered and    !
-      !      NOT serialized (a scratch buffer, not prognostic state).                               !
-      type(cohort_deriv_block) :: deriv
-      real(wp)           :: site_area = 1.0_wp
-      integer(ik)        :: n_pft     = 0_ik
-      !----- Monotonic counters for the persistent global ids (never reused within a run). ---!
-      integer(ik)        :: next_cohort_id = 1_ik
-      integer(ik)        :: next_patch_id  = 1_ik
-      !----- Global ring-buffer write slot for the moving-average growth (same for all cohorts !
-      !      since they all take one sample per step); advanced by update_demography.           !
-      integer(ik)        :: growth_hist_pos = 0_ik
-      !----- Site daily-mean air-temperature accumulator for phenology: the fast loop sums the   !
-      !      met air temperature over the slow step (reset                                        !
-      !      each step), and the slow-loop phenology driver reads the mean (sum/n) then. Transient !
-      !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
-      real(wp)           :: pheno_tair_sum = 0.0_wp
-      integer(ik)        :: pheno_tair_n   = 0_ik
-      !----- GROWTH TEMPERATURE for thermal acclimation (docs/science/leaf_gas_exchange.md eq.       !
-      !      (4)): an exponential running mean of the daily-mean air temperature, window             !
-      !      [leaf_physiology].acclim_window_days (~30 d), which is what Kattge & Knorr (2007)       !
-      !      fitted dS against. PROGNOSTIC and slow, so it is written to the state file:             !
-      !      rebuilding a month of memory after every restart would make the acclimated optimum      !
-      !      jump. Negative means "not yet seeded" -- the first slow step adopts that day's mean     !
-      !      outright rather than relaxing from an arbitrary origin. --------------------------------!
-      real(wp)           :: t_growth_avg = -1.0_wp       !< [K] running-mean growth temperature
-      !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
-      !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
-      !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
-      !      (total_et) at the output tick. Transient (never restarted).                                !
-      real(wp)           :: et_accum       = 0.0_wp
-      !----- And the water the soil column lost the same way [kg/m2 = mm]: the pond's spill (surface   !
-      !      runoff) and the bottom flux (drainage; negative when an aquifer feeds the column). --------!
-      real(wp)           :: runoff_surf_accum = 0.0_wp
-      real(wp)           :: drainage_accum    = 0.0_wp
-      !----- Integrator WORK accumulators: summed over patches and fast sub-steps within a slow      !
-      !      step, reset alongside et_accum. These are the COST axis of a scheme comparison --       !
-      !      wall-clock is too coarse and too machine-dependent to rank integrators, whereas         !
-      !      step/sub-solver counts are exact and reproducible. Transient (diagnostic only,          !
-      !      never restarted). Real-valued so the output integrators can average them over a         !
-      !      period like any other diagnostic. ------------------------------------------------------!
-      real(wp)           :: work_integ_steps = 0.0_wp   !< accepted integrator sub-steps
-      real(wp)           :: work_integ_rej   = 0.0_wp   !< rejected integrator steps
-      !----- The soil-plant water network's work. A nonzero work_water_nfail is also a correctness     !
-      !      flag: a sub-step taken at the shortest length although Newton had not converged keeps      !
-      !      water exactly but leaves the stores off their curves. -------------------------------------!
-      real(wp)           :: work_water_nsub   = 0.0_wp   !< accepted sub-steps
-      real(wp)           :: work_water_newton = 0.0_wp   !< Newton iterations
-      real(wp)           :: work_water_reject = 0.0_wp   !< rejected sub-steps
-      real(wp)           :: work_water_nfail  = 0.0_wp   !< sub-steps taken although unconverged
-      !----- INTEGRATOR-HEALTH accumulators. Same cadence and area weighting as the work             !
-      !      counters above, but these measure CORRECTNESS rather than cost: how often a scheme      !
-      !      had to leave its own model to stay standing, and how much mass/energy that cost         !
-      !      outside the conservation ledger. Without them a run cannot report whether it            !
-      !      actually ran the integrator it was configured for (docs/science/numerical_scheme.md     !
-      !      §3, `rk45`). ---------------------------------------------------------------------------!
-      real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid with the ARK
-      real(wp)           :: work_clamp_stage = 0.0_wp   !< stage-input clamp activations (throwaway states)
-   end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
    !      the carbon rate provider and folded into the tendency bundle by the driver. -----------!
@@ -442,56 +295,6 @@ contains
       allocate(deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m), deriv%d_wood_carbon_dt(m),  &
                deriv%d_nonstructural_carbon_dt(m), deriv%dln_nplant_dt(m))
    end subroutine cohort_deriv_alloc
-
-   !=======================================================================================!
-   !  Allocation                                                                            !
-   !=======================================================================================!
-   subroutine site_alloc(site, n_pft, coh_cap, pat_cap, n_growth_window, allom)
-      type(site_t),      intent(out) :: site
-      integer(ik),       intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
-      type(allometry_t), intent(in)  :: allom   !< the site's allometry (cfg%allom of its config)
-      site%n_pft = n_pft
-      site%cohort%allom = allom
-      call cohort_alloc(site%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
-      call patch_alloc(site%patch, max(pat_cap, 1_ik), n_pft)
-   end subroutine site_alloc
-
-   subroutine site_free(site)
-      type(site_t), intent(inout) :: site
-      site%cohort%n = 0_ik ; site%cohort%cap = 0_ik
-      site%patch%n = 0_ik ; site%patch%cap = 0_ik
-      if (allocated(site%cohort%nplant)) deallocate(site%cohort%pft, site%cohort%nplant, site%cohort%dbh, &
-         site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
-         site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,                     &
-         site%cohort%dmax_psi_leaf, site%cohort%dmax_psi_leaf_accum,                            &
-         site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
-         site%cohort%p_hgt_max, site%cohort%sla, site%cohort%vcmax25, site%cohort%rd25,               &
-         site%cohort%leaf_turnover_rate, site%cohort%p_aboveground_frac,                                &
-         site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
-         site%cohort%wood_area, site%cohort%sapwood_carbon, site%cohort%sapwood_area,                    &
-         site%cohort%p_wai_b1, site%cohort%p_wai_b2, site%cohort%p_sapwood_area_b1,                      &
-         site%cohort%p_sapwood_area_b2, site%cohort%p_leaf_width, site%cohort%p_branch_diameter,         &
-         site%cohort%p_is_woody,                                                                         &
-         site%cohort%p_stem_resp_factor25, site%cohort%p_root_resp_factor25,                             &
-         site%cohort%p_stem_resp_sapwood25,                                                              &
-         site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
-         site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
-         site%cohort%overtopping_lai,                                                             &
-         site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%leaf_water_mass,               &
-         site%cohort%wood_water_mass, site%cohort%leaf_surf_water, site%cohort%wood_surf_water,   &
-         site%cohort%gpp_accum, site%cohort%light_hours_accum,                                            &
-         site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
-         site%cohort%leaf_flush_tendency, site%cohort%leaf_shed_tendency,                            &
-         site%cohort%growing_degree_days, site%cohort%cold_degree_days,                                        &
-         site%cohort%dry_psi_sum,                                                       &
-         site%cohort%wet_psi_sum, site%cohort%light_hours_mean)
-      if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
-         site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
-         site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
-         site%patch%xi_accum, site%patch%litter_in, site%patch%shed_water_rate,                   &
-         site%patch%slow_co2_rate,                                                                &
-         site%patch%adapt_dt_last)
-   end subroutine site_free
 
    subroutine cohort_alloc(cohort, cap, nwin)
       type(cohort_block), intent(inout) :: cohort
@@ -550,22 +353,6 @@ contains
       cohort%p_stem_resp_sapwood25 = 0.0_wp
       cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%leaf_turnover_rate = 0.0_wp
    end subroutine cohort_alloc
-
-   subroutine patch_alloc(patch, cap, n_pft)
-      type(patch_block), intent(inout) :: patch
-      integer(ik),       intent(in)    :: cap, n_pft
-      patch%cap = cap ; patch%n = 0_ik
-      allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap), patch%global_id(cap))
-      allocate(patch%cohort_offset(cap), patch%cohort_count(cap), patch%recruit_pool(n_pft, cap))
-      allocate(patch%cas(cap), patch%soil_e(cap), patch%soil_w(cap), patch%snow(cap))   !< default-initialised reservoirs
-      allocate(patch%soil_carbon(cap))                                                 !< default-initialised (0)
-      allocate(patch%xi_accum(cap))                                                    !< default-initialised (0)
-      allocate(patch%litter_in(cap))                                                   !< default-initialised (0)
-      allocate(patch%shed_water_rate(cap), patch%slow_co2_rate(cap), patch%adapt_dt_last(cap))
-      patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
-      patch%shed_water_rate = 0.0_wp ; patch%slow_co2_rate = 0.0_wp ; patch%adapt_dt_last = 0.0_wp
-      patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
-   end subroutine patch_alloc
 
    !=======================================================================================!
    !  cohort_ensure_capacity -- ensure the cohort SoA can hold at least `need` cohorts,    !
@@ -727,58 +514,6 @@ contains
    end subroutine move_alloc_block
 
    !=======================================================================================!
-   !  patch_ensure_capacity -- the patch-SoA twin of cohort_ensure_capacity: ensure the    !
-   !  patch SoA can hold at least `need` patches, growing 1.5x if it must. Same n/cap      !
-   !  reserve model, no-op fast path, geometric growth, and move_alloc as in the           !
-   !  cohort routine. LOCKSTEP SITE: a new per-patch field must be copied here (1:n)       !
-   !  and move_alloc'd, then registered at sort_patches / patch_compact -- the patch       !
-   !  lockstep sites, since patches have no single reorder routine like cohorts do.        !
-   !=======================================================================================!
-   subroutine patch_ensure_capacity(patch, need, n_pft)
-      type(patch_block), intent(inout) :: patch
-      integer(ik),       intent(in)    :: need, n_pft
-      type(patch_block)                :: tmp
-      integer(ik)                       :: newcap, m
-      if (need <= patch%cap) return
-      newcap = max(need, (patch%cap * 3_ik) / 2_ik + 1_ik)
-      !----- Grow the diagnostic block in place; the move_alloc list below leaves it alone.  -----!
-      call patch_diag_grow(patch%diag, newcap)
-      call patch_alloc(tmp, newcap, n_pft)
-      m = patch%n ; tmp%n = m
-      tmp%area(1:m)           = patch%area(1:m)
-      tmp%age(1:m)            = patch%age(1:m)
-      tmp%dist_type(1:m)      = patch%dist_type(1:m)
-      tmp%cohort_offset(1:m)           = patch%cohort_offset(1:m)
-      tmp%cohort_count(1:m)         = patch%cohort_count(1:m)
-      tmp%recruit_pool(:,1:m) = patch%recruit_pool(:,1:m)
-      tmp%global_id(1:m)      = patch%global_id(1:m)
-      tmp%cas(1:m)            = patch%cas(1:m)
-      tmp%soil_e(1:m)         = patch%soil_e(1:m)
-      tmp%soil_w(1:m)         = patch%soil_w(1:m)
-      tmp%snow(1:m)           = patch%snow(1:m)
-      tmp%soil_carbon(1:m)    = patch%soil_carbon(1:m)
-      tmp%xi_accum(1:m)       = patch%xi_accum(1:m)
-      tmp%litter_in(1:m)      = patch%litter_in(1:m)
-      tmp%shed_water_rate(1:m) = patch%shed_water_rate(1:m)
-      tmp%slow_co2_rate(1:m)   = patch%slow_co2_rate(1:m)
-      tmp%adapt_dt_last(1:m)   = patch%adapt_dt_last(1:m)
-      patch%n = tmp%n ; patch%cap = tmp%cap
-      call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
-      call move_alloc(tmp%dist_type, patch%dist_type)
-      call move_alloc(tmp%cohort_offset, patch%cohort_offset)             ; call move_alloc(tmp%cohort_count, patch%cohort_count)
-      call move_alloc(tmp%recruit_pool, patch%recruit_pool)
-      call move_alloc(tmp%global_id, patch%global_id)
-      call move_alloc(tmp%cas, patch%cas) ; call move_alloc(tmp%soil_e, patch%soil_e)
-      call move_alloc(tmp%soil_w, patch%soil_w) ; call move_alloc(tmp%snow, patch%snow)
-      call move_alloc(tmp%soil_carbon, patch%soil_carbon)
-      call move_alloc(tmp%xi_accum, patch%xi_accum)
-      call move_alloc(tmp%litter_in, patch%litter_in)
-      call move_alloc(tmp%shed_water_rate, patch%shed_water_rate)
-      call move_alloc(tmp%slow_co2_rate,   patch%slow_co2_rate)
-      call move_alloc(tmp%adapt_dt_last,   patch%adapt_dt_last)
-   end subroutine patch_ensure_capacity
-
-   !=======================================================================================!
    !  Centralized lockstep reorder: place old index perm(k) at new position k, for k=1..m.  !
    !  Array assignment with a vector subscript on the RHS is evaluated to a temporary       !
    !  first, so self-permutation is safe. THIS is the one place that knows every field.     !
@@ -849,7 +584,7 @@ contains
       cohort%wet_psi_sum(1:m)         = cohort%wet_psi_sum(perm(1:m))
       cohort%light_hours_mean(1:m)      = cohort%light_hours_mean(perm(1:m))
       !----- The diagnostic accumulators ride the SAME permutation. One call, and it cannot omit  !
-      !      a field: they are rows of one 2-D array (meds_site_diag_types, decision 4).  --------!
+      !      a field: they are rows of one 2-D array (meds_diag_vars, decision 4).  --------      !
       call cohort_diag_reorder(cohort%diag,  perm, m)
       call cohort_diag_reorder(cohort%sdiag, perm, m)
       cohort%n = m
@@ -979,7 +714,7 @@ contains
    !                  normalization.                                                         !
    !                                                                                         !
    !  The diagnostic twins are fused from their own declared table (CDIAG_FUSE,              !
-   !  meds_site_diag_types) on weights the caller computes: the tissue heat capacities for   !
+   !  meds_diag_vars) on weights the caller computes: the tissue heat capacities for         !
    !  the leaf and wood temperatures, as here, and leaf area for a per-LEAF-AREA diagnostic  !
    !  (transpiration per m2 of leaf, say), which is not a temperature. Adding a fast-loop    !
    !  field is one line here; the compiler will not remind you, so the line is the reminder. !
@@ -1275,34 +1010,6 @@ contains
       call set_cohort_tissue_water(cohort, m, birth_psi, leaf_curve, wood_curve)
    end subroutine init_cohort
 
-   !---------------------------------------------------------------------------------------!
-   ! The state a new cohort in patch `ip` is born in: the patch's canopy-air temperature [K]  !
-   ! and the water potential of its top soil layer [MPa] (top_soil_psi, the value the        !
-   ! stomatal predawn potential is seeded with), so the cohort starts in equilibrium with   !
-   ! where it stands. A patch whose fast state has not been seeded yet -- at setup, or in a  !
-   ! run without the fast loop -- has neither, and gives the run's starting state from      !
-   ! [init] instead: soil_temp, and the top layer's potential at the starting soil water.   !
-   ! init_fast_reservoirs re-seeds the setup cohorts from their patch once it has seeded it.  !
-   ! `soil` is the column's parameters (soil_column_params).                                  !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine patch_birth_state(site, ip, cfg, soil, temp, psi)
-      type(site_t),        intent(in)  :: site
-      integer(ik),         intent(in)  :: ip
-      type(meds_config_t), intent(in)  :: cfg
-      type(soil_params_t), intent(in)  :: soil
-      real(wp),            intent(out) :: temp, psi
-      real(wp) :: theta(n_soil_layer_max)
-      !----- A seeded canopy air has a temperature: the type's default is 0 K. ----------------!
-      if (site%patch%cas(ip)%can_temp > 0.0_wp) then
-         temp = site%patch%cas(ip)%can_temp
-         psi  = top_soil_psi(soil, site%patch%soil_w(ip)%theta(1))
-      else
-         temp = cfg%init_soil_temp
-         call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta)
-         psi  = top_soil_psi(soil, theta(1))
-      end if
-   end subroutine patch_birth_state
-
    !----- The carbon whose water a cohort's wood store holds [kgC/plant]: the sapwood ring and the   !
    !      fine roots, one store in the plant-water network (docs/science/soil_plant_water.md §1). ---!
    elemental pure real(wp) function cohort_wood_store_carbon(sapwood_carbon, fineroot_carbon) result(c)
@@ -1342,71 +1049,4 @@ contains
       call set_cohort_wood_geometry(cohort, i)
    end subroutine set_cohort_size_from_carbon
 
-   !=======================================================================================!
-   !  Rebuild the CSR patch map by stably regrouping cohorts by owner_patch (counting sort).!
-   !=======================================================================================!
-   subroutine rebuild_csr(site)
-      type(site_t), intent(inout) :: site
-      integer(ik), allocatable :: perm(:), pos(:), slot(:)
-      integer(ik)              :: i, ip, np, nc
-      np = site%patch%n ; nc = site%cohort%n
-      if (np < 1_ik) then                                  ! no patches: nothing to group
-         if (nc > 0_ik) error stop 'rebuild_csr: cohorts present with no patches'
-         return
-      end if
-      site%patch%cohort_count(1:np) = 0_ik
-      do i = 1_ik, nc
-         ip = site%cohort%owner_patch(i)
-         if (ip < 1_ik .or. ip > np) error stop 'rebuild_csr: owner_patch out of range'
-         site%patch%cohort_count(ip) = site%patch%cohort_count(ip) + 1_ik
-      end do
-      site%patch%cohort_offset(1) = 1_ik
-      do ip = 2_ik, np
-         site%patch%cohort_offset(ip) = site%patch%cohort_offset(ip-1) + site%patch%cohort_count(ip-1)
-      end do
-      !----- Stable placement: preserve within-patch order. -------------------------------!
-      allocate(pos(np), slot(nc), perm(nc))
-      pos(1:np) = site%patch%cohort_offset(1:np)
-      do i = 1_ik, nc
-         ip = site%cohort%owner_patch(i)
-         slot(i) = pos(ip)
-         pos(ip) = pos(ip) + 1_ik
-      end do
-      do i = 1_ik, nc
-         perm(slot(i)) = i
-      end do
-      call cohort_reorder(site%cohort, perm, nc)
-   end subroutine rebuild_csr
-
-   !=======================================================================================!
-   !  Persistent identity: stamp a slot with the next unused global id and bump the         !
-   !  monotonic counter. Ids are never reused within a run, so a terminated/fused-away id    !
-   !  simply never reappears -- exactly what an external tracker needs.                      !
-   !=======================================================================================!
-   subroutine assign_cohort_id(site, slot)
-      type(site_t), intent(inout) :: site
-      integer(ik),  intent(in)    :: slot
-      site%cohort%global_id(slot) = site%next_cohort_id
-      site%next_cohort_id = site%next_cohort_id + 1_ik
-   end subroutine assign_cohort_id
-
-   subroutine assign_patch_id(site, slot)
-      type(site_t), intent(inout) :: site
-      integer(ik),  intent(in)    :: slot
-      site%patch%global_id(slot) = site%next_patch_id
-      site%next_patch_id = site%next_patch_id + 1_ik
-   end subroutine assign_patch_id
-
-   !----- Zero the step diagnostic blocks -- per cohort, per patch, per polygon -- after the       !
-   !      output has read them. They accumulate from one output tick to the next: the fast loop    !
-   !      adds each sub-step, the slow step its rows, and a calendar boundary between two steps    !
-   !      its events (disturbance, culls), which therefore reach the record of the step that       !
-   !      follows. The slow cohort block is SET each step instead and needs no reset here. --------!
-   subroutine reset_step_diagnostics(site)
-      type(site_t), intent(inout) :: site
-      call cohort_diag_reset(site%cohort%diag)
-      call patch_diag_reset(site%patch%diag)
-      call polygon_diag_reset(site%diag)
-   end subroutine reset_step_diagnostics
-
-end module meds_site_state_types
+end module meds_cohort_state_vars

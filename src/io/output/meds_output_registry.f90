@@ -16,9 +16,8 @@ module meds_output_registry
    use meds_config,         only : meds_config_t
    use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
    use meds_soil_column_config, only : soil_params_t
-   use meds_site_state_types,   only : site_t
-   use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
-                                       patch_diag_alloc
+   use meds_site_state_vars,    only : site_t
+   use meds_diag_vars,          only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc, patch_diag_alloc
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
@@ -55,29 +54,21 @@ module meds_output_registry
         SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PD0,                                &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CD0, FLD_C_DIAG0, FLD_P_DIAG0, &
         FLD_PY_DIAG0
-   use meds_site_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
-                                    CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
-                                    CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
-                                    CD_ROOT_UPTAKE, CD_ABS_PAR, CD_ABS_SW, CD_ABS_LW, CD_WIND,   &
-                                    CD_LEAF_WATER, CD_WOOD_WATER, CD_LEAF_TEMP, CD_WOOD_TEMP,    &
-                                   CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, CD_CA, CD_PRESSURE,  &
-                                    PD_LE, PD_H, PD_RNET, PD_SW_GROUND, PD_LW_GROUND,            &
-                                    PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR,      &
-                                    PD_LW_UP,                                                    &
-                                    PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_GPP, PD_NEE,   &
-                                    PD_TRANSP, PD_SOIL_TEMP_TOP, PD_RESID_ENERGY,                  &
-                                    PD_CAS_VPD, PD_W_SURFACE, PD_CAS_TEMP, PD_CAS_SHV, PD_CAS_CO2, &
-                                    PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP,               &
-                                    PD_RESID_WATER, PD_NPP, PD_RECO, PD_SW_UP, PD_SKIN_TEMP,     &
-                                    PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
-                                    PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
-                                    PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
-                                    PY_RAINF, N_PYDIAG,                                          &
-                                    CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
-                                    CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
-                                    CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
-                                    PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB,             &
-                                    PD_LITTER_STRUCT, PD_LITTER_WOOD, PD_LITTER_REPRO, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
+   use meds_diag_vars,       only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD, CD_TRANSP, CD_BETA_STOM, &
+                                    CD_BETA_NONSTOM, CD_LEAF_VPD, CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE, &
+                                    CD_ABS_PAR, CD_ABS_SW, CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_LEAF_TEMP, &
+                                    CD_WOOD_TEMP, CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, CD_CA, CD_PRESSURE, PD_LE, PD_H, &
+                                    PD_RNET, PD_SW_GROUND, PD_LW_GROUND, PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR, &
+                                    PD_LW_UP, PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_GPP, PD_NEE, PD_TRANSP, &
+                                    PD_SOIL_TEMP_TOP, PD_RESID_ENERGY, PD_CAS_VPD, PD_W_SURFACE, PD_CAS_TEMP, PD_CAS_SHV, &
+                                    PD_CAS_CO2, PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP, PD_RESID_WATER, PD_NPP, PD_RECO, &
+                                    PD_SW_UP, PD_SKIN_TEMP, PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND, PY_LWDOWN, &
+                                    PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM, PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, &
+                                    PY_RHO_AIR, PY_RAINF, N_PYDIAG, CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF, &
+                                    CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, &
+                                    CS_EXUDATE, PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, &
+                                    PD_MORT_C_DISTURB, PD_LITTER_STRUCT, PD_LITTER_WOOD, PD_LITTER_REPRO, PD_RECRUIT_NPLANT, &
+                                    PD_DISTURB_AREA
    implicit none
    private
 
@@ -1343,7 +1334,7 @@ contains
    !  Turn the per-cohort / per-patch fast diagnostic blocks ON iff the finalized registry has     !
    !  at least one LIVE variable that reads them. This is what makes the capture free for a run     !
    !  that does not report it: `active = .false.` leaves both blocks unallocated and every entry     !
-   !  point in meds_site_diag_types a no-op, and the fast loop never even asks the leaf kernel for   !
+   !  point in meds_diag_vars a no-op, and the fast loop never even asks the leaf kernel for         !
    !  the extra flux fields.                                                                         !
    !=======================================================================================!
    subroutine activate_site_diag(files, site)

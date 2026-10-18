@@ -4,16 +4,16 @@
 ! SLOW soil-carbon cycle: the CENTURY-family multi-pool soil carbon advanced daily by the carbon   !
 ! matrix ODE dX/dt = B*I + A*xi*K*X (docs/science/soil_carbon.md eq. (1)). Pure DATA +             !
 ! parameters, no methods -- the biogeochem analogue of meds_canopy_types/meds_soil_types. Links    !
-! meds_kinds and meds_column_state_types only.                                                     !
+! meds_kinds and meds_patch_state_vars only.                                                       !
 !                                                                                          !
 ! Owned HERE: the fixed pool count `n_soil_pool` + `IP_*`, soilc_audit_t, soilc_seam_t and         !
 ! soilc_diag_t. The pools themselves (soil_carbon_t) and litter_input_t are per-patch state in     !
-! meds_column_state_types (litter_input_t is re-exported here; see the notes below), and           !
+! meds_patch_state_vars (litter_input_t is re-exported here; see the notes below), and             !
 ! decomp_opts_t + its selector codes are config, in meds_biogeochem_opts.                          !
 !==========================================================================================!
 module meds_biogeochem_types
    use meds_kinds, only : wp, ik
-   use meds_column_state_types, only : litter_input_t
+   use meds_patch_state_vars,   only : litter_input_t
    implicit none
    private
 
@@ -43,16 +43,14 @@ module meds_biogeochem_types
 
    !==========================================================================================!
    !  The slow, stateful per-patch soil-carbon pools themselves (soil_carbon_t: written DAILY,       !
-   !  read-only in the fast loop) are defined in meds_column_state_types (src/state/column), so      !
-   !  `patch_block` can carry a per-patch soil_carbon_t with no state->biogeochemistry library       !
-   !  edge -- the same reason cas_state_t / soil_column_t / soil_energy_column_t / snow_column_t     !
-   !  live there (src/README.md rule 3). The ACTIVE pool count is set by decomp_scheme (default      !
-   !  3-active: idx 5, 7 inert).                                                                     !
+   !  read-only in the fast loop) are defined in meds_patch_state_vars, with the patch's other       !
+   !  stores: they are what a patch holds (src/README.md rule 3), and the kernels take them from     !
+   !  there. The ACTIVE pool count is set by decomp_scheme (default 3-active: idx 5, 7 inert).       !
    !==========================================================================================!
 
-   !----- litter_input_t is defined in meds_column_state_types, beside the soil_carbon_t pools it
-   !      feeds: it is a PER-PATCH FIELD (patch%litter_in), and the site state module cannot depend
-   !      on this one without inverting the library graph. Re-exported here.
+   !----- litter_input_t is defined in meds_patch_state_vars, beside the soil_carbon_t pools it
+   !      feeds: it is a PER-PATCH FIELD (patch%litter_in), and the state layer cannot depend on
+   !      this kernel module without inverting the library graph. Re-exported here.
 
    !----- Daily carbon-mass conservation guard (the fast/slow contract). --------------------------!
    type :: soilc_audit_t

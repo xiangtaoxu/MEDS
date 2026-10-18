@@ -3,10 +3,9 @@
 program test_disturbance
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t, DIST_TREEFALL
-   use meds_site_state_types, only : site_t
+   use meds_site_state_vars,  only : site_t
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance
-   use meds_site_diag_types,           only : PD_DISTURB_AREA, PD_LE, PD_MORT_C_CULL,        &
-                                              patch_diag_alloc, patch_diag_value
+   use meds_diag_vars,                 only : PD_DISTURB_AREA, PD_LE, PD_MORT_C_CULL, patch_diag_alloc, patch_diag_value
    use meds_constants,                 only : yr_sec
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_diagnostic_reduce, only : total_area, total_nplant

@@ -3,10 +3,10 @@
 program test_containers
    use meds_kinds,           only : wp, ik
    use meds_config,          only : meds_config_t
-   use meds_site_state_types,           only : site_t
+   use meds_site_state_vars,            only : site_t
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
-   use meds_site_diag_types, only : cohort_diag_alloc, cohort_diag_value, N_CSDIAG
+   use meds_diag_vars,       only : cohort_diag_alloc, cohort_diag_value, N_CSDIAG
    use meds_test_support, only : banner, build_test_config, check
    implicit none
 

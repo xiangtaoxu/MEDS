@@ -27,8 +27,8 @@ module meds_c_api_run
    use iso_c_binding
    use meds_kinds,             only : wp, ik
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
-   use meds_site_diag_types,   only : CS_NPP_LEAF, CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO, &
-                                      CS_GROWTH_RESP, CS_EXUDATE
+   use meds_diag_vars,         only : CS_NPP_LEAF, CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO, CS_GROWTH_RESP, &
+                                      CS_EXUDATE
    use meds_driver,            only : meds_run_t, driver_open, driver_step, driver_finalize,   &
                                       driver_free, driver_done
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area,    &
