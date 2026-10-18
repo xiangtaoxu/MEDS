@@ -177,7 +177,8 @@ meds_fortran_flags(meds_config)
 #  meds_diag_vars         -- the diagnostic accumulators, per cohort, per patch, per polygon. #
 #                                                                                            #
 #  The kernels take only the per-patch store types (from meds_patch_state_vars), never        #
-#  site_t, which keeps them OpenMP-`target` device-eligible. The parameters that describe the #
+#  site_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_no_site_state       #
+#  checks it, because the shared module directory cannot. The parameters that describe the    #
 #  stores are config (meds_soil_column_config): a parameter is not state.                     #
 file(GLOB STATE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/*.f90)
 add_library(meds_state STATIC ${STATE_SOURCES})
@@ -512,6 +513,11 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME no_issue_refs
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_issue_refs.py
                        ${CMAKE_CURRENT_SOURCE_DIR})
+      #----- The kernels take only the per-patch store types from the state layer, never site_t:    #
+      #      the shared module directory cannot enforce it, so this does, on every run.             #
+      add_test(NAME kernels_no_site_state
+               COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_kernel_state.py
+                       ${CMAKE_CURRENT_SOURCE_DIR}/src)
    endif()
    add_executable(test_config_keys test/test_config_keys.f90)
    target_link_libraries(test_config_keys PRIVATE meds_config meds_testsupport)
