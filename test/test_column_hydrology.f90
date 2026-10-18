@@ -23,9 +23,9 @@
 program test_column_hydrology
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, grav_head
+   use meds_constants,        only : rho_h2o, grav_head, n_soil_layer_max
    use meds_soil_types, only : chydro_forcing_t
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
+   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER

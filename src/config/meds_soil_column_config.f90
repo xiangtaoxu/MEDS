@@ -1,40 +1,27 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_column_params -- everything about a column that is NOT state: the compile-time      !
-! dimensions, the fresh-cohort initial values, and the static per-column parameter bundles !
-! (geometry, texture, thermal properties) with their `pure` assemblers.                    !
+! meds_soil_column_config -- the soil column a run is set on: the [soil_column] block, the !
+! rule that cuts it into layers, and the parameters derived from it once per column.       !
 !                                                                                          !
-! These describe the same stores meds_column_state_types holds, but they are fixed or      !
-! derived once per column and never integrated, which is the line src/README.md's rule 3   !
-! draws (parameters are not state). Three kinds sit here, and they are worth telling       !
-! apart:                                                                                   !
-!   * DIMENSIONS (n_soil_layer_max, n_snow_layer_max) -- compile-time ceilings, not        !
-!     settings. They are what keep the columns allocatable-free and GPU-eligible.          !
-!   * BIRTH VALUES (LEAF_TEMP_INIT, PSI_INIT) -- the state a fresh cohort starts from.     !
-!   * DERIVED BUNDLES (soil_params_t, soil_thermal_params_t) -- assembled per column at    !
-!     run time from scalar geometry and texture inputs. NOT config: they stand to          !
-!     `[soil_column]` as leaf_photo_table_t stands to the PFT table, which is why they     !
-!     live beside the stores they describe rather than in src/config.                      !
-!                                                                                          !
-! The builders are state-free constructors -- they read plain scalar texture/geometry      !
-! inputs and the shared retention curve, never soil state -- so this module stays below    !
-! the kernels.                                                                             !
+! soil_column_params turns the block into the two bundles the soil kernels read:          !
+! soil_params_t (the layers, the hydraulic texture and the field capacity) and             !
+! soil_thermal_params_t (the thermal texture). They are derived from the config and never  !
+! integrated -- parameters, not state -- so they live with the config, as the PFT table's  !
+! derived rates do (meds_pft_params). A config leaf: it uses only src/shared/, so the soil !
+! kernels import it without the meds_config aggregator.                                    !
 !==========================================================================================!
-module meds_column_params
+module meds_soil_column_config
    use meds_kinds,            only : wp, ik
+   use meds_constants,        only : n_soil_layer_max
    use meds_water_retention,  only : soil_theta_from_psi, SOIL_RETENTION_VG
    implicit none
    private
 
-   public :: n_soil_layer_max, n_snow_layer_max, LEAF_TEMP_INIT, PSI_INIT
-   public :: C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
-   public :: soil_params_t, soil_thermal_params_t
+   public :: soil_column_config_t, soil_texture_layers_t, soil_params_t, soil_thermal_params_t
+   public :: soil_column_layers, soil_column_texture, soil_column_params
+   public :: SOIL_LAYER_TEMPLATE, soil_layer_grid
    public :: build_soil_hydr_params, build_soil_therm_params
    public :: build_soil_hydr_params_layers, build_soil_therm_params_layers
-   public :: SOIL_LAYER_TEMPLATE, soil_layer_grid
-
-   integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
-   integer(ik), parameter :: n_snow_layer_max = 1_ik        !< one bulk layer (multi-layer snow: see docs/ROADMAP.md)
 
    !----- The soil layers every column cuts at its own depth                               !
    !      (docs/science/soil_biophysics.md, "The soil layers"): bottoms [m, down] at       !
@@ -50,20 +37,51 @@ module meds_column_params
    real(wp), parameter :: LAYER_MERGE_SHARE = 0.5_wp
    real(wp), parameter :: GRID_TOL = 1.0e-6_wp     !< [m] a depth this close to a list bottom ends on it
 
-   !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep): a fresh      !
-   !      cohort starts at a mild tension + a neutral leaf temperature (both relax within one fast !
-   !      step).                                                                                   !
-   real(wp),    parameter :: LEAF_TEMP_INIT = 288.15_wp     !< [K]   fresh-cohort leaf temperature
-   real(wp),    parameter :: PSI_INIT       = -0.1_wp       !< [MPa] fresh-cohort node water potential
+   !----- SOIL COLUMN ([soil_column]): the site's geometry, texture and thermal properties          !
+   !      (docs/science/soil_biophysics.md). Consumed once per run by the fast-context builder      !
+   !      (build_fast_context), which turns them into soil_params_t + soil_thermal_params_t.        !
+   !      Every key is OPTIONAL and defaults to the value below. NOTE the distinction from          !
+   !      [soil], which holds the soil water's options (bottom BC, the water network's              !
+   !      tolerances, the pond): this block is the PHYSICAL column they apply to. ------------------!
+   type :: soil_column_config_t
+      !----- Vertical grid: SOIL_LAYER_TEMPLATE, or the `layer_bottoms` list when          !
+      !      set, cut at `depth` (soil_column_layers). ----------------------------------- !
+      real(wp)    :: depth           = 2.0_wp    !< [m]  total column depth (positive; z is negative down)
+      integer(ik) :: n_layer_bottoms = 0_ik      !< [-]  entries of layer_bottoms; 0 = the template
+      real(wp)    :: layer_bottoms(n_soil_layer_max) = 0.0_wp   !< [m] layer bottoms, positive down
+      !----- Hydraulic texture, one for the whole column (or per layer: n_layer_values below). ------!
+      integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
+      real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
+      real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
+      real(wp)    :: ksat        = 2.89e-6_wp !< [m/s]   saturated hydraulic conductivity
+      real(wp)    :: curve_par_a = 3.6_wp     !< [1/m] van Genuchten alpha, OR [m] Campbell psi_sat (< 0)
+      real(wp)    :: curve_par_n = 1.56_wp    !< [-]   van Genuchten n (>1), OR [-] Campbell b
+      real(wp)    :: psi_fc      = -3.37_wp   !< [m]   field-capacity matric head (derives theta_fc)
+      !----- Thermal texture (uniform over the column). ---------------------------------------------!
+      real(wp)    :: solid_conductivity = 3.0_wp    !< [W/m/K]  mineral-solid conductivity
+      real(wp)    :: dry_conductivity   = 0.15_wp   !< [W/m/K]  dry-matrix conductivity
+      real(wp)    :: dry_heat_capacity  = 2.0e6_wp  !< [J/m3/K] dry-matrix volumetric heat capacity
+      !----- A texture per layer, from the soil maps ([maps], meds_surface_maps), in place of the  !
+      !      one texture above: n_layer_values is the column's layer count, and each array holds    !
+      !      one value per layer. 0 = the one texture. No config key sets these. -------------------!
+      integer(ik) :: n_layer_values = 0_ik
+      real(wp)    :: layer_theta_sat(n_soil_layer_max)          = 0.0_wp
+      real(wp)    :: layer_theta_res(n_soil_layer_max)          = 0.0_wp
+      real(wp)    :: layer_ksat(n_soil_layer_max)               = 0.0_wp
+      real(wp)    :: layer_curve_par_a(n_soil_layer_max)        = 0.0_wp
+      real(wp)    :: layer_curve_par_n(n_soil_layer_max)        = 0.0_wp
+      real(wp)    :: layer_solid_conductivity(n_soil_layer_max) = 0.0_wp
+      real(wp)    :: layer_dry_conductivity(n_soil_layer_max)   = 0.0_wp
+      real(wp)    :: layer_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp
+   end type soil_column_config_t
 
-   !----- A tissue's dry heat capacity (docs/science/vegetation_energy_dynamics.md eq. (8)). One set  !
-   !      for the fast loop (veg_thermal_params_t starts from it, build_column_frozen) and the slow   !
-   !      side (cohort_tissue_heat_capacity: the fusion weights and the slow ledger), so both weigh  !
-   !      a tissue's heat alike. Hard-coded parameters, not config keys. --------------------------!
-   real(wp),    parameter :: C2B_WOOD          = 2.0_wp    !< [-] carbon -> dry biomass (carbon fraction 0.5)
-   real(wp),    parameter :: TISSUE_C_LEAF     = 3200.0_wp !< [J/kg/K] dry leaf specific heat
-   real(wp),    parameter :: TISSUE_C_WOOD_DRY = 1217.0_wp !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
-   real(wp),    parameter :: TISSUE_HCAP_MIN   = 20.0_wp   !< [J/m2 tissue/K] least dry heat capacity
+   !----- The column's texture, one value per layer: the per-layer arrays, or the one texture   !
+   !      repeated (soil_column_texture). --------------------------------------------------------!
+   type :: soil_texture_layers_t
+      real(wp) :: theta_sat(n_soil_layer_max), theta_res(n_soil_layer_max), ksat(n_soil_layer_max)
+      real(wp) :: par_a(n_soil_layer_max), par_n(n_soil_layer_max)
+      real(wp) :: k_solid(n_soil_layer_max), k_dry(n_soil_layer_max), dry_cvol(n_soil_layer_max)
+   end type soil_texture_layers_t
 
    !----- Per-column geometry + texture (assembled once per site; ED2 negative-z convention:   !
    !      interface elevations z <= 0 below ground; dz, dz_node are positive magnitudes). Fixed- !
@@ -97,6 +115,59 @@ module meds_column_params
    end type soil_thermal_params_t
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! The column's layers: the bottoms [m, positive down] of `layer_bottoms` when the       !
+   ! config sets it, else SOIL_LAYER_TEMPLATE, cut at `depth` (soil_layer_grid).           !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_column_layers(sc, bottoms, n_layer)
+      type(soil_column_config_t), intent(in)  :: sc
+      real(wp),                   intent(out) :: bottoms(n_soil_layer_max)
+      integer(ik),                intent(out) :: n_layer
+      if (sc%n_layer_bottoms > 0_ik) then
+         call soil_layer_grid(sc%depth, sc%layer_bottoms, sc%n_layer_bottoms, bottoms, n_layer)
+      else
+         call soil_layer_grid(sc%depth, SOIL_LAYER_TEMPLATE, size(SOIL_LAYER_TEMPLATE, kind=ik),   &
+                              bottoms, n_layer)
+      end if
+   end subroutine soil_column_layers
+
+   !----- The column's texture per layer: the map's per-layer values, or the one texture. -------!
+   pure subroutine soil_column_texture(sc, tex)
+      type(soil_column_config_t),  intent(in)  :: sc
+      type(soil_texture_layers_t), intent(out) :: tex
+      if (sc%n_layer_values > 0_ik) then
+         tex%theta_sat = sc%layer_theta_sat ; tex%theta_res = sc%layer_theta_res ; tex%ksat = sc%layer_ksat
+         tex%par_a     = sc%layer_curve_par_a ; tex%par_n   = sc%layer_curve_par_n
+         tex%k_solid   = sc%layer_solid_conductivity ; tex%k_dry = sc%layer_dry_conductivity
+         tex%dry_cvol  = sc%layer_dry_heat_capacity
+      else
+         tex%theta_sat = sc%theta_sat ; tex%theta_res = sc%theta_res ; tex%ksat = sc%ksat
+         tex%par_a     = sc%curve_par_a ; tex%par_n   = sc%curve_par_n
+         tex%k_solid   = sc%solid_conductivity ; tex%k_dry = sc%dry_conductivity
+         tex%dry_cvol  = sc%dry_heat_capacity
+      end if
+   end subroutine soil_column_texture
+
+   !---------------------------------------------------------------------------------------!
+   ! The soil column the [soil_column] block describes: its layers (soil_column_layers),    !
+   ! each layer's retention curve and Ks, and, when asked, each layer's thermal texture.   !
+   ! The fast loop, the slow ledger and validate_config all build the column here.         !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_column_params(sc, soil, therm)
+      type(soil_column_config_t),            intent(in)  :: sc
+      type(soil_params_t),                   intent(out) :: soil
+      type(soil_thermal_params_t), optional, intent(out) :: therm
+      type(soil_texture_layers_t) :: tex
+      real(wp)    :: bottoms(n_soil_layer_max)
+      integer(ik) :: n_layer
+      call soil_column_layers(sc, bottoms, n_layer)
+      call soil_column_texture(sc, tex)
+      call build_soil_hydr_params_layers(n_layer, sc%retention, bottoms, tex%theta_sat, tex%theta_res,  &
+                                         tex%ksat, tex%par_a, tex%par_n, sc%psi_fc, soil)
+      if (present(therm)) call build_soil_therm_params_layers(n_layer, tex%k_solid, tex%k_dry,        &
+                                                              tex%dry_cvol, therm)
+   end subroutine soil_column_params
 
    !=======================================================================================!
    !  Per-column soil PARAMETER assemblers. Both are `pure` -- they take plain scalar      !
@@ -213,4 +284,4 @@ contains
       call build_soil_therm_params_layers(n_active, ks, kd, cv, therm)
    end subroutine build_soil_therm_params
 
-end module meds_column_params
+end module meds_soil_column_config

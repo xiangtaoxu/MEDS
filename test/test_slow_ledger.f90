@@ -22,13 +22,12 @@
 !==========================================================================================!
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
-   use meds_config,             only : meds_config_t, soil_column_layers
-   use meds_site_state_types,   only : site_t, carbon_flux_block
+   use meds_config,             only : meds_config_t
+   use meds_site_state_types,   only : site_t, carbon_flux_block, PSI_INIT
    use meds_column_state_types, only : cas_set_depth
-   use meds_column_params,      only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
+   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
-   use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity, set_cohort_size_from_carbon, &
-                                       TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
+   use meds_site_state_types,   only : init_cohort, set_cohort_size_from_carbon
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : fuse_2_patches
    use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand, shed_turnover_water
@@ -40,8 +39,7 @@ program test_slow_ledger
    use meds_slow_dynamics,      only : settle_tissue_water
    use meds_config,             only : pft_tissue_curves
    use meds_water_retention,    only : water_curve_t, psi_from_water_content
-   use meds_constants,          only : grav_head
-   use meds_column_params,      only : PSI_INIT
+   use meds_constants,          only : grav_head, n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them

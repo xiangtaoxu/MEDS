@@ -23,14 +23,13 @@ module meds_demography_cohort_fusefiss
    use meds_constants,  only : tiny_num
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL, pair_mean
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
-   use meds_column_params, only : LEAF_TEMP_INIT
+   use meds_site_state_types, only : LEAF_TEMP_INIT
    use meds_config,     only : meds_config_t
    use meds_site_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
    use meds_site_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity,      &
-                                      cohort_tissue_water, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,        &
-                                      TISSUE_HCAP_MIN,                                              &
+                                      cohort_tissue_water,                                          &
                                       set_cohort_size_from_carbon, assign_cohort_id,       &
                                       fuse_cohort_fast_state
    use meds_litter_partition, only : necromass_to_litter
@@ -209,8 +208,8 @@ contains
          !----- The tissue heat capacities the diagnostic temperatures fuse on, taken BEFORE          !
          !      fuse_cohort_fast_state blends the survivor's tissue water into them: the same          !
          !      weights the prognostic temperatures fuse on. ----------------------------------------!
-         call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, hlr, hwr)
-         call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, hld, hwd)
+         call cohort_tissue_heat_capacity(cohort, recc, hlr, hwr)
+         call cohort_tissue_heat_capacity(cohort, donc, hld, hwd)
          call fuse_cohort_fast_state(cohort, recc, donc, nr, nd)
          cohort%sla(recc)     = pair_mean(cohort%sla(recc),     cr, cohort%sla(donc),     cd)
          cohort%vcmax25(recc) = pair_mean(cohort%vcmax25(recc), wr, cohort%vcmax25(donc), wd)
@@ -489,8 +488,7 @@ contains
                endow = cohort%leaf_carbon(m) + cohort%fineroot_carbon(m)                           &
                      + cohort%wood_carbon(m) + cohort%nonstructural_carbon(m)
                c_tot = c_tot + patch%area(ip) * patch%recruit_pool(pf, ip) * (endow - c_min)
-               call cohort_tissue_heat_capacity(cohort, m, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,       &
-                                                TISSUE_HCAP_MIN, cap_leaf, cap_wood)
+               call cohort_tissue_heat_capacity(cohort, m, cap_leaf, cap_wood)
                e_tot = e_tot + patch%area(ip) * (cap_leaf + cap_wood) * t_birth
                w_tot = w_tot + patch%area(ip) * cohort_tissue_water(cohort, m)
                patch%recruit_pool(pf, ip) = 0.0_wp

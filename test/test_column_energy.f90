@@ -29,12 +29,11 @@
 program test_column_energy
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice, pi
+   use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice, pi, n_soil_layer_max
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_column_state_types, only : soil_energy_column_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : soil_thermal_params_t, soil_params_t, build_soil_hydr_params,          &
-                                 build_soil_therm_params, n_soil_layer_max
+   use meds_soil_column_config, only : soil_thermal_params_t, soil_params_t, build_soil_hydr_params, build_soil_therm_params
    use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
    use meds_therm_lib,           only : soil_thermal_cond, soil_heat_cap_vol

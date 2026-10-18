@@ -21,14 +21,12 @@ module meds_site_state_types
                                       cohort_diag_reset, patch_diag_reset, polygon_diag_reset
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : cp_liq
+   use meds_constants,  only : cp_liq, C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
    use meds_water_retention, only : wood_thermal_water
    use meds_numerics,   only : pair_mean
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,           &
                                carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
-   use meds_column_params, only : LEAF_TEMP_INIT, PSI_INIT, C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, &
-                                  TISSUE_HCAP_MIN
    use meds_config,        only : hydraulics_config_t, pft_tissue_curves
    use meds_water_retention, only : water_curve_t, water_content
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
@@ -47,10 +45,13 @@ module meds_site_state_types
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
-   !----- The tissue heat constants live in meds_column_params, shared with the fast loop; they are   !
-   !      re-exported here for meds_demography and the slow driver. -------------------------------!
-   public :: C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
+   public :: LEAF_TEMP_INIT, PSI_INIT
+
+   !----- A fresh cohort's tissue state: a neutral leaf and wood temperature and a mild tension   !
+   !      (both relax within one fast step). ----------------------------------------------------!
+   real(wp), parameter :: LEAF_TEMP_INIT = 288.15_wp     !< [K]   fresh-cohort leaf temperature
+   real(wp), parameter :: PSI_INIT       = -0.1_wp       !< [MPa] fresh-cohort node water potential
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
    !      this until its first growth step adds a sample (negative => "unset"; a real growth     !
@@ -1016,8 +1017,8 @@ contains
       !      the sapwood ring, which set_cohort_size_from_carbon re-derives from the merged dbh;  !
       !      that leaves a small thermal-mass change, of the same kind growth makes and declared   !
       !      the same way by the caller.  --------------------------------------------------!
-      call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, clr, cwr)
-      call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, cld, cwd)
+      call cohort_tissue_heat_capacity(cohort, recc, clr, cwr)
+      call cohort_tissue_heat_capacity(cohort, donc, cld, cwd)
       call blend(cohort%leaf_temp,        clr, cld)
       call blend(cohort%wood_temp,        cwr, cwd)
       !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
@@ -1131,21 +1132,19 @@ contains
    ! naming. The WOOD's dry tissue is all the wood, at the dry specific heat, and its water  !
    ! is the sapwood share of the hydraulic store `wood_water_mass` (wood_thermal_water, one  !
    ! function for both): the fine roots' share sits in the soil and heartwood holds none.    !
-   ! Each dry capacity is at least `hcap_min` per unit of the tissue's own area, so a        !
-   ! tissue's capacity scales with its area as its fluxes do, and splitting a cohort in two  !
-   ! changes neither the sum nor a fusion weight. The fast loop builds its own copy from the !
-   ! column view; this function is the half of that pair that three libraries can reach.     !
+   ! Every term scales with plant number, so splitting a cohort in two changes neither the   !
+   ! sum nor a fusion weight. The fast loop builds its own copy from the column view; this   !
+   ! function is the half of that pair that three libraries can reach.                      !
    !=========================================================================================!
-   pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_wood_dry, hcap_min, cap_leaf, cap_wood)
+   pure subroutine cohort_tissue_heat_capacity(cohort, i, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
-      real(wp),           intent(in)  :: c_leaf, c_wood_dry, hcap_min   !< [J/kg/K], [J/kg/K], [J/m2 tissue/K]
       real(wp),           intent(out) :: cap_leaf, cap_wood             !< [J/m2 ground/K]
       real(wp) :: n
       n = cohort%nplant(i)
-      cap_leaf = max(cohort%leaf_carbon(i) * n * C2B_WOOD * c_leaf, hcap_min * n * cohort%leaf_area(i))   &
+      cap_leaf = cohort%leaf_carbon(i) * n * C2B_WOOD * TISSUE_C_LEAF                                &
                + max(cohort%leaf_water_mass(i), 0.0_wp) * n * cp_liq
-      cap_wood = max(cohort%wood_carbon(i) * n * C2B_WOOD * c_wood_dry, hcap_min * n * cohort%wood_area(i))  &
+      cap_wood = cohort%wood_carbon(i) * n * C2B_WOOD * TISSUE_C_WOOD_DRY                            &
                + n * wood_thermal_water(cohort%wood_water_mass(i), cohort%sapwood_carbon(i),              &
                                         cohort%fineroot_carbon(i)) * cp_liq
    end subroutine cohort_tissue_heat_capacity

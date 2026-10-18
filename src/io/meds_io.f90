@@ -27,11 +27,11 @@ module meds_io
    use meds_config,   only : meds_config_t, growth_window_steps, pft_tissue_curves
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
-   use meds_site_state_types, only : site_t
+   use meds_site_state_types, only : site_t, PSI_INIT
    use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr, &
                                            set_cohort_size_from_carbon, set_cohort_tissue_water
    use meds_demography_update,      only : update_overtopping_lai
-   use meds_column_params, only : n_soil_layer_max, n_snow_layer_max, PSI_INIT
+   use meds_constants,     only : n_soil_layer_max, n_snow_layer_max
    use meds_water_retention, only : water_curve_t
    use meds_therm_lib,              only : internal_energy_liquid
    use meds_demography_cohort_fusefiss,   only : sort_cohorts

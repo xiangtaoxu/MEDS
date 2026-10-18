@@ -13,12 +13,11 @@
 program test_fast_loop
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon
+   use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon, PSI_INIT
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params, n_soil_layer_max
+   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
    use meds_water_retention, only : SOIL_RETENTION_VG, water_content
-   use meds_column_params,   only : PSI_INIT
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
@@ -34,7 +33,7 @@ program test_fast_loop
    use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, &
                                         PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND, PD_CAS_TEMP,           &
                                         PD_SKIN_TEMP, PD_LW_UP
-   use meds_constants,           only : stefan
+   use meds_constants,           only : stefan, n_soil_layer_max
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none

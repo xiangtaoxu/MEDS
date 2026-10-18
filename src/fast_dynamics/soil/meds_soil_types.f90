@@ -10,7 +10,7 @@
 !==========================================================================================!
 module meds_soil_types
    use meds_kinds,             only : wp, ik
-   use meds_column_params,  only : n_soil_layer_max, n_snow_layer_max
+   use meds_constants,      only : n_soil_layer_max, n_snow_layer_max
    implicit none
    private
 
@@ -20,7 +20,7 @@ module meds_soil_types
 
    !=======================================================================================!
    !  Soil-column water: the boundary the water network's evaporation reads. The soil's       !
-   !  parameters are soil_params_t (meds_column_params), its options soil_opts_t              !
+   !  parameters are soil_params_t (meds_soil_column_config), its options soil_opts_t         !
    !  (meds_biophysics_opts), its retention curves meds_water_retention.                       !
    !=======================================================================================!
 

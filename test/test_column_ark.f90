@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_column_ark
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o, cp_liq
+   use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -25,8 +25,8 @@ program test_column_ark
    use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : n_soil_layer_max
-   use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
+   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
+   use meds_site_state_types, only : PSI_INIT
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
@@ -284,8 +284,7 @@ contains
       call set_noon_forcing()
       w_store = biophys%wood_water_mass(1)
       w_sap   = w_store * col_cohort%bsap(1) / (col_cohort%bsap(1) + col_cohort%broot(1))
-      cap_dry = max(col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * col_config%veg_thermal%c_wood_dry,  &
-                    col_config%veg_thermal%veg_hcap_min * col_cohort%wai(1))
+      cap_dry = col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * col_config%veg_thermal%c_wood_dry
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, n, nsl, fz, ys)
       cap_full = fz%tissue%wood_hcap_per_dt(1) * dt_fast

@@ -27,7 +27,7 @@ module meds_fast_prepass
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_fast_types, only : patch_biophys_t
-   use meds_column_params, only : soil_params_t
+   use meds_soil_column_config, only : soil_params_t
    use meds_biophysics_opts, only : aero_cfg_t
    use meds_column_state_types, only : cas_state_t, soil_carbon_t
    use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, hydro_params_table_t, hydro_opts_t, &

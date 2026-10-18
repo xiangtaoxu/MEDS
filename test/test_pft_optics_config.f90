@@ -20,10 +20,9 @@ program test_pft_optics_config
    use meds_fast_types,     only : apply_hydraulics_config
    use meds_hydr_lib,       only : plc_retained, wood_kmax_from_density
    use meds_water_retention, only : pv_psi_tlp, water_content
-   use meds_site_state_types, only : site_t
+   use meds_site_state_types, only : site_t, PSI_INIT
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
    use meds_vegetation_dynamics, only : shed_excess_tissue_water
-   use meds_column_params,  only : PSI_INIT
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
    use meds_test_support, only : banner, build_test_config, check, check_close

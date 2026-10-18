@@ -50,7 +50,7 @@ program test_output_integrate
                                      apply_variable_override, OVR_MASK
    use meds_diagnostic_reduce, only : W_NPLANT, W_LEAF_AREA
    use meds_output_config,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
-   use meds_column_params,    only : n_soil_layer_max
+   use meds_constants,        only : n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 

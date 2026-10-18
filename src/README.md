@@ -26,14 +26,15 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        TOML reader and loader, PFT trait table, meds_config_t,
-│                  and the per-domain *_opts leaves (meds_region_opts for
-│                  the [region] block)                                       3 707
+│                  the per-domain *_opts leaves (meds_region_opts for
+│                  the [region] block), and the soil column with the
+│                  parameters derived from it (meds_soil_column_config)      3 707
 │
 │  ── STATE, a layer in two halves ───────────────────────────────────────────
 ├── state/
 │   ├── column/    ONE patch, seen vertically: the soil-water, soil-energy,
-│   │              snow, canopy-air and soil-carbon reservoirs, their fusion
-│   │              blends, and the parameter bundles that describe them         587
+│   │              snow, canopy-air and soil-carbon reservoirs, and their
+│   │              fusion blends                                                587
 │   └── site/      ALL the patches: the flat cohort structure-of-arrays, the
 │                  patch CSR map, the lockstep reorder machinery, site_t,
 │                  and the diagnostic accumulators                           1 896
@@ -88,8 +89,8 @@ there `use`s other `shared/` modules and compiler intrinsics and nothing else: n
 configuration, no external library. That is what lets every other layer, and the tests that link
 one narrow library, use it freely. A file that needs `meds_config`, a state type or netCDF is not
 foundation however small or widely used it is, and goes to its caller's layer instead; `config/`
-itself is a separate library for exactly that reason, since it links `state_column`. The test is
-what keeps `shared/` from becoming the place a file goes when no other place fits.
+is a library of its own because configuration is not foundation. The test is what keeps `shared/`
+from becoming the place a file goes when no other place fits.
 
 ## Four rules, in the order you apply them
 
@@ -110,7 +111,9 @@ machine precision.
 
 **3. A derived type lives with whoever mutates it.** If two subsystems mutate it, it is boundary
 state and belongs in `state/column`. **Parameters are not state**: they are derived once and never
-integrated, so `meds_column_params` is a separate module from `meds_column_state_types`.
+integrated, so they live with the configuration they are derived from. The soil column's
+(`soil_params_t`, the layer grid and their builders) are in `config/meds_soil_column_config`, as
+the PFT table's derived rates are in `config/meds_pft_params`.
 
 **4. Laws and operators do not touch.** `demography/` holds both the vital-rate laws
 (`meds_demography_rates`) and the operators that apply them (`update_*`, `*_fusefiss`,
@@ -125,7 +128,7 @@ Acyclic by construction, and the build enforces it. Every arrow is a `target_lin
 in [`CMakeLists.txt`](../CMakeLists.txt).
 
 ```
-  shared ──→ state_column ──→ config ──→ state_site ──→ demography ──→ io_prep
+  shared ──→ state_column, config ─────→ state_site ──→ demography ──→ io_prep
      │            │                          ↑              │             │
      │            ├──→ fast_kernels ─────────┤              │             │
      │            └──→ slow_kernels ─────────┘              │             │
@@ -141,12 +144,8 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
                                                                └→ meds_py (libmeds.so)
 ```
 
-Two edges are worth knowing because they are easy to get wrong:
+One edge is worth knowing because it is easy to get wrong:
 
-- **`config` links `state_column`**, not the other way round: `meds_config` takes
-  `n_soil_layer_max` from `meds_column_params` for the `[soil_column]` bounds check. A missing edge
-  here does not show in the everyday build — the Makefile generator happens to order the two module
-  files correctly — but a parallel build with a different scheduler (Ninja) fails.
 - **`io_prep` carries no netCDF.** The netCDF-free half of the output subsystem (the reductions,
   the registry, the temporal integrators) is a separate target from the serializer, so the stepper
   can tick the integrators without pulling a C dependency. It is an explicit file list, not a glob:

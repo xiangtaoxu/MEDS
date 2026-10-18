@@ -22,8 +22,7 @@
 !==========================================================================================!
 module meds_fast_rk45
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air
-   use meds_column_params,    only : n_soil_layer_max
+   use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air, n_soil_layer_max
    use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t, &

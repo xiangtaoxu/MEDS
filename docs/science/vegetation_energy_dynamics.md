@@ -157,15 +157,14 @@ halves across **different** masses, which is a physical distinction and not a de
 Per unit ground area, with $B$ the dry biomass (carbon × 2 × $`n_{plant}`$):
 
 ```math
-\mathrm{cap}_{wood} = \max\!\big(c_{wood}\,B_{wood},\ C_{min}\,\mathrm{WAI}\big)
+\mathrm{cap}_{wood} = c_{wood}\,B_{wood}
   + c_{liq}\,n_{plant}\,W_{wood}\,\frac{B_{sap}}{B_{sap}+B_{root}}, \qquad
-\mathrm{cap}_{leaf} = \max\!\big(c_{leaf}\,B_{leaf},\ C_{min}\,\mathrm{LAI}\big) + c_{liq}\,W_{leaf} \qquad(8)
+\mathrm{cap}_{leaf} = c_{leaf}\,B_{leaf} + c_{liq}\,W_{leaf} \qquad(8)
 ```
 
 with $`c_{wood}`$ = 1217 J kg⁻¹ K⁻¹, ED2's specific heat of **dry** wood at 15 °C (`c_wood_dry`;
-103.1 + 3.867 T), $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ for dry leaf (`c_leaf`), $`C_{min}`$ = 20 J K⁻¹ per m²
-of the tissue's own area (`veg_hcap_min`; per area, so the capacity scales with the tissue's area as its
-fluxes do), $`W_{wood}`$ the wood store's water per plant and $`W_{leaf}`$ the leaf's internal water,
+103.1 + 3.867 T), $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ for dry leaf (`c_leaf`), $`W_{wood}`$ the wood
+store's water per plant and $`W_{leaf}`$ the leaf's internal water,
 both from the water network. Fresh wood's specific heat (about 2700 J kg⁻¹ K⁻¹ at 100 % moisture) is
 not used: the water is counted on its own, so a fresh-wood value would count it twice. The function
 `wood_thermal_water` gives the water term to both the fast loop and the state layer's

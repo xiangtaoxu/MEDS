@@ -9,7 +9,7 @@
 !==========================================================================================!
 module meds_config
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : yr_day, yr_sec, day_sec
+   use meds_constants,  only : yr_day, yr_sec, day_sec, n_soil_layer_max
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_allometry,  only : allometry_t, HEIGHT_CHAVE
@@ -18,9 +18,9 @@ module meds_config
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp, water_curve_t
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t,                &
-                                  build_soil_hydr_params_layers, build_soil_therm_params_layers,         &
-                                  SOIL_LAYER_TEMPLATE, soil_layer_grid
+   use meds_soil_column_config, only : soil_column_config_t, soil_texture_layers_t, soil_params_t,       &
+                                       soil_column_layers, soil_column_texture, soil_column_params,   &
+                                       SOIL_LAYER_TEMPLATE
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
                                    METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
                                    WIND_EXPOSURE_OPEN_TERRAIN, ARCHIVE_DT_SEC
@@ -33,10 +33,10 @@ module meds_config
    implicit none
    private
 
-   public :: meds_config_t, hydraulics_config_t, soil_column_config_t
+   public :: meds_config_t, hydraulics_config_t
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
-   public :: validate_config, growth_window_steps, soil_column_layers, soil_column_params
+   public :: validate_config, growth_window_steps
    public :: pft_tissue_curves, pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
@@ -105,52 +105,6 @@ module meds_config
 
    !----- A field with no in-type default is set by the config reader (presence-mapped) or     !
    !      derived (derive_config / derive_pft_rates). DERIVED fields are noted. ---------------!
-
-   !----- SOIL COLUMN ([soil_column]): the site's geometry, texture and thermal properties          !
-   !      (docs/science/soil_biophysics.md). Consumed once per run by the fast-context builder      !
-   !      (build_fast_context), which turns them into soil_params_t + soil_thermal_params_t.        !
-   !      Every key is OPTIONAL and defaults to the value below. NOTE the distinction from          !
-   !      [soil], which holds the soil water's options (bottom BC, the water network's              !
-   !      tolerances, the pond): this block is the PHYSICAL column they apply to. ------------------!
-   type :: soil_column_config_t
-      !----- Vertical grid: SOIL_LAYER_TEMPLATE, or the `layer_bottoms` list when          !
-      !      set, cut at `depth` (soil_column_layers). ----------------------------------- !
-      real(wp)    :: depth           = 2.0_wp    !< [m]  total column depth (positive; z is negative down)
-      integer(ik) :: n_layer_bottoms = 0_ik      !< [-]  entries of layer_bottoms; 0 = the template
-      real(wp)    :: layer_bottoms(n_soil_layer_max) = 0.0_wp   !< [m] layer bottoms, positive down
-      !----- Hydraulic texture, one for the whole column (or per layer: n_layer_values below). ------!
-      integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
-      real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
-      real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
-      real(wp)    :: ksat        = 2.89e-6_wp !< [m/s]   saturated hydraulic conductivity
-      real(wp)    :: curve_par_a = 3.6_wp     !< [1/m] van Genuchten alpha, OR [m] Campbell psi_sat (< 0)
-      real(wp)    :: curve_par_n = 1.56_wp    !< [-]   van Genuchten n (>1), OR [-] Campbell b
-      real(wp)    :: psi_fc      = -3.37_wp   !< [m]   field-capacity matric head (derives theta_fc)
-      !----- Thermal texture (uniform over the column). ---------------------------------------------!
-      real(wp)    :: solid_conductivity = 3.0_wp    !< [W/m/K]  mineral-solid conductivity
-      real(wp)    :: dry_conductivity   = 0.15_wp   !< [W/m/K]  dry-matrix conductivity
-      real(wp)    :: dry_heat_capacity  = 2.0e6_wp  !< [J/m3/K] dry-matrix volumetric heat capacity
-      !----- A texture per layer, from the soil maps ([maps], meds_surface_maps), in place of the  !
-      !      one texture above: n_layer_values is the column's layer count, and each array holds    !
-      !      one value per layer. 0 = the one texture. No config key sets these. -------------------!
-      integer(ik) :: n_layer_values = 0_ik
-      real(wp)    :: layer_theta_sat(n_soil_layer_max)          = 0.0_wp
-      real(wp)    :: layer_theta_res(n_soil_layer_max)          = 0.0_wp
-      real(wp)    :: layer_ksat(n_soil_layer_max)               = 0.0_wp
-      real(wp)    :: layer_curve_par_a(n_soil_layer_max)        = 0.0_wp
-      real(wp)    :: layer_curve_par_n(n_soil_layer_max)        = 0.0_wp
-      real(wp)    :: layer_solid_conductivity(n_soil_layer_max) = 0.0_wp
-      real(wp)    :: layer_dry_conductivity(n_soil_layer_max)   = 0.0_wp
-      real(wp)    :: layer_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp
-   end type soil_column_config_t
-
-   !----- The column's texture, one value per layer: the per-layer arrays, or the one texture   !
-   !      repeated (soil_column_texture). --------------------------------------------------------!
-   type :: soil_texture_layers_t
-      real(wp) :: theta_sat(n_soil_layer_max), theta_res(n_soil_layer_max), ksat(n_soil_layer_max)
-      real(wp) :: par_a(n_soil_layer_max), par_n(n_soil_layer_max)
-      real(wp) :: k_solid(n_soil_layer_max), k_dry(n_soil_layer_max), dry_cvol(n_soil_layer_max)
-   end type soil_texture_layers_t
 
    !----- Plant-hydraulics parameters ([hydraulics]; docs/science/plant_hydraulics.md): the        !
    !      run-wide value of each hydraulic trait, which the PFT file's pft.<key> overrides per     !
@@ -444,59 +398,6 @@ module meds_config
    end type meds_config_t
 
 contains
-
-   !---------------------------------------------------------------------------------------!
-   ! The column's layers: the bottoms [m, positive down] of `layer_bottoms` when the       !
-   ! config sets it, else SOIL_LAYER_TEMPLATE, cut at `depth` (soil_layer_grid).           !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine soil_column_layers(sc, bottoms, n_layer)
-      type(soil_column_config_t), intent(in)  :: sc
-      real(wp),                   intent(out) :: bottoms(n_soil_layer_max)
-      integer(ik),                intent(out) :: n_layer
-      if (sc%n_layer_bottoms > 0_ik) then
-         call soil_layer_grid(sc%depth, sc%layer_bottoms, sc%n_layer_bottoms, bottoms, n_layer)
-      else
-         call soil_layer_grid(sc%depth, SOIL_LAYER_TEMPLATE, size(SOIL_LAYER_TEMPLATE, kind=ik),   &
-                              bottoms, n_layer)
-      end if
-   end subroutine soil_column_layers
-
-   !----- The column's texture per layer: the map's per-layer values, or the one texture. -------!
-   pure subroutine soil_column_texture(sc, tex)
-      type(soil_column_config_t),  intent(in)  :: sc
-      type(soil_texture_layers_t), intent(out) :: tex
-      if (sc%n_layer_values > 0_ik) then
-         tex%theta_sat = sc%layer_theta_sat ; tex%theta_res = sc%layer_theta_res ; tex%ksat = sc%layer_ksat
-         tex%par_a     = sc%layer_curve_par_a ; tex%par_n   = sc%layer_curve_par_n
-         tex%k_solid   = sc%layer_solid_conductivity ; tex%k_dry = sc%layer_dry_conductivity
-         tex%dry_cvol  = sc%layer_dry_heat_capacity
-      else
-         tex%theta_sat = sc%theta_sat ; tex%theta_res = sc%theta_res ; tex%ksat = sc%ksat
-         tex%par_a     = sc%curve_par_a ; tex%par_n   = sc%curve_par_n
-         tex%k_solid   = sc%solid_conductivity ; tex%k_dry = sc%dry_conductivity
-         tex%dry_cvol  = sc%dry_heat_capacity
-      end if
-   end subroutine soil_column_texture
-
-   !---------------------------------------------------------------------------------------!
-   ! The soil column the [soil_column] block describes: its layers (soil_column_layers),    !
-   ! each layer's retention curve and Ks, and, when asked, each layer's thermal texture.   !
-   ! The fast loop, the slow ledger and validate_config all build the column here.         !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine soil_column_params(sc, soil, therm)
-      type(soil_column_config_t),            intent(in)  :: sc
-      type(soil_params_t),                   intent(out) :: soil
-      type(soil_thermal_params_t), optional, intent(out) :: therm
-      type(soil_texture_layers_t) :: tex
-      real(wp)    :: bottoms(n_soil_layer_max)
-      integer(ik) :: n_layer
-      call soil_column_layers(sc, bottoms, n_layer)
-      call soil_column_texture(sc, tex)
-      call build_soil_hydr_params_layers(n_layer, sc%retention, bottoms, tex%theta_sat, tex%theta_res,  &
-                                         tex%ksat, tex%par_a, tex%par_n, sc%psi_fc, soil)
-      if (present(therm)) call build_soil_therm_params_layers(n_layer, tex%k_solid, tex%k_dry,        &
-                                                              tex%dry_cvol, therm)
-   end subroutine soil_column_params
 
    !---------------------------------------------------------------------------------------!
    ! Compute the DERIVED configuration from the (already-loaded) primary parameters: the      !

@@ -35,7 +35,7 @@
 !==========================================================================================!
 program test_slow_diag_units
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : yr_sec
+   use meds_constants,           only : yr_sec, n_soil_layer_max
    use meds_config,              only : meds_config_t
    use meds_site_state_types,    only : site_t, reset_step_diagnostics
    use meds_site_diag_types,     only : patch_diag_alloc, patch_diag_value, patch_diag_slow_row,  &
@@ -43,8 +43,7 @@ program test_slow_diag_units
                                         PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_LE, PD_GPP
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : n_soil_layer_max
-   use meds_column_params,       only : build_soil_hydr_params, build_soil_therm_params
+   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
    use meds_water_retention,     only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
    use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config

@@ -23,7 +23,8 @@ module meds_fast_dynamics
                                      par_w_2_umol,                                                            &
                                      stefan
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t, soil_column_params
+   use meds_config,           only : meds_config_t
+   use meds_soil_column_config, only : soil_column_params
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
@@ -43,7 +44,7 @@ module meds_fast_dynamics
                                      PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                      PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
                                      PY_RAINF, N_PYDIAG, cohort_diag_grow, patch_diag_grow
-   use meds_column_params, only : n_soil_layer_max, PSI_INIT
+   use meds_constants,     only : n_soil_layer_max
    use meds_column_state_types, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_forcing_kernels,  only : precip_phase

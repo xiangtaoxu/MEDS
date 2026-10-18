@@ -14,7 +14,7 @@
 !==========================================================================================!
 program test_column_rk45
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o, grav_head
+   use meds_constants,           only : rho_h2o, grav_head, n_soil_layer_max
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -26,9 +26,9 @@ program test_column_rk45
    use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : n_soil_layer_max, soil_params_t
+   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, build_soil_therm_params
+   use meds_site_state_types, only : PSI_INIT
    use meds_site_diag_types, only : N_CDIAG, CD_PSI_PREDAWN
-   use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts

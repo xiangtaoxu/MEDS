@@ -11,7 +11,7 @@
 !                                                                                          !
 ! (The SOIL_RETENTION_* selectors stay in meds_water_retention with the retention curves;  !
 ! the per-column soil_params_t / soil_thermal_params_t descriptors are in                  !
-! meds_column_params.)                                                                     !
+! meds_soil_column_config.)                                                                !
 !==========================================================================================!
 module meds_biophysics_opts
    use meds_kinds, only : wp, ik

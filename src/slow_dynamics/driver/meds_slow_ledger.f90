@@ -31,10 +31,9 @@
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : rho_h2o
-   use meds_config,             only : meds_config_t, soil_column_params
-   use meds_site_state_types,   only : site_t, cohort_tissue_heat_capacity,                    &
-                                       TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
-   use meds_column_params,      only : soil_params_t
+   use meds_config,             only : meds_config_t
+   use meds_site_state_types,   only : site_t, cohort_tissue_heat_capacity
+   use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
    use meds_budget_check,       only : budget_rtol_flux
@@ -371,8 +370,7 @@ contains
                !----- Tissue heat, through the SHARED capacity (state/site), so the ledger, the    !
                !      demography operators and the slow driver cannot drift apart on what a        !
                !      cohort's thermal mass is. ---------------------------------------------------!
-               call cohort_tissue_heat_capacity(c, i, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,           &
-                                                TISSUE_HCAP_MIN, cap_leaf, cap_wood)
+               call cohort_tissue_heat_capacity(c, i, cap_leaf, cap_wood)
                store%energy = store%energy + a * (cap_leaf * c%leaf_temp(i) + cap_wood * c%wood_temp(i))
             end do
          end associate
@@ -393,8 +391,7 @@ contains
          i0 = site%patch%cohort_offset(ip)
          i1 = i0 + site%patch%cohort_count(ip) - 1_ik
          do i = i0, i1
-            call cohort_tissue_heat_capacity(site%cohort, i, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,    &
-                                             TISSUE_HCAP_MIN, cap_leaf, cap_wood)
+            call cohort_tissue_heat_capacity(site%cohort, i, cap_leaf, cap_wood)
             e = e + site%patch%area(ip) * (cap_leaf * site%cohort%leaf_temp(i)                    &
                                          + cap_wood * site%cohort%wood_temp(i))
          end do

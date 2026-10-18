@@ -27,8 +27,8 @@
 !==========================================================================================!
 module meds_column_view
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cm2_to_m2
-   use meds_site_state_types, only : cohort_block, cohort_alloc, init_cohort, set_cohort_size, C2B_WOOD
+   use meds_constants,        only : cm2_to_m2, C2B_WOOD
+   use meds_site_state_types, only : cohort_block, cohort_alloc, init_cohort, set_cohort_size
    use meds_pft_params,       only : pft_table_t
    use meds_config,           only : hydraulics_config_t
    use meds_fast_types,       only : column_cohort_t, ensure_column_cohort_capacity

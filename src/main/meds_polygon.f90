@@ -43,7 +43,8 @@ module meds_polygon
                                            activate_site_diag, apply_variable_override,          &
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
-   use meds_column_params,          only : soil_params_t, n_soil_layer_max
+   use meds_constants,              only : n_soil_layer_max
+   use meds_soil_column_config,     only : soil_params_t
    use meds_allometry,              only : HEIGHT_CHAVE
    use meds_biophysics_opts,        only : SOIL_BC_AQUIFER
    use meds_forcing_types,          only : met_cells_t
