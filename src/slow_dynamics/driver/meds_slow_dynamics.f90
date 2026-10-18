@@ -10,12 +10,12 @@ module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
    use meds_config,                only : meds_config_t
    use meds_time,                  only : meds_time_t, day_of_year
-   use meds_site_state_types, only : site_t
+   use meds_site_state_vars,  only : site_t
    use meds_demography_update, only : update_patch_states
    use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand, shed_excess_tissue_water
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
-   use meds_column_state_types, only : cas_set_depth
+   use meds_patch_state_vars,   only : cas_set_depth
    use meds_slow_ledger,           only : slow_ledger_t, slow_ledger_open, slow_ledger_mark,       &
                                           slow_ledger_rebase, slow_tissue_heat,                   &
                                           slow_ledger_declare, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC, &

@@ -20,18 +20,14 @@ module meds_demography_patch_fusefiss
    use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL
    use meds_config,     only : meds_config_t, DIST_TREEFALL
-   use meds_site_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
-                                      cohort_ensure_capacity, copy_cohort_slot,                    &
-                                      scale_cohort_ground_fields,                                  &
-                                      patch_ensure_capacity, assign_cohort_id, assign_patch_id,     &
-                                      cohort_tissue_water
-   use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
-                                     patch_diag_inherit, PD_DISTURB_AREA,                        &
-                                     PD_MORT_C_DISTURB
+   use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
+                                      scale_cohort_ground_fields, cohort_tissue_water
+   use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
+   use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
-   use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
-                                      blend_litter_input, &
-                                      blend_xi_accum
+   use meds_patch_state_vars,   only : expand_patch_block, reorder_patch_block, blend_cas, blend_soil_water,      &
+                                       blend_soil_energy, blend_snow, snow_column_t, blend_soil_carbon,          &
+                                       blend_litter_input, blend_xi_accum
    use meds_litter_partition, only : necromass_to_litter
    implicit none
    private
@@ -66,24 +62,8 @@ contains
             end do
             pperm(j + 1_ik) = key
          end do
-         !----- Apply permutation to patch arrays (RHS vector subscript -> safe temp). -----!
-         patch%area(1:np)           = patch%area(pperm(1:np))
-         patch%age(1:np)            = patch%age(pperm(1:np))
-         patch%dist_type(1:np)      = patch%dist_type(pperm(1:np))
-         patch%recruit_pool(:,1:np) = patch%recruit_pool(:,pperm(1:np))
-         patch%global_id(1:np)      = patch%global_id(pperm(1:np))
-         patch%cas(1:np)            = patch%cas(pperm(1:np))
-         patch%soil_e(1:np)         = patch%soil_e(pperm(1:np))
-         patch%soil_w(1:np)         = patch%soil_w(pperm(1:np))
-         patch%snow(1:np)           = patch%snow(pperm(1:np))
-         patch%soil_carbon(1:np)    = patch%soil_carbon(pperm(1:np))
-         patch%xi_accum(1:np)       = patch%xi_accum(pperm(1:np))
-         patch%litter_in(1:np)      = patch%litter_in(pperm(1:np))
-         patch%shed_water_rate(1:np) = patch%shed_water_rate(pperm(1:np))
-         patch%slow_co2_rate(1:np)   = patch%slow_co2_rate(pperm(1:np))
-         patch%adapt_dt_last(1:np)   = patch%adapt_dt_last(pperm(1:np))
-         !----- The per-patch diagnostic accumulators ride the same permutation. -----------!
-         call patch_diag_reorder(patch%diag, pperm, np)
+         !----- Apply the permutation to every patch field, the diagnostics included. ---------!
+         call reorder_patch_block(patch, pperm, np)
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -234,31 +214,34 @@ contains
             return
          end if
          rawgt = ar / anew ; dawgt = ad / anew
-         !----- Area-weighted patch scalars. ----------------------------------------------!
+         !----- The patch's fields, in the patch file's section order. The area is set last,      !
+         !      below: it is the weight. ----------------------------------------------------------!
+         !----- 1. Identity and area: area-weighted age. -------------------------------------------!
          patch%age(recp)            = rawgt * patch%age(recp)            + dawgt * patch%age(donp)
+         !----- 3. Recruit bank. --------------------------------------------------------------------!
          patch%recruit_pool(:,recp) = rawgt * patch%recruit_pool(:,recp) + dawgt * patch%recruit_pool(:,donp)
-         !----- Area-weighted fast-biophysics reservoirs (conserves the area-extensive store). !
+         !----- 4-6. Area-weighted fast-biophysics reservoirs (conserves the area-extensive store);   !
+         !      temp/fliq are re-diagnosed in the fast loop. -------------------------------------------!
          patch%cas(recp)    = blend_cas(rawgt,    patch%cas(recp),    dawgt, patch%cas(donp))
-         patch%soil_e(recp) = blend_soil_e(rawgt, patch%soil_e(recp), dawgt, patch%soil_e(donp))
-         patch%soil_w(recp) = blend_soil_w(rawgt, patch%soil_w(recp), dawgt, patch%soil_w(donp))
-         ! temp/fliq re-diagnosed in the fast loop
          patch%snow(recp)   = blend_snow(rawgt,   patch%snow(recp),   dawgt, patch%snow(donp))
-         !----- Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -----!
+         patch%soil_water(recp) = blend_soil_water(rawgt, patch%soil_water(recp), dawgt, patch%soil_water(donp))
+         patch%soil_energy(recp) = blend_soil_energy(rawgt, patch%soil_energy(recp), dawgt, patch%soil_energy(donp))
+         !----- 7. Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -------!
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
-         patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
-         !----- Today's litter is a per-area rate like the rest: area-weight it, or the fused patch
-         !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
-         patch%litter_in(recp)   = blend_litter_input(rawgt, patch%litter_in(recp), dawgt, patch%litter_in(donp))
-         !----- shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -----!
+         !----- 8. shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -!
          patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
-         !----- adapt_dt_last is a controller SEED, not a conserved amount -- any value is valid and   !
+         !----- 9. Today's litter is a per-area rate like the rest: area-weight it, or the fused patch !
+         !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
+         patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
+         patch%litter_in(recp)   = blend_litter_input(rawgt, patch%litter_in(recp), dawgt, patch%litter_in(donp))
+         !----- 10. adapt_dt_last is a controller SEED, not a conserved amount -- any value is valid and   !
          !      the controller re-adapts within a step. Area-weight it like its neighbours purely so    !
          !      the result is DETERMINISTIC and order-independent. ------------------------------------!
          patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
-         !----- Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so    !
+         !----- 11. Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so!
          !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
-         call patch_diag_blend(patch%diag, recp, donp, ar, ad)
+         call blend_patch_diag(patch%diag, recp, donp, ar, ad)
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). The    !
          !      ground-referenced films [kg/m2 of THEIR patch] take the same factor: per m2 of the   !
          !      merged patch they are diluted exactly as the density is. -------------------------!
@@ -343,17 +326,18 @@ contains
    subroutine patch_compact(site, pkeep)
       type(site_t), intent(inout) :: site
       logical,         intent(in)    :: pkeep(:)
-      integer(ik), allocatable :: newidx(:)
+      integer(ik), allocatable :: newidx(:), keep_idx(:)
       logical,     allocatable :: ckeep(:)
       integer(ik) :: np, ip, k, i, nc
 
       np = site%patch%n
-      allocate(newidx(np))
+      allocate(newidx(np), keep_idx(max(np, 1_ik)))
       k = 0_ik
       do ip = 1_ik, np
          if (pkeep(ip)) then
             k = k + 1_ik
             newidx(ip) = k
+            keep_idx(k) = ip
          else
             newidx(ip) = 0_ik
          end if
@@ -366,44 +350,11 @@ contains
          ckeep(i) = pkeep(site%cohort%owner_patch(i))
          if (ckeep(i)) site%cohort%owner_patch(i) = newidx(site%cohort%owner_patch(i))
       end do
-      call cohort_compact(site%cohort, ckeep)
+      call compact_cohort_block(site%cohort, ckeep)
 
-      !----- Patches: compact every patch array by pkeep (RHS pack -> safe temp). ---------!
-      associate (patch => site%patch)
-         patch%area(1:k)           = pack(patch%area(1:np),           pkeep)
-         patch%age(1:k)            = pack(patch%age(1:np),            pkeep)
-         patch%dist_type(1:k)      = pack(patch%dist_type(1:np),      pkeep)
-         patch%global_id(1:k)      = pack(patch%global_id(1:np),      pkeep)
-         patch%cas(1:k)            = pack(patch%cas(1:np),            pkeep)
-         patch%soil_e(1:k)         = pack(patch%soil_e(1:np),         pkeep)
-         patch%soil_w(1:k)         = pack(patch%soil_w(1:np),         pkeep)
-         patch%snow(1:k)           = pack(patch%snow(1:np),           pkeep)
-         patch%soil_carbon(1:k)    = pack(patch%soil_carbon(1:np),    pkeep)
-         patch%xi_accum(1:k)       = pack(patch%xi_accum(1:np),       pkeep)
-         patch%litter_in(1:k)      = pack(patch%litter_in(1:np),      pkeep)
-         patch%shed_water_rate(1:k) = pack(patch%shed_water_rate(1:np), pkeep)
-         patch%slow_co2_rate(1:k)   = pack(patch%slow_co2_rate(1:np), pkeep)
-         patch%adapt_dt_last(1:k)   = pack(patch%adapt_dt_last(1:np),   pkeep)
-         !----- The diagnostic accumulators compact by the SAME mask. patch_diag_reorder takes a  !
-         !      permutation rather than a mask, so build the surviving-index list here (this is    !
-         !      exactly what cohort_compact does for the cohort axis).  --------------------------!
-         block
-            integer(ik), allocatable :: dperm(:)
-            integer(ik) :: q, jq
-            allocate(dperm(max(k,1_ik))) ; q = 0_ik
-            do jq = 1_ik, np
-               if (pkeep(jq)) then ; q = q + 1_ik ; dperm(q) = jq ; end if
-            end do
-            call patch_diag_reorder(patch%diag, dperm, k)
-         end block
-         block
-            integer(ik) :: jp
-            do jp = 1_ik, site%n_pft
-               patch%recruit_pool(jp, 1:k) = pack(patch%recruit_pool(jp, 1:np), pkeep)
-            end do
-         end block
-         patch%n = k
-      end associate
+      !----- Patches: keep the survivors, in order. The surviving-index list is the permutation   !
+      !      reorder_patch_block takes, exactly as compact_cohort_block builds it for the cohort axis. --------!
+      call reorder_patch_block(site%patch, keep_idx, k)
       call rebuild_csr(site)
    end subroutine patch_compact
 
@@ -443,7 +394,7 @@ contains
       !----- Report the disturbed-area flux, WRITTEN ON THE DONORS and written HERE, before          !
       !      patch%n grows: every patch loses the same fraction `frac`, and at this point the diag   !
       !      block's slots still line up with the donor patches. The gap then inherits the           !
-      !      donors' blended slot (patch_diag_inherit, at the end of this routine), so               !
+      !      donors' blended slot (inherit_patch_diag, at the end of this routine), so               !
       !      Sum(area * value) counts the rate on all of the ground it was disturbed on.             !
       !      UNITS: the block's weight is Sum(dt) in SECONDS, so the contribution is the             !
       !      declared [1/yr] rate times this step's weight in seconds. `frac` is the fraction        !
@@ -452,7 +403,7 @@ contains
       !      would be a per-SECOND rate under the per-year label).                                   !
       if (site%patch%diag%active) then
          do i = 1_ik, np0
-            site%patch%diag%v(PD_DISTURB_AREA, i) = site%patch%diag%v(PD_DISTURB_AREA, i)          &
+            site%patch%diag%v(PA_DISTURB_AREA, i) = site%patch%diag%v(PA_DISTURB_AREA, i)          &
                                                   + frac * yr_sec
          end do
       end if
@@ -461,7 +412,7 @@ contains
       !                                                                                          !
       !      The same sweep records the DISTURBANCE pathway's mortality carbon off the other         !
       !      branch of the same test, so the split and the kill can never drift apart. Written on   !
-      !      the DONORS and written HERE, before patch%n grows -- the same rule PD_DISTURB_AREA     !
+      !      the DONORS and written HERE, before patch%n grows -- the same rule PA_DISTURB_AREA     !
       !      above follows.                                                                        !
       !                                                                                          !
       !      Valued on the donor's ORIGINAL ground. Every patch diagnostic is per m2 of its OWN      !
@@ -470,22 +421,22 @@ contains
       !      inherits the donors' slot, so together they weigh the value by the donors' original     !
       !      area and the site total is exact.                                                       !
       !      Rate [kgC/m2/yr] x weight in seconds is the block's contract; dt_yr cancels             !
-      !      against the weight dt_yr*yr_sec, as it does for PD_DISTURB_AREA.                        !
+      !      against the weight dt_yr*yr_sec, as it does for PA_DISTURB_AREA.                        !
       nsurv = 0_ik
       do i = 1_ik, site%cohort%n
          if (site%cohort%height(i) < cfg%disturbance_survive_height) then
             nsurv = nsurv + 1_ik
          else if (site%patch%diag%active) then
             d = site%cohort%owner_patch(i)
-            site%patch%diag%v(PD_MORT_C_DISTURB, d) = site%patch%diag%v(PD_MORT_C_DISTURB, d)      &
+            site%patch%diag%v(PA_MORT_C_DISTURB, d) = site%patch%diag%v(PA_MORT_C_DISTURB, d)      &
                + site%cohort%nplant(i) * frac * yr_sec                                             &
                  * (site%cohort%leaf_carbon(i)     + site%cohort%fineroot_carbon(i)                &
                   + site%cohort%wood_carbon(i)     + site%cohort%nonstructural_carbon(i))
          end if
       end do
 
-      call patch_ensure_capacity(site%patch, np0 + 1_ik, site%n_pft)
-      call cohort_ensure_capacity(site%cohort, site%cohort%n + nsurv)
+      call expand_patch_block(site%patch, np0 + 1_ik, site%n_pft)
+      call expand_cohort_block(site%cohort, site%cohort%n + nsurv)
       newp = np0 + 1_ik
       m0   = site%cohort%n                       ! cohorts before the survivors are moved in
 
@@ -505,31 +456,31 @@ contains
          !      canopy air are INHERITED from the disturbed area, not created bare). ----------!
          atot = sum(patch%area(1:np0))                       ! donors still hold pre-disturbance area here
          if (atot > tiny_num) then
-            patch%cas(newp)    = blend_cas(   patch%area(1)/atot, patch%cas(1),    0.0_wp, patch%cas(1))
-            patch%soil_e(newp) = blend_soil_e(patch%area(1)/atot, patch%soil_e(1), 0.0_wp, patch%soil_e(1))
-            patch%soil_w(newp) = blend_soil_w(patch%area(1)/atot, patch%soil_w(1), 0.0_wp, patch%soil_w(1))
-            patch%snow(newp)   = blend_snow(  patch%area(1)/atot, patch%snow(1),   0.0_wp, patch%snow(1))
-            patch%soil_carbon(newp) = blend_soil_carbon(patch%area(1)/atot, patch%soil_carbon(1), &
-                                                        0.0_wp, patch%soil_carbon(1))
-            patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
-            patch%litter_in(newp) = blend_litter_input(patch%area(1)/atot, patch%litter_in(1),      &
-                                                       0.0_wp, patch%litter_in(1))
             !----- The SEED BANK is inherited material too. A treefall gap does not sterilise      !
             !      the ground it opens: the carry-forward recruit pool sits in the soil with the   !
             !      litter and the CENTURY carbon, both of which the gap inherits. Zeroing it would !
             !      destroy the pool's carbon on the disturbed fraction. ---------------------------!
             patch%recruit_pool(:,newp) = (patch%area(1)/atot) * patch%recruit_pool(:,1)
+            patch%cas(newp)    = blend_cas(   patch%area(1)/atot, patch%cas(1),    0.0_wp, patch%cas(1))
+            patch%snow(newp)   = blend_snow(  patch%area(1)/atot, patch%snow(1),   0.0_wp, patch%snow(1))
+            patch%soil_water(newp) = blend_soil_water(patch%area(1)/atot, patch%soil_water(1), 0.0_wp, patch%soil_water(1))
+            patch%soil_energy(newp) = blend_soil_energy(patch%area(1)/atot, patch%soil_energy(1), 0.0_wp, patch%soil_energy(1))
+            patch%soil_carbon(newp) = blend_soil_carbon(patch%area(1)/atot, patch%soil_carbon(1), &
+                                                        0.0_wp, patch%soil_carbon(1))
+            patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
+            patch%litter_in(newp) = blend_litter_input(patch%area(1)/atot, patch%litter_in(1),      &
+                                                       0.0_wp, patch%litter_in(1))
             do d = 2_ik, np0
                wd = patch%area(d) / atot
+               patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
                patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
-               patch%soil_e(newp) = blend_soil_e(1.0_wp, patch%soil_e(newp), wd, patch%soil_e(d))
-               patch%soil_w(newp) = blend_soil_w(1.0_wp, patch%soil_w(newp), wd, patch%soil_w(d))
                patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
+               patch%soil_water(newp) = blend_soil_water(1.0_wp, patch%soil_water(newp), wd, patch%soil_water(d))
+               patch%soil_energy(newp) = blend_soil_energy(1.0_wp, patch%soil_energy(newp), wd, patch%soil_energy(d))
                patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
                patch%xi_accum(newp)    = blend_xi_accum(1.0_wp, patch%xi_accum(newp), wd, patch%xi_accum(d))
                patch%litter_in(newp)   = blend_litter_input(1.0_wp, patch%litter_in(newp), wd,        &
                                                             patch%litter_in(d))
-               patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
             end do
          end if
 
@@ -577,7 +528,7 @@ contains
                   cycle
                end if
                m = m + 1_ik
-               call copy_cohort_slot(cohort, m, i)
+               call copy_cohort(cohort, m, i)
                cohort%nplant(m)      = cohort%nplant(i) * (frac * patch%area(d) / new_area)
                call scale_cohort_ground_fields(cohort, m, frac * patch%area(d) / new_area)  ! films dilute like nplant
                cohort%owner_patch(m) = newp
@@ -601,9 +552,9 @@ contains
       !      At a calendar boundary the donors hold only that boundary's events (the step's sums were !
       !      read and reset), and the gap keeps its share of them; inside a step (the C API) they     !
       !      hold the step so far. Every donor lost the same fraction, so their current areas give    !
-      !      the same blend as their original ones. (patch_ensure_capacity above grew the block with   !
+      !      the same blend as their original ones. (expand_patch_block above grew the block with      !
       !      the patch arrays.)                                                                       !
-      call patch_diag_inherit(site%patch%diag, newp, site%patch%area(1:np0))
+      call inherit_patch_diag(site%patch%diag, newp, site%patch%area(1:np0))
       do i = m0 + 1_ik, site%cohort%n
          call assign_cohort_id(site, i)
       end do

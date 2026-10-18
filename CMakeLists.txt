@@ -168,27 +168,22 @@ target_include_directories(meds_config PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gener
 target_link_libraries(meds_config PUBLIC meds_shared)
 meds_fortran_flags(meds_config)
 
-#----- STATE, as a LAYER in two halves (src/README.md, rule 3). -----------------------------#
+#----- STATE, one LAYER in four files by model hierarchy (src/README.md, rule 3). -------------#
 #                                                                                            #
-#  state/column -- ONE patch's reservoirs, seen vertically: the soil water / soil energy /    #
-#  snow / canopy-air-space / soil-carbon stores and their fusion blends (the parameters that  #
-#  describe them are config: meds_soil_column_config). This is BOUNDARY state: the kernels    #
-#  mutate it and the demographic hub owns it. It is not foundation -- src/shared/ admits no   #
-#  model state -- so it is a layer of its own, and the kernels link it directly.              #
+#  meds_cohort_state_vars -- the flat cohort SoA and the cohort lockstep.                     #
+#  meds_patch_state_vars  -- ONE patch's stores (canopy air, snow, soil water and heat, soil  #
+#                            carbon) and their blends, and the patch SoA with its CSR map.    #
+#  meds_site_state_vars   -- site_t: one cohort block and one patch block.                    #
+#  meds_diag_vars         -- the diagnostic accumulators, per cohort, per patch, per polygon. #
 #                                                                                            #
-#  state/site -- ALL the patches: the flat cohort SoA, the patch CSR, the lockstep machinery,   #
-#  site_t and the diagnostic blocks. Drivers only. Kernels never link this, which is what keeps #
-#  them site_t-free and OpenMP-`target` device-eligible, and what lets the kernel-only           #
-#  ctests keep linking one kernel library alone.                                                 #
-file(GLOB STATE_COLUMN_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/column/*.f90)
-add_library(meds_state_column STATIC ${STATE_COLUMN_SOURCES})
-target_link_libraries(meds_state_column PUBLIC meds_shared)
-meds_fortran_flags(meds_state_column)
-
-file(GLOB STATE_SITE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/site/*.f90)
-add_library(meds_state_site STATIC ${STATE_SITE_SOURCES})
-target_link_libraries(meds_state_site PUBLIC meds_state_column meds_config)
-meds_fortran_flags(meds_state_site)
+#  The kernels take only the per-patch store types (from meds_patch_state_vars), never        #
+#  site_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_no_site_state       #
+#  checks it, because the shared module directory cannot. The parameters that describe the    #
+#  stores are config (meds_soil_column_config): a parameter is not state.                     #
+file(GLOB STATE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/*.f90)
+add_library(meds_state STATIC ${STATE_SOURCES})
+target_link_libraries(meds_state PUBLIC meds_shared meds_config)
+meds_fortran_flags(meds_state)
 
 
 
@@ -202,20 +197,20 @@ meds_fortran_flags(meds_state_site)
 
 #----- SLOW kernels (daily / annual): phenology, carbon allocation, trait dynamics, the CENTURY #
 #      soil-carbon matrix and the litter-destination split. Stateless and `pure`-where-possible; #
-#      links the column state it reads/writes plus the config leaves. Builds standalone.         #
+#      links the patch store types it reads/writes plus the config leaves. Builds standalone.   #
 file(GLOB SLOW_KERNEL_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/plant/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/soil/*.f90)
 add_library(meds_slow_kernels STATIC ${SLOW_KERNEL_SOURCES})
-target_link_libraries(meds_slow_kernels PUBLIC meds_state_column meds_config)
+target_link_libraries(meds_slow_kernels PUBLIC meds_state meds_config)
 meds_fortran_flags(meds_slow_kernels)
 
 #----- FAST kernels (sub-daily): canopy radiative transfer + aerodynamics + the canopy air space #
 #      (canopy/ = the medium), leaf gas exchange + hydraulics + maintenance respiration + the     #
 #      tissue energy balance (plant/ = the organisms), and the soil water / soil energy / ground  #
-#      + snow stores (soil/). State-free apart from the column reservoirs; builds standalone.      #
+#      + snow stores (soil/). State-free apart from the patch store types; builds standalone.     #
 #                                                                                                  #
-#      It links meds_state_column and meds_config only: the fast kernels import nothing from         #
+#      It links meds_state and meds_config only: the fast kernels import nothing from                #
 #      slow_dynamics/, and the one fast->slow edge (the heterotrophic-respiration seam,              #
 #      docs/science/soil_carbon.md §7) sits on meds_fast.                                            #
 file(GLOB FAST_KERNEL_SOURCES CONFIGURE_DEPENDS
@@ -224,7 +219,7 @@ file(GLOB FAST_KERNEL_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/plant/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/soil/*.f90)
 add_library(meds_fast_kernels STATIC ${FAST_KERNEL_SOURCES})
-target_link_libraries(meds_fast_kernels PUBLIC meds_state_column meds_config)
+target_link_libraries(meds_fast_kernels PUBLIC meds_state meds_config)
 meds_fortran_flags(meds_fast_kernels)
 
 #----- DEMOGRAPHY: the vital-rate laws (growth / mortality / recruitment) and the apply-operators #
@@ -234,7 +229,7 @@ meds_fortran_flags(meds_fast_kernels)
 #      the operators take rate ARRAYS and never import meds_demography_rates.                        #
 file(GLOB DEMOGRAPHY_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/demography/*.f90)
 add_library(meds_demography STATIC ${DEMOGRAPHY_SOURCES})
-target_link_libraries(meds_demography PUBLIC meds_state_site meds_slow_kernels)
+target_link_libraries(meds_demography PUBLIC meds_state meds_slow_kernels)
 meds_fortran_flags(meds_demography)
 
 #----- Output PREP (src/io/output): the netCDF-FREE half of the output subsystem -- the site-level        #
@@ -320,7 +315,7 @@ file(GLOB FAST_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/numerics/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/driver/*.f90)
 add_library(meds_fast STATIC ${FAST_SOURCES})
-target_link_libraries(meds_fast PUBLIC meds_fast_kernels meds_slow_kernels meds_state_site
+target_link_libraries(meds_fast PUBLIC meds_fast_kernels meds_slow_kernels meds_state
                                        meds_forcing meds_io_prep)
 meds_fortran_flags(meds_fast)
 
@@ -518,6 +513,11 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME no_issue_refs
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_issue_refs.py
                        ${CMAKE_CURRENT_SOURCE_DIR})
+      #----- The kernels take only the per-patch store types from the state layer, never site_t:    #
+      #      the shared module directory cannot enforce it, so this does, on every run.             #
+      add_test(NAME kernels_no_site_state
+               COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_kernel_state.py
+                       ${CMAKE_CURRENT_SOURCE_DIR}/src)
    endif()
    add_executable(test_config_keys test/test_config_keys.f90)
    target_link_libraries(test_config_keys PRIVATE meds_config meds_testsupport)
@@ -555,7 +555,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- The [soil] column keys reach the column they describe. ----------------------------#
    add_executable(test_soil_column_config test/test_soil_column_config.f90)
-   target_link_libraries(test_soil_column_config PRIVATE meds_config meds_state_column meds_testsupport)
+   target_link_libraries(test_soil_column_config PRIVATE meds_config meds_testsupport)
    meds_fortran_flags(test_soil_column_config)
    add_test(NAME soil_column_config COMMAND test_soil_column_config)
 

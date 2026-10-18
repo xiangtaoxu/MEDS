@@ -25,13 +25,14 @@ module meds_demography_cohort_fusefiss
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_config,     only : meds_config_t
    use meds_soil_column_config, only : soil_params_t, soil_column_params
-   use meds_site_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
-   use meds_site_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
-                                      cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
-                                      scale_cohort_ground_fields, cohort_tissue_heat_capacity,      &
-                                      cohort_tissue_water,                                          &
-                                      set_cohort_size_from_carbon, assign_cohort_id,       &
-                                      fuse_cohort_fast_state, patch_birth_state
+   use meds_diag_vars,        only : fuse_cohort_diag, PA_MORT_C_CULL
+   use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &
+                                      expand_cohort_block, copy_cohort, init_cohort,           &
+                                      scale_cohort_ground_fields, cohort_tissue_heat_capacity,           &
+                                      cohort_tissue_water, set_cohort_size_from_carbon,                  &
+                                      fuse_cohort_fast_state
+   use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id
+   use meds_patch_state_vars, only : patch_physical_state
    use meds_litter_partition, only : necromass_to_litter
    implicit none
    private
@@ -73,7 +74,7 @@ contains
             end do
          end do
       end associate
-      call cohort_reorder(site%cohort, perm, n)
+      call reorder_cohort_block(site%cohort, perm, n)
    end subroutine sort_cohorts
 
    !----- True if (h1,d1) ranks at least as high as (h2,d2) under the sort order. ----------!
@@ -166,7 +167,7 @@ contains
          end do
       end associate
       if (did_fuse) then
-         call cohort_compact(site%cohort, alive)
+         call compact_cohort_block(site%cohort, alive)
          call rebuild_csr(site)
          call sort_cohorts(site)
       end if
@@ -192,7 +193,7 @@ contains
          ntot    = nr + nd
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
          !----- The fast-loop-owned state fuses by its DECLARED per-field policy, in one place  !
-         !      (meds_site_state_types%fuse_cohort_fast_state): heat-capacity-weighted for the         !
+         !      (meds_cohort_state_vars%fuse_cohort_fast_state): heat-capacity-weighted for the        !
          !      tissue temperatures, nplant-weighted for the per-plant amounts, summed for the         !
          !      ground-referenced film. Enumerating it here would let a field drift from its           !
          !      declared convention. The dynamic leaf traits stay here: they are slow-loop state,      !
@@ -218,9 +219,9 @@ contains
                                                      cohort%leaf_turnover_rate(donc), cd)
          !----- Fast-loop DIAGNOSTIC accumulators, handed leaf area (wr, wd), nplant (nr, nd) and the  !
          !      tissue heat capacities. Which weight applies is declared per field in                 !
-         !      meds_site_diag_types (CDIAG_FUSE), not decided here. ------------------------------------!
-         call cohort_diag_fuse(cohort%diag,  recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CDIAG_FUSE)
-         call cohort_diag_fuse(cohort%sdiag, recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CSDIAG_FUSE)
+         !      meds_diag_vars (CO_FUSION_KIND), not decided here. ------------------------------------------!
+         call fuse_cohort_diag(cohort%diag,  recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd)
+         call fuse_cohort_diag(cohort%sdiag, recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd)
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          !----- Same convention for the predawn water status. Fusion requires the two cohorts to  !
@@ -285,7 +286,7 @@ contains
          agb_before = sum(site%cohort%nplant(1:n0) * site%cohort%agb(1:n0))
          film_before = sum(site%cohort%leaf_surf_water(1:n0) + site%cohort%wood_surf_water(1:n0))
          film_magnitude = sum(abs(site%cohort%leaf_surf_water(1:n0)) + abs(site%cohort%wood_surf_water(1:n0)))
-         call cohort_ensure_capacity(site%cohort, n0 + nsplit)
+         call expand_cohort_block(site%cohort, n0 + nsplit)
          m = n0
          associate (cohort => site%cohort)
             do i = 1_ik, n0
@@ -297,7 +298,7 @@ contains
                !      pools + AGB EXACTLY (0.5n*wc*(1+eps)+0.5n*wc*(1-eps)=n*wc) and is immune to the   !
                !      hgt_max cap (no dbh-renorm approximation).  ------------------------------------!
                wc0 = cohort%wood_carbon(i)
-               call copy_cohort_slot(cohort, m, i)           ! copies halved nplant + params + pools
+               call copy_cohort(cohort, m, i)           ! copies halved nplant + params + pools
                !----- the interception films are per m2 GROUND, not per plant: each daughter keeps  !
                !      half, or the split creates film water. ---------------------------------------!
                call scale_cohort_ground_fields(cohort, i, 0.5_wp)
@@ -373,12 +374,12 @@ contains
             !      demographic event, and it still happened when the soil pools are off. The cull     !
             !      runs inside the cohort restructuring, which permutes the COHORT axis and leaves    !
             !      the patch axis alone, so patch slot `ip` is the one this cohort's diagnostics      !
-            !      belong to and still will be after cohort_compact.                                  !
+            !      belong to and still will be after compact_cohort_block.                            !
             !      A rate [kgC/m2/yr] times the step's weight in seconds -- the block's contract.     !
             !      `dt_slow` is the weight one slow step accumulates; the cull fires on a             !
             !      month boundary and the output layer's temporal fold handles the rest.              !
             if (patch%diag%active)                                                                 &
-               patch%diag%v(PD_MORT_C_CULL, ip) = patch%diag%v(PD_MORT_C_CULL, ip)                 &
+               patch%diag%v(PA_MORT_C_CULL, ip) = patch%diag%v(PA_MORT_C_CULL, ip)                 &
                   + (cohort%nplant(i) * (cohort%leaf_carbon(i) + cohort%fineroot_carbon(i)         &
                                        + cohort%wood_carbon(i) + cohort%nonstructural_carbon(i))   &
                      / cfg%dt_years) * cfg%dt_slow
@@ -401,7 +402,7 @@ contains
       end associate
       if (present(water_shed)) water_shed = w_tot
       if (all(keep)) return
-      call cohort_compact(site%cohort, keep)
+      call compact_cohort_block(site%cohort, keep)
       call rebuild_csr(site)
    end subroutine terminate_cohorts
 
@@ -467,7 +468,7 @@ contains
          return
       end if
 
-      call cohort_ensure_capacity(site%cohort, site%cohort%n + nspawn)
+      call expand_cohort_block(site%cohort, site%cohort%n + nspawn)
       call soil_column_params(cfg%soil_column, soil)
       n_before = site%cohort%n
       m = site%cohort%n
@@ -477,8 +478,8 @@ contains
                if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
                m = m + 1_ik
                !----- Born in its patch's state: at the canopy-air temperature, holding the water     !
-               !      its tissues hold at the top soil layer's potential (patch_birth_state). -------!
-               call patch_birth_state(site, ip, cfg, soil, t_birth, psi_birth)
+               !      its tissues hold at the top soil layer's potential (patch_physical_state). -------!
+               call patch_physical_state(patch%cas(ip), patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
                                 cfg%hydraulics, t_birth, psi_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !

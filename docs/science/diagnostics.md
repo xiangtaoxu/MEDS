@@ -5,7 +5,7 @@ hierarchy and across time, and how to ask for the ones you want.
 
 Implementation: `src/io/output/` (`meds_diagnostic_kernels`, `meds_diagnostic_reduce`,
 `meds_output_{types,registry,integrate,stream,manager}`) plus the per-cohort / per-patch
-accumulators in `src/state/site/meds_site_diag_types.f90`. Design and rationale:
+accumulators in `src/state/meds_diag_vars.f90`. Design and rationale:
 `docs/dev_plans/MEDS_IO_V01_PLAN.md`; the temporal-aggregation engine underneath is
 `docs/dev_plans/MEDS_IO_DESIGN.md`.
 
@@ -19,7 +19,7 @@ accumulators in `src/state/site/meds_site_diag_types.f90`. Design and rationale:
   [1] DERIVE      meds_diagnostic_kernels     quantities that are a closed-form function of state
       │                                       (LAI, gsc, WUE, soil psi/wetness, CAS VPD, DBH class)
       │
-  [2] CAPTURE     meds_site_diag_types        dt-weighted accumulators for everything the fast loop
+  [2] CAPTURE     meds_diag_vars              dt-weighted accumulators for everything the fast loop
       │                                       computes per dt_fast and would otherwise discard
       │
   [3] REDUCE      meds_diagnostic_reduce      ONE weighted aggregation:
@@ -344,9 +344,10 @@ that already has an accessor case emits its patch, site, PFT and size-class twin
 registry line each**, with no new extraction code.
 
 For a quantity the fast loop computes and drops, add a row to `cohort_diag_block` or
-`patch_diag_block` (`meds_site_diag_types`): a new index parameter, one fill line in the capture,
-and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), so a
-patch row reaches the sub-daily tier with one more registry line (`SRC_F_PD0 + PD_*`), per patch
+`patch_diag_block` (`meds_diag_vars`): a new index parameter in its section (a patch row the fast
+loop fills goes before `N_PA_FAST_ROWS`, and the slow driver's rows follow), one fill line in the
+capture, and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), so a
+patch row reaches the sub-daily tier with one more registry line (`SRC_F_PA0 + PA_*`), per patch
 or as a site mean. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
 array, so every permutation is a single whole-array statement that cannot omit a field.
 

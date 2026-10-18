@@ -21,9 +21,8 @@ module meds_vegetation_dynamics
                                          wood_thermal_water
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
-   use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET, &
-                                         set_cohort_size_from_carbon
-   use meds_site_state_types, only : site_t, cohort_wood_store_carbon
+   use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon
+   use meds_site_state_vars,  only : site_t
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
@@ -42,15 +41,10 @@ module meds_vegetation_dynamics
    use meds_sink_limitation,      only : growth_sink_limitation
    use meds_litter_partition, only : add_necromass
    use meds_biogeochem_types, only : litter_input_t
-   use meds_site_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
-                                        CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
-                                        CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, &
-                                        cohort_diag_grow,                                      &
-                                        PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
-                                        PD_LITTER_WOOD, PD_LITTER_REPRO,                       &
-                                        PD_MORT_C_BACKGROUND,                                &
-                                        PD_RECRUIT_NPLANT,                                     &
-                                        cohort_diag_reset
+   use meds_diag_vars,            only : CO_DDBH_DT, CO_DAGB_DT, CO_MORT_RATE, CO_NPP_LEAF, CO_NPP_FINEROOT, CO_NPP_WOOD, &
+                                         CO_NPP_STORAGE, CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP, CO_EXUDATE, &
+                                         expand_cohort_diag, PA_LITTER_LEAF, PA_LITTER_FINEROOT, PA_LITTER_STRUCT, PA_LITTER_WOOD, &
+                                         PA_LITTER_REPRO, PA_MORT_C_BACKGROUND, PA_RECRUIT_NPLANT, reset_cohort_diag
    implicit none
    private
 
@@ -58,6 +52,19 @@ module meds_vegetation_dynamics
    public :: reacclimate_plant_traits
    public :: shed_turnover_water, shed_excess_tissue_water, fill_new_leaf_water, accumulate_recruit_pool
    public :: update_cohort_derivatives
+   public :: pool_change_block
+
+   !----- Each cohort's NET change of its four carbon pools over one slow step [kgC/plant/step], as  !
+   !      compute_carbon_allocation forms it: leaf and fine root are growth minus shed, wood is      !
+   !      growth, and storage is allocation minus storage maintenance plus the carbon resorbed from  !
+   !      shed leaves and roots. It is NOT the NPP allocation the output reports (the CO_NPP_* rows  !
+   !      of the slow diagnostic block, which are gross growth): a deciduous tree dropping its       !
+   !      leaves has a negative leaf change and no leaf NPP, and shed_turnover_water reads that      !
+   !      sign. One local of vegetation_dynamics, passed to the three routines that read it, so it   !
+   !      lives here, with its one user; public only for the tests. ----------------------------------!
+   type :: pool_change_block
+      real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
+   end type pool_change_block
 
    !----- Patch structural dynamics (fusion/fission/disturbance) are an ANNUAL process, so       !
    !       disturbance integrates its yearly rate over this interval, not the per-step dt.        !
@@ -76,7 +83,7 @@ contains
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
       !----- The per-patch litter accumulator is site%patch%litter_in, NOT a local array, so that it
       !      follows its patches when restructure_stand reorders, blends or creates them. See the
-      !      field's comment in meds_site_state_types.
+      !      field's comment in meds_patch_state_vars.
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (meds_slow_ledger)
       real(wp),            intent(in),    optional :: latitude_deg !< the polygon's (default [site])
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
@@ -86,7 +93,7 @@ contains
       real(wp), allocatable    :: nplant_before(:), leaf_carbon_before(:)
       real(wp)                 :: seed_rain_carbon
       integer(ik)              :: ip
-      type(carbon_flux_block)  :: npp
+      type(pool_change_block)  :: dpool
       integer(ik)              :: n_window
 
       !----- 0. Leaf phenology (UNCONDITIONAL): advance the per-cohort leaf tendencies ONE daily      !
@@ -118,16 +125,16 @@ contains
       !----- SLOW diagnostic block: size + zero it for this step BEFORE anything writes into it.   !
       !      SET semantics (one sample per slow step), so `w` is a presence flag rather than a dt.   !
       if (site%cohort%sdiag%active) then
-         call cohort_diag_grow(site%cohort%sdiag, max(site%cohort%n, 1_ik))
-         call cohort_diag_reset(site%cohort%sdiag)
+         call expand_cohort_diag(site%cohort%sdiag, max(site%cohort%n, 1_ik))
+         call reset_cohort_diag(site%cohort%sdiag)
          site%cohort%sdiag%n = site%cohort%n
       end if
-      call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, site%patch%litter_in, exhausted)
+      call compute_carbon_allocation(site, cfg, cfg%dt_years, dpool, npp_repro, site%patch%litter_in, exhausted)
 
       !----- 1b. Leaf/fine-root turnover WATER shedding: must run BEFORE update_cohort_states       !
       !          commits this step's new leaf_carbon/fineroot_carbon below, since it needs the PRE-   !
       !          step pools as its "how much was lost" denominator (see shed_turnover_water). --------!
-      call shed_turnover_water(site, cfg, npp, ledger)
+      call shed_turnover_water(site, cfg, dpool, ledger)
       !----- LEDGER: the allocation phase COMPUTES; the only state it moves is tissue water into    !
       !      patch%shed_water_rate, a handoff to the fast tier that shed_turnover_water declares,   !
       !      so this phase should close on every currency. It is marked anyway -- a phase that      !
@@ -137,7 +144,7 @@ contains
 
       !----- 2. Carbon vital RATES via the rate laws, PRE-apply: mortality reads the growth_avg    !
       !         of the steps before this one (this step's sample enters the ring buffer below).    !
-      call compute_vital_rates(site, cfg, npp%wood, npp_repro, exhausted, cfg%dt_years, mortality, recruitment)
+      call compute_vital_rates(site, cfg, dpool%wood, npp_repro, exhausted, cfg%dt_years, mortality, recruitment)
 
       !----- 2b0. Credit the recruit pool with THIS STEP's recruitment, every step: the exact      !
       !           integral of a daily quantity, where a monthly credit from one day's rate scaled  !
@@ -169,7 +176,7 @@ contains
       !      The ring buffer is refreshed inside update_cohort_derivatives, so mortality's         !
       !      growth_avg dependency holds.                                                          !
       call cohort_deriv_alloc(site%deriv, site%cohort%n)
-      call update_cohort_derivatives(site, npp, mortality, cfg%dt_years, n_window, site%growth_hist_pos)
+      call update_cohort_derivatives(site, dpool, mortality, cfg%dt_years, n_window, site%growth_hist_pos)
       !----- TISSUE THERMAL MASS across the commit. A cohort's heat capacity is a function of its  !
       !      biomass and density, so growing or dying changes `cap * T` with no flux at all: the   !
       !      model makes thermal mass out of carbon, and unmakes it, with no counterparty in       !
@@ -262,24 +269,24 @@ contains
          do ip = 1_ik, site%patch%n
             !----- Leaf and fine-root litter by the tissue they came from: what falls, not the        !
             !      share of it that reaches one destination pool. ----------------------------------!
-            site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
+            site%patch%diag%v(PA_LITTER_LEAF,     ip) = site%patch%diag%v(PA_LITTER_LEAF,     ip) &
                                                       + (site%patch%litter_in(ip)%leaf_c                &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_LITTER_FINEROOT, ip) = site%patch%diag%v(PD_LITTER_FINEROOT, ip) &
+            site%patch%diag%v(PA_LITTER_FINEROOT, ip) = site%patch%diag%v(PA_LITTER_FINEROOT, ip) &
                                                       + (site%patch%litter_in(ip)%fineroot_c            &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_LITTER_WOOD,     ip) = site%patch%diag%v(PD_LITTER_WOOD,     ip) &
+            site%patch%diag%v(PA_LITTER_WOOD,     ip) = site%patch%diag%v(PA_LITTER_WOOD,     ip) &
                                                       + ((site%patch%litter_in(ip)%wood_c               &
                                                         + site%patch%litter_in(ip)%storage_c)           &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_LITTER_REPRO,    ip) = site%patch%diag%v(PD_LITTER_REPRO,    ip) &
+            site%patch%diag%v(PA_LITTER_REPRO,    ip) = site%patch%diag%v(PA_LITTER_REPRO,    ip) &
                                                       + (site%patch%litter_in(ip)%repro_c               &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_LITTER_STRUCT,   ip) = site%patch%diag%v(PD_LITTER_STRUCT,   ip) &
+            site%patch%diag%v(PA_LITTER_STRUCT,   ip) = site%patch%diag%v(PA_LITTER_STRUCT,   ip) &
                                                       + ((site%patch%litter_in(ip)%struct_grnd          &
                                                         + site%patch%litter_in(ip)%struct_soil)         &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) &
+            site%patch%diag%v(PA_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PA_RECRUIT_NPLANT,  ip) &
                                                       + sum(recruitment(:, ip)) * cfg%dt_slow
             !----- The block's weight: the fast loop adds dt_fast each sub-step; without one, the step  !
             !      adds its own dt_slow, or a slow-only run reads every patch row back as 0. ----------!
@@ -419,9 +426,9 @@ contains
    ! (persistent state) so Camac mortality sees carbon growth, and records the log-space            !
    ! mortality rate dln_nplant_dt = -mortality. Host-only (the flip calls the branchy wood_to_dbh). !
    !---------------------------------------------------------------------------------------!
-   subroutine update_cohort_derivatives(site, npp, mortality, dt_yr, n_window, hist_pos)
+   subroutine update_cohort_derivatives(site, dpool, mortality, dt_yr, n_window, hist_pos)
       type(site_t),             intent(inout) :: site       ! inout: fills site%deriv + refreshes the ring buffer
-      type(carbon_flux_block),  intent(in)    :: npp
+      type(pool_change_block),  intent(in)    :: dpool
       real(wp),                 intent(in)    :: mortality(:)
       real(wp),                 intent(in)    :: dt_yr
       integer(ik),              intent(in)    :: n_window, hist_pos
@@ -435,15 +442,17 @@ contains
             !      the step empties lands on 0 to round-off, and an overdraw stays negative, so the  !
             !      applier carries it on and the bounds guard stops the run naming the pool. A floor !
             !      here would create the carbon the overdraw took before the applier could see it. -!
-            lc_new = advance_pool(cohort%leaf_carbon(i),          npp%leaf(i))
-            fc_new = advance_pool(cohort%fineroot_carbon(i),      npp%fineroot(i))
-            wc_new = advance_pool(cohort%wood_carbon(i),          npp%wood(i))
-            nc_new = advance_pool(cohort%nonstructural_carbon(i), npp%nonstructural(i))
+            lc_new = advance_pool(cohort%leaf_carbon(i),          dpool%leaf(i))
+            fc_new = advance_pool(cohort%fineroot_carbon(i),      dpool%fineroot(i))
+            wc_new = advance_pool(cohort%wood_carbon(i),          dpool%wood(i))
+            nc_new = advance_pool(cohort%nonstructural_carbon(i), dpool%nonstructural(i))
             !----- FLIP the geometry from the tentative pools (dbh from wood_carbon, leaf_area    !
             !      from leaf_carbon) into locals, for the growth rate the ring buffer and the     !
             !      diagnostics report; update_cohort_states commits the same flip. ---------------!
-            call carbon_to_structure(cohort%allom, wc_new, lc_new, cohort%p_wood_density(i),        &
-                                     cohort%p_hgt_max(i), cohort%p_aboveground_frac(i), cohort%sla(i), &
+            call carbon_to_structure(cohort%allom, wc_new, lc_new,                                  &
+                                     cohort%pft_table%wood_density(cohort%pft(i)),                  &
+                                     cohort%pft_table%hgt_max(cohort%pft(i)),                       &
+                                     cohort%pft_table%aboveground_frac(cohort%pft(i)), cohort%sla(i), &
                                      dbh_new, height_new, ba_new, agb_new, la_new)
             !----- Back out the pools' tendencies + advance the ring buffer with the REALIZED dbh !
             !      rate (fill_cohort_deriv, which the C-API's empirical path shares). -------------!
@@ -455,9 +464,9 @@ contains
             !      it at the output tick -- which runs AFTER the monthly fiss/fuse permutes the       !
             !      cohort axis -- would pair tendency i with a different plant i.  ------------------!
             if (cohort%sdiag%active) then
-               cohort%sdiag%v(CS_DDBH_DT,   i) = dbh_rate
-               cohort%sdiag%v(CS_DAGB_DT,   i) = (agb_new - cohort%agb(i)) / dt_yr
-               cohort%sdiag%v(CS_MORT_RATE, i) = mortality(i)
+               cohort%sdiag%v(CO_DDBH_DT,   i) = dbh_rate
+               cohort%sdiag%v(CO_DAGB_DT,   i) = (agb_new - cohort%agb(i)) / dt_yr
+               cohort%sdiag%v(CO_MORT_RATE, i) = mortality(i)
                cohort%sdiag%w(i)               = 1.0_wp
             end if
          end do
@@ -468,7 +477,7 @@ contains
    ! CARBON vital-RATE assembler: turn the per-cohort carbon fluxes (npp_wood for the dbh rate,   !
    ! npp_repro for recruits) into the mortality [1/yr] + recruitment [plant/m2/yr] arrays, by     !
    ! calling the per-individual rate laws (meds_demography_rates). The site-level sweep (patch    !
-   ! reduction + baseline seed rain + the GROWTH_AVG_UNSET test) stays here in the DRIVER, so     !
+   ! reduction + baseline seed rain + the growth-history test) stays here in the   DRIVER, so     !
    ! the laws remain state-free.                                                                  !
    !---------------------------------------------------------------------------------------!
    subroutine compute_vital_rates(site, cfg, npp_wood, npp_repro, exhausted, dt_yr, mortality, recruitment)
@@ -505,10 +514,10 @@ contains
             ip = cohort%owner_patch(j)
             !----- Prospective carbon dbh-increment rate (the mortality instantaneous term). --!
             dbh_rate = npp_to_growth(cohort%allom, cohort%wood_carbon(j), npp_wood(j), cohort%dbh(j),  &
-                                     dt_yr, cohort%p_wood_density(j), cohort%p_hgt_max(j),        &
-                                     cohort%p_aboveground_frac(j))
+                                     dt_yr, pft%wood_density(pf), pft%hgt_max(pf),               &
+                                     pft%aboveground_frac(pf))
             mortality(j) = camac_mortality(cohort%growth_avg(j), dbh_rate,                          &
-                                           cohort%growth_avg(j) /= GROWTH_AVG_UNSET,                &
+                                           cohort%growth_count(j) > 0_ik,                           &
                                            pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
             !----- A cohort with no leaves and no storage cannot flush again, so it dies: its density  !
             !      goes to the floor this step, down the path every death takes (its carbon to        !
@@ -566,13 +575,13 @@ contains
    ! shed). Turnover-first makes the within-step leaf replacement exact (a canopy that is not      !
    ! senescing holds target). docs/science/plant_carbon_allocation.md §1-§2, §5.                   !
    !---------------------------------------------------------------------------------------!
-   subroutine compute_carbon_allocation(site, cfg, dt_yr, npp, npp_repro, lit, exhausted)
+   subroutine compute_carbon_allocation(site, cfg, dt_yr, dpool, npp_repro, lit, exhausted)
       !----- intent(inout) ONLY to record the NPP allocation split into the slow diagnostic block; !
       !      no prognostic state is touched here (the appliers still own that).  ------------------!
       type(site_t),            intent(inout) :: site
       type(meds_config_t),     intent(in)  :: cfg
       real(wp),                intent(in)  :: dt_yr
-      type(carbon_flux_block), intent(out) :: npp
+      type(pool_change_block), intent(out) :: dpool
       real(wp), allocatable,   intent(out) :: npp_repro(:)
       type(litter_input_t),    intent(inout) :: lit(:)   !< per-patch litter accumulator
       logical,  allocatable,   intent(out) :: exhausted(:)  !< per cohort: no leaves and no storage
@@ -589,7 +598,7 @@ contains
 
       n = site%cohort%n
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
-      allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n), exhausted(n))
+      allocate(dpool%leaf(n), dpool%fineroot(n), dpool%wood(n), dpool%nonstructural(n), npp_repro(n), exhausted(n))
       allocate(co2_owed(site%patch%n)) ; co2_owed = 0.0_wp
       efficiency = cohort_recruit_efficiency(site, cfg)
       !----- The growth ring-buffer slot this step's realized growth will be written to (step 3 of  !
@@ -614,7 +623,7 @@ contains
             !      rate x dt cannot make the charge exceed what is there -- and cannot go negative       !
             !      and manufacture storage.                                                              !
             !                                                                                          !
-            !      IT IS A TENDENCY, NOT A WRITE. The charge is netted into npp%nonstructural and        !
+            !      IT IS A TENDENCY, NOT A WRITE. The charge is netted into dpool%nonstructural and      !
             !      applied with every other pool change in the GROW phase; this routine does not touch   !
             !      cohort%nonstructural_carbon. That is the standing rule -- the driver computes, the    !
             !      engine applies -- and here it is also what keeps the ledger closed, because the       !
@@ -639,7 +648,7 @@ contains
             !      onset of maturity). --------------------------------------------------------------!
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
                                  cohort%height(j) >= pft%reproduction_height_fraction                &
-                                                     * local_hmax(cohort%allom, cohort%p_hgt_max(j)))
+                                                     * local_hmax(cohort%allom, pft%hgt_max(pf)))
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
             !      capped growth demands (the single per-cohort "how much carbon, how much litter"  !
             !      computation, isolated from the surrounding orchestration). ----------------------!
@@ -675,23 +684,23 @@ contains
                      wood_growth_max=growth_sink_limitation(                                       &
                         allom=cohort%allom,                                                          &
                         wood_carbon=cohort%wood_carbon(j), dbh=cohort%dbh(j),                       &
-                        wood_density=cohort%p_wood_density(j), hgt_max=cohort%p_hgt_max(j),         &
-                        aboveground_frac=cohort%p_aboveground_frac(j),                              &
+                        wood_density=pft%wood_density(pf), hgt_max=pft%hgt_max(pf),                 &
+                        aboveground_frac=pft%aboveground_frac(pf),                                  &
                         max_relative_growth_rate=pft%max_relative_growth_rate(pf),                  &
                         max_absolute_growth_rate=pft%max_absolute_growth_rate(pf),                  &
                         max_absolute_growth_exponent=pft%max_absolute_growth_exponent(pf),          &
                         dt_yr=dt_yr, window_yr=window_yr, grown_in_window=grown_in_window),         &
                      exudate=exudate)
             !----- NET per-pool change = growth - shed (leaf/root); litter = shed. ---------------!
-            npp%leaf(j)          = g_leaf     - leaf_shed_c
-            npp%fineroot(j)      = g_fineroot - fineroot_shed_c
-            npp%wood(j)          = g_wood
+            dpool%leaf(j)          = g_leaf     - leaf_shed_c
+            dpool%fineroot(j)      = g_fineroot - fineroot_shed_c
+            dpool%wood(j)          = g_wood
             !----- The storage maintenance leaves the pool HERE, as part of this step's tendency,     !
             !      and the resorbed leaf and fine-root carbon ARRIVES here for the same reason.        !
-            !      npp%leaf and npp%fineroot above already carry the FULL shed removals, so this       !
+            !      dpool%leaf and dpool%fineroot above already carry the FULL shed removals, so this   !
             !      credit moves carbon between pools rather than creating any                          !
             !      (docs/science/plant_carbon_allocation.md eq. (3)).                                  !
-            npp%nonstructural(j) = npp_store - storage_maint + leaf_retained_c + fineroot_retained_c
+            dpool%nonstructural(j) = npp_store - storage_maint + leaf_retained_c + fineroot_retained_c
             npp_repro(j)         = g_repro
             !----- NO LEAVES AND NO STORAGE: the maintenance this step's photosynthesis and the whole  !
             !      storage pool left unpaid (`deficit`, > 0 only once storage is spent) is more than   !
@@ -705,16 +714,16 @@ contains
             !      maintenance and exudate, so the carbon budget closes from the output file. As      !
             !      RATES [kgC/plant/yr], so they are comparable across slow-step lengths. Written     !
             !      into a block that rides the cohort lockstep, NOT into a transient scratch (see     !
-            !      meds_site_diag_types). ------------------------------------------------------------!
+            !      meds_diag_vars). ------------------------------------------------------------      !
             if (cohort%sdiag%active) then
-               cohort%sdiag%v(CS_NPP_LEAF,     j) = g_leaf     / dt_yr
-               cohort%sdiag%v(CS_NPP_FINEROOT, j) = g_fineroot / dt_yr
-               cohort%sdiag%v(CS_NPP_WOOD,     j) = g_wood     / dt_yr
-               cohort%sdiag%v(CS_NPP_STORAGE,  j) = npp_store  / dt_yr
-               cohort%sdiag%v(CS_NPP_REPRO,    j) = g_repro    / dt_yr
-               cohort%sdiag%v(CS_GROWTH_RESP,  j) = growth_resp / dt_yr
-               cohort%sdiag%v(CS_STORAGE_RESP, j) = storage_maint / dt_yr
-               cohort%sdiag%v(CS_EXUDATE,      j) = exudate / dt_yr
+               cohort%sdiag%v(CO_NPP_LEAF,     j) = g_leaf     / dt_yr
+               cohort%sdiag%v(CO_NPP_FINEROOT, j) = g_fineroot / dt_yr
+               cohort%sdiag%v(CO_NPP_WOOD,     j) = g_wood     / dt_yr
+               cohort%sdiag%v(CO_NPP_STORAGE,  j) = npp_store  / dt_yr
+               cohort%sdiag%v(CO_NPP_REPRO,    j) = g_repro    / dt_yr
+               cohort%sdiag%v(CO_GROWTH_RESP,  j) = growth_resp / dt_yr
+               cohort%sdiag%v(CO_STORAGE_RESP, j) = storage_maint / dt_yr
+               cohort%sdiag%v(CO_EXUDATE,      j) = exudate / dt_yr
                cohort%sdiag%w(j)                  = 1.0_wp
             end if
             !----- EVERY ALLOCATOR OUTPUT HAS A DESTINATION (docs/science/plant_respiration.md §6).    !
@@ -788,7 +797,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Leaf/fine-root turnover WATER shedding. A NET biomass LOSS this slow step                         !
-   ! (npp%leaf(j)/npp%fineroot(j) < 0 -- shedding out-ran growth) sheds tissue water in the SAME       !
+   ! (dpool%leaf(j)/dpool%fineroot(j) < 0 -- shedding out-ran growth) sheds tissue water in the SAME   !
    ! proportion as the carbon loss, so the REMAINING tissue's rwc is unchanged: mass, not psi, is      !
    ! what a biomass change must not silently perturb. A NET GAIN step touches nothing here -- the      !
    ! fast loop's mass-conserving seam (meds_fast_dynamics) handles that direction (capacity            !
@@ -807,10 +816,10 @@ contains
    ! of vanishing. Its ENERGY needs NO separate wiring: mixed into the ground-water input              !
    ! (precip_ground), it is valued like the precipitation it joins -- "similarly as                    !
    ! precipitation," not a more precise mechanism than precipitation itself receives. -----------------!
-   subroutine shed_turnover_water(site, cfg, npp, ledger)
+   subroutine shed_turnover_water(site, cfg, dpool, ledger)
       type(site_t),            intent(inout) :: site
       type(meds_config_t),     intent(in)    :: cfg
-      type(carbon_flux_block), intent(in)    :: npp
+      type(pool_change_block), intent(in)    :: dpool
       type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp), allocatable :: patch_total(:)
       real(wp) :: shed_frac, shed_amount, shed_enth
@@ -823,8 +832,8 @@ contains
       associate (cohort => site%cohort)
          do j = 1_ik, cohort%n
             ip = cohort%owner_patch(j)
-            if (npp%leaf(j) < 0.0_wp) then
-               shed_frac   = min(1.0_wp, -npp%leaf(j) / max(cohort%leaf_carbon(j), tiny_num))
+            if (dpool%leaf(j) < 0.0_wp) then
+               shed_frac   = min(1.0_wp, -dpool%leaf(j) / max(cohort%leaf_carbon(j), tiny_num))
                shed_amount = cohort%leaf_water_mass(j) * shed_frac
                cohort%leaf_water_mass(j) = cohort%leaf_water_mass(j) - shed_amount
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
@@ -836,8 +845,8 @@ contains
                shed_enth = shed_enth + site%patch%area(ip) * cohort%nplant(j) * shed_amount          &
                                      * cp_liq * cohort%leaf_temp(j)
             end if
-            if (npp%fineroot(j) < 0.0_wp) then
-               shed_frac   = min(1.0_wp, -npp%fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
+            if (dpool%fineroot(j) < 0.0_wp) then
+               shed_frac   = min(1.0_wp, -dpool%fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
                !----- The fine roots' own share of the store: what wood_thermal_water leaves of it. --!
                shed_amount = (cohort%wood_water_mass(j)                                               &
                               - wood_thermal_water(cohort%wood_water_mass(j), cohort%sapwood_carbon(j),  &
@@ -1061,8 +1070,8 @@ contains
             !      biogeochemistry. As a rate [kgC/m2/yr] times the step's weight in seconds, which   !
             !      is the block's contract.                                                           !
             if (site%patch%diag%active)                                                            &
-               site%patch%diag%v(PD_MORT_C_BACKGROUND, ip) =                                       &
-                  site%patch%diag%v(PD_MORT_C_BACKGROUND, ip)                                      &
+               site%patch%diag%v(PA_MORT_C_BACKGROUND, ip) =                                       &
+                  site%patch%diag%v(PA_MORT_C_BACKGROUND, ip)                                      &
                   + (died_nplant * (cohort%leaf_carbon(j) + cohort%fineroot_carbon(j)              &
                                   + cohort%wood_carbon(j) + cohort%nonstructural_carbon(j))        &
                      / cfg%dt_years) * cfg%dt_slow

@@ -5,8 +5,8 @@
 ! docs/science/snow_biophysics.md). Pure DATA, no methods, no hidden state.                !
 !                                                                                          !
 ! Each domain follows the same shape: a *_forcing_t / *_env_t the kernel reads, and a      !
-! *_flux_t it returns, with the PROGNOSTIC stores themselves in state/column and the       !
-! run-config selectors in meds_biophysics_opts.                                            !
+! *_flux_t it returns, with the PROGNOSTIC stores themselves in meds_patch_state_vars and  !
+! the run-config selectors in meds_biophysics_opts.                                        !
 !==========================================================================================!
 module meds_soil_types
    use meds_kinds,             only : wp, ik

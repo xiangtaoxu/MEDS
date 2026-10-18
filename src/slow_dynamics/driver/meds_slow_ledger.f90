@@ -32,7 +32,8 @@ module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : rho_h2o
    use meds_config,             only : meds_config_t
-   use meds_site_state_types,   only : site_t, cohort_tissue_heat_capacity
+   use meds_cohort_state_vars,  only : cohort_tissue_heat_capacity
+   use meds_site_state_vars,    only : site_t
    use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
@@ -318,15 +319,15 @@ contains
          !      over the layer thicknesses (identical to soil_water_store / soil_energy_store).   !
          w_soil = 0.0_wp ; e_soil = 0.0_wp
          do k = 1_ik, soil%n_active
-            w_soil = w_soil + site%patch%soil_w(ip)%theta(k)       * soil%dz(k) * rho_h2o
-            e_soil = e_soil + site%patch%soil_e(ip)%soil_energy(k) * soil%dz(k)
+            w_soil = w_soil + site%patch%soil_water(ip)%theta(k)       * soil%dz(k) * rho_h2o
+            e_soil = e_soil + site%patch%soil_energy(ip)%soil_energy(k) * soil%dz(k)
          end do
          store%water  = store%water  + a * w_soil
          store%energy = store%energy + a * e_soil
 
          !----- Pond and snow: both already extensive per m2 of patch ground. --------------------!
-         store%water  = store%water  + a * site%patch%soil_w(ip)%w_surface
-         store%energy = store%energy + a * site%patch%soil_w(ip)%w_surface_enth
+         store%water  = store%water  + a * site%patch%soil_water(ip)%w_surface
+         store%energy = store%energy + a * site%patch%soil_water(ip)%w_surface_energy
          store%water  = store%water  + a * sum(site%patch%snow(ip)%swe)
          store%energy = store%energy + a * sum(site%patch%snow(ip)%snow_energy)
 
@@ -367,7 +368,7 @@ contains
                             + c%fineroot_carbon(i) + c%wood_carbon(i) + c%nonstructural_carbon(i))
                store%water  = store%water  + a * c%nplant(i) * (c%leaf_water_mass(i) + c%wood_water_mass(i))
                store%water  = store%water  + a * (c%leaf_surf_water(i) + c%wood_surf_water(i))
-               !----- Tissue heat, through the SHARED capacity (state/site), so the ledger, the    !
+               !----- Tissue heat, through the SHARED capacity (cohort state), so the ledger, the  !
                !      demography operators and the slow driver cannot drift apart on what a        !
                !      cohort's thermal mass is. ---------------------------------------------------!
                call cohort_tissue_heat_capacity(c, i, cap_leaf, cap_wood)

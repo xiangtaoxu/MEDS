@@ -23,7 +23,7 @@
 !     equals the day's integrated atmospheric Rh BY CONSTRUCTION (closes the Jensen gap, §6).              !
 !                                                                                          !
 ! All compute kernels take bare scalars/arrays + small derived types and link only the shared,             !
-! state_column and config libraries; they are `pure` where the arithmetic allows and                       !
+! state and config libraries; they are `pure` where the arithmetic allows and                              !
 ! allocation/LAPACK-free (the active-block solve is a hand-rolled small dense Gaussian                     !
 ! elimination), so they are GPU-eligible.                                                                  !
 !==========================================================================================!
@@ -33,7 +33,7 @@ module meds_soil_biogeochem
    use meds_numerics,         only : matrix_exp
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_column_state_types, only : soil_carbon_t
+   use meds_patch_state_vars,   only : soil_carbon_t
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_CENTURY5
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
    implicit none

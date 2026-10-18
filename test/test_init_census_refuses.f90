@@ -5,7 +5,7 @@
 program test_init_census_refuses
    use meds_kinds,            only : ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_types, only : site_t
+   use meds_site_state_vars,  only : site_t
    use meds_init,             only : init_from_census
    use meds_test_support,     only : build_test_config
    implicit none

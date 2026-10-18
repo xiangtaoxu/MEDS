@@ -79,20 +79,24 @@ and gfortran. Seven traps, each invisible to ifx and each of which has bitten at
 Four rules, applied in order. The long form, with the library graph and a lookup table, is in
 [`src/README.md`](src/README.md).
 
-1. **Kernels never see `site_t`.** The kernel folders link `state_column` and `config` only, which
-   is what keeps them device-eligible and standalone-buildable. A routine that needs `site_t` is
-   driver code.
+1. **Kernels never see `site_t`.** The kernel folders take only the per-patch store types from the
+   state layer (`meds_patch_state_vars`, through an only-list), which is what keeps them
+   device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A routine that
+   needs `site_t` is driver code.
 2. **A kernel goes where its caller's timescale is**, then in its domain folder. A kernel called
    from both tiers is a documented seam, never a folder — there is exactly one.
-3. **A derived type lives with whoever mutates it.** Two mutators means boundary state, which is
-   `state/column`. Parameters are not state.
+3. **A derived type lives with whoever mutates it.** Two mutators means state, in the `state/` file
+   of the level that holds it (`meds_cohort_state_vars`, `meds_patch_state_vars`,
+   `meds_site_state_vars`). Parameters are not state.
 4. **Laws and operators do not touch.** The appliers take rate arrays and never import the rate
    laws. The slow driver is the one place they meet.
 
 ## Invariants that break quietly
 
-- **State is a flat site-wide structure of arrays**; adding a per-cohort field means updating the
-  **one centralized lockstep reorder**, every creation site, and the fusion policy.
+- **State is a flat site-wide structure of arrays**; adding a per-cohort field means adding it to its
+  section of `cohort_block` and of **each lockstep list** in `meds_cohort_state_vars` (one section
+  order throughout), every creation site, and the fusion policy. Patch fields: the same, in
+  `meds_patch_state_vars`.
 - **Persistent ids** are stamped at creation and carried through every sort, fusion and compaction.
   Never reused.
 - **Tendencies arrive as plain data.** The engine applies; the driver computes. The bundle is

@@ -27,7 +27,8 @@ module meds_c_api_demography
    use meds_constants,              only : tiny_num
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
-   use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
+   use meds_cohort_state_vars,       only : cohort_deriv_alloc
+   use meds_site_state_vars,         only : site_t, site_free
    use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
@@ -180,17 +181,18 @@ contains
          !      twin of the driver's carbon update_cohort_derivatives -- this is thin C-API glue, not  !
          !      a named peer computer. ---------------------------------------------------------------!
          call cohort_deriv_alloc(site%deriv, site%cohort%n)
-         associate (cohort => site%cohort)
+         associate (cohort => site%cohort, pft => cfg%pft)
             do i = 1_ik, cohort%n
+               pf = cohort%pft(i)
                !----- Forward allometry from the supplied dbh growth. It CALLS meds_allometry rather   !
                !      than inlining it, so a coefficient change reaches the model and this shim alike. !
-               dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, cohort%p_dbh_critical(i))
-               height_new = dbh_to_height(cohort%allom, dbh_new, cohort%p_hgt_max(i))
+               dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, pft%dbh_critical(pf))
+               height_new = dbh_to_height(cohort%allom, dbh_new, pft%hgt_max(pf))
                lc_new     = size2leaf_carbon(cohort%allom, dbh_new, height_new, cohort%sla(i))
                wc_new     = size2wood_carbon(cohort%allom, dbh_new, height_new,                        &
-                                             cohort%p_wood_density(i), cohort%p_aboveground_frac(i))
-               fc_new     = cohort%p_root_to_leaf_ratio(i) * lc_new
-               nc_new     = storage_carbon_target(cohort%p_storage_cushion(i), lc_new, fc_new)
+                                             pft%wood_density(pf), pft%aboveground_frac(pf))
+               fc_new     = pft%root_to_leaf_ratio(pf) * lc_new
+               nc_new     = storage_carbon_target(pft%storage_cushion(pf), lc_new, fc_new)
                !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth     !
                !      rate (empirical behaviour -- records the request even when dbh is capped). ----!
                call fill_cohort_deriv(cohort, i, site%deriv, cfg%dt_years, m(i), g(i),                &

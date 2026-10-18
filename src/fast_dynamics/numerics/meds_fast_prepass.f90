@@ -17,18 +17,18 @@ module meds_fast_prepass
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, r_gas, kgCday_2_umols
    use meds_config,           only : meds_config_t
-   use meds_site_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
-                                     CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,                  &
-                                     CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
-                                     CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE, &
-                                     CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, CD_CA, CD_PRESSURE
+   use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM, CO_BETA_NONSTOM, &
+                                     CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, &
+                                     CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_GPP_RATE, CO_LEAF_PAR, CO_GB_MOL, CO_PSI_PREDAWN, &
+                                     CO_CA, CO_PRESSURE
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_fast_types, only : patch_biophys_t
    use meds_soil_column_config, only : soil_params_t, top_soil_psi
+   use meds_state_defaults, only : is_unset_negative
    use meds_biophysics_opts, only : aero_cfg_t
-   use meds_column_state_types, only : cas_state_t, soil_carbon_t
+   use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
    use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, hydro_params_table_t, hydro_opts_t, &
                                 wood_params_t, root_params_t
    use meds_biogeochem_types, only : n_soil_pool
@@ -83,17 +83,17 @@ contains
       !      Present only when the run reports per-cohort ecophysiology; absent, the extra         !
       !      leaf_flux_t fields are never even requested from the batch kernel, so this costs      !
       !      nothing. -----------------------------------------------------------------------------!
-      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) INSTANTANEOUS values
+      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CO_FAST_ROWS, ncoh) INSTANTANEOUS values
 
       real(wp) :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
 
       !----- 1. aerodynamics from the current canopy-air state. ------------------------------------!
       call refresh_canopy_aerodynamics(col_config%aero, aenv, ageom, col_cohort, biophys%cas,           &
-                                       biophys%soil_e%soil_temp(1), biophys%leaf_temp,                 &
+                                       biophys%soil_energy%soil_temp(1), biophys%leaf_temp,                 &
                                        biophys%wood_temp, aero, tcas, qcas, press, rho, t_ground)
 
       !----- 2. root-zone environment (root + heterotrophic respiration drivers). ------------------!
-      call root_zone_environment(col_config%soil, root_frac, biophys%soil_e%soil_temp, biophys%soil_w%theta, &
+      call root_zone_environment(col_config%soil, root_frac, biophys%soil_energy%soil_temp, biophys%soil_water%theta, &
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
@@ -105,7 +105,7 @@ contains
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
       call canopy_maintenance_respiration(col_config%wood, col_config%root, col_config%soil, root_frac, col_cohort, &
-                                          biophys%wood_temp, biophys%soil_e%soil_temp, ra_stem, ra_root, &
+                                          biophys%wood_temp, biophys%soil_energy%soil_temp, ra_stem, ra_root, &
                                           stem_resp_coh, root_resp_coh)
 
       !----- 5. heterotrophic respiration. -------------------------------------------------------!
@@ -187,7 +187,7 @@ contains
    !                                                                                                !
    ! STOMATAL WATER STRESS: beta_stomata = min(1, exp(sref*(psi - psi_onset)))                      !
    ! (docs/science/leaf_gas_exchange.md eq. (10)) is driven by YESTERDAY's daily-maximum leaf water !
-   ! potential -- the model's predawn potential. DMAX_PSI_LEAF_UNSET (positive, so unmistakable)    !
+   ! potential -- the model's predawn potential. UNSET_NEGATIVE (positive, so unmistakable)         !
    ! means the cohort has no history yet: a recruit, or the first step of a run. It is seeded from  !
    ! the SURFACE-LAYER soil potential so it starts at its patch's actual water status rather than   !
    ! at 0, which would read as fully turgid.                                                        !
@@ -242,9 +242,9 @@ contains
                biophys%wood_water_mass(i), col_cohort%bsap(i) + col_cohort%broot(i), col_cohort%height(i),   &
                hyd_table%pft(col_cohort%pft(i)), hyd_opts)
       end do
-      dmax_psi_seed = top_soil_psi(soil, biophys%soil_w%theta(1))
+      dmax_psi_seed = top_soil_psi(soil, biophys%soil_water%theta(1))
       do i = 1_ik, n
-         if (col_cohort%dmax_psi_leaf(i) > 0.0_wp) then
+         if (is_unset_negative(col_cohort%dmax_psi_leaf(i))) then
             dmax_psi_arr(i) = dmax_psi_seed                    ! UNSET sentinel -> seed from the soil
          else
             dmax_psi_arr(i) = col_cohort%dmax_psi_leaf(i)
@@ -258,30 +258,30 @@ contains
                                       a_net=a_net_arr, ci=ci_arr, cs=cs_arr,                            &
                                       beta_stom=bstom_arr, beta_nonstom=bnstom_arr)
          do i = 1_ik, n
-            cdiag(CD_ANET,         i) = a_net_arr(i)
-            cdiag(CD_AGROSS,       i) = a_gross_arr(i)
-            cdiag(CD_GSW,          i) = gs_arr(i)
-            cdiag(CD_GBW,          i) = aero%leaf_gbw(i)
-            cdiag(CD_CI,           i) = ci_arr(i)
-            cdiag(CD_CS,           i) = cs_arr(i)
-            cdiag(CD_RD,           i) = rd_arr(i)
-            cdiag(CD_BETA_STOM,    i) = bstom_arr(i)
-            cdiag(CD_BETA_NONSTOM, i) = bnstom_arr(i)
-            cdiag(CD_LEAF_TEMP,    i) = biophys%leaf_temp(i)
-            cdiag(CD_WOOD_TEMP,    i) = biophys%wood_temp(i)
-            cdiag(CD_LEAF_VPD,     i) = vpd_arr(i)
-            cdiag(CD_PSI_LEAF,     i) = psi_leaf_arr(i)
-            cdiag(CD_ABS_PAR,      i) = forc%abs_par(i)
-            cdiag(CD_ABS_SW,       i) = forc%abs_sw(i)
-            cdiag(CD_ABS_LW,       i) = forc%abs_lw(i)
-            cdiag(CD_WIND,         i) = aero%wind(i)
-            cdiag(CD_LEAF_WATER,   i) = biophys%leaf_water_mass(i)
-            cdiag(CD_WOOD_WATER,   i) = biophys%wood_water_mass(i)
-            cdiag(CD_LEAF_PAR,     i) = par_arr(i)
-            cdiag(CD_GB_MOL,       i) = gb_arr(i)
-            cdiag(CD_PSI_PREDAWN,  i) = dmax_psi_arr(i)
-            cdiag(CD_CA,           i) = biophys%cas%can_co2
-            cdiag(CD_PRESSURE,     i) = press
+            cdiag(CO_ANET,         i) = a_net_arr(i)
+            cdiag(CO_AGROSS,       i) = a_gross_arr(i)
+            cdiag(CO_GSW,          i) = gs_arr(i)
+            cdiag(CO_GBW,          i) = aero%leaf_gbw(i)
+            cdiag(CO_CI,           i) = ci_arr(i)
+            cdiag(CO_CS,           i) = cs_arr(i)
+            cdiag(CO_RD,           i) = rd_arr(i)
+            cdiag(CO_BETA_STOM,    i) = bstom_arr(i)
+            cdiag(CO_BETA_NONSTOM, i) = bnstom_arr(i)
+            cdiag(CO_LEAF_TEMP,    i) = biophys%leaf_temp(i)
+            cdiag(CO_WOOD_TEMP,    i) = biophys%wood_temp(i)
+            cdiag(CO_LEAF_VPD,     i) = vpd_arr(i)
+            cdiag(CO_PSI_LEAF,     i) = psi_leaf_arr(i)
+            cdiag(CO_ABS_PAR,      i) = forc%abs_par(i)
+            cdiag(CO_ABS_SW,       i) = forc%abs_sw(i)
+            cdiag(CO_ABS_LW,       i) = forc%abs_lw(i)
+            cdiag(CO_WIND,         i) = aero%wind(i)
+            cdiag(CO_LEAF_WATER,   i) = biophys%leaf_water_mass(i)
+            cdiag(CO_WOOD_WATER,   i) = biophys%wood_water_mass(i)
+            cdiag(CO_LEAF_PAR,     i) = par_arr(i)
+            cdiag(CO_GB_MOL,       i) = gb_arr(i)
+            cdiag(CO_PSI_PREDAWN,  i) = dmax_psi_arr(i)
+            cdiag(CO_CA,           i) = biophys%cas%can_co2
+            cdiag(CO_PRESSURE,     i) = press
          end do
       else
          call leaf_gas_exchange_batch(n, par_arr, biophys%leaf_temp(1:n), vpd_arr, biophys%cas%can_co2, press, &
@@ -295,7 +295,7 @@ contains
          !      leaf's net exchange A_g - Rd whatever the water-stress controls did to A_g. -------!
          gpp     = gpp     + a_gross_arr(i) * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(gpp_coh)) gpp_coh(i) = a_gross_arr(i) * col_cohort%leaf_area(i)
-         if (present(cdiag))   cdiag(CD_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
+         if (present(cdiag))   cdiag(CO_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
          ra_leaf = ra_leaf + rd_arr(i)      * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = rd_arr(i) * col_cohort%leaf_area(i)
          h_coeff_leaf(i) = sensible_heat_coeff(veg_thermal%effarea_heat * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)

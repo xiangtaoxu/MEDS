@@ -37,10 +37,9 @@ program test_slow_diag_units
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : yr_sec, n_soil_layer_max
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t, reset_step_diagnostics
-   use meds_site_diag_types,     only : patch_diag_alloc, patch_diag_value, patch_diag_slow_row,  &
-                                        PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,     &
-                                        PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_LE, PD_GPP
+   use meds_site_state_vars,     only : site_t, reset_step_diagnostics
+   use meds_diag_vars,           only : alloc_patch_diag, patch_diag_value, patch_diag_slow_row, PA_LITTER_LEAF, &
+                                        PA_LITTER_FINEROOT, PA_LITTER_STRUCT, PA_RECRUIT_NPLANT, PA_DISTURB_AREA, PA_LE, PA_GPP
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
@@ -90,7 +89,7 @@ program test_slow_diag_units
    !----- Turn the patch diagnostic block on by hand. In production meds_output_registry does this !
    !      from the enabled-variable set; a test has no registry, and the block is a no-op at every !
    !      entry point until it is active. -----------------------------------------------------!
-   call patch_diag_alloc(site%patch%diag, max(site%patch%cap, 1_ik), .true.)
+   call alloc_patch_diag(site%patch%diag, max(site%patch%cap, 1_ik), .true.)
 
    !=== 1. THE FIXTURE MIRRORS THE DRIVER: one fast window weighs exactly one slow step. =========!
    call fast_dynamics(site, ctx, cfg)
@@ -105,27 +104,27 @@ program test_slow_diag_units
 
    call check(site%patch%litter_in(1)%leaf_c > 0.0_wp, 'the step actually shed leaf litter')
 
-   call patch_diag_value(site%patch%diag, PD_LITTER_LEAF, x, np)
+   call patch_diag_value(site%patch%diag, PA_LITTER_LEAF, x, np)
    call check(np >= 1_ik, 'the patch diagnostic block reports at least one slot')
    call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%leaf_c, 1.0e-10_wp,                 &
-                    'PD_LITTER_LEAF rate x elapsed == the leaf litter amount')
+                    'PA_LITTER_LEAF rate x elapsed == the leaf litter amount')
    write(*,'(a,es12.5,a)') '   (leaf litterfall: ', x(1), ' kgC/m2/yr)'
 
-   call patch_diag_value(site%patch%diag, PD_LITTER_FINEROOT, x, np)
+   call patch_diag_value(site%patch%diag, PA_LITTER_FINEROOT, x, np)
    call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%fineroot_c, 1.0e-10_wp,             &
-                    'PD_LITTER_FINEROOT rate x elapsed == the fine-root litter amount')
+                    'PA_LITTER_FINEROOT rate x elapsed == the fine-root litter amount')
 
-   call patch_diag_value(site%patch%diag, PD_LITTER_STRUCT, x, np)
+   call patch_diag_value(site%patch%diag, PA_LITTER_STRUCT, x, np)
    call check_close(x(1) * elapsed_yr,                                                             &
                     site%patch%litter_in(1)%struct_grnd + site%patch%litter_in(1)%struct_soil,     &
-                    1.0e-10_wp, 'PD_LITTER_STRUCT rate x elapsed == the structural litter amount')
+                    1.0e-10_wp, 'PA_LITTER_STRUCT rate x elapsed == the structural litter amount')
 
    !=== 3. RECRUITMENT: the same identity against the pool the SAME step credits. The pool is     !
    !    consumed only on a month boundary, and this step is not one, so its change IS the amount.  !
-   call patch_diag_value(site%patch%diag, PD_RECRUIT_NPLANT, x, np)
+   call patch_diag_value(site%patch%diag, PA_RECRUIT_NPLANT, x, np)
    call check(pool1 - pool0 > 0.0_wp, 'the step actually credited the recruit pool')
    call check_close(x(1) * elapsed_yr, pool1 - pool0, 1.0e-10_wp,                                  &
-                    'PD_RECRUIT_NPLANT rate x elapsed == the recruit-pool credit')
+                    'PA_RECRUIT_NPLANT rate x elapsed == the recruit-pool credit')
 
    !=== 4. DISTURBANCE: fires on a year boundary, in a different file with its own expression, so   !
    !    it gets its own check. The amount is the area fraction its hazard removes over the one-     !
@@ -141,9 +140,9 @@ program test_slow_diag_units
                        'the window after the boundary weighs exactly one slow step')
       frac_expected = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)   ! PATCH_DYNAMICS_INTERVAL
       call check(frac_expected > 0.0_wp, 'the test config actually disturbs')
-      call patch_diag_value(site%patch%diag, PD_DISTURB_AREA, x, np)
+      call patch_diag_value(site%patch%diag, PA_DISTURB_AREA, x, np)
       call check_close(x(1) * elapsed_yr, frac_expected, 1.0e-9_wp,                                &
-                       'PD_DISTURB_AREA rate x elapsed == the area fraction disturbed')
+                       'PA_DISTURB_AREA rate x elapsed == the area fraction disturbed')
       write(*,'(a,es12.5,a,es12.5,a)') '   (disturbance: reported ', x(1),                         &
                                        ' 1/yr  vs configured hazard ', cfg%patch_disturbance_rate, ' 1/yr)'
    end block
@@ -163,15 +162,15 @@ program test_slow_diag_units
                        'slow-only: the slow step weighs the block by dt_slow')
       call check(site%patch%diag%n == site%patch%n, 'slow-only: the slow step sets the patch count')
       elapsed_yr = site%patch%diag%w(1) / yr_sec
-      call patch_diag_value(site%patch%diag, PD_RECRUIT_NPLANT, x, np)
+      call patch_diag_value(site%patch%diag, PA_RECRUIT_NPLANT, x, np)
       call check(np >= 1_ik .and. pool1 - pool0 > 0.0_wp, 'slow-only: the recruit row has a slot')
       call check_close(x(1) * elapsed_yr, pool1 - pool0, 1.0e-10_wp,                               &
-                       'slow-only: PD_RECRUIT_NPLANT rate x elapsed == the recruit-pool credit')
+                       'slow-only: PA_RECRUIT_NPLANT rate x elapsed == the recruit-pool credit')
       call check_true('slow-only: litter, recruitment and disturbance are slow rows',              &
-                      patch_diag_slow_row(PD_LITTER_LEAF) .and. patch_diag_slow_row(PD_RECRUIT_NPLANT) &
-                      .and. patch_diag_slow_row(PD_DISTURB_AREA))
+                      patch_diag_slow_row(PA_LITTER_LEAF) .and. patch_diag_slow_row(PA_RECRUIT_NPLANT) &
+                      .and. patch_diag_slow_row(PA_DISTURB_AREA))
       call check_true('slow-only: latent heat and GPP are fast rows',                              &
-                      .not. (patch_diag_slow_row(PD_LE) .or. patch_diag_slow_row(PD_GPP)))
+                      .not. (patch_diag_slow_row(PA_LE) .or. patch_diag_slow_row(PA_GPP)))
    end block
 
    call test_report('test_slow_diag_units')

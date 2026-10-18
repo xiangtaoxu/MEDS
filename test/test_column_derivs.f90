@@ -23,7 +23,7 @@ program test_column_derivs
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t, build_soil_hydr_params, build_soil_therm_params
-   use meds_column_state_types, only : soil_energy_column_t
+   use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, soil_opts_t
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv

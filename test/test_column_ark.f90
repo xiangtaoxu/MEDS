@@ -140,8 +140,8 @@ program test_column_ark
       physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp .and. biophys%cas%can_shv > 0.0_wp
       physical = physical .and. biophys%leaf_temp(1) > 250.0_wp .and. biophys%leaf_temp(1) < 340.0_wp
       do k = 1_ik, nsl
-         physical = physical .and. biophys%soil_w%theta(k) > 0.0_wp .and. biophys%soil_w%theta(k) < 0.6_wp
-         physical = physical .and. biophys%soil_e%soil_temp(k) > 260.0_wp .and. biophys%soil_e%soil_temp(k) < 340.0_wp
+         physical = physical .and. biophys%soil_water%theta(k) > 0.0_wp .and. biophys%soil_water%theta(k) < 0.6_wp
+         physical = physical .and. biophys%soil_energy%soil_temp(k) > 260.0_wp .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
       end do
       !----- psi is not persisted state: diagnose it from the persisted leaf_water_mass             !
       !      (docs/science/plant_hydraulics.md §2, eqs. (4)-(5)). ----------------------------------!
@@ -310,8 +310,8 @@ contains
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
-      biophys%soil_w%theta(1:col_config%soil%n_active) = 0.15_wp
-      theta_bot0 = biophys%soil_w%theta(col_config%soil%n_active)
+      biophys%soil_water%theta(1:col_config%soil%n_active) = 0.15_wp
+      theta_bot0 = biophys%soil_water%theta(col_config%soil%n_active)
       do istep = 1_ik, 12_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
@@ -321,8 +321,8 @@ contains
       call check_true('AQUIFER/ARK: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                         &
               real(budget%whole_energy%n_fail, wp))
       call check_true('AQUIFER/ARK: dry column wets from below',                                                      &
-              biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                            &
-              biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
+              biophys%soil_water%theta(col_config%soil%n_active) > theta_bot0,                                            &
+              biophys%soil_water%theta(col_config%soil%n_active) - theta_bot0)
       col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_ark_aquifer
 
@@ -372,7 +372,7 @@ contains
          forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
-      theta_col1 = sum(biophys%soil_w%theta(1:nsl))
+      theta_col1 = sum(biophys%soil_water%theta(1:nsl))
       call check_true('ARK wet: ran a full day of wet steps (no guard error stop)', &
             budget%cas_energy%n_check == 24_ik * steps_per_hour, &
               real(budget%cas_energy%n_check, wp))
@@ -438,7 +438,7 @@ contains
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
-      theta_col1 = sum(biophys%soil_w%theta(1:nsl))
+      theta_col1 = sum(biophys%soil_water%theta(1:nsl))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
       call check_true('ARK shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
               theta_col1 > theta_dry, theta_col1 - theta_dry)
@@ -476,9 +476,9 @@ contains
          call set_diurnal_forcing(istep)
          forc%rainfall = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
-         pond_peak  = max(pond_peak,  biophys%soil_w%w_surface)
-         theta_peak = max(theta_peak, maxval(biophys%soil_w%theta(1:nsl)))
-         ss_min = min(ss_min, biophys%soil_e%soil_temp(1)) ; ss_max = max(ss_max, biophys%soil_e%soil_temp(1))
+         pond_peak  = max(pond_peak,  biophys%soil_water%w_surface)
+         theta_peak = max(theta_peak, maxval(biophys%soil_water%theta(1:nsl)))
+         ss_min = min(ss_min, biophys%soil_energy%soil_temp(1)) ; ss_max = max(ss_max, biophys%soil_energy%soil_temp(1))
       end do
       theta_seed = theta0                                 ! restore for any test added after this
       call check_true('ARK saturated: column reached theta_sat (saturation path is live)',                            &
@@ -581,11 +581,11 @@ contains
       biophys%wood_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
-      biophys%soil_w%theta(1:nsl) = theta_seed
+      biophys%soil_water%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl
-         biophys%soil_e%soil_energy(kk) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
+         biophys%soil_energy%soil_energy(kk) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
                                       theta_seed * rho_h2o, t0, 1.0_wp)
-         biophys%soil_e%soil_temp(kk)   = t0
+         biophys%soil_energy%soil_temp(kk)   = t0
       end do
    end subroutine reset_state
 
@@ -624,7 +624,7 @@ contains
          forc%rainfall = 0.0_wp
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
-      theta_sum = sum(biophys%soil_w%theta(1:nsl))
+      theta_sum = sum(biophys%soil_water%theta(1:nsl))
    end subroutine march_dry_day
 
 end program test_column_ark

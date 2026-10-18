@@ -86,7 +86,7 @@ aerodynamic roughness does not see the pack: the driver passes `snowfac = 0` to 
 |---|---|
 | snow energy / base conductance | `meds_ground_biophysics`: `snow_energy_step`, `snow_base_conductance` |
 | snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
-| prognostic snow type | `meds_column_state_types`: `snow_column_t` |
+| prognostic snow type | `meds_patch_state_vars`: `snow_column_t` |
 
 ## References
 - Murphy & Koop (2005), *Q. J. R. Meteorol. Soc.* 131:1539 — vapour pressure over ice.

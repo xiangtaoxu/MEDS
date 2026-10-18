@@ -27,7 +27,7 @@ program test_column_rk45
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, build_soil_therm_params
-   use meds_site_diag_types, only : N_CDIAG, CD_PSI_PREDAWN
+   use meds_diag_vars,       only : N_CO_FAST_ROWS, CO_PSI_PREDAWN
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
@@ -118,8 +118,8 @@ program test_column_rk45
       physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp .and. biophys%cas%can_shv > 0.0_wp
       physical = physical .and. biophys%leaf_temp(1) > 250.0_wp .and. biophys%leaf_temp(1) < 340.0_wp
       do k = 1_ik, nsl
-         physical = physical .and. biophys%soil_w%theta(k) > 0.0_wp .and. biophys%soil_w%theta(k) < 0.6_wp
-         physical = physical .and. biophys%soil_e%soil_temp(k) > 260.0_wp .and. biophys%soil_e%soil_temp(k) < 340.0_wp
+         physical = physical .and. biophys%soil_water%theta(k) > 0.0_wp .and. biophys%soil_water%theta(k) < 0.6_wp
+         physical = physical .and. biophys%soil_energy%soil_temp(k) > 260.0_wp .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
       end do
       physical = physical .and. biophys%leaf_water_mass(1) > 0.0_wp .and. biophys%wood_water_mass(1) > 0.0_wp
       psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_curve, &
@@ -264,8 +264,8 @@ contains
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
-      biophys%soil_w%theta(1:col_config%soil%n_active) = 0.15_wp
-      theta_bot0 = biophys%soil_w%theta(col_config%soil%n_active)
+      biophys%soil_water%theta(1:col_config%soil%n_active) = 0.15_wp
+      theta_bot0 = biophys%soil_water%theta(col_config%soil%n_active)
       do istep = 1_ik, 12_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
@@ -275,8 +275,8 @@ contains
       call check_true('AQUIFER/RK45: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                        &
               real(budget%whole_energy%n_fail, wp))
       call check_true('AQUIFER/RK45: dry column wets from below',                                                     &
-              biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                            &
-              biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
+              biophys%soil_water%theta(col_config%soil%n_active) > theta_bot0,                                            &
+              biophys%soil_water%theta(col_config%soil%n_active) - theta_bot0)
       !----- K_bot/Delta with Delta = dz(n)/2 is a fast boundary term the implicit paths absorb and   !
       !      an explicit march may not, so report the substep cost rather than assume it. ------------!
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
@@ -327,7 +327,7 @@ contains
          forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
-      theta_col1 = sum(biophys%soil_w%theta(1:nsl))
+      theta_col1 = sum(biophys%soil_water%theta(1:nsl))
       call check_true('RK45 wet: ran a full day of wet steps (no guard error stop)', &
             budget%whole_water%n_check == 24_ik * steps_per_hour, &
               real(budget%whole_water%n_check, wp))
@@ -391,7 +391,7 @@ contains
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
-      theta_col1 = sum(biophys%soil_w%theta(1:nsl))
+      theta_col1 = sum(biophys%soil_water%theta(1:nsl))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
       call check_true('RK45 shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
               theta_col1 > theta_dry, theta_col1 - theta_dry)
@@ -445,8 +445,8 @@ contains
          physical = physical .and. biophys%wood_temp(1) > 250.0_wp .and. biophys%wood_temp(1) < 340.0_wp
          physical = physical .and. biophys%cas%can_temp > 250.0_wp .and. biophys%cas%can_temp < 340.0_wp
          do k = 1_ik, nsl
-            physical = physical .and. biophys%soil_w%theta(k) >= 0.0_wp .and. biophys%soil_w%theta(k) <= 0.6_wp
-            physical = physical .and. biophys%soil_e%soil_temp(k) > 250.0_wp .and. biophys%soil_e%soil_temp(k) < 340.0_wp
+            physical = physical .and. biophys%soil_water%theta(k) >= 0.0_wp .and. biophys%soil_water%theta(k) <= 0.6_wp
+            physical = physical .and. biophys%soil_energy%soil_temp(k) > 250.0_wp .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
          end do
          physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
       end do
@@ -488,7 +488,7 @@ contains
          physical = physical .and. biophys%cas%can_temp > 250.0_wp .and. biophys%cas%can_temp < 340.0_wp
          physical = physical .and. biophys%leaf_temp(1)  > 250.0_wp .and. biophys%leaf_temp(1)  < 340.0_wp
          do k = 1_ik, nsl
-            physical = physical .and. biophys%soil_e%soil_temp(k) > 250.0_wp .and. biophys%soil_e%soil_temp(k) < 340.0_wp
+            physical = physical .and. biophys%soil_energy%soil_temp(k) > 250.0_wp .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
          end do
          physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
       end do
@@ -519,7 +519,7 @@ contains
          forc%rainfall = 0.0_wp
          forc%shv_atm = 0.5_wp * forc%shv_atm            ! halve the atmospheric humidity: dry the air
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
-         theta_min = min(theta_min, minval(biophys%soil_w%theta(1:nsl)))
+         theta_min = min(theta_min, minval(biophys%soil_water%theta(1:nsl)))
       end do
       e_worst = budget%whole_energy%worst ; w_worst = budget%whole_water%worst
       theta_seed = theta0                                 ! restore for any test added after this
@@ -558,9 +558,9 @@ contains
          call set_diurnal_forcing(istep)
          forc%rainfall = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
-         pond_peak  = max(pond_peak,  biophys%soil_w%w_surface)
-         theta_peak = max(theta_peak, maxval(biophys%soil_w%theta(1:nsl)))
-         ss_min = min(ss_min, biophys%soil_e%soil_temp(1)) ; ss_max = max(ss_max, biophys%soil_e%soil_temp(1))
+         pond_peak  = max(pond_peak,  biophys%soil_water%w_surface)
+         theta_peak = max(theta_peak, maxval(biophys%soil_water%theta(1:nsl)))
+         ss_min = min(ss_min, biophys%soil_energy%soil_temp(1)) ; ss_max = max(ss_max, biophys%soil_energy%soil_temp(1))
          ood_peak      = max(ood_peak,   budget%theta_ood_max)
       end do
       theta_seed = theta0                                 ! restore for any test added after this
@@ -633,7 +633,7 @@ contains
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       w_worst = budget%whole_water%worst
-      psi_top = soil_psi_from_theta(col_config%soil%retention, biophys%soil_w%theta(1), col_config%soil%theta_sat(1), &
+      psi_top = soil_psi_from_theta(col_config%soil%retention, biophys%soil_water%theta(1), col_config%soil%theta_sat(1), &
                                     col_config%soil%theta_res(1), col_config%soil%curve_par_a(1),          &
                                     col_config%soil%curve_par_n(1))
       theta_seed = theta0
@@ -649,7 +649,7 @@ contains
    subroutine test_campbell_predawn_seed()
       real(wp), parameter :: theta_sat = 0.43_wp, theta_res = 0.0_wp, psi_sat = -0.26_wp, b = 5.65_wp
       type(soil_params_t) :: vg_soil
-      real(wp) :: cdiag(N_CDIAG, n), seed
+      real(wp) :: cdiag(N_CO_FAST_ROWS, n), seed
       vg_soil = col_config%soil
       call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, test_bottoms, theta_sat, theta_res,     &
                                   2.89e-6_wp, psi_sat, b, -3.37_wp, col_config%soil)
@@ -666,7 +666,7 @@ contains
               col_cohort%dmax_psi_leaf(1) > 0.0_wp, col_cohort%dmax_psi_leaf(1))
       call check_true('Campbell seed: the top layer is unsaturated (a seed below zero)', seed < 0.0_wp, seed)
       call check_true('Campbell seed: the predawn seed is the Campbell curve''s top-layer potential',                 &
-              abs(cdiag(CD_PSI_PREDAWN, 1) - seed) <= 1.0e-12_wp * abs(seed), cdiag(CD_PSI_PREDAWN, 1))
+              abs(cdiag(CO_PSI_PREDAWN, 1) - seed) <= 1.0e-12_wp * abs(seed), cdiag(CO_PSI_PREDAWN, 1))
    end subroutine test_campbell_predawn_seed
 
    subroutine reset_state()
@@ -678,11 +678,11 @@ contains
       biophys%wood_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
-      biophys%soil_w%theta(1:nsl) = theta_seed
+      biophys%soil_water%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl
-         biophys%soil_e%soil_energy(kk) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
+         biophys%soil_energy%soil_energy(kk) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
                                       theta_seed * rho_h2o, t0, 1.0_wp)
-         biophys%soil_e%soil_temp(kk)   = t0
+         biophys%soil_energy%soil_temp(kk)   = t0
       end do
    end subroutine reset_state
 
@@ -739,7 +739,7 @@ contains
          forc%rainfall = 0.0_wp
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
-      theta_sum = sum(biophys%soil_w%theta(1:nsl))
+      theta_sum = sum(biophys%soil_water%theta(1:nsl))
    end subroutine march_dry_day
 
 end program test_column_rk45

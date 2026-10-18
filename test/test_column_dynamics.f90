@@ -510,7 +510,7 @@ program test_column_dynamics
    snow_seed = 0.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
    snowfall_on = .true. ; snowf_rate = 5.0e-6_wp          ! 7.5e-4 kg/m2 per 150 s step < min_new_snow_mass (1e-3)
    call integrate_day()
-   e_col_snow = sum(biophys%soil_e%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_w%w_surface_enth
+   e_col_snow = sum(biophys%soil_energy%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_water%w_surface_energy
    call check_true('RUN 9b: sub-threshold snowfall never started a pack', biophys%snow%nlayer == 0_ik,                &
            real(biophys%snow%nlayer, wp))
    call check_true('RUN 9b snow: whole-column energy closes to round-off', budget%whole_energy%worst < 1.0e-3_wp,     &
@@ -518,7 +518,7 @@ program test_column_dynamics
    snow_mass_total = snowf_rate * real(nstep, wp) * dt_fast
    snowfall_on = .false. ; cold_air = .true. ; rain_rate = snowf_rate
    call integrate_day()
-   e_col_rain = sum(biophys%soil_e%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_w%w_surface_enth
+   e_col_rain = sum(biophys%soil_energy%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_water%w_surface_energy
    cold_air = .false. ; rain_rate = 0.0_wp ; snowf_rate = 2.0e-5_wp
    fusion_expect = latent_heat_fusion * snow_mass_total
    !----- ~0.56 L_f on this fixture: the colder, wetter surface loses less to the air over the day and    !
@@ -564,11 +564,11 @@ contains
          biophys%snow%nlayer         = 1_ik
       end if
       snow_physical = .true.
-      biophys%soil_w%theta(1:nsl) = theta_seed
+      biophys%soil_water%theta(1:nsl) = theta_seed
       do k = 1_ik, nsl
-         biophys%soil_e%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k),  &
+         biophys%soil_energy%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k),  &
                                      theta_seed * rho_h2o, t0, 1.0_wp)
-         biophys%soil_e%soil_temp(k)   = t0
+         biophys%soil_energy%soil_temp(k)   = t0
       end do
 
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp ; sd_min = 1.0e9_wp ; sd_max = -1.0e9_wp
@@ -617,19 +617,19 @@ contains
             exit
          end if
 
-         ss_min = min(ss_min, biophys%soil_e%soil_temp(1))   ; ss_max = max(ss_max, biophys%soil_e%soil_temp(1))
-         sd_min = min(sd_min, biophys%soil_e%soil_temp(nsl)) ; sd_max = max(sd_max, biophys%soil_e%soil_temp(nsl))
-         th_min = min(th_min, biophys%soil_w%theta(1))       ; th_max = max(th_max, biophys%soil_w%theta(1))
+         ss_min = min(ss_min, biophys%soil_energy%soil_temp(1))   ; ss_max = max(ss_max, biophys%soil_energy%soil_temp(1))
+         sd_min = min(sd_min, biophys%soil_energy%soil_temp(nsl)) ; sd_max = max(sd_max, biophys%soil_energy%soil_temp(nsl))
+         th_min = min(th_min, biophys%soil_water%theta(1))       ; th_max = max(th_max, biophys%soil_water%theta(1))
          surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
-         pond_peak       = max(pond_peak, biophys%soil_w%w_surface)
-         theta_peak_col  = max(theta_peak_col, maxval(biophys%soil_w%theta(1:nsl)))
+         pond_peak       = max(pond_peak, biophys%soil_water%w_surface)
+         theta_peak_col  = max(theta_peak_col, maxval(biophys%soil_water%theta(1:nsl)))
          if (biophys%snow%nlayer >= 1_ik) then
             snow_physical = snow_physical .and. biophys%snow%swe(1) >= 0.0_wp                            &
                             .and. biophys%snow%snow_temp(1) > 200.0_wp                                   &
                             .and. biophys%snow%snow_temp(1) < 290.0_wp
             do k = 1_ik, nsl
-               snow_physical = snow_physical .and. biophys%soil_e%soil_temp(k) > 230.0_wp                &
-                               .and. biophys%soil_e%soil_temp(k) < 340.0_wp
+               snow_physical = snow_physical .and. biophys%soil_energy%soil_temp(k) > 230.0_wp                &
+                               .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
             end do
          end if
          if (istep == 13_ik * steps_per_hour + steps_per_hour / 2_ik) then     ! 13:30
@@ -651,9 +651,9 @@ contains
       !----- whole-column WATER store at the end of the march (soil layers + pond + pack), for        !
       !      RUN 9's boundary-input accounting. Not a budget -- just the store the arriving water     !
       !      must land in if it lands anywhere at all. -----------------------------------------------!
-      col_water_end = biophys%soil_w%w_surface + biophys%snow%swe(1)
+      col_water_end = biophys%soil_water%w_surface + biophys%snow%swe(1)
       do k = 1_ik, nsl
-         col_water_end = col_water_end + biophys%soil_w%theta(k) * col_config%soil%dz(k) * rho_h2o
+         col_water_end = col_water_end + biophys%soil_water%theta(k) * col_config%soil%dz(k) * rho_h2o
       end do
    end subroutine integrate_day
 

@@ -15,9 +15,9 @@
 !     wholesale -- it is the aggregation seam meds_fast_dynamics%build_fast_context fills, not a      !
 !     duplicate of them.                                                                             !
 !   * column_state_t is a FLAT re-packing of the same prognostic quantities the persistent per-store  !
-!     structs in meds_column_state_types hold (cas_state_t/soil_column_t/soil_energy_column_t) -- a    !
-!     deliberate representation choice (the ARK needs a contiguous vector for state_axpy/              !
-!     state_wrms_grouped/tableau linear combinations), not a duplication to unify.                     !
+!     structs in meds_patch_state_vars hold (cas_state_t / soil_water_column_t /                      !
+!     soil_energy_column_t) -- a deliberate representation choice (the ARK needs a contiguous vector  !
+!     for state_axpy / state_wrms_grouped / tableau linear combinations), not a duplication to unify. !
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
@@ -25,7 +25,7 @@ module meds_fast_types
    use meds_plant_types, only : hydro_params_table_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t
-   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_enthalpy_of_temp
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
@@ -35,7 +35,7 @@ module meds_fast_types
    use meds_config, only : hydraulics_config_t, pft_tissue_curves, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
    use meds_pft_params, only : pft_table_t, HYD_UNSET
-   use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
+   use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
    private
 
@@ -207,7 +207,7 @@ module meds_fast_types
       !      (docs/science/leaf_gas_exchange.md §4.2). It reaches the leaf kernel as the OPTIONAL   !
       !      `psi` argument of leaf_gas_exchange_batch, which reads an absent one as 0 (no stress), !
       !      so column_prepass always passes it. ---------------------------------------------------!
-      real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; DMAX_PSI_LEAF_UNSET => seed from soil
+      real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; UNSET_NEGATIVE => seed from soil
    end type column_cohort_t
 
    !----- Prescribed per-step forcing the higher layers (RT, met) supply. ---------------------!
@@ -516,7 +516,7 @@ module meds_fast_types
       !      combinator. While it has no stage RHS it stays OUT of state_wrms_grouped, like the     !
       !      canopy-surface films below, or the error controller would score a frozen quantity. ----!
       real(wp) :: w_surface      = 0.0_wp         !< [kg/m2] ponded surface water
-      real(wp) :: w_surface_enth = 0.0_wp         !< [J/m2]  enthalpy of the ponded water
+      real(wp) :: w_surface_energy = 0.0_wp         !< [J/m2]  enthalpy of the ponded water
       !----- Canopy-SURFACE water: the interception film on the leaf/wood boundary layer, DISTINCT  !
       !      from the internal (xylem/symplast) water above -- the film evaporates with no stomatal !
       !      resistance, the internal water feeds transpiration through stomata. [kg/m2 GROUND]     !
@@ -542,7 +542,7 @@ module meds_fast_types
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
       real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground (the pond's inflow)
       real(wp) :: t_infil       = 0.0_wp          !< [K]       temperature of the infiltrating (pond) water
-      real(wp) :: w_surface_enth1 = 0.0_wp        !< [J/m2]    end-of-step pond ENTHALPY
+      real(wp) :: w_surface_energy1 = 0.0_wp        !< [J/m2]    end-of-step pond ENTHALPY
       real(wp) :: t_pond_inflow      = 0.0_wp          !< [K]       temperature of the water entering the pond
       real(wp) :: runoff_enth   = 0.0_wp          !< [W/m2]    enthalpy leaving with surface runoff
       real(wp) :: t_film_valuation     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
@@ -740,8 +740,8 @@ module meds_fast_types
    !      and per-cohort state by the fast driver (meds_fast_dynamics) and written back after. -----!
    type :: patch_biophys_t
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
-      type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
-      type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
+      type(soil_energy_column_t) :: soil_energy            !< soil thermal column (internal energy; temp diagnosed)
+      type(soil_water_column_t)  :: soil_water            !< soil water column (theta; psi_soil diagnosed)
       type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
       !----- FROZEN slow soil-carbon pool (docs/science/soil_carbon.md §7): a read-only snapshot of     !
       !      site%patch%soil_carbon(ip), seeded ONCE at the top of the slow step and held constant      !
@@ -819,7 +819,7 @@ contains
       !----- UNSET, not 0. A 0 here would read as FULLY TURGID and silently disable the stomatal    !
       !      stress limb for any caller that forgets to fill it; the sentinel makes column_prepass    !
       !      seed from the soil instead, which is the safe default. --------------------------------!
-      col_cohort%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
+      col_cohort%dmax_psi_leaf = UNSET_NEGATIVE
    end subroutine alloc_column_cohort
 
    !---------------------------------------------------------------------------------------!
@@ -933,7 +933,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Grow-only capacity check for the per-cohort arrays of patch_biophys_t (mirrors                !
-   ! ensure_column_cohort_capacity). It does NOT touch biophys%cas/soil_e/soil_w/snow/soil_carbon: !
+   ! ensure_column_cohort_capacity). It does NOT touch biophys%cas/soil_energy/soil_water/snow/soil_carbon: !
    ! every caller overwrites those with the site's persisted per-patch reservoirs                  !
    ! (site%patch%cas(ip) etc.) immediately after allocating, so their alloc_patch_biophys seed     !
    ! values are always discarded; only leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/        !

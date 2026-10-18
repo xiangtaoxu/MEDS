@@ -98,7 +98,7 @@ into the source by the driver, so the box math itself is scheme-shared.
 | source / capacity / conductance bundles | `meds_cas_biophysics`: `cas_source_t`, `cas_column_t` |
 | capacities $`W_{cap}`$, $`C_{cap}`$ + conductances | `meds_fast_prepass`: `cas_capacities_and_conductances` |
 | biotic CO₂ source $`F_{bio}`$ | `meds_fast_prepass`: `column_prepass` |
-| CAS depth + open-volume exchange | `refresh_canopy_depth` (`meds_slow_dynamics`), `cas_set_depth` (`meds_column_state_types`) |
+| CAS depth + open-volume exchange | `refresh_canopy_depth` (`meds_slow_dynamics`), `cas_set_depth` (`meds_patch_state_vars`) |
 | $`u_*`$ conductance (temp1/temp2) | `meds_canopy_aerodynamics` (see [canopy_aerodynamics](canopy_aerodynamics.md)) |
 
 ## References

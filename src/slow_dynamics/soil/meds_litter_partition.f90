@@ -14,7 +14,7 @@
 !==========================================================================================!
 module meds_litter_partition
    use meds_kinds,              only : wp
-   use meds_column_state_types, only : litter_input_t
+   use meds_patch_state_vars,   only : litter_input_t
    implicit none
    private
 

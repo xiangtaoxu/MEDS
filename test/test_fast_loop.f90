@@ -13,7 +13,8 @@
 program test_fast_loop
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon
+   use meds_cohort_state_vars,   only : set_cohort_size_from_carbon
+   use meds_site_state_vars,     only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params, top_soil_psi
@@ -30,9 +31,8 @@ program test_fast_loop
    use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
-   use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, &
-                                        PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND, PD_CAS_TEMP,           &
-                                        PD_SKIN_TEMP, PD_LW_UP
+   use meds_diag_vars,           only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, PY_PAR_DIFFUSE, PY_RHO_AIR, &
+                                        PY_WIND, PA_CAS_TEMP, PA_SKIN_TEMP, PA_LW_UP
    use meds_constants,           only : stefan, n_soil_layer_max
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
@@ -74,7 +74,7 @@ program test_fast_loop
    call init_fast_reservoirs(site, ctx)
 
    t_cas0    = site%patch%cas(1)%can_temp
-   theta0_1  = site%patch%soil_w(1)%theta(1)
+   theta0_1  = site%patch%soil_water(1)%theta(1)
    !----- init_fast_reservoirs starts the cohort in its patch's state: holding the water its tissues !
    !      hold at the top soil layer's potential, so the fast loop's first touch reads a real store,  !
    !      not a sentinel to seed. --------------------------------------------------------------------!
@@ -84,7 +84,7 @@ program test_fast_loop
    !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
    call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
    t_cas1    = site%patch%cas(1)%can_temp
-   theta1_1  = site%patch%soil_w(1)%theta(1)
+   theta1_1  = site%patch%soil_water(1)%theta(1)
    mass1_leaf = site%cohort%leaf_water_mass(1)       ! lazy-init seeded THIS call, then evolved once
 
    call check(n_budget_fail == 0_ik, 'whole-column budgets closed on every patch (n_fail == 0)')
@@ -277,17 +277,17 @@ program test_fast_loop
             own = ob%fast_n_patch == site%patch%n ; site_cas = 0.0_wp ; skin = .true.
             do ip = 1_ik, site%patch%n
                kb = (ip - 1_ik) * n_soil_layer_max
-               own = own .and. ob%fast_patch(PD_CAS_TEMP, ip, nsub) == site%patch%cas(ip)%can_temp     &
+               own = own .and. ob%fast_patch(PA_CAS_TEMP, ip, nsub) == site%patch%cas(ip)%can_temp     &
                          .and. all(ob%fast_soil_temp_patch(kb+1_ik:kb+na, nsub)                        &
-                                   == site%patch%soil_e(ip)%soil_temp(1:na))
-               site_cas = site_cas + site%patch%area(ip) * ob%fast_patch(PD_CAS_TEMP, ip, nsub)
+                                   == site%patch%soil_energy(ip)%soil_temp(1:na))
+               site_cas = site_cas + site%patch%area(ip) * ob%fast_patch(PA_CAS_TEMP, ip, nsub)
                !----- The skin temperature is the black-body temperature of the longwave up        !
                !      (docs/science/diagnostics.md §4, The skin temperature). ---------------------!
-               skin = skin .and. abs(stefan * ob%fast_patch(PD_SKIN_TEMP, ip, nsub)**4                  &
-                                     - ob%fast_patch(PD_LW_UP, ip, nsub)) <= 1.0e-9_wp * ob%fast_patch(PD_LW_UP, ip, nsub)
+               skin = skin .and. abs(stefan * ob%fast_patch(PA_SKIN_TEMP, ip, nsub)**4                  &
+                                     - ob%fast_patch(PA_LW_UP, ip, nsub)) <= 1.0e-9_wp * ob%fast_patch(PA_LW_UP, ip, nsub)
             end do
             call check(skin, 'the skin temperature radiates the patch''s longwave up as a black body')
-            folded = ob%fast_site(PD_CAS_TEMP, nsub) == site_cas
+            folded = ob%fast_site(PA_CAS_TEMP, nsub) == site_cas
             call check(own, 'the fast tier stages each patch''s own sample and soil column')
             call check(folded, 'the fast tier''s site mean is the area-weighted sum of the patch rows')
          end block

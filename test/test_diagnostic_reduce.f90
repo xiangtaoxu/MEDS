@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
-   use meds_site_state_types,   only : site_t, site_alloc, site_free
+   use meds_site_state_vars,    only : site_t, site_alloc, site_free
    use meds_allometry,         only : allometry_t
    use meds_constants,     only : n_soil_layer_max
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
@@ -24,13 +24,11 @@ program test_diagnostic_reduce
                                        total_agb, total_lai, total_nplant
    use meds_diagnostic_kernels, only : dbh_class_index, soil_wetness, cohort_gsc, cohort_wue,    &
                                        safe_ratio
-   use meds_site_diag_types,    only : cohort_diag_block, cohort_diag_alloc, cohort_diag_reorder, &
-                                       cohort_diag_copy_slot, cohort_diag_fuse,                  &
-                                       cohort_diag_clear_slot, cohort_diag_value,                &
-                                       CDIAG_FUSE, N_CDIAG, CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW, &
-                                       CD_WOOD_TEMP, CD_GSW
+   use meds_diag_vars,          only : cohort_diag_block, alloc_cohort_diag, reorder_cohort_diag, copy_cohort_diag, &
+                                       fuse_cohort_diag, clear_cohort_diag, cohort_diag_value, N_CO_FAST_ROWS, &
+                                       CO_LEAF_TEMP, CO_SAPFLOW, CO_ABS_SW, CO_WOOD_TEMP, CO_GSW
    use meds_output_types,       only : MISSING_VALUE
-   use meds_test_support, only : banner, check, check_close
+   use meds_test_support, only : banner, check, check_close, test_pft_table
    implicit none
 
    call banner('diagnostic_reduce')
@@ -50,7 +48,7 @@ contains
    !      stem-weighted MEAN and a basal-area-weighted MEAN are three different numbers.  -------!
    subroutine build_fixture(site)
       type(site_t), intent(out) :: site
-      call site_alloc(site, 3_ik, 16_ik, 4_ik, 4_ik, allometry_t())
+      call site_alloc(site, 3_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
       site%n_pft = 3_ik
       !----- patch 1 (area 0.75): cohorts 1,2 ; patch 2 (area 0.25): cohort 3. -----!
       site%patch%n = 2_ik
@@ -328,38 +326,38 @@ contains
       real(wp)    :: x(8)
       integer(ik) :: perm(4), n
 
-      call cohort_diag_alloc(d, 8_ik, .true.)
+      call alloc_cohort_diag(d, 8_ik, .true.)
       d%n = 4_ik
-      d%v(CD_LEAF_TEMP, 1:4) = [290.0_wp, 300.0_wp, 310.0_wp, 320.0_wp]
-      d%v(CD_WOOD_TEMP, 1:4) = [280.0_wp, 285.0_wp, 295.0_wp, 305.0_wp]
-      d%v(CD_GSW,       1:4) = [  0.1_wp,   0.2_wp,   0.3_wp,   0.4_wp]
-      d%v(CD_SAPFLOW,   1:4) = [  1.0_wp,   2.0_wp,   3.0_wp,   4.0_wp]
-      d%v(CD_ABS_SW,    1:4) = [ 10.0_wp,  20.0_wp,  30.0_wp,  40.0_wp]
+      d%v(CO_LEAF_TEMP, 1:4) = [290.0_wp, 300.0_wp, 310.0_wp, 320.0_wp]
+      d%v(CO_WOOD_TEMP, 1:4) = [280.0_wp, 285.0_wp, 295.0_wp, 305.0_wp]
+      d%v(CO_GSW,       1:4) = [  0.1_wp,   0.2_wp,   0.3_wp,   0.4_wp]
+      d%v(CO_SAPFLOW,   1:4) = [  1.0_wp,   2.0_wp,   3.0_wp,   4.0_wp]
+      d%v(CO_ABS_SW,    1:4) = [ 10.0_wp,  20.0_wp,  30.0_wp,  40.0_wp]
       d%w(1:4)               = 1.0_wp
 
       !----- REORDER: one statement must permute EVERY field, not the ones someone remembered. !
       perm = [4_ik, 3_ik, 2_ik, 1_ik]
-      call cohort_diag_reorder(d, perm, 4_ik)
-      call cohort_diag_value(d, CD_LEAF_TEMP, x, n, 0.0_wp)
+      call reorder_cohort_diag(d, perm, 4_ik)
+      call cohort_diag_value(d, CO_LEAF_TEMP, x, n, 0.0_wp)
       call check(n == 4_ik, 'reorder keeps the live count')
       call check_close(x(1), 320.0_wp, 1.0e-12_wp, 'reorder permuted leaf_temp')
-      call cohort_diag_value(d, CD_SAPFLOW, x, n, 0.0_wp)
+      call cohort_diag_value(d, CO_SAPFLOW, x, n, 0.0_wp)
       call check_close(x(1), 4.0_wp, 1.0e-12_wp, 'reorder permuted sapflow in lockstep')
-      call cohort_diag_value(d, CD_ABS_SW, x, n, 0.0_wp)
+      call cohort_diag_value(d, CO_ABS_SW, x, n, 0.0_wp)
       call check_close(x(1), 40.0_wp, 1.0e-12_wp, 'reorder permuted abs_sw in lockstep')
 
       !----- COPY SLOT (a cohort split): the daughter is a full copy. -----!
-      call cohort_diag_copy_slot(d, 5_ik, 1_ik)
-      call check_close(d%v(CD_SAPFLOW, 5_ik), d%v(CD_SAPFLOW, 1_ik), 1.0e-12_wp, 'copy_slot copies every field')
+      call copy_cohort_diag(d, 5_ik, 1_ik)
+      call check_close(d%v(CO_SAPFLOW, 5_ik), d%v(CO_SAPFLOW, 1_ik), 1.0e-12_wp, 'copy_slot copies every field')
       call check_close(d%w(5_ik), d%w(1_ik), 1.0e-12_wp, 'copy_slot carries the dt weight')
 
       !----- CLEAR SLOT (a recruit into a reused, stale cull slot). -----!
-      call cohort_diag_clear_slot(d, 5_ik)
-      call check(d%v(CD_SAPFLOW, 5_ik) == 0.0_wp, 'clear_slot zeroes a reused slot')
+      call clear_cohort_diag(d, 5_ik)
+      call check(d%v(CO_SAPFLOW, 5_ik) == 0.0_wp, 'clear_slot zeroes a reused slot')
       call check(d%w(5_ik) == 0.0_wp,             'clear_slot zeroes the weight')
       !----- ...and reads as the caller's "no samples" value, not as 0 K. -----!
       d%n = 5_ik
-      call cohort_diag_value(d, CD_LEAF_TEMP, x, n, -1.0_wp)
+      call cohort_diag_value(d, CO_LEAF_TEMP, x, n, -1.0_wp)
       call check(x(5) == -1.0_wp .and. x(1) == 320.0_wp, 'a slot with no samples reads the empty value')
       d%n = 4_ik
 
@@ -372,17 +370,16 @@ contains
       !        INTENSIVE  gsw       = (3*0.4 + 1*0.3)/4      = 0.375                               !
       !        EXTENSIVE  sapflow   = (2*4   + 6*3  )/8      = 3.25                                !
       !        GROUND     abs_sw    =  40 + 30                = 70                                  !
-      call cohort_diag_fuse(d, 1_ik, 2_ik, 3.0_wp, 1.0_wp, 2.0_wp, 6.0_wp, 1.0_wp, 4.0_wp, 5.0_wp, 1.0_wp,  &
-                            CDIAG_FUSE)
-      call cohort_diag_value(d, CD_LEAF_TEMP, x, n, 0.0_wp)
+      call fuse_cohort_diag(d, 1_ik, 2_ik, 3.0_wp, 1.0_wp, 2.0_wp, 6.0_wp, 1.0_wp, 4.0_wp, 5.0_wp, 1.0_wp)
+      call cohort_diag_value(d, CO_LEAF_TEMP, x, n, 0.0_wp)
       call check_close(x(1), 312.0_wp, 1.0e-12_wp, 'leaf temperature fuses on leaf heat capacity')
-      call cohort_diag_value(d, CD_WOOD_TEMP, x, n, 0.0_wp)
+      call cohort_diag_value(d, CO_WOOD_TEMP, x, n, 0.0_wp)
       call check_close(x(1), 1820.0_wp / 6.0_wp, 1.0e-12_wp, 'wood temperature fuses on wood heat capacity')
-      call cohort_diag_value(d, CD_GSW, x, n, 0.0_wp)
+      call cohort_diag_value(d, CO_GSW, x, n, 0.0_wp)
       call check_close(x(1), 0.375_wp, 1.0e-12_wp, 'INTENSIVE field fuses leaf-area-weighted')
-      call cohort_diag_value(d, CD_SAPFLOW, x, n, 0.0_wp)
+      call cohort_diag_value(d, CO_SAPFLOW, x, n, 0.0_wp)
       call check_close(x(1), 3.25_wp, 1.0e-12_wp, 'EXTENSIVE field fuses nplant-weighted')
-      call cohort_diag_value(d, CD_ABS_SW, x, n, 0.0_wp)
+      call cohort_diag_value(d, CO_ABS_SW, x, n, 0.0_wp)
       call check_close(x(1), 70.0_wp, 1.0e-12_wp, 'GROUND-referenced field fuses by SUM')
       !----- The five answers are mutually distinct, so a blend that applied one rule to all     !
       !      of them would fail at least four of the assertions above. -----------------------!
@@ -390,9 +387,9 @@ contains
       !----- An INACTIVE block is a total no-op: nothing allocated, every entry point safe. ---!
       block
          type(cohort_diag_block) :: dead
-         call cohort_diag_alloc(dead, 8_ik, .false.)
-         call cohort_diag_reorder(dead, perm, 4_ik)      ! must not touch anything
-         call cohort_diag_value(dead, CD_SAPFLOW, x, n, 0.0_wp)
+         call alloc_cohort_diag(dead, 8_ik, .false.)
+         call reorder_cohort_diag(dead, perm, 4_ik)      ! must not touch anything
+         call cohort_diag_value(dead, CO_SAPFLOW, x, n, 0.0_wp)
          call check(n == 0_ik, 'inactive block reports no data and does not crash')
       end block
    end subroutine test_diag_lockstep

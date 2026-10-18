@@ -23,9 +23,9 @@ module meds_output_integrate
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
-   use meds_site_state_types,   only : site_t
-   use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, N_PYDIAG, cohort_diag_value,           &
-                                       patch_diag_value, patch_diag_slow_row, polygon_diag_value
+   use meds_site_state_vars,    only : site_t
+   use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, N_PY_ROWS, cohort_diag_value, patch_diag_value, &
+                                       patch_diag_slow_row, polygon_diag_value
    use meds_constants,     only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
                                        soil_matric_potential
@@ -49,7 +49,7 @@ module meds_output_integrate
    public :: FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER, FLD_C_OVERTOP_LAI
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
    public :: FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED
-   public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0, FLD_PY_DIAG0
+   public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_PY_DIAG0
    !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
    public :: FLD_P_GLOBAL_ID, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH
@@ -66,8 +66,8 @@ module meds_output_integrate
    public :: SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE
    !----- FAST-tier instantaneous sources (5000-5999): resolved against the fast loop's staging.  !
    public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
-   public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CD0
-   public :: SRC_F_PY0, SRC_F_PD0
+   public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0
+   public :: SRC_F_PY0, SRC_F_PA0
 
    !==========================================================================================!
    !  SOURCE CODE SPACE. Each source id names a FIELD, and its NUMERIC RANGE says which entity   !
@@ -116,7 +116,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_PHENO_SHED      = 1026_ik
    !----- Leaf and wood temperature are not read here at the output tick: one sample per window,  !
    !      at the boundary's local hour, biases them. Their time means are rows of the             !
-   !      cohort block (FLD_C_DIAG0 + CD_LEAF_TEMP, CD_WOOD_TEMP), sampled every sub-step. ------!
+   !      cohort block (FLD_C_DIAG0 + CO_LEAF_TEMP, CO_WOOD_TEMP), sampled every sub-step. ------!
    !----- DERIVED cohort fields (computed by meds_diagnostic_kernels / from the deriv bundle). --!
    integer(ik), parameter :: FLD_C_ONE             = 1050_ik !< constant 1 (stem counts on any axis)
    integer(ik), parameter :: FLD_C_LAI             = 1051_ik !< nplant*leaf_area [m2/m2]
@@ -124,15 +124,12 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_BGB             = 1053_ik !< belowground biomass per plant
    integer(ik), parameter :: FLD_C_VEG_CARBON      = 1054_ik !< leaf+fineroot+wood+storage per plant
    integer(ik), parameter :: FLD_C_WAI             = 1055_ik !< nplant*wood_area [m2/m2]
-   !----- SLOW-loop diagnostics (1200+), read from site%cohort%sdiag. NOT from site%deriv: that     !
-   !      bundle is transient and deliberately NOT lockstep-reordered, and the step re-sorts the     !
-   !      cohorts after filling it, so at the output tick its index need not match the cohort axis. !
-   integer(ik), parameter :: FLD_C_SDIAG0          = 1200_ik
-   !----- FAST-LOOP per-cohort DIAGNOSTICS (1100+), read from site%cohort%diag. These are the      !
-   !      quantities the fast loop computes every dt_fast and keeps nowhere else; the id encodes the !
-   !      row of the diagnostic block (CD_*), offset by FLD_C_DIAG0.  --------------------------!
+   !----- Per-cohort DIAGNOSTICS (1100+): the id is FLD_C_DIAG0 + the row (CO_*). The fast loop's   !
+   !      rows are read from site%cohort%diag, the slow step's (above N_CO_FAST_ROWS) from            !
+   !      site%cohort%sdiag -- not from site%deriv, which is transient and NOT lockstep-reordered,    !
+   !      so at the output tick its index need not match the cohort axis. -------------------------!
    integer(ik), parameter :: FLD_C_DIAG0           = 1100_ik
-   !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from site%patch%diag (PD_* + FLD_P_DIAG0). !
+   !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from site%patch%diag (PA_* + FLD_P_DIAG0). !
    integer(ik), parameter :: FLD_P_DIAG0           = 2100_ik
    !----- POLYGON diagnostics (4100+, a site-scalar family), read from site%diag (PY_* + FLD_PY_DIAG0). !
    integer(ik), parameter :: FLD_PY_DIAG0          = 4100_ik
@@ -146,7 +143,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_GLOBAL_ID       = 2006_ik
    !----- The canopy-air, soil-top and surface-water STATES are not read here at the output tick:  !
    !      one sample per window, at the boundary's local hour, biases them. Their time means         !
-   !      are rows of the patch block (FLD_P_DIAG0 + PD_*), accumulated through the step. ---------!
+   !      are rows of the patch block (FLD_P_DIAG0 + PA_*), accumulated through the step. ---------!
    integer(ik), parameter :: FLD_P_CAS_DEPTH       = 2014_ik
    integer(ik), parameter :: FLD_P_SWE             = 2016_ik
    integer(ik), parameter :: FLD_P_SNOW_DEPTH      = 2017_ik
@@ -188,17 +185,17 @@ module meds_output_integrate
    !----- FAST-tier staged sources (SRCK_FAST): read from the fast loop's staging, never from      !
    !      site state (which at replay time is the end-of-slow-step snapshot). Two are rows of the   !
    !      blocks' own tables: the forcing echo (docs/science/diagnostics.md §5), SRC_F_PY0 + PY_*, and !
-   !      the patch block's fast rows, SRC_F_PD0 + PD_*, as a site mean or per patch by the dim. --!
+   !      the patch block's fast rows, SRC_F_PA0 + PA_*, as a site mean or per patch by the dim. --!
    integer(ik), parameter :: SRC_F_PY0           = 5100_ik
-   integer(ik), parameter :: SRC_F_PD0           = 5200_ik
+   integer(ik), parameter :: SRC_F_PA0           = 5200_ik
    integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
    integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
    integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_GPP       = 5021_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_HEIGHT    = 5022_ik  !< DIM_COHORT
-   !----- The per-cohort diagnostic block's rows at the FAST tier, SRC_F_CD0 + CD_*, DIM_COHORT: the  !
+   !----- The per-cohort diagnostic block's rows at the FAST tier, SRC_F_CO0 + CO_*, DIM_COHORT: the  !
    !      fast loop stages every row of every sub-step when the block is on (fast_coh_cdiag). -----!
-   integer(ik), parameter :: SRC_F_CD0           = 5300_ik
+   integer(ik), parameter :: SRC_F_CO0           = 5300_ik
 
 contains
 
@@ -377,14 +374,14 @@ contains
       type(site_t), intent(in) :: site
       integer(ik),  intent(in) :: src
       ns = .false.
-      if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) then
+      if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) then
          ns = .not. site%cohort%diag%active
-      else if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) then
+      else if (src > FLD_C_DIAG0 + N_CO_FAST_ROWS .and. src <= FLD_C_DIAG0 + N_CO_ROWS) then
          ns = .not. site%cohort%sdiag%active
-      else if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PDIAG) then
+      else if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) then
          ns = .not. site%patch%diag%active .or.                                                    &
               (.not. site%patch%diag%fast_rows .and. .not. patch_diag_slow_row(src - FLD_P_DIAG0))
-      else if (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PYDIAG) then
+      else if (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PY_ROWS) then
          ns = .not. site%diag%active
       end if
    end function not_simulated
@@ -455,18 +452,18 @@ contains
                                                 site%cohort%root_resp_accum(1:n))
       case (FLD_C_BGB)             ; x(1:n) = site%cohort%fineroot_carbon(1:n)                  &
                                     + site%cohort%wood_carbon(1:n)                             &
-                                      * (1.0_wp - site%cohort%p_aboveground_frac(1:n))
+                                      * (1.0_wp - site%cohort%pft_table%aboveground_frac(site%cohort%pft(1:n)))
       case (FLD_C_VEG_CARBON)      ; x(1:n) = site%cohort%leaf_carbon(1:n)                      &
                                     + site%cohort%fineroot_carbon(1:n)                         &
                                     + site%cohort%wood_carbon(1:n)                             &
                                     + site%cohort%nonstructural_carbon(1:n)
       case default
-         !----- Diagnostic-block rows (FLD_C_DIAG0 + CD_*, FLD_C_SDIAG0 + CS_*): read the dt-weighted   !
+         !----- Diagnostic-block rows (FLD_C_DIAG0 + CO_*): read the dt-weighted                       !
          !      accumulator and normalize. A block that is off never reaches here (not_simulated). ---!
-         if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) then
+         if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) then
             call cohort_diag_value(site%cohort%diag, src - FLD_C_DIAG0, x, n, MISSING_VALUE)
-         else if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) then
-            call cohort_diag_value(site%cohort%sdiag, src - FLD_C_SDIAG0, x, n, MISSING_VALUE)
+         else if (src > FLD_C_DIAG0 + N_CO_FAST_ROWS .and. src <= FLD_C_DIAG0 + N_CO_ROWS) then
+            call cohort_diag_value(site%cohort%sdiag, src - FLD_C_DIAG0, x, n, MISSING_VALUE)
          else
             x(1:n) = MISSING_VALUE
          end if
@@ -521,7 +518,7 @@ contains
       case (FLD_P_RH)
          do ip = 1_ik, n ; x(ip) = site%patch%xi_accum(ip)%rh_fast_accum ; end do
       case default
-         if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PDIAG) then
+         if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) then
             call patch_diag_value(site%patch%diag, src - FLD_P_DIAG0, x, n)
          else
             x(1:n) = MISSING_VALUE
@@ -556,28 +553,28 @@ contains
       select case (src)
       case (FLD_L_SOIL_TEMP)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_e(ip)%soil_temp(1:nlayer)
+            col(1:nlayer, ip) = site%patch%soil_energy(ip)%soil_temp(1:nlayer)
          end do
       case (FLD_L_SOIL_WATER)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_w(ip)%theta(1:nlayer)
+            col(1:nlayer, ip) = site%patch%soil_water(ip)%theta(1:nlayer)
          end do
       case (FLD_L_SOIL_FLIQ)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_e(ip)%soil_fliq(1:nlayer)
+            col(1:nlayer, ip) = site%patch%soil_energy(ip)%soil_fliq(1:nlayer)
          end do
       case (FLD_L_SOIL_PSI)
          if (.not. dp%soil_ready) then ; ok = .false. ; return ; end if
          do ip = 1_ik, np
             col(1:nlayer, ip) = soil_matric_potential(dp%retention,                            &
-                                   site%patch%soil_w(ip)%theta(1:nlayer),                      &
+                                   site%patch%soil_water(ip)%theta(1:nlayer),                      &
                                    dp%theta_sat(1:nlayer), dp%theta_res(1:nlayer),             &
                                    dp%par_a(1:nlayer), dp%par_n(1:nlayer))
          end do
       case (FLD_L_SOIL_WETNESS)
          if (.not. dp%soil_ready) then ; ok = .false. ; return ; end if
          do ip = 1_ik, np
-            col(1:nlayer, ip) = soil_wetness(site%patch%soil_w(ip)%theta(1:nlayer),            &
+            col(1:nlayer, ip) = soil_wetness(site%patch%soil_water(ip)%theta(1:nlayer),            &
                                              dp%theta_res(1:nlayer), dp%theta_sat(1:nlayer))
          end do
       case default ; ok = .false.
@@ -710,7 +707,7 @@ contains
       case (SRC_S_WORK_RK45_RESCUE)  ; val = site%work_rk45_rescue
       case (SRC_S_WORK_CLAMP_STAGE)  ; val = site%work_clamp_stage
       case default
-         if (source_id > FLD_PY_DIAG0 .and. source_id <= FLD_PY_DIAG0 + N_PYDIAG) then
+         if (source_id > FLD_PY_DIAG0 .and. source_id <= FLD_PY_DIAG0 + N_PY_ROWS) then
             val = MISSING_VALUE
             if (site%diag%active) val = polygon_diag_value(site%diag, source_id - FLD_PY_DIAG0)
          else
@@ -892,11 +889,11 @@ contains
    !=======================================================================================!
    pure real(wp) function extract_fast_scalar(source_id, site_row, forcing) result(val)
       integer(ik), intent(in) :: source_id
-      real(wp),    intent(in) :: site_row(:)   !< the sub-step's site mean of the patch rows (PD_*)
+      real(wp),    intent(in) :: site_row(:)   !< the sub-step's site mean of the patch rows (PA_*)
       real(wp),    intent(in) :: forcing(:)    !< the sub-step's forcing (PY_*)
-      if (source_id > SRC_F_PD0 .and. source_id <= SRC_F_PD0 + N_PDIAG) then
-         val = site_row(source_id - SRC_F_PD0)
-      else if (source_id > SRC_F_PY0 .and. source_id <= SRC_F_PY0 + N_PYDIAG) then
+      if (source_id > SRC_F_PA0 .and. source_id <= SRC_F_PA0 + N_PA_ROWS) then
+         val = site_row(source_id - SRC_F_PA0)
+      else if (source_id > SRC_F_PY0 .and. source_id <= SRC_F_PY0 + N_PY_ROWS) then
          val = forcing(source_id - SRC_F_PY0)
       else
          val = MISSING_VALUE
@@ -934,7 +931,7 @@ contains
             call integrate_scalar(bufs%buf(k,1), extract_fast_scalar(src, bufs%fast_site(:, isub),        &
                                                                      bufs%fast_forcing(:, isub)), dt)
          case (DIM_PATCH)
-            call integrate_slab(bufs%buf(k,1), bufs%fast_patch(src - SRC_F_PD0, 1:np, isub), np, dt)
+            call integrate_slab(bufs%buf(k,1), bufs%fast_patch(src - SRC_F_PA0, 1:np, isub), np, dt)
          case (DIM_SOIL)
             if (src == SRC_F_SOIL_WATER) then
                call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water(:,isub), bufs%fast_n_soil, dt)
@@ -957,10 +954,10 @@ contains
                call integrate_slab(bufs%buf(k,1), bufs%fast_coh_height(:,isub), bufs%fast_n_cohort, dt)
             case (SRC_F_COH_LEAF_TEMP)
                call integrate_slab(bufs%buf(k,1), bufs%fast_coh_ltemp(:,isub), bufs%fast_n_cohort, dt)
-            case default   ! SRC_F_CD0 + CD_*: a row of the per-cohort diagnostic block
+            case default   ! SRC_F_CO0 + CO_*: a row of the per-cohort diagnostic block
                !----- staged only while the block is on (a fast loop that ran); else it reads as missing
                if (allocated(bufs%fast_coh_cdiag))                                                    &
-                  call integrate_slab(bufs%buf(k,1), bufs%fast_coh_cdiag(:, src - SRC_F_CD0, isub),   &
+                  call integrate_slab(bufs%buf(k,1), bufs%fast_coh_cdiag(:, src - SRC_F_CO0, isub),   &
                                       bufs%fast_n_cohort, dt)
             end select
          end select

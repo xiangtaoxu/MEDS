@@ -22,7 +22,7 @@ module meds_fast_be_stage
    use meds_config, only : INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : step_control_factor
    use meds_soil_types, only : energy_forcing_t, energy_flux_t, snow_melt_t
-   use meds_column_state_types, only : soil_energy_column_t
+   use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_fast_time_derivs, only : surface_derivs, cas_conductances
    use meds_cas_biophysics, only : cas_column_step_implicit, cas_column_t, cas_source_t
    use meds_column_state_ops, only : state_init, state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas, &
@@ -166,7 +166,7 @@ contains
       !      end-of-step pond is committed once per dt_fast in column_fast_step_ark, and the pond      !
       !      is outside the error norm. ---------------------------------------------------------------!
       y_out%w_surface      = y%w_surface
-      y_out%w_surface_enth = y%w_surface_enth
+      y_out%w_surface_energy = y%w_surface_energy
 
       !----- plant water MASS PASSED THROUGH (advanced by advance_plant_water, not here). ----!
       y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)

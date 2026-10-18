@@ -3,10 +3,10 @@
 program test_containers
    use meds_kinds,           only : wp, ik
    use meds_config,          only : meds_config_t
-   use meds_site_state_types,           only : site_t
+   use meds_site_state_vars,            only : site_t
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
-   use meds_site_diag_types, only : cohort_diag_alloc, cohort_diag_value, N_CSDIAG
+   use meds_diag_vars,       only : alloc_cohort_diag, cohort_diag_value
    use meds_test_support, only : banner, build_test_config, check
    implicit none
 
@@ -64,8 +64,8 @@ program test_containers
    !      fills 1..d%n into it, so a stale count is an out-of-bounds WRITE -- silent in    !
    !      Release, a SIGSEGV some steps later. A stand that never shrinks cannot show it   !
    !      (the Ithaca reference goes 114 -> 125 cohorts over three years). ----------------!
-   call cohort_diag_alloc(site%cohort%diag,  site%cohort%cap, .true.)
-   call cohort_diag_alloc(site%cohort%sdiag, site%cohort%cap, .true., nfield=N_CSDIAG)
+   call alloc_cohort_diag(site%cohort%diag,  site%cohort%cap, .true.)
+   call alloc_cohort_diag(site%cohort%sdiag, site%cohort%cap, .true., slow_rows=.true.)
    site%cohort%diag%n  = site%cohort%n
    site%cohort%sdiag%n = site%cohort%n
 

@@ -16,16 +16,18 @@
 !==========================================================================================!
 module meds_polygon
    use meds_kinds,                  only : wp, ik
+   use meds_state_defaults,         only : is_unset_positive
    use meds_therm_lib,              only : temp_to_internal_energy, internal_energy_to_temp
    use meds_config,                 only : meds_config_t
    use meds_time,                   only : meds_time_t, time_to_string
-   use meds_site_state_types,       only : site_t, reset_step_diagnostics, cohort_bad_field, cohort_field_name
+   use meds_cohort_state_vars,      only : cohort_bad_field, cohort_field_name
+   use meds_site_state_vars,        only : site_t, reset_step_diagnostics
    use meds_stepper,                only : advance_one_step, advance_boundary
    use meds_slow_dynamics,          only : refresh_canopy_depth
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_fast_config,            only : acclimate_leaf_photo_table
    use meds_biogeochem_types,       only : litter_input_t, n_soil_pool, soilc_seam_t
-   use meds_column_state_types,     only : soil_carbon_t
+   use meds_patch_state_vars,       only : soil_carbon_t
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input, soil_carbon_bad_pool,             &
                                            soil_carbon_pool_name
@@ -434,7 +436,7 @@ contains
       real(wp) :: t_day, w
       if (poly%site%pheno_tair_n < 1_ik) return          ! no fast sub-steps ran: nothing to average
       t_day = poly%site%pheno_tair_sum / real(poly%site%pheno_tair_n, wp)
-      if (poly%site%t_growth_avg <= 0.0_wp) then
+      if (is_unset_positive(poly%site%t_growth_avg)) then
          poly%site%t_growth_avg = t_day
       else
          w = min(1.0_wp, real(step_days, wp) / max(poly%cfg%acclim_window_days, real(step_days, wp)))

@@ -46,9 +46,10 @@ A new water flow belongs in the network (its law in `meds_hydr_lib` or `meds_soi
 
 ## Rules that break things quietly
 
-- **Kernels never see `site_t`.** `canopy/`, `plant/` and `soil/` link `state_column` and `config`
-  only. That is what keeps them device-eligible and standalone-buildable. A routine that needs
-  `site_t` is driver code.
+- **Kernels never see `site_t`.** `canopy/`, `plant/` and `soil/` take only the per-patch store types
+  from `meds_patch_state_vars` (through an only-list) and link only `state` and `config`. That is what
+  keeps them device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A
+  routine that needs `site_t` is driver code.
 - **Build a column cohort view through `meds_column_view`.** `copy_column_cohort` for production,
   `column_cohort_init` for tests and probes — the latter builds the block through the canonical
   birth path, so a fixture tree is on-allometry by construction. A hand-assembled one can describe a

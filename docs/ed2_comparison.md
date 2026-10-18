@@ -360,6 +360,26 @@ stream**, because a window longer than a month would straddle the disturbance re
 MEDS has no equivalent of EDTS. That is the gap behind the "not benchmarked" caveat at the top of
 this page, and closing it is the obvious next piece of work.
 
+### 4.6 Model state
+
+MEDS's state files, `src/state/meds_{cohort,patch,site}_state_vars.f90`, do the job of ED2's
+`memory/ed_state_vars.F90` and are named after it: they define the cohort, patch and site types and
+the routines that allocate, copy and reorder them. Three differences:
+
+- **No global state.** ED2 holds the model's state in the module-level `edgrid_g`. MEDS's modules
+  define the types and the routines on them only; the state is passed as an argument.
+- **One list per operation.** ED2 copies or packs each cohort array in every routine that moves
+  cohorts, which is where its "forgot to reallocate one array" bugs come from. MEDS lists every
+  cohort field once in each of a few lockstep routines (allocate, free, grow, move, reorder, copy),
+  all in one section order, and every sort, fusion and compaction goes through them.
+- **Rates are not state.** ED2 keeps `ddbh_dt`, `dagb_dt` and `mort_rate` in the cohort type, so every
+  copy carries them. MEDS computes the tendencies into a separate bundle each step and applies them
+  at once; the output reads them from the slow diagnostic block.
+
+The fast-to-slow maintenance-respiration accumulators (`leaf_resp_accum`, `stem_resp_accum`,
+`root_resp_accum`) mirror ED2's `today_leaf_resp`, `today_stem_resp` and `today_root_resp`, kept
+apart from gross GPP as ED2 keeps them.
+
 ---
 
 ## 5. Quick checklist: what an ED2 user will find missing
@@ -436,7 +456,7 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 | Forcing | `src/io/input/forcing/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
 | Fusion / fission | `src/slow_dynamics/demography/meds_demography_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
 | Parameters | `src/config/` (TOML, all required); [`docs/configuration.md`](configuration.md) | `ed_params.f90`, the `*_coms` modules, `ED2IN` |
-| State | `src/state/site/meds_site_state_types.f90` | `memory/ed_state_vars.F90` |
+| State | `src/state/meds_{cohort,patch,site}_state_vars.f90`, named after ED2's; MEDS has no global like `edgrid_g` | `memory/ed_state_vars.F90` |
 | Output | `src/io/output/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |
 
 Background reading for both: Moorcroft et al. 2001 (*Ecol. Monogr.*), Medvigy et al. 2009 (*JGR*),

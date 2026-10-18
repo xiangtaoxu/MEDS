@@ -13,7 +13,7 @@
 !==========================================================================================!
 module test_output_integrate_support
    use meds_kinds,            only : wp, ik
-   use meds_site_state_types, only : site_t
+   use meds_site_state_vars,  only : site_t
    implicit none
 contains
    !----- Opaque per-cohort agb setter (separate compilation scope; nvfortran cannot CSE across it). !
@@ -29,7 +29,7 @@ program test_output_integrate
    use test_output_integrate_support, only : set_cohort_agb
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_types, only : site_t, site_alloc, site_free
+   use meds_site_state_vars,  only : site_t, site_alloc, site_free
    use meds_allometry,        only : allometry_t
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,  &
                                      diag_params_t, slab_col,                                     &
@@ -39,11 +39,10 @@ program test_output_integrate
    use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar,         &
                                      integrate_slab, normalize_scalar, normalize_slab,           &
                                      extract_variable, output_integrate_fast, close_tier,        &
-                                     extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PD0, SRC_F_PY0, &
+                                     extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PA0, SRC_F_PY0, &
                                      output_integrate
-   use meds_site_diag_types,  only : cohort_diag_alloc, CD_LEAF_TEMP,                             &
-                                     N_PYDIAG, PY_TAIR, PY_CO2, N_PDIAG, PD_CAS_TEMP, PD_LE, PD_H, &
-                                     PD_GPP, PD_SW_UP, PD_LW_UP
+   use meds_diag_vars,        only : alloc_cohort_diag, CO_LEAF_TEMP, N_PY_ROWS, PY_TAIR, PY_CO2, N_PA_ROWS, PA_CAS_TEMP, PA_LE, &
+                                     PA_H, PA_GPP, PA_SW_UP, PA_LW_UP
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
                                      manager_setup, manager_finalize, build_freq_index,          &
@@ -51,7 +50,7 @@ program test_output_integrate
    use meds_diagnostic_reduce, only : W_NPLANT, W_LEAF_AREA
    use meds_output_config,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
    use meds_constants,        only : n_soil_layer_max
-   use meds_test_support, only : banner, build_test_config, check, check_close
+   use meds_test_support, only : banner, build_test_config, test_pft_table, check, check_close
    implicit none
 
    call banner('output_integrate')
@@ -137,7 +136,7 @@ contains
       type(diag_params_t)  :: dp
       integer(ik)          :: n_out, i
       !----- A fixed 3-cohort / 1-patch site (slot set constant across the window). ----------!
-      call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik, allometry_t())
+      call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik, allometry_t(), test_pft_table())
       site%cohort%n = 3_ik
       site%cohort%nplant(1:3)     = [1.0_wp, 1.0_wp, 1.0_wp]
       call set_cohort_agb(site, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)   ! opaque (see header note)
@@ -187,13 +186,13 @@ contains
       !----- Leaf temperature is the cohort block's within-step mean. A cohort with no         !
       !      samples -- recruited after the fast loop -- is fill on the cohort axis and out of the !
       !      leaf-area-weighted site mean; a mean over nothing is missing, not 0 K. -------------!
-      call cohort_diag_alloc(site%cohort%diag, 64_ik, .true.)
+      call alloc_cohort_diag(site%cohort%diag, 64_ik, .true.)
       site%cohort%diag%n = 3_ik
       site%cohort%leaf_area(1:3) = 1.0_wp
-      site%cohort%diag%v(CD_LEAF_TEMP, 1:2) = [300.0_wp, 310.0_wp] * 900.0_wp
+      site%cohort%diag%v(CO_LEAF_TEMP, 1:2) = [300.0_wp, 310.0_wp] * 900.0_wp
       site%cohort%diag%w(1:2) = 900.0_wp ; site%cohort%diag%w(3) = 0.0_wp
       v_lt%name = 'leaf_temp_cohort' ; v_lt%dim = DIM_COHORT ; v_lt%agg = AGG_TMEAN
-      v_lt%source_id = FLD_C_DIAG0 + CD_LEAF_TEMP
+      v_lt%source_id = FLD_C_DIAG0 + CO_LEAF_TEMP
       call extract_variable(site, dp, v_lt, scal, slab, vslab, n_out)
       call check(n_out == 3_ik .and. vslab(1) .and. vslab(2) .and. .not. vslab(3),               &
                  'a cohort with no samples is fill on the cohort axis')
@@ -215,7 +214,7 @@ contains
       type(meds_config_t)    :: cfg
       type(output_files_t)   :: files
       type(output_buffers_t) :: bufs
-      real(wp)    :: f0(N_PYDIAG), s(N_PDIAG)
+      real(wp)    :: f0(N_PY_ROWS), s(N_PA_ROWS)
       integer(ik) :: k_cas, k_soil, k_leaf, k_air, k_hgt, k_cas_p, k_soil_p, nl
       real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
 
@@ -223,14 +222,14 @@ contains
       !      forcing id its row of the sub-step's forcing table. -----------------------------------!
       f0 = 0.0_wp ; f0(PY_CO2) = 415.0_wp
       s = 0.0_wp
-      s(PD_CAS_TEMP) = 290.0_wp ; s(PD_LE) = 100.0_wp ; s(PD_H) = 50.0_wp ; s(PD_GPP) = 12.0_wp
-      s(PD_SW_UP) = 83.0_wp ; s(PD_LW_UP) = 455.0_wp
-      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_CAS_TEMP, s, f0), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
-      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_LE,       s, f0), 100.0_wp, 1.0e-12_wp, 'fast extract le')
-      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_H,        s, f0),  50.0_wp, 1.0e-12_wp, 'fast extract h')
-      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_GPP,      s, f0),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
-      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_SW_UP,    s, f0),  83.0_wp, 1.0e-12_wp, 'fast extract sw_up')
-      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_LW_UP,    s, f0), 455.0_wp, 1.0e-12_wp, 'fast extract lw_up')
+      s(PA_CAS_TEMP) = 290.0_wp ; s(PA_LE) = 100.0_wp ; s(PA_H) = 50.0_wp ; s(PA_GPP) = 12.0_wp
+      s(PA_SW_UP) = 83.0_wp ; s(PA_LW_UP) = 455.0_wp
+      call check_close(extract_fast_scalar(SRC_F_PA0 + PA_CAS_TEMP, s, f0), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
+      call check_close(extract_fast_scalar(SRC_F_PA0 + PA_LE,       s, f0), 100.0_wp, 1.0e-12_wp, 'fast extract le')
+      call check_close(extract_fast_scalar(SRC_F_PA0 + PA_H,        s, f0),  50.0_wp, 1.0e-12_wp, 'fast extract h')
+      call check_close(extract_fast_scalar(SRC_F_PA0 + PA_GPP,      s, f0),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
+      call check_close(extract_fast_scalar(SRC_F_PA0 + PA_SW_UP,    s, f0),  83.0_wp, 1.0e-12_wp, 'fast extract sw_up')
+      call check_close(extract_fast_scalar(SRC_F_PA0 + PA_LW_UP,    s, f0), 455.0_wp, 1.0e-12_wp, 'fast extract lw_up')
       call check_close(extract_fast_scalar(SRC_F_PY0 + PY_CO2, s, f0), 415.0_wp, 1.0e-12_wp, 'fast extract forcing CO2')
 
       !----- Build a manager with the FAST tier + all groups ON (so the energy/water/carbon FAST vars   !
@@ -248,10 +247,10 @@ contains
       nl = n_soil_layer_max
       call alloc_fast_staging(bufs, 2_ik, 2_ik, 8_ik)
       bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 2_ik
-      bufs%fast_site(PD_CAS_TEMP, :) = [290.0_wp, 294.0_wp]                 ! mean 292
-      bufs%fast_site(PD_LE, :)       = [100.0_wp, 200.0_wp]
-      bufs%fast_patch(PD_CAS_TEMP, 1, :) = [290.0_wp, 294.0_wp]             ! patch 1 mean 292
-      bufs%fast_patch(PD_CAS_TEMP, 2, :) = [300.0_wp, 304.0_wp]             ! patch 2 mean 302
+      bufs%fast_site(PA_CAS_TEMP, :) = [290.0_wp, 294.0_wp]                 ! mean 292
+      bufs%fast_site(PA_LE, :)       = [100.0_wp, 200.0_wp]
+      bufs%fast_patch(PA_CAS_TEMP, 1, :) = [290.0_wp, 294.0_wp]             ! patch 1 mean 292
+      bufs%fast_patch(PA_CAS_TEMP, 2, :) = [300.0_wp, 304.0_wp]             ! patch 2 mean 302
       bufs%fast_forcing(PY_TAIR, 1) = 300.0_wp ; bufs%fast_forcing(PY_TAIR, 2) = 302.0_wp    ! mean 301
       bufs%fast_soil_temp(1:2,1) = [280.0_wp, 281.0_wp]                     ! slot1 mean 281
       bufs%fast_soil_temp(1:2,2) = [282.0_wp, 283.0_wp]                     ! slot2 mean 282
@@ -445,7 +444,7 @@ contains
       k_n = find_var_index(files%reg, 'n_cohort_site')
       call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
 
-      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik, allometry_t())
+      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik, allometry_t(), cfg%pft)
       site%patch%n = 1_ik ; site%patch%area(1) = 1.0_wp ; site%patch%cohort_offset(1) = 1_ik
       jan30 = meds_time_t(year=2000_ik, month=1_ik, day=30_ik)
       jan31 = time_advance_days(jan30, 1_ik)
@@ -500,8 +499,8 @@ contains
       real(wp),            intent(in)    :: cas(2)
       call alloc_fast_staging(bufs, 2_ik, 1_ik, 8_ik)
       bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 1_ik
-      bufs%fast_site(PD_CAS_TEMP, :) = cas
-      bufs%fast_patch(PD_CAS_TEMP, 1, :) = cas
+      bufs%fast_site(PA_CAS_TEMP, :) = cas
+      bufs%fast_patch(PA_CAS_TEMP, 1, :) = cas
       bufs%fast_soil_temp = 280.0_wp ; bufs%fast_soil_temp_patch = 280.0_wp
       bufs%fast_coh_ltemp = 285.0_wp ; bufs%fast_coh_height = 10.0_wp
    end subroutine stage_cas
@@ -513,8 +512,8 @@ contains
       integer(ik),            intent(in)    :: nsub, np, nc
       integer(ik) :: nl
       nl = n_soil_layer_max
-      allocate(bufs%fast_time(nsub), bufs%fast_forcing(N_PYDIAG, nsub), bufs%fast_site(N_PDIAG, nsub),  &
-               bufs%fast_patch(N_PDIAG, max(np, 1_ik), nsub))
+      allocate(bufs%fast_time(nsub), bufs%fast_forcing(N_PY_ROWS, nsub), bufs%fast_site(N_PA_ROWS, nsub),  &
+               bufs%fast_patch(N_PA_ROWS, max(np, 1_ik), nsub))
       allocate(bufs%fast_soil_temp(nl, nsub), bufs%fast_soil_water(nl, nsub),                        &
                bufs%fast_soil_temp_patch(nl * max(np, 1_ik), nsub),                                  &
                bufs%fast_soil_water_patch(nl * max(np, 1_ik), nsub))

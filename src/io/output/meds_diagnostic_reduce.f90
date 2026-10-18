@@ -30,7 +30,7 @@
 module meds_diagnostic_reduce
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, cm2_to_m2, n_soil_layer_max
-   use meds_site_state_types,   only : site_t
+   use meds_site_state_vars,    only : site_t
    use meds_diagnostic_kernels, only : dbh_class_index
    use meds_output_types,       only : MISSING_VALUE
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan, ieee_is_finite
@@ -413,7 +413,7 @@ contains
       real(wp)    :: x(max(site%patch%n, 1_ik))
       integer(ik) :: ip
       logical     :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_e(ip)%soil_temp(1) ; end do
+      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_energy(ip)%soil_temp(1) ; end do
       call reduce_patch_to_site(site, x, .false., tbar, ok)
    end function mean_soil_temp_top
 
@@ -508,7 +508,7 @@ contains
       real(wp)    :: col(n_soil_layer_max, max(site%patch%n, 1_ik))
       integer(ik) :: ip
       do ip = 1_ik, site%patch%n
-         col(1:n_soil_layer_max, ip) = site%patch%soil_e(ip)%soil_temp(1:n_soil_layer_max)
+         col(1:n_soil_layer_max, ip) = site%patch%soil_energy(ip)%soil_temp(1:n_soil_layer_max)
       end do
       call reduce_patch_column_to_site(site, col, n_soil_layer_max, out, n)
    end subroutine site_soil_temp_column
@@ -521,7 +521,7 @@ contains
       real(wp)    :: col(n_soil_layer_max, max(site%patch%n, 1_ik))
       integer(ik) :: ip
       do ip = 1_ik, site%patch%n
-         col(1:n_soil_layer_max, ip) = site%patch%soil_w(ip)%theta(1:n_soil_layer_max)
+         col(1:n_soil_layer_max, ip) = site%patch%soil_water(ip)%theta(1:n_soil_layer_max)
       end do
       call reduce_patch_column_to_site(site, col, n_soil_layer_max, out, n)
    end subroutine site_soil_water_column

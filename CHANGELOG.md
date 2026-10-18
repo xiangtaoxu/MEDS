@@ -15,7 +15,8 @@ before and after.
 ## [Unreleased]
 
 The soil column's parameters become configuration, the ground becomes one block of the main config,
-and a new cohort starts in its patch's state instead of at two constants (#447).
+and a new cohort starts in its patch's state instead of at two constants (#447). The state layer is
+reorganized by model hierarchy, with no change to any result (#448).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -37,7 +38,7 @@ and a new cohort starts in its patch's state instead of at two constants (#447).
 - **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
   restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
   temperature, holding the water their tissues hold at the potential of the patch's top soil layer
-  (`patch_birth_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
+  (`patch_physical_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
   but a recruit started at 288.15 K, and every cohort, recruits included, at −0.1 MPa: a census run
   starting in an Ithaca January began with every tree about 20 K warmer than its air, and a recruit in
   dry soil was born wetter than its soil. Until the fast loop seeds a patch, the run's `[init]` state
@@ -55,6 +56,52 @@ and a new cohort starts in its patch's state instead of at two constants (#447).
 - **The ground is one block of the main config** (#447), as listed under Upgrading. The Fortran option
   types are unchanged: they stay grouped by the solver that reads them. Outputs are unchanged bit for
   bit.
+
+- **The state layer is one library of four files, by model hierarchy** (#448;
+  `docs/dev_plans/MEDS_STATE_HIERARCHY_PLAN.md`). `src/state/column/` and `src/state/site/` become
+  `src/state/`: `meds_cohort_state_vars` (the cohort block and its lockstep),
+  `meds_patch_state_vars` (one patch's stores, their blends, and the patch block),
+  `meds_site_state_vars` (`site_t`) and `meds_diag_vars` (the diagnostic accumulators, formerly
+  `meds_site_diag_types`), named after ED2's `ed_state_vars`. Each file is laid out in sections,
+  and every list of a block's fields follows the same order.
+  - The cohort block carries the site's PFT table instead of 16 per-cohort copies of PFT traits
+    (the `p_*` fields and `gather_pft_params` are gone).
+  - The patch arrays have one reorder, `reorder_patch_block`, which `sort_patches` and
+    `patch_compact` call.
+  - `soil_column_t` is `soil_water_column_t`; the slow driver's pool-change type moves to
+    `meds_vegetation_dynamics` as `pool_change_block`.
+  - The patch's soil stores are `soil_water` and `soil_energy` (were `soil_w` and `soil_e`), mixed by
+    `blend_soil_water` and `blend_soil_energy`. The pond's heat is `w_surface_energy` (was
+    `w_surface_enth`), named like the snow and soil stores; the restart file keeps its variable names.
+  - `patch_birth_state` is `patch_physical_state`: it returns the canopy-air temperature and the top
+    soil layer's water potential a new cohort is born into.
+  - The block routines are named for what they do to the block: `alloc_cohort_block`,
+    `expand_cohort_block`, `move_cohort_block`, `reorder_cohort_block`, `compact_cohort_block`,
+    `free_cohort_block` and `copy_cohort`, and their patch twins `alloc_patch_block`,
+    `expand_patch_block`, `reorder_patch_block` and `free_patch_block`; `set_cohort_wood_geometry`
+    is `set_cohort_wood_allometry`.
+  - The "no value yet" markers and a newborn's phenology are in `meds_state_defaults`, and a tissue's
+    heat capacity is `tissue_heat_capacity` in `meds_therm_lib`.
+  - Two "no value yet" markers replace the per-field ones, by the sign of the field they mark:
+    `UNSET_POSITIVE` (−1) for a field never negative once set, `UNSET_NEGATIVE` (+1) for one never
+    positive, tested by `is_unset_positive` and `is_unset_negative`. The growth temperature and an
+    unseeded canopy air (was 0 K) use them too. A cohort's mean diameter growth can be negative, so
+    it counts as set once it has a sample (`growth_count > 0`).
+  - The four files write one statement per line: no `;` joins two statements.
+  - The diagnostic rows are renumbered by section, the patch's slow rows after its fast rows; every
+    reader takes them by name.
+  - The diagnostic routines follow the block routines' pattern (`alloc_cohort_diag`,
+    `expand_cohort_diag`, `reorder_cohort_diag`, `fuse_cohort_diag`, `blend_patch_diag`, ...), and
+    the fusion kinds are `FSK_*`. The rows take one prefix per level: `CO_` (cohort), `PA_` (patch,
+    was `PD_`), `PY_` (polygon). The cohort's are numbered once (was `CD_` and `CS_`, each from 1): the
+    fast loop's rows, then the slow step's, each block holding only its own, so a row used on the
+    wrong block is out of bounds; one table, `CO_FUSION_KIND`, gives every row's fusion kind.
+  - The kernels' rule never to see `site_t` is checked by a lint (ctest `kernels_no_site_state`),
+    since the library boundary could not hold it.
+
+  Results are unchanged: a two-year census run and a one-year run with every output group on match
+  the previous version bit for bit. Fortran code that imports the old modules imports the new ones;
+  the Python API is unchanged.
 
 ### Removed
 

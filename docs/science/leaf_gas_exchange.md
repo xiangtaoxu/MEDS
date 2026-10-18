@@ -282,6 +282,13 @@ tall tree has in wet soil does not read as drought).
 > forever. The supply potential and soil $`\psi`$ coincide only in wet soil: the wood↔soil relaxation
 > time is ~9 s at $`\theta`$ 0.25 but ~4.8 **days** at $`\theta`$ 0.10, so a droughted cohort never
 > equilibrates overnight — which is why the kernel field is named plainly `psi`.
+>
+> Merging the two would also change the physics: the kernel would read *today's* partial maximum,
+> which early in the morning is barely different from the instantaneous $`\psi_{leaf}`$ — the tight
+> sub-step feedback the slow control exists to avoid. A genuine one-field design is a different
+> algorithm: sample $`\psi_{leaf}`$ once a day at true predawn. It saves one value per cohort but
+> adds a clock dependency to the fast loop and a sensitivity to which sub-step is caught; the daily
+> maximum needs neither.
 
 ### 4.3 Where this diverges from ED2
 

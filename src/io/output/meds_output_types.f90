@@ -286,15 +286,15 @@ module meds_output_types
       type(record_queue_t)   :: queue(N_FREQ)            !< closed records awaiting the I/O phase
       !----- FAST (sub-daily) tier staging (netCDF-free): filled per (patch, sub-step) by the fast   !
       !      loop, replayed into buf(:,1) by main via output_integrate_fast. Each patch's sub-step    !
-      !      is the patch block's own row (PD_*) and its soil column; the site means are their        !
+      !      is the patch block's own row (PA_*) and its soil column; the site means are their        !
       !      area-weighted sums, and the forcing is the polygon block's row (PY_*). The per-cohort   !
       !      slabs are indexed by the site's cohort slot. The buffers follow the live patch and       !
       !      cohort counts; the output layer checks those against output.patch_max and cohort_max.   !
       logical              :: fast_on = .false.                !< output on and the FAST tier has live variables
       type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) each sub-step's start
       real(wp),            allocatable :: fast_forcing(:,:)     !< (PY_*, n_fast_sub) the sub-step's forcing
-      real(wp),            allocatable :: fast_patch(:,:,:)     !< (PD_*, patch, n_fast_sub) each patch's row
-      real(wp),            allocatable :: fast_site(:,:)        !< (PD_*, n_fast_sub) their area-weighted sum
+      real(wp),            allocatable :: fast_patch(:,:,:)     !< (PA_*, patch, n_fast_sub) each patch's row
+      real(wp),            allocatable :: fast_site(:,:)        !< (PA_*, n_fast_sub) their area-weighted sum
       !----- The soil columns, per patch in the soil-by-patch slab's layout, (ip-1)*n_soil_layer_max  !
       !      + k (DIM_SOIL_PATCH), and area-weighted over the patches. ------------------------------!
       real(wp),            allocatable :: fast_soil_temp_patch(:,:)   !< (layer x patch, n_fast_sub) [K]
@@ -305,7 +305,7 @@ module meds_output_types
       real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
       !< (cohort, n_fast_sub) per-cohort height [m] (tallest post-proc)
       real(wp),            allocatable :: fast_coh_height(:,:)
-      !< (cohort, CD_*, n_fast_sub) the per-cohort diagnostic block's rows, staged while it is on
+      !< (cohort, CO_*, n_fast_sub) the per-cohort diagnostic block's rows, staged while it is on
       real(wp),            allocatable :: fast_coh_cdiag(:,:,:)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
       integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs

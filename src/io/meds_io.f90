@@ -24,12 +24,14 @@
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
+   use meds_state_defaults, only : is_unset_positive
    use meds_config,   only : meds_config_t, growth_window_steps, pft_tissue_curves
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
-   use meds_site_state_types, only : site_t, patch_birth_state
-   use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr, &
-                                           set_cohort_size_from_carbon, set_cohort_tissue_water
+   use meds_site_state_vars,  only : site_t
+   use meds_patch_state_vars, only : patch_physical_state
+   use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water
+   use meds_site_state_vars,        only : site_alloc, rebuild_csr
    use meds_soil_column_config,     only : soil_params_t, soil_column_params
    use meds_demography_update,      only : update_overtopping_lai
    use meds_constants,     only : n_soil_layer_max, n_snow_layer_max
@@ -143,7 +145,7 @@ contains
       call dv('leaf_turnover_rate', NC_DOUBLE, [d_cohort], 'baseline leaf turnover rate [1/yr] (plastic)')
       !----- Per-cohort plant-hydraulics internal water + tissue temperatures. Persisting these makes  !
       !      a restart EXACT for the fast loop -- without them the restart starts the tissues in their   !
-      !      patch's state (patch_birth_state), whose step from the evolved state makes the              !
+      !      patch's state (patch_physical_state), whose step from the evolved state makes the             !
       !      plant-hydraulics solve grind for a few days on a healthy high-LAI restart. OPTIONAL on read !
       !      (gv_dbl_opt), so a state file without them still restarts, on those values. The            !
       !      leaf-surface (interception) film is stored below with the pools. ---------------------------!
@@ -424,12 +426,12 @@ contains
                do ip = 1_ik, npat
                   fc(ip,1) = p%cas(ip)%can_enthalpy ; fc(ip,2) = p%cas(ip)%can_shv
                   fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
-                  fw(ip,1) = p%soil_w(ip)%w_surface ; fw(ip,2) = p%soil_w(ip)%w_surface_enth
+                  fw(ip,1) = p%soil_water(ip)%w_surface ; fw(ip,2) = p%soil_water(ip)%w_surface_energy
                   fw(ip,3) = p%shed_water_rate(ip) ; fw(ip,4) = p%adapt_dt_last(ip)
-                  fsoil(ip,:,1) = p%soil_w(ip)%theta(1:n_soil_layer_max)
-                  fsoil(ip,:,2) = p%soil_e(ip)%soil_energy(1:n_soil_layer_max)
-                  fsoil(ip,:,3) = p%soil_e(ip)%soil_fliq(1:n_soil_layer_max)
-                  fsoil(ip,:,4) = p%soil_e(ip)%soil_temp(1:n_soil_layer_max)
+                  fsoil(ip,:,1) = p%soil_water(ip)%theta(1:n_soil_layer_max)
+                  fsoil(ip,:,2) = p%soil_energy(ip)%soil_energy(1:n_soil_layer_max)
+                  fsoil(ip,:,3) = p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max)
+                  fsoil(ip,:,4) = p%soil_energy(ip)%soil_temp(1:n_soil_layer_max)
                   fsnow(ip,:,1) = p%snow(ip)%swe(1:n_snow_layer_max)
                   fsnow(ip,:,2) = p%snow(ip)%snow_energy(1:n_snow_layer_max)
                   fsnow(ip,:,3) = p%snow(ip)%snow_depth(1:n_snow_layer_max)
@@ -649,7 +651,7 @@ contains
       if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
 
       call site_alloc(site, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg), &
-                      cfg%allom)
+                      cfg%allom, cfg%pft)
       site%cohort%n = ncoh ; site%patch%n = npat
       !----- Growth temperature: OPTIONAL, so a state file without it keeps the unseeded          !
       !      sentinel site_alloc set and the first slow step adopts that day's mean.  ---------------!
@@ -699,7 +701,7 @@ contains
             call gv_dbl_opt(ncid, 'wood_water_mass', ncoh, c%wood_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_temp',       ncoh, c%wood_temp(1:ncoh))
-            !----- Stomatal feedback (OPTIONAL): site_alloc has already set DMAX_PSI_LEAF_UNSET /      !
+            !----- Stomatal feedback (OPTIONAL): site_alloc has already set UNSET_NEGATIVE /           !
             !      DMAX_PSI_LEAF_ACCUM_RESET, so a state file without them seeds from the soil; one with  !
             !      them restores the true feedback state. ------------------------------------------------!
             call gv_dbl_opt(ncid, 'dmax_psi_leaf',   ncoh, c%dmax_psi_leaf(1:ncoh))
@@ -716,7 +718,6 @@ contains
             call gv_dbl_opt(ncid, 'leaf_surf_water',    ncoh, c%leaf_surf_water(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
          end associate
-         call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
          !----- The carbon pools the writing run held, and the geometry derived from them as the  !
          !      run derives it (the file's height/agb/leaf_area are for its readers, not read back). !
          !      A file without pools places each cohort on the allometry from its dbh. -----------!
@@ -760,7 +761,7 @@ contains
             end block
          else
             do i = 1_ik, ncoh
-               if (site%cohort%growth_avg(i) >= 0.0_wp) then
+               if (.not. is_unset_positive(site%cohort%growth_avg(i))) then
                   site%cohort%growth_count(i)   = nwin
                   site%cohort%growth_accum(i)   = site%cohort%growth_avg(i) * real(nwin, wp)
                   site%cohort%growth_hist(:, i) = site%cohort%growth_avg(i)
@@ -779,8 +780,8 @@ contains
                call gv_dbl2_row(ncid, 'recruit_pool', ip, npft, p%recruit_pool(1:npft, ip))
             end do
             !----- FAST reservoirs: OPTIONAL as a WHOLE (existence of the first variable stands for     !
-            !      all of them, always written together) -- a file without them leaves p%cas/soil_e/      !
-            !      soil_w/snow at site_alloc's defaults, and the caller re-seeds them via                 !
+            !      all of them, always written together) -- a file without them leaves p%cas/soil_energy/      !
+            !      soil_water/snow at site_alloc's defaults, and the caller re-seeds them via                 !
             !      init_fast_reservoirs. -----------------------------------------------------------------!
             fast_ok = nc_inq_varid_f(ncid, 'cas_can_enthalpy', vid) == NC_NOERR
             if (fast_ok) then
@@ -798,7 +799,7 @@ contains
                   do ip = 1_ik, npat ; p%cas(ip)%can_temp     = fc(ip) ; end do
                   call gv_dbl(ncid, 'soil_w_surface',    npat, fw1)
                   do ip = 1_ik, npat
-                     p%soil_w(ip)%w_surface = fw1(ip)
+                     p%soil_water(ip)%w_surface = fw1(ip)
                   end do
                   !----- Pond ENTHALPY: OPTIONAL, because older state files do not carry it. Read the
                   !      value here if present; the RECONSTRUCTION for a file without it waits until
@@ -818,10 +819,10 @@ contains
                   call gv_int(ncid, 'snow_nlayer', npat, fnl)
                   do ip = 1_ik, npat ; p%snow(ip)%nlayer = fnl(ip) ; end do
                   do ip = 1_ik, npat
-                     call gv_dbl2_row(ncid, 'soil_theta',  ip, n_soil_layer_max, p%soil_w(ip)%theta(1:n_soil_layer_max))
-                     call gv_dbl2_row(ncid, 'soil_energy', ip, n_soil_layer_max, p%soil_e(ip)%soil_energy(1:n_soil_layer_max))
-                     call gv_dbl2_row(ncid, 'soil_temp',   ip, n_soil_layer_max, p%soil_e(ip)%soil_temp(1:n_soil_layer_max))
-                     call gv_dbl2_row(ncid, 'soil_fliq',   ip, n_soil_layer_max, p%soil_e(ip)%soil_fliq(1:n_soil_layer_max))
+                     call gv_dbl2_row(ncid, 'soil_theta',  ip, n_soil_layer_max, p%soil_water(ip)%theta(1:n_soil_layer_max))
+                     call gv_dbl2_row(ncid, 'soil_energy', ip, n_soil_layer_max, p%soil_energy(ip)%soil_energy(1:n_soil_layer_max))
+                     call gv_dbl2_row(ncid, 'soil_temp',   ip, n_soil_layer_max, p%soil_energy(ip)%soil_temp(1:n_soil_layer_max))
+                     call gv_dbl2_row(ncid, 'soil_fliq',   ip, n_soil_layer_max, p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max))
                      call gv_dbl2_row(ncid, 'snow_swe',    ip, n_snow_layer_max, p%snow(ip)%swe(1:n_snow_layer_max))
                      call gv_dbl2_row(ncid, 'snow_energy', ip, n_snow_layer_max, p%snow(ip)%snow_energy(1:n_snow_layer_max))
                      call gv_dbl2_row(ncid, 'snow_depth',  ip, n_snow_layer_max, p%snow(ip)%snow_depth(1:n_snow_layer_max))
@@ -838,10 +839,10 @@ contains
                   !      pond (the common case) reconstructs to exactly 0 either way. --------------------!
                   do ip = 1_ik, npat
                      if (pond_enth_ok) then
-                        p%soil_w(ip)%w_surface_enth = fw4(ip)
+                        p%soil_water(ip)%w_surface_energy = fw4(ip)
                      else
-                        p%soil_w(ip)%w_surface_enth = p%soil_w(ip)%w_surface                            &
-                              * internal_energy_liquid(p%soil_e(ip)%soil_temp(1))
+                        p%soil_water(ip)%w_surface_energy = p%soil_water(ip)%w_surface                            &
+                              * internal_energy_liquid(p%soil_energy(ip)%soil_temp(1))
                      end if
                   end do
                end block
@@ -877,7 +878,7 @@ contains
          end associate
       end if
       !----- A state file without the cohorts' tissue water or temperatures starts each cohort in its  !
-      !      patch's state, as a recruit is born (patch_birth_state): the canopy air and top soil layer !
+      !      patch's state, as a recruit is born (patch_physical_state): the canopy air and top soil layer !
       !      just read, or, for a file without them either, the run's starting state, from which       !
       !      init_fast_reservoirs then re-seeds the patch and its cohorts. -----------------------------!
       if (ncoh > 0_ik .and. npat > 0_ik .and. .not. (tissue_water_ok .and. tissue_temp_ok)) then
@@ -885,9 +886,11 @@ contains
             type(soil_params_t) :: soil
             type(water_curve_t) :: leaf_curve, wood_curve
             real(wp) :: t_birth, psi_birth
+            integer(ik) :: ip
             call soil_column_params(cfg%soil_column, soil)
             do i = 1_ik, ncoh
-               call patch_birth_state(site, site%cohort%owner_patch(i), cfg, soil, t_birth, psi_birth)
+               ip = site%cohort%owner_patch(i)
+               call patch_physical_state(site%patch%cas(ip), site%patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
                if (.not. tissue_temp_ok) then
                   site%cohort%leaf_temp(i) = t_birth ; site%cohort%wood_temp(i) = t_birth
                end if

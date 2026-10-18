@@ -27,8 +27,8 @@ module meds_c_api_run
    use iso_c_binding
    use meds_kinds,             only : wp, ik
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
-   use meds_site_diag_types,   only : CS_NPP_LEAF, CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO, &
-                                      CS_GROWTH_RESP, CS_EXUDATE
+   use meds_diag_vars,         only : CO_NPP_LEAF, CO_NPP_FINEROOT, CO_NPP_WOOD, CO_NPP_STORAGE, CO_NPP_REPRO, CO_GROWTH_RESP, &
+                                      CO_EXUDATE
    use meds_driver,            only : meds_run_t, driver_open, driver_step, driver_finalize,   &
                                       driver_free, driver_done
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area,    &
@@ -275,16 +275,16 @@ contains
             end if
             select case (field_id)
             case (9_c_int)
-               buf(1:n) = real(c%sdiag%v(CS_NPP_LEAF, 1:n) + c%sdiag%v(CS_NPP_FINEROOT, 1:n)          &
-                             + c%sdiag%v(CS_NPP_WOOD, 1:n) + c%sdiag%v(CS_NPP_STORAGE, 1:n)          &
-                             + c%sdiag%v(CS_NPP_REPRO, 1:n), c_double)
-            case (10_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_WOOD,     1:n), c_double)
-            case (18_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_LEAF,     1:n), c_double)
-            case (19_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_FINEROOT, 1:n), c_double)
-            case (20_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_STORAGE,  1:n), c_double)
-            case (21_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_REPRO,    1:n), c_double)
-            case (22_c_int) ; buf(1:n) = real(c%sdiag%v(CS_GROWTH_RESP,  1:n), c_double)
-            case (23_c_int) ; buf(1:n) = real(c%sdiag%v(CS_EXUDATE,      1:n), c_double)
+               buf(1:n) = real(c%sdiag%v(CO_NPP_LEAF, 1:n) + c%sdiag%v(CO_NPP_FINEROOT, 1:n)          &
+                             + c%sdiag%v(CO_NPP_WOOD, 1:n) + c%sdiag%v(CO_NPP_STORAGE, 1:n)          &
+                             + c%sdiag%v(CO_NPP_REPRO, 1:n), c_double)
+            case (10_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_WOOD,     1:n), c_double)
+            case (18_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_LEAF,     1:n), c_double)
+            case (19_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_FINEROOT, 1:n), c_double)
+            case (20_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_STORAGE,  1:n), c_double)
+            case (21_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_REPRO,    1:n), c_double)
+            case (22_c_int) ; buf(1:n) = real(c%sdiag%v(CO_GROWTH_RESP,  1:n), c_double)
+            case (23_c_int) ; buf(1:n) = real(c%sdiag%v(CO_EXUDATE,      1:n), c_double)
             end select
          end select
       end associate
