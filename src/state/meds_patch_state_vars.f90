@@ -36,7 +36,7 @@ module meds_patch_state_vars
    public :: blend_cas, blend_snow, blend_soil_w, blend_soil_e, blend_soil_carbon, blend_xi_accum
    public :: blend_litter_input
                                                                     !< area-weighted mix (patch fusion / disturbance seed)
-   public :: patch_block, patch_alloc, patch_ensure_capacity, patch_reorder, patch_free, patch_birth_state
+   public :: patch_block, patch_alloc, patch_ensure_capacity, patch_reorder, patch_free, cohort_birth_state
 
    !----- Prognostic per-patch canopy-air-space thermal state (three implicit twins). -------!
    type :: cas_state_t
@@ -655,7 +655,7 @@ contains
    ! the starting soil water. init_fast_reservoirs re-seeds the setup cohorts from their      !
    ! patch once it has seeded it. `soil` is the column's parameters (soil_column_params).     !
    !---------------------------------------------------------------------------------------!
-   pure subroutine patch_birth_state(cas, soil_w, cfg, soil, temp, psi)
+   pure subroutine cohort_birth_state(cas, soil_w, cfg, soil, temp, psi)
       type(cas_state_t),         intent(in)  :: cas      !< the patch's canopy air
       type(soil_water_column_t), intent(in)  :: soil_w   !< the patch's soil water
       type(meds_config_t),       intent(in)  :: cfg
@@ -671,7 +671,7 @@ contains
          call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta)
          psi  = top_soil_psi(soil, theta(1))
       end if
-   end subroutine patch_birth_state
+   end subroutine cohort_birth_state
 
 
 end module meds_patch_state_vars

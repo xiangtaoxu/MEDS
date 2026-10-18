@@ -129,7 +129,7 @@ module meds_cohort_state_vars
       !      fusion conserves the nplant-weighted TOTAL, not a leaf-area-weighted mean               !
       !      (fuse_cohort_fast_state). Genuine sub-slow-step hydraulic memory. A cohort is born      !
       !      holding the water its tissues hold at its patch's top-soil potential (init_cohort,      !
-      !      patch_birth_state), so 0 is a real amount: a leafless cohort's leaves hold none. --------!
+      !      cohort_birth_state), so 0 is a real amount: a leafless cohort's leaves hold none. --------!
       real(wp),    allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water
       real(wp),    allocatable :: wood_water_mass(:) !< [kg/plant] internal wood (sapwood + fine-root) water
       !----- Leaf/wood SURFACE (interception film) water [kg/m2 GROUND] -- a store DISTINCT from     !
@@ -824,7 +824,7 @@ contains
       real(wp),           intent(in)    :: nplant, dbh
       !----- The shared [hydraulics] traits, which with the PFT's own give its tissue curves. -------!
       type(hydraulics_config_t), intent(in) :: hydraulics
-      !----- The state the cohort is born in, its patch's (patch_birth_state): its leaves and wood  !
+      !----- The state the cohort is born in, its patch's (cohort_birth_state): its leaves and wood !
       !      start at birth_temp, holding the water their tissues hold at birth_psi. ---------------!
       real(wp),           intent(in)    :: birth_temp   !< [K]
       real(wp),           intent(in)    :: birth_psi    !< [MPa]

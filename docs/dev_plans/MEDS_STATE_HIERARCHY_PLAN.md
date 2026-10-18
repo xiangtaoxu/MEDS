@@ -780,7 +780,7 @@ each file's own alignment.
   change.
 - **Two placeholder defaults in `cas_state_t`.** `can_co2 = 400` and `can_depth = 20 m` are never
   seen by a run with the fast loop (the canopy air is seeded from the forcing, and its depth set from
-  the stand, at setup). The type's other unseeded values are 0, and `patch_birth_state` reads
+  the stand, at setup). The type's other unseeded values are 0, and `cohort_birth_state` reads
   `can_temp > 0` as "seeded". Making the two 0 as well would change test fixtures and runs without the
   fast loop, so it is its own change.
 - **The TOML site file** (the location, ground and starting state split from the model settings): the
@@ -851,3 +851,10 @@ fields can hold, and `meds_constants` keeps only physical and calendar constants
 phenology values are private to the cohort file, which alone uses them. The patch file's
 `tiny_mass` duplicated `tiny_num` (both 1e-30) and is gone, and the snow store's default temperature
 is written as `t_3ple`. Bit-identical.
+
+**One rename after review (2026-10-18).** `patch_birth_state` is now `cohort_birth_state`: it reads a
+patch's canopy air and top soil water and returns the temperature and water potential a new cohort
+is born at, so the name says whose birth it describes. It stays in the patch file, since it reads
+only patch data. The name `init_patch` is kept for a patch constructor the code does not have yet:
+setup, the census reader and the new gap in `apply_patch_disturbance` each set a new patch's fields
+themselves. Bit-identical.

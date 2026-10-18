@@ -38,7 +38,7 @@ reorganized by model hierarchy, with no change to any result (#448).
 - **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
   restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
   temperature, holding the water their tissues hold at the potential of the patch's top soil layer
-  (`patch_birth_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
+  (`cohort_birth_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
   but a recruit started at 288.15 K, and every cohort, recruits included, at −0.1 MPa: a census run
   starting in an Ithaca January began with every tree about 20 K warmer than its air, and a recruit in
   dry soil was born wetter than its soil. Until the fast loop seeds a patch, the run's `[init]` state
@@ -69,6 +69,8 @@ reorganized by model hierarchy, with no change to any result (#448).
   - The patch arrays have one reorder, `patch_reorder`, which `sort_patches` and `patch_compact` call.
   - `soil_column_t` is `soil_water_column_t`; the slow driver's pool-change type moves to
     `meds_vegetation_dynamics` as `pool_change_block`.
+  - `patch_birth_state` is `cohort_birth_state`: it returns the state a new cohort is born in,
+    read from its patch.
   - The diagnostic rows are renumbered by section, the patch's slow rows after its fast rows; every
     reader takes them by name.
   - The kernels' rule never to see `site_t` is checked by a lint (ctest `kernels_no_site_state`),

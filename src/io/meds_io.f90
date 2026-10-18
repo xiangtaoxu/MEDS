@@ -28,7 +28,7 @@ module meds_io
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
    use meds_site_state_vars,  only : site_t
-   use meds_patch_state_vars, only : patch_birth_state
+   use meds_patch_state_vars, only : cohort_birth_state
    use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water
    use meds_site_state_vars,        only : site_alloc, rebuild_csr
    use meds_soil_column_config,     only : soil_params_t, soil_column_params
@@ -144,7 +144,7 @@ contains
       call dv('leaf_turnover_rate', NC_DOUBLE, [d_cohort], 'baseline leaf turnover rate [1/yr] (plastic)')
       !----- Per-cohort plant-hydraulics internal water + tissue temperatures. Persisting these makes  !
       !      a restart EXACT for the fast loop -- without them the restart starts the tissues in their   !
-      !      patch's state (patch_birth_state), whose step from the evolved state makes the              !
+      !      patch's state (cohort_birth_state), whose step from the evolved state makes the             !
       !      plant-hydraulics solve grind for a few days on a healthy high-LAI restart. OPTIONAL on read !
       !      (gv_dbl_opt), so a state file without them still restarts, on those values. The            !
       !      leaf-surface (interception) film is stored below with the pools. ---------------------------!
@@ -877,7 +877,7 @@ contains
          end associate
       end if
       !----- A state file without the cohorts' tissue water or temperatures starts each cohort in its  !
-      !      patch's state, as a recruit is born (patch_birth_state): the canopy air and top soil layer !
+      !      patch's state, as a recruit is born (cohort_birth_state): the canopy air and top soil layer !
       !      just read, or, for a file without them either, the run's starting state, from which       !
       !      init_fast_reservoirs then re-seeds the patch and its cohorts. -----------------------------!
       if (ncoh > 0_ik .and. npat > 0_ik .and. .not. (tissue_water_ok .and. tissue_temp_ok)) then
@@ -889,7 +889,7 @@ contains
             call soil_column_params(cfg%soil_column, soil)
             do i = 1_ik, ncoh
                ip = site%cohort%owner_patch(i)
-               call patch_birth_state(site%patch%cas(ip), site%patch%soil_w(ip), cfg, soil, t_birth, psi_birth)
+               call cohort_birth_state(site%patch%cas(ip), site%patch%soil_w(ip), cfg, soil, t_birth, psi_birth)
                if (.not. tissue_temp_ok) then
                   site%cohort%leaf_temp(i) = t_birth ; site%cohort%wood_temp(i) = t_birth
                end if

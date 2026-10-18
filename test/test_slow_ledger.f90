@@ -24,7 +24,7 @@ program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
    use meds_site_state_vars,    only : site_t
-   use meds_patch_state_vars,   only : cas_set_depth, patch_birth_state
+   use meds_patch_state_vars,   only : cas_set_depth, cohort_birth_state
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
                                        soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
@@ -736,7 +736,7 @@ contains
       call check(heat_after < heat_before, 'cull: the tissue heat store falls when a cohort goes')
    end subroutine check_cull
 
-   !----- A cohort is born in its patch's state (patch_birth_state): at the canopy-air temperature,  !
+   !----- A cohort is born in its patch's state (cohort_birth_state): at the canopy-air temperature, !
    !      its tissues at the top soil layer's potential. A patch not seeded yet gives the run's       !
    !      starting state from [init]. ------------------------------------------------------------------!
    subroutine check_birth_temp()
@@ -746,7 +746,7 @@ contains
       m = site%cohort%n + 1_ik
       t_save = site%patch%cas(1)%can_temp
       site%patch%cas(1)%can_temp = 268.0_wp        ! a cold, seeded patch
-      call patch_birth_state(site%patch%cas(1), site%patch%soil_w(1), cfg, soil, t_birth, psi_birth)
+      call cohort_birth_state(site%patch%cas(1), site%patch%soil_w(1), cfg, soil, t_birth, psi_birth)
       call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
       call check_close(psi_birth, top_soil_psi(soil, site%patch%soil_w(1)%theta(1)), 1.0e-12_wp,   &
                        'birth: a seeded patch gives its top soil layer''s potential')
@@ -759,7 +759,7 @@ contains
                        'birth: the leaves hold the water of that potential')
       !----- A patch not seeded yet (its canopy air at the type's 0 K) gives the starting state. ----!
       site%patch%cas(1)%can_temp = 0.0_wp
-      call patch_birth_state(site%patch%cas(1), site%patch%soil_w(1), cfg, soil, t_birth, psi_birth)
+      call cohort_birth_state(site%patch%cas(1), site%patch%soil_w(1), cfg, soil, t_birth, psi_birth)
       call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta_start)
       call check_close(t_birth, cfg%init_soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
       call check_close(psi_birth, top_soil_psi(soil, theta_start(1)), 1.0e-12_wp,                       &

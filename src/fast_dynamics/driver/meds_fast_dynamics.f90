@@ -202,7 +202,7 @@ contains
    end subroutine build_fast_context
 
    !----- Seed every patch's fast reservoirs to a horizontally-uniform equilibrium, and start the  !
-   !      patch's cohorts in equilibrium with it, as a recruit is born (patch_birth_state): at the  !
+   !      patch's cohorts in equilibrium with it, as a recruit is born (cohort_birth_state): at the !
    !      canopy-air temperature, holding the water their tissues hold at the top soil layer's     !
    !      potential. Called once after the community is built (production) or before a fast-loop  !
    !      test. ----------------------------------------------------------------------------------!
