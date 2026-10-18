@@ -45,8 +45,8 @@ DBH_EDGES = "[0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 1000.0]"     # [cm] the np
 #      through each polygon's config, Chave's E), which a region config refuses. -----------------------------------
 FROM_CELLS = [("site", "latitude"), ("site", "longitude"), ("site", "elevation"),
               ("forcing", "path"), ("forcing", "grid_index"), ("forcing", "grid_match"),
-              ("init", "soil_theta"), ("energy", "deep_temp"), ("energy", "deep_depth")] + \
-             [("soil_column", k) for k in ("depth", "layer_bottoms", "retention", "theta_sat", "theta_res", "ksat",
+              ("init", "soil_theta"), ("soil", "deep_temp"), ("soil", "deep_depth")] + \
+             [("soil", k) for k in ("depth", "layer_bottoms", "retention", "theta_sat", "theta_res", "ksat",
                                            "curve_par_a", "curve_par_n", "solid_conductivity", "dry_conductivity",
                                            "dry_heat_capacity")]
 

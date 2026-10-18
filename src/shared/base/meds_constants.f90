@@ -12,7 +12,7 @@ module meds_constants
 
    !----- Array sizes: the most soil and snow layers a column can hold. These are storage    !
    !      limits, not model parameters, and no result depends on them: the layers a run uses   !
-   !      come from its config ([soil_column].depth and layer_bottoms), and the loader refuses  !
+   !      come from its config ([soil].depth and layer_bottoms), and the loader refuses         !
    !      a column with more layers than fit. The soil and snow stores are fixed-size arrays,  !
    !      so copying a patch's stores never allocates. The snow is one bulk layer             !
    !      (multi-layer snow: docs/ROADMAP.md). --------------------------------------------!

@@ -5,7 +5,7 @@
 ! maps"). Each map is on the forcing grid; meds_surface_maps reads it at the run's cells.  !
 !                                                                                          !
 ! A region run needs the three soil maps: every polygon takes its own soil column from its !
-! cell. A site run may use them too, at its forcing cell, or set [soil_column] by hand --  !
+! cell. A site run may use them too, at its forcing cell, or set [soil] by hand --         !
 ! not both. A key a map provides is refused when the map is set, so a run never holds two  !
 ! values for one quantity.                                                                 !
 !==========================================================================================!

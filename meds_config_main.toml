@@ -76,10 +76,24 @@ dt_fast             = "900s"   # fast biophysics timestep, an ACCURACY setting, 
 # step_controller     = "i"          # "i" (integral) | "pi" (proportional-integral: damps step-size hunting)
 # ark_coupled         = true         # the leaf <-> canopy-air surface solve: true = coupled Newton,
 #                                    #   false = one uncoupled backward-Euler pass
+# ---- The soil-plant water network: soil and plant water are solved together as one network
+#      (implicit Euler with Newton and its own sub-steps; docs/science/soil_plant_water.md). ----
+# water_rtol          = 1.0e-3       # [-]  its sub-step relative tolerance
+# water_atol          = 1.0e-4       # [-]  its sub-step absolute tolerance: water content for soil layers
+#                                    #   and the pond, relative water content for plant tissues
+# ---- Budget checks. The soil-heat solve is ONE unconditionally stable backward-Euler step, and the
+#      outer adaptive march controls the accuracy of the soil energy (tolerance group GRP_SE,
+#      docs/science/numerical_scheme.md eq. (3)). ----
+# soil_energy_budget_atol = 1.0e-2   # [K]  soil-heat budget-closure threshold for the debug halt (NOT a
+#                                    #   step tolerance)
+# debug_error         = false        # true: a budget breach STOPS the run (for bisecting one); false: it
+#                                    #   is reported and the run goes on
 # ---- Process switches and initial seeds. ----
 # forcing_sample_frac = 0.5          # [-]  where in each sub-step the forcing is sampled, in [0, 1]
 # cas_condensation    = true         # condense canopy-air supersaturation
 # canopy_water_on     = false        # canopy interception film and its evaporation (condensate goes to soil layer 1)
+# intercept_alpha     = 1.0          # [-]  Beer interception efficiency
+# intercept_k         = 0.5          # [1/PAI] Beer interception extinction
 # snow_init_swe       = 0.0          # [kg/m2] snow water equivalent seeded at the run start
 # snow_init_temp      = 270.0        # [K]  temperature of that seeded pack
 # fast_probe          = false        # one CSV row per (patch, sub-step), for debugging; needs n_threads = 1
@@ -132,42 +146,24 @@ specific_root_length = 2.0e4      # [m/kgC] fine-root length per unit fine-root 
 fine_root_radius     = 2.5e-4     # [m]     fine-root radius: tropical fine-root diameters are 0.4-0.6 mm
 
 [soil]
-# Soil-water options, consumed by the fast loop. Every key is OPTIONAL: it defaults to the value
-# shown, so the whole block may be omitted (the meds_biophysics_opts defaults).
-# Soil and plant water are solved together as one network (implicit Euler with Newton and its own
-# sub-steps; docs/science/soil_plant_water.md); rtol/atol set its error. This is NOT the soil
-# geometry/texture (see [soil_column]).
-bottom_bc      = "free_drain" # free_drain | aquifer | bedrock   (bottom boundary condition; free_drain
-                              #   and bedrock drain at q = f K, f = 1 and 0; a soil map's leaky base at its f_leak)
-rtol           = 1.0e-3       # [-]      water-network sub-step relative tolerance
-atol           = 1.0e-4       # [-]      water-network sub-step absolute tolerance: water content for soil
-                              #          layers and the pond, relative water content for plant tissues
-w_pond_max     = 5.0          # [kg/m2]  ponding capacity before surface runoff
-intercept_alpha = 1.0         # [-]      Beer interception efficiency
-intercept_k     = 0.5         # [1/PAI]  Beer interception extinction
-dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil evaporation)
-dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
-ground_albedo_vis = 0.15      # [-]      bare-soil albedo, visible
-ground_albedo_nir = 0.30      # [-]      bare-soil albedo, near infrared
-ground_emissivity = 0.95      # [-]      bare-soil longwave emissivity
-
-# ------------------------------------------------------------------------------------------
-# [soil_column] -- the PHYSICAL soil column the soil water above is solved OVER.
-# [soil] holds the water network's tolerances and the bottom BC; this is the ground itself:
-# the vertical grid, the hydraulic texture and the thermal texture.
+# The ground: the soil column (its layers, hydraulic texture and thermal texture), its surface
+# (pond, dry surface layer, optics) and its two bottom boundaries, one for the water and one for
+# the heat. Every key is OPTIONAL and defaults to the value shown. The values below are a generic
+# loam, NOT a measured soil: replace them for a real site. With the [maps] soil maps, each polygon
+# takes its column, its leaky base and its deep temperature from its cell, and those keys are refused
+# here.
 #
-# Every key is OPTIONAL and defaults to the value shown. The values below are a generic loam,
-# NOT a measured soil: replace them for a real site. Validated at load: a
-# non-positive depth, layer_bottoms that do not increase or do not reach the depth,
-# theta_sat <= theta_res, or a van Genuchten n <= 1 are hard errors, because each one produces a
-# silently wrong column rather than a crash.
-[soil_column]
+# Validated at load: a non-positive depth, layer_bottoms that do not increase or do not reach the
+# depth, theta_sat <= theta_res, or a van Genuchten n <= 1 are hard errors, because each one produces
+# a silently wrong column rather than a crash.
+#
+# ---- The column. ----
 depth       = 2.0          # [m]      total column depth
 #
 #   NOTE ON `depth`. 2.0 m is about one annual thermal damping depth at a mid-latitude site
 #   (1.97 m for this texture at theta = 0.3), so the annual temperature wave has barely attenuated
 #   at the base, and a zero-flux base reflects it instead of letting it decay. Deepening the column,
-#   or the dirichlet base in [energy], is the fix (not extrapolating the gradient, which is
+#   or the dirichlet base below, is the fix (not extrapolating the gradient, which is
 #   degenerate). Changing it changes soil temperature.
 #
 #   The layers are SoilGrids 2.0's depths (bottoms 0.05, 0.15, 0.30, 0.60, 1.00 m), then 1.5,
@@ -185,33 +181,33 @@ psi_fc      = -3.37        # [m]      field-capacity matric head (derives theta_
 solid_conductivity = 3.0   # [W/m/K]  mineral-solid thermal conductivity
 dry_conductivity   = 0.15  # [W/m/K]  dry-matrix thermal conductivity
 dry_heat_capacity  = 2.0e6 # [J/m3/K] dry-matrix volumetric heat capacity
-
-[energy]
-# Soil-thermal (backward-Euler heat) options. Every key OPTIONAL; defaults shown.
-# The solve is ONE unconditionally-stable BE step -- there is no substepping here, and the accuracy
-# of the integrated soil energy is controlled by the outer adaptive march (tolerance group GRP_SE,
-# docs/science/numerical_scheme.md eq. (3)), not by this block.
-atol           = 1.0e-2       # [K]  budget-closure threshold for the debug halt (NOT a step tolerance)
-# debug_error    = false        # true: a budget breach above atol STOPS the run (for bisecting one);
-                              #   false: it is reported and the run goes on
-
-#----- THERMAL bottom boundary. NOTE this is [energy].bottom_bc, NOT [soil].bottom_bc -- the latter
-#      is the WATER boundary (free_drain | bedrock | aquifer). Two different keys, two different
-#      physics, same name in different blocks.
 #
-#      `geothermal` (the DEFAULT) prescribes the bottom FLUX, hard-wired to zero, which makes the
-#      base an adiabatic wall that REFLECTS the annual temperature wave. Against the analytic
-#      semi-infinite profile it leaves the amplitude at -1.73 m 82 % too large (0.764 of the surface
-#      where the analytic value is 0.421); `dirichlet` lands at 0.412, i.e. -2 %. In a full model run
-#      at Ithaca the difference is 4.3 K in July soil temperature at the column base, and it matters
-#      for anything keyed to deep soil temperature -- soil-carbon Q10, root-zone temperature, and the
-#      timing of spring thaw. See docs/science/soil_biophysics.md, "The bottom thermal boundary"
-#      (eq. (12)), and test_soil_annual_damping in test/test_column_energy.f90.
+# ---- The surface. ----
+w_pond_max     = 5.0          # [kg/m2]  ponding capacity before surface runoff
+dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil evaporation)
+dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
+ground_albedo_vis = 0.15      # [-]      bare-soil albedo, visible
+ground_albedo_nir = 0.30      # [-]      bare-soil albedo, near infrared
+ground_emissivity = 0.95      # [-]      bare-soil longwave emissivity
+#
+# ---- The bottom boundaries. ----
+water_bottom_bc = "free_drain" # free_drain | aquifer | bedrock (free_drain and bedrock drain at
+                               #   q = f K, f = 1 and 0; a soil map's leaky base at its f_leak)
+#
+#      The THERMAL bottom boundary. `geothermal` (the DEFAULT) prescribes the bottom FLUX,
+#      hard-wired to zero, which makes the base an adiabatic wall that REFLECTS the annual
+#      temperature wave. Against the analytic semi-infinite profile it leaves the amplitude at
+#      -1.73 m 82 % too large (0.764 of the surface where the analytic value is 0.421); `dirichlet`
+#      lands at 0.412, i.e. -2 %. In a full model run at Ithaca the difference is 4.3 K in July soil
+#      temperature at the column base, and it matters for anything keyed to deep soil temperature --
+#      soil-carbon Q10, root-zone temperature, and the timing of spring thaw. See
+#      docs/science/soil_biophysics.md, "The bottom thermal boundary" (eq. (12)), and
+#      test_soil_annual_damping in test/test_column_energy.f90.
 #
 #      It is NOT switched on by default because `deep_temp` is a SITE property with no defensible
 #      global value, and the loader refuses to guess it. Set both keys, or accept the reflecting base
 #      knowingly.
-bottom_bc      = "geothermal" # geothermal (adiabatic base, REFLECTS the annual wave) | dirichlet
+thermal_bottom_bc = "geothermal" # geothermal (adiabatic base, REFLECTS the annual wave) | dirichlet
 #deep_temp     = 284.75       # [K]  REQUIRED by dirichlet. Mean annual soil temperature below the
                               #      annual damping depth ~ mean annual AIR temperature + 1..2 K.
                               #      An error here is a steady flux into the column base, i.e. a
@@ -634,10 +630,10 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 # [maps] -- the static maps a run takes its soil and its Chave site index from, each on the       #
 # ED_ERA5land grid (so they need format = "ED_ERA5land"); docs/configuration.md "Input maps".      #
 # A region needs the three soil maps, and chave_e_map with height_allometry = "chave2014". A site  #
-# may use them too, read at its forcing cell, in place of setting [soil_column] by hand. With the   #
-# soil maps set, every key they provide is refused: soil_column.depth, layer_bottoms, retention     #
-# and the texture keys, soil.bottom_bc, energy.deep_temp and deep_depth, and init.soil_theta (each  #
-# layer then starts at its field capacity). soil_column.psi_fc still defines that capacity.         #
+# may use them too, read at its forcing cell, in place of setting the [soil] column by hand. With  #
+# the soil maps set, every key they provide is refused: soil.depth, layer_bottoms, retention and    #
+# the texture keys, soil.water_bottom_bc, soil.deep_temp and deep_depth, and init.soil_theta (each  #
+# layer then starts at its field capacity). soil.psi_fc still defines that capacity.                #
 #-------------------------------------------------------------------------------------------------#
 # [maps]
 # soil_depth_map     = "/path/to/ED_ERA5land_soil_depth_v2.nc"

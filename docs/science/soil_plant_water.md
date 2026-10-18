@@ -42,7 +42,7 @@ The paths:
   embolised cohort's leaves stay joined to its wood.
 - **Boundaries** — rain into the pond; ground evaporation from layer 1 (Philip's pore humidity with
   the Swenson–Lawrence dry-surface-layer resistance); drainage out of the bottom layer
-  (`[soil].bottom_bc`: drainage at a factor of free drainage, 1 to 0 for bedrock, or a head-driven
+  (`[soil].water_bottom_bc`: drainage at a factor of free drainage, 1 to 0 for bedrock, or a head-driven
   two-way aquifer); and each cohort's transpiration out of its leaves.
 
 Every flow is written with its derivatives in each store's unknown, so Newton's Jacobian is exact.

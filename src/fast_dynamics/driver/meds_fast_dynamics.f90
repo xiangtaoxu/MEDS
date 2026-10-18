@@ -141,14 +141,14 @@ contains
    !  reservoir seeds keep the fast_context_t defaults, which are constant and             !
    !  horizontally uniform -- the reference climate used when no forcing file is           !
    !  configured. The static column config `col_config` is assembled here FROM THE RUN     !
-   !  CONFIG: the soil column comes from [soil_column], the respiration factors and canopy !
+   !  CONFIG: the soil column comes from [soil], the respiration factors and canopy        !
    !  optics are per-PFT traits, and the plant-hydraulics constants come from              !
    !  [hydraulics]. Nothing in this routine is a hard-coded model parameter.               !
    !=======================================================================================!
    subroutine build_fast_context(cfg, ctx)
       type(meds_config_t),  intent(in)  :: cfg
       type(fast_context_t), intent(out) :: ctx
-      !----- The physical soil column, from [soil_column]: its layers, and each layer's texture,  !
+      !----- The physical soil column, from [soil]: its layers, and each layer's texture,         !
       !      one for the whole column or one per layer from the soil maps (soil_column_params). -!
       call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
       !----- Plant hydraulics: ONE seam builds the PER-PFT table. The shared [hydraulics] block is    !
@@ -160,14 +160,14 @@ contains
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
       ctx%col_config%canopy_water_on    = cfg%canopy_water_on
-      !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
+      !----- Fast-loop biophysics run-config from the [soil]/[snow]/[aerodynamics] blocks and [fast]  !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
-      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil]         -> soil water and the water network
+      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil], [fast] -> soil water and the water network
       ctx%soil_albedo(1) = cfg%soil%ground_albedo_vis   ! [soil] ground optics -> the canopy radiation solver
       ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
       ctx%soil_emiss     = cfg%soil%ground_emissivity
-      ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
+      ctx%col_config%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
       !----- The initial soil state, from [init]: what init_fast_reservoirs seeds every layer with. --!
       !      A column with a texture per layer starts each layer at its own field capacity. ----------!
       if (cfg%soil_column%n_layer_values > 0_ik) then
@@ -188,8 +188,8 @@ contains
       associate (tols => ctx%col_config%integrator%error_control%tols)
          ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
          ctx%col_config%soil_water_opts%atol   = tols%atol(GRP_THETA)
-         !----- [energy].atol is a budget-closure threshold, not an integrator tolerance, so        !
-         !      atol_scale scales it DIRECTLY instead of through a tolerance group. ----------------!
+         !----- [fast].soil_energy_budget_atol is a budget-closure threshold, not an integrator   !
+         !      tolerance, so atol_scale scales it DIRECTLY instead of through a tolerance group. ---!
          ctx%col_config%energy%atol  = cfg%energy%atol * cfg%atol_scale
       end associate
 

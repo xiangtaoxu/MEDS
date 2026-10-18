@@ -1,7 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_soil_column_config -- the soil column a run is set on: the [soil_column] block, the !
-! rule that cuts it into layers, and the parameters derived from it once per column.       !
+! meds_soil_column_config -- the soil column a run is set on: the column keys of [soil],  !
+! the rule that cuts the column into layers, and the parameters derived from it once per   !
+! column.                                                                                  !
 !                                                                                          !
 ! soil_column_params turns the block into the two bundles the soil kernels read:          !
 ! soil_params_t (the layers, the hydraulic texture and the field capacity) and             !
@@ -37,12 +38,11 @@ module meds_soil_column_config
    real(wp), parameter :: LAYER_MERGE_SHARE = 0.5_wp
    real(wp), parameter :: GRID_TOL = 1.0e-6_wp     !< [m] a depth this close to a list bottom ends on it
 
-   !----- SOIL COLUMN ([soil_column]): the site's geometry, texture and thermal properties          !
-   !      (docs/science/soil_biophysics.md). Consumed once per run by the fast-context builder      !
-   !      (build_fast_context), which turns them into soil_params_t + soil_thermal_params_t.        !
-   !      Every key is OPTIONAL and defaults to the value below. NOTE the distinction from          !
-   !      [soil], which holds the soil water's options (bottom BC, the water network's              !
-   !      tolerances, the pond): this block is the PHYSICAL column they apply to. ------------------!
+   !----- The SOIL COLUMN ([soil]): the site's geometry, texture and thermal properties            !
+   !      (docs/science/soil_biophysics.md). soil_column_params turns them into soil_params_t +     !
+   !      soil_thermal_params_t. Every key is OPTIONAL and defaults to the value below. [soil] also  !
+   !      holds the ground's surface and its two bottom boundaries, which are read into the solver  !
+   !      options (soil_opts_t, energy_opts_t in meds_biophysics_opts). ----------------------------!
    type :: soil_column_config_t
       !----- Vertical grid: SOIL_LAYER_TEMPLATE, or the `layer_bottoms` list when          !
       !      set, cut at `depth` (soil_column_layers). ----------------------------------- !
@@ -150,7 +150,7 @@ contains
    end subroutine soil_column_texture
 
    !---------------------------------------------------------------------------------------!
-   ! The soil column the [soil_column] block describes: its layers (soil_column_layers),    !
+   ! The soil column [soil] describes: its layers (soil_column_layers),                    !
    ! each layer's retention curve and Ks, and, when asked, each layer's thermal texture.   !
    ! The fast loop, the slow ledger and validate_config all build the column here.         !
    !---------------------------------------------------------------------------------------!

@@ -96,7 +96,7 @@ module meds_slow_ledger
    !      rather than hidden in site state.  ------------------------------------------------------!
    type :: slow_ledger_t
       logical             :: active = .false.       !< off => every entry point is a no-op
-      !----- Soil layer geometry, built once from [soil_column]; only `dz` is used (store depth).  !
+      !----- Soil layer geometry, built once from [soil]; only `dz` is used (store depth).         !
       type(soil_params_t) :: soil
       logical             :: soil_ready = .false.
       !----- The air density the canopy-air store is valued at. Supplied by the caller from the    !
@@ -432,7 +432,7 @@ contains
       end do
    end function slow_fast_carbon_handover
 
-   !----- Build the soil layer geometry once, from the same [soil_column] block the fast context  !
+   !----- Build the soil layer geometry once, from the same [soil] block the fast context         !
    !      uses, so the two tiers integrate over identical layer thicknesses. --------------------!
    subroutine ensure_soil_geometry(ledger, cfg)
       type(slow_ledger_t), intent(inout) :: ledger

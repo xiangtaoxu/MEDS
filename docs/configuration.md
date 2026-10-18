@@ -27,7 +27,7 @@ Two exceptions, both explicit:
 - **Derived quantities** are computed from the primary ones — the step in years, the height class
   edges, the mortality-hazard coefficients from wood density. Set `[options].override_derived =
   true` and supply a `[derived]` block to pin them instead.
-- **Optional keys.** Solver settings, process switches and a few late-added blocks (`[soil_column]`,
+- **Optional keys.** Solver settings, process switches and a few late-added blocks (`[soil]`,
   `[snow]`, `[soil_carbon]`) read each key with a fallback to its default, so a feature needs no
   TOML edits. The reference file lists each one commented out at that default.
 
@@ -64,12 +64,12 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | Block | What it sets |
 |---|---|
 | `[run]` | The slow timestep, and the run span as **calendar dates** (`start_time`, `end_time`, leap-year-aware Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`). Thread count. The run `mode`: one site, or a region. |
-| `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control. |
+| `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control; the soil-plant water network's tolerances (`water_rtol`, `water_atol`), the budget checks (`soil_energy_budget_atol`, `debug_error`) and the canopy interception (`intercept_alpha`, `intercept_k`). |
 | `[init]` | How the run starts, and the path to the PFT file. |
 | `[demography]` | Cohort and patch fusion/fission, the cadence switches. |
 | `[disturbance]`, `[recruitment]` | Treefall rates; the seed-rain and reproduction settings. |
-| `[soil_column]` | The **physical ground**: depth and layers, hydraulic texture, retention family, thermal properties. |
-| `[soil]`, `[energy]`, `[snow]`, `[aerodynamics]` | The **solvers over it**: selectors and tolerances. `[soil]` also holds the bare ground's optics: `ground_albedo_vis`, `ground_albedo_nir` and `ground_emissivity`. |
+| `[soil]` | The **ground**: depth and layers, hydraulic texture, retention family and thermal properties; its surface (the pond, the dry surface layer, and the optics `ground_albedo_vis`, `ground_albedo_nir` and `ground_emissivity`); and its two bottom boundaries, `water_bottom_bc` and `thermal_bottom_bc` with the thermal anchor's `deep_temp` and `deep_depth`. |
+| `[snow]`, `[aerodynamics]` | The snow store's and the canopy aerodynamics' parameters. |
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
 | `[hydraulics]` | Plant water transport: the pressure–volume and vulnerability traits, the sapwood path factor `vessel_curl` (the sapwood conductivity follows wood density; `pft.wood_kmax` overrides it), and the roots (`root_beta`, `root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait, so `[soil_column].root_beta` is refused. |
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
@@ -78,9 +78,10 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[state]` | Restart checkpointing: output directory, prefix, interval. *(The spelling `[io]` is refused.)* |
 | `[options]` | `override_derived` and other run switches. |
 
-**`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: layer bottoms
-that do not increase, or a saturated water content below the residual, produce a silently wrong column
-rather than a crash, so the physical block is validated at load.
+**`[soil]` is the ground; `[fast]` holds the solvers' settings.** Every property of the ground is in
+one block, whichever solver reads it: the column, its surface and both bottom boundaries. The column
+is validated at load, because layer bottoms that do not increase, or a saturated water content below
+the residual, produce a silently wrong column rather than a crash.
 
 **The soil layers.**
 - **Default:** every column cuts one list of layer bottoms at its `depth`: SoilGrids 2.0's depths
@@ -93,21 +94,21 @@ rather than a crash, so the physical block is validated at load.
 - **Refused keys:** `n_layer` and `grid_growth`.
 - **The science:** [`science/soil_biophysics.md`](science/soil_biophysics.md), "The soil layers".
 
-**The bottom water boundary — `[soil].bottom_bc`.** `free_drain` (default), `bedrock` or `aquifer`.
+**The bottom water boundary — `[soil].water_bottom_bc`.** `free_drain` (default), `bedrock` or `aquifer`.
 The first two are the ends of one drainage boundary, $`q = f\,K(\theta_n)`$ at $f = 1$ and $f = 0$; a
 leaky base, $0 < f < 1$, comes from the soil maps' `f_leak` (Input maps, below). `aquifer` is a water
 table at the column base, for wet sites only ([`science/soil_biophysics.md`](science/soil_biophysics.md),
 "Boundary conditions").
 
-### The bottom thermal boundary — `[energy].bottom_bc`
+### The bottom thermal boundary — `[soil].thermal_bottom_bc`
 
 The default 2.0 m column sits against an annual thermal damping depth of about 2 m, so the annual
-temperature wave has barely attenuated by the time it reaches the base. `bottom_bc` decides what
+temperature wave has barely attenuated by the time it reaches the base. `thermal_bottom_bc` decides what
 happens to it there.
 
 | key | values | meaning |
 |---|---|---|
-| `bottom_bc` | `geothermal` (default) \| `dirichlet` | prescribed bottom flux (held at zero — an adiabatic wall that **reflects** the annual wave) vs conduction to a fixed deep temperature |
+| `thermal_bottom_bc` | `geothermal` (default) \| `dirichlet` | prescribed bottom flux (held at zero — an adiabatic wall that **reflects** the annual wave) vs conduction to a fixed deep temperature |
 | `deep_temp` | [K] | the anchor temperature. **Required** when `bottom_bc = "dirichlet"`; there is no default |
 | `deep_depth` | [m], default 3.145 | depth of the anchor plane below the surface; must lie below the bottom soil node |
 
@@ -120,10 +121,10 @@ this boundary condition exists to remove.
 `deep_depth` is a physical choice, not a numerical one, and the default is derived: a resistive
 termination reflects least when the anchor sits `d/sqrt(2)` below the bottom node, `d` being the
 annual damping depth. For the default column that is 1.75 + 1.973/√2 = 3.145 m. **Recompute it if you
-change `[soil_column].depth` or the thermal texture** — the derivation, the measured sweep and what
+change `[soil].depth` or the thermal texture** — the derivation, the measured sweep and what
 the anchor does and does not fix are in [`docs/science/soil_biophysics.md`](science/soil_biophysics.md).
 
-Deepening the column with `[soil_column].depth` remains available and is the other way out, at the
+Deepening the column with `[soil].depth` remains available and is the other way out, at the
 cost of layers; it also moves the root profile and the drainage, so it is not a thermal-only change.
 
 ### Cohort and patch fusion — `[demography]`
@@ -251,7 +252,7 @@ every soil layer of every patch starts there, unless a state checkpoint restores
 default to 288 K and 0.30. A run with no spin-up starts from them, so set them to the site: the
 mean annual air temperature, for instance, keeps a warm site's column from starting cold. The
 loader refuses a temperature outside 233–333 K and a water content outside
-(`[soil_column].theta_res`, `theta_sat`]. A column from the soil maps has a texture per layer, so
+(`[soil].theta_res`, `theta_sat`]. A column from the soil maps has a texture per layer, so
 each layer starts at its own field capacity instead, and `soil_theta` is refused.
 
 ## Output
@@ -452,11 +453,11 @@ reads every map and is the only module that does.
 | `chave_e_map` | `ED_ERA5land_Chave2014_E.nc` | `chave_e` |
 
 The three soil maps go together. A region needs them. A site may use them as well, read at the
-forcing cell its `[site]` location reads (so with `format = "ED_ERA5land"`), or it sets
-`[soil_column]` by hand. From the maps, each cell's column is built as follows:
+forcing cell its `[site]` location reads (so with `format = "ED_ERA5land"`), or it sets the
+`[soil]` column by hand. From the maps, each cell's column is built as follows:
 
 - **Depth and layers.** The column ends at `soil_depth`, on the default layers
-  ([`[soil_column]`](#the-main-file)).
+  ([`[soil]`](#the-main-file)).
 - **Each layer's soil.** A layer takes the map layers it overlaps, weighted by the overlap; below the
   maps' 2 m, it takes the deepest map layer. Its retention curve and Ks come from MEDS's
   pedotransfer function, and its thermal properties from the same texture by CLM5's mineral-soil
@@ -469,17 +470,16 @@ forcing cell its `[site]` location reads (so with `format = "ED_ERA5land"`), or 
   - 3 (sealed) is `bedrock`, $f = 0$;
   - 4 is `aquifer`.
 - **The thermal anchor** sits at `deep_temp`, annual damping depth / √2 below the bottom node, where it
-  reflects the annual wave least. It is used when `[energy].bottom_bc = "dirichlet"`.
+  reflects the annual wave least. It is used when `[soil].thermal_bottom_bc = "dirichlet"`.
 
 So that a run never holds two values for one quantity, every key the soil maps provide is refused
 while they are set:
 
-- in `[soil_column]`: `depth`, `layer_bottoms`, `retention`, and the texture keys;
-- `[soil].bottom_bc`;
-- `[energy].deep_temp` and `deep_depth`;
+- in `[soil]`: `depth`, `layer_bottoms`, `retention` and the texture keys, `water_bottom_bc`, and
+  `deep_temp` and `deep_depth`;
 - `[init].soil_theta`.
 
-`[soil_column].psi_fc` still defines field capacity, where each layer starts. With `chave_e_map`,
+`[soil].psi_fc` still defines field capacity, where each layer starts. With `chave_e_map`,
 `[allometry].chave_e` is refused in the PFT file, and the map needs `height_allometry = "chave2014"`.
 
 **MEDS fills no gaps.** A run cell a map leaves empty stops the run, naming the map, the variable and

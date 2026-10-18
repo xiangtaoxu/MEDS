@@ -378,12 +378,12 @@ program test_region
    !      key they provide is refused, a run cell they leave empty is named, and Chave's E serves !
    !      only the Chave heights. ----------------------------------------------------------------!
    call refused('a region needs the soil maps', '[maps]'//nl()//'soil_depth_map = ""'//nl()//        &
-                'soil_texture_map = ""'//nl()//'soil_chemistry_map = ""'//nl()//'[energy]'//nl()//       &
+                'soil_texture_map = ""'//nl()//'soil_chemistry_map = ""'//nl()//'[soil]'//nl()//         &
                 'deep_temp = 284.75'//nl()//region_block(), .true., .false., 'needs the soil maps')
-   call refused('a soil key the maps provide is refused', '[soil_column]'//nl()//'theta_sat = 0.40'//nl()// &
-                site_block(1_ik), .false., .false., 'soil_column.theta_sat comes from the [maps] soil maps')
-   call refused('a deep temperature beside the maps is refused', '[energy]'//nl()//'deep_temp = 290.0'//nl()// &
-                region_block(), .true., .false., 'energy.deep_temp comes from the [maps] soil maps')
+   call refused('a soil key the maps provide is refused', '[soil]'//nl()//'theta_sat = 0.40'//nl()//    &
+                site_block(1_ik), .false., .false., 'soil.theta_sat comes from the [maps] soil maps')
+   call refused('a deep temperature beside the maps is refused', '[soil]'//nl()//'deep_temp = 290.0'//nl()// &
+                region_block(), .true., .false., 'soil.deep_temp comes from the [maps] soil maps')
    call refused('a run cell the soil maps leave empty is named', '[maps]'//nl()//'soil_texture_map = "'// &
                 trim(work)//'/archive/gap/soil_texture.nc"'//nl()//region_block(), .true., .false.,         &
                 'sand has no value at the cell (35.00, -180.00)')
@@ -516,7 +516,7 @@ contains
       if (present(keep_file_keys)) then
          if (keep_file_keys) drop = .false.
       end if
-      drop = drop .or. (sec == 'energy' .and. key == 'deep_temp')     ! the soil maps give it
+      drop = drop .or. (sec == 'soil' .and. key == 'deep_temp')       ! the soil maps give it
       if (region) drop = drop .or. (sec == 'site' .and. (key == 'latitude' .or. key == 'longitude' .or. &
                                                           key == 'elevation'))
    end function drop

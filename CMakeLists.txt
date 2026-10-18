@@ -553,7 +553,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_pft_optics_config)
    add_test(NAME pft_optics_config COMMAND test_pft_optics_config)
 
-   #----- The [soil_column] keys reach the column they describe. -----------------------------#
+   #----- The [soil] column keys reach the column they describe. ----------------------------#
    add_executable(test_soil_column_config test/test_soil_column_config.f90)
    target_link_libraries(test_soil_column_config PRIVATE meds_config meds_state_column meds_testsupport)
    meds_fortran_flags(test_soil_column_config)
@@ -791,7 +791,7 @@ if(MEDS_BUILD_TESTS)
       endif()
    endif()
 
-   #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
+   #----- Fast-loop biophysics run-config TOML wiring ([soil]/[fast]/[snow]/[aerodynamics]).   #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
    target_link_libraries(test_biophysics_opts_config PRIVATE meds_config meds_testassert)
    meds_fortran_flags(test_biophysics_opts_config)

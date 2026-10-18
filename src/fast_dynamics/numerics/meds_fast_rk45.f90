@@ -718,7 +718,7 @@ contains
       if (present(iters))     iters     = nsteps
    end subroutine column_fast_step_rk45
 
-   !----- Under [energy].debug_error, stop the run if a step column_fast_step KEEPS breached a      !
+   !----- Under [fast].debug_error, stop the run if a step column_fast_step KEEPS breached a        !
    !      whole-column ledger. column_fast_step_rk45 records the checks without stopping, because   !
    !      a step handed to the ARK rescue is discarded and must not end the run. -------------------!
    subroutine rk45_ledgers_stop(budget, dt_fast, col_config)

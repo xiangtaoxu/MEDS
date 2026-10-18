@@ -763,11 +763,11 @@ contains
       call build_fast_context(c, fx)
       call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &
               fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, fx%col_config%soil_water_opts%rtol)
-      !----- [energy] has NO integrator tolerance to push into: the soil-thermal solve is one           !
+      !----- The soil heat has NO integrator tolerance to push into: the soil-thermal solve is one      !
       !      unconditionally-stable BE step, and the accuracy of the integrated soil energy belongs to   !
-      !      GRP_SE. What the dial must still reach is [energy].atol, the BUDGET-CLOSURE threshold,      !
-      !      which atol_scale scales directly, outside the tolerance groups. This assertion catches a    !
-      !      dropped path.                                                                               !
+      !      GRP_SE. What the dial must still reach is [fast].soil_energy_budget_atol, the               !
+      !      BUDGET-CLOSURE threshold, which atol_scale scales directly, outside the tolerance groups.    !
+      !      This assertion catches a dropped path.                                                      !
       call check_true('tol: atol_scale reaches the soil-energy BUDGET threshold',                                     &
               fx%col_config%energy%atol == c%energy%atol * 1.0e-2_wp, fx%col_config%energy%atol)
    end subroutine test_tolerance_unification

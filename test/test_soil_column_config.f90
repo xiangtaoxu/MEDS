@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_soil_column_config -- the [soil_column] keys reach the column they describe.         !
+! test_soil_column_config -- the [soil] column keys reach the column they describe.         !
 !                                                                                          !
 ! The soil column's grid, texture and thermal properties are config keys, worth anything   !
 ! only if they actually change the column, and that wiring is the kind that breaks         !
@@ -28,7 +28,7 @@ program test_soil_column_config
    integer(ik)                 :: n_layer, k
    real(wp), parameter         :: SOILGRIDS_BOTTOMS(5) = [0.05_wp, 0.15_wp, 0.30_wp, 0.60_wp, 1.00_wp]
 
-   call banner('[soil_column]: the keys reach the column')
+   call banner('[soil]: the column keys reach the column')
 
    !=== 1. The defaults: a 2 m column on the default layers. =================================!
    call check(sc%n_layer_bottoms == 0_ik,                'default layers are not the template')

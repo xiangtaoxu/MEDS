@@ -32,8 +32,11 @@ defect in it from every code path anyone runs.
 
 If a value is genuinely required, make it required and let the presence map catch it.
 
-## `[soil_column]` is the ground; `[soil]` is the solver over it
+## `[soil]` is the ground; `[fast]` holds the solvers' settings
 
+Every property of the ground is one block, whichever solver reads it: the column, its surface and
+both bottom boundaries, so one Fortran type does not map to one block (`soil_column_config_t`,
+`soil_opts_t` and `energy_opts_t` are each filled from `[soil]`, the last two also from `[fast]`).
 The physical column — depth and layer bottoms, hydraulic texture, retention family, thermal
 properties — is validated at load, because a layer count over the compile-time ceiling, layer
 bottoms that do not increase or a saturated water content below the residual produce a silently

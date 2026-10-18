@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_biophysics_opts_config -- unit tests for the [soil]/[energy]/[snow]/[aerodynamics] TOML  !
+! test_biophysics_opts_config -- unit tests for the [soil]/[fast]/[snow]/[aerodynamics] TOML    !
 ! wiring of the fast-loop biophysics run-config (meds_config_io load_* helpers -> the            !
 ! meds_biophysics_opts bundles). Writes a small TOML fixture, parses it, and checks: (1) string    !
 ! selectors map to the right enum codes, (2) scalar keys override the defaults, (3) keys ABSENT    !
@@ -29,15 +29,15 @@ program test_biophysics_opts_config
    !----- Write a fixture that overrides a SUBSET of each block (leaving others to default). ----!
    open(newunit=u, file=TOMLFILE, status='replace', action='write')
    write(u,'(a)') '[soil]'
-   write(u,'(a)') 'bottom_bc  = "aquifer"'
-   write(u,'(a)') 'rtol       = 2.5e-4'
-   write(u,'(a)') 'w_pond_max = 9.0'
+   write(u,'(a)') 'water_bottom_bc   = "aquifer"'
+   write(u,'(a)') 'w_pond_max        = 9.0'
    write(u,'(a)') 'ground_albedo_nir = 0.25'
+   write(u,'(a)') 'thermal_bottom_bc = "dirichlet"'
+   write(u,'(a)') 'deep_temp         = 283.24'
    write(u,'(a)') ''
-   write(u,'(a)') '[energy]'
-   write(u,'(a)') 'atol         = 0.05'
-   write(u,'(a)') 'bottom_bc    = "dirichlet"'
-   write(u,'(a)') 'deep_temp    = 283.24'
+   write(u,'(a)') '[fast]'
+   write(u,'(a)') 'water_rtol              = 2.5e-4'
+   write(u,'(a)') 'soil_energy_budget_atol = 0.05'
    write(u,'(a)') ''
    write(u,'(a)') '[snow]'
    write(u,'(a)') 'rho_snow   = 300.0'
@@ -59,25 +59,26 @@ program test_biophysics_opts_config
 
    print '(a)', 'test_biophysics_opts_config:'
 
-   !----- [soil]: string selectors -> enums, scalar overrides, and absent-keeps-default. -------!
-   call check_true('soil.bottom_bc "aquifer" -> SOIL_BC_AQUIFER', s%bottom_bc == SOIL_BC_AQUIFER, real(s%bottom_bc, wp))
-   call check('soil.rtol overridden',       s%rtol,     2.5e-4_wp, 1.0e-12_wp)
+   !----- [soil] and [fast]: string selectors -> enums, scalar overrides, and absent-keeps-default. -!
+   call check_true('soil.water_bottom_bc "aquifer" -> SOIL_BC_AQUIFER', s%bottom_bc == SOIL_BC_AQUIFER,   &
+                   real(s%bottom_bc, wp))
+   call check('fast.water_rtol overridden', s%rtol,     2.5e-4_wp, 1.0e-12_wp)
    call check('soil.w_pond_max overridden', s%w_pond_max, 9.0_wp, 0.0_wp)
    call check('soil.ground_albedo_nir overridden', s%ground_albedo_nir, 0.25_wp, 1.0e-12_wp)
    call check('soil.ground_albedo_vis absent -> default 0.15', s%ground_albedo_vis, 0.15_wp, 0.0_wp)
    call check('soil.ground_emissivity absent -> default 0.95', s%ground_emissivity, 0.95_wp, 0.0_wp)
    call check('soil.dsl_dmax absent -> default 0.015', s%dsl_dmax, 0.015_wp, 0.0_wp)
-   call check('soil.atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
+   call check('fast.water_atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
 
-   !----- [energy]: the budget-closure threshold atol, for the debug halt. The soil-thermal solve is !
-   !      one backward-Euler step, so the block has no substep keys. ---------------------------------!
-   call check('energy.atol overridden',       e%atol, 0.05_wp,    1.0e-12_wp)
-   !----- [energy] bottom thermal BC: selector -> enum, anchor temperature read, and the           !
+   !----- The soil heat's budget-closure threshold, for the debug halt. The soil-thermal solve is   !
+   !      one backward-Euler step, so there are no substep keys. ---------------------------------------!
+   call check('fast.soil_energy_budget_atol overridden', e%atol, 0.05_wp, 1.0e-12_wp)
+   !----- The [soil] thermal bottom BC: selector -> enum, anchor temperature read, and the         !
    !      anchor DEPTH left at its derived default when the key is absent. -------------------------!
-   call check_true('energy.bottom_bc "dirichlet" -> ENERGY_BC_DIRICHLET',                          &
+   call check_true('soil.thermal_bottom_bc "dirichlet" -> ENERGY_BC_DIRICHLET',                    &
                    e%bottom_bc == ENERGY_BC_DIRICHLET, real(e%bottom_bc, wp))
-   call check('energy.deep_temp overridden', e%deep_temp, 283.24_wp, 1.0e-9_wp)
-   call check('energy.deep_depth absent -> derived default 3.145', e%deep_depth, 3.145_wp, 1.0e-12_wp)
+   call check('soil.deep_temp overridden', e%deep_temp, 283.24_wp, 1.0e-9_wp)
+   call check('soil.deep_depth absent -> derived default 3.145', e%deep_depth, 3.145_wp, 1.0e-12_wp)
 
    !----- [snow]: overrides + default. ---------------------------------------------------------!
    call check('snow.rho_snow overridden',   sn%rho_snow,   300.0_wp, 1.0e-9_wp)
@@ -94,12 +95,12 @@ program test_biophysics_opts_config
       type(soil_opts_t) :: s0
       type(energy_opts_t) :: e0
       call load_soil_opts(tm, s0)     ! same table, fresh struct: same result as s (idempotent)
-      call check('reload soil.rtol matches', s0%rtol, s%rtol, 0.0_wp)
+      call check('reload fast.water_rtol matches', s0%rtol, s%rtol, 0.0_wp)
       call load_energy_opts(tm, e0)
-      call check_true('reload energy.bottom_bc matches', e0%bottom_bc == e%bottom_bc, real(e0%bottom_bc, wp))
+      call check_true('reload soil.thermal_bottom_bc matches', e0%bottom_bc == e%bottom_bc, real(e0%bottom_bc, wp))
    end block
 
-   !----- A table with NO [energy] block keeps the compiled default bottom boundary, geothermal. ---!
+   !----- A table with NO [soil] block keeps the compiled default bottom boundary, geothermal. -----!
    block
       type(toml_table_t)  :: tm2
       type(energy_opts_t) :: e2
@@ -111,7 +112,7 @@ program test_biophysics_opts_config
       call toml_parse_file('test_biophysics_opts_empty.toml', tm2, ok2)
       call check_true('empty-block TOML parsed', ok2, 0.0_wp)
       call load_energy_opts(tm2, e2)
-      call check_true('no [energy] block -> default ENERGY_BC_GEOTHERMAL',                         &
+      call check_true('no [soil] block -> default ENERGY_BC_GEOTHERMAL',                           &
                       e2%bottom_bc == ENERGY_BC_GEOTHERMAL, real(e2%bottom_bc, wp))
       open(newunit=u, file='test_biophysics_opts_empty.toml', status='old', action='write')
       close(u, status='delete')
@@ -128,7 +129,7 @@ program test_biophysics_opts_config
       do i = 1_ik, 2_ik
          open(newunit=u, file='test_biophysics_opts_bc.toml', status='replace', action='write')
          write(u,'(a)') '[soil]'
-         write(u,'(3a)') 'bottom_bc = "', trim(NAMES(i)), '"'
+         write(u,'(3a)') 'water_bottom_bc = "', trim(NAMES(i)), '"'
          close(u)
          call toml_parse_file('test_biophysics_opts_bc.toml', tb, okb)
          if (i == 1_ik) call load_soil_opts(tb, s_free)
@@ -136,10 +137,10 @@ program test_biophysics_opts_config
       end do
       open(newunit=u, file='test_biophysics_opts_bc.toml', status='old', action='write')
       close(u, status='delete')
-      call check_true('soil.bottom_bc "free_drain" -> drainage at f = 1, the default',                &
+      call check_true('soil.water_bottom_bc "free_drain" -> drainage at f = 1, the default',          &
                       s_free%bottom_bc == SOIL_BC_DRAIN .and. s_free%drain_factor == 1.0_wp .and.     &
                       s_default%bottom_bc == SOIL_BC_DRAIN .and. s_default%drain_factor == 1.0_wp)
-      call check_true('soil.bottom_bc "bedrock" -> drainage at f = 0',                                &
+      call check_true('soil.water_bottom_bc "bedrock" -> drainage at f = 0',                          &
                       s_rock%bottom_bc == SOIL_BC_DRAIN .and. s_rock%drain_factor == 0.0_wp)
    end block
 

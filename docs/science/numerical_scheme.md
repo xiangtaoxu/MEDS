@@ -187,7 +187,7 @@ Both schemes judge a sub-step by the same weighted root-mean-square of their err
 ```
 
 $`a_g`$ is the group's absolute tolerance, times `atol_scale`; $`r_g`$ is `ark_rtol` (soil moisture
-takes `[soil].rtol` and `atol`), or `rtol_all` for every group when it is set. The canopy films and the
+takes `[fast].water_rtol` and `water_atol`), or `rtol_all` for every group when it is set. The canopy films and the
 pond carry no group. A sub-step with $`\lVert\varepsilon\rVert\le 1`$ is accepted, and the next one is
 scaled by the I controller or, with `step_controller = "pi"`, the PI controller:
 
@@ -399,7 +399,7 @@ however small, since it is written on the start-of-step imbalance with no divisi
 and a tissue with neither coupling nor heat capacity (no area) takes the temperature of what it grows
 from and carries no flux ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eqs. (5), (7)).
 No tissue needs a floor that routes energy elsewhere. With the budget hard-stop armed
-(`[energy].debug_error`), a forced January month at Ithaca (a deciduous stand in winter) closes on
+(`[fast].debug_error`), a forced January month at Ithaca (a deciduous stand in winter) closes on
 both schemes: none of the 8928 whole-column checks fails, and the worst residual is 1.2×10⁻⁶ J m⁻²
 (ARK and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
 
@@ -438,13 +438,11 @@ rtol_all            = 0.0        # master relative-accuracy dial; 0 = per-group 
 atol_scale          = 1.0        # scales every absolute tolerance -- needed, rtol alone saturates
 step_controller     = "i"        # "pi" damps step oscillation on stiff transients
 forcing_sample_frac = 0.5        # where in the sub-step the meteorology is sampled
+debug_error         = false      # true = HALT on a non-closing budget. Use it when validating a
+                                 # change to any flux seam; leave it off for production.
 
 [output]
 numerics = true                  # the work + health counters; turn this on for any numerics study
-
-[energy]
-debug_error = false              # true = HALT on a non-closing budget. Use it when validating a
-                                 # change to any flux seam; leave it off for production.
 ```
 
 **Three traps worth naming.**
