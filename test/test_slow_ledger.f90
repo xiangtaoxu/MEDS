@@ -25,6 +25,7 @@ program test_slow_ledger
    use meds_config,             only : meds_config_t
    use meds_site_state_vars,    only : site_t
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
+   use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
                                        soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
@@ -757,8 +758,8 @@ contains
       call check_close(psi_from_water_content(site%cohort%leaf_water_mass(m), leaf_curve,                &
                        site%cohort%leaf_carbon(m)), psi_birth, 1.0e-9_wp,                               &
                        'birth: the leaves hold the water of that potential')
-      !----- A patch not seeded yet (its canopy air at the type's 0 K) gives the starting state. ----!
-      site%patch%cas(1)%can_temp = 0.0_wp
+      !----- A patch not seeded yet (its canopy air at the type's UNSET_POSITIVE) gives the starting state. !
+      site%patch%cas(1)%can_temp = UNSET_POSITIVE
       call patch_physical_state(site%patch%cas(1), site%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
       call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta_start)
       call check_close(t_birth, cfg%init_soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')

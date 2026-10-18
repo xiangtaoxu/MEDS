@@ -911,3 +911,13 @@ a store's content is `*_energy` and the heat a flow carries is `*_enth`; the res
 variable names. `cohort_birth_state` is `patch_physical_state`. The recruit bank stays in plants per m²
 for now (§9). Bit-identical.
 
+**Diagnostic prefixes and unset markers (2026-10-18).** The diagnostic rows take one prefix per level,
+`CO_`, `PA_`, `PY_`; the cohort's fast and slow rows are numbered once (the slow block holds rows
+`N_CO_FAST_ROWS+1..N_CO_ROWS`, so a row used on the wrong block is out of bounds) with one fusion table,
+`CO_FUSION_KIND`. The routines are `verb_level_diag`, the fusion kinds `FSK_*`. The "no value yet"
+markers are `UNSET_POSITIVE` and `UNSET_NEGATIVE` with the tests `is_unset_positive` and
+`is_unset_negative`, which keep each old check's sign; the growth temperature and an unseeded canopy
+air use them. The mean diameter growth can be negative, so its test is its sample count. The other
+values that look like markers but are used as numbers (`adapt_dt_last`, the canopy-air placeholders)
+are unchanged (§9). Bit-identical, including a run with every output group on.
+

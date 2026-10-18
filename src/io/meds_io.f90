@@ -24,6 +24,7 @@
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
+   use meds_state_defaults, only : is_unset_positive
    use meds_config,   only : meds_config_t, growth_window_steps, pft_tissue_curves
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
@@ -700,7 +701,7 @@ contains
             call gv_dbl_opt(ncid, 'wood_water_mass', ncoh, c%wood_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_temp',       ncoh, c%wood_temp(1:ncoh))
-            !----- Stomatal feedback (OPTIONAL): site_alloc has already set DMAX_PSI_LEAF_UNSET /      !
+            !----- Stomatal feedback (OPTIONAL): site_alloc has already set UNSET_NEGATIVE /           !
             !      DMAX_PSI_LEAF_ACCUM_RESET, so a state file without them seeds from the soil; one with  !
             !      them restores the true feedback state. ------------------------------------------------!
             call gv_dbl_opt(ncid, 'dmax_psi_leaf',   ncoh, c%dmax_psi_leaf(1:ncoh))
@@ -760,7 +761,7 @@ contains
             end block
          else
             do i = 1_ik, ncoh
-               if (site%cohort%growth_avg(i) >= 0.0_wp) then
+               if (.not. is_unset_positive(site%cohort%growth_avg(i))) then
                   site%cohort%growth_count(i)   = nwin
                   site%cohort%growth_accum(i)   = site%cohort%growth_avg(i) * real(nwin, wp)
                   site%cohort%growth_hist(:, i) = site%cohort%growth_avg(i)

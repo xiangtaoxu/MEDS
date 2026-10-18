@@ -49,7 +49,7 @@ program test_state_roundtrip
       site%cohort%leaf_temp(i)       = 291.5_wp + real(i, wp)
       site%cohort%wood_temp(i)       = 289.5_wp + real(i, wp)
       !----- The predawn-psi stomatal feedback. Stamped NEGATIVE and distinct so a round-trip that     !
-      !      drops them is caught -- both sentinels are the opposite sign (DMAX_PSI_LEAF_UNSET = +1,       !
+      !      drops them is caught -- both sentinels are the opposite sign (UNSET_NEGATIVE = +1,            !
       !      DMAX_PSI_LEAF_ACCUM_RESET = -1e30), so a silent fallback cannot masquerade as a recovered value.  !
       site%cohort%dmax_psi_leaf(i)   = -0.75_wp - 0.01_wp * real(i, wp)
       site%cohort%dmax_psi_leaf_accum(i) = -0.40_wp - 0.01_wp * real(i, wp)

@@ -10,6 +10,7 @@ module meds_site_state_vars
    use meds_diag_vars,          only : polygon_diag_block, reset_cohort_diag, reset_patch_diag,          &
                                        reset_polygon_diag
    use meds_kinds,              only : wp, ik
+   use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_allometry,          only : allometry_t
    use meds_pft_params,         only : pft_table_t
    use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, alloc_cohort_block, free_cohort_block, reorder_cohort_block
@@ -49,9 +50,9 @@ module meds_site_state_vars
       !      [leaf_physiology].acclim_window_days (~30 d), which is what Kattge & Knorr (2007)       !
       !      fitted dS against. PROGNOSTIC and slow, so it is written to the state file:             !
       !      rebuilding a month of memory after every restart would make the acclimated optimum      !
-      !      jump. Negative means "not yet seeded" -- the first slow step adopts that day's mean     !
-      !      outright rather than relaxing from an arbitrary origin. --------------------------------!
-      real(wp)           :: t_growth_avg = -1.0_wp       !< [K] running-mean growth temperature
+      !      jump. Until it is seeded, the first slow step adopts that day's mean outright rather    !
+      !      than relaxing from an arbitrary origin. -------------------------------------------------!
+      real(wp)           :: t_growth_avg = UNSET_POSITIVE  !< [K] running-mean growth temperature
       !==========================================================================================!
       ! 4. FAST-TO-SLOW ACCUMULATORS (the model reads them)                                      !
       !==========================================================================================!

@@ -22,7 +22,6 @@ module meds_vegetation_dynamics
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
    use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon
-   use meds_state_defaults,       only : GROWTH_AVG_UNSET
    use meds_site_state_vars,  only : site_t
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
@@ -478,7 +477,7 @@ contains
    ! CARBON vital-RATE assembler: turn the per-cohort carbon fluxes (npp_wood for the dbh rate,   !
    ! npp_repro for recruits) into the mortality [1/yr] + recruitment [plant/m2/yr] arrays, by     !
    ! calling the per-individual rate laws (meds_demography_rates). The site-level sweep (patch    !
-   ! reduction + baseline seed rain + the GROWTH_AVG_UNSET test) stays here in the DRIVER, so     !
+   ! reduction + baseline seed rain + the growth-history test) stays here in the   DRIVER, so     !
    ! the laws remain state-free.                                                                  !
    !---------------------------------------------------------------------------------------!
    subroutine compute_vital_rates(site, cfg, npp_wood, npp_repro, exhausted, dt_yr, mortality, recruitment)
@@ -518,7 +517,7 @@ contains
                                      dt_yr, pft%wood_density(pf), pft%hgt_max(pf),               &
                                      pft%aboveground_frac(pf))
             mortality(j) = camac_mortality(cohort%growth_avg(j), dbh_rate,                          &
-                                           cohort%growth_avg(j) /= GROWTH_AVG_UNSET,                &
+                                           cohort%growth_count(j) > 0_ik,                           &
                                            pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
             !----- A cohort with no leaves and no storage cannot flush again, so it dies: its density  !
             !      goes to the floor this step, down the path every death takes (its carbon to        !

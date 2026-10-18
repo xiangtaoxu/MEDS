@@ -28,8 +28,8 @@ module meds_cohort_state_vars
    use meds_config,          only : hydraulics_config_t, pft_tissue_curves
    use meds_diag_vars,       only : cohort_diag_block, expand_cohort_diag, reorder_cohort_diag,              &
                                     copy_cohort_diag, clear_cohort_diag
-   use meds_state_defaults,  only : GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET,      &
-                                    LIGHT_HOURS_MEAN_UNSET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
+   use meds_state_defaults,  only : UNSET_POSITIVE, UNSET_NEGATIVE, DMAX_PSI_LEAF_ACCUM_RESET,            &
+                                    PHENO_FLUSH_INIT, PHENO_SHED_INIT
    implicit none
    private
 
@@ -109,7 +109,7 @@ module meds_cohort_state_vars
       !==========================================================================================!
       ! 8. GROWTH HISTORY (the mortality law reads growth_avg)                                   !
       !==========================================================================================!
-      real(wp),    allocatable :: growth_avg(:)       !< [cm/yr] moving-average dbh growth
+      real(wp),    allocatable :: growth_avg(:)       !< [cm/yr] moving-average dbh growth, read once growth_count > 0
       real(wp),    allocatable :: growth_accum(:)     !< [cm/yr] sum of the samples in the window
       integer(ik), allocatable :: growth_count(:)     !< samples in the window
       real(wp),    allocatable :: growth_hist(:,:)    !< [cm/yr] (window, cohort) ring buffer of samples
@@ -190,7 +190,7 @@ contains
       cohort%wood_water_mass = 0.0_wp
       cohort%leaf_surf_water = 0.0_wp
       cohort%wood_surf_water = 0.0_wp
-      cohort%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
+      cohort%dmax_psi_leaf = UNSET_NEGATIVE
       !----- 5. Energy --------------------------------------------------------------------------!
       allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap))
       cohort%leaf_temp = 0.0_wp
@@ -211,11 +211,11 @@ contains
       cohort%cold_degree_days = 0.0_wp
       cohort%dry_psi_sum = 0.0_wp
       cohort%wet_psi_sum = 0.0_wp
-      cohort%light_hours_mean = LIGHT_HOURS_MEAN_UNSET
+      cohort%light_hours_mean = UNSET_POSITIVE
       !----- 8. Growth history ------------------------------------------------------------------!
       allocate(cohort%growth_avg(cap), cohort%growth_accum(cap), cohort%growth_count(cap),                     &
                cohort%growth_hist(nwin, cap))
-      cohort%growth_avg = GROWTH_AVG_UNSET
+      cohort%growth_avg = UNSET_POSITIVE
       cohort%growth_accum = 0.0_wp
       cohort%growth_count = 0_ik
       cohort%growth_hist = 0.0_wp
@@ -707,10 +707,10 @@ contains
       cohort%owner_patch(m)      = owner_patch
       cohort%nplant(m)           = nplant
       cohort%dbh(m)              = dbh
-      cohort%growth_avg(m)       = GROWTH_AVG_UNSET   ! set on its first growth step
+      cohort%growth_avg(m)       = UNSET_POSITIVE     ! read once growth_count > 0
       !----- UNSET: the fast loop seeds it from the surface-layer soil potential on the cohort's  !
       !      first step, so a recruit starts at its patch's actual water status, not at 0 (turgid). !
-      cohort%dmax_psi_leaf(m)   = DMAX_PSI_LEAF_UNSET
+      cohort%dmax_psi_leaf(m)   = UNSET_NEGATIVE
       cohort%dmax_psi_leaf_accum(m) = DMAX_PSI_LEAF_ACCUM_RESET
       cohort%growth_accum(m)     = 0.0_wp
       cohort%growth_count(m)     = 0_ik
@@ -725,7 +725,7 @@ contains
       cohort%cold_degree_days(m)    = 0.0_wp
       cohort%dry_psi_sum(m)         = 0.0_wp
       cohort%wet_psi_sum(m)         = 0.0_wp
-      cohort%light_hours_mean(m) = LIGHT_HOURS_MEAN_UNSET  ! no light memory: its first day sets it
+      cohort%light_hours_mean(m) = UNSET_POSITIVE  ! no light memory: its first day sets it
       cohort%sla(m)                = pft%sla(ipft)
       cohort%vcmax25(m)              = pft%vcmax25(ipft)          ! dynamic leaf traits born at
       cohort%rd25(m)                 = pft%rd25(ipft)             ! top-of-canopy; plasticity relaxes

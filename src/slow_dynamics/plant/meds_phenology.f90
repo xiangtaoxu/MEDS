@@ -27,6 +27,7 @@ module meds_phenology
    use meds_numerics,    only : logistic, clamp01
    use meds_time,        only : doy_effective
    use meds_phenology_types
+   use meds_state_defaults, only : is_unset_positive
    implicit none
    private
 
@@ -151,7 +152,7 @@ contains
       !      no light memory yet (a cold start or a recruit) starts from today's hours, so its  !
       !      first days do not read as darkness.                                             !
       if (iand(both, CUE_LIGHT) /= 0_ik) then
-         if (state%light_hours_mean < 0.0_wp) then
+         if (is_unset_positive(state%light_hours_mean)) then
             state%light_hours_mean = env%par_hours
          else
             w = min(1.0_wp, dt / max(params%light_window, dt))

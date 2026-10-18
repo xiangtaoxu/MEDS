@@ -40,9 +40,9 @@ contains
    end function npp_to_growth
 
    !----- Camac et al. (2018) additive mortality hazard [1/yr] on the cohort's EFFECTIVE growth:  !
-   !       its tracked running-mean growth (growth_avg) once seeded, else the instantaneous rate.  !
-   !       `avg_is_set` is the caller's test of the moving-average sentinel (kept out of this     !
-   !       law, which sees no cohort state).                                                      !
+   !       its tracked running-mean growth (growth_avg) once it has a sample, else the            !
+   !       instantaneous rate. `avg_is_set` is the caller's test (the cohort's growth_count > 0), !
+   !       kept out of this law, which sees no cohort state.                                      !
    elemental pure function camac_mortality(growth_avg, growth_inst, avg_is_set,                 &
                                            mort_gamma, mort_alpha, mort_beta) result(mort)
       real(wp), intent(in) :: growth_avg, growth_inst, mort_gamma, mort_alpha, mort_beta

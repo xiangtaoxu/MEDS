@@ -35,7 +35,7 @@ module meds_fast_types
    use meds_config, only : hydraulics_config_t, pft_tissue_curves, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
    use meds_pft_params, only : pft_table_t, HYD_UNSET
-   use meds_state_defaults,    only : DMAX_PSI_LEAF_UNSET
+   use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
    private
 
@@ -207,7 +207,7 @@ module meds_fast_types
       !      (docs/science/leaf_gas_exchange.md §4.2). It reaches the leaf kernel as the OPTIONAL   !
       !      `psi` argument of leaf_gas_exchange_batch, which reads an absent one as 0 (no stress), !
       !      so column_prepass always passes it. ---------------------------------------------------!
-      real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; DMAX_PSI_LEAF_UNSET => seed from soil
+      real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; UNSET_NEGATIVE => seed from soil
    end type column_cohort_t
 
    !----- Prescribed per-step forcing the higher layers (RT, met) supply. ---------------------!
@@ -819,7 +819,7 @@ contains
       !----- UNSET, not 0. A 0 here would read as FULLY TURGID and silently disable the stomatal    !
       !      stress limb for any caller that forgets to fill it; the sentinel makes column_prepass    !
       !      seed from the soil instead, which is the safe default. --------------------------------!
-      col_cohort%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
+      col_cohort%dmax_psi_leaf = UNSET_NEGATIVE
    end subroutine alloc_column_cohort
 
    !---------------------------------------------------------------------------------------!

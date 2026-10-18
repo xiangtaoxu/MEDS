@@ -16,6 +16,7 @@
 !==========================================================================================!
 module meds_polygon
    use meds_kinds,                  only : wp, ik
+   use meds_state_defaults,         only : is_unset_positive
    use meds_therm_lib,              only : temp_to_internal_energy, internal_energy_to_temp
    use meds_config,                 only : meds_config_t
    use meds_time,                   only : meds_time_t, time_to_string
@@ -435,7 +436,7 @@ contains
       real(wp) :: t_day, w
       if (poly%site%pheno_tair_n < 1_ik) return          ! no fast sub-steps ran: nothing to average
       t_day = poly%site%pheno_tair_sum / real(poly%site%pheno_tair_n, wp)
-      if (poly%site%t_growth_avg <= 0.0_wp) then
+      if (is_unset_positive(poly%site%t_growth_avg)) then
          poly%site%t_growth_avg = t_day
       else
          w = min(1.0_wp, real(step_days, wp) / max(poly%cfg%acclim_window_days, real(step_days, wp)))

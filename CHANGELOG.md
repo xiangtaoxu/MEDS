@@ -82,6 +82,11 @@ reorganized by model hierarchy, with no change to any result (#448).
     is `set_cohort_wood_allometry`.
   - The "no value yet" markers and a newborn's phenology are in `meds_state_defaults`, and a tissue's
     heat capacity is `tissue_heat_capacity` in `meds_therm_lib`.
+  - Two "no value yet" markers replace the per-field ones, by the sign of the field they mark:
+    `UNSET_POSITIVE` (−1) for a field never negative once set, `UNSET_NEGATIVE` (+1) for one never
+    positive, tested by `is_unset_positive` and `is_unset_negative`. The growth temperature and an
+    unseeded canopy air (was 0 K) use them too. A cohort's mean diameter growth can be negative, so
+    it counts as set once it has a sample (`growth_count > 0`).
   - The four files write one statement per line: no `;` joins two statements.
   - The diagnostic rows are renumbered by section, the patch's slow rows after its fast rows; every
     reader takes them by name.

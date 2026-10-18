@@ -26,6 +26,7 @@ module meds_fast_prepass
    use meds_plant_types, only : veg_thermal_params_t
    use meds_fast_types, only : patch_biophys_t
    use meds_soil_column_config, only : soil_params_t, top_soil_psi
+   use meds_state_defaults, only : is_unset_negative
    use meds_biophysics_opts, only : aero_cfg_t
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
    use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, hydro_params_table_t, hydro_opts_t, &
@@ -186,7 +187,7 @@ contains
    !                                                                                                !
    ! STOMATAL WATER STRESS: beta_stomata = min(1, exp(sref*(psi - psi_onset)))                      !
    ! (docs/science/leaf_gas_exchange.md eq. (10)) is driven by YESTERDAY's daily-maximum leaf water !
-   ! potential -- the model's predawn potential. DMAX_PSI_LEAF_UNSET (positive, so unmistakable)    !
+   ! potential -- the model's predawn potential. UNSET_NEGATIVE (positive, so unmistakable)         !
    ! means the cohort has no history yet: a recruit, or the first step of a run. It is seeded from  !
    ! the SURFACE-LAYER soil potential so it starts at its patch's actual water status rather than   !
    ! at 0, which would read as fully turgid.                                                        !
@@ -243,7 +244,7 @@ contains
       end do
       dmax_psi_seed = top_soil_psi(soil, biophys%soil_water%theta(1))
       do i = 1_ik, n
-         if (col_cohort%dmax_psi_leaf(i) > 0.0_wp) then
+         if (is_unset_negative(col_cohort%dmax_psi_leaf(i))) then
             dmax_psi_arr(i) = dmax_psi_seed                    ! UNSET sentinel -> seed from the soil
          else
             dmax_psi_arr(i) = col_cohort%dmax_psi_leaf(i)

@@ -19,7 +19,7 @@ module meds_patch_state_vars
    use meds_constants,        only : n_soil_layer_max, n_snow_layer_max, tiny_num, t_3ple
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, expand_patch_diag, reorder_patch_diag
-   use meds_state_defaults,   only : CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
+   use meds_state_defaults,   only : UNSET_POSITIVE, is_unset_positive, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
    use meds_config,           only : meds_config_t, DIST_PRIMARY
    use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
    implicit none
@@ -38,7 +38,7 @@ module meds_patch_state_vars
       real(wp) :: can_enthalpy = 0.0_wp                     !< [J/kg]     specific enthalpy (prognostic)
       real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg]    specific humidity (prognostic)
       real(wp) :: can_co2      = CAN_CO2_UNSEEDED           !< [umol/mol] CO2 mixing ratio in dry air (prognostic)
-      real(wp) :: can_temp     = 0.0_wp                     !< [K]        diagnosed
+      real(wp) :: can_temp     = UNSET_POSITIVE             !< [K]        diagnosed; unset until the fast loop seeds it
       real(wp) :: can_depth    = CAN_DEPTH_UNSET            !< [m]        tallest cohort + freeboard, set by the slow step
    end type cas_state_t
 
@@ -508,8 +508,7 @@ contains
       type(soil_params_t),       intent(in)  :: soil
       real(wp),                  intent(out) :: temp, psi
       real(wp) :: theta(n_soil_layer_max)
-      !----- A seeded canopy air has a temperature: the type's default is 0 K. ----------------!
-      if (cas%can_temp > 0.0_wp) then
+      if (.not. is_unset_positive(cas%can_temp)) then
          temp = cas%can_temp
          psi  = top_soil_psi(soil, soil_water%theta(1))
       else
