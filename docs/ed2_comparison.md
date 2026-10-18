@@ -436,7 +436,7 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 | Forcing | `src/io/input/forcing/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
 | Fusion / fission | `src/slow_dynamics/demography/meds_demography_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
 | Parameters | `src/config/` (TOML, all required); [`docs/configuration.md`](configuration.md) | `ed_params.f90`, the `*_coms` modules, `ED2IN` |
-| State | `src/state/site/meds_site_state_types.f90` | `memory/ed_state_vars.F90` |
+| State | `src/state/meds_{cohort,patch,site}_state_vars.f90`, named after ED2's; MEDS has no global like `edgrid_g` | `memory/ed_state_vars.F90` |
 | Output | `src/io/output/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |
 
 Background reading for both: Moorcroft et al. 2001 (*Ecol. Monogr.*), Medvigy et al. 2009 (*JGR*),

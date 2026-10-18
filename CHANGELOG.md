@@ -15,7 +15,8 @@ before and after.
 ## [Unreleased]
 
 The soil column's parameters become configuration, the ground becomes one block of the main config,
-and a new cohort starts in its patch's state instead of at two constants (#447).
+and a new cohort starts in its patch's state instead of at two constants (#447). The state layer is
+reorganized by model hierarchy, with no change to any result (STATE_PR).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -55,6 +56,27 @@ and a new cohort starts in its patch's state instead of at two constants (#447).
 - **The ground is one block of the main config** (#447), as listed under Upgrading. The Fortran option
   types are unchanged: they stay grouped by the solver that reads them. Outputs are unchanged bit for
   bit.
+
+- **The state layer is one library of four files, by model hierarchy** (STATE_PR;
+  `docs/dev_plans/MEDS_STATE_HIERARCHY_PLAN.md`). `src/state/column/` and `src/state/site/` become
+  `src/state/`: `meds_cohort_state_vars` (the cohort block and its lockstep),
+  `meds_patch_state_vars` (one patch's stores, their blends, and the patch block),
+  `meds_site_state_vars` (`site_t`) and `meds_diag_vars` (the diagnostic accumulators, formerly
+  `meds_site_diag_types`), named after ED2's `ed_state_vars`. Each file is laid out in sections,
+  and every list of a block's fields follows the same order.
+  - The cohort block carries the site's PFT table instead of 16 per-cohort copies of PFT traits
+    (the `p_*` fields and `gather_pft_params` are gone).
+  - The patch arrays have one reorder, `patch_reorder`, which `sort_patches` and `patch_compact` call.
+  - `soil_column_t` is `soil_water_column_t`; the slow driver's pool-change type moves to
+    `meds_vegetation_dynamics` as `pool_change_block`.
+  - The diagnostic rows are renumbered by section, the patch's slow rows after its fast rows; every
+    reader takes them by name.
+  - The kernels' rule never to see `site_t` is checked by a lint (ctest `kernels_no_site_state`),
+    since the library boundary could not hold it.
+
+  Results are unchanged: a two-year census run and a one-year run with every output group on match
+  the previous version bit for bit. Fortran code that imports the old modules imports the new ones;
+  the Python API is unchanged.
 
 ### Removed
 

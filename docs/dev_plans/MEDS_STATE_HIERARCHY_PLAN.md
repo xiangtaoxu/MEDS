@@ -434,7 +434,7 @@ The graph in `src/README.md` becomes:
                           └──→ slow_kernels    the kernels_no_site_state lint, §5)
 ```
 
-That is 20 CMake libraries instead of 21. Each kernel library still builds on its own:
+That is 21 CMake libraries instead of 22. Each kernel library still builds on its own:
 `cmake --build … --target meds_fast_kernels` from a clean tree builds `meds_shared`, `meds_config` and
 `meds_state` first.
 
@@ -802,3 +802,37 @@ each file's own alignment.
 | `CHANGELOG.md` | one entry; no user-visible effect |
 
 Archived plans keep the old paths, as the dev_plans rule says.
+
+---
+
+## 11. Implementation (2026-10-18)
+
+Done on branch `refactor/state-hierarchy`, one commit per step. The order differs from §8 in one
+way: the PFT table (step 4), the pool-change type (step 5) and the patch reorder (step 7) went in
+before the section reorder of their files, so no list was written in section order only to be
+rewritten in the next commit.
+
+| Commit | Step |
+|---|---|
+| Plan the state layer by model hierarchy | this document |
+| State: one library of four files by model hierarchy | 1 |
+| State: each level frees its own fields; patch_birth_state takes the patch | 2 |
+| Cohort block: one PFT table instead of 16 per-cohort copies | 4 |
+| Move the pool-change type to its one user, named for what it holds | 5 |
+| Cohort file in sections | 3, cohort |
+| One reorder for the patch arrays | 7 |
+| Patch file in sections; soil_column_t becomes soil_water_column_t | 3, patch |
+| Site file and diagnostic rows in sections | 3, site and diagnostics |
+| Lint: the kernels take only the per-patch store types | 6 |
+| Docs | 8 |
+
+**Verification.** After every step: ctest on ifx Release, and the two-year census comparison of #447
+against `b0d47a7`, identical on all 51 files and 8,107 variables. After the diagnostic renumbering,
+also a one-year run with every output group and the FAST tier on: identical on 26 files and 4,822
+variables. The lint passes on the tree and fails on a copy with an injected `site_t` import and on
+an injected `patch_block` in a kernel's only-list. ctest is 76 tests with the lint.
+
+**Found on the way, not changed.** `cohort_ensure_capacity` does not carry `overtopping_lai` across
+a grow (the only one of the 45 cohort arrays it leaves out), so a grow resets it to 0 until the slow
+step recomputes it from the stand. That was the behaviour before, and the list now says so where it
+happens; whether a grow mid-step should keep it is a question for its own change.

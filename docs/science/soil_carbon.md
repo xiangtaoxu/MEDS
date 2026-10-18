@@ -301,7 +301,7 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 | instantaneous $`R_h`$ (the fast↔slow seam kernel) | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix` |
 | steady state; capacity / potential / residence time | `meds_soil_biogeochem`: `solve_soil_carbon_steady_state`, `soil_carbon_diagnostics` |
 | pool plausibility | `meds_soil_biogeochem`: `soil_carbon_bad_pool`, `soil_carbon_pool_name` |
-| pools, indices, audit/diagnostic records | `meds_biogeochem_types`; `soil_carbon_t` / `xi_accum_t` / `litter_input_t` in `meds_column_state_types` |
+| pools, indices, audit/diagnostic records | `meds_biogeochem_types`; `soil_carbon_t` / `xi_accum_t` / `litter_input_t` in `meds_patch_state_vars` |
 | `[soil_carbon]` bundle + selectors | `meds_biogeochem_opts`: `decomp_opts_t`, `DECOMP_SCHEME_*`, `DECOMP_STEP_*` |
 | daily driver, seam guard, ledger | `meds_biogeochem_dynamics`: `advance_biogeochem_dynamics` |
 | litter accumulation | `meds_vegetation_dynamics`; kills in `meds_demography_{cohort,patch}_fusefiss` |

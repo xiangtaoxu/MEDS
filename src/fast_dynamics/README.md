@@ -21,7 +21,8 @@ Each domain owns its argument records: **`meds_canopy_types`** (radiative transf
 aerodynamics), **`meds_soil_types`** (hydrology, thermal, snow), **`meds_plant_types`** (leaf,
 hydraulics, tissue energy). The `SOIL_*` / `ENERGY_*` / `HR_*` selector codes live one layer down in
 `config/meds_biophysics_opts`, and the prognostic per-store column state — the canopy-air state, the
-two soil columns, the snow store — lives in `state/column`, so the demographic state hub can own it.
+two soil columns, the snow store — lives in `state/meds_patch_state_vars`, with the rest of what a
+patch holds, and the kernels take those types from there.
 
 ## The process families
 

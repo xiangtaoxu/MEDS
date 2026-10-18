@@ -378,7 +378,7 @@ and passes the resulting flux into the CO₂ source.
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
-| Soil water | `soil_column_t` | `theta(:)`, `w_surface` | `psi_soil` |
+| Soil water | `soil_water_column_t` | `theta(:)`, `w_surface` | `psi_soil` |
 | Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 
 ## Code map
@@ -397,7 +397,7 @@ and passes the resulting flux into the CO₂ source.
 | the column from the soil maps | `meds_surface_maps`: `apply_map_inputs` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; `meds_fast_prepass`: `patch_heterotrophic_respiration` |
-| prognostic soil types | `meds_column_state_types`: `soil_column_t`, `soil_energy_column_t` |
+| prognostic soil types | `meds_patch_state_vars`: `soil_water_column_t`, `soil_energy_column_t` |
 
 ## References
 - ED2 `../ED2/ED/src/dynamics/`: `lsm_hyd.f90`, `soil_respiration.f90` — the soil stores in the reference model.

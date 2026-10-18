@@ -30,14 +30,13 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  the [region] block), and the soil column with the
 │                  parameters derived from it (meds_soil_column_config)      3 707
 │
-│  ── STATE, a layer in two halves ───────────────────────────────────────────
-├── state/
-│   ├── column/    ONE patch, seen vertically: the soil-water, soil-energy,
-│   │              snow, canopy-air and soil-carbon reservoirs, and their
-│   │              fusion blends                                                587
-│   └── site/      ALL the patches: the flat cohort structure-of-arrays, the
-│                  patch CSR map, the lockstep reorder machinery, site_t,
-│                  and the diagnostic accumulators                           1 896
+│  ── STATE, one file per level of the hierarchy, each in sections ────────────
+├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
+│                  and its lockstep; meds_patch_state_vars: one patch's stores
+│                  (canopy air, snow, soil water and heat, soil carbon), their
+│                  blends, and the patch block with its CSR map;
+│                  meds_site_state_vars: site_t; meds_diag_vars: the
+│                  diagnostic accumulators                                   2 612
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
 ├── fast_dynamics/       sub-daily, one dt_fast per step                     11 632
@@ -94,14 +93,16 @@ from becoming the place a file goes when no other place fits.
 
 ## Four rules, in the order you apply them
 
-**1. Kernel folders never see `site_t`.** `fast_dynamics/{canopy,plant,soil}`,
-`slow_dynamics/{plant,soil}` and `state/column` link only `state_column` and `config`. That is what
-keeps each kernel library building standalone, keeps the kernels eligible for OpenMP `target`
+**1. Kernel folders never see `site_t`.** `fast_dynamics/{canopy,plant,soil}` and
+`slow_dynamics/{plant,soil}` take from the state layer only the per-patch store types and their
+blends, through `use meds_patch_state_vars, only : ...`, and link only `state` and `config`. That is
+what keeps each kernel library building standalone, keeps the kernels eligible for OpenMP `target`
 offload (a portability property worth holding, though offload is not currently a speedup — see
 [`dev_plans/archive/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/archive/MEDS_GPU_EVALUATION.md)), and lets a
-test link one kernel library alone. It is checked, not assumed:
-there is no occurrence of `site_t` in any of those folders. **If a new routine needs `site_t`, it
-is driver code**, and it belongs in a `driver/` folder.
+test link one kernel library alone. It is checked on every ctest run, by `kernels_no_site_state`
+(`scripts/lint/check_kernel_state.py`), because the library boundary cannot hold it: every module
+file goes to one shared directory, so any file can use any built module. **If a new routine needs
+`site_t`, it is driver code**, and it belongs in a `driver/` folder.
 
 **2. A kernel goes where its caller's timescale is**, and within that, in its domain folder. A
 kernel called from *both* tiers is a documented seam, never a folder of its own. There is exactly
@@ -109,8 +110,9 @@ one: `heterotrophic_respiration_matrix`, so that the sub-daily respiration debit
 matrix the daily step does. Co-locating it with the daily step is what closes the seam gap to
 machine precision.
 
-**3. A derived type lives with whoever mutates it.** If two subsystems mutate it, it is boundary
-state and belongs in `state/column`. **Parameters are not state**: they are derived once and never
+**3. A derived type lives with whoever mutates it.** If two subsystems mutate it, it is state, and
+belongs in the `state/` file of the level that holds it: a patch's stores in
+`meds_patch_state_vars`, a cohort's fields in `meds_cohort_state_vars`. **Parameters are not state**: they are derived once and never
 integrated, so they live with the configuration they are derived from. The soil column's
 (`soil_params_t`, the layer grid and their builders) are in `config/meds_soil_column_config`, as
 the PFT table's derived rates are in `config/meds_pft_params`.
@@ -128,16 +130,16 @@ Acyclic by construction, and the build enforces it. Every arrow is a `target_lin
 in [`CMakeLists.txt`](../CMakeLists.txt).
 
 ```
-  shared ──→ state_column, config ─────→ state_site ──→ demography ──→ io_prep
-     │            │                          ↑              │             │
-     │            ├──→ fast_kernels ─────────┤              │             │
-     │            └──→ slow_kernels ─────────┘              │             │
-     │                                                      │             │
-  netcdf_c, config ──→ forcing ───────────────────────→  fast  ←──────────┤
-                                                          slow  ←─────────┘
-                                                          init
-                                                            └──→ stepper ──→ model
-                                                                             (INTERFACE)
+  shared ──→ config ──→ state ──────────────────────→ demography ──→ io_prep
+     │                    │                              ↑             │
+     │                    ├──→ fast_kernels ──────┐      │             │
+     │                    └──→ slow_kernels ──────┼──────┘             │
+     │                                            │                    │
+  netcdf_c, config ──→ forcing ─────────────────→ fast  ←──────────────┤
+                                                  slow  ←──────────────┘
+                                                  init
+                                                    └──→ stepper ──→ model
+                                                                     (INTERFACE)
   forcing, config ──→ maps ──────────────────────┐
   io_stream ─────────────────────────────────────┤
   model ─────────────────────────────────────────┴──→ driver ──→ meds_main
@@ -156,8 +158,9 @@ One edge is worth knowing because it is easy to get wrong:
 | You are adding | It goes in |
 |---|---|
 | a soil, canopy or plant process | `fast_dynamics/<domain>/` or `slow_dynamics/<domain>/`, by the **cadence of its caller** |
-| a reservoir two subsystems mutate | `state/column/` |
-| a per-cohort field | `state/site/` — and the lockstep reorder, every creation site, and the fusion policy |
+| a per-patch store the kernels and the patch block share | `state/meds_patch_state_vars.f90`: its type, its blend, and its section of `patch_block` |
+| a per-cohort field | `state/meds_cohort_state_vars.f90`: its section of `cohort_block` and of each lockstep list — and every creation site, and the fusion policy |
+| a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_2_patches` and the new gap in `apply_patch_disturbance` |
 | a stateless constitutive curve | `shared/functions/` |
 | a numerical, calendar or checking helper every layer needs | `shared/util/`, if it uses nothing outside `shared/` |
 | a TOML block | `config/`, as an `*_opts` leaf so `meds_config` can carry it with no back-edge |
@@ -174,11 +177,12 @@ These are the things that break quietly if you do not know them.
 - **State is a flat, site-wide structure of arrays.** Every cohort of the whole site lives in one
   contiguous set of 1-D arrays, with patch membership as a CSR map. The dominant daily kernels are
   a single unit-stride sweep.
-- **One centralized lockstep reorder.** When you add a per-cohort field, update the reorder,
-  compaction, slot-copy and capacity routines in `state/site/meds_site_state_types.f90` — the
-  single place that touches every array. This is the structural fix for ED2's "forgot to reallocate
-  one array" class of bug. Patch arrays have no single reorder routine; their permute and pack
-  sites are `sort_patches` and `patch_compact`.
+- **One centralized lockstep reorder.** When you add a per-cohort field, add it to its section of
+  `cohort_block` and of each lockstep routine (allocate, free, grow, move, reorder, copy) in
+  `state/meds_cohort_state_vars.f90` — the one file that lists every cohort field, every list in
+  the same section order. This is the structural fix for ED2's "forgot to reallocate one array"
+  class of bug. Patch fields work the same way in `state/meds_patch_state_vars.f90`, whose
+  `patch_reorder` is what `sort_patches` and `patch_compact` call.
 - **Persistent identity.** Every cohort and patch is stamped with a monotonic `global_id` at
   creation and carries it, in lockstep, through every sort, fusion and compaction. Ids are never
   reused; fusion keeps the survivor's. That is what lets a reader track one cohort across output

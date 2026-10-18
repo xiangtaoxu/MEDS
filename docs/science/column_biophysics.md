@@ -101,12 +101,12 @@ machine precision — the invariant that makes the coupled surface model trustwo
 
 ---
 
-## Prognostic state (per patch, `patch_biophys_t` / `meds_column_state_types`)
+## Prognostic state (per patch, `patch_biophys_t` / `meds_patch_state_vars`)
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
 | Canopy air space | `cas_state_t` | `can_enthalpy`, `can_shv`, `can_co2`, `can_depth` | `can_temp` |
-| Soil water | `soil_column_t` | `theta(:)`, `w_surface`, `w_surface_enth` [J m⁻²] | `psi_soil` |
+| Soil water | `soil_water_column_t` | `theta(:)`, `w_surface`, `w_surface_enth` [J m⁻²] | `psi_soil` |
 | Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 | Snow / surface water | `snow_column_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
 | Leaf / wood tissue | `patch_biophys_t` | `leaf_temp`, `wood_temp` (heat store, exact exponential relaxation) | — |
@@ -147,4 +147,4 @@ carved (temp/fliq are re-diagnosed, never blended).
 | Cash–Karp step (config `rk45`) | `meds_fast_rk45`: `column_fast_step_rk45`, `adaptive_rk45_march`, `rk45_column_step` |
 | whole-column tendency RHS | `meds_fast_time_derivs`: `column_derivs` (`rk45`), `surface_derivs` (both) |
 | explicit tendency siblings | `meds_soil_energy`: `soil_energy_time_deriv`; the soil and plant water tendencies are the water network's rates, set in `column_derivs` |
-| prognostic column types | `meds_column_state_types`: `cas_state_t`, `soil_column_t`, `soil_energy_column_t`, `snow_column_t` |
+| prognostic column types | `meds_patch_state_vars`: `cas_state_t`, `snow_column_t`, `soil_water_column_t`, `soil_energy_column_t` |

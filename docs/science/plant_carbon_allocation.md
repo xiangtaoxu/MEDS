@@ -254,7 +254,7 @@ This is the *only* plant-flux call on the slow carbon path.
 
 | output | destination |
 |---|---|
-| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `carbon_flux_block`, and hands it to `update_cohort_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry.carbon_to_structure`) → the core engine's `update_cohort_states` |
+| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `pool_change_block` (`meds_vegetation_dynamics`; the net pool change, not the gross NPP the `CS_NPP_*` diagnostics report), and hands it to `update_cohort_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry.carbon_to_structure`) → the core engine's `update_cohort_states` |
 | `growth_resp` | autotrophic-respiration accounting (with maintenance resp) |
 | `deficit`, `starving` | `deficit` is netted, with the opposite sign, into the patch's `slow_co2_rate` (`plant_respiration.md` §6); no tissue is destroyed. A deficit larger than the cohort's leaf carbon means it has no leaves and no storage, and it dies (§2) |
 | leaf + fine-root **litter** (`shed`) | the resorbed share to storage, the rest to the patch's litter (`add_necromass`); the exudate to `labile_soil` |
