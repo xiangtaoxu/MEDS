@@ -20,8 +20,8 @@ module meds_demography_patch_fusefiss
    use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL
    use meds_config,     only : meds_config_t, DIST_TREEFALL
-   use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block_size, copy_cohort_slot, scale_cohort_ground_fields, &
-                                      cohort_tissue_water
+   use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block_size, copy_cohort_slot,  &
+                                      scale_cohort_ground_fields, cohort_tissue_water
    use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
    use meds_diag_vars,        only : patch_diag_blend, patch_diag_inherit, PD_DISTURB_AREA, PD_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts

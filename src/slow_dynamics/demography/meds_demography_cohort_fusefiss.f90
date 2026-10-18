@@ -26,9 +26,11 @@ module meds_demography_cohort_fusefiss
    use meds_config,     only : meds_config_t
    use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_diag_vars,        only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
-   use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block, expand_cohort_block_size, copy_cohort_slot, init_cohort, &
-                                      scale_cohort_ground_fields, cohort_tissue_heat_capacity, cohort_tissue_water, &
-                                      set_cohort_size_from_carbon, fuse_cohort_fast_state
+   use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &
+                                      expand_cohort_block_size, copy_cohort_slot, init_cohort,           &
+                                      scale_cohort_ground_fields, cohort_tissue_heat_capacity,           &
+                                      cohort_tissue_water, set_cohort_size_from_carbon,                  &
+                                      fuse_cohort_fast_state
    use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id
    use meds_patch_state_vars, only : cohort_birth_state
    use meds_litter_partition, only : necromass_to_litter
