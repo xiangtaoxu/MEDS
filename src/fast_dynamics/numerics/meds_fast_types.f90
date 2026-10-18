@@ -15,9 +15,9 @@
 !     wholesale -- it is the aggregation seam meds_fast_dynamics%build_fast_context fills, not a      !
 !     duplicate of them.                                                                             !
 !   * column_state_t is a FLAT re-packing of the same prognostic quantities the persistent per-store  !
-!     structs in meds_patch_state_vars hold (cas_state_t/soil_column_t/soil_energy_column_t) -- a      !
-!     deliberate representation choice (the ARK needs a contiguous vector for state_axpy/              !
-!     state_wrms_grouped/tableau linear combinations), not a duplication to unify.                     !
+!     structs in meds_patch_state_vars hold (cas_state_t / soil_water_column_t /                      !
+!     soil_energy_column_t) -- a deliberate representation choice (the ARK needs a contiguous vector  !
+!     for state_axpy / state_wrms_grouped / tableau linear combinations), not a duplication to unify. !
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
@@ -25,7 +25,7 @@ module meds_fast_types
    use meds_plant_types, only : hydro_params_table_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t
-   use meds_patch_state_vars,   only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_enthalpy_of_temp
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
@@ -741,7 +741,7 @@ module meds_fast_types
    type :: patch_biophys_t
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
       type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
-      type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
+      type(soil_water_column_t)  :: soil_w            !< soil water column (theta; psi_soil diagnosed)
       type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
       !----- FROZEN slow soil-carbon pool (docs/science/soil_carbon.md §7): a read-only snapshot of     !
       !      site%patch%soil_carbon(ip), seeded ONCE at the top of the slow step and held constant      !

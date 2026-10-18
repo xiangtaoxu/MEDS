@@ -214,29 +214,32 @@ contains
             return
          end if
          rawgt = ar / anew ; dawgt = ad / anew
-         !----- Area-weighted patch scalars. ----------------------------------------------!
+         !----- The patch's fields, in the patch file's section order. The area is set last,      !
+         !      below: it is the weight. ----------------------------------------------------------!
+         !----- 1. Identity and area: area-weighted age. -------------------------------------------!
          patch%age(recp)            = rawgt * patch%age(recp)            + dawgt * patch%age(donp)
+         !----- 3. Recruit bank. --------------------------------------------------------------------!
          patch%recruit_pool(:,recp) = rawgt * patch%recruit_pool(:,recp) + dawgt * patch%recruit_pool(:,donp)
-         !----- Area-weighted fast-biophysics reservoirs (conserves the area-extensive store). !
+         !----- 4-6. Area-weighted fast-biophysics reservoirs (conserves the area-extensive store);   !
+         !      temp/fliq are re-diagnosed in the fast loop. -------------------------------------------!
          patch%cas(recp)    = blend_cas(rawgt,    patch%cas(recp),    dawgt, patch%cas(donp))
-         patch%soil_e(recp) = blend_soil_e(rawgt, patch%soil_e(recp), dawgt, patch%soil_e(donp))
-         patch%soil_w(recp) = blend_soil_w(rawgt, patch%soil_w(recp), dawgt, patch%soil_w(donp))
-         ! temp/fliq re-diagnosed in the fast loop
          patch%snow(recp)   = blend_snow(rawgt,   patch%snow(recp),   dawgt, patch%snow(donp))
-         !----- Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -----!
+         patch%soil_w(recp) = blend_soil_w(rawgt, patch%soil_w(recp), dawgt, patch%soil_w(donp))
+         patch%soil_e(recp) = blend_soil_e(rawgt, patch%soil_e(recp), dawgt, patch%soil_e(donp))
+         !----- 7. Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -------!
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
-         patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
-         !----- Today's litter is a per-area rate like the rest: area-weight it, or the fused patch
-         !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
-         patch%litter_in(recp)   = blend_litter_input(rawgt, patch%litter_in(recp), dawgt, patch%litter_in(donp))
-         !----- shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -----!
+         !----- 8. shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -!
          patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
-         !----- adapt_dt_last is a controller SEED, not a conserved amount -- any value is valid and   !
+         !----- 9. Today's litter is a per-area rate like the rest: area-weight it, or the fused patch !
+         !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
+         patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
+         patch%litter_in(recp)   = blend_litter_input(rawgt, patch%litter_in(recp), dawgt, patch%litter_in(donp))
+         !----- 10. adapt_dt_last is a controller SEED, not a conserved amount -- any value is valid and   !
          !      the controller re-adapts within a step. Area-weight it like its neighbours purely so    !
          !      the result is DETERMINISTIC and order-independent. ------------------------------------!
          patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
-         !----- Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so    !
+         !----- 11. Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so!
          !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
          call patch_diag_blend(patch%diag, recp, donp, ar, ad)
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). The    !
@@ -453,31 +456,31 @@ contains
          !      canopy air are INHERITED from the disturbed area, not created bare). ----------!
          atot = sum(patch%area(1:np0))                       ! donors still hold pre-disturbance area here
          if (atot > tiny_num) then
-            patch%cas(newp)    = blend_cas(   patch%area(1)/atot, patch%cas(1),    0.0_wp, patch%cas(1))
-            patch%soil_e(newp) = blend_soil_e(patch%area(1)/atot, patch%soil_e(1), 0.0_wp, patch%soil_e(1))
-            patch%soil_w(newp) = blend_soil_w(patch%area(1)/atot, patch%soil_w(1), 0.0_wp, patch%soil_w(1))
-            patch%snow(newp)   = blend_snow(  patch%area(1)/atot, patch%snow(1),   0.0_wp, patch%snow(1))
-            patch%soil_carbon(newp) = blend_soil_carbon(patch%area(1)/atot, patch%soil_carbon(1), &
-                                                        0.0_wp, patch%soil_carbon(1))
-            patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
-            patch%litter_in(newp) = blend_litter_input(patch%area(1)/atot, patch%litter_in(1),      &
-                                                       0.0_wp, patch%litter_in(1))
             !----- The SEED BANK is inherited material too. A treefall gap does not sterilise      !
             !      the ground it opens: the carry-forward recruit pool sits in the soil with the   !
             !      litter and the CENTURY carbon, both of which the gap inherits. Zeroing it would !
             !      destroy the pool's carbon on the disturbed fraction. ---------------------------!
             patch%recruit_pool(:,newp) = (patch%area(1)/atot) * patch%recruit_pool(:,1)
+            patch%cas(newp)    = blend_cas(   patch%area(1)/atot, patch%cas(1),    0.0_wp, patch%cas(1))
+            patch%snow(newp)   = blend_snow(  patch%area(1)/atot, patch%snow(1),   0.0_wp, patch%snow(1))
+            patch%soil_w(newp) = blend_soil_w(patch%area(1)/atot, patch%soil_w(1), 0.0_wp, patch%soil_w(1))
+            patch%soil_e(newp) = blend_soil_e(patch%area(1)/atot, patch%soil_e(1), 0.0_wp, patch%soil_e(1))
+            patch%soil_carbon(newp) = blend_soil_carbon(patch%area(1)/atot, patch%soil_carbon(1), &
+                                                        0.0_wp, patch%soil_carbon(1))
+            patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
+            patch%litter_in(newp) = blend_litter_input(patch%area(1)/atot, patch%litter_in(1),      &
+                                                       0.0_wp, patch%litter_in(1))
             do d = 2_ik, np0
                wd = patch%area(d) / atot
+               patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
                patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
-               patch%soil_e(newp) = blend_soil_e(1.0_wp, patch%soil_e(newp), wd, patch%soil_e(d))
-               patch%soil_w(newp) = blend_soil_w(1.0_wp, patch%soil_w(newp), wd, patch%soil_w(d))
                patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
+               patch%soil_w(newp) = blend_soil_w(1.0_wp, patch%soil_w(newp), wd, patch%soil_w(d))
+               patch%soil_e(newp) = blend_soil_e(1.0_wp, patch%soil_e(newp), wd, patch%soil_e(d))
                patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
                patch%xi_accum(newp)    = blend_xi_accum(1.0_wp, patch%xi_accum(newp), wd, patch%xi_accum(d))
                patch%litter_in(newp)   = blend_litter_input(1.0_wp, patch%litter_in(newp), wd,        &
                                                             patch%litter_in(d))
-               patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
             end do
          end if
 
