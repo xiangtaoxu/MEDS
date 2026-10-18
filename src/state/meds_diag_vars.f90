@@ -33,7 +33,7 @@
 !     statement that cannot omit a field. Adding a diagnostic is a new index parameter     !
 !     plus a fill line -- ZERO edits to the reorder machinery. The alternative, one        !
 !     allocatable per field, would need a new line per field in each of cohort_alloc /     !
-!     cohort_ensure_capacity / move_alloc_block / cohort_reorder / copy_cohort_slot --     !
+!     expand_cohort_block_size / move_cohort_block / reorder_cohort_block / copy_cohort_slot --     !
 !     precisely the "forgot to reallocate" class CLAUDE.md names as the reason the         !
 !     centralized reorder exists.                                                          !
 !                                                                                          !
@@ -391,7 +391,7 @@ contains
    !      omit a field, which is the whole point of the 2-D layout (decision 4).                 !
    !                                                                                          !
    !      THE COUNT RIDES THE LOCKSTEP TOO. `m` is the post-operator cohort count, and         !
-   !      cohort_reorder sets cohort%n = m right after calling this; a block that kept its     !
+   !      reorder_cohort_block sets cohort%n = m right after calling this; a block that kept its     !
    !      old d%n would claim more live slots than the cohort array has. Everything            !
    !      downstream believes d%n: cohort_diag_value fills 1..d%n into a caller buffer         !
    !      that extract_variable sizes from cohort%n, so after any operator that SHRINKS        !

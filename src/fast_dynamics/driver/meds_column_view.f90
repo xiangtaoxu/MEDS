@@ -43,7 +43,7 @@ contains
    ! Copy one patch's contiguous CSR cohort section [i0, i0+ncoh-1] into the fast loop's      !
    ! per-patch view. Every line is a plain copy or a per-ground index: nothing is DERIVED     !
    ! here, because the derived geometry is cached on the cohort block beside height/agb and   !
-   ! refreshed whenever the size changes (set_cohort_wood_geometry).                          !
+   ! refreshed whenever the size changes (set_cohort_wood_allometry).                         !
    !                                                                                          !
    ! The per-ground indices are formed HERE rather than cached, so no stored value can carry   !
    ! a stale plant density: mortality changes nplant every step without touching geometry.     !

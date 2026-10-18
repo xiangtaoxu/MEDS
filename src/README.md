@@ -36,7 +36,8 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  (canopy air, snow, soil water and heat, soil carbon), their
 │                  blends, and the patch block with its CSR map;
 │                  meds_site_state_vars: site_t; meds_diag_vars: the
-│                  diagnostic accumulators                                   2 612
+│                  diagnostic accumulators; meds_state_defaults: the values
+│                  a field holds before it has a real one                    2 612
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
 ├── fast_dynamics/       sub-daily, one dt_fast per step                     11 632

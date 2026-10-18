@@ -858,3 +858,13 @@ is born at, so the name says whose birth it describes. It stays in the patch fil
 only patch data. The name `init_patch` is kept for a patch constructor the code does not have yet:
 setup, the census reader and the new gap in `apply_patch_disturbance` each set a new patch's fields
 themselves. Bit-identical.
+
+**Cohort-file review (2026-10-18).** The header explains the CSR map and the comparison with ED2 moved
+to `docs/ed2_comparison.md` §4.6 (from all three state headers). Field annotations are one line each,
+with the detail in the science pages (the predawn double buffer: `leaf_gas_exchange.md` §4.2). The
+"no value yet" markers, a newborn's phenology and the canopy-air placeholders are in a fifth state
+file, `meds_state_defaults`. The block routines are `expand_cohort_block_size`,
+`move_cohort_block`, `reorder_cohort_block` and `compact_cohort_block`, and
+`set_cohort_wood_geometry` is `set_cohort_wood_allometry`. A tissue's heat capacity is
+`tissue_heat_capacity` in `meds_therm_lib`; `cohort_tissue_heat_capacity` is its per-slot wrapper.
+Bit-identical.

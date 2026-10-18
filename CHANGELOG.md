@@ -71,6 +71,11 @@ reorganized by model hierarchy, with no change to any result (#448).
     `meds_vegetation_dynamics` as `pool_change_block`.
   - `patch_birth_state` is `cohort_birth_state`: it returns the state a new cohort is born in,
     read from its patch.
+  - The cohort block's routines are named for what they do to it: `expand_cohort_block_size`,
+    `move_cohort_block`, `reorder_cohort_block`, `compact_cohort_block`; `set_cohort_wood_geometry`
+    is `set_cohort_wood_allometry`.
+  - The "no value yet" markers and a newborn's phenology are in `meds_state_defaults`, and a tissue's
+    heat capacity is `tissue_heat_capacity` in `meds_therm_lib`.
   - The diagnostic rows are renumbered by section, the patch's slow rows after its fast rows; every
     reader takes them by name.
   - The kernels' rule never to see `site_t` is checked by a lint (ctest `kernels_no_site_state`),

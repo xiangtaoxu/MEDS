@@ -47,7 +47,8 @@ module meds_fast_dynamics
    use meds_met_driver,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
-   use meds_cohort_state_vars, only : DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, set_cohort_tissue_water
+   use meds_cohort_state_vars, only : set_cohort_tissue_water
+   use meds_state_defaults,    only : DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_site_state_vars,  only : site_t
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &

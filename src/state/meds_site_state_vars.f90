@@ -5,11 +5,6 @@
 !                                                                                          !
 ! A polygon holds exactly one site_t, so this is the polygon's ecological state too;       !
 ! meds_polygon_t (src/main) wraps it with the run's forcing, budgets and ledgers.          !
-!                                                                                          !
-! The name follows ED2's ed_state_vars, which holds the same kind of types with their      !
-! allocate and copy routines. Unlike ED2 there is no global state (no edgrid_g): this      !
-! module defines the types and the routines on them, and the state is passed as an         !
-! argument.                                                                                !
 !==========================================================================================!
 module meds_site_state_vars
    use meds_diag_vars,          only : polygon_diag_block, cohort_diag_reset, patch_diag_reset,          &
@@ -17,7 +12,7 @@ module meds_site_state_vars
    use meds_kinds,              only : wp, ik
    use meds_allometry,          only : allometry_t
    use meds_pft_params,         only : pft_table_t
-   use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, cohort_alloc, cohort_free, cohort_reorder
+   use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, cohort_alloc, cohort_free, reorder_cohort_block
    use meds_patch_state_vars,   only : patch_block, patch_alloc, patch_free
    implicit none
    private
@@ -179,7 +174,7 @@ contains
       do i = 1_ik, nc
          perm(slot(i)) = i
       end do
-      call cohort_reorder(site%cohort, perm, nc)
+      call reorder_cohort_block(site%cohort, perm, nc)
    end subroutine rebuild_csr
 
    !=======================================================================================!

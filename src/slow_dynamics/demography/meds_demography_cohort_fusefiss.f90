@@ -26,7 +26,7 @@ module meds_demography_cohort_fusefiss
    use meds_config,     only : meds_config_t
    use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_diag_vars,        only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
-   use meds_cohort_state_vars, only : cohort_reorder, cohort_compact, cohort_ensure_capacity, copy_cohort_slot, init_cohort, &
+   use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block, expand_cohort_block_size, copy_cohort_slot, init_cohort, &
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity, cohort_tissue_water, &
                                       set_cohort_size_from_carbon, fuse_cohort_fast_state
    use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id
@@ -72,7 +72,7 @@ contains
             end do
          end do
       end associate
-      call cohort_reorder(site%cohort, perm, n)
+      call reorder_cohort_block(site%cohort, perm, n)
    end subroutine sort_cohorts
 
    !----- True if (h1,d1) ranks at least as high as (h2,d2) under the sort order. ----------!
@@ -165,7 +165,7 @@ contains
          end do
       end associate
       if (did_fuse) then
-         call cohort_compact(site%cohort, alive)
+         call compact_cohort_block(site%cohort, alive)
          call rebuild_csr(site)
          call sort_cohorts(site)
       end if
@@ -284,7 +284,7 @@ contains
          agb_before = sum(site%cohort%nplant(1:n0) * site%cohort%agb(1:n0))
          film_before = sum(site%cohort%leaf_surf_water(1:n0) + site%cohort%wood_surf_water(1:n0))
          film_magnitude = sum(abs(site%cohort%leaf_surf_water(1:n0)) + abs(site%cohort%wood_surf_water(1:n0)))
-         call cohort_ensure_capacity(site%cohort, n0 + nsplit)
+         call expand_cohort_block_size(site%cohort, n0 + nsplit)
          m = n0
          associate (cohort => site%cohort)
             do i = 1_ik, n0
@@ -372,7 +372,7 @@ contains
             !      demographic event, and it still happened when the soil pools are off. The cull     !
             !      runs inside the cohort restructuring, which permutes the COHORT axis and leaves    !
             !      the patch axis alone, so patch slot `ip` is the one this cohort's diagnostics      !
-            !      belong to and still will be after cohort_compact.                                  !
+            !      belong to and still will be after compact_cohort_block.                            !
             !      A rate [kgC/m2/yr] times the step's weight in seconds -- the block's contract.     !
             !      `dt_slow` is the weight one slow step accumulates; the cull fires on a             !
             !      month boundary and the output layer's temporal fold handles the rest.              !
@@ -400,7 +400,7 @@ contains
       end associate
       if (present(water_shed)) water_shed = w_tot
       if (all(keep)) return
-      call cohort_compact(site%cohort, keep)
+      call compact_cohort_block(site%cohort, keep)
       call rebuild_csr(site)
    end subroutine terminate_cohorts
 
@@ -466,7 +466,7 @@ contains
          return
       end if
 
-      call cohort_ensure_capacity(site%cohort, site%cohort%n + nspawn)
+      call expand_cohort_block_size(site%cohort, site%cohort%n + nspawn)
       call soil_column_params(cfg%soil_column, soil)
       n_before = site%cohort%n
       m = site%cohort%n

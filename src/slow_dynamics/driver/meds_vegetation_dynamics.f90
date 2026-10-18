@@ -21,8 +21,8 @@ module meds_vegetation_dynamics
                                          wood_thermal_water
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
-   use meds_cohort_state_vars,    only : cohort_deriv_alloc, GROWTH_AVG_UNSET, set_cohort_size_from_carbon,   &
-                                         cohort_wood_store_carbon
+   use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon
+   use meds_state_defaults,       only : GROWTH_AVG_UNSET
    use meds_site_state_vars,  only : site_t
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &

@@ -20,7 +20,7 @@ module meds_demography_patch_fusefiss
    use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL
    use meds_config,     only : meds_config_t, DIST_TREEFALL
-   use meds_cohort_state_vars, only : cohort_compact, cohort_ensure_capacity, copy_cohort_slot, scale_cohort_ground_fields, &
+   use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block_size, copy_cohort_slot, scale_cohort_ground_fields, &
                                       cohort_tissue_water
    use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
    use meds_diag_vars,        only : patch_diag_blend, patch_diag_inherit, PD_DISTURB_AREA, PD_MORT_C_DISTURB
@@ -350,10 +350,10 @@ contains
          ckeep(i) = pkeep(site%cohort%owner_patch(i))
          if (ckeep(i)) site%cohort%owner_patch(i) = newidx(site%cohort%owner_patch(i))
       end do
-      call cohort_compact(site%cohort, ckeep)
+      call compact_cohort_block(site%cohort, ckeep)
 
       !----- Patches: keep the survivors, in order. The surviving-index list is the permutation   !
-      !      patch_reorder takes, exactly as cohort_compact builds it for the cohort axis. --------!
+      !      patch_reorder takes, exactly as compact_cohort_block builds it for the cohort axis. --------!
       call patch_reorder(site%patch, keep_idx, k)
       call rebuild_csr(site)
    end subroutine patch_compact
@@ -436,7 +436,7 @@ contains
       end do
 
       call patch_ensure_capacity(site%patch, np0 + 1_ik, site%n_pft)
-      call cohort_ensure_capacity(site%cohort, site%cohort%n + nsurv)
+      call expand_cohort_block_size(site%cohort, site%cohort%n + nsurv)
       newp = np0 + 1_ik
       m0   = site%cohort%n                       ! cohorts before the survivors are moved in
 

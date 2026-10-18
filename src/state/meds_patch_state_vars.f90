@@ -13,18 +13,14 @@
 !                                                                                          !
 ! `patch_block` holds every patch of the site as one Structure-of-Arrays, with a CSR map   !
 ! into the cohort block (meds_cohort_state_vars).                                          !
-!                                                                                          !
-! The name follows ED2's ed_state_vars, which holds the same kind of types with their      !
-! allocate and copy routines. Unlike ED2 there is no global state (no edgrid_g): this      !
-! module defines the types and the routines on them, and the state is passed as an         !
-! argument.                                                                                !
 !==========================================================================================!
 module meds_patch_state_vars
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, n_snow_layer_max, tiny_num, t_3ple
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, patch_diag_grow, patch_diag_reorder
-   use meds_config,           only : meds_config_t
+   use meds_state_defaults,   only : CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
+   use meds_config,           only : meds_config_t, DIST_PRIMARY
    use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
    implicit none
    private
@@ -42,7 +38,7 @@ module meds_patch_state_vars
    type :: cas_state_t
       real(wp) :: can_enthalpy = 0.0_wp                     !< [J/kg] specific enthalpy (PROGNOSTIC)
       real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg] specific humidity (PROGNOSTIC twin)
-      real(wp) :: can_co2      = 400.0_wp                   !< [umol/mol] dry-air CO2 mixing ratio (PROGNOSTIC third twin)
+      real(wp) :: can_co2      = CAN_CO2_UNSEEDED           !< [umol/mol] dry-air CO2 mixing ratio (PROGNOSTIC third twin)
       real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
       !----- CAS DEPTH is PROGNOSTIC-ish: a per-patch geometry state the SLOW loop owns, set from     !
       !      the tallest cohort plus a freeboard (aero_cfg_t%canopy_freeboard, floored at             !
@@ -50,7 +46,7 @@ module meds_patch_state_vars
       !      depth would hold 4x too much air over a 1 m regenerating gap and ~1.8x too little        !
       !      over a 35 m tropical canopy. The 20 m here is only the value before the slow loop        !
       !      first sets it. --------------------------------------------------------------------------!
-      real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (slow loop owns it)
+      real(wp) :: can_depth    = CAN_DEPTH_UNSET            !< [m]    CAS depth (slow loop owns it)
    end type cas_state_t
 
    !----- Temporary-surface-water / SNOW store: a stacked mass+energy reservoir between the       !
@@ -489,7 +485,7 @@ contains
       patch%cap = cap ; patch%n = 0_ik
       !----- 1. Identity and area ---------------------------------------------------------------!
       allocate(patch%global_id(cap), patch%dist_type(cap), patch%area(cap), patch%age(cap))
-      patch%global_id = 0_ik ; patch%dist_type = 1_ik ; patch%area = 0.0_wp ; patch%age = 0.0_wp
+      patch%global_id = 0_ik ; patch%dist_type = DIST_PRIMARY ; patch%area = 0.0_wp ; patch%age = 0.0_wp
       !----- 2. Cohort map ----------------------------------------------------------------------!
       allocate(patch%cohort_offset(cap), patch%cohort_count(cap))
       patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik
@@ -515,7 +511,7 @@ contains
    end subroutine patch_alloc
 
    !=======================================================================================!
-   !  patch_ensure_capacity -- the patch-SoA twin of cohort_ensure_capacity: ensure the    !
+   !  patch_ensure_capacity -- the patch-SoA twin of expand_cohort_block_size: ensure the  !
    !  patch SoA can hold at least `need` patches, growing 1.5x if it must. Same n/cap      !
    !  reserve model, no-op fast path, geometric growth, and move_alloc as in the           !
    !  cohort routine. LOCKSTEP SITE: a new per-patch field must be copied here (1:n)       !
@@ -590,7 +586,7 @@ contains
    end subroutine patch_ensure_capacity
 
    !=======================================================================================!
-   !  The patch twin of cohort_reorder: place old index perm(k) at new position k, for       !
+   !  The patch twin of reorder_cohort_block: place old index perm(k) at new position k, for !
    !  k=1..m, in every per-patch array and the diagnostic block. Array assignment with a     !
    !  vector subscript on the RHS is evaluated to a temporary first, so self-permutation is  !
    !  safe. The CSR map is not permuted: rebuild_csr derives it from the cohorts afterwards. !

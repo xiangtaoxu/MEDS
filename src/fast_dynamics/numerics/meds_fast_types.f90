@@ -35,7 +35,7 @@ module meds_fast_types
    use meds_config, only : hydraulics_config_t, pft_tissue_curves, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
    use meds_pft_params, only : pft_table_t, HYD_UNSET
-   use meds_cohort_state_vars, only : DMAX_PSI_LEAF_UNSET
+   use meds_state_defaults,    only : DMAX_PSI_LEAF_UNSET
    implicit none
    private
 

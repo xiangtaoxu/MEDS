@@ -23,8 +23,8 @@ set of 1-D arrays, with patch membership as a CSR map (offset plus count, and an
 dominant daily kernels are a single unit-stride sweep.
 
 **One file per level, each in sections.** `state/meds_cohort_state_vars.f90` holds `cohort_block`
-and every routine that lists its fields: allocate, free, grow (`cohort_ensure_capacity`,
-`move_alloc_block`), reorder, compact and slot copy, plus the size setter that fills one slot's
+and every routine that lists its fields: allocate, free, grow (`expand_cohort_block_size`,
+`move_cohort_block`), reorder, compact and slot copy, plus the size setter that fills one slot's
 cached geometry. The type is laid out in sections (identity and density, carbon pools, size,
 water, energy, plastic traits, phenology, growth history, accumulators, output), and **every
 lockstep list follows the same section order. When you add a per-cohort field, add it to its

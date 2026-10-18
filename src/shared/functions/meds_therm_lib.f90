@@ -12,10 +12,11 @@ module meds_therm_lib
    use meds_kinds,     only : wp
    use meds_constants, only : mmdry, tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,    &
                               t_3ple, tsupercool_liq, tsupercool_vap, r_dry,                    &
-                              rho_h2o, k_water, k_ice
+                              rho_h2o, k_water, k_ice, C2B_WOOD
    implicit none
    private
 
+   public :: tissue_heat_capacity
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
    public :: air_vpd, specific_humidity_to_vpd
 
@@ -31,6 +32,17 @@ module meds_therm_lib
    real(wp), parameter :: SR_FLOOR = 0.05_wp     !< Kersten log10 floor (Johansen validity limit)
 
 contains
+
+   !----- One tissue's heat capacity per m2 of ground [J/m2/K]: its dry matter (the tissue's carbon  !
+   !      as dry mass, at its dry specific heat) plus the liquid water it holds                    !
+   !      (docs/science/vegetation_energy_dynamics.md eq. (8)). -----------------------------------!
+   elemental pure real(wp) function tissue_heat_capacity(nplant, carbon, c_dry, water) result(cap)
+      real(wp), intent(in) :: nplant   !< [plant/m2]
+      real(wp), intent(in) :: carbon   !< [kgC/plant] the tissue's carbon
+      real(wp), intent(in) :: c_dry    !< [J/kg/K]    specific heat of its dry matter
+      real(wp), intent(in) :: water    !< [kg/plant]  the water it holds
+      cap = carbon * nplant * C2B_WOOD * c_dry + water * nplant * cp_liq
+   end function tissue_heat_capacity
 
    !---------------------------------------------------------------------------------------!
    ! SATURATION VAPOUR PRESSURE, over liquid water OR over ice                                 !
