@@ -15,7 +15,7 @@ before and after.
 ## [Unreleased]
 
 The soil column's parameters become configuration, the ground becomes one block of the main config,
-and a new cohort starts in its patch's state instead of at two constants (#PR).
+and a new cohort starts in its patch's state instead of at two constants (#447).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -34,7 +34,7 @@ and a new cohort starts in its patch's state instead of at two constants (#PR).
 
 ### Changed
 
-- **A new cohort starts in its patch's state** (#PR). A recruit, a cohort made at setup, and a
+- **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
   restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
   temperature, holding the water their tissues hold at the potential of the patch's top soil layer
   (`patch_birth_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
@@ -45,24 +45,24 @@ and a new cohort starts in its patch's state instead of at two constants (#PR).
   census run of the reference config with the fast loop on, site GPP, LAI and AGB growth move by less
   than 0.01 %, nplant by +0.09 % and the mortality rate by +0.7 %; the water the recruits draw from
   outside the model about halves. Every slow-ledger phase still closes.
-- **The soil column's parameters are configuration** (#PR). `state/column/meds_column_params.f90` is
+- **The soil column's parameters are configuration** (#447). `state/column/meds_column_params.f90` is
   dissolved: the soil parameter bundles (`soil_params_t`, `soil_thermal_params_t`), their builders,
   the layer template and `soil_layer_grid` join the soil-column block and `soil_column_params` (from
   `meds_config`) in a new config leaf, `src/config/meds_soil_column_config.f90`; the array ceilings
   `n_soil_layer_max` and `n_snow_layer_max` and the tissue heat constants go to `meds_constants`.
   `meds_config` links `meds_shared` only, so config reads nothing from state. Outputs are unchanged
   bit for bit.
-- **The ground is one block of the main config** (#PR), as listed under Upgrading. The Fortran option
+- **The ground is one block of the main config** (#447), as listed under Upgrading. The Fortran option
   types are unchanged: they stay grouped by the solver that reads them. Outputs are unchanged bit for
   bit.
 
 ### Removed
 
-- **`TISSUE_HCAP_MIN`** (#PR), the floor of 20 J K⁻¹ per m² of tissue under a tissue's dry heat
+- **`TISSUE_HCAP_MIN`** (#447), the floor of 20 J K⁻¹ per m² of tissue under a tissue's dry heat
   capacity. Per unit of tissue area it never binds: for leaves only above an SLA of 320 m² kgC⁻¹, and
   a 1 cm sapling's dry wood holds about 150 J K⁻¹ against a floor of 0.2. Outputs are unchanged bit
   for bit; `docs/science/vegetation_energy_dynamics.md` eq. (8) loses the floor.
-- **`LEAF_TEMP_INIT` and `PSI_INIT`** (#PR), the constant birth temperature and potential (see
+- **`LEAF_TEMP_INIT` and `PSI_INIT`** (#447), the constant birth temperature and potential (see
   Changed).
 
 ## [0.3.5] — 2026-10-17
