@@ -23,7 +23,6 @@
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
-   use meds_cohort_state_vars,  only : carbon_flux_block
    use meds_site_state_vars,    only : site_t
    use meds_patch_state_vars,   only : cas_set_depth, patch_birth_state
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
@@ -32,7 +31,7 @@ program test_slow_ledger
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : fuse_2_patches
-   use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand, shed_turnover_water
+   use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand, shed_turnover_water, pool_change_block
    use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
@@ -527,19 +526,19 @@ contains
    end subroutine check_mortality_water
 
    subroutine check_shed_heat()
-      type(carbon_flux_block) :: npp
+      type(pool_change_block) :: dpool
       type(slow_ledger_t)     :: lg
       integer(ik) :: nc
       nc = site%cohort%n
-      allocate(npp%leaf(nc), npp%fineroot(nc), npp%wood(nc), npp%nonstructural(nc))
-      npp%wood = 0.0_wp ; npp%nonstructural = 0.0_wp
-      npp%leaf     = -0.25_wp * site%cohort%leaf_carbon(1:nc)       ! a quarter of the leaves shed
-      npp%fineroot = -0.10_wp * site%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
+      allocate(dpool%leaf(nc), dpool%fineroot(nc), dpool%wood(nc), dpool%nonstructural(nc))
+      dpool%wood = 0.0_wp ; dpool%nonstructural = 0.0_wp
+      dpool%leaf     = -0.25_wp * site%cohort%leaf_carbon(1:nc)       ! a quarter of the leaves shed
+      dpool%fineroot = -0.10_wp * site%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
       site%cohort%leaf_water_mass(1:nc) = 0.7_wp
       site%cohort%wood_water_mass(1:nc) = 2.3_wp
       lg%active = .true.
       call slow_ledger_open(lg, site, cfg, RHO)
-      call shed_turnover_water(site, cfg, npp, lg)
+      call shed_turnover_water(site, cfg, dpool, lg)
       call slow_ledger_mark(lg, site, cfg, SLOW_PHASE_ALLOCATE)
       call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy > 0.0_wp, 'shed heat: the shed declares energy')
       call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%energy)                                      &

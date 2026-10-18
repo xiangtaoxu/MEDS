@@ -34,7 +34,7 @@ module meds_cohort_state_vars
    public :: cohort_block, cohort_alloc, cohort_free, cohort_ensure_capacity, cohort_reorder, cohort_compact
    public :: copy_cohort_slot, set_cohort_size, set_cohort_size_from_carbon, init_cohort
    public :: scale_cohort_ground_fields, fuse_cohort_fast_state
-   public :: cohort_deriv_block, cohort_deriv_alloc, carbon_flux_block
+   public :: cohort_deriv_block, cohort_deriv_alloc
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
@@ -239,12 +239,6 @@ module meds_cohort_state_vars
       real(wp), allocatable :: d_wood_carbon_dt(:), d_nonstructural_carbon_dt(:)
       real(wp), allocatable :: dln_nplant_dt(:)
    end type cohort_deriv_block
-
-   !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
-   !      the carbon rate provider and folded into the tendency bundle by the driver. -----------!
-   type :: carbon_flux_block
-      real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
-   end type carbon_flux_block
 
    !----- The bounded cohort fields cohort_bad_field checks, in its order. ------------------!
    integer(ik), parameter :: N_COHORT_BOUNDED = 10_ik
