@@ -36,9 +36,9 @@ to ED-MORE; which issue is in which phase, and why, is in
 | [#393](https://github.com/xiangtaoxu/MEDS/issues/393) | Leafless cohorts with no storage never die (9 % of BCI cohorts) | *Done in beta (interim).* A cohort whose unpaid maintenance exceeds all its leaf carbon has no leaves and no storage; its density goes to the floor in that step, through the background mortality path, and the monthly cull removes it (`docs/science/plant_carbon_allocation.md` §2). The owner's decision is no separate starvation hazard, since growth already sets mortality; this special case is to be revisited with a growth- or storage-based mortality. |
 | [#395](https://github.com/xiangtaoxu/MEDS/issues/395) | `reconcile_tissue_water_capacity` creates and destroys tissue water without booking it | *Done in beta.* The routine is gone. A cohort is born with its tissue water (a recruit's declared as drawn in), and water above a store's capacity is shed to the ground before the fast loop, declared in the slow ledger's own phase (`docs/science/soil_plant_water.md` §2). |
 | [#416](https://github.com/xiangtaoxu/MEDS/issues/416) | `grav_head` (9.804×10⁻³ MPa/m) is not `rho_h2o·grav` (9.80665×10⁻³) | *Done in beta.* `grav_head` is `rho_h2o·grav·10⁻⁶` (9.80665×10⁻³ MPa/m). Every head-to-pressure conversion, soil and plant alike, uses it; `grav` appears only where the acceleration itself is meant (the Kelvin factor of soil evaporation, the aerodynamics, the lapse rate). |
-| [#427](https://github.com/xiangtaoxu/MEDS/issues/427) | Campbell retention: the predawn-potential seed reads van Genuchten parameters | The seed of a new cohort's predawn potential reads 0 MPa (a wet soil) and divides by zero; the water network itself reads the right pair. Van Genuchten runs, every shipped config, are unaffected. |
-| [#428](https://github.com/xiangtaoxu/MEDS/issues/428) | A missing census or restart file silently starts a site run from bare ground | The only notice needs `verbose`; a region stops, but calls a missing file "not a region state file". |
-| [#429](https://github.com/xiangtaoxu/MEDS/issues/429) | `meds.canopy.Canopy` ignores a config rewritten at the same path | It caches the open model by path, so a loop that rewrites one trial config keeps the first one's parameters. |
+| [#427](https://github.com/xiangtaoxu/MEDS/issues/427) | Campbell retention: the predawn-potential seed reads van Genuchten parameters | *Done in beta.* The seed reads the soil's own retention pair, as the water network does. Van Genuchten runs, every shipped config, are unaffected. |
+| [#428](https://github.com/xiangtaoxu/MEDS/issues/428) | A missing census or restart file silently starts a site run from bare ground | *Done in beta.* A census or state file that cannot start a run stops it with a message naming the mode and the file. |
+| [#429](https://github.com/xiangtaoxu/MEDS/issues/429) | `meds.canopy.Canopy` ignores a config rewritten at the same path | *Done in beta.* A new `Canopy` reads the config as it is on disk. |
 | [#423](https://github.com/xiangtaoxu/MEDS/issues/423) | The `post_proc` readers use example 03's stand-layout names, but the README says to run them on `meds_main` output | Four scripts; deferred by the owner. Meanwhile `post_proc/README.md` says which layout each script reads. |
 | [#390](https://github.com/xiangtaoxu/MEDS/issues/390) | Dry-soil conductivity: a film-flow term for the van Genuchten–Mualem curve | Enhancement. Until then the pore connectivity L = −1 (Schaap & Leij 2000) holds K above ED2's floor of 1.16×10⁻¹³ m s⁻¹ to about −2 MPa for a soil of n near 1.4 |
 | [#434](https://github.com/xiangtaoxu/MEDS/issues/434) | Fine-root turnover drains about 35× too much water from the wood store | *Done in beta.* A fine-root loss sheds the fine roots' own share of the store, `wood_water_mass · broot/(bsap + broot)`. |
@@ -198,10 +198,12 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
 - **The wood's heat capacity uses a fixed sapwood moisture.** *Done in beta.* [#419](https://github.com/xiangtaoxu/MEDS/issues/419) The
   wood's water term is the sapwood share of the network's store, and the dry wood is at a dry specific
   heat (`docs/science/vegetation_energy_dynamics.md` eq. (8)).
-- **The sub-canopy ground conductance.** *Open question.* [#265](https://github.com/xiangtaoxu/MEDS/issues/265) MEDS ports ED2's non-default
+- **The sub-canopy ground conductance.** *Deferred.* [#265](https://github.com/xiangtaoxu/MEDS/issues/265) MEDS ports ED2's non-default
   `icanturb = 4`, CLM4's dense-canopy form, whose ground resistance is 8–16× that of the Sellers et al.
   (1986) form ED2 ships; it matters most in gaps. It is a faithful port of a published scheme, a
-  modelling choice; whether it matters is measured once the open-canopy blend (#410) acts.
+  modelling choice. Measured with the open-canopy blend (#410) acting: raising `cs_dense` from 0.004 to
+  0.04 raises BCI's LE by 6 % (+4 W m⁻²) and its ground evaporation by 43 %, beyond the interannual
+  spread. To be decided with a later refit of example 04.
 - **No litter layer.** *Open question.* [#268](https://github.com/xiangtaoxu/MEDS/issues/268) No surface organic horizon for the ground energy
   balance or soil evaporation to act on. To be measured per patch after #410: the case behind it was a
   site mean dominated by gap patches.
@@ -331,6 +333,9 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
     bare-ground start (`pft.nbg_init_density`);
   - region state files and restarts;
   - every variable and tier in the region's one file set (`detail_polygons` retired);
+  - *done in beta:* resuming a region from a state file without a failed cell ([#431](https://github.com/xiangtaoxu/MEDS/issues/431)):
+    a state file may hold more polygons than the region, so a failed cell can be masked out and the
+    run resumed;
   - *done in beta:* the soil maps' leaky bottom ([#401](https://github.com/xiangtaoxu/MEDS/issues/401)), one drainage factor $f$ for
     every draining base ($`q = f\,K`$: free 1, leaky the map's `f_leak`, sealed 0), carried per polygon in
     the region files.
@@ -339,8 +344,6 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   Still open:
   - patch threads inside a region's polygons ([#400](https://github.com/xiangtaoxu/MEDS/issues/400));
   - the rest of the runtime consolidation ([#310](https://github.com/xiangtaoxu/MEDS/issues/310));
-  - resuming a region from a state file without a failed cell ([#431](https://github.com/xiangtaoxu/MEDS/issues/431)): a restart must hold
-    exactly the region's polygons, so a cell that fails cannot be masked out and the run resumed.
 
   Example 06 runs as two region runs.
 - **A source interface for the met reader.** *Done in beta.* [#311](https://github.com/xiangtaoxu/MEDS/issues/311) The two file sources
@@ -454,10 +457,9 @@ Gaps and residues found in the 2026-10-17 annotation review.
   beta.* [#430](https://github.com/xiangtaoxu/MEDS/issues/430) Every example takes its data folders from an option or an environment variable
   and stops with a message without them; the root `meds_output_pft_parameters.csv` is gone; `CLAUDE.md`
   and `README.md` give 72 tests and 284 variables.
-- **The crown-area allometry is required config but never used.** *Planned.* [#432](https://github.com/xiangtaoxu/MEDS/issues/432)
-  `[allometry].ca_b1`/`ca_b2` are required, but `dbh_to_crown_area` is never called, and
-  `crown_area_frac` (1.0 in every shipped config) only sets the in-canopy wind's crown cover. The open
-  canopy of #410 uses the leaf and wood area instead.
+- **The crown-area allometry is required config but never used.** *Done in beta.* [#432](https://github.com/xiangtaoxu/MEDS/issues/432)
+  `[allometry].ca_b1`/`ca_b2` and `pft.crown_area_frac` are retired and refused (the sweep's decision D1):
+  the crowns close over their patch, and the open canopy of #410 uses the leaf and wood area.
 - **The per-step freeze's drought bias, and a consistent midpoint freeze.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) At 900 s
   Palo Verde's February–April GPP and ET run 5.5–6 % high, linearly in `dt_fast`, because the gas
   exchange and the transpiration demand are set from the step-start leaf potential

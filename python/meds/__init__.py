@@ -22,5 +22,5 @@ of it exposed for their own sake.
 Importing `meds` is cheap and does NOT load any compiled library; each sub-module loads the
 shared library lazily on first import, so `import meds` works even without it built.
 """
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 __all__ = ["plant", "demography", "model", "config", "canopy"]

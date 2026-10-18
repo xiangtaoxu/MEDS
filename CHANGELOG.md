@@ -14,6 +14,47 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-10-17
+
+A **region production and open-issue sweep** release. Region runs become production runs: a cell
+mask, each polygon's soil and height curve from the static maps, chunked region state files and
+restarts, and one file set that holds every variable (#408). Source comments state the present
+rationale and cite the science pages, and change history lives only in this file (#409). Before the
+move to ED-MORE, the sweep fixes, measures or defers every open issue (#437, #438, #440, #445):
+- the ground couples to the canopy air through the open canopy, as in CLM (#410);
+- thin tissues are no longer slaved to the canopy air (#349);
+- the wood's heat capacity counts its own water at a dry specific heat (#419);
+- Γ* no longer rises with altitude (#342);
+- leaf turnover is a rate (#379);
+- a cohort with no leaves and no storage dies (#393);
+- tissue water is booked when it is born, moved or shed (#395, #436);
+- a region resumes around a failed cell (#431).
+
+Example 04 is refitted, and the contemporary runs of examples 01–05 are repeated; example 05's
+420-year and 150-year runs and example 06 keep their v0.3.4 results.
+
+**Upgrading from v0.3.4:**
+- **Leaf turnover is a rate** (#379): `pft.leaf_lifespan_toc` [yr] is refused; set
+  `leaf_turnover_rate_toc` [yr⁻¹] = 1 / lifespan. `derived.kplastic_llspan` becomes
+  `kplastic_leaf_turnover` with the opposite sign, and `trait_dynamics.fineroot_lifespan_plastic`
+  becomes `fineroot_turnover_plastic`. An old state file's `llspan` is read as 1/`llspan`. The output
+  `llspan_cohort` is now `leaf_turnover_rate_cohort` [yr⁻¹]; an io config naming the old one stops
+  with "no such variable".
+- **Retired and refused, each with a message:**
+  - the crown area: `[allometry].ca_b1` and `ca_b2`, and `pft.crown_area_frac` (#432);
+  - the inert nitrogen keys of `[soil_carbon]` (`n_cycle_on`, the `c2n_*`, `n_immobil_supply_scale`)
+    and its unread `agf_fast` and `agf_struct`: the litter is split by tissue, with each PFT's
+    `f_labile_leaf`, `f_labile_stem` and `aboveground_frac` (#418);
+  - `[region].detail_polygons` (#408).
+- **A run that cannot start stops** (#428): a missing or empty census or state file no longer starts a
+  site run from bare ground.
+- **Static maps and regions** (#408, #401):
+  - while a map is set, the keys it provides are refused;
+  - the soil depth map must hold `f_leak`;
+  - region files carry each polygon's `drain_factor`, and a sealed polygon's `bottom_bc` is 1 with
+    `drain_factor` 0 (it was 3);
+  - a region state file may hold more polygons than the region.
+
 ### Added
 
 - **A cell mask for region runs, and one module for static maps** (`MEDS_POLYGON_RUNTIME_PLAN.md`
@@ -5203,7 +5244,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.4...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.5...beta
+[0.3.5]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...v0.3.2
