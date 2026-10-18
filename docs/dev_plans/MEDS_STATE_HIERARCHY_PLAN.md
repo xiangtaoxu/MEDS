@@ -832,7 +832,10 @@ also a one-year run with every output group and the FAST tier on: identical on 2
 variables. The lint passes on the tree and fails on a copy with an injected `site_t` import and on
 an injected `patch_block` in a kernel's only-list. ctest is 76 tests with the lint.
 
-**Found on the way, not changed.** `cohort_ensure_capacity` does not carry `overtopping_lai` across
-a grow (the only one of the 45 cohort arrays it leaves out), so a grow resets it to 0 until the slow
-step recomputes it from the stand. That was the behaviour before, and the list now says so where it
-happens; whether a grow mid-step should keep it is a question for its own change.
+**Found on the way.** `cohort_ensure_capacity` did not carry `overtopping_lai` across a grow (the
+only one of the 45 cohort arrays it left out), so a grow reset it to 0. The block grows in cohort
+fission (`split_cohorts`), recruitment (`apply_recruitment`), the survivors copied into a new gap
+(`apply_patch_disturbance`) and setup (`add_cohort`). The reset was never seen: each of those paths
+ends with `update_overtopping_lai` (the end of `restructure_stand`, and the driver after setup),
+nothing between reads the field, and the readers (trait plasticity, the output, the state file) all
+come after. It is carried now, so a grow keeps every field, and the result is bit-identical.

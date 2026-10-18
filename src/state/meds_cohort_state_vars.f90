@@ -374,7 +374,7 @@ contains
    !  so it is safe to call unconditionally; otherwise it grows GEOMETRICALLY (1.5x)       !
    !  for amortized-O(1) appends, copying the live 1:n prefix and move_alloc-ing in.       !
    !  LOCKSTEP SITE: a new per-cohort field must be added to the 1:n copy list AND to      !
-   !  move_alloc_block (in both = kept on grow; move_alloc_block only = reset).            !
+   !  move_alloc_block; a field in move_alloc_block alone would be reset by every grow.     !
    !=======================================================================================!
    subroutine cohort_ensure_capacity(cohort, need)
       type(cohort_block), intent(inout) :: cohort
@@ -401,16 +401,15 @@ contains
       tmp%wood_carbon(1:m)          = cohort%wood_carbon(1:m)
       tmp%nonstructural_carbon(1:m) = cohort%nonstructural_carbon(1:m)
       !----- 3. Size, derived from the carbon pools ---------------------------------------------!
-      tmp%dbh(1:m)            = cohort%dbh(1:m)
-      tmp%height(1:m)         = cohort%height(1:m)
-      tmp%basal_area(1:m)     = cohort%basal_area(1:m)
-      tmp%agb(1:m)            = cohort%agb(1:m)
-      tmp%leaf_area(1:m)      = cohort%leaf_area(1:m)
-      tmp%wood_area(1:m)      = cohort%wood_area(1:m)
-      tmp%sapwood_carbon(1:m) = cohort%sapwood_carbon(1:m)
-      tmp%sapwood_area(1:m)   = cohort%sapwood_area(1:m)
-      !      (overtopping_lai is not carried: a grow resets it to 0, as move_alloc_block alone does,
-      !      and the slow step recomputes it from the stand.)
+      tmp%dbh(1:m)             = cohort%dbh(1:m)
+      tmp%height(1:m)          = cohort%height(1:m)
+      tmp%basal_area(1:m)      = cohort%basal_area(1:m)
+      tmp%agb(1:m)             = cohort%agb(1:m)
+      tmp%leaf_area(1:m)       = cohort%leaf_area(1:m)
+      tmp%wood_area(1:m)       = cohort%wood_area(1:m)
+      tmp%sapwood_carbon(1:m)  = cohort%sapwood_carbon(1:m)
+      tmp%sapwood_area(1:m)    = cohort%sapwood_area(1:m)
+      tmp%overtopping_lai(1:m) = cohort%overtopping_lai(1:m)
       !----- 4. Water ---------------------------------------------------------------------------!
       tmp%leaf_water_mass(1:m) = cohort%leaf_water_mass(1:m)
       tmp%wood_water_mass(1:m) = cohort%wood_water_mass(1:m)
