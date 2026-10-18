@@ -5,7 +5,7 @@ program test_disturbance
    use meds_config,           only : meds_config_t, DIST_TREEFALL
    use meds_site_state_vars,  only : site_t
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance
-   use meds_diag_vars,                 only : PD_DISTURB_AREA, PD_LE, PD_MORT_C_CULL, patch_diag_alloc, patch_diag_value
+   use meds_diag_vars,                 only : PD_DISTURB_AREA, PD_LE, PD_MORT_C_CULL, alloc_patch_diag, patch_diag_value
    use meds_constants,                 only : yr_sec
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_diagnostic_reduce, only : total_area, total_nplant
@@ -40,7 +40,7 @@ program test_disturbance
    !----- Turn the per-patch diagnostic block ON. It defaults OFF (a run with no diagnostics    !
    !      allocates nothing and every entry point no-ops), so a test that wants to read a slot     !
    !      must ask for it: a slot nothing reads can sit at a silent zero unseen. -------------------!
-   call patch_diag_alloc(site%patch%diag, site%patch%n + 1_ik, .true.)
+   call alloc_patch_diag(site%patch%diag, site%patch%n + 1_ik, .true.)
    !----- The donor's own shed rate, which the gap must not inherit, and the tissue water the dying  !
    !      canopy holds, which it must receive. ------------------------------------------------------!
    site%patch%shed_water_rate(1) = 7.0_wp
@@ -127,7 +127,7 @@ program test_disturbance
    !      Sum(area * value) is unchanged and the gap reads the donors' area-weighted value; a        !
    !      cleared gap slot would read 0 there and pull the site mean low by the disturbed fraction.  !
    !      Donor latent heat 100 and 300 W/m2 on areas 0.6 and 0.4: 180 W/m2 before and after. -------!
-   call patch_diag_alloc(site%patch%diag, site%patch%n + 1_ik, .true.)
+   call alloc_patch_diag(site%patch%diag, site%patch%n + 1_ik, .true.)
    site%patch%diag%n = site%patch%n
    site%patch%diag%w(1:2) = cfg%dt_slow
    site%patch%diag%v(PD_LE, 1) = 100.0_wp * cfg%dt_slow

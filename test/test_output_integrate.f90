@@ -41,7 +41,7 @@ program test_output_integrate
                                      extract_variable, output_integrate_fast, close_tier,        &
                                      extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PD0, SRC_F_PY0, &
                                      output_integrate
-   use meds_diag_vars,        only : cohort_diag_alloc, CD_LEAF_TEMP, N_PYDIAG, PY_TAIR, PY_CO2, N_PDIAG, PD_CAS_TEMP, PD_LE, &
+   use meds_diag_vars,        only : alloc_cohort_diag, CD_LEAF_TEMP, N_PYDIAG, PY_TAIR, PY_CO2, N_PDIAG, PD_CAS_TEMP, PD_LE, &
                                      PD_H, PD_GPP, PD_SW_UP, PD_LW_UP
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
@@ -186,7 +186,7 @@ contains
       !----- Leaf temperature is the cohort block's within-step mean. A cohort with no         !
       !      samples -- recruited after the fast loop -- is fill on the cohort axis and out of the !
       !      leaf-area-weighted site mean; a mean over nothing is missing, not 0 K. -------------!
-      call cohort_diag_alloc(site%cohort%diag, 64_ik, .true.)
+      call alloc_cohort_diag(site%cohort%diag, 64_ik, .true.)
       site%cohort%diag%n = 3_ik
       site%cohort%leaf_area(1:3) = 1.0_wp
       site%cohort%diag%v(CD_LEAF_TEMP, 1:2) = [300.0_wp, 310.0_wp] * 900.0_wp

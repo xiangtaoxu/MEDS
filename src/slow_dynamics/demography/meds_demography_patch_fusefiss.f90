@@ -23,7 +23,7 @@ module meds_demography_patch_fusefiss
    use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
                                       scale_cohort_ground_fields, cohort_tissue_water
    use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
-   use meds_diag_vars,        only : patch_diag_blend, patch_diag_inherit, PD_DISTURB_AREA, PD_MORT_C_DISTURB
+   use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PD_DISTURB_AREA, PD_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_patch_state_vars,   only : expand_patch_block, reorder_patch_block, blend_cas, blend_soil_water,      &
                                        blend_soil_energy, blend_snow, snow_column_t, blend_soil_carbon,          &
@@ -241,7 +241,7 @@ contains
          patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
          !----- 11. Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so!
          !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
-         call patch_diag_blend(patch%diag, recp, donp, ar, ad)
+         call blend_patch_diag(patch%diag, recp, donp, ar, ad)
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). The    !
          !      ground-referenced films [kg/m2 of THEIR patch] take the same factor: per m2 of the   !
          !      merged patch they are diluted exactly as the density is. -------------------------!
@@ -394,7 +394,7 @@ contains
       !----- Report the disturbed-area flux, WRITTEN ON THE DONORS and written HERE, before          !
       !      patch%n grows: every patch loses the same fraction `frac`, and at this point the diag   !
       !      block's slots still line up with the donor patches. The gap then inherits the           !
-      !      donors' blended slot (patch_diag_inherit, at the end of this routine), so               !
+      !      donors' blended slot (inherit_patch_diag, at the end of this routine), so               !
       !      Sum(area * value) counts the rate on all of the ground it was disturbed on.             !
       !      UNITS: the block's weight is Sum(dt) in SECONDS, so the contribution is the             !
       !      declared [1/yr] rate times this step's weight in seconds. `frac` is the fraction        !
@@ -554,7 +554,7 @@ contains
       !      hold the step so far. Every donor lost the same fraction, so their current areas give    !
       !      the same blend as their original ones. (expand_patch_block above grew the block with      !
       !      the patch arrays.)                                                                       !
-      call patch_diag_inherit(site%patch%diag, newp, site%patch%area(1:np0))
+      call inherit_patch_diag(site%patch%diag, newp, site%patch%area(1:np0))
       do i = m0 + 1_ik, site%cohort%n
          call assign_cohort_id(site, i)
       end do

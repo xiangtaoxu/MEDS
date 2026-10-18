@@ -28,7 +28,7 @@ program test_mortality_pathways
    use meds_config,              only : meds_config_t
    use meds_cohort_state_vars,   only : set_cohort_size_from_carbon
    use meds_site_state_vars,     only : site_t
-   use meds_diag_vars,           only : patch_diag_alloc, patch_diag_value, PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, &
+   use meds_diag_vars,           only : alloc_patch_diag, patch_diag_value, PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, &
                                         PD_MORT_C_DISTURB
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
@@ -53,7 +53,7 @@ contains
    subroutine arm_patch_diag(site, cfg)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
-      call patch_diag_alloc(site%patch%diag, site%patch%n + 2_ik, .true.)
+      call alloc_patch_diag(site%patch%diag, site%patch%n + 2_ik, .true.)
       site%patch%diag%n = site%patch%n
       site%patch%diag%w(1:site%patch%diag%cap) = cfg%dt_slow
    end subroutine arm_patch_diag

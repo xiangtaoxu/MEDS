@@ -17,7 +17,7 @@ module meds_output_registry
    use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
    use meds_soil_column_config, only : soil_params_t
    use meds_site_state_vars,    only : site_t
-   use meds_diag_vars,          only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc, patch_diag_alloc
+   use meds_diag_vars,          only : N_CDIAG, N_PDIAG, N_CSDIAG, alloc_cohort_diag, alloc_patch_diag
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
@@ -1363,9 +1363,9 @@ contains
       !----- Additive: a block already on stays on. -----------------------------------------------!
       need_c = need_c .or. site%cohort%diag%active  ; need_s = need_s .or. site%cohort%sdiag%active
       need_p = need_p .or. site%patch%diag%active   ; need_y = need_y .or. site%diag%active
-      call cohort_diag_alloc(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)
-      call cohort_diag_alloc(site%cohort%sdiag, max(site%cohort%cap, 1_ik), need_s, nfield=N_CSDIAG)
-      call patch_diag_alloc (site%patch%diag,   max(site%patch%cap,  1_ik), need_p)
+      call alloc_cohort_diag(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)
+      call alloc_cohort_diag(site%cohort%sdiag, max(site%cohort%cap, 1_ik), need_s, nfield=N_CSDIAG)
+      call alloc_patch_diag (site%patch%diag,   max(site%patch%cap,  1_ik), need_p)
       site%diag%active = need_y                    ! the polygon block: fixed size, nothing to allocate
    end subroutine activate_site_diag
 

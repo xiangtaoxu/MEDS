@@ -18,7 +18,7 @@ module meds_patch_state_vars
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, n_snow_layer_max, tiny_num, t_3ple
    use meds_therm_lib,        only : cas_molar_density
-   use meds_diag_vars,        only : patch_diag_block, patch_diag_grow, patch_diag_reorder
+   use meds_diag_vars,        only : patch_diag_block, expand_patch_diag, reorder_patch_diag
    use meds_state_defaults,   only : CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
    use meds_config,           only : meds_config_t, DIST_PRIMARY
    use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
@@ -379,7 +379,7 @@ contains
       if (need <= patch%cap) return
       newcap = max(need, (patch%cap * 3_ik) / 2_ik + 1_ik)
       !----- Grow the diagnostic block in place; the move_alloc list below leaves it alone.  -----!
-      call patch_diag_grow(patch%diag, newcap)
+      call expand_patch_diag(patch%diag, newcap)
       call alloc_patch_block(tmp, newcap, n_pft)
       m = patch%n
       tmp%n = m
@@ -475,7 +475,7 @@ contains
       !----- 10. Solver memory ------------------------------------------------------------------!
       patch%adapt_dt_last(1:m) = patch%adapt_dt_last(perm(1:m))
       !----- 11. Output accumulators ------------------------------------------------------------!
-      call patch_diag_reorder(patch%diag, perm, m)
+      call reorder_patch_diag(patch%diag, perm, m)
       patch%n = m
    end subroutine reorder_patch_block
 

@@ -7,8 +7,8 @@
 ! meds_polygon_t (src/main) wraps it with the run's forcing, budgets and ledgers.          !
 !==========================================================================================!
 module meds_site_state_vars
-   use meds_diag_vars,          only : polygon_diag_block, cohort_diag_reset, patch_diag_reset,          &
-                                       polygon_diag_reset
+   use meds_diag_vars,          only : polygon_diag_block, reset_cohort_diag, reset_patch_diag,          &
+                                       reset_polygon_diag
    use meds_kinds,              only : wp, ik
    use meds_allometry,          only : allometry_t
    use meds_pft_params,         only : pft_table_t
@@ -212,9 +212,9 @@ contains
    !      follows. The slow cohort block is SET each step instead and needs no reset here. --------!
    subroutine reset_step_diagnostics(site)
       type(site_t), intent(inout) :: site
-      call cohort_diag_reset(site%cohort%diag)
-      call patch_diag_reset(site%patch%diag)
-      call polygon_diag_reset(site%diag)
+      call reset_cohort_diag(site%cohort%diag)
+      call reset_patch_diag(site%patch%diag)
+      call reset_polygon_diag(site%diag)
    end subroutine reset_step_diagnostics
 
 end module meds_site_state_vars

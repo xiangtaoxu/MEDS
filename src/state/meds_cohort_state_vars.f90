@@ -26,8 +26,8 @@ module meds_cohort_state_vars
                                     carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_pft_params,      only : pft_table_t
    use meds_config,          only : hydraulics_config_t, pft_tissue_curves
-   use meds_diag_vars,       only : cohort_diag_block, cohort_diag_grow, cohort_diag_reorder,              &
-                                    cohort_diag_copy_slot, cohort_diag_clear_slot
+   use meds_diag_vars,       only : cohort_diag_block, expand_cohort_diag, reorder_cohort_diag,              &
+                                    copy_cohort_diag, clear_cohort_diag
    use meds_state_defaults,  only : GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET,      &
                                     LIGHT_HOURS_MEAN_UNSET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
    implicit none
@@ -274,8 +274,8 @@ contains
       newcap = max(need, (cohort%cap * 3_ik) / 2_ik + 1_ik)
       !----- Grow the diagnostic block IN PLACE first, so move_cohort_block below can hand its     !
       !      (already correctly sized, prefix-preserving) arrays straight across.  ---------------!
-      call cohort_diag_grow(cohort%diag,  newcap)
-      call cohort_diag_grow(cohort%sdiag, newcap)
+      call expand_cohort_diag(cohort%diag,  newcap)
+      call expand_cohort_diag(cohort%sdiag, newcap)
       call alloc_cohort_block(tmp, newcap, int(size(cohort%growth_hist, 1), ik))  ! keep the window size
       m = cohort%n
       tmp%n = m
@@ -468,9 +468,9 @@ contains
       cohort%dmax_psi_leaf_accum(1:m) = cohort%dmax_psi_leaf_accum(perm(1:m))
       !----- 10. Output accumulators ------------------------------------------------------------!
       !----- The diagnostic accumulators ride the SAME permutation. One call, and it cannot omit  !
-      !      a field: they are rows of one 2-D array (meds_diag_vars, decision 4).  --------      !
-      call cohort_diag_reorder(cohort%diag,  perm, m)
-      call cohort_diag_reorder(cohort%sdiag, perm, m)
+      !      a field: they are rows of one 2-D array (meds_diag_vars, principle 4).  --------      !
+      call reorder_cohort_diag(cohort%diag,  perm, m)
+      call reorder_cohort_diag(cohort%sdiag, perm, m)
       cohort%n = m
    end subroutine reorder_cohort_block
 
@@ -550,8 +550,8 @@ contains
       cohort%light_hours_accum(dst)   = cohort%light_hours_accum(src)
       cohort%dmax_psi_leaf_accum(dst) = cohort%dmax_psi_leaf_accum(src)
       !----- 10. Output accumulators ------------------------------------------------------------!
-      call cohort_diag_copy_slot(cohort%diag,  dst, src)
-      call cohort_diag_copy_slot(cohort%sdiag, dst, src)
+      call copy_cohort_diag(cohort%diag,  dst, src)
+      call copy_cohort_diag(cohort%sdiag, dst, src)
    end subroutine copy_cohort
 
    !=======================================================================================!
@@ -717,8 +717,8 @@ contains
       cohort%growth_hist(:, m)   = 0.0_wp             ! a reused slot keeps a dead cohort's samples otherwise
       cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)
       cohort%light_hours_accum(m)        = 0.0_wp             ! no light seen yet this step
-      call cohort_diag_clear_slot(cohort%diag,  m)    ! fresh diagnostics (slot may be a reused, stale cull)
-      call cohort_diag_clear_slot(cohort%sdiag, m)
+      call clear_cohort_diag(cohort%diag,  m)    ! fresh diagnostics (slot may be a reused, stale cull)
+      call clear_cohort_diag(cohort%sdiag, m)
       cohort%leaf_flush_tendency(m) = PHENO_FLUSH_INIT  ! born flushing
       cohort%leaf_shed_tendency(m)  = PHENO_SHED_INIT   ! not senescing at birth
       cohort%growing_degree_days(m) = 0.0_wp            ! fresh phenology memory
@@ -771,13 +771,13 @@ contains
    !  kind wrong is invisible: the AGB assert still passes, the conservation ledgers still   !
    !  close, and the answer is quietly wrong.                                                !
    !                                                                                         !
-   !    FK_INTENSIVE  a per-mass property (a temperature). Weighted by the HEAT CAPACITY     !
+   !    FSK_INTENSIVE  a per-mass property (a temperature). Weighted by the HEAT CAPACITY     !
    !                  that carries it, which is what conserves the tissue's energy through   !
    !                  the merge.                                                             !
-   !    FK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux).      !
+   !    FSK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux).      !
    !                  nplant-weighted mean, so the site total (nplant * value, summed) is    !
    !                  conserved.                                                             !
-   !    FK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts    !
+   !    FSK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts    !
    !                  over the same ground simply ADD; weighting would double-count the      !
    !                  normalization.                                                         !
    !                                                                                         !

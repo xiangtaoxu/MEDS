@@ -85,6 +85,9 @@ reorganized by model hierarchy, with no change to any result (#448).
   - The four files write one statement per line: no `;` joins two statements.
   - The diagnostic rows are renumbered by section, the patch's slow rows after its fast rows; every
     reader takes them by name.
+  - The diagnostic routines follow the block routines' pattern (`alloc_cohort_diag`,
+    `expand_cohort_diag`, `reorder_cohort_diag`, `fuse_cohort_diag`, `blend_patch_diag`, ...), and
+    the fusion kinds are `FSK_*`.
   - The kernels' rule never to see `site_t` is checked by a lint (ctest `kernels_no_site_state`),
     since the library boundary could not hold it.
 

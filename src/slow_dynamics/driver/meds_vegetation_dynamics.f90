@@ -44,8 +44,8 @@ module meds_vegetation_dynamics
    use meds_biogeochem_types, only : litter_input_t
    use meds_diag_vars,            only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF, CS_NPP_FINEROOT, CS_NPP_WOOD, &
                                          CS_NPP_STORAGE, CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, &
-                                         cohort_diag_grow, PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_LITTER_WOOD, &
-                                         PD_LITTER_REPRO, PD_MORT_C_BACKGROUND, PD_RECRUIT_NPLANT, cohort_diag_reset
+                                         expand_cohort_diag, PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_LITTER_WOOD, &
+                                         PD_LITTER_REPRO, PD_MORT_C_BACKGROUND, PD_RECRUIT_NPLANT, reset_cohort_diag
    implicit none
    private
 
@@ -126,8 +126,8 @@ contains
       !----- SLOW diagnostic block: size + zero it for this step BEFORE anything writes into it.   !
       !      SET semantics (one sample per slow step), so `w` is a presence flag rather than a dt.   !
       if (site%cohort%sdiag%active) then
-         call cohort_diag_grow(site%cohort%sdiag, max(site%cohort%n, 1_ik))
-         call cohort_diag_reset(site%cohort%sdiag)
+         call expand_cohort_diag(site%cohort%sdiag, max(site%cohort%n, 1_ik))
+         call reset_cohort_diag(site%cohort%sdiag)
          site%cohort%sdiag%n = site%cohort%n
       end if
       call compute_carbon_allocation(site, cfg, cfg%dt_years, dpool, npp_repro, site%patch%litter_in, exhausted)

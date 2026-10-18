@@ -39,7 +39,7 @@ module meds_fast_dynamics
                                      PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, &
                                      PD_Z_CAS_TOP, PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND, PY_LWDOWN, &
                                      PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM, PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, &
-                                     PY_RHO_AIR, PY_RAINF, N_PYDIAG, cohort_diag_grow, patch_diag_grow
+                                     PY_RHO_AIR, PY_RAINF, N_PYDIAG, expand_cohort_diag, expand_patch_diag
    use meds_constants,     only : n_soil_layer_max
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
@@ -391,11 +391,11 @@ contains
       !      caller zeroes them after reading (reset_step_diagnostics), so a calendar boundary's       !
       !      events, written between the two steps, reach the next record. ----------------------------!
       if (do_cdiag) then
-         call cohort_diag_grow(site%cohort%diag, max(site%cohort%n, 1_ik))
+         call expand_cohort_diag(site%cohort%diag, max(site%cohort%n, 1_ik))
          site%cohort%diag%n = site%cohort%n
       end if
       if (do_pdiag) then
-         call patch_diag_grow(site%patch%diag, max(npatch, 1_ik))
+         call expand_patch_diag(site%patch%diag, max(npatch, 1_ik))
          site%patch%diag%n = npatch
       end if
       nl = n_soil_layer_max
