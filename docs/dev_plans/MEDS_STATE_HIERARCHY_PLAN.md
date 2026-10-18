@@ -778,6 +778,11 @@ each file's own alignment.
   needs the `fast_rows` flag and `patch_diag_slow_row` for slow-only runs. A separate slow block per
   level, as the cohort has, needs no special case. It changes output arithmetic, so it is its own
   change.
+- **Two placeholder defaults in `cas_state_t`.** `can_co2 = 400` and `can_depth = 20 m` are never
+  seen by a run with the fast loop (the canopy air is seeded from the forcing, and its depth set from
+  the stand, at setup). The type's other unseeded values are 0, and `patch_birth_state` reads
+  `can_temp > 0` as "seeded". Making the two 0 as well would change test fixtures and runs without the
+  fast loop, so it is its own change.
 - **The TOML site file** (the location, ground and starting state split from the model settings): the
   owner will revisit.
 - **"column" elsewhere.** The fast loop's `column_cohort_t`, `meds_column_view`, `build_column_frozen`
@@ -839,3 +844,10 @@ fission (`split_cohorts`), recruitment (`apply_recruitment`), the survivors copi
 ends with `update_overtopping_lai` (the end of `restructure_stand`, and the driver after setup),
 nothing between reads the field, and the readers (trait plasticity, the output, the state file) all
 come after. It is carried now, so a grow keeps every field, and the result is bit-identical.
+
+**Constants, after review (2026-10-18).** The "unset" markers (`GROWTH_AVG_UNSET`,
+`DMAX_PSI_LEAF_UNSET`, `DMAX_PSI_LEAF_ACCUM_RESET`) stay in the cohort file: they define what their
+fields can hold, and `meds_constants` keeps only physical and calendar constants. The two newborn
+phenology values are private to the cohort file, which alone uses them. The patch file's
+`tiny_mass` duplicated `tiny_num` (both 1e-30) and is gone, and the snow store's default temperature
+is written as `t_3ple`. Bit-identical.

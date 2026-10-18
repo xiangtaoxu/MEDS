@@ -38,7 +38,7 @@ module meds_cohort_state_vars
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
-   public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
+   public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
    !      this until its first growth step adds a sample (negative => "unset"; a real growth     !

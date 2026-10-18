@@ -21,16 +21,13 @@
 !==========================================================================================!
 module meds_patch_state_vars
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : n_soil_layer_max, n_snow_layer_max
+   use meds_constants,        only : n_soil_layer_max, n_snow_layer_max, tiny_num, t_3ple
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, patch_diag_grow, patch_diag_reorder
    use meds_config,           only : meds_config_t
    use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
    implicit none
    private
-
-   !----- Below this total air mass a blend has nothing to conserve (see blend_cas). ------!
-   real(wp), parameter :: tiny_mass = 1.0e-30_wp
 
    public :: cas_state_t, cas_set_depth
    public :: snow_column_t, soil_water_column_t, soil_energy_column_t, soil_carbon_t
@@ -65,7 +62,7 @@ module meds_patch_state_vars
       real(wp) :: swe(n_snow_layer_max)         = 0.0_wp   !< [kg/m2] water-equivalent mass  (PROGNOSTIC)
       real(wp) :: snow_energy(n_snow_layer_max) = 0.0_wp   !< [J/m2]  extensive internal energy (PROGNOSTIC)
       real(wp) :: snow_depth(n_snow_layer_max)  = 0.0_wp   !< [m]     geometric depth (= swe/rho_snow, the fixed density)
-      real(wp) :: snow_temp(n_snow_layer_max)   = 273.16_wp !< [K]    diagnosed each step (read-off)
+      real(wp) :: snow_temp(n_snow_layer_max)   = t_3ple    !< [K]    diagnosed each step (read-off)
       real(wp) :: snow_fliq(n_snow_layer_max)   = 0.0_wp   !< [-]     diagnosed liquid fraction (read-off)
       integer(ik) :: nlayer                     = 0_ik     !< active layer count (0 = no snow)
    end type snow_column_t
@@ -319,7 +316,7 @@ contains
       real(wp) :: m1, m2, mt
       m1 = w1 * a%can_depth ; m2 = w2 * b%can_depth ; mt = m1 + m2
       c%can_depth = mt                                   ! = w1*d1 + w2*d2, the area-weighted depth
-      if (mt > tiny_mass) then
+      if (mt > tiny_num) then        ! below it, a blend has no air mass to conserve
          c%can_enthalpy = (m1 * a%can_enthalpy + m2 * b%can_enthalpy) / mt
          c%can_shv      = (m1 * a%can_shv      + m2 * b%can_shv     ) / mt
          c%can_co2      = (m1 * a%can_co2      + m2 * b%can_co2     ) / mt
