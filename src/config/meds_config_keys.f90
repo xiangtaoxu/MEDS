@@ -42,8 +42,13 @@ module meds_config_keys
       'min_leaf_cover (the leaf cover senescence stops at) and the cue masks; background turnover '//  &
       'is not cold-suppressed'
    character(len=*), parameter :: SOIL_NETWORK = 'soil water is solved with the plants'' water as '// &
-      'one network (implicit Euler, Newton, its own sub-steps), whose error is set by [soil].rtol '// &
-      'and [soil].atol; the Richards solver''s linearization and sub-step controls are gone'
+      'one network (implicit Euler, Newton, its own sub-steps), whose error is set by '//         &
+      '[fast].water_rtol and [fast].water_atol; the Richards solver''s linearization and sub-step '// &
+      'controls are gone'
+   !----- [soil] is the one block for the ground: the column, its surface and both bottom        !
+   !      boundaries. Solver settings are in [fast]. -------------------------------------------------!
+   character(len=*), parameter :: GROUND = ' ([soil] holds the whole ground, [fast] the solver '// &
+      'settings)'
    character(len=*), parameter :: NITROGEN = 'the nitrogen cycle is not built; it is planned after '// &
       'the move to ED-MORE, and MEDS is carbon-only until then: delete the key'
    character(len=*), parameter :: LITTER_SPLIT = 'the litter is split by the tissue it comes from, with '// &
@@ -60,10 +65,33 @@ module meds_config_keys
                     '[hydraulics].root_beta (0 < beta < 1), and the rooting depth through '//    &
                     'root_depth_b1 and root_depth_b2'),                                          &
       retired_key_t('soil_column.n_layer', 'the soil layers are SoilGrids'' depths (5, 15, 30, '// &
-                    '60, 100, 150, 200 cm, then deeper) cut at soil_column.depth; set '//        &
-                    'soil_column.layer_bottoms [m] for other layers'),                           &
+                    '60, 100, 150, 200 cm, then deeper) cut at soil.depth; set '//               &
+                    'soil.layer_bottoms [m] for other layers'),                                  &
       retired_key_t('soil_column.grid_growth', 'the layers no longer thicken by a growth '//     &
                     'factor: see soil_column.n_layer'),                                          &
+      retired_key_t('soil_column.depth', 'moved to soil.depth'//GROUND),                         &
+      retired_key_t('soil_column.layer_bottoms', 'moved to soil.layer_bottoms'//GROUND),         &
+      retired_key_t('soil_column.retention', 'moved to soil.retention'//GROUND),                 &
+      retired_key_t('soil_column.theta_sat', 'moved to soil.theta_sat'//GROUND),                 &
+      retired_key_t('soil_column.theta_res', 'moved to soil.theta_res'//GROUND),                 &
+      retired_key_t('soil_column.ksat', 'moved to soil.ksat'//GROUND),                           &
+      retired_key_t('soil_column.curve_par_a', 'moved to soil.curve_par_a'//GROUND),             &
+      retired_key_t('soil_column.curve_par_n', 'moved to soil.curve_par_n'//GROUND),             &
+      retired_key_t('soil_column.psi_fc', 'moved to soil.psi_fc'//GROUND),                       &
+      retired_key_t('soil_column.solid_conductivity', 'moved to soil.solid_conductivity'//GROUND), &
+      retired_key_t('soil_column.dry_conductivity', 'moved to soil.dry_conductivity'//GROUND),   &
+      retired_key_t('soil_column.dry_heat_capacity', 'moved to soil.dry_heat_capacity'//GROUND), &
+      retired_key_t('soil.bottom_bc', 'renamed soil.water_bottom_bc (the heat''s is '//          &
+                    'soil.thermal_bottom_bc)'//GROUND),                                        &
+      retired_key_t('soil.rtol', 'moved to fast.water_rtol'//GROUND),                            &
+      retired_key_t('soil.atol', 'moved to fast.water_atol'//GROUND),                            &
+      retired_key_t('soil.intercept_alpha', 'moved to fast.intercept_alpha, beside canopy_water_on'), &
+      retired_key_t('soil.intercept_k', 'moved to fast.intercept_k, beside canopy_water_on'),    &
+      retired_key_t('energy.bottom_bc', 'renamed soil.thermal_bottom_bc'//GROUND),               &
+      retired_key_t('energy.deep_temp', 'moved to soil.deep_temp'//GROUND),                      &
+      retired_key_t('energy.deep_depth', 'moved to soil.deep_depth'//GROUND),                    &
+      retired_key_t('energy.atol', 'renamed fast.soil_energy_budget_atol'//GROUND),              &
+      retired_key_t('energy.debug_error', 'moved to fast.debug_error'//GROUND),                  &
       retired_key_t('hydraulics.root_depth', 'each cohort roots to root_depth_b1 * height^'//     &
                     'root_depth_b2, capped at the soil column: set [hydraulics].root_depth_b1 '// &
                     'and root_depth_b2 (defaults 1.114 and 0.4223, ED2), or pft.root_depth_b1/b2'), &

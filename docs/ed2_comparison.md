@@ -228,7 +228,7 @@ Both models check budgets. ED2 verifies energy, water, CO₂ and carbon every ph
 against relative tolerances (`tol_subday_budget`, `tol_carbon_budget` in `utils/budget_utils.f90`).
 MEDS closes whole-column water and energy ledgers to machine precision (~1e-13 kg m⁻² and ~1e-7 J m⁻²)
 in the unsaturated regime, with snow and condensation active, and asserts this in the test suite; an
-opt-in `[energy].debug_error` turns a non-closing budget into a hard stop.
+opt-in `[fast].debug_error` turns a non-closing budget into a hard stop.
 
 Two hard-won qualifications, both stated in the MEDS docs and worth repeating to anyone porting
 analysis code:

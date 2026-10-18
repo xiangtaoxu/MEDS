@@ -73,7 +73,7 @@ init_mode    = 0
 restart_file = "none"
 census_file  = "none"
 pft_config   = "pft_parameters.toml"
-soil_temp    = 298.65             # [K] as [energy].deep_temp
+soil_temp    = 298.65             # [K] as [soil].deep_temp
 soil_theta   = 0.42               # [m3/m3] example 04's start
 
 [state]
@@ -178,15 +178,13 @@ start_clamp    = "error"
 [soil_carbon]
 soil_carbon_on = true             # starts empty, filled by the regrowing forest's litter
 
-[soil_column]
+[soil]
 depth       = 2.0
 theta_sat   = 0.60
 theta_res   = 0.10
 curve_par_a = 2.0
 curve_par_n = 1.23
 ksat        = 1.0e-5
-
-[energy]
-bottom_bc  = "dirichlet"
+thermal_bottom_bc = "dirichlet"
 deep_temp  = 298.65
 deep_depth = 3.145

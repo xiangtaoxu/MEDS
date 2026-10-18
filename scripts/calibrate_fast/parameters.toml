@@ -267,7 +267,7 @@ source = "woody-surface film capacity [kg m-2 wood] (the old soil.dewmx, CLM5 0.
 
 [intercept_k]
 file = "main"
-key = "soil.intercept_k"
+key = "fast.intercept_k"
 scope = "site"
 kind = "effective"
 range = [0.3, 0.8]

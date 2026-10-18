@@ -7,9 +7,9 @@
 ! Philosophy: NO hard-coded model parameters. Every parameter is supplied by the user via  !
 ! TOML (or DERIVED from supplied ones); a missing parameter or a missing file is a HARD    !
 ! ERROR. The exceptions are the optional keys -- solver settings, process switches and a   !
-! few blocks ([soil_column], [soil], [energy], [snow], [aerodynamics], [soil_carbon]) --   !
-! which fall back to their defaults. The MAIN file (passed on the CLI) holds all non-PFT   !
-! parameters and names the PFT file; the PFT file holds all PFT-specific traits plus the   !
+! few blocks ([soil], [snow], [aerodynamics], [soil_carbon]) -- which fall back to their   !
+! defaults. The MAIN file (passed on the CLI) holds all non-PFT parameters and names the   !
+! PFT file; the PFT file holds all PFT-specific traits plus the                            !
 ! allometry and mortality-hazard coefficients. Presence is tracked while reading (a        !
 ! "missing key" list); after both files are read, any missing required key aborts with the !
 ! full list. Derived quantities are then computed (derive_parameters); with                !
@@ -23,8 +23,8 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_config,     only : soil_column_config_t,                                              &
-                               pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
+   use meds_config,     only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
+   use meds_soil_column_config, only : soil_column_config_t
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION
    use meds_maps_opts, only : soil_maps_on
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
@@ -173,64 +173,72 @@ contains
 
 
    !=======================================================================================!
-   !  Fast-loop biophysics run-config loaders ([soil]/[energy]/[snow]/[aerodynamics]). All !
-   !  OPTIONAL: every key is read with its current (default) value as the getter fallback, !
-   !  so an absent key or block keeps the meds_biophysics_opts default. String selectors   !
-   !  keep the default when absent and HARD-ERROR when present but unrecognized (like the  !
-   !  [forcing] enum mappers, but optional -- no note_missing). Public for unit testing.   !
+   !  Fast-loop biophysics run-config loaders ([soil]/[snow]/[aerodynamics], and the solver !
+   !  settings in [fast]). All OPTIONAL: every key is read with its current (default)       !
+   !  value as the getter fallback, so an absent key or block keeps the type's default.     !
+   !  String selectors keep the default when absent and HARD-ERROR when present but         !
+   !  unrecognized (like the [forcing] enum mappers, but optional -- no note_missing).      !
+   !  Public for unit testing.                                                              !
+   !                                                                                       !
+   !  [soil] is the ground, the one block that describes it: the column's layers and        !
+   !  texture (soil_column_config_t), its surface (soil_opts_t: pond, dry surface layer,    !
+   !  optics) and both bottom boundaries (soil_opts_t for the water, energy_opts_t for the  !
+   !  heat). The Fortran types are grouped by the solver that reads them, so one block      !
+   !  fills three types.                                                                   !
    !=======================================================================================!
    !---------------------------------------------------------------------------------------!
-   ! [soil_column] -> the PHYSICAL soil column: grid, hydraulic texture, thermal texture.  !
-   ! Distinct from [soil], the water network's options over this column. Every key is      !
-   ! optional and defaults to its soil_column_config_t value.                              !
+   ! [soil] -> the soil column: its layers, hydraulic texture and thermal texture. Every    !
+   ! key is optional and defaults to its soil_column_config_t value.                       !
    !---------------------------------------------------------------------------------------!
    subroutine load_soil_column(tm, c)
       type(toml_table_t),         intent(in)    :: tm
       type(soil_column_config_t), intent(inout) :: c
       character(len=64) :: str
       !----- A layer_bottoms list without a depth sets the column to end at its last bottom. ---!
-      call toml_real_array(tm, 'soil_column.layer_bottoms', c%layer_bottoms, c%n_layer_bottoms)
+      call toml_real_array(tm, 'soil.layer_bottoms', c%layer_bottoms, c%n_layer_bottoms)
       if (c%n_layer_bottoms > 0_ik) c%depth = c%layer_bottoms(c%n_layer_bottoms)
-      c%depth       = toml_real(tm, 'soil_column.depth',       c%depth)
-      if (toml_has(tm, 'soil_column.retention')) then
-         str = toml_string(tm, 'soil_column.retention', '')
+      c%depth       = toml_real(tm, 'soil.depth',       c%depth)
+      if (toml_has(tm, 'soil.retention')) then
+         str = toml_string(tm, 'soil.retention', '')
          select case (trim(str))
          case ('van_genuchten') ; c%retention = SOIL_RETENTION_VG
          case ('campbell')      ; c%retention = SOIL_RETENTION_CAMPBELL
-         case default ; error stop 'load_meds_config: soil_column.retention must be van_genuchten|campbell'
+         case default ; error stop 'load_meds_config: soil.retention must be van_genuchten|campbell'
          end select
       end if
-      c%theta_sat   = toml_real(tm, 'soil_column.theta_sat',   c%theta_sat)
-      c%theta_res   = toml_real(tm, 'soil_column.theta_res',   c%theta_res)
-      c%ksat        = toml_real(tm, 'soil_column.ksat',        c%ksat)
-      c%curve_par_a = toml_real(tm, 'soil_column.curve_par_a', c%curve_par_a)
-      c%curve_par_n = toml_real(tm, 'soil_column.curve_par_n', c%curve_par_n)
-      c%psi_fc      = toml_real(tm, 'soil_column.psi_fc',      c%psi_fc)
-      c%solid_conductivity = toml_real(tm, 'soil_column.solid_conductivity', c%solid_conductivity)
-      c%dry_conductivity   = toml_real(tm, 'soil_column.dry_conductivity',   c%dry_conductivity)
-      c%dry_heat_capacity  = toml_real(tm, 'soil_column.dry_heat_capacity',  c%dry_heat_capacity)
+      c%theta_sat   = toml_real(tm, 'soil.theta_sat',   c%theta_sat)
+      c%theta_res   = toml_real(tm, 'soil.theta_res',   c%theta_res)
+      c%ksat        = toml_real(tm, 'soil.ksat',        c%ksat)
+      c%curve_par_a = toml_real(tm, 'soil.curve_par_a', c%curve_par_a)
+      c%curve_par_n = toml_real(tm, 'soil.curve_par_n', c%curve_par_n)
+      c%psi_fc      = toml_real(tm, 'soil.psi_fc',      c%psi_fc)
+      c%solid_conductivity = toml_real(tm, 'soil.solid_conductivity', c%solid_conductivity)
+      c%dry_conductivity   = toml_real(tm, 'soil.dry_conductivity',   c%dry_conductivity)
+      c%dry_heat_capacity  = toml_real(tm, 'soil.dry_heat_capacity',  c%dry_heat_capacity)
    end subroutine load_soil_column
 
-   subroutine load_soil_opts(tm, s)                     ! [soil] -> soil-water opts
+   !----- The soil water's options: the ground's surface and water boundary from [soil], the   !
+   !      water network's tolerances and the canopy interception from [fast]. ------------------!
+   subroutine load_soil_opts(tm, s)
       type(toml_table_t), intent(in)    :: tm
       type(soil_opts_t),  intent(inout) :: s
       character(len=64) :: str
-      if (toml_has(tm, 'soil.bottom_bc')) then
-         str = toml_string(tm, 'soil.bottom_bc', '')
+      if (toml_has(tm, 'soil.water_bottom_bc')) then
+         str = toml_string(tm, 'soil.water_bottom_bc', '')
          !----- free_drain and bedrock are the drainage boundary's two ends, f = 1 and f = 0  !
          !      (docs/science/soil_biophysics.md §Boundary conditions). ---------------------!
          select case (trim(str))
          case ('free_drain') ; s%bottom_bc = SOIL_BC_DRAIN ; s%drain_factor = 1.0_wp
          case ('bedrock')    ; s%bottom_bc = SOIL_BC_DRAIN ; s%drain_factor = 0.0_wp
          case ('aquifer')    ; s%bottom_bc = SOIL_BC_AQUIFER
-         case default ; error stop 'load_meds_config: soil.bottom_bc must be free_drain|aquifer|bedrock'
+         case default ; error stop 'load_meds_config: soil.water_bottom_bc must be free_drain|aquifer|bedrock'
          end select
       end if
-      s%rtol           = toml_real   (tm, 'soil.rtol',            s%rtol)
-      s%atol           = toml_real   (tm, 'soil.atol',            s%atol)
+      s%rtol           = toml_real   (tm, 'fast.water_rtol',      s%rtol)
+      s%atol           = toml_real   (tm, 'fast.water_atol',      s%atol)
       s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
-      s%intercept_alpha= toml_real   (tm, 'soil.intercept_alpha', s%intercept_alpha)
-      s%intercept_k    = toml_real   (tm, 'soil.intercept_k',     s%intercept_k)
+      s%intercept_alpha= toml_real   (tm, 'fast.intercept_alpha', s%intercept_alpha)
+      s%intercept_k    = toml_real   (tm, 'fast.intercept_k',     s%intercept_k)
       s%dsl_dmax       = toml_real   (tm, 'soil.dsl_dmax',        s%dsl_dmax)
       s%dsl_theta_init = toml_real   (tm, 'soil.dsl_theta_init',  s%dsl_theta_init)
       s%ground_albedo_vis = toml_real(tm, 'soil.ground_albedo_vis', s%ground_albedo_vis)
@@ -238,31 +246,33 @@ contains
       s%ground_emissivity = toml_real(tm, 'soil.ground_emissivity', s%ground_emissivity)
    end subroutine load_soil_opts
 
-   subroutine load_energy_opts(tm, e)                   ! [energy] -> soil-thermal opts
+   !----- The soil heat's options: the ground's thermal bottom boundary from [soil], the budget  !
+   !      check from [fast]. --------------------------------------------------------------------!
+   subroutine load_energy_opts(tm, e)
       type(toml_table_t),  intent(in)    :: tm
       type(energy_opts_t), intent(inout) :: e
       character(len=64) :: str
-      if (toml_has(tm, 'energy.bottom_bc')) then
-         str = toml_string(tm, 'energy.bottom_bc', '')
+      if (toml_has(tm, 'soil.thermal_bottom_bc')) then
+         str = toml_string(tm, 'soil.thermal_bottom_bc', '')
          select case (trim(str))
          case ('geothermal') ; e%bottom_bc = ENERGY_BC_GEOTHERMAL
          case ('dirichlet')  ; e%bottom_bc = ENERGY_BC_DIRICHLET
-         case default ; error stop 'load_meds_config: energy.bottom_bc must be geothermal|dirichlet'
+         case default ; error stop 'load_meds_config: soil.thermal_bottom_bc must be geothermal|dirichlet'
          end select
       end if
-      e%deep_temp   = toml_real(tm, 'energy.deep_temp',   e%deep_temp)
-      e%deep_depth  = toml_real(tm, 'energy.deep_depth',  e%deep_depth)
-      e%atol        = toml_real(tm, 'energy.atol',        e%atol)
+      e%deep_temp   = toml_real(tm, 'soil.deep_temp',   e%deep_temp)
+      e%deep_depth  = toml_real(tm, 'soil.deep_depth',  e%deep_depth)
+      e%atol        = toml_real(tm, 'fast.soil_energy_budget_atol', e%atol)
       !----- HARD-STOP on a non-closing budget. Gates the stop on the fast loop's budget checks      !
       !      (meds_fast_ark, meds_fast_rk45) and the kernels' own closure checks. Default            !
       !      .false., so a production run reports a breach rather than halting on it; set it to      !
       !      halt when you are bisecting one.                                                        !
       !                                                                                              !
       !      This key MUST keep its reader. Without one the flag can be set only from Fortran,       !
-      !      every configured run sits at .false., and the protocol "run with energy.debug_error     !
+      !      every configured run sits at .false., and the protocol "run with fast.debug_error       !
       !      = .true. so a breach HALTS" is silently vacuous: a run would complete because           !
       !      nothing was checking, not because nothing was wrong. -----------------------------------!
-      e%debug_error = toml_logical(tm, 'energy.debug_error', e%debug_error)
+      e%debug_error = toml_logical(tm, 'fast.debug_error', e%debug_error)
    end subroutine load_energy_opts
 
    subroutine load_snow_params(tm, s)                   ! [snow] -> snow physical params
@@ -656,11 +666,10 @@ contains
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       character(len=*), parameter :: SOIL_MAP_KEYS(15) = [character(len=32) ::                       &
-         'soil_column.depth', 'soil_column.layer_bottoms', 'soil_column.theta_sat',                  &
-         'soil_column.theta_res', 'soil_column.ksat', 'soil_column.curve_par_a',                     &
-         'soil_column.curve_par_n', 'soil_column.solid_conductivity', 'soil_column.dry_conductivity', &
-         'soil_column.dry_heat_capacity', 'soil_column.retention', 'soil.bottom_bc',                  &
-         'energy.deep_temp', 'energy.deep_depth', 'init.soil_theta']
+         'soil.depth', 'soil.layer_bottoms', 'soil.theta_sat', 'soil.theta_res', 'soil.ksat',          &
+         'soil.curve_par_a', 'soil.curve_par_n', 'soil.solid_conductivity', 'soil.dry_conductivity',    &
+         'soil.dry_heat_capacity', 'soil.retention', 'soil.water_bottom_bc', 'soil.deep_temp',          &
+         'soil.deep_depth', 'init.soil_theta']
       integer(ik) :: i, n_set
       cfg%maps%soil_depth_map     = toml_string(t, 'maps.soil_depth_map',     '')
       cfg%maps%soil_texture_map   = toml_string(t, 'maps.soil_texture_map',   '')
@@ -1015,14 +1024,15 @@ contains
       cfg%hydraulics%fine_root_radius     = toml_real(tm, 'hydraulics.fine_root_radius',                    &
                                                       cfg%hydraulics%fine_root_radius)
 
-      !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (every key     !
-      !      DEFAULTED to its meds_biophysics_opts value, so an absent block keeps the            !
-      !      defaults). build_fast_context copies these verbatim into the column config. ---------!
+      !----- [soil]/[snow]/[aerodynamics] fast-loop biophysics run-config, and its solver         !
+      !      settings in [fast] (every key DEFAULTED to its type's value, so an absent block      !
+      !      keeps the defaults). build_fast_context copies these verbatim into the column        !
+      !      config. -----------------------------------------------------------------------------!
       call load_soil_opts  (tm, cfg%soil)
       call load_soil_column(tm, cfg%soil_column)
       call load_energy_opts(tm, cfg%energy)
-      !----- ONE debug switch: [energy].debug_error arms every Debug-only hard stop, including the     !
-      !      soil-water kernel's own mass-closure stops, which have no [soil] key of their own. -------!
+      !----- ONE debug switch: [fast].debug_error arms every Debug-only hard stop, including the       !
+      !      soil-water kernel's own mass-closure stops, which have no key of their own. --------------!
       cfg%soil%debug_error = cfg%energy%debug_error
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)

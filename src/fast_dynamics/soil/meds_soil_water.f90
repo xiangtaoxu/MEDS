@@ -19,7 +19,7 @@ module meds_soil_water
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav, grav_head, r_wv, tiny_num, p_std, safe_exp
    use meds_soil_types, only : chydro_forcing_t
-   use meds_column_params, only : soil_params_t
+   use meds_soil_column_config, only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_AQUIFER
    use meds_water_retention,  only : soil_theta_from_psi
    use meds_hydr_lib,         only : smooth_max0

@@ -20,10 +20,10 @@ program test_pft_optics_config
    use meds_fast_types,     only : apply_hydraulics_config
    use meds_hydr_lib,       only : plc_retained, wood_kmax_from_density
    use meds_water_retention, only : pv_psi_tlp, water_content
-   use meds_site_state_types, only : site_t
+   use meds_site_state_types, only : site_t, patch_birth_state
+   use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
    use meds_vegetation_dynamics, only : shed_excess_tissue_water
-   use meds_column_params,  only : PSI_INIT
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -134,8 +134,9 @@ program test_pft_optics_config
    block
       type(hydro_params_table_t) :: tab
       type(site_t) :: site
-      real(wp) :: w_expect, w_shed
+      real(wp) :: w_expect, w_shed, t_birth, psi_birth
       integer(ik) :: i2
+      type(soil_params_t) :: soil
       cfg%pft%hyd_leaf_water_sat(2) = 3.0_wp      ! vs the shared 2.0
       call apply_hydraulics_config(cfg%hydraulics, cfg%pft, tab)
       call init_bare_ground(site, cfg, 1_ik)
@@ -143,10 +144,12 @@ program test_pft_optics_config
       call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 20.0_wp)
       call finalize_init(site)
       i2 = merge(1_ik, 2_ik, site%cohort%pft(1) == 2_ik)        ! the PFT-2 cohort, after the sort
-      w_expect = water_content(PSI_INIT, tab%pft(2)%leaf_curve, site%cohort%leaf_carbon(i2))
+      call soil_column_params(cfg%soil_column, soil)
+      call patch_birth_state(site, 1_ik, cfg, soil, t_birth, psi_birth)
+      w_expect = water_content(psi_birth, tab%pft(2)%leaf_curve, site%cohort%leaf_carbon(i2))
       call check_close(site%cohort%leaf_water_mass(i2), w_expect, 1.0e-12_wp,                      &
                        'PFT 2 leaf water at birth is on its own curve')
-      call check(abs(w_expect - water_content(PSI_INIT, tab%pft(1)%leaf_curve, site%cohort%leaf_carbon(i2))) &
+      call check(abs(w_expect - water_content(psi_birth, tab%pft(1)%leaf_curve, site%cohort%leaf_carbon(i2))) &
                  > 1.0e-6_wp * w_expect, 'the two PFTs'' curves give different birth water (the fixture bites)')
       !----- Capped on its own ceiling too: a supersaturated store falls to 3.0 x leaf carbon. ---!
       site%cohort%leaf_water_mass(i2) = 10.0_wp * site%cohort%leaf_carbon(i2)

@@ -23,7 +23,8 @@ module meds_fast_dynamics
                                      par_w_2_umol,                                                            &
                                      stefan
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t, soil_column_params
+   use meds_config,           only : meds_config_t
+   use meds_soil_column_config, only : soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
@@ -43,14 +44,14 @@ module meds_fast_dynamics
                                      PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                      PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
                                      PY_RAINF, N_PYDIAG, cohort_diag_grow, patch_diag_grow
-   use meds_column_params, only : n_soil_layer_max, PSI_INIT
+   use meds_constants,     only : n_soil_layer_max
    use meds_column_state_types, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_forcing_kernels,  only : precip_phase
    use meds_met_driver,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
-   use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
+   use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, set_cohort_tissue_water
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
@@ -140,14 +141,14 @@ contains
    !  reservoir seeds keep the fast_context_t defaults, which are constant and             !
    !  horizontally uniform -- the reference climate used when no forcing file is           !
    !  configured. The static column config `col_config` is assembled here FROM THE RUN     !
-   !  CONFIG: the soil column comes from [soil_column], the respiration factors and canopy !
+   !  CONFIG: the soil column comes from [soil], the respiration factors and canopy        !
    !  optics are per-PFT traits, and the plant-hydraulics constants come from              !
    !  [hydraulics]. Nothing in this routine is a hard-coded model parameter.               !
    !=======================================================================================!
    subroutine build_fast_context(cfg, ctx)
       type(meds_config_t),  intent(in)  :: cfg
       type(fast_context_t), intent(out) :: ctx
-      !----- The physical soil column, from [soil_column]: its layers, and each layer's texture,  !
+      !----- The physical soil column, from [soil]: its layers, and each layer's texture,         !
       !      one for the whole column or one per layer from the soil maps (soil_column_params). -!
       call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
       !----- Plant hydraulics: ONE seam builds the PER-PFT table. The shared [hydraulics] block is    !
@@ -159,21 +160,17 @@ contains
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
       ctx%col_config%canopy_water_on    = cfg%canopy_water_on
-      !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
+      !----- Fast-loop biophysics run-config from the [soil]/[snow]/[aerodynamics] blocks and [fast]  !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
-      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil]         -> soil water and the water network
+      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil], [fast] -> soil water and the water network
       ctx%soil_albedo(1) = cfg%soil%ground_albedo_vis   ! [soil] ground optics -> the canopy radiation solver
       ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
       ctx%soil_emiss     = cfg%soil%ground_emissivity
-      ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
+      ctx%col_config%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
       !----- The initial soil state, from [init]: what init_fast_reservoirs seeds every layer with. --!
       !      A column with a texture per layer starts each layer at its own field capacity. ----------!
-      if (cfg%soil_column%n_layer_values > 0_ik) then
-         ctx%theta_init = ctx%col_config%soil%theta_fc
-      else
-         ctx%theta_init = cfg%init_soil_theta
-      end if
+      call soil_column_start_theta(cfg%soil_column, ctx%col_config%soil, cfg%init_soil_theta, ctx%theta_init)
       ctx%soil_temp_init = cfg%init_soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
@@ -187,8 +184,8 @@ contains
       associate (tols => ctx%col_config%integrator%error_control%tols)
          ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
          ctx%col_config%soil_water_opts%atol   = tols%atol(GRP_THETA)
-         !----- [energy].atol is a budget-closure threshold, not an integrator tolerance, so        !
-         !      atol_scale scales it DIRECTLY instead of through a tolerance group. ----------------!
+         !----- [fast].soil_energy_budget_atol is a budget-closure threshold, not an integrator   !
+         !      tolerance, so atol_scale scales it DIRECTLY instead of through a tolerance group. ---!
          ctx%col_config%energy%atol  = cfg%energy%atol * cfg%atol_scale
       end associate
 
@@ -207,12 +204,16 @@ contains
       call build_rad_optics(cfg, ctx%rad_opt)
    end subroutine build_fast_context
 
-   !----- Seed every patch's fast reservoirs to a horizontally-uniform equilibrium. Called once !
-   !      after the community is built (production) or before a fast-loop test. --------------!
+   !----- Seed every patch's fast reservoirs to a horizontally-uniform equilibrium, and start the  !
+   !      patch's cohorts in equilibrium with it, as a recruit is born (patch_birth_state): at the  !
+   !      canopy-air temperature, holding the water their tissues hold at the top soil layer's     !
+   !      potential. Called once after the community is built (production) or before a fast-loop  !
+   !      test. ----------------------------------------------------------------------------------!
    subroutine init_fast_reservoirs(site, ctx)
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
-      integer(ik) :: ip, k, nsl
+      integer(ik) :: ip, k, nsl, i
+      real(wp)    :: psi
       nsl = ctx%col_config%soil%n_active
       do ip = 1_ik, site%patch%n
          associate (cas => site%patch%cas(ip), se => site%patch%soil_e(ip), sw => site%patch%soil_w(ip))
@@ -226,6 +227,13 @@ contains
             cas%can_shv      = ctx%shv_atm ; cas%can_co2 = ctx%co2_atm
             cas%can_enthalpy = cas_enthalpy_of_temp(ctx%air_temp, ctx%shv_atm)
             cas%can_temp     = ctx%air_temp
+            psi = top_soil_psi(ctx%col_config%soil, sw%theta(1))
+            do i = site%patch%cohort_offset(ip), site%patch%cohort_offset(ip) + site%patch%cohort_count(ip) - 1_ik
+               site%cohort%leaf_temp(i) = cas%can_temp ; site%cohort%wood_temp(i) = cas%can_temp
+               associate (hyd => ctx%col_config%hydraulics_table%pft(site%cohort%pft(i)))
+                  call set_cohort_tissue_water(site%cohort, i, psi, hyd%leaf_curve, hyd%wood_curve)
+               end associate
+            end do
          end associate
       end do
    end subroutine init_fast_reservoirs

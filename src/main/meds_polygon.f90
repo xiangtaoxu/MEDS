@@ -43,7 +43,8 @@ module meds_polygon
                                            activate_site_diag, apply_variable_override,          &
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
-   use meds_column_params,          only : soil_params_t, n_soil_layer_max
+   use meds_constants,              only : n_soil_layer_max
+   use meds_soil_column_config,     only : soil_params_t
    use meds_allometry,              only : HEIGHT_CHAVE
    use meds_biophysics_opts,        only : SOIL_BC_AQUIFER
    use meds_forcing_types,          only : met_cells_t
@@ -378,10 +379,10 @@ contains
                ' kg/m2   checks = ', poly%face_budget%n_check
          if (poly%face_budget%n_fail > 0_ik)                                                       &
             write(*,'(a,i0,a)') ' WARNING: ', poly%face_budget%n_fail,                               &
-               ' soil-water solves did not converge (see [energy].debug_error to make this fatal)'
+               ' soil-water solves did not converge (see [fast].debug_error to make this fatal)'
          if (poly%energy_budget%n_fail + poly%water_budget%n_fail > 0_ik)                        &
             write(*,'(a,i0,a)') ' WARNING: ', poly%energy_budget%n_fail + poly%water_budget%n_fail, &
-               ' whole-column budget checks breached tolerance (see [energy].debug_error to make this fatal)'
+               ' whole-column budget checks breached tolerance (see [fast].debug_error to make this fatal)'
       end if
       !----- The soil-carbon seam, in the same place and spirit as the two budgets above: a number  !
       !      that should be machine-zero, reported whether or not it ever breached.  ----------------!

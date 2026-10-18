@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_column_ark
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o, cp_liq
+   use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -25,8 +25,7 @@ program test_column_ark
    use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : n_soil_layer_max
-   use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
+   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
@@ -46,6 +45,7 @@ program test_column_ark
    integer(ik), parameter :: steps_per_hour = nint(3600.0_wp / dt_fast, ik)
    !----- seed moisture, a VARIABLE so the saturated test can drive the column to theta_sat.   !
    real(wp) :: theta_seed = theta0
+   real(wp), parameter :: PSI_FIXTURE = -0.1_wp   !< [MPa] the fixture tissues' starting potential, a mild tension
    type(meds_config_t)    :: cfg
    type(column_config_t)  :: col_config
    type(column_cohort_t)  :: col_cohort
@@ -284,8 +284,7 @@ contains
       call set_noon_forcing()
       w_store = biophys%wood_water_mass(1)
       w_sap   = w_store * col_cohort%bsap(1) / (col_cohort%bsap(1) + col_cohort%broot(1))
-      cap_dry = max(col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * col_config%veg_thermal%c_wood_dry,  &
-                    col_config%veg_thermal%veg_hcap_min * col_cohort%wai(1))
+      cap_dry = col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * col_config%veg_thermal%c_wood_dry
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, n, nsl, fz, ys)
       cap_full = fz%tissue%wood_hcap_per_dt(1) * dt_fast
@@ -574,12 +573,12 @@ contains
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
       !----- alloc_patch_biophys starts leaf_water_mass/wood_water_mass at a scratch 0, which the    !
-      !      production gather overwrites from the cohort block -- give them the water a cohort is   !
-      !      born with, water_content(PSI_INIT,...) (init_cohort), or psi_from_water_content would  !
+      !      production gather overwrites from the cohort block -- give them a physical store at a  !
+      !      mild tension, water_content(PSI_FIXTURE,...), or psi_from_water_content would          !
       !      diagnose an unphysical psi from an empty pool. -----------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_curve, &
+      biophys%leaf_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%leaf_curve, &
             col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_curve, &
+      biophys%wood_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%soil_w%theta(1:nsl) = theta_seed

@@ -15,7 +15,7 @@
 !==========================================================================================!
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : latent_heat_fusion, rho_h2o, grav, pio4
+   use meds_constants,           only : latent_heat_fusion, rho_h2o, grav, pio4, n_soil_layer_max
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy
@@ -26,8 +26,7 @@ program test_column_dynamics
    use meds_biophysics_opts, only : SOIL_BC_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : n_soil_layer_max
-   use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
+   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config, &
                                         fast_workspace_t
@@ -51,6 +50,7 @@ program test_column_dynamics
    !----- Seed moisture + rain-pulse rate, VARIABLES so RUN 7 can drive the column to saturation.  !
    !      Initialized to the values RUNS 1-6 run on. ----------------------------------------------!
    real(wp) :: theta_seed = theta0, rain_pulse = 1.5e-4_wp
+   real(wp), parameter :: PSI_FIXTURE = -0.1_wp   !< [MPa] the fixture tissues' starting potential, a mild tension
    real(wp) :: pond_peak, theta_peak_col
    !----- RUN 8 (snow): seed mass for the pack (0 = no pack, the default for RUNS 1-7) plus the  !
    !      diagnostics integrate_day fills while it is on. ---------------------------------------!
@@ -545,12 +545,12 @@ contains
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
       !----- alloc_patch_biophys starts leaf_water_mass/wood_water_mass at a scratch 0, which the    !
-      !      production gather overwrites from the cohort block -- give them the water a cohort is   !
-      !      born with, water_content(PSI_INIT,...) (init_cohort), or psi_from_water_content would  !
+      !      production gather overwrites from the cohort block -- give them a physical store at a  !
+      !      mild tension, water_content(PSI_FIXTURE,...), or psi_from_water_content would          !
       !      diagnose an unphysical psi from an empty pool. -----------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_curve, &
+      biophys%leaf_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%leaf_curve, &
             col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_curve, &
+      biophys%wood_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%shed_water_rate = shed_seed
@@ -763,11 +763,11 @@ contains
       call build_fast_context(c, fx)
       call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &
               fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, fx%col_config%soil_water_opts%rtol)
-      !----- [energy] has NO integrator tolerance to push into: the soil-thermal solve is one           !
+      !----- The soil heat has NO integrator tolerance to push into: the soil-thermal solve is one      !
       !      unconditionally-stable BE step, and the accuracy of the integrated soil energy belongs to   !
-      !      GRP_SE. What the dial must still reach is [energy].atol, the BUDGET-CLOSURE threshold,      !
-      !      which atol_scale scales directly, outside the tolerance groups. This assertion catches a    !
-      !      dropped path.                                                                               !
+      !      GRP_SE. What the dial must still reach is [fast].soil_energy_budget_atol, the               !
+      !      BUDGET-CLOSURE threshold, which atol_scale scales directly, outside the tolerance groups.    !
+      !      This assertion catches a dropped path.                                                      !
       call check_true('tol: atol_scale reaches the soil-energy BUDGET threshold',                                     &
               fx%col_config%energy%atol == c%energy%atol * 1.0e-2_wp, fx%col_config%energy%atol)
    end subroutine test_tolerance_unification

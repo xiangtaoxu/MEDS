@@ -97,7 +97,7 @@ base and a sealed one are its values of $f$ (`drain_factor`), not separate cases
 | `bedrock` | drainage, $f = 0$: $`q = 0`$ | an impermeable base |
 | `aquifer` | $`q = K_{bot}\,(\psi_n/\Delta + 1)`$, $`\Delta = \Delta z_n/2`$, **two-way** | a shallow water table at the column base |
 
-`[soil].bottom_bc` names `free_drain`, `bedrock` or `aquifer`; a leaky base comes only from the soil
+`[soil].water_bottom_bc` names `free_drain`, `bedrock` or `aquifer`; a leaky base comes only from the soil
 maps (§ The column from the soil maps), which give each cell its own $`f_{leak}`$.
 
 **`aquifer` is a boundary condition, not a store.** The water table is *defined* to sit at the column
@@ -142,7 +142,7 @@ so no column ends in a sliver.
 - **A shallow soil gets a few layers rather than thin ones:** 0.3 m is 5, 10 and 15 cm.
 - **Per-layer soil maps line up with the layers,** and every column of a region shares one depth axis.
 
-`[soil_column].layer_bottoms` replaces the list for a site with a measured profile, and the column
+`[soil].layer_bottoms` replaces the list for a site with a measured profile, and the column
 then ends at its last bottom unless `depth` cuts it.
 
 ### Hydraulic parameters from soil texture
@@ -275,7 +275,7 @@ liquid water and ice.
 
 ### The bottom thermal boundary
 
-Two boundary conditions are selectable, through `[energy].bottom_bc`.
+Two boundary conditions are selectable, through `[soil].thermal_bottom_bc`.
 
 **`geothermal` (Neumann, the default).** A prescribed flux at the base, held at exactly zero. The term
 is fully plumbed — `forcing%geothermal` reaches the kernel, is differenced into $`hf_n`$ and is debited
@@ -387,7 +387,7 @@ and passes the resulting flux into the CO₂ source.
 |---|---|
 | soil water (the network) | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)); a layer's water relations: `meds_water_retention`: `soil_water_relations` |
 | soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
-| soil layers | `meds_column_params`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`; `meds_config`: `soil_column_layers` |
+| soil layers | `meds_soil_column_config`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`, `soil_column_layers` |
 | retention curves (vG / Campbell) | `meds_water_retention` |
 | hydraulic parameters from texture, eqs. (6)–(8) | `meds_pedotransfer`: `soil_hydraulics_from_texture` |
 | thermal properties from texture, eq. (9) | `meds_pedotransfer`: `soil_thermal_from_texture` |

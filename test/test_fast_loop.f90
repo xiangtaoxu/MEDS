@@ -16,9 +16,8 @@ program test_fast_loop
    use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params, n_soil_layer_max
+   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params, top_soil_psi
    use meds_water_retention, only : SOIL_RETENTION_VG, water_content
-   use meds_column_params,   only : PSI_INIT
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
@@ -34,7 +33,7 @@ program test_fast_loop
    use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, &
                                         PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND, PD_CAS_TEMP,           &
                                         PD_SKIN_TEMP, PD_LW_UP
-   use meds_constants,           only : stefan
+   use meds_constants,           only : stefan, n_soil_layer_max
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -45,6 +44,7 @@ program test_fast_loop
    type(site_t)         :: site
    type(fast_context_t) :: ctx
    real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, theta1_1, mass0_leaf, mass1_leaf, mass2_leaf
+   real(wp)    :: t_leaf0, t_wood0
    real(wp)    :: cbal0, cbal1
    integer(ik) :: n_budget_fail
 
@@ -75,9 +75,11 @@ program test_fast_loop
 
    t_cas0    = site%patch%cas(1)%can_temp
    theta0_1  = site%patch%soil_w(1)%theta(1)
-   !----- A cohort is born holding its tissue water at PSI_INIT, so the fast loop's first touch     !
-   !      reads a real store, not a sentinel to seed. ----------------------------------------------!
+   !----- init_fast_reservoirs starts the cohort in its patch's state: holding the water its tissues !
+   !      hold at the top soil layer's potential, so the fast loop's first touch reads a real store,  !
+   !      not a sentinel to seed. --------------------------------------------------------------------!
    mass0_leaf = site%cohort%leaf_water_mass(1)
+   t_leaf0    = site%cohort%leaf_temp(1) ; t_wood0 = site%cohort%wood_temp(1)
 
    !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
    call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
@@ -90,8 +92,10 @@ program test_fast_loop
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(site%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
-   call check_close(mass0_leaf, water_content(PSI_INIT, ctx%col_config%hydraulics_table%pft(1)%leaf_curve, &
-                    site%cohort%leaf_carbon(1)), 1.0e-12_wp, 'a cohort is born with its leaf water at PSI_INIT')
+   call check_close(mass0_leaf, water_content(top_soil_psi(ctx%col_config%soil, theta0_1),           &
+                    ctx%col_config%hydraulics_table%pft(1)%leaf_curve, site%cohort%leaf_carbon(1)),     &
+                    1.0e-12_wp, 'a cohort starts with its leaf water at its patch''s top-soil potential')
+   call check(t_leaf0 == t_cas0 .and. t_wood0 == t_cas0, 'a cohort starts at its patch''s canopy-air temperature')
    call check(mass1_leaf > 0.0_wp .and. mass1_leaf /= mass0_leaf,                                 &
               'the fast loop evolved the birth water and wrote it back')
    !----- A SECOND call starts from mass1_leaf, so its own evolution is a clean round-trip proof:   !
@@ -537,8 +541,8 @@ program test_fast_loop
                                        site%cohort%leaf_water_mass(1), ' kg/plant after a 100x bleaf collapse)'
 
       !----- A BARE cohort (leaf_carbon = 0 -> leaf_water_mass = 0, its physical state) keeps its    !
-      !      wood water: nothing resets a store to PSI_INIT, so a dormant cohort carries its deficit   !
-      !      through the winter. Perturb the wood store to a value PSI_INIT cannot produce, run a    !
+      !      wood water: nothing re-seeds a store, so a dormant cohort carries its deficit through    !
+      !      the winter. Perturb the wood store to a value a seed cannot produce, run a              !
       !      day with no leaves (no transpiration, so the wood store barely moves), and assert it    !
       !      carried through. ----------------------------------------------------------------------!
       block
@@ -546,12 +550,12 @@ program test_fast_loop
          integer(ik) :: nsub_save
          site%cohort%leaf_carbon(1)     = 0.0_wp
          site%cohort%leaf_water_mass(1) = 0.0_wp
-         wood_set = 0.98_wp * site%cohort%wood_water_mass(1)  ! a 2% deficit PSI_INIT cannot produce
+         wood_set = 0.98_wp * site%cohort%wood_water_mass(1)  ! a 2% deficit a seed cannot produce
          site%cohort%wood_water_mass(1) = wood_set
          !----- ONE short sub-step with a SMALL deficit: near saturation the PV curve gives a small    !
          !      driving potential, so root uptake moves the store by << 0.5% in 60 s (a 30% deficit,   !
-         !      by contrast, refills a third of the way in that minute). A shared-sentinel re-seed at  !
-         !      PSI_INIT puts the store back to 100% -- a 2% jump this check sees. --------------------!
+         !      by contrast, refills a third of the way in that minute). A re-seed from the soil puts  !
+         !      the store back to 100% -- a 2% jump this check sees. ----------------------------------!
          !----- ...and with the plant-hydraulics process MASKED (frozen tissue water), because the    !
          !      fixture's leafless cohort refills even a 2% wood deficit within the minute: the store   !
          !      must come out exactly as it went in, so the only thing that can move it is the seed. --!
@@ -565,7 +569,7 @@ program test_fast_loop
          write(*,'(a,es10.3,a,es10.3,a)') '   (dormant seam: wood water set ', wood_set, ' -> ', wood_after, &
                ' kg/plant after one 60 s step)'
          call check(abs(wood_after - wood_set) < 1.0e-9_wp * wood_set,                               &
-                    'dormant seam: bare cohort keeps its integrated wood water (not re-seeded at PSI_INIT)')
+                    'dormant seam: bare cohort keeps its integrated wood water (not re-seeded)')
          call check(site%cohort%leaf_water_mass(1) == 0.0_wp,                                        &
                     'dormant seam: a bare cohort holds no leaf water')
       end block

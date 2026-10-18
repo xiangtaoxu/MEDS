@@ -28,7 +28,7 @@ program test_spac_solver
    use meds_test_assert, only : check_true, check_close, check_int, test_report
    use, intrinsic :: iso_fortran_env, only : int64
    use meds_kinds,       only : wp, ik
-   use meds_constants,   only : grav_head, rho_h2o, pi, tiny_num
+   use meds_constants,   only : grav_head, rho_h2o, pi, tiny_num, n_soil_layer_max
    use meds_arrowhead_solve, only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance,      &
                                 spac_jacobian_error, POND, WOOD, LEAF
@@ -38,7 +38,7 @@ program test_spac_solver
                                     soil_psi_from_theta
    use meds_plant_types,   only : hydro_params_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
+   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_types,    only : chydro_forcing_t
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_DRAIN

@@ -148,12 +148,12 @@ add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
 #----- CONFIGURATION: the PFT trait table, the per-domain option leaves (biophysics, leaf,         #
-#      biogeochemistry, maps, region, output, forcing), the meds_config_t aggregator, the          #
-#      minimal TOML reader and the loader that fills the aggregator from two TOML files. `toml`    #
-#      and `config_io` live here, not in src/io/: they are configuration INPUT, not I/O of model   #
-#      results, and they carry no external dependency, unlike the netCDF output layer.             #
-#      Links meds_shared and meds_state_column (the edge below); nothing here imports site         #
-#      state or a kernel.                                                                          #
+#      biogeochemistry, maps, region, output, forcing, and the soil column with the parameters     #
+#      derived from it), the meds_config_t aggregator, the minimal TOML reader and the loader that #
+#      fills the aggregator from two TOML files. `toml` and `config_io` live here, not in src/io/: #
+#      they are configuration INPUT, not I/O of model results, and they carry no external          #
+#      dependency, unlike the netCDF output layer. Links meds_shared only; nothing here imports    #
+#      model state or a kernel.                                                                    #
 file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
 #      The keys a config may hold are the ones the two reference configs list (meds_config_keys):  #
@@ -165,20 +165,16 @@ meds_write_config_keys(${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
 target_include_directories(meds_config PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
-#      meds_state_column: meds_config takes `n_soil_layer_max` from meds_column_params for the
-#      [soil_column] block's bounds check. The edge is acyclic (state/column links meds_shared
-#      only) and must be declared: without it the Makefile generator happens to order the two .mod
-#      files correctly, but a parallel build with a different scheduler (Ninja) fails.
-target_link_libraries(meds_config PUBLIC meds_shared meds_state_column)
+target_link_libraries(meds_config PUBLIC meds_shared)
 meds_fortran_flags(meds_config)
 
 #----- STATE, as a LAYER in two halves (src/README.md, rule 3). -----------------------------#
 #                                                                                            #
 #  state/column -- ONE patch's reservoirs, seen vertically: the soil water / soil energy /    #
-#  snow / canopy-air-space / soil-carbon stores, their fusion blends, and the parameter        #
-#  bundles that describe them. This is BOUNDARY state: the kernels mutate it and the           #
-#  demographic hub owns it. It is not foundation -- src/shared/ admits no model state --     #
-#  so it is a layer of its own, and the kernels link it directly.                            #
+#  snow / canopy-air-space / soil-carbon stores and their fusion blends (the parameters that  #
+#  describe them are config: meds_soil_column_config). This is BOUNDARY state: the kernels    #
+#  mutate it and the demographic hub owns it. It is not foundation -- src/shared/ admits no   #
+#  model state -- so it is a layer of its own, and the kernels link it directly.              #
 #                                                                                            #
 #  state/site -- ALL the patches: the flat cohort SoA, the patch CSR, the lockstep machinery,   #
 #  site_t and the diagnostic blocks. Drivers only. Kernels never link this, which is what keeps #
@@ -557,7 +553,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_pft_optics_config)
    add_test(NAME pft_optics_config COMMAND test_pft_optics_config)
 
-   #----- The [soil_column] keys reach the column they describe. -----------------------------#
+   #----- The [soil] column keys reach the column they describe. ----------------------------#
    add_executable(test_soil_column_config test/test_soil_column_config.f90)
    target_link_libraries(test_soil_column_config PRIVATE meds_config meds_state_column meds_testsupport)
    meds_fortran_flags(test_soil_column_config)
@@ -795,7 +791,7 @@ if(MEDS_BUILD_TESTS)
       endif()
    endif()
 
-   #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
+   #----- Fast-loop biophysics run-config TOML wiring ([soil]/[fast]/[snow]/[aerodynamics]).   #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
    target_link_libraries(test_biophysics_opts_config PRIVATE meds_config meds_testassert)
    meds_fortran_flags(test_biophysics_opts_config)

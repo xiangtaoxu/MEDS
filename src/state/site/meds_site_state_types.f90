@@ -21,15 +21,14 @@ module meds_site_state_types
                                       cohort_diag_reset, patch_diag_reset, polygon_diag_reset
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : cp_liq
+   use meds_constants,  only : cp_liq, C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, n_soil_layer_max
    use meds_water_retention, only : wood_thermal_water
    use meds_numerics,   only : pair_mean
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,           &
                                carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
-   use meds_column_params, only : LEAF_TEMP_INIT, PSI_INIT, C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, &
-                                  TISSUE_HCAP_MIN
-   use meds_config,        only : hydraulics_config_t, pft_tissue_curves
+   use meds_config,        only : meds_config_t, hydraulics_config_t, pft_tissue_curves
+   use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
    use meds_water_retention, only : water_curve_t, water_content
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
                                       xi_accum_t, litter_input_t
@@ -41,15 +40,12 @@ module meds_site_state_types
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params, cohort_alloc
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
    public :: scale_cohort_ground_fields, fuse_cohort_fast_state
-   public :: set_cohort_size_from_carbon, carbon_flux_block
+   public :: set_cohort_size_from_carbon, carbon_flux_block, patch_birth_state
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
-   !----- The tissue heat constants live in meds_column_params, shared with the fast loop; they are   !
-   !      re-exported here for meds_demography and the slow driver. -------------------------------!
-   public :: C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
@@ -197,8 +193,8 @@ module meds_site_state_types
       !      needed (docs/science/plant_hydraulics.md §2). EXTENSIVE per plant (like AGB):           !
       !      fusion conserves the nplant-weighted TOTAL, not a leaf-area-weighted mean               !
       !      (fuse_cohort_fast_state). Genuine sub-slow-step hydraulic memory. A cohort is born      !
-      !      holding the water its tissues hold at PSI_INIT (init_cohort), so 0 is a real amount: a  !
-      !      leafless cohort's leaves hold none. ------------------------------------------------------!
+      !      holding the water its tissues hold at its patch's top-soil potential (init_cohort,      !
+      !      patch_birth_state), so 0 is a real amount: a leafless cohort's leaves hold none. --------!
       real(wp),    allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water
       real(wp),    allocatable :: wood_water_mass(:) !< [kg/plant] internal wood (sapwood + fine-root) water
       !----- Leaf/wood SURFACE (interception film) water [kg/m2 GROUND] -- a store DISTINCT from     !
@@ -526,7 +522,7 @@ contains
                cohort%growing_degree_days(cap), cohort%cold_degree_days(cap),                                   &
                cohort%dry_psi_sum(cap),                                                   &
                cohort%wet_psi_sum(cap), cohort%light_hours_mean(cap))
-      cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%wood_temp = LEAF_TEMP_INIT
+      cohort%leaf_temp = 0.0_wp ; cohort%wood_temp = 0.0_wp      ! a slot's tissue state is set at birth
       cohort%leaf_water_mass = 0.0_wp ; cohort%wood_water_mass = 0.0_wp ; cohort%gpp_accum = 0.0_wp
       cohort%light_hours_accum = 0.0_wp
       cohort%leaf_surf_water = 0.0_wp ; cohort%wood_surf_water = 0.0_wp
@@ -1016,8 +1012,8 @@ contains
       !      the sapwood ring, which set_cohort_size_from_carbon re-derives from the merged dbh;  !
       !      that leaves a small thermal-mass change, of the same kind growth makes and declared   !
       !      the same way by the caller.  --------------------------------------------------!
-      call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, clr, cwr)
-      call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, cld, cwd)
+      call cohort_tissue_heat_capacity(cohort, recc, clr, cwr)
+      call cohort_tissue_heat_capacity(cohort, donc, cld, cwd)
       call blend(cohort%leaf_temp,        clr, cld)
       call blend(cohort%wood_temp,        cwr, cwd)
       !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
@@ -1131,21 +1127,19 @@ contains
    ! naming. The WOOD's dry tissue is all the wood, at the dry specific heat, and its water  !
    ! is the sapwood share of the hydraulic store `wood_water_mass` (wood_thermal_water, one  !
    ! function for both): the fine roots' share sits in the soil and heartwood holds none.    !
-   ! Each dry capacity is at least `hcap_min` per unit of the tissue's own area, so a        !
-   ! tissue's capacity scales with its area as its fluxes do, and splitting a cohort in two  !
-   ! changes neither the sum nor a fusion weight. The fast loop builds its own copy from the !
-   ! column view; this function is the half of that pair that three libraries can reach.     !
+   ! Every term scales with plant number, so splitting a cohort in two changes neither the   !
+   ! sum nor a fusion weight. The fast loop builds its own copy from the column view; this   !
+   ! function is the half of that pair that three libraries can reach.                      !
    !=========================================================================================!
-   pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_wood_dry, hcap_min, cap_leaf, cap_wood)
+   pure subroutine cohort_tissue_heat_capacity(cohort, i, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
-      real(wp),           intent(in)  :: c_leaf, c_wood_dry, hcap_min   !< [J/kg/K], [J/kg/K], [J/m2 tissue/K]
       real(wp),           intent(out) :: cap_leaf, cap_wood             !< [J/m2 ground/K]
       real(wp) :: n
       n = cohort%nplant(i)
-      cap_leaf = max(cohort%leaf_carbon(i) * n * C2B_WOOD * c_leaf, hcap_min * n * cohort%leaf_area(i))   &
+      cap_leaf = cohort%leaf_carbon(i) * n * C2B_WOOD * TISSUE_C_LEAF                                &
                + max(cohort%leaf_water_mass(i), 0.0_wp) * n * cp_liq
-      cap_wood = max(cohort%wood_carbon(i) * n * C2B_WOOD * c_wood_dry, hcap_min * n * cohort%wood_area(i))  &
+      cap_wood = cohort%wood_carbon(i) * n * C2B_WOOD * TISSUE_C_WOOD_DRY                            &
                + n * wood_thermal_water(cohort%wood_water_mass(i), cohort%sapwood_carbon(i),              &
                                         cohort%fineroot_carbon(i)) * cp_liq
    end subroutine cohort_tissue_heat_capacity
@@ -1217,21 +1211,17 @@ contains
    ! hold a stale value; it is recomputed by update_overtopping_lai every slow step anyway).    !
    ! The caller ensures capacity, stamps the global id, and bumps cohort%n.                    !
    !---------------------------------------------------------------------------------------!
-   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, hydraulics, birth_temp)
+   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, hydraulics, birth_temp, birth_psi)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: m, ipft, owner_patch
       type(pft_table_t),  intent(in)    :: pft
       real(wp),           intent(in)    :: nplant, dbh
-      !----- The shared [hydraulics] traits, which with the PFT's own give its tissue curves: the new  !
-      !      cohort is born holding the water its tissues hold at PSI_INIT. -------------------------!
+      !----- The shared [hydraulics] traits, which with the PFT's own give its tissue curves. -------!
       type(hydraulics_config_t), intent(in) :: hydraulics
-      !----- Birth TEMPERATURE. Defaults to LEAF_TEMP_INIT, a single global constant of 288.15 K,   !
-      !      which is fine for a setup call with no environment yet but wrong for a recruit: a      !
-      !      sapling appearing in an Ithaca January is born ~23 K warmer than the air it stands in, !
-      !      and the model then has to shed that spurious heat. A caller that KNOWS the local       !
-      !      canopy-air temperature passes it, so the recruit starts in thermal equilibrium with    !
-      !      its patch instead of with a compile-time constant.  ---------------------------------!
-      real(wp), optional, intent(in)    :: birth_temp
+      !----- The state the cohort is born in, its patch's (patch_birth_state): its leaves and wood  !
+      !      start at birth_temp, holding the water their tissues hold at birth_psi. ---------------!
+      real(wp),           intent(in)    :: birth_temp   !< [K]
+      real(wp),           intent(in)    :: birth_psi    !< [MPa]
       type(water_curve_t) :: leaf_curve, wood_curve
       cohort%pft(m)              = ipft
       cohort%owner_patch(m)      = owner_patch
@@ -1276,18 +1266,42 @@ contains
       cohort%p_stem_resp_factor25(m) = pft%stem_resp_factor25(ipft)
       cohort%p_root_resp_factor25(m) = pft%root_resp_factor25(ipft)
       cohort%p_stem_resp_sapwood25(m) = pft%stem_resp_sapwood25(ipft)
-      cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
-      ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
-      cohort%wood_temp(m)        = LEAF_TEMP_INIT
-      if (present(birth_temp)) then
-         cohort%leaf_temp(m) = birth_temp ; cohort%wood_temp(m) = birth_temp
-      end if
+      cohort%leaf_temp(m)        = birth_temp         ! fresh fast state (slot may be a reused, stale cull)
+      cohort%wood_temp(m)        = birth_temp
       cohort%leaf_surf_water(m)  = 0.0_wp             ! a new cohort's canopy starts dry
       cohort%wood_surf_water(m)  = 0.0_wp
       call set_cohort_size(cohort, m)                 ! carbon pools from dbh, then the geometry from them
       call pft_tissue_curves(hydraulics, pft, ipft, leaf_curve, wood_curve)
-      call set_cohort_tissue_water(cohort, m, PSI_INIT, leaf_curve, wood_curve)
+      call set_cohort_tissue_water(cohort, m, birth_psi, leaf_curve, wood_curve)
    end subroutine init_cohort
+
+   !---------------------------------------------------------------------------------------!
+   ! The state a new cohort in patch `ip` is born in: the patch's canopy-air temperature [K]  !
+   ! and the water potential of its top soil layer [MPa] (top_soil_psi, the value the        !
+   ! stomatal predawn potential is seeded with), so the cohort starts in equilibrium with   !
+   ! where it stands. A patch whose fast state has not been seeded yet -- at setup, or in a  !
+   ! run without the fast loop -- has neither, and gives the run's starting state from      !
+   ! [init] instead: soil_temp, and the top layer's potential at the starting soil water.   !
+   ! init_fast_reservoirs re-seeds the setup cohorts from their patch once it has seeded it.  !
+   ! `soil` is the column's parameters (soil_column_params).                                  !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine patch_birth_state(site, ip, cfg, soil, temp, psi)
+      type(site_t),        intent(in)  :: site
+      integer(ik),         intent(in)  :: ip
+      type(meds_config_t), intent(in)  :: cfg
+      type(soil_params_t), intent(in)  :: soil
+      real(wp),            intent(out) :: temp, psi
+      real(wp) :: theta(n_soil_layer_max)
+      !----- A seeded canopy air has a temperature: the type's default is 0 K. ----------------!
+      if (site%patch%cas(ip)%can_temp > 0.0_wp) then
+         temp = site%patch%cas(ip)%can_temp
+         psi  = top_soil_psi(soil, site%patch%soil_w(ip)%theta(1))
+      else
+         temp = cfg%init_soil_temp
+         call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta)
+         psi  = top_soil_psi(soil, theta(1))
+      end if
+   end subroutine patch_birth_state
 
    !----- The carbon whose water a cohort's wood store holds [kgC/plant]: the sapwood ring and the   !
    !      fine roots, one store in the plant-water network (docs/science/soil_plant_water.md §1). ---!

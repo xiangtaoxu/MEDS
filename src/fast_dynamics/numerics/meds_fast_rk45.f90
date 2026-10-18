@@ -22,8 +22,7 @@
 !==========================================================================================!
 module meds_fast_rk45
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air
-   use meds_column_params,    only : n_soil_layer_max
+   use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air, n_soil_layer_max
    use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t, &
@@ -719,7 +718,7 @@ contains
       if (present(iters))     iters     = nsteps
    end subroutine column_fast_step_rk45
 
-   !----- Under [energy].debug_error, stop the run if a step column_fast_step KEEPS breached a      !
+   !----- Under [fast].debug_error, stop the run if a step column_fast_step KEEPS breached a        !
    !      whole-column ledger. column_fast_step_rk45 records the checks without stopping, because   !
    !      a step handed to the ARK rescue is discarded and must not end the run. -------------------!
    subroutine rk45_ledgers_stop(budget, dt_fast, col_config)

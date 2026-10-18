@@ -8,13 +8,13 @@
 !                                                                                          !
 ! This is BOUNDARY state: the biophysics kernels mutate it and the demographic state hub   !
 ! owns it per patch and threads it through the lockstep reorder. That is why it is its own !
-! layer rather than a member of either side. Parameters that describe these same stores    !
-! live next door in meds_column_params -- a parameter is not state (src/README.md, rule    !
-! 3).                                                                                      !
+! layer rather than a member of either side. The parameters that describe these stores   !
+! (soil_params_t) are derived from the config and live with it, in meds_soil_column_config !
+! -- a parameter is not state (src/README.md, rule 3).                                     !
 !==========================================================================================!
 module meds_column_state_types
    use meds_kinds,            only : wp, ik
-   use meds_column_params, only : n_soil_layer_max, n_snow_layer_max
+   use meds_constants,        only : n_soil_layer_max, n_snow_layer_max
    use meds_therm_lib,        only : cas_molar_density
    implicit none
    private

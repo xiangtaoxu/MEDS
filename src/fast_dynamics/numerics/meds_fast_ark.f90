@@ -515,7 +515,7 @@ contains
       surf_enth0  = surf_water0 * internal_energy_liquid(frozen%hydrology%t_film_valuation)
       surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%t_film_valuation)
       intercept_total = sum(frozen%film%intercept_leaf(1:n) + frozen%film%intercept_wood(1:n))
-      !----- [energy].debug_error promotes a non-closing budget from a counted n_fail to a hard         !
+      !----- [fast].debug_error promotes a non-closing budget from a counted n_fail to a hard           !
       !      `error stop` (docs/science/numerical_scheme.md §5b); off by default. Tolerances are        !
       !      FLUX-scaled (meds_budget_check header): rtol * gross boundary flux over the step plus a    !
       !      rate floor * dt_fast, because a store-scaled tolerance lets a ~1 W/m2 leak through. -------!

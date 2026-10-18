@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! meds_biophysics_opts -- the run-configuration bundles of the fast (sub-daily) biophysics !
 ! loop: the solver selectors and tolerances (soil water, soil energy) and the physical     !
-! parameter tables (snow, aerodynamics), filled from the [soil], [energy], [snow] and      !
+! parameter tables (snow, aerodynamics), filled from the [soil], [fast], [snow] and        !
 ! [aerodynamics] blocks, with the defaults below for standalone and test use. They are run !
 ! configuration, not prognostic state and not per-column descriptors, so they live in a    !
 ! low-level config leaf (`meds_kinds` only, like meds_pft_params) that the device-eligible !
@@ -11,7 +11,7 @@
 !                                                                                          !
 ! (The SOIL_RETENTION_* selectors stay in meds_water_retention with the retention curves;  !
 ! the per-column soil_params_t / soil_thermal_params_t descriptors are in                  !
-! meds_column_params.)                                                                     !
+! meds_soil_column_config.)                                                                !
 !==========================================================================================!
 module meds_biophysics_opts
    use meds_kinds, only : wp, ik
@@ -42,22 +42,24 @@ module meds_biophysics_opts
    !----- Soil water: the bottom boundary, the soil-plant water network's tolerances, the pond, the !
    !      canopy interception, the ground's evaporation and optics (NOT the whole config). ----!
    type :: soil_opts_t
-      !----- Drainage (default) | aquifer, with drainage's factor f: [soil].bottom_bc = "free_drain"  !
-      !      is f = 1, "bedrock" f = 0, and a soil map's leaky base its f_leak.  NOTE: `aquifer` is the !
-      !      WET-SITE boundary -- the water table is DEFINED as the column base, so the bottom face is  !
-      !      head-driven against a saturated zone and supplies water upward without limit.  Right for  !
-      !      riparian, floodplain and wetland stands; WRONG for a typical upland one, where free       !
-      !      drainage is the correct choice.  It is not a drop-in "more realistic drainage" option. ---!
+      !----- Drainage (default) | aquifer, with drainage's factor f: [soil].water_bottom_bc =        !
+      !      "free_drain" is f = 1, "bedrock" f = 0, and a soil map's leaky base its f_leak.  NOTE:   !
+      !      `aquifer` is the WET-SITE boundary -- the water table is DEFINED as the column base, so  !
+      !      the bottom face is head-driven against a saturated zone and supplies water upward       !
+      !      without limit.  Right for riparian, floodplain and wetland stands; WRONG for a typical  !
+      !      upland one, where free drainage is the correct choice.  It is not a drop-in "more        !
+      !      realistic drainage" option. ---------------------------------------------------------!
       integer(ik) :: bottom_bc    = SOIL_BC_DRAIN
       real(wp)    :: drain_factor = 1.0_wp              !< [-] f in [0, 1] of q = f K(theta_N)
-      !----- The water network's sub-step tolerances (docs/science/soil_plant_water.md §3): a        !
-      !      store's error is weighed against atol of its scale -- water content for soil layers     !
-      !      and the pond, relative water content for plant tissues -- plus rtol of its water. ------!
+      !----- The water network's sub-step tolerances ([fast].water_rtol and water_atol;            !
+      !      docs/science/soil_plant_water.md §3): a store's error is weighed against atol of its    !
+      !      scale -- water content for soil layers and the pond, relative water content for plant   !
+      !      tissues -- plus rtol of its water. ------------------------------------------------------!
       real(wp)    :: rtol   = 1.0e-3_wp
       real(wp)    :: atol   = 1.0e-4_wp
       real(wp)    :: w_pond_max = 5.0_wp                 !< [kg/m2] ponding capacity before surface runoff
-      real(wp)    :: intercept_alpha = 1.0_wp            !< Beer interception efficiency
-      real(wp)    :: intercept_k     = 0.5_wp            !< [1/PAI] Beer extinction
+      real(wp)    :: intercept_alpha = 1.0_wp            !< Beer interception efficiency ([fast])
+      real(wp)    :: intercept_k     = 0.5_wp            !< [1/PAI] Beer extinction ([fast])
       real(wp)    :: dsl_dmax       = 0.015_wp           !< [m] DSL max thickness (soil evap)
       real(wp)    :: dsl_theta_init = 0.8_wp             !< DSL initiation theta_1/theta_sat
       logical     :: debug_error = .false.
@@ -93,7 +95,8 @@ module meds_biophysics_opts
       !      3.145 m, is that optimum for the default 2 m column in a mid-latitude mineral soil      !
       !      at theta = 0.3; change it with the column depth or the soil's thermal texture. ---------!
       real(wp)    :: deep_depth  = 3.145_wp       !< [m] depth (positive) of the anchor plane
-      !----- [K] budget-closure threshold for the debug halt, NOT an integrator tolerance. -----------!
+      !----- [K] budget-closure threshold for the debug halt, NOT an integrator tolerance              !
+      !      ([fast].soil_energy_budget_atol). ---------------------------------------------------------!
       real(wp)    :: atol        = 1.0e-2_wp
       logical     :: debug_error = .false.
    end type energy_opts_t

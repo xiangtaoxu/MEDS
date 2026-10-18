@@ -6,9 +6,18 @@
 ! year). area_tol is the tolerance of the end-of-run check that the patch areas sum to one.  !
 !==========================================================================================!
 module meds_constants
-   use meds_kinds, only : wp
+   use meds_kinds, only : wp, ik
    implicit none
    public
+
+   !----- Array sizes: the most soil and snow layers a column can hold. These are storage    !
+   !      limits, not model parameters, and no result depends on them: the layers a run uses   !
+   !      come from its config ([soil].depth and layer_bottoms), and the loader refuses         !
+   !      a column with more layers than fit. The soil and snow stores are fixed-size arrays,  !
+   !      so copying a patch's stores never allocates. The snow is one bulk layer             !
+   !      (multi-layer snow: docs/ROADMAP.md). --------------------------------------------!
+   integer(ik), parameter :: n_soil_layer_max = 20_ik
+   integer(ik), parameter :: n_snow_layer_max = 1_ik
 
    !----- Geometry. -----------------------------------------------------------------------!
    real(wp), parameter :: pi   = 3.14159265358979323846_wp
@@ -57,6 +66,13 @@ module meds_constants
    real(wp), parameter :: cp_liq = 4186.0_wp                 !< liquid-water cp (store water, advected enthalpy)
    real(wp), parameter :: cp_ice = 2093.0_wp                 !< ice cp (frozen-store heat capacity)
    real(wp), parameter :: latent_heat_fusion = 3.34e5_wp     !< [J/kg] latent heat of fusion (freeze/thaw plateau)
+
+   !----- Plant tissue heat (docs/science/vegetation_energy_dynamics.md eq. (8)): the dry-matter !
+   !      specific heats and the carbon -> dry-biomass factor. One set for the fast loop and the  !
+   !      slow side (the fusion weights, the slow ledger), so both weigh a tissue's heat alike. --!
+   real(wp), parameter :: C2B_WOOD          = 2.0_wp    !< [-] carbon -> dry biomass (carbon fraction 0.5)
+   real(wp), parameter :: TISSUE_C_LEAF     = 3200.0_wp !< [J/kg/K] dry leaf specific heat
+   real(wp), parameter :: TISSUE_C_WOOD_DRY = 1217.0_wp !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
 
    !----- PAR (VIS, 400-700 nm) energy -> photon flux [umol photon / J]; the 400-700 nm solar     !
    !      spectrum gives ~4.57. ------------------------------------------------------------------!

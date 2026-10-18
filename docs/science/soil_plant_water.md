@@ -42,7 +42,7 @@ The paths:
   embolised cohort's leaves stay joined to its wood.
 - **Boundaries** — rain into the pond; ground evaporation from layer 1 (Philip's pore humidity with
   the Swenson–Lawrence dry-surface-layer resistance); drainage out of the bottom layer
-  (`[soil].bottom_bc`: drainage at a factor of free drainage, 1 to 0 for bedrock, or a head-driven
+  (`[soil].water_bottom_bc`: drainage at a factor of free drainage, 1 to 0 for bedrock, or a head-driven
   two-way aquifer); and each cohort's transpiration out of its leaves.
 
 Every flow is written with its derivatives in each store's unknown, so Newton's Jacobian is exact.
@@ -75,8 +75,11 @@ Each store is solved in the unknown in which its curve is best behaved:
   ([plant_hydraulics](plant_hydraulics.md) eq. (2); `fill_new_leaf_water`). The plant's water is
   unchanged, and a canopy that re-flushes from bare starts at its stem's potential, not at the dry end
   of its pressure–volume curve (about −1.5×10⁴ MPa), which would close its stomata for the first
-  step. A cohort is born holding the water its tissues hold at its starting potential (`PSI_INIT`); a
-  recruit's water, like its carbon, is drawn from outside the model, and the slow ledger declares it.
+  step. A cohort is born in its patch's state (`patch_birth_state`): at the canopy-air temperature,
+  holding the water its tissues hold at the potential of the patch's top soil layer, the one the
+  stomatal predawn potential is seeded with. Cohorts made at setup start from the run's `[init]`
+  state and are re-seeded from their patch when the fast loop seeds it. A recruit's water, like its
+  carbon, is drawn from outside the model, and the slow ledger declares it.
   Tissue lost to turnover takes its water with it, in proportion to the carbon lost
   (`shed_turnover_water`): shed leaves take that share of the leaf store, and shed fine roots that
   share of their own part of the wood store, the fraction $`B_{root}/(B_{sap}+B_{root})`$ of it, so the

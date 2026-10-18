@@ -184,7 +184,7 @@ soil_carbon_on = true             # starts empty; the start file carries no soil
 # eqs. (6)-(7)); one van Genuchten curve is fitted to their thickness-weighted average over the column, ksat
 # is their geometric mean, and the thermal properties are CLM5's from the texture (eq. (9)). The layers are
 # MEDS's default SoilGrids cut at the depth.
-[soil_column]
+[soil]
 depth       = 1.5712           # [m]
 theta_sat   = 0.4456
 theta_res   = 0.2354
@@ -194,8 +194,6 @@ ksat        = 3.00e-6          # [m/s]
 solid_conductivity = 5.57      # [W/m/K]
 dry_conductivity   = 0.208     # [W/m/K]
 dry_heat_capacity  = 1.26e6    # [J/m3/K]
-
-[energy]
-bottom_bc  = "dirichlet"
+thermal_bottom_bc = "dirichlet"
 deep_temp  = 300.0               # [K] the map's deep_temp at this cell is 299.99
 deep_depth = 2.68               # [m] bottom node (1.29 m) + 1.973/sqrt(2) (docs/science/soil_biophysics.md eq. (13))

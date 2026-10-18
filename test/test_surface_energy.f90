@@ -90,7 +90,7 @@ contains
          !      mean two wood temperatures and is deliberately not taken. --------------------!
          dbio_w   = wc(i) * npl(i) * C2B                                ! [kg dry/m2] all wood
          dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
-         cap    = max(dbio_w * tp%c_wood_dry, tp%veg_hcap_min * wai)                            &
+         cap    = dbio_w * tp%c_wood_dry                                                        &
                 + wood_thermal_water(WOOD_WATER_SAT * dbio_sap / C2B, dbio_sap / C2B, 0.0_wp) * cp_liq
          drdt   = 8.0_wp * WOOD_EMISS * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
          tau    = cap / drdt

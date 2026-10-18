@@ -21,10 +21,10 @@
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
-   use meds_constants, only : t_3ple
+   use meds_constants, only : t_3ple, n_soil_layer_max
    use meds_plant_types, only : hydro_params_table_t
    use meds_plant_types, only : veg_thermal_params_t
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t
+   use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_enthalpy_of_temp
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t

@@ -153,6 +153,6 @@ start_clamp    = "hold"
 [soil_carbon]
 soil_carbon_on = true
 
-[energy]
-bottom_bc = "dirichlet"
+[soil]
+thermal_bottom_bc = "dirichlet"
 deep_temp = 284.75

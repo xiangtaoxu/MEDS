@@ -23,9 +23,7 @@ module meds_vegetation_dynamics
                                          storage_carbon_target, local_hmax
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET, &
                                          set_cohort_size_from_carbon
-   use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity, cohort_wood_store_carbon, &
-                                     TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,                        &
-                                     TISSUE_HCAP_MIN
+   use meds_site_state_types, only : site_t, cohort_wood_store_carbon
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
