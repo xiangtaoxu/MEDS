@@ -16,7 +16,7 @@ before and after.
 
 The soil column's parameters become configuration, the ground becomes one block of the main config,
 and a new cohort starts in its patch's state instead of at two constants (#447). The state layer is
-reorganized by model hierarchy, with no change to any result (STATE_PR).
+reorganized by model hierarchy, with no change to any result (#448).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -57,7 +57,7 @@ reorganized by model hierarchy, with no change to any result (STATE_PR).
   types are unchanged: they stay grouped by the solver that reads them. Outputs are unchanged bit for
   bit.
 
-- **The state layer is one library of four files, by model hierarchy** (STATE_PR;
+- **The state layer is one library of four files, by model hierarchy** (#448;
   `docs/dev_plans/MEDS_STATE_HIERARCHY_PLAN.md`). `src/state/column/` and `src/state/site/` become
   `src/state/`: `meds_cohort_state_vars` (the cohort block and its lockstep),
   `meds_patch_state_vars` (one patch's stores, their blends, and the patch block),
