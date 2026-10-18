@@ -455,7 +455,7 @@ contains
                                                 site%cohort%root_resp_accum(1:n))
       case (FLD_C_BGB)             ; x(1:n) = site%cohort%fineroot_carbon(1:n)                  &
                                     + site%cohort%wood_carbon(1:n)                             &
-                                      * (1.0_wp - site%cohort%p_aboveground_frac(1:n))
+                                      * (1.0_wp - site%cohort%pft_table%aboveground_frac(site%cohort%pft(1:n)))
       case (FLD_C_VEG_CARBON)      ; x(1:n) = site%cohort%leaf_carbon(1:n)                      &
                                     + site%cohort%fineroot_carbon(1:n)                         &
                                     + site%cohort%wood_carbon(1:n)                             &

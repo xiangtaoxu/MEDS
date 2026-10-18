@@ -53,10 +53,12 @@ contains
       type(cohort_block),    intent(in)    :: cohort
       integer(ik),           intent(in)    :: i0      !< first cohort of the patch (CSR offset)
       integer(ik),           intent(in)    :: ncoh    !< cohorts in the patch
-      integer(ik) :: i, j
+      integer(ik) :: i, j, pf
       call ensure_column_cohort_capacity(cc, ncoh)
+      associate (pft => cohort%pft_table)
       do j = 1_ik, ncoh
          i = i0 + j - 1_ik
+         pf = cohort%pft(i)
          !----- Demographic inputs. -----------------------------------------------------!
          cc%pft(j)           = cohort%pft(i)
          cc%nplant(j)        = cohort%nplant(i)
@@ -76,19 +78,20 @@ contains
          cc%vcmax25(j)       = cohort%vcmax25(i)
          cc%rd25(j)          = cohort%rd25(i)
          cc%dmax_psi_leaf(j) = cohort%dmax_psi_leaf(i)
-         !----- Canopy-element geometry (per-PFT traits, gathered on the block). ----------!
-         cc%leaf_width(j)    = cohort%p_leaf_width(i)
-         cc%branch_diam(j)   = cohort%p_branch_diameter(i)
-         cc%aboveground_frac(j) = cohort%p_aboveground_frac(i)
-         cc%is_woody(j)           = cohort%p_is_woody(i)
-         cc%stem_resp_factor25(j) = cohort%p_stem_resp_factor25(i)
-         cc%stem_resp_sapwood25(j) = cohort%p_stem_resp_sapwood25(i)
+         !----- Canopy-element geometry and respiration traits (the PFT's, from the block's table). !
+         cc%leaf_width(j)    = pft%leaf_width(pf)
+         cc%branch_diam(j)   = pft%branch_diameter(pf)
+         cc%aboveground_frac(j) = pft%aboveground_frac(pf)
+         cc%is_woody(j)           = pft%is_woody(pf)
+         cc%stem_resp_factor25(j) = pft%stem_resp_factor25(pf)
+         cc%stem_resp_sapwood25(j) = pft%stem_resp_sapwood25(pf)
          !----- Sapwood volume [m3/plant]: its carbon as dry mass, over the PFT's wood density   !
          !      [g/cm3 = 1000 kg/m3]. Biomass grows as density^0.976, so the volume barely      !
          !      depends on the density: it is the stem's geometry. ---------------------------!
-         cc%sap_volume(j)    = cohort%sapwood_carbon(i) * C2B_WOOD / (1.0e3_wp * cohort%p_wood_density(i))
-         cc%root_resp_factor25(j) = cohort%p_root_resp_factor25(i)
+         cc%sap_volume(j)    = cohort%sapwood_carbon(i) * C2B_WOOD / (1.0e3_wp * pft%wood_density(pf))
+         cc%root_resp_factor25(j) = pft%root_resp_factor25(pf)
       end do
+      end associate
    end subroutine copy_column_cohort
 
    !---------------------------------------------------------------------------------------!
@@ -107,6 +110,7 @@ contains
       integer(ik)        :: j, n
       n = int(size(ipft), ik)
       call cohort_alloc(block, n, 1_ik)   ! growth ring buffer irrelevant to a fixture
+      block%pft_table = pft               ! as site_alloc sets it
       block%n = n
       do j = 1_ik, n
          !----- The view carries no tissue water or temperature (the column's stores are the         !

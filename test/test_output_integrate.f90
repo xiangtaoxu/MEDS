@@ -50,7 +50,7 @@ program test_output_integrate
    use meds_diagnostic_reduce, only : W_NPLANT, W_LEAF_AREA
    use meds_output_config,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
    use meds_constants,        only : n_soil_layer_max
-   use meds_test_support, only : banner, build_test_config, check, check_close
+   use meds_test_support, only : banner, build_test_config, test_pft_table, check, check_close
    implicit none
 
    call banner('output_integrate')
@@ -136,7 +136,7 @@ contains
       type(diag_params_t)  :: dp
       integer(ik)          :: n_out, i
       !----- A fixed 3-cohort / 1-patch site (slot set constant across the window). ----------!
-      call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik, allometry_t())
+      call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik, allometry_t(), test_pft_table())
       site%cohort%n = 3_ik
       site%cohort%nplant(1:3)     = [1.0_wp, 1.0_wp, 1.0_wp]
       call set_cohort_agb(site, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)   ! opaque (see header note)
@@ -444,7 +444,7 @@ contains
       k_n = find_var_index(files%reg, 'n_cohort_site')
       call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
 
-      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik, allometry_t())
+      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik, allometry_t(), cfg%pft)
       site%patch%n = 1_ik ; site%patch%area(1) = 1.0_wp ; site%patch%cohort_offset(1) = 1_ik
       jan30 = meds_time_t(year=2000_ik, month=1_ik, day=30_ik)
       jan31 = time_advance_days(jan30, 1_ik)

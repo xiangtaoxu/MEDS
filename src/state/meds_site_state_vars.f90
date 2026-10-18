@@ -16,6 +16,7 @@ module meds_site_state_vars
                                        polygon_diag_reset
    use meds_kinds,              only : wp, ik
    use meds_allometry,          only : allometry_t
+   use meds_pft_params,         only : pft_table_t
    use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, cohort_alloc, cohort_free, cohort_reorder
    use meds_patch_state_vars,   only : patch_block, patch_alloc, patch_free
    implicit none
@@ -96,12 +97,14 @@ contains
    !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
-   subroutine site_alloc(site, n_pft, coh_cap, pat_cap, n_growth_window, allom)
+   subroutine site_alloc(site, n_pft, coh_cap, pat_cap, n_growth_window, allom, pft)
       type(site_t),      intent(out) :: site
       integer(ik),       intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
       type(allometry_t), intent(in)  :: allom   !< the site's allometry (cfg%allom of its config)
+      type(pft_table_t), intent(in)  :: pft     !< the site's PFT trait table (cfg%pft of its config)
       site%n_pft = n_pft
-      site%cohort%allom = allom
+      site%cohort%allom     = allom
+      site%cohort%pft_table = pft
       call cohort_alloc(site%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
       call patch_alloc(site%patch, max(pat_cap, 1_ik), n_pft)
    end subroutine site_alloc

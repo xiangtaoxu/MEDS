@@ -28,7 +28,7 @@ program test_diagnostic_reduce
                                        cohort_diag_fuse, cohort_diag_clear_slot, cohort_diag_value, CDIAG_FUSE, N_CDIAG, &
                                        CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW, CD_WOOD_TEMP, CD_GSW
    use meds_output_types,       only : MISSING_VALUE
-   use meds_test_support, only : banner, check, check_close
+   use meds_test_support, only : banner, check, check_close, test_pft_table
    implicit none
 
    call banner('diagnostic_reduce')
@@ -48,7 +48,7 @@ contains
    !      stem-weighted MEAN and a basal-area-weighted MEAN are three different numbers.  -------!
    subroutine build_fixture(site)
       type(site_t), intent(out) :: site
-      call site_alloc(site, 3_ik, 16_ik, 4_ik, 4_ik, allometry_t())
+      call site_alloc(site, 3_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
       site%n_pft = 3_ik
       !----- patch 1 (area 0.75): cohorts 1,2 ; patch 2 (area 0.25): cohort 3. -----!
       site%patch%n = 2_ik

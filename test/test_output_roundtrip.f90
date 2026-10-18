@@ -50,7 +50,7 @@ program test_output_roundtrip
    use meds_water_retention,  only : SOIL_RETENTION_VG
    use meds_output_registry,  only : manager_set_soil_params
    use meds_output_types,     only : MISSING_VALUE
-   use meds_test_support, only : banner, check, check_close
+   use meds_test_support, only : banner, check, check_close, test_pft_table
    use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
@@ -68,7 +68,7 @@ program test_output_roundtrip
    call banner('output_roundtrip')
 
    !----- A fixed 1-cohort / 1-patch site (constant slot set). -----!
-   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik, allometry_t())
+   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
    site%cohort%n = 1_ik ; site%patch%n = 1_ik
    site%cohort%nplant(1) = 1.0_wp ; site%cohort%dbh(1) = 5.0_wp
    site%cohort%height(1) = 4.0_wp ; site%cohort%basal_area(1) = 19.6_wp

@@ -79,9 +79,10 @@ program test_carbon_growth
    !        ledger and shows up only as a slowly wrong tree.                                      !
    block
       real(wp) :: wa_fresh, fs_fresh
-      wa_fresh = dbh_to_wai(site%cohort%dbh(1), 1.0_wp, site%cohort%p_wai_b1(1), site%cohort%p_wai_b2(1))
-      fs_fresh = sapwood_fraction(site%cohort%dbh(1), site%cohort%p_sapwood_area_b1(1),          &
-                                  site%cohort%p_sapwood_area_b2(1))
+      associate (pft => site%cohort%pft_table, pf => site%cohort%pft(1))
+         wa_fresh = dbh_to_wai(site%cohort%dbh(1), 1.0_wp, pft%wai_b1(pf), pft%wai_b2(pf))
+         fs_fresh = sapwood_fraction(site%cohort%dbh(1), pft%sapwood_area_b1(pf), pft%sapwood_area_b2(pf))
+      end associate
       call check(wa_fresh > 0.0_wp, 'wood-geometry fixture is degenerate (zero wood area)')
       call check_close(site%cohort%wood_area(1), wa_fresh, 1.0e-13_wp,                           &
                        'cached wood_area is stale after growth')
@@ -200,8 +201,8 @@ program test_carbon_growth
       call check(site%cohort%leaf_carbon(1) == 0.0_wp, 'applier: a full shed leaves no leaf carbon')
       call check(site%cohort%leaf_area(1) == 0.0_wp, 'applier: and exactly no leaf area')
       call carbon_to_structure(site%cohort%allom, site%cohort%wood_carbon(1), site%cohort%leaf_carbon(1),              &
-                               site%cohort%p_wood_density(1), site%cohort%p_hgt_max(1),             &
-                               site%cohort%p_aboveground_frac(1), site%cohort%sla(1),               &
+                               cfg%pft%wood_density(site%cohort%pft(1)), cfg%pft%hgt_max(site%cohort%pft(1)), &
+                               cfg%pft%aboveground_frac(site%cohort%pft(1)), site%cohort%sla(1),    &
                                dbh_c, h_c, ba_c, agb_c, la_c)
       call check(site%cohort%dbh(1) == dbh_c .and. site%cohort%height(1) == h_c                     &
                  .and. site%cohort%agb(1) == agb_c, 'applier: geometry is the allometry of the carbon')

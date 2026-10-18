@@ -181,17 +181,18 @@ contains
          !      twin of the driver's carbon update_cohort_derivatives -- this is thin C-API glue, not  !
          !      a named peer computer. ---------------------------------------------------------------!
          call cohort_deriv_alloc(site%deriv, site%cohort%n)
-         associate (cohort => site%cohort)
+         associate (cohort => site%cohort, pft => cfg%pft)
             do i = 1_ik, cohort%n
+               pf = cohort%pft(i)
                !----- Forward allometry from the supplied dbh growth. It CALLS meds_allometry rather   !
                !      than inlining it, so a coefficient change reaches the model and this shim alike. !
-               dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, cohort%p_dbh_critical(i))
-               height_new = dbh_to_height(cohort%allom, dbh_new, cohort%p_hgt_max(i))
+               dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, pft%dbh_critical(pf))
+               height_new = dbh_to_height(cohort%allom, dbh_new, pft%hgt_max(pf))
                lc_new     = size2leaf_carbon(cohort%allom, dbh_new, height_new, cohort%sla(i))
                wc_new     = size2wood_carbon(cohort%allom, dbh_new, height_new,                        &
-                                             cohort%p_wood_density(i), cohort%p_aboveground_frac(i))
-               fc_new     = cohort%p_root_to_leaf_ratio(i) * lc_new
-               nc_new     = storage_carbon_target(cohort%p_storage_cushion(i), lc_new, fc_new)
+                                             pft%wood_density(pf), pft%aboveground_frac(pf))
+               fc_new     = pft%root_to_leaf_ratio(pf) * lc_new
+               nc_new     = storage_carbon_target(pft%storage_cushion(pf), lc_new, fc_new)
                !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth     !
                !      rate (empirical behaviour -- records the request even when dbh is capped). ----!
                call fill_cohort_deriv(cohort, i, site%deriv, cfg%dt_years, m(i), g(i),                &

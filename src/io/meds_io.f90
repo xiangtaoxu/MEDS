@@ -29,8 +29,7 @@ module meds_io
    use meds_netcdf_c
    use meds_site_state_vars,  only : site_t
    use meds_patch_state_vars, only : patch_birth_state
-   use meds_cohort_state_vars,      only : gather_pft_params, set_cohort_size, set_cohort_size_from_carbon, &
-                                           set_cohort_tissue_water
+   use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water
    use meds_site_state_vars,        only : site_alloc, rebuild_csr
    use meds_soil_column_config,     only : soil_params_t, soil_column_params
    use meds_demography_update,      only : update_overtopping_lai
@@ -651,7 +650,7 @@ contains
       if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
 
       call site_alloc(site, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg), &
-                      cfg%allom)
+                      cfg%allom, cfg%pft)
       site%cohort%n = ncoh ; site%patch%n = npat
       !----- Growth temperature: OPTIONAL, so a state file without it keeps the unseeded          !
       !      sentinel site_alloc set and the first slow step adopts that day's mean.  ---------------!
@@ -718,7 +717,6 @@ contains
             call gv_dbl_opt(ncid, 'leaf_surf_water',    ncoh, c%leaf_surf_water(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
          end associate
-         call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
          !----- The carbon pools the writing run held, and the geometry derived from them as the  !
          !      run derives it (the file's height/agb/leaf_area are for its readers, not read back). !
          !      A file without pools places each cohort on the allometry from its dbh. -----------!

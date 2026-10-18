@@ -9,7 +9,7 @@ module meds_test_support
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : day_sec
    use meds_time,       only : meds_time_t
-   use meds_pft_params, only : alloc_pft_table, PATH_C3, PATH_C4
+   use meds_pft_params, only : pft_table_t, alloc_pft_table, PATH_C3, PATH_C4
    use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE, INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_PEAKED
@@ -21,7 +21,7 @@ module meds_test_support
    !----- Re-exported, so a test that links the full support library needs one `use`. -----!
    public :: check, check_close, check_true, check_int, banner
    public :: test_report, test_reset, test_failures
-   public :: build_test_config
+   public :: build_test_config, test_pft_table
 
 contains
 
@@ -154,5 +154,13 @@ contains
       cfg%allom%light_ext = 0.5_wp
       call derive_parameters(cfg)
    end function build_test_config
+
+   !----- The test configuration's PFT table, for a fixture site that has no config of its own. --!
+   function test_pft_table() result(pft)
+      type(pft_table_t)   :: pft
+      type(meds_config_t) :: cfg
+      cfg = build_test_config()
+      pft = cfg%pft
+   end function test_pft_table
 
 end module meds_test_support
