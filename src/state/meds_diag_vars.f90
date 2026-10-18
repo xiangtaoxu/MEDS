@@ -76,31 +76,37 @@ module meds_diag_vars
    !  PER-COHORT diagnostic fields. Order is free; the parameters are the only thing that binds  !
    !  a row to a meaning.                                                                        !
    !==========================================================================================!
+   !----- 1. Carbon -----------------------------------------------------------------------------!
    integer(ik), parameter, public :: CD_ANET         =  1_ik  !< [umol CO2/m2 leaf/s] net assimilation
    integer(ik), parameter, public :: CD_AGROSS       =  2_ik  !< [umol CO2/m2 leaf/s] gross assimilation
-   integer(ik), parameter, public :: CD_GSW          =  3_ik  !< [mol H2O/m2 leaf/s]  stomatal conductance
-   integer(ik), parameter, public :: CD_GBW          =  4_ik  !< [m/s] leaf boundary-layer conductance
-   integer(ik), parameter, public :: CD_CI           =  5_ik  !< [umol/mol] intercellular CO2
-   integer(ik), parameter, public :: CD_CS           =  6_ik  !< [umol/mol] leaf-surface CO2
-   integer(ik), parameter, public :: CD_RD           =  7_ik  !< [umol/m2 leaf/s] leaf dark respiration
-   integer(ik), parameter, public :: CD_TRANSP       =  8_ik  !< [mol H2O/m2 leaf/s] leaf transpiration
-   integer(ik), parameter, public :: CD_BETA_STOM    =  9_ik  !< [-] stomatal water-stress limb
-   integer(ik), parameter, public :: CD_BETA_NONSTOM = 10_ik  !< [-] non-stomatal (capacity) limb
-   integer(ik), parameter, public :: CD_LEAF_TEMP    = 11_ik  !< [K]
-   integer(ik), parameter, public :: CD_WOOD_TEMP    = 12_ik  !< [K]
-   integer(ik), parameter, public :: CD_LEAF_VPD     = 13_ik  !< [Pa] leaf-to-air VPD
-   integer(ik), parameter, public :: CD_PSI_LEAF     = 14_ik  !< [MPa]
-   integer(ik), parameter, public :: CD_PSI_WOOD     = 15_ik  !< [MPa]
-   integer(ik), parameter, public :: CD_PLC          = 16_ik  !< [-] percent loss of conductance
-   integer(ik), parameter, public :: CD_SAPFLOW      = 17_ik  !< [kg/plant/s] wood -> leaf
-   integer(ik), parameter, public :: CD_ROOT_UPTAKE  = 18_ik  !< [kg/plant/s] soil -> root
-   integer(ik), parameter, public :: CD_ABS_PAR      = 19_ik  !< [W/m2 ground] absorbed PAR
-   integer(ik), parameter, public :: CD_ABS_SW       = 20_ik  !< [W/m2 ground] absorbed shortwave
-   integer(ik), parameter, public :: CD_ABS_LW       = 21_ik  !< [W/m2 ground] net longwave
-   integer(ik), parameter, public :: CD_WIND         = 22_ik  !< [m/s] in-canopy wind
-   integer(ik), parameter, public :: CD_GPP_RATE     = 23_ik  !< [umol CO2/plant/s]
-   integer(ik), parameter, public :: CD_LEAF_WATER   = 24_ik  !< [kg/plant] internal leaf water
-   integer(ik), parameter, public :: CD_WOOD_WATER   = 25_ik  !< [kg/plant] internal wood water
+   integer(ik), parameter, public :: CD_RD           =  3_ik  !< [umol/m2 leaf/s] leaf dark respiration
+   integer(ik), parameter, public :: CD_GPP_RATE     =  4_ik  !< [umol CO2/plant/s]
+   !----- 2. Stomata and leaf exchange ----------------------------------------------------------!
+   integer(ik), parameter, public :: CD_GSW          =  5_ik  !< [mol H2O/m2 leaf/s]  stomatal conductance
+   integer(ik), parameter, public :: CD_GBW          =  6_ik  !< [m/s] leaf boundary-layer conductance
+   integer(ik), parameter, public :: CD_CI           =  7_ik  !< [umol/mol] intercellular CO2
+   integer(ik), parameter, public :: CD_CS           =  8_ik  !< [umol/mol] leaf-surface CO2
+   integer(ik), parameter, public :: CD_TRANSP       =  9_ik  !< [mol H2O/m2 leaf/s] leaf transpiration
+   integer(ik), parameter, public :: CD_BETA_STOM    = 10_ik  !< [-] stomatal water-stress limb
+   integer(ik), parameter, public :: CD_BETA_NONSTOM = 11_ik  !< [-] non-stomatal (capacity) limb
+   !----- 3. Plant water ------------------------------------------------------------------------!
+   integer(ik), parameter, public :: CD_PSI_LEAF     = 12_ik  !< [MPa]
+   integer(ik), parameter, public :: CD_PSI_WOOD     = 13_ik  !< [MPa]
+   integer(ik), parameter, public :: CD_PLC          = 14_ik  !< [-] percent loss of conductance
+   integer(ik), parameter, public :: CD_SAPFLOW      = 15_ik  !< [kg/plant/s] wood -> leaf
+   integer(ik), parameter, public :: CD_ROOT_UPTAKE  = 16_ik  !< [kg/plant/s] soil -> root
+   integer(ik), parameter, public :: CD_LEAF_WATER   = 17_ik  !< [kg/plant] internal leaf water
+   integer(ik), parameter, public :: CD_WOOD_WATER   = 18_ik  !< [kg/plant] internal wood water
+   !----- 4. Energy and radiation ---------------------------------------------------------------!
+   integer(ik), parameter, public :: CD_LEAF_TEMP    = 19_ik  !< [K]
+   integer(ik), parameter, public :: CD_WOOD_TEMP    = 20_ik  !< [K]
+   integer(ik), parameter, public :: CD_ABS_PAR      = 21_ik  !< [W/m2 ground] absorbed PAR
+   integer(ik), parameter, public :: CD_ABS_SW       = 22_ik  !< [W/m2 ground] absorbed shortwave
+   integer(ik), parameter, public :: CD_ABS_LW       = 23_ik  !< [W/m2 ground] net longwave
+   !----- 5. Canopy environment -----------------------------------------------------------------!
+   integer(ik), parameter, public :: CD_LEAF_VPD     = 24_ik  !< [Pa] leaf-to-air VPD
+   integer(ik), parameter, public :: CD_WIND         = 25_ik  !< [m/s] in-canopy wind
+   !----- 6. The leaf solve's other inputs ------------------------------------------------------!
    !----- The rest of the leaf solve's own inputs, as it saw them, so the solve can be repeated     !
    !      outside the model (the calibration's canopy of leaf kernels): with CD_LEAF_TEMP,           !
    !      CD_LEAF_VPD and CD_PSI_LEAF they are every driver of leaf_gas_exchange_batch. ------------!
@@ -119,13 +125,13 @@ module meds_diag_vars
    !      EXTENSIVE (nplant-weighted), matching how their prognostic twins fuse. The absorbed-     !
    !      radiation terms are per m2 of GROUND, so two cohorts' contributions to the same patch    !
    !      simply add -- the same convention leaf_surf_water follows. -----------------------------!
-   integer(ik), parameter, public :: CDIAG_FUSE(N_CDIAG) = [                                     &
-        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
-        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
-        FK_LEAF_HEAT, FK_WOOD_HEAT, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
-        FK_INTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_GROUND,    FK_GROUND,                       &
-        FK_GROUND,    FK_INTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE,                    &
-        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE ]
+   integer(ik), parameter, public :: CDIAG_FUSE(N_CDIAG) = [                                              &
+        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_EXTENSIVE,                                           &   ! 1. Carbon
+        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, &   ! 2. Stomata and leaf exchange
+        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, &   ! 3. Plant water
+        FK_LEAF_HEAT, FK_WOOD_HEAT, FK_GROUND, FK_GROUND, FK_GROUND,                                      &   ! 4. Energy and radiation
+        FK_INTENSIVE, FK_INTENSIVE,                                                                       &   ! 5. Canopy environment
+        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE                              ]   ! 6. The leaf solve's other inputs
 
    !==========================================================================================!
    !  PER-COHORT SLOW-LOOP diagnostic fields -- a SECOND block of the same shape, written once per  !
@@ -142,17 +148,20 @@ module meds_diag_vars
    !  changes, as thread count can make it. Storing the tendencies in a block that DOES ride the       !
    !  lockstep removes the failure mode rather than timing around it.                                  !
    !==========================================================================================!
-   integer(ik), parameter, public :: CS_DDBH_DT      = 1_ik  !< [cm/yr]         diameter growth
-   integer(ik), parameter, public :: CS_DAGB_DT      = 2_ik  !< [kgC/plant/yr]  AGB growth
-   integer(ik), parameter, public :: CS_MORT_RATE    = 3_ik  !< [1/yr]          mortality hazard (positive)
-   integer(ik), parameter, public :: CS_NPP_LEAF     = 4_ik  !< [kgC/plant/yr]  NPP to leaf
-   integer(ik), parameter, public :: CS_NPP_FINEROOT = 5_ik  !< [kgC/plant/yr]  NPP to fine root
-   integer(ik), parameter, public :: CS_NPP_WOOD     = 6_ik  !< [kgC/plant/yr]  NPP to wood
-   integer(ik), parameter, public :: CS_NPP_STORAGE  = 7_ik  !< [kgC/plant/yr]  NPP to non-structural storage
-   integer(ik), parameter, public :: CS_NPP_REPRO    = 8_ik  !< [kgC/plant/yr]  NPP to reproduction
-   integer(ik), parameter, public :: CS_GROWTH_RESP  = 9_ik  !< [kgC/plant/yr]  growth respiration
-   integer(ik), parameter, public :: CS_STORAGE_RESP = 10_ik !< [kgC/plant/yr]  storage maintenance respiration
-   integer(ik), parameter, public :: CS_EXUDATE      = 11_ik !< [kgC/plant/yr]  root exudate (carbon the growth sink could not use)
+   !----- 1. Growth and mortality ---------------------------------------------------------------!
+   integer(ik), parameter, public :: CS_DDBH_DT      =  1_ik  !< [cm/yr]         diameter growth
+   integer(ik), parameter, public :: CS_DAGB_DT      =  2_ik  !< [kgC/plant/yr]  AGB growth
+   integer(ik), parameter, public :: CS_MORT_RATE    =  3_ik  !< [1/yr]          mortality hazard (positive)
+   !----- 2. Carbon allocation ------------------------------------------------------------------!
+   integer(ik), parameter, public :: CS_NPP_LEAF     =  4_ik  !< [kgC/plant/yr]  NPP to leaf
+   integer(ik), parameter, public :: CS_NPP_FINEROOT =  5_ik  !< [kgC/plant/yr]  NPP to fine root
+   integer(ik), parameter, public :: CS_NPP_WOOD     =  6_ik  !< [kgC/plant/yr]  NPP to wood
+   integer(ik), parameter, public :: CS_NPP_STORAGE  =  7_ik  !< [kgC/plant/yr]  NPP to non-structural storage
+   integer(ik), parameter, public :: CS_NPP_REPRO    =  8_ik  !< [kgC/plant/yr]  NPP to reproduction
+   !----- 3. Carbon losses ----------------------------------------------------------------------!
+   integer(ik), parameter, public :: CS_GROWTH_RESP  =  9_ik  !< [kgC/plant/yr]  growth respiration
+   integer(ik), parameter, public :: CS_STORAGE_RESP = 10_ik  !< [kgC/plant/yr]  storage maintenance respiration
+   integer(ik), parameter, public :: CS_EXUDATE      = 11_ik  !< [kgC/plant/yr]  root exudate (carbon the growth sink could not use)
    integer(ik), parameter, public :: N_CSDIAG        = 11_ik
 
    !----- Fusion kinds for the slow rows. All of them are per-PLANT rates, so all are EXTENSIVE    !
@@ -168,45 +177,79 @@ module meds_diag_vars
    !  (patch_diag_row): the coarse tiers accumulate that row, and the FAST tier stages it as it  !
    !  is, so the two read one list.                                                             !
    !==========================================================================================!
-   integer(ik), parameter, public :: PD_LE            =  1_ik  !< [W/m2] latent heat (CAS -> atm)
-   integer(ik), parameter, public :: PD_H             =  2_ik  !< [W/m2] sensible heat (CAS -> atm)
-   integer(ik), parameter, public :: PD_RNET          =  3_ik  !< [W/m2] net all-wave radiation
-   integer(ik), parameter, public :: PD_SW_GROUND     =  4_ik  !< [W/m2] shortwave reaching the ground
-   integer(ik), parameter, public :: PD_LW_GROUND     =  5_ik  !< [W/m2] net longwave at the ground
-   integer(ik), parameter, public :: PD_USTAR         =  6_ik  !< [m/s]
-   integer(ik), parameter, public :: PD_GGNET         =  7_ik  !< [m/s] ground conductance
-   integer(ik), parameter, public :: PD_ROUGH         =  8_ik  !< [m] roughness length
-   integer(ik), parameter, public :: PD_DISPLACE      =  9_ik  !< [m] displacement height
-   integer(ik), parameter, public :: PD_CAS_TEMP      = 10_ik  !< [K]
-   integer(ik), parameter, public :: PD_CAS_SHV       = 11_ik  !< [kg/kg]
-   integer(ik), parameter, public :: PD_CAS_CO2       = 12_ik  !< [umol/mol]
-   integer(ik), parameter, public :: PD_GPP           = 13_ik  !< [umol CO2/m2/s] patch GPP rate
-   integer(ik), parameter, public :: PD_NEE           = 14_ik  !< [umol CO2/m2/s] net ecosystem exchange
-   integer(ik), parameter, public :: PD_TRANSP        = 15_ik  !< [kg/m2/s] canopy transpiration
-   integer(ik), parameter, public :: PD_NPP           = 16_ik  !< [umol CO2/m2/s] GPP net of maintenance respiration
-   integer(ik), parameter, public :: PD_RECO          = 17_ik  !< [umol CO2/m2/s] ecosystem respiration, NEE + GPP
-   integer(ik), parameter, public :: PD_SOIL_TEMP_TOP = 18_ik  !< [K] top soil layer (the ground surface when snow-free)
-   integer(ik), parameter, public :: PD_RESID_ENERGY  = 19_ik  !< [W/m2] whole-column energy residual
-   integer(ik), parameter, public :: PD_RESID_WATER   = 20_ik  !< [kg/m2/s] whole-column water residual
-   !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
-   !      above because the reader normalizes by w either way, and the slow driver writes them as   !
-   !      a dt-weighted contribution over the same slow step the fast rows span. -------------------!
-   integer(ik), parameter, public :: PD_LITTER_LEAF     = 21_ik !< [kgC/m2/yr] leaf litterfall (after resorption)
-   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 22_ik !< [kgC/m2/yr] fine-root litter (after resorption)
-   integer(ik), parameter, public :: PD_LITTER_STRUCT   = 23_ik !< [kgC/m2/yr] structural litter + CWD
-   integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 24_ik !< [plant/m2/yr] recruitment density flux
-   integer(ik), parameter, public :: PD_DISTURB_AREA    = 25_ik !< [1/yr] area fraction disturbed
+   !----- 1. Forcing at the canopy-air top ------------------------------------------------------!
+   !----- The patch's own forcing: the sample moved to its canopy-air top (docs/science/forcing.md  !
+   !      §8). Only the wind and the air temperature differ between patches.                       !
+   integer(ik), parameter, public :: PD_WIND_CAS_TOP      =  1_ik  !< [m/s] wind speed at the canopy-air top
+   integer(ik), parameter, public :: PD_TAIR_CAS_TOP      =  2_ik  !< [K]   air temperature at the canopy-air top
+   integer(ik), parameter, public :: PD_Z_CAS_TOP         =  3_ik  !< [m]   that top: the canopy-air depth the fast loop used
+   !----- 2. Top-of-canopy radiation ------------------------------------------------------------!
    !----- TOP-OF-CANOPY radiative fluxes. Kept as FLUXES, not as a time-averaged albedo: a        !
    !      period-mean albedo is the mean of a RATIO, which is not the ratio of the means, and     !
    !      at night the shortwave ratio is 0/0. The albedo a reader wants is sum(up)/sum(down)     !
    !      over the period (docs/science/canopy_radiation_transfer.md eq. (15)), which these       !
    !      make computable -- and which is what a satellite product is. ---------------------------!
-   integer(ik), parameter, public :: PD_SW_IN_VIS       = 26_ik !< [W/m2] incident VIS at canopy top
-   integer(ik), parameter, public :: PD_SW_IN_NIR       = 27_ik !< [W/m2] incident NIR at canopy top
-   integer(ik), parameter, public :: PD_SW_UP_VIS       = 28_ik !< [W/m2] upwelling VIS leaving the canopy top
-   integer(ik), parameter, public :: PD_SW_UP_NIR       = 29_ik !< [W/m2] upwelling NIR leaving the canopy top
-   integer(ik), parameter, public :: PD_LW_UP           = 30_ik !< [W/m2] upwelling LW (surface emission included)
-   integer(ik), parameter, public :: PD_SW_UP           = 31_ik !< [W/m2] upwelling shortwave, both bands (VIS + NIR)
+   integer(ik), parameter, public :: PD_SW_IN_VIS         =  4_ik  !< [W/m2] incident VIS at canopy top
+   integer(ik), parameter, public :: PD_SW_IN_NIR         =  5_ik  !< [W/m2] incident NIR at canopy top
+   integer(ik), parameter, public :: PD_SW_UP_VIS         =  6_ik  !< [W/m2] upwelling VIS leaving the canopy top
+   integer(ik), parameter, public :: PD_SW_UP_NIR         =  7_ik  !< [W/m2] upwelling NIR leaving the canopy top
+   integer(ik), parameter, public :: PD_SW_UP             =  8_ik  !< [W/m2] upwelling shortwave, both bands (VIS + NIR)
+   integer(ik), parameter, public :: PD_LW_UP             =  9_ik  !< [W/m2] upwelling LW (surface emission included)
+   !----- The SKIN temperature, in the land-model sense (CLM's TSKIN): the black-body             !
+   !      temperature of the longwave leaving the canopy top, what an infrared thermometer or     !
+   !      a satellite land-surface temperature sees (docs/science/diagnostics.md §4, "The         !
+   !      skin temperature"). MEDS has no skin layer of its own -- snow-free, the ground          !
+   !      surface is the top soil layer (PD_SOIL_TEMP_TOP) -- and over a forest this is           !
+   !      mostly the canopy. It is a fourth root, so it is formed per sub-step, like the VPD. ----!
+   integer(ik), parameter, public :: PD_SKIN_TEMP         = 10_ik  !< [K] (longwave up / sigma)^(1/4)
+   !----- 3. Turbulence -------------------------------------------------------------------------!
+   integer(ik), parameter, public :: PD_USTAR             = 11_ik  !< [m/s]
+   integer(ik), parameter, public :: PD_GGNET             = 12_ik  !< [m/s] ground conductance
+   integer(ik), parameter, public :: PD_ROUGH             = 13_ik  !< [m] roughness length
+   integer(ik), parameter, public :: PD_DISPLACE          = 14_ik  !< [m] displacement height
+   !----- 4. Surface energy balance -------------------------------------------------------------!
+   integer(ik), parameter, public :: PD_RNET              = 15_ik  !< [W/m2] net all-wave radiation
+   integer(ik), parameter, public :: PD_H                 = 16_ik  !< [W/m2] sensible heat (CAS -> atm)
+   integer(ik), parameter, public :: PD_LE                = 17_ik  !< [W/m2] latent heat (CAS -> atm)
+   integer(ik), parameter, public :: PD_SW_GROUND         = 18_ik  !< [W/m2] shortwave reaching the ground
+   integer(ik), parameter, public :: PD_LW_GROUND         = 19_ik  !< [W/m2] net longwave at the ground
+   !----- 5. Carbon and water fluxes ------------------------------------------------------------!
+   integer(ik), parameter, public :: PD_GPP               = 20_ik  !< [umol CO2/m2/s] patch GPP rate
+   integer(ik), parameter, public :: PD_NPP               = 21_ik  !< [umol CO2/m2/s] GPP net of maintenance respiration
+   integer(ik), parameter, public :: PD_RECO              = 22_ik  !< [umol CO2/m2/s] ecosystem respiration, NEE + GPP
+   integer(ik), parameter, public :: PD_NEE               = 23_ik  !< [umol CO2/m2/s] net ecosystem exchange
+   integer(ik), parameter, public :: PD_TRANSP            = 24_ik  !< [kg/m2/s] canopy transpiration
+   !----- 6. Canopy air and ground state --------------------------------------------------------!
+   !----- Fast-varying CAS / surface state, accumulated dt-weighted rather than read at the      !
+   !      output tick. A state read at the tick is ONE instantaneous sample per output           !
+   !      window, taken at whatever local time the boundary falls on, so its bias is a           !
+   !      function of the site's longitude -- measured at +1.4 K for the top soil layer at       !
+   !      Ithaca. -------------------------------------------------------------------------------!
+   integer(ik), parameter, public :: PD_CAS_TEMP          = 25_ik  !< [K]
+   integer(ik), parameter, public :: PD_CAS_SHV           = 26_ik  !< [kg/kg]
+   integer(ik), parameter, public :: PD_CAS_CO2           = 27_ik  !< [umol/mol]
+   integer(ik), parameter, public :: PD_CAS_VPD           = 28_ik  !< [Pa]
+   integer(ik), parameter, public :: PD_SOIL_TEMP_TOP     = 29_ik  !< [K] top soil layer (the ground surface when snow-free)
+   integer(ik), parameter, public :: PD_W_SURFACE         = 30_ik  !< [kg/m2] ponded surface water
+   !----- 7. Budget residuals -------------------------------------------------------------------!
+   integer(ik), parameter, public :: PD_RESID_ENERGY      = 31_ik  !< [W/m2] whole-column energy residual
+   integer(ik), parameter, public :: PD_RESID_WATER       = 32_ik  !< [kg/m2/s] whole-column water residual
+   integer(ik), parameter, public :: N_PDIAG_FAST         = 32_ik  !< the fast loop's rows are 1..N_PDIAG_FAST; the slow driver's follow
+   !----- 8. SLOW rows: litter ------------------------------------------------------------------!
+   !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
+   !      above because the reader normalizes by w either way, and the slow driver writes them as   !
+   !      a dt-weighted contribution over the same slow step the fast rows span. -------------------!
+   integer(ik), parameter, public :: PD_LITTER_LEAF       = 33_ik  !< [kgC/m2/yr] leaf litterfall (after resorption)
+   integer(ik), parameter, public :: PD_LITTER_FINEROOT   = 34_ik  !< [kgC/m2/yr] fine-root litter (after resorption)
+   !----- Litter by the tissue it came from, completing PD_LITTER_LEAF / PD_LITTER_FINEROOT:     !
+   !      with root_exudate_site they sum to the carbon entering the soil pools                  !
+   !      (docs/science/soil_carbon.md §5). -----------------------------------------------------!
+   integer(ik), parameter, public :: PD_LITTER_WOOD       = 35_ik  !< [kgC/m2/yr] wood + storage of dead plants
+   integer(ik), parameter, public :: PD_LITTER_REPRO      = 36_ik  !< [kgC/m2/yr] fruit and seed that made no recruit
+   integer(ik), parameter, public :: PD_LITTER_STRUCT     = 37_ik  !< [kgC/m2/yr] structural litter + CWD
+   !----- 9. SLOW rows: demography --------------------------------------------------------------!
+   integer(ik), parameter, public :: PD_RECRUIT_NPLANT    = 38_ik  !< [plant/m2/yr] recruitment density flux
+   integer(ik), parameter, public :: PD_DISTURB_AREA      = 39_ik  !< [1/yr] area fraction disturbed
    !----- MORTALITY CARBON BY PATHWAY: the three ways a MEDS plant can die, kept apart so a       !
    !      user can tell a stand thinning continuously from one being knocked over. The three      !
    !      are mutually exclusive and jointly exhaustive -- every kilogram of carbon that          !
@@ -219,34 +262,10 @@ module meds_diag_vars
    !      died is a DEMOGRAPHIC question that does not stop being asked when the soil pools       !
    !      are switched off. Whole-individual death carries every pool (leaf + fine root +         !
    !      wood + storage), as the litter partitioning does. --------------------------------------!
-   integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 32_ik !< [kgC/m2/yr] continuous hazard mortality
-   integer(ik), parameter, public :: PD_MORT_C_CULL       = 33_ik !< [kgC/m2/yr] cohorts culled below the tracking floor
-   integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 34_ik !< [kgC/m2/yr] canopy killed by patch disturbance
-   !----- Fast-varying CAS / surface state, accumulated dt-weighted rather than read at the      !
-   !      output tick. A state read at the tick is ONE instantaneous sample per output           !
-   !      window, taken at whatever local time the boundary falls on, so its bias is a           !
-   !      function of the site's longitude -- measured at +1.4 K for the top soil layer at       !
-   !      Ithaca. -------------------------------------------------------------------------------!
-   integer(ik), parameter, public :: PD_CAS_VPD       = 35_ik  !< [Pa]
-   integer(ik), parameter, public :: PD_W_SURFACE     = 36_ik  !< [kg/m2] ponded surface water
-   !----- The patch's own forcing: the sample moved to its canopy-air top (docs/science/forcing.md  !
-   !      §8). Only the wind and the air temperature differ between patches.                       !
-   integer(ik), parameter, public :: PD_WIND_CAS_TOP  = 37_ik  !< [m/s] wind speed at the canopy-air top
-   integer(ik), parameter, public :: PD_TAIR_CAS_TOP  = 38_ik  !< [K]   air temperature at the canopy-air top
-   integer(ik), parameter, public :: PD_Z_CAS_TOP     = 39_ik  !< [m]   that top: the canopy-air depth the fast loop used
-   !----- The SKIN temperature, in the land-model sense (CLM's TSKIN): the black-body             !
-   !      temperature of the longwave leaving the canopy top, what an infrared thermometer or     !
-   !      a satellite land-surface temperature sees (docs/science/diagnostics.md §4, "The         !
-   !      skin temperature"). MEDS has no skin layer of its own -- snow-free, the ground          !
-   !      surface is the top soil layer (PD_SOIL_TEMP_TOP) -- and over a forest this is           !
-   !      mostly the canopy. It is a fourth root, so it is formed per sub-step, like the VPD. ----!
-   integer(ik), parameter, public :: PD_SKIN_TEMP     = 40_ik  !< [K] (longwave up / sigma)^(1/4)
-   !----- Litter by the tissue it came from, completing PD_LITTER_LEAF / PD_LITTER_FINEROOT:     !
-   !      with root_exudate_site they sum to the carbon entering the soil pools                  !
-   !      (docs/science/soil_carbon.md §5). -----------------------------------------------------!
-   integer(ik), parameter, public :: PD_LITTER_WOOD   = 41_ik  !< [kgC/m2/yr] wood + storage of dead plants
-   integer(ik), parameter, public :: PD_LITTER_REPRO  = 42_ik  !< [kgC/m2/yr] fruit and seed that made no recruit
-   integer(ik), parameter, public :: N_PDIAG            = 42_ik
+   integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 40_ik  !< [kgC/m2/yr] continuous hazard mortality
+   integer(ik), parameter, public :: PD_MORT_C_CULL       = 41_ik  !< [kgC/m2/yr] cohorts culled below the tracking floor
+   integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 42_ik  !< [kgC/m2/yr] canopy killed by patch disturbance
+   integer(ik), parameter, public :: N_PDIAG              = 42_ik
 
    !==========================================================================================!
    !  PER-POLYGON diagnostic fields: quantities that are the same everywhere in the polygon,  !
@@ -256,23 +275,26 @@ module meds_diag_vars
    !  shortwave partition, rain/snow split and optional height and lapse corrections, dt-     !
    !  weighted over the sub-steps.                                                            !
    !==========================================================================================!
-   integer(ik), parameter, public :: PY_SW_IN          =  1_ik !< [W/m2] incident shortwave at canopy top
-   integer(ik), parameter, public :: PY_PRECIP         =  2_ik !< [kg/m2/s] total precipitation (rain + snow)
-   integer(ik), parameter, public :: PY_TAIR           =  3_ik !< [K] reference-height air temperature
-   integer(ik), parameter, public :: PY_QAIR           =  4_ik !< [kg/kg] specific humidity
-   integer(ik), parameter, public :: PY_PSURF          =  5_ik !< [Pa] surface pressure
-   integer(ik), parameter, public :: PY_WIND           =  6_ik !< [m/s] wind speed at the reference height
-   integer(ik), parameter, public :: PY_LWDOWN         =  7_ik !< [W/m2] downward longwave
-   integer(ik), parameter, public :: PY_PAR_BEAM       =  8_ik !< [W/m2] direct-beam PAR
-   integer(ik), parameter, public :: PY_PAR_DIFFUSE    =  9_ik !< [W/m2] diffuse PAR
-   integer(ik), parameter, public :: PY_NIR_BEAM       = 10_ik !< [W/m2] direct-beam NIR
-   integer(ik), parameter, public :: PY_NIR_DIFFUSE    = 11_ik !< [W/m2] diffuse NIR
-   integer(ik), parameter, public :: PY_SNOWFALL       = 12_ik !< [kg/m2/s] frozen precipitation
-   integer(ik), parameter, public :: PY_CO2            = 13_ik !< [umol/mol] free-atmosphere CO2
-   integer(ik), parameter, public :: PY_COSZ           = 14_ik !< [-] cosine of the solar zenith angle (0 with the sun down)
-   integer(ik), parameter, public :: PY_RHO_AIR        = 15_ik !< [kg/m3] air density
-   integer(ik), parameter, public :: PY_RAINF          = 16_ik !< [kg/m2/s] liquid precipitation
-   integer(ik), parameter, public :: N_PYDIAG          = 16_ik
+   !----- 1. Radiation --------------------------------------------------------------------------!
+   integer(ik), parameter, public :: PY_SW_IN       =  1_ik  !< [W/m2] incident shortwave at canopy top
+   integer(ik), parameter, public :: PY_PAR_BEAM    =  2_ik  !< [W/m2] direct-beam PAR
+   integer(ik), parameter, public :: PY_PAR_DIFFUSE =  3_ik  !< [W/m2] diffuse PAR
+   integer(ik), parameter, public :: PY_NIR_BEAM    =  4_ik  !< [W/m2] direct-beam NIR
+   integer(ik), parameter, public :: PY_NIR_DIFFUSE =  5_ik  !< [W/m2] diffuse NIR
+   integer(ik), parameter, public :: PY_LWDOWN      =  6_ik  !< [W/m2] downward longwave
+   integer(ik), parameter, public :: PY_COSZ        =  7_ik  !< [-] cosine of the solar zenith angle (0 with the sun down)
+   !----- 2. Precipitation ----------------------------------------------------------------------!
+   integer(ik), parameter, public :: PY_PRECIP      =  8_ik  !< [kg/m2/s] total precipitation (rain + snow)
+   integer(ik), parameter, public :: PY_RAINF       =  9_ik  !< [kg/m2/s] liquid precipitation
+   integer(ik), parameter, public :: PY_SNOWFALL    = 10_ik  !< [kg/m2/s] frozen precipitation
+   !----- 3. Air --------------------------------------------------------------------------------!
+   integer(ik), parameter, public :: PY_TAIR        = 11_ik  !< [K] reference-height air temperature
+   integer(ik), parameter, public :: PY_QAIR        = 12_ik  !< [kg/kg] specific humidity
+   integer(ik), parameter, public :: PY_PSURF       = 13_ik  !< [Pa] surface pressure
+   integer(ik), parameter, public :: PY_WIND        = 14_ik  !< [m/s] wind speed at the reference height
+   integer(ik), parameter, public :: PY_CO2         = 15_ik  !< [umol/mol] free-atmosphere CO2
+   integer(ik), parameter, public :: PY_RHO_AIR     = 16_ik  !< [kg/m3] air density
+   integer(ik), parameter, public :: N_PYDIAG       = 16_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !
@@ -586,13 +608,8 @@ contains
    !      carbon): the ones a slow-only run fills. Every other row is the fast loop's. ------------!
    pure logical function patch_diag_slow_row(field) result(slow)
       integer(ik), intent(in) :: field
-      select case (field)
-      case (PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_LITTER_WOOD, PD_LITTER_REPRO,  &
-            PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB)
-         slow = .true.
-      case default
-         slow = .false.
-      end select
+      !----- The slow driver's rows follow the fast loop's (see N_PDIAG_FAST). ------------------!
+      slow = field > N_PDIAG_FAST
    end function patch_diag_slow_row
 
    pure subroutine patch_diag_value(d, field, x, n)

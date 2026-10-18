@@ -26,30 +26,29 @@ module meds_site_state_vars
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
 
    type :: site_t
+      !==========================================================================================!
+      ! 0. THE BLOCKS IT HOLDS                                                                   !
+      !==========================================================================================!
       type(cohort_block) :: cohort
       type(patch_block)  :: patch
-      !----- TRANSIENT fast-loop diagnostics that are the same across the polygon -- its forcing   !
-      !      (PY_* in meds_diag_vars): one slot, the cohort and patch blocks' polygon twin. ---      !
-      type(polygon_diag_block) :: diag
-      !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
-      !      step and update_cohort_states applies. Site-carried so it allocates once (resize-on-   !
-      !      grow) instead of per step; refilled every step, so it is NOT lockstep-reordered and    !
-      !      NOT serialized (a scratch buffer, not prognostic state).                               !
-      type(cohort_deriv_block) :: deriv
-      real(wp)           :: site_area = 1.0_wp
+      !==========================================================================================!
+      ! 1. DIMENSIONS AND ID COUNTERS                                                            !
+      !==========================================================================================!
       integer(ik)        :: n_pft     = 0_ik
       !----- Monotonic counters for the persistent global ids (never reused within a run). ---!
       integer(ik)        :: next_cohort_id = 1_ik
       integer(ik)        :: next_patch_id  = 1_ik
+      !----- Unused: only the restart writes and reads it (one site per polygon, patch areas sum to 1). !
+      real(wp)           :: site_area = 1.0_wp
+      !==========================================================================================!
+      ! 2. SHARED COHORT CLOCK                                                                   !
+      !==========================================================================================!
       !----- Global ring-buffer write slot for the moving-average growth (same for all cohorts !
       !      since they all take one sample per step); advanced by update_demography.           !
       integer(ik)        :: growth_hist_pos = 0_ik
-      !----- Site daily-mean air-temperature accumulator for phenology: the fast loop sums the   !
-      !      met air temperature over the slow step (reset                                        !
-      !      each step), and the slow-loop phenology driver reads the mean (sum/n) then. Transient !
-      !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
-      real(wp)           :: pheno_tair_sum = 0.0_wp
-      integer(ik)        :: pheno_tair_n   = 0_ik
+      !==========================================================================================!
+      ! 3. CLIMATE MEMORY                                                                        !
+      !==========================================================================================!
       !----- GROWTH TEMPERATURE for thermal acclimation (docs/science/leaf_gas_exchange.md eq.       !
       !      (4)): an exponential running mean of the daily-mean air temperature, window             !
       !      [leaf_physiology].acclim_window_days (~30 d), which is what Kattge & Knorr (2007)       !
@@ -58,6 +57,29 @@ module meds_site_state_vars
       !      jump. Negative means "not yet seeded" -- the first slow step adopts that day's mean     !
       !      outright rather than relaxing from an arbitrary origin. --------------------------------!
       real(wp)           :: t_growth_avg = -1.0_wp       !< [K] running-mean growth temperature
+      !==========================================================================================!
+      ! 4. FAST-TO-SLOW ACCUMULATORS (the model reads them)                                      !
+      !==========================================================================================!
+      !----- Site daily-mean air-temperature accumulator for phenology: the fast loop sums the   !
+      !      met air temperature over the slow step (reset                                        !
+      !      each step), and the slow-loop phenology driver reads the mean (sum/n) then. Transient !
+      !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
+      real(wp)           :: pheno_tair_sum = 0.0_wp
+      integer(ik)        :: pheno_tair_n   = 0_ik
+      !==========================================================================================!
+      ! 5. TENDENCIES (scratch)                                                                  !
+      !==========================================================================================!
+      !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
+      !      step and update_cohort_states applies. Site-carried so it allocates once (resize-on-   !
+      !      grow) instead of per step; refilled every step, so it is NOT lockstep-reordered and    !
+      !      NOT serialized (a scratch buffer, not prognostic state).                               !
+      type(cohort_deriv_block) :: deriv
+      !==========================================================================================!
+      ! 6. OUTPUT ACCUMULATORS (only output reads them; never restarted)                         !
+      !==========================================================================================!
+      !----- TRANSIENT fast-loop diagnostics that are the same across the polygon -- its forcing   !
+      !      (PY_* in meds_diag_vars): one slot, the cohort and patch blocks' polygon twin. ---      !
+      type(polygon_diag_block) :: diag
       !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
       !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
@@ -95,6 +117,10 @@ module meds_site_state_vars
 contains
 
    !=======================================================================================!
+   !  LIFECYCLE                                                                            !
+   !=======================================================================================!
+
+   !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
    subroutine site_alloc(site, n_pft, coh_cap, pat_cap, n_growth_window, allom, pft)
@@ -115,6 +141,10 @@ contains
       call cohort_free(site%cohort)
       call patch_free(site%patch)
    end subroutine site_free
+
+   !=======================================================================================!
+   !  STRUCTURE                                                                            !
+   !=======================================================================================!
 
    !=======================================================================================!
    !  Rebuild the CSR patch map by stably regrouping cohorts by owner_patch (counting sort).!
@@ -153,6 +183,10 @@ contains
    end subroutine rebuild_csr
 
    !=======================================================================================!
+   !  IDENTITY                                                                             !
+   !=======================================================================================!
+
+   !=======================================================================================!
    !  Persistent identity: stamp a slot with the next unused global id and bump the         !
    !  monotonic counter. Ids are never reused within a run, so a terminated/fused-away id    !
    !  simply never reappears -- exactly what an external tracker needs.                      !
@@ -170,6 +204,10 @@ contains
       site%patch%global_id(slot) = site%next_patch_id
       site%next_patch_id = site%next_patch_id + 1_ik
    end subroutine assign_patch_id
+
+   !=======================================================================================!
+   !  PER STEP                                                                             !
+   !=======================================================================================!
 
    !----- Zero the step diagnostic blocks -- per cohort, per patch, per polygon -- after the       !
    !      output has read them. They accumulate from one output tick to the next: the fast loop    !
