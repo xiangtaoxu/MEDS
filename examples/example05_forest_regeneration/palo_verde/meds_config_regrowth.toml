@@ -18,12 +18,12 @@ dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
-canopy_water_on     = true       # the canopy intercepts rain and dew, and its film evaporates
+canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
-# Each cohort's Vcmax25, Rd25, SLA and leaf lifespan follow the leaf area above it.
+# Each cohort's Vcmax25, Rd25, SLA and leaf turnover rate follow the leaf area above it.
 [trait_dynamics]
 trait_plasticity_on = true
-fineroot_lifespan_plastic = true      # fine roots, like leaves, turn over more slowly in the shade
+fineroot_turnover_plastic = true      # fine roots, like leaves, turn over more slowly in the shade
 
 #----- The demography (example 03). -------------------------------------------------------------------
 [demography]
@@ -61,11 +61,11 @@ disturbance_survive_height = 10.0
 [recruitment]
 min_recruit_size = 1.0e-2
 
-# The PFT file's [derived] table sets each PFT's mortality (example 03's census fit).
+# The PFT file's [derived] table sets the light-plasticity slopes; mortality follows wood density ([camac]).
 [options]
 override_derived = true
 
-#----- Start: the Palo Verde 2009 inventory (ED2 site files merged; patch_id = 10 x plot + patch). -----
+#----- Start: 3 recruits per m2 of each PFT at 1.5 m (data/pv_bare_start.csv, read as a census). -----
 [init]
 init_mode    = 1
 restart_file = "none"
@@ -138,7 +138,7 @@ leaf_absorptance = 0.85
 phi_psii         = 0.74
 
 [aerodynamics]
-z0m_ratio = 0.0535721             # example 04's calibration
+z0m_ratio = 0.0535721             # the Palo Verde set's own, from example 04's fit on a 1.4 m soil column
 
 #----- The site and its weather. ----------------------------------------------------------------------
 [site]
@@ -147,8 +147,7 @@ longitude             = -85.35
 elevation             = 10.0
 apply_elevation_lapse = false
 
-# ERA5-Land at the Palo Verde cell (10.40 N, 85.30 W, 7.8 km away), read from the archive for the run's
-# own dates; the CO2 follows its history.
+# ERA5-Land at the Palo Verde cell (10.40 N, 85.30 W, 7.8 km away); the CO2 follows its history.
 [forcing]
 forcing_on     = true
 # ERA5-Land at Palo Verde's cell, 2003-2022 (run_palo_verde.py cuts it from the archive), repeated: model
@@ -176,14 +175,15 @@ recycle_start  = "2003-01-01 01:00:00"
 recycle_end    = "2023-01-01 01:00:00"
 start_clamp    = "error"
 
-#----- The soil: the forcing cell (10.4 N, 85.3 W) of the ED soil maps v2 (/ibstorage/ED-Data/ED-SoilMaps). --
+#----- The soil: the forcing cell (10.4 N, 85.3 W) of the ED soil maps v2 (docs/configuration.md, Input maps). --
 [soil_carbon]
-soil_carbon_on = true             # starts empty; the inventory carries no soil pools
+soil_carbon_on = true             # starts empty; the start file carries no soil pools
 
 # A Cambisol, ~40 % clay at every depth, 1.57 m deep (the map's soil depth). Each SoilGrids layer's curve is
-# MEDS's pedotransfer function (Hodnett & Tomasella 2002 + Ottoni 2019 ksat); one van Genuchten curve is fitted
-# to their thickness-weighted average over the column, ksat is their geometric mean, and the thermal
-# properties are CLM5's from the texture. The layers are MEDS's default SoilGrids cut at the depth.
+# MEDS's pedotransfer function (Hodnett & Tomasella 2002 + Ottoni 2019 ksat; docs/science/soil_biophysics.md
+# eqs. (6)-(7)); one van Genuchten curve is fitted to their thickness-weighted average over the column, ksat
+# is their geometric mean, and the thermal properties are CLM5's from the texture (eq. (9)). The layers are
+# MEDS's default SoilGrids cut at the depth.
 [soil_column]
 depth       = 1.5712           # [m]
 theta_sat   = 0.4456
@@ -198,4 +198,4 @@ dry_heat_capacity  = 1.26e6    # [J/m3/K]
 [energy]
 bottom_bc  = "dirichlet"
 deep_temp  = 300.0               # [K] the map's deep_temp at this cell is 299.99
-deep_depth = 2.68               # [m] bottom node (1.29 m) + 1.973/sqrt(2)
+deep_depth = 2.68               # [m] bottom node (1.29 m) + 1.973/sqrt(2) (docs/science/soil_biophysics.md eq. (13))

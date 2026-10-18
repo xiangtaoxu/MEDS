@@ -23,6 +23,9 @@ Three PFTs, early, mid and late successional, compete for light.
 Aboveground biomass and basal area by PFT, leaf area, the carbon fluxes, evapotranspiration and the
 trees of 10 cm and more, against the 50-ha plot's censuses (circles) and the BCI tower's GPP.
 
+The 420-year run, this figure and its results below were made with v0.3.4; they were not repeated
+after the 2026-10 sweep.
+
 ### Results
 
 | year | AGB [MgC ha⁻¹] | early / mid / late | basal area [m² ha⁻¹] | LAI | trees ≥ 10 cm ha⁻¹ | GPP / NPP [MgC ha⁻¹ yr⁻¹] |
@@ -68,19 +71,19 @@ Diameter growth [cm yr⁻¹], model / census, by size class:
 
 | dbh [cm] | early | mid | late |
 |---|---|---|---|
-| 1–2 | 0.085 / 0.130 | 0.085 / 0.056 | 0.051 / 0.044 |
-| 2–5 | 0.129 / 0.155 | 0.088 / 0.070 | 0.075 / 0.052 |
-| 5–10 | 0.206 / 0.201 | 0.178 / 0.126 | 0.110 / 0.084 |
-| 10–20 | 0.362 / 0.231 | 0.341 / 0.247 | 0.198 / 0.119 |
+| 1–2 | 0.086 / 0.130 | 0.087 / 0.056 | 0.052 / 0.044 |
+| 2–5 | 0.130 / 0.155 | 0.089 / 0.070 | 0.077 / 0.052 |
+| 5–10 | 0.211 / 0.201 | 0.180 / 0.126 | 0.113 / 0.084 |
+| 10–20 | 0.362 / 0.231 | 0.343 / 0.247 | 0.199 / 0.119 |
 | 20–50 | 0.80 / 0.52 | 0.67 / 0.31 | 0.36 / 0.22 |
 | 50–100 | 1.05 / 0.56 | 0.98 / 0.33 | 0.62 / 0.35 |
-| ≥ 100 | 1.12 / 0.28 | | 0.73 / 0.47 |
+| ≥ 100 | 1.13 / 0.28 | | 0.73 / 0.47 |
 
-- **Below 20 cm the model grows 0.65–1.7 times the census**, the early PFT's saplings slow, the mid
-  and late PFTs' 15–50 % fast.
+- **Below 20 cm the model grows 0.66–1.7 times the census**, the early PFT's saplings slow, the mid
+  and late PFTs' 15–55 % fast.
 - **Above 20 cm it grows 1.5–4 times as fast**, most for the biggest early-PFT trees.
 - **By light it is too steep.** Under less than 3 m² m⁻² of taller leaves the model grows 1.6–4.2
-  times the census, under 3–6 0–1.9 times, and under more than 6 0–1.3 times. The census's
+  times the census, under 3–6 0–1.9 times, and under more than 6 0–1.5 times. The census's
   overtopping LAI, the leaf area of taller trees within 20 m, is a noisy measure of a tree's light,
   which flattens the census's own response to it.
 
@@ -88,13 +91,13 @@ The stand's carbon budget, the mean of the trial's years 2–5 [MgC ha⁻¹ yr�
 
 | | model | BCI |
 |---|---|---|
-| GPP | 31.3 | 31.3 (tower 2012–2017, corrected; example 04) |
-| NPP (net of all plant respiration) | 12.3 | |
+| GPP | 31.2 | 31.1 (tower 2012–2017, corrected; example 04) |
+| NPP (net of all plant respiration) | 12.4 | |
 | leaf NPP | 2.2 | 2.7–3.5 (leaf litterfall) |
 | aboveground wood NPP | 4.4 | 2.4 (census 2005–2010, on the model's allometry) |
 | fine roots' share of NPP | 26 % | 27 ± 11 % (Malhi et al. 2011, 35 tropical forests) |
 | root respiration, rhizosphere included | 5.5 | 5.5–5.8 (Gigante, Manaus) |
-| aboveground stem respiration | 4.6 | 4.2–5.1 (stem CO₂ efflux, Amazon and La Selva) |
+| aboveground stem respiration | 4.5 | 4.2–5.1 (stem CO₂ efflux, Amazon and La Selva) |
 | reproduction | 0.7 | about 0.5 (flowers and fruit in BCI's litter traps; Chave et al. 2010) |
 | root exudate (the sink limit's surplus) | 0.4 | |
 
@@ -121,23 +124,23 @@ The run is [`meds_config_regeneration.toml`](meds_config_regeneration.toml), its
   CMIP7 history ([`data/co2`](../../data/co2/co2_cmip7_global_annual_1000-2022.txt)), 279 µmol mol⁻¹
   in 1600 and 413 in 2020. Up to 25 patches, and 60 cohorts in each.
 - **From the other examples.** The column — stomata, Vcmax25 (32.3 µmol m⁻² s⁻¹ for all three PFTs),
-  canopy optics and water, roots, BCI's clay soil — is example 04's calibration. The PFTs (BCI's
-  species in three wood-density classes), the BCI height curve and the census-fitted mortality are
-  example 03's; treefall opens 1.4 % of the forest a year and kills its trees above 10 m.
+  canopy optics and water, roots, BCI's clay soil — is example 04's calibration made with v0.3.4. The
+  PFTs (BCI's species in three wood-density classes), the BCI height curve and the census-fitted
+  mortality are example 03's; treefall opens 1.4 % of the forest a year and kills its trees above 10 m.
 
 Set for this example:
 
 | | early | mid | late | from |
 |---|---|---|---|---|
 | wood density [g cm⁻³] | 0.36 | 0.50 | 0.68 | example 03 |
-| leaf lifespan at the canopy top [yr] | 0.5 | 0.7 | 0.9 | Panama's sun leaves (Kitajima et al. 1997, 2005, 2013) |
+| leaf turnover at the canopy top [yr⁻¹] | 2.0 | 1.43 | 1.11 | 1 / the lifespans of Panama's sun leaves, 0.5, 0.7 and 0.9 yr (Kitajima et al. 1997, 2005, 2013) |
 | leaf mass per area [g m⁻²] | 100 | 110 | 120 | Panama's crane leaves (Xu et al. 2017) |
 | fine-root turnover [yr⁻¹] | 3.0 | 2.14 | 1.67 | 1.5 × the leaves' |
 | g_max [cm yr⁻¹] | 0.42 | 0.31 | 0.12 | 2 × the census's 75th percentile in full light |
 
 - **Shade**: Vcmax25, Rd25 and leaf mass per area fall with the leaf area above a cohort as Ma et
-  al. (2025) measured at BCI; leaf lifespan rises at half their rate, 1.8 times longer under 5 m² m⁻²
-  of taller leaves.
+  al. (2025) measured at BCI; leaf turnover slows at half the rate their leaf lifespans lengthen,
+  1.8 times slower under 5 m² m⁻² of taller leaves.
 - **Sink limit**: a cohort's diameter grows at most g_max · dbh^0.5 a year (the census's shape);
   the carbon left over is exuded by the roots.
 - **Respiration**: of the fine roots, whose carbon equals the leaves', and of the stems, on sapwood
@@ -161,8 +164,9 @@ python run_example.py --plot-only                            # redraw regenerati
 
 The first step cuts BCI's ERA5-Land cell out of the processed archive
 ([`make_forcing_file.py`](../../scripts/prepare_era5/make_forcing_file.py); about 7 minutes) into
-`data/`. The run takes about 3.3 hours on 20 threads and writes monthly and yearly site, PFT and
-size-class totals to `output/`, with the full stand checkpointed every 20 years.
+`data/`; the archive is `--era5-archive` or the environment variable `ERA5LAND_ARCHIVE`. The run
+takes about 3.3 hours on 20 threads and writes monthly and yearly site, PFT and size-class totals to
+`output/`, with the full stand checkpointed every 20 years.
 
 ## 2. Palo Verde: a tropical dry forest, 150 years
 
@@ -186,11 +190,11 @@ this stand:
 
 | 2009–2010 | MEDS | Target |
 |---|---|---|
-| Leaf litter [kg dry m⁻² yr⁻¹] | 0.48 | 0.5 (litter traps 0.54) |
+| Leaf litter [kg dry m⁻² yr⁻¹] | 0.49 | 0.5 (litter traps 0.54) |
 | AGB growth of trees ≥ 10 cm [kg dry m⁻² yr⁻¹] | 0.47 | 0.3–0.5 |
 | Relative AGB growth, Ds / D / BD / E [% yr⁻¹] | 5.6 / 4.1 / 3.0 / 1.1 | 5 / 2–3 / 2–3 / 1–2 |
-| Lowest leaf cover, Ds / D / BD / E | 0.02 / 0.00 / 0.33 / 0.75 | bare / bare / 0.25–0.5 / ≥ 0.5 |
-| Stand LAI, March–April / wet season | 2.1 / 5.0 | MODIS 1.5 / 5.3 |
+| Lowest leaf cover, Ds / D / BD / E | 0.02 / 0.01 / 0.33 / 0.75 | bare / bare / 0.25–0.5 / ≥ 0.5 |
+| Stand LAI, March–April / wet season | 2.2 / 5.0 | MODIS 1.5 / 5.3 |
 | Mortality of trees ≥ 10 cm, Ds / D / BD / E [% yr⁻¹] | 2.5 / 1.2 / 0.7 / 0.5 | 0.7–3.1 for the plots (Powers et al. 2020) |
 
 ### The regrowth
@@ -208,6 +212,9 @@ and Palo Verde's chronosequence at 20 years (Poorter et al. 2016, *Nature* 530: 
 year's highest and lowest monthly leaf area index; the last ten years' leaf area by PFT; GPP; and the
 trees of 10 cm and more.
 
+The 150-year regrowth, this figure and the table below were made with v0.3.4; they were not repeated
+after the 2026-10 sweep.
+
 | | MEDS, 150 years | 2009 inventory |
 |---|---|---|
 | AGB [MgC ha⁻¹], all / Ds / D / BD / E | 84 / 13 / 4 / 33 / 35 | 88 / 2 / 16 / 56 / 14 |
@@ -223,7 +230,7 @@ trees of 10 cm and more.
 - **The first decades are slow:** 28 MgC ha⁻¹ after 20 years, against 71 on Palo Verde's
   chronosequence (143 dry Mg ha⁻¹), the same shortfall as across example 06's region.
 - **The canopy grows more evergreen.** The driest month's leaf area rises from below 1 in the
-  Ds decades to 3.0 in the last ten years (the wettest month 5.8); in the 2009 stand it is 2.1
+  Ds decades to 3.0 in the last ten years (the wettest month 5.8); in the 2009 stand it is 2.2
   (MODIS 1.5). GPP stays near 27 MgC ha⁻¹ yr⁻¹ throughout, and evapotranspiration is 956 mm a year
   in the last ten years.
 
@@ -232,10 +239,14 @@ trees of 10 cm and more.
 ```bash
 cd examples/example05_forest_regeneration/palo_verde
 python run_palo_verde.py --era5-archive /path/to/ED_ERA5land   # forcing, inventory check, regrowth, figure
-python run_palo_verde.py --skip-inventory                      # the regrowth only
+python run_palo_verde.py --skip-inventory                      # the regrowth only, once the forcing is cut
 python run_palo_verde.py --plot-only                           # redraw palo_verde.png
 ```
 
+The archive can also be named by the environment variable `ERA5LAND_ARCHIVE`. The regrowth reads the
+forcing cut into `palo_verde/data/`; the inventory check reads the archive itself, so the script runs a
+copy of `meds_config_inventory.toml` with the archive's folder in `[forcing].data_path`
+(`palo_verde/output/config/inventory.toml`). To run that config by hand, set `data_path` to the folder.
 The forcing cut takes about 4 minutes, the inventory check 2 and the regrowth about an hour on 12
 threads (`[run].n_threads`). Output goes to `palo_verde/output/`.
 

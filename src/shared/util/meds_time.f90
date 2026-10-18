@@ -77,16 +77,10 @@ contains
    !                                                                                          !
    !     delta = 23.45 deg * sin( 2 pi (284 + n) / 365 )                                        !
    !                                                                                          !
-   ! ONE FORMULA, EVERY CONSUMER (#152). solar_cosz and daylength each carried their own        !
-   ! standard approximation -- Cooper here, and White (1997) -23.44 cos(2 pi (n + 9)/365) in     !
-   ! daylength. The two are the same function with a 1.25-day phase offset, since                !
-   ! -cos(x) = sin(x - pi/2) puts White's ascending zero crossing at n = 82.25 against Cooper's   !
-   ! n = 81. Both are approximations, but Cooper's crossing is the closer one to the true         !
-   ! vernal equinox (n ~ 79-80), and it is the form the radiation path already used every         !
-   ! dt_fast -- so daylength moved to it rather than the other way round.                         !
-   !                                                                                          !
-   ! Neither form carries the equation of time or the eccentricity correction; that is the same  !
-   ! simplification solar_cosz's local-apparent-solar-time hour angle already makes.             !
+   ! ONE FORMULA, EVERY CONSUMER: solar_cosz and daylength both use it. White (1997)'s          !
+   ! -23.44 cos(2 pi (n + 9)/365) is the same function with a 1.25-day phase offset, and        !
+   ! Cooper's ascending zero crossing (n = 81) is the closer to the true vernal equinox         !
+   ! (n ~ 79-80); docs/science/forcing.md §4, eq. (4). The eccentricity correction is left out. !
    !---------------------------------------------------------------------------------------!
    elemental real(wp) function solar_declination(doy) result(decl)
       integer(ik), intent(in) :: doy          !< day of year (1 = 1 January)
@@ -96,9 +90,10 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Cosine of the solar zenith angle from the TIME DIMENSION (date -> declination, sub-daily !
    ! cursor -> hour angle) + site latitude. cosz is a DERIVED quantity, not a met forcing:     !
-   ! the fast loop calls this each dt_fast with `t_sec` = local-solar seconds into the day.     !
-   ! Declination from the shared solar_declination; local apparent solar time (no longitude /  !
-   ! equation-of-time -- adequate for a single-site diurnal cycle). Floored at 0 (night).       !
+   ! the forcing calls it every sub-step (met_solar_cosz) with `t_sec` = local APPARENT solar   !
+   ! seconds into the day, made from UTC, the longitude and the equation of time                !
+   ! (docs/science/forcing.md eqs. (2)-(4)). Declination from the shared solar_declination.     !
+   ! Floored at 0 (night).                                                                      !
    !---------------------------------------------------------------------------------------!
    pure real(wp) function solar_cosz(t, t_sec, latitude_deg) result(cosz)
       type(meds_time_t), intent(in) :: t
@@ -115,10 +110,10 @@ contains
    end function solar_cosz
 
    !---------------------------------------------------------------------------------------!
-   ! Daylength [h] from latitude [deg] + day-of-year. Relocated from meds_phenology so any       !
-   ! seasonal process can call it without a plant-library edge. The ED2 polar branch is FIXED:   !
-   ! polar DAY is arg <= -1 (ED2 wrote arg <= 1, a bug). Declination comes from the SHARED       !
-   ! solar_declination (#152) -- it used to carry its own White-1997 form.                        !
+   ! Daylength [h] from latitude [deg] + day-of-year. It lives here so any seasonal             !
+   ! process can call it without a plant-library edge. Polar DAY is arg <= -1 (ED2's            !
+   ! polar branch reads arg <= 1, a bug). Declination comes from the SHARED                     !
+   ! solar_declination.                                                                         !
    !---------------------------------------------------------------------------------------!
    elemental real(wp) function daylength(lat_deg, doy) result(dl)
       real(wp),    intent(in) :: lat_deg
@@ -130,7 +125,7 @@ contains
       if (arg >= 1.0_wp) then
          dl = 0.0_wp                 ! polar night
       else if (arg <= -1.0_wp) then
-         dl = 24.0_wp                ! polar day (FIX: ED2's branch read arg <= 1)
+         dl = 24.0_wp                ! polar day (ED2's branch reads arg <= 1)
       else
          dl = 24.0_wp / pi * acos(arg)
       end if
@@ -306,7 +301,7 @@ contains
       end do
    end function whole_years_between
 
-   !----- Range check on the fields (used to validate parsed configuration). ---------------!
+   !----- Range check on the fields (it validates parsed configuration). -------------------!
    pure logical function time_valid(t) result(ok)
       type(meds_time_t), intent(in) :: t
       ok = t%month >= 1_ik  .and. t%month <= 12_ik                                           &

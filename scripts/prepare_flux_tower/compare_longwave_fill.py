@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """compare_longwave_fill.py -- score the longwave gap fills against observations they never saw
-(MEDS_FLUX_TOWER_FORCING_PLAN.md D5).
+(scripts/prepare_flux_tower/README.md, "Gap filling").
 
 It hides a share of the tower's observed longwave in whole blocks of days (the way real gaps come),
 fills them exactly as make_tower_forcing.py would, and scores the fill, and two references, against

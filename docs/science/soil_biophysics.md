@@ -30,14 +30,20 @@ C(\psi_k)\,\frac{\partial\psi_k}{\partial t}
 with matric potential $`\psi(\theta)`$, hydraulic conductivity $`K(\theta)`$, and specific moisture
 capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **Campbell / Clapp-Hornberger**
 retention curves (`meds_water_retention`). The van Genuchten conductivity is Mualem's,
-$`K = K_{sat}\,S_e^{L}\,[1-(1-S_e^{1/m})^m]^2`$, with pore connectivity $L=-1$ (Schaap & Leij 2000), as ED2
-uses with this curve: with Mualem's 0.5 a soil of $n$ near 1.4 conducts less than `K_MIN` from about
-−0.7 MPa, far wetter than measured (UNSODA); a film-flow term for drier soil is #390.
-Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
+
+```math
+K = K_{sat}\,S_e^{L}\,\big[1-(1-S_e^{1/m})^m\big]^2, \qquad L = -1 \qquad(2)
+```
+
+with pore connectivity $L=-1$ (Schaap & Leij 2000, `VG_PORE_CONNECTIVITY`), as ED2 uses with this
+curve: with Mualem's 0.5 a soil of $n$ near 1.4 conducts less than ED2's floor of
+1.16×10⁻¹³ m s⁻¹ from about −0.7 MPa, far wetter than measured (UNSODA), and −1 keeps it above that
+to about −2 MPa. MEDS has no film-flow term
+for drier soil (see `docs/ROADMAP.md`). Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
 interpolated linearly between the two nodes to the face, a thickness-weighted geometric mean,
 
 ```math
-K_{k+1/2} = K_k^{\,1-w}\,K_{k+1}^{\,w}, \qquad w = \frac{\Delta z_k}{\Delta z_k+\Delta z_{k+1}} \qquad(1a)
+K_{k+1/2} = K_k^{\,1-w}\,K_{k+1}^{\,w}, \qquad w = \frac{\Delta z_k}{\Delta z_k+\Delta z_{k+1}} \qquad(3)
 ```
 
 since the face lies $`\Delta z_k/2`$ below node $k$ and $`\Delta z_{k+1}/2`$ above node $k+1$; equal layers
@@ -67,11 +73,11 @@ The **top boundary** is the pond, a store of its own: rain enters it, and it exc
 top layer by the Darcy flux
 
 ```math
-q_{pond} = \sqrt{K(\theta_1)\,K_{sat}}\;\Big(1 + \frac{h-\psi_1}{-z_1}\Big) \qquad(1b)
+q_{pond} = \sqrt{K(\theta_1)\,K_{sat}}\;\Big(1 + \frac{h-\psi_1}{-z_1}\Big) \qquad(4)
 ```
 
 from the pond, treated as a saturated layer as thick as the top one, to the top node at depth $`z_1`$:
-(1a) with $w = 1/2$, $h$ the pond's head and $`\psi_1`$ here in metres. It is solved implicitly and is
+eq. (3) with $w = 1/2$, $h$ the pond's head and $`\psi_1`$ here in metres. It is solved implicitly and is
 two-way: a top layer pushed past saturation exfiltrates to the pond. The pond holds up to
 `w_pond_max` (its first millimetre is a depression store that fills before any head builds); above
 that, water runs off at the pond's temperature. The top layer's own $`K(\theta_1)`$ alone would seal a dried surface: near
@@ -80,20 +86,25 @@ season the pond overflows and the soil never re-wets. With the geometric mean th
 state is about 0.1 mm/h, and it rises by an order of magnitude with the first millimetre taken up,
 so the 5 mm pond buffers a storm and the top layer re-wets within hours.
 
-The **bottom** (`[soil].bottom_bc`) is one of three, and the third was rebuilt rather than tuned:
+The **bottom** either drains or sits on an aquifer. Drainage is the unit-gradient flux scaled by a
+drainage factor $f \in [0, 1]$, $`q = f\,K(\theta_n)`$, always **downward**; free drainage, a leaky
+base and a sealed one are its values of $f$ (`drain_factor`), not separate cases:
 
 | option | flux at the base | use for |
 |---|---|---|
-| `free_drain` (default) | $`q = K(\theta_n)`$, unit gradient, always **downward** | a deep, unseen water table |
-| `bedrock` | $`q = 0`$ | an impermeable base |
+| `free_drain` (default) | drainage, $f = 1$: $`q = K(\theta_n)`$ | a deep, unseen water table |
+| leaky (soil maps only) | drainage, $`f = f_{leak}`$, the map's (0.05 in ED-SoilMaps v2) | soil on weathered rock that drains slowly |
+| `bedrock` | drainage, $f = 0$: $`q = 0`$ | an impermeable base |
 | `aquifer` | $`q = K_{bot}\,(\psi_n/\Delta + 1)`$, $`\Delta = \Delta z_n/2`$, **two-way** | a shallow water table at the column base |
+
+`[soil].bottom_bc` names `free_drain`, `bedrock` or `aquifer`; a leaky base comes only from the soil
+maps (§ The column from the soil maps), which give each cell its own $`f_{leak}`$.
 
 **`aquifer` is a boundary condition, not a store.** The water table is *defined* to sit at the column
 base, so the modelled soil column **is** the unsaturated zone above it. There is no aquifer bucket, no
-baseflow, and no prognostic water-table depth — the lumped store, its baseflow, the diagnosed $`z_{wt}`$,
-the Dunne saturation-excess runoff that keyed off it, and the Zeng–Decker equilibrium correction have
-all been **deleted**. $`K_{bot}`$ is upstream-weighted: $`K(\theta_n)`$ when the flux is downward,
-$`K_{sat}`$ when it reverses, because the upstream cell is then the saturated zone (using
+baseflow, no prognostic or diagnosed water-table depth, and so no Dunne saturation-excess runoff and no
+Zeng–Decker equilibrium correction to key off one. $`K_{bot}`$ is upstream-weighted: $`K(\theta_n)`$
+when the flux is downward, $`K_{sat}`$ when it reverses, because the upstream cell is then the saturated zone (using
 $`K(\theta_n)`$ there under-predicts capillary rise).
 
 Two things follow that are easy to get wrong:
@@ -102,16 +113,16 @@ Two things follow that are easy to get wrong:
   pull against the saturated zone. So `aquifer` is the **wet-site** boundary — right for riparian,
   floodplain and wetland columns, and wrong for an upland one, where it will supply water a real
   hillslope would not.
-- The old `aquifer` was *identical to free drainage* in the flux it applied: it used the deep-water-table
-  limit $`q = K(\theta_n)`$ unconditionally, behind a bucket whose water table could rise into the soil
-  column without ever saturating it. Any result predating the rebuild that turned on `aquifer` was
-  running free drainage with extra bookkeeping.
+- The head term is what makes `aquifer` differ from `free_drain`: applied unconditionally, the
+  deep-water-table limit $`q = K(\theta_n)`$ is free drainage, whatever store is put behind it. A
+  water-table bucket that could rise into the column without saturating it would add bookkeeping, not
+  a water table.
 
 Every step closes a machine-precision water budget:
 
 ```math
 \text{mass\_resid} = \Delta W_{stores}
- - \Delta t\,(P - E_{soil} - \text{drainage} - \text{uptake} - \text{runoff}) \approx 0 \qquad(2)
+ - \Delta t\,(P - E_{soil} - \text{drainage} - \text{uptake} - \text{runoff}) \approx 0 \qquad(5)
 ```
 
 and exports the time-mean per-face Darcy flux and each layer's uptake for the soil-energy solve's
@@ -150,14 +161,14 @@ tropical soils and kept by ED2 as `soil_hydro_scheme` 2; each polynomial is in p
 \theta_{sat} &= \big(81.799 + 0.099\,Cl - 31.42\,\rho_b + 0.018\,\mathrm{CEC} + 0.451\,\mathrm{pH} - 0.0005\,Sa\,Cl\big)/100\\
 \theta_{res} &= \max\Big[0,\ \big(22.733 - 0.164\,Sa + 0.235\,\mathrm{CEC} - 0.831\,\mathrm{pH} + 0.0018\,Cl^2 + 0.0026\,Sa\,Cl\big)/100\Big]
 \end{aligned}
-\qquad(2a)
+\qquad(6)
 ```
 
 with $\alpha$ per kPa, turned into per metre of water head. The saturated conductivity of the fine
 earth follows Ottoni et al. (2019) from the water that drains between saturation and −33 kPa:
 
 ```math
-K_{sat} = 19.31\ \mathrm{m\,d^{-1}}\,\big(\theta_{sat} - \theta(-33\ \mathrm{kPa})\big)^{1.948} \qquad(2b)
+K_{sat} = 19.31\ \mathrm{m\,d^{-1}}\,\big(\theta_{sat} - \theta(-33\ \mathrm{kPa})\big)^{1.948} \qquad(7)
 ```
 
 Coarse fragments hold no water, so the layer's curve is the fine earth's scaled by $1-f_v$; they slow
@@ -167,7 +178,7 @@ $\rho_p = 2.65$ g cm⁻³ the density of the grains and of the fragments:
 ```math
 \theta_{sat,res} \leftarrow (1-f_v)\,\theta_{sat,res}, \qquad
 K_{sat} \leftarrow K_{sat}\,\frac{1-f_m}{1-f_m\,(1-\tfrac{3}{2}\rho_b/\rho_p)}, \qquad
-f_m = \frac{f_v}{(\rho_b/\rho_p)(1-f_v)+f_v} \qquad(2c)
+f_m = \frac{f_v}{(\rho_b/\rho_p)(1-f_v)+f_v} \qquad(8)
 ```
 
 **Why this function.** Against 12,297 measured retention curves (GSHP; Gupta et al. 2022) it gives the
@@ -183,21 +194,60 @@ the available water comes out about 0.04 m³ m⁻³ low (Hyytiälä's topsoil: $
 against 0.07 measured). Like every texture-based function, $K_{sat}$ scatters by about a factor of ten
 and runs low where soil structure adds large pores.
 
+### The column from the soil maps
+
+With the `[maps]` soil maps (ED-SoilMaps v2; `docs/configuration.md` "Input maps"),
+`apply_map_inputs` (`meds_surface_maps`) builds each cell's column. A region's polygons and a site
+on the ED_ERA5land grid build it the same way.
+
+- **The layers.** The column ends at the map's `soil_depth`, on the layers above.
+- **Each layer's soil.** A layer takes the texture and chemistry of the map layers it overlaps (SoilGrids'
+  six, to 2 m), each weighted by the overlap. Below 2 m it takes the deepest map layer's.
+- **Hydraulics and heat, per layer.** Each layer gets its own curve and $K_{sat}$ by eqs. (6)–(8). Its
+  thermal properties come from the same texture by CLM5's mineral-soil formulas (Lawrence & Slater 2008), with
+  $\theta_{sat}$ the layer's porosity and silt left out as in CLM5:
+
+  ```math
+  k_{solid} = \frac{8.80\,Sa + 2.92\,Cl}{Sa + Cl}, \qquad
+  k_{dry} = \frac{0.135\,\rho_d + 64.7}{2700 - 0.947\,\rho_d}, \qquad
+  c_{dry} = \frac{2.128\,Sa + 2.385\,Cl}{Sa + Cl}\,10^6\,(1-\theta_{sat}) \qquad(9)
+  ```
+
+  Here $`\rho_d = 2700\,(1-\theta_{sat})`$ kg m⁻³ is the dry bulk density; $k$ is in W m⁻¹ K⁻¹ and
+  $c_{dry}$, the solids' heat capacity per m³ of layer, in J m⁻³ K⁻¹ (MEDS counts the water itself).
+- **The start.** Each layer starts at its own field capacity, $\theta(\psi_{fc})$.
+- **The bottom water boundary** is the map's `bc_class`:
+  - free drain, drainage at $f = 1$;
+  - leaky, drainage at the map's `f_leak` (a leaky cell whose `f_leak` is outside (0, 1] stops the
+    run);
+  - sealed, drainage at $f = 0$ (bedrock);
+  - aquifer.
+- **The thermal anchor.** The Dirichlet bottom conducts to the map's `deep_temp`, the cell's mean air
+  temperature plus 1 K, at $d/\sqrt2$ below the bottom node, $d = 1.973$ m (§ The bottom thermal
+  boundary).
+
+A cell whose maps hold no value stops the run, naming the cell. The products are made complete in
+their own pipelines; MEDS does not fill them.
+
+A map-built column is layered by design rather than one curve fitted to the thickness-weighted
+column: its top layers hold the surface's organic, high-CEC soil and its deep layers the subsoil's.
+
 ---
 
 ## The soil thermal column
 
 `soil_energy_step_implicit` (`meds_soil_energy`) advances the prognostic volumetric internal energy
-$`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve that **reuses the same Thomas sweep and negative-$z$
-geometry** as the hydrology. At each state it inverts $`E_k\to(T_k,\text{fliq}_k)`$, forms the ice-aware
-thermal conductivity $`\kappa(\theta,\text{fliq})`$ and effective volumetric heat capacity
-$`C_{eff}(\theta,\text{fliq})`$, solves for $`T^{n+1}`$ with a top Neumann flux $`G_{top}`$ and a bottom
-geothermal flux, then commits a **conservative** energy update from the $`T^{n+1}`$ conductive faces plus
-optional upwind water-enthalpy advection:
+$`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve, a Thomas sweep (`meds_numerics`: `thomas_solve`)
+on **the same negative-$z$ geometry** as the water column. At each state it inverts
+$`E_k\to(T_k,\text{fliq}_k)`$, forms the ice-aware thermal conductivity $`\kappa(\theta,\text{fliq})`$
+and effective volumetric heat capacity $`C_{eff}(\theta,\text{fliq})`$, solves for $`T^{n+1}`$ with a
+top Neumann flux $`G_{top}`$ and the bottom boundary of § The bottom thermal boundary, then commits a
+**conservative** energy update from the $`T^{n+1}`$ conductive faces plus optional upwind
+water-enthalpy advection:
 
 ```math
 E_k^{n+1} = E_k^n + \frac{\Delta t}{\Delta z_k}\big[(hf_k-hf_{k-1}) + (qwf_k-qwf_{k-1})\big]
-            + \Delta t\,q_{src,k} \qquad(3)
+            + \Delta t\,q_{src,k} \qquad(10)
 ```
 
 Temperature and liquid fraction are re-diagnosed from the committed energy — so **freeze/thaw is the
@@ -206,7 +256,22 @@ $`\kappa`$/$`C_{eff}`$; the zero-curtain is tested, cooling a wet layer pins `so
 point while `soil_fliq` absorbs the fusion enthalpy). The closed residual is `energy_resid`
 $`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\approx0`$. A sibling
 `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
-ARK integrator.
+RK45 integrator; ARK's implicit stages take the BE step.
+
+The conductivity is Johansen's, made ice-aware (`soil_thermal_cond`, `meds_therm_lib`). With the
+relative saturation $`S_r=\theta/\theta_{sat}`$, floored at 0.05 where the logarithm leaves its range of
+validity, the Kersten number blends Johansen's unfrozen form with the linear frozen one by the liquid
+fraction $`f_{liq}`$, and the saturated conductivity is the geometric mean of the solids, the liquid and
+the ice:
+
+```math
+K_e = f_{liq}\,(\log_{10}S_r + 1) + (1-f_{liq})\,S_r,\quad 0\le K_e\le 1, \qquad
+\kappa_{sat} = k_{solid}^{\,1-\theta_{sat}}\,k_w^{\,\theta_{sat}f_{liq}}\,k_i^{\,\theta_{sat}(1-f_{liq})}, \qquad
+\kappa = K_e\,\kappa_{sat} + (1-K_e)\,k_{dry} \qquad(11)
+```
+
+$`k_{solid}`$ and $`k_{dry}`$ come from the texture (eq. (9)); $`k_w`$ and $`k_i`$ are the conductivities of
+liquid water and ice.
 
 ### The bottom thermal boundary
 
@@ -226,7 +291,7 @@ time it arrives.
 layer's own conductivity:
 
 ```math
-hf_n = -\,g_{deep}\,(T_n - T_{deep}), \qquad g_{deep} = \frac{\kappa_n}{\ell} \qquad(4)
+hf_n = -\,g_{deep}\,(T_n - T_{deep}), \qquad g_{deep} = \frac{\kappa_n}{\ell} \qquad(12)
 ```
 
 The anchor enters the BE **matrix** (it adds $`g_{deep}`$ to the bottom diagonal and
@@ -245,7 +310,7 @@ when the two magnitudes match:
 
 ```math
 \frac{\kappa}{\ell} = \left|\frac{\kappa(1+i)}{d}\right| = \frac{\sqrt{2}\,\kappa}{d}
-\quad\Longrightarrow\quad \ell = \frac{d}{\sqrt{2}} \qquad(5)
+\quad\Longrightarrow\quad \ell = \frac{d}{\sqrt{2}} \qquad(13)
 ```
 
 So the anchor **depth** is a physical choice, and the default is derived rather than fitted. For the
@@ -273,7 +338,7 @@ there the boundary is far enough away to be irrelevant.
 **What this does not fix.** A purely resistive termination cannot reflect less than 0.41 in amplitude,
 whatever $`\ell`$ is — matching a complex impedance with a real one leaves the phase wrong by 45°.
 Closing that last gap needs heat *capacity* below the column, i.e. real layers: passive deep thermal
-layers under the hydrologically active column (`docs/ROADMAP.md`, #145 follow-up). The anchor buys
+layers under the hydrologically active column (see `docs/ROADMAP.md`). The anchor buys
 roughly a factor of ten in this metric, not exactness.
 
 **Choosing `deep_temp` is the user's job, and the loader insists on it.** It is the mean annual soil
@@ -302,7 +367,7 @@ infiltration boundary sees.
 The heterotrophic soil CO₂ flux $`R_h`$ comes from **one authority**: the CENTURY transfer matrix
 (`meds_soil_biogeochem`: `heterotrophic_respiration_matrix`, reached through
 `patch_heterotrophic_respiration`). It is a soil-carbon decomposition process (the slow
-biogeochemistry lives in `biogeochemistry/`), but its flux enters the fast loop as a source term of
+biogeochemistry lives in `src/slow_dynamics/soil/`; [soil_carbon](soil_carbon.md)), but its flux enters the fast loop as a source term of
 the CAS CO₂ twin
 (see [canopy_air_space_biophysics](canopy_air_space_biophysics.md)). The driver is its single authority
 and passes the resulting flux into the CO₂ source.
@@ -324,11 +389,14 @@ and passes the resulting flux into the CO₂ source.
 | soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
 | soil layers | `meds_column_params`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`; `meds_config`: `soil_column_layers` |
 | retention curves (vG / Campbell) | `meds_water_retention` |
-| hydraulic parameters from texture | `meds_pedotransfer`: `soil_hydraulics_from_texture` |
+| hydraulic parameters from texture, eqs. (6)–(8) | `meds_pedotransfer`: `soil_hydraulics_from_texture` |
+| thermal properties from texture, eq. (9) | `meds_pedotransfer`: `soil_thermal_from_texture` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
-| explicit thermal tendency (ARK) | `meds_soil_energy`: `soil_energy_time_deriv` |
+| explicit thermal tendency (RK45) | `meds_soil_energy`: `soil_energy_time_deriv` |
+| bottom thermal boundary, eqs. (12)–(13) | `meds_soil_energy`: `bottom_heat_face`, `deep_conductance` |
+| the column from the soil maps | `meds_surface_maps`: `apply_map_inputs` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
-| soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_flux`, `heterotrophic_respiration_damm` |
+| soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; `meds_fast_prepass`: `patch_heterotrophic_respiration` |
 | prognostic soil types | `meds_column_state_types`: `soil_column_t`, `soil_energy_column_t` |
 
 ## References
@@ -342,4 +410,5 @@ and passes the resulting flux into the CO₂ source.
 - Saxton & Rawls (2006), *Soil Sci. Soc. Am. J.* 70:1569 — coarse fragments.
 - Gupta et al. (2021), *Earth Syst. Sci. Data* 13:1593 (SoilKsatDB) and (2022), *Sci. Data* 9:444 (GSHP) — the measurements the function was chosen on.
 - Swenson & Lawrence (2014), *JGR-Atmos.* 119:10299 — dry-surface-layer soil evaporation.
-- Design docs: `MEDS_COLUMN_HYDROLOGY_DESIGN.md`, `MEDS_ENERGY_BALANCE_DESIGN.md`.
+- Lawrence & Slater (2008), *Clim. Dyn.* 30:145 — the mineral and dry-soil thermal properties CLM uses, eq. (9).
+- Design records: `docs/dev_plans/archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md`, `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md`.

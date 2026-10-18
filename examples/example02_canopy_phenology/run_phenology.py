@@ -8,8 +8,9 @@
   Palo Verde      a drought-deciduous dry forest: predawn leaf water potential and day length
 
 The kernel and the leaf rule are the compiled Fortran of the coupled model, reached through
-meds.plant.pheno, with carbon never limiting the flush. Light at every site is ERA5-Land through
-MEDS's forcing reader (drivers/era5_par_hours_*.csv.gz).
+meds.plant.pheno, with carbon never limiting the flush; the cues, switches and leaf habits are
+docs/science/plant_phenology.md §2-§6. Light at every site is ERA5-Land through MEDS's forcing
+reader (drivers/era5_par_hours_*.csv.gz).
 
 Usage (after fetch_phenology_data.py; build libmeds.so first, see the README):
   python run_phenology.py                  # run fitted_parameters.json: print scores, write the figure

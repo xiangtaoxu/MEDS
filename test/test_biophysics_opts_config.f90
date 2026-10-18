@@ -4,13 +4,13 @@
 ! wiring of the fast-loop biophysics run-config (meds_config_io load_* helpers -> the            !
 ! meds_biophysics_opts bundles). Writes a small TOML fixture, parses it, and checks: (1) string    !
 ! selectors map to the right enum codes, (2) scalar keys override the defaults, (3) keys ABSENT    !
-! from the block keep their meds_biophysics_opts default (opt-in, no clobber). House style.        !
+! from the block keep their meds_biophysics_opts default (opt-in, no clobber).                    !
 !==========================================================================================!
 program test_biophysics_opts_config
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_AQUIFER,                                               &
+                                    SOIL_BC_AQUIFER, SOIL_BC_DRAIN,                                &
                                     ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_toml,            only : toml_table_t, toml_parse_file, toml_write_record
    use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg
@@ -69,10 +69,10 @@ program test_biophysics_opts_config
    call check('soil.dsl_dmax absent -> default 0.015', s%dsl_dmax, 0.015_wp, 0.0_wp)
    call check('soil.atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
 
-   !----- [energy]: what survives is the budget-closure threshold and the debug halt. The adaptive  !
-   !      substep keys were deleted as unread (#163) -- the soil-thermal solve is one BE step. -------!
+   !----- [energy]: the budget-closure threshold atol, for the debug halt. The soil-thermal solve is !
+   !      one backward-Euler step, so the block has no substep keys. ---------------------------------!
    call check('energy.atol overridden',       e%atol, 0.05_wp,    1.0e-12_wp)
-   !----- [energy] bottom thermal BC (#145): selector -> enum, anchor temperature read, and the    !
+   !----- [energy] bottom thermal BC: selector -> enum, anchor temperature read, and the           !
    !      anchor DEPTH left at its derived default when the key is absent. -------------------------!
    call check_true('energy.bottom_bc "dirichlet" -> ENERGY_BC_DIRICHLET',                          &
                    e%bottom_bc == ENERGY_BC_DIRICHLET, real(e%bottom_bc, wp))
@@ -99,8 +99,7 @@ program test_biophysics_opts_config
       call check_true('reload energy.bottom_bc matches', e0%bottom_bc == e%bottom_bc, real(e0%bottom_bc, wp))
    end block
 
-   !----- A table with NO [energy] block keeps the compiled defaults, so an existing config that   !
-   !      never mentioned the block is unchanged by #145: geothermal, i.e. the old behaviour. ------!
+   !----- A table with NO [energy] block keeps the compiled default bottom boundary, geothermal. ---!
    block
       type(toml_table_t)  :: tm2
       type(energy_opts_t) :: e2
@@ -116,6 +115,32 @@ program test_biophysics_opts_config
                       e2%bottom_bc == ENERGY_BC_GEOTHERMAL, real(e2%bottom_bc, wp))
       open(newunit=u, file='test_biophysics_opts_empty.toml', status='old', action='write')
       close(u, status='delete')
+   end block
+
+   !----- The drainage boundary's two named ends (docs/science/soil_biophysics.md §Boundary         !
+   !      conditions): free_drain is drainage at f = 1, the default, and bedrock at f = 0. ------------!
+   block
+      type(toml_table_t) :: tb
+      type(soil_opts_t)  :: s_free, s_rock, s_default
+      logical            :: okb
+      character(len=*), parameter :: NAMES(2) = [character(len=10) :: 'free_drain', 'bedrock']
+      integer(ik) :: i
+      do i = 1_ik, 2_ik
+         open(newunit=u, file='test_biophysics_opts_bc.toml', status='replace', action='write')
+         write(u,'(a)') '[soil]'
+         write(u,'(3a)') 'bottom_bc = "', trim(NAMES(i)), '"'
+         close(u)
+         call toml_parse_file('test_biophysics_opts_bc.toml', tb, okb)
+         if (i == 1_ik) call load_soil_opts(tb, s_free)
+         if (i == 2_ik) call load_soil_opts(tb, s_rock)
+      end do
+      open(newunit=u, file='test_biophysics_opts_bc.toml', status='old', action='write')
+      close(u, status='delete')
+      call check_true('soil.bottom_bc "free_drain" -> drainage at f = 1, the default',                &
+                      s_free%bottom_bc == SOIL_BC_DRAIN .and. s_free%drain_factor == 1.0_wp .and.     &
+                      s_default%bottom_bc == SOIL_BC_DRAIN .and. s_default%drain_factor == 1.0_wp)
+      call check_true('soil.bottom_bc "bedrock" -> drainage at f = 0',                                &
+                      s_rock%bottom_bc == SOIL_BC_DRAIN .and. s_rock%drain_factor == 0.0_wp)
    end block
 
    !----- The parameter record: every key the loaders read, set or defaulted, and no key they did   !

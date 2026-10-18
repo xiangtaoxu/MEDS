@@ -22,12 +22,12 @@
 ! that responds to temperature or water.                                                     !
 !                                                                                          !
 ! plant_carbon_allocation builds wood up to the limit returned here; the carbon it cannot use    !
-! leaves the plant as root exudate, charged the same growth respiration as tissue               !
-! (docs/science/plant_carbon_allocation.md).                                                    !
+! leaves the plant as root exudate, charged the same growth respiration as tissue              !
+! (docs/science/plant_carbon_allocation.md §2 "Sink limitation of wood growth", eq. (4)).      !
 !==========================================================================================!
 module meds_sink_limitation
    use meds_kinds,     only : wp
-   use meds_allometry, only : size2wood_carbon, dbh_to_height
+   use meds_allometry, only : allometry_t, size2wood_carbon, dbh_to_height
    implicit none
    private
 
@@ -48,10 +48,11 @@ contains
    ! cap. A rate of zero or less turns its limit off; with both off there is no limit (huge),    !
    ! which is the default.                                                                     !
    !---------------------------------------------------------------------------------------!
-   elemental pure function growth_sink_limitation(wood_carbon, dbh, wood_density, hgt_max,             &
+   elemental pure function growth_sink_limitation(allom, wood_carbon, dbh, wood_density, hgt_max,      &
                                                   aboveground_frac, max_relative_growth_rate,        &
                                                   max_absolute_growth_rate, max_absolute_growth_exponent, &
                                                   dt_yr, window_yr, grown_in_window) result(growth_max)
+      type(allometry_t), intent(in) :: allom            !< the site's allometry coefficients
       real(wp), intent(in) :: wood_carbon               !< [kgC/plant] wood carbon at the step's start
       real(wp), intent(in) :: dbh                       !< [cm] stem diameter at the step's start
       real(wp), intent(in) :: wood_density              !< [g/cm3] the cohort's wood density
@@ -74,8 +75,10 @@ contains
          dbh_room   = max_absolute_growth_rate * max(dbh, DBH_FLOOR) ** max_absolute_growth_exponent       &
                     * max(window_yr, dt) - max(grown_in_window, 0.0_wp)
          dbh_max    = dbh + max(dbh_room, 0.0_wp)
-         wood_now   = size2wood_carbon(dbh,     dbh_to_height(dbh,     hgt_max), wood_density, aboveground_frac)
-         wood_max   = size2wood_carbon(dbh_max, dbh_to_height(dbh_max, hgt_max), wood_density, aboveground_frac)
+         wood_now   = size2wood_carbon(allom, dbh,     dbh_to_height(allom, dbh,     hgt_max), wood_density,      &
+                                       aboveground_frac)
+         wood_max   = size2wood_carbon(allom, dbh_max, dbh_to_height(allom, dbh_max, hgt_max), wood_density,      &
+                                       aboveground_frac)
          growth_max = min(growth_max, max(wood_max - wood_now, 0.0_wp))
       end if
    end function growth_sink_limitation

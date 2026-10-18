@@ -1,17 +1,16 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_numerics -- shared numerical PRIMITIVES near the root of the library DAG (uses meds_kinds !
-! + meds_constants for safe_exp; meds_constants itself uses meds_kinds only, so no cycle).       !
-! Consolidated per MEDS_COLUMN_DYNAMICS_DESIGN.md Part III so that the                            !
-! biophysics AND plant libraries -- which both link `shared` ONLY and cannot see each other --  !
-! share ONE tridiagonal solve plus the small reusable scalar kernels, instead of re-deriving    !
-! them behind the state/process wall.                                                          !
+! + meds_constants for safe_exp; meds_constants itself uses meds_kinds only, so no cycle). The   !
+! kernel libraries link `shared` and cannot see each other, so they share ONE tridiagonal        !
+! solve, ONE matrix exponential and the small reusable scalar kernels here instead of            !
+! re-deriving them behind the state/process wall (src/README.md, the library graph).             !
 !                                                                                          !
-! Every routine is `pure` and issue-#7-safe: `thomas_solve` is a subroutine with an intent(out) !
-! array (never an array-valued function fed into a call -- silently wrong at -O2, segfault at    !
-! -O0 on nvfortran). It is DIMENSION-FREE (explicit-shape dummies keyed on the passed `n`), so   !
-! it needs no fixed `n_soil_layer_max` constant and thus no biophysics dependency -- the move    !
-! out of the old `meds_soil_solver` that made this consolidation possible.                       !
+! Every routine is `pure` and keeps clear of nvfortran's array-temporary trap                    !
+! (docs/building.md): `thomas_solve` is a subroutine with an intent(out) array (never an         !
+! array-valued function fed into a call -- silently wrong at -O2, segfault at -O0 on             !
+! nvfortran). It is DIMENSION-FREE (explicit-shape dummies keyed on the passed `n`), so it       !
+! needs no fixed `n_soil_layer_max` constant and thus no dependency outside `shared`.            !
 !==========================================================================================!
 module meds_numerics
    use meds_kinds,     only : wp, ik
@@ -33,8 +32,8 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Tridiagonal (Thomas) sweep: solve  a_k x_{k-1} + b_k x_k + c_k x_{k+1} = d_k, k = 1..n.  !
-   ! a(1) and c(n) are ignored. No PARTIAL pivoting -- the backward-Euler matrices that call    !
-   ! this (soil heat, soil water) carry a diagonally-dominant C*dz/dt diagonal, so a row swap    !
+   ! a(1) and c(n) are ignored. No PARTIAL pivoting -- the backward-Euler matrix that calls     !
+   ! this (soil heat) carries a diagonally-dominant C*dz/dt diagonal, so a row swap              !
    ! is never needed. A ZERO-PIVOT GUARD floors |b(1)| and each elimination |denom| away from 0   !
    ! (sign-preserving, mirroring meds_soil_biogeochem's gaussian_solve) so a degenerate/          !
    ! misconfigured caller divides by tiny_num instead of exactly 0 -- a NaN/Inf firewall, not a   !
@@ -42,7 +41,7 @@ contains
    ! `pure` throughout (no error stop: this solver is called from the fast-loop RHS, which must   !
    ! stay side-effect-free/GPU-eligible -- same discipline as the other fast-loop kernels).        !
    ! The guard is a NO-OP for every diagonally-dominant matrix this solves                         !
-   ! today (|b(1)|, |denom| >> tiny_num always), so existing callers are bit-identical.            !
+   ! (|b(1)|, |denom| >> tiny_num always).                                                         !
    ! Explicit-shape dummies: the actual arrays may be LONGER than n (the first n elements          !
    ! associate), so the callers keep their fixed-size (n_soil_layer_max) storage and pass the       !
    ! active count `n`.                                                                              !
@@ -105,7 +104,8 @@ contains
    ! Smaller root of the co-limitation quadratic  theta*x^2 - (a+b)*x + a*b = 0. The smaller   !
    ! root is the smooth analogue of min(a,b): it -> min(a,b) as theta -> 1 and the co-limited   !
    ! (harmonic-like) mean for smaller theta. Discriminant is guarded >= 0. `elemental` so it     !
-   ! sweeps arrays. (Used by Farquhar co-limitation and pressure-volume inverses.)               !
+   ! sweeps arrays. (Used by the FvCB co-limitation and the electron-transport hyperbola,       !
+   ! docs/science/leaf_gas_exchange.md §2.)                                                     !
    !---------------------------------------------------------------------------------------!
    elemental pure function quadratic_smaller_root(theta, a, b) result(x)
       real(wp), intent(in) :: theta, a, b
@@ -116,23 +116,20 @@ contains
    end function quadratic_smaller_root
 
    !---------------------------------------------------------------------------------------!
-   ! Step-doubling size-update FACTOR (multiply the substep h by this). Classic error-scaled    !
-   ! controller  factor = safety * err**(-1/2), clamped to [fmin, fmax]. The symmetric clamp     !
-   ! reproduces BOTH shipped controllers: on ACCEPT (err <= 1) the raw factor >= safety >= fmin  !
-   ! so `min(fmax, raw)` binds (hydrology form); on REJECT (err > 1) raw < 1 < fmax so           !
-   ! `max(fmin, raw)` binds (shrink). Callers pass their OWN safety/fmin/fmax -- these DIFFER     !
-   ! across kernels (hydrology fmin=0.25, hydraulics fmin=0.20), so they are arguments, never     !
+   ! Step-size update FACTOR (multiply the step h by this): the classic error-scaled I           !
+   ! controller factor = safety * err**(-1/(p_order+1)), clamped to [fmin, fmax]                 !
+   ! (docs/science/numerical_scheme.md eq. (4)). On ACCEPT (err <= 1) the raw factor >= safety   !
+   ! >= fmin, so `min(fmax, raw)` binds; on REJECT (err > 1) raw < 1 < fmax, so `max(fmin, raw)` !
+   ! binds (shrink). Callers pass their OWN safety/fmin/fmax, so they are arguments, never       !
    ! hard-coded here.                                                                            !
    !---------------------------------------------------------------------------------------!
    elemental pure function adaptive_step_update(err, safety, fmin, fmax, p_order) result(factor)
       real(wp),    intent(in)           :: err, safety, fmin, fmax
-      !----- Embedded-pair LOWER order (MEDS_ED2_RK45_DESIGN.md sec 6): the classical I-controller  !
-      !      exponent is -1/(p_order+1). Default 1 reproduces every EXISTING caller's behaviour       !
-      !      byte-for-byte (ARK's ARS(2,2,2) embedded estimate is 1st-order, exponent -1/2 exactly     !
-      !      as before); Cash-Karp's embedded 4th-order estimate needs p_order=4 (exponent -1/5) --      !
-      !      passing 1 there would silently under/over-react to the SAME normalized error, not          !
-      !      "wrong" in a way that breaks accept/reject, but not matching the method's true             !
-      !      asymptotic step-size law either. --------------------------------------------------------!
+      !----- Embedded-pair LOWER order: the classical I-controller exponent is -1/(p_order+1). The    !
+      !      default 1 suits ARK's first-order embedded estimate (exponent -1/2); Cash-Karp's         !
+      !      embedded 4th-order estimate needs p_order=4 (exponent -1/5) -- passing 1 there would     !
+      !      silently under/over-react to the SAME normalized error, not "wrong" in a way that breaks !
+      !      accept/reject, but not matching the method's true asymptotic step-size law either. ------!
       integer(ik), intent(in), optional :: p_order
       real(wp)             :: factor, expo
       integer(ik) :: p
@@ -146,7 +143,8 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Numerically-safe logistic (smooth 0->1 step) -- the shared home of the 1/(1+exp(-z))     !
-   ! primitive that phenology, evergreen turnover suppression, and any smooth gate reuse.      !
+   ! primitive that the phenology cue switches (docs/science/plant_phenology.md eq. (2)) and    !
+   ! any smooth gate reuse.                                                                    !
    ! `safe_exp` (meds_constants) clamps the argument so `-fpe0`/`-Ktrap=fp` never overflow.    !
    !---------------------------------------------------------------------------------------!
    elemental pure function logistic(z) result(f)
@@ -170,13 +168,11 @@ contains
    end function clamp
 
    !---------------------------------------------------------------------------------------!
-   ! Matrix exponential exp(A) for a fixed-size m x m matrix, via scaling-and-squaring + a    !
-   ! fixed-order Taylor series (issue-#7-safe: dimension-free explicit-shape dummies keyed on  !
-   ! the passed `m`, no array-valued function result fed into a call). Promoted from            !
-   ! meds_soil_biogeochem's CENTURY spin-up EXPM (MEDS_NUMERICS_SCOPING.md QW4) so every         !
-   ! implicit-RC scheme -- soil carbon, and any future multi-node hydraulics topology -- shares   !
-   ! ONE primitive instead of re-deriving it behind the state/process wall. Two entry points     !
-   ! share one Taylor/squaring core:                                                             !
+   ! Matrix exponential exp(A) for a fixed-size m x m matrix, via scaling-and-squaring + a     !
+   ! fixed-order Taylor series (dimension-free explicit-shape dummies keyed on the passed `m`, !
+   ! no array-valued function result fed into a call). The soil-carbon step's augmented        !
+   ! exponential (docs/science/soil_carbon.md eq. (6)) uses it; any implicit-RC scheme can.    !
+   ! Two entry points share one Taylor/squaring core:                                          !
    !   * matrix_exp       -- ADAPTIVE squaring count s, chosen from ||A||_inf so the scaled        !
    !                         argument A/2^s is small enough for the Taylor series to converge      !
    !                         to machine precision (the general-purpose, data-dependent path).      !
@@ -187,8 +183,7 @@ contains
    !                         Over-squaring is harmless (the Taylor argument only gets smaller, so    !
    !                         it is MORE accurate, not less); the caller picks s as a safe upper       !
    !                         bound for its problem class. matrix_exp delegates to this with its        !
-   !                         own computed s, so the two paths share one Taylor/squaring core (and      !
-   !                         are bit-identical to the pre-promotion meds_soil_biogeochem version).     !
+   !                         own computed s, so the two paths share one Taylor/squaring core.          !
    !---------------------------------------------------------------------------------------!
    pure subroutine matrix_exp(a_in, e, m)
       integer(ik), intent(in)  :: m
@@ -245,7 +240,7 @@ contains
       end do
    end subroutine matrix_exp_fixed
 
-   !----- Explicit square-matrix product C = A*B (issue-#7-safe: no array-valued function temp). --!
+   !----- Explicit square-matrix product C = A*B (no array-valued function temporary). ------------!
    pure subroutine matmul_sq(a, b, c, m)
       integer(ik), intent(in)  :: m
       real(wp),    intent(in)  :: a(m, m), b(m, m)
@@ -265,8 +260,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Weighted sum sum_k x(k)*w(k) over k = 1..n (a weighted MEAN when the weights sum to 1). Used  !
-   ! for root-fraction-weighted soil quantities (temperature, water potential). Ascending loop,   !
-   ! so it reproduces the explicit accumulation it replaced bit for bit.                          !
+   ! for root-fraction-weighted soil quantities. An ascending loop, so the sum's order is fixed.  !
    !---------------------------------------------------------------------------------------!
    pure function weighted_mean(x, w, n) result(xbar)
       real(wp),    intent(in) :: x(:), w(:)
@@ -284,10 +278,10 @@ contains
    ! round-off of summing it: |after - before| <= rtol * magnitude, with `magnitude` the sum of !
    ! the ABSOLUTE values of the terms (what reordering or rescaling a floating-point sum         !
    ! perturbs). A tolerance relative to the NET total fails on round-off alone whenever the     !
-   ! total is near zero or its terms differ in sign (#389). Below tiny/epsilon (~1e-292 in      !
-   ! double) even epsilon of the magnitude is a subnormal number, which an optimized build      !
-   ! flushes to zero, so the floating-point format itself resolves nothing smaller: that is the !
-   ! absolute floor (BCI: two leafless cohorts' leaf area of 1.4e-307 fused to exactly 0). A    !
+   ! total is near zero or its terms differ in sign. Below tiny/epsilon (~1e-292 in double)    !
+   ! even epsilon of the magnitude is a subnormal number, which an optimized build flushes to   !
+   ! zero, so the floating-point format itself resolves nothing smaller: that is the absolute   !
+   ! floor (two leafless cohorts' leaf areas of 1.4e-307 can fuse to exactly 0). A              !
    ! NaN on either side fails; it is tested for before the comparison, which a NaN would make   !
    ! raise IEEE invalid (a trap in the debug build).                                           !
    !---------------------------------------------------------------------------------------!
@@ -304,7 +298,7 @@ contains
    ! between a and b for any non-negative weights, however small. Only with no weight at all   !
    ! does it keep `a` (a fusion's survivor). There is no size threshold: a leafless cohort's    !
    ! leaf carbon decays toward 1e-190 and is still the weight its SLA blends on, and a          !
-   ! threshold that skipped the blend below 1e-30 broke the leaf area fusion conserves (#389). !
+   ! threshold that skipped the blend below 1e-30 would break the leaf area fusion conserves.  !
    !---------------------------------------------------------------------------------------!
    elemental pure real(wp) function pair_mean(a, wa, b, wb) result(m)
       real(wp), intent(in) :: a, wa   !< the first value and its weight (>= 0)

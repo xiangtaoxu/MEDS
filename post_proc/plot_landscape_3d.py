@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Render the whole MEDS site (all patches of one record) as a continuous 3D landscape (PyVista).
 
-A unified, spatially-explicit synthesis (no grid, no LAI binning):
+A spatially explicit synthesis in five steps:
 
   1. SIZE. canopy_total_nplant = area-weighted Sum over patches of each patch's nplant summed across
      its top `--top-lai-layers` LAI layers. A_viz = target_canopy_stem / canopy_total_nplant, so the

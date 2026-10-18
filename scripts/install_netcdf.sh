@@ -183,11 +183,9 @@ fi
 
 cat <<'EOF'
 
-Done. Build MEDS with netCDF output (the default), pointing CMake at the prefix above:
+Done. Build MEDS (netCDF is required), pointing CMake at the prefix above:
     cmake -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_PREFIX_PATH=<prefix>
     cmake --build build -j
-    LD_LIBRARY_PATH=<prefix>/lib ./build/meds_main meds_config.toml
-Or skip netCDF for a quick test/debug build:
-    cmake -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DMEDS_ENABLE_IO=OFF
+    LD_LIBRARY_PATH=<prefix>/lib ./build/meds_main meds_config_main.toml
 EOF

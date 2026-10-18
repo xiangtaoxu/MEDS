@@ -1,9 +1,9 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_mortality_pathways -- mortality carbon SPLIT BY PATHWAY (#169).                          !
+! test_mortality_pathways -- mortality carbon SPLIT BY PATHWAY.                                 !
 !                                                                                          !
-! A MEDS plant can die three ways, and the output carried the rates and the total litter but      !
-! never the split, so a stand thinning continuously and a stand being knocked over looked alike.   !
+! A MEDS plant can die three ways, and without the split a stand thinning continuously and a      !
+! stand being knocked over look alike in the output.                                               !
 ! The three pathways are mutually exclusive and jointly exhaustive:                                !
 !                                                                                          !
 !   BACKGROUND  the continuous hazard, applied every slow step to every cohort's density           !
@@ -19,27 +19,28 @@
 ! a pathway split: not a wrong total, but the same death counted twice, which no sum-to-the-total  !
 ! check can see and which is exactly what a user would be reading the split to rule out.           !
 !                                                                                          !
-! Units follow the block's contract (#239): the slots hold (rate x weight in seconds) and are read !
+! Units follow the block's contract: the slots hold (rate x weight in seconds) and are read        !
 ! through patch_diag_value, the same reader the output layer uses, never off the raw accumulator.  !
 !==========================================================================================!
 program test_mortality_pathways
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : yr_sec
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t
+   use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon
    use meds_site_diag_types,     only : patch_diag_alloc, patch_diag_value,                       &
                                         PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : apply_patch_disturbance
-   use meds_slow_dynamics,       only : advance_slow_dynamics
+   use meds_slow_dynamics,       only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, test_report
    implicit none
 
-   call banner('mortality carbon by pathway (#169)')
+   call banner('mortality carbon by pathway')
    call check_cull()
    call check_disturbance()
    call check_background()
+   call check_exhausted()
    call test_report('test_mortality_pathways')
 
 contains
@@ -171,7 +172,7 @@ contains
       call add_cohort(site, cfg, 1_ik, 2_ik, 0.50_wp, 20.0_wp)
       call finalize_init(site)
       call arm_patch_diag(site, cfg)
-      !----- With the fast loop off, the slow step weights the block itself (#299), so the fixture's  !
+      !----- With the fast loop off, the slow step weights the block itself, so the fixture's         !
       !      stand-in for the fast sub-steps' weight would count the step twice. --------------------!
       site%patch%diag%w = 0.0_wp
 
@@ -192,5 +193,71 @@ contains
       call check_close(site_amount(site, cfg, PD_MORT_C_DISTURB), 0.0_wp, 1.0e-12_wp,              &
                        'background mortality is not also counted as disturbance')
    end subroutine check_background
+
+   !=== A cohort with no leaves and no storage dies; one living on its storage does not. =========!
+   !    Both are leafless and dormant (no flush, so nothing grows) with a day's stem respiration    !
+   !    and no photosynthesis, as in a dry season; only their storage differs. The first cannot pay  !
+   !    its upkeep, so its density goes to the floor on its first step, through the background     !
+   !    pathway, and the next month boundary culls it. The second pays its upkeep from storage      !
+   !    through a 150-day dry season and loses density only at the growth-driven hazard.           !
+   subroutine check_exhausted()
+      type(meds_config_t) :: cfg
+      type(site_t)        :: site
+      real(wp)            :: n0, expect
+      integer(ik)         :: day
+
+      cfg = build_test_config()
+      cfg%fast_biophysics_on = .true.        ! the allocator reads the accumulators set below
+      cfg%soil_carbon_on     = .false.
+
+      !----- No storage: dead on the first step, at the floor, its carbon down the background path. -!
+      call leafless_stand(site, cfg, 0.0_wp)
+      call arm_patch_diag(site, cfg)        ! fast loop on: the fixture's weight stands in for it
+      n0     = site%cohort%nplant(1)
+      expect = (n0 - cfg%negligible_nplant) * plant_carbon(site, 1_ik)
+      call advance_slow_dynamics(site, cfg)
+      call check(site%cohort%nplant(1) == cfg%negligible_nplant,                                   &
+                 'no leaves, no storage: the density reaches the floor on the first step')
+      call check_close(site_amount(site, cfg, PD_MORT_C_BACKGROUND), expect, 1.0e-9_wp,            &
+                       'no leaves, no storage: its carbon dies down the background pathway')
+      do day = 2_ik, 30_ik
+         call advance_slow_dynamics(site, cfg)
+      end do
+      call advance_boundary_dynamics(site, cfg, .true., .false.)
+      call check(site%cohort%n == 0_ik, 'no leaves, no storage: culled at the month boundary')
+
+      !----- Storage for the season: the cohort lives on it, leafless, for 150 days. --------------!
+      call leafless_stand(site, cfg, 0.5_wp)
+      n0 = site%cohort%nplant(1)
+      do day = 1_ik, 150_ik
+         call advance_slow_dynamics(site, cfg)
+         if (mod(day, 30_ik) == 0_ik) call advance_boundary_dynamics(site, cfg, .true., .false.)
+      end do
+      call check(site%cohort%n == 1_ik, 'leafless with storage: survives a 150-day dry season')
+      call check(site%cohort%nonstructural_carbon(1) > 0.0_wp .and. site%cohort%leaf_carbon(1) == 0.0_wp, &
+                 'leafless with storage: it paid its upkeep from storage and stayed leafless')
+      call check(site%cohort%nplant(1) > 0.9_wp * n0,                                              &
+                 'leafless with storage: only the growth-driven hazard thinned it')
+   end subroutine check_exhausted
+
+   !----- One leafless, dormant cohort holding `storage` [kgC/plant], with a day's stem respiration !
+   !      and no photosynthesis on every step (there is no fast loop to overwrite the accumulators). -!
+   subroutine leafless_stand(site, cfg, storage)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(in)    :: storage
+      real(wp), parameter :: STEM_RESP_DAY = 1.0e-3_wp   !< [kgC/plant] one day's stem respiration
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.05_wp, 20.0_wp)
+      call finalize_init(site)
+      site%cohort%leaf_carbon(1)          = 0.0_wp
+      site%cohort%nonstructural_carbon(1) = storage
+      call set_cohort_size_from_carbon(site%cohort, 1_ik)
+      site%cohort%leaf_flush_tendency(1) = 0.0_wp      ! dormant: no flush, no turnover
+      site%cohort%gpp_accum(1)           = 0.0_wp
+      site%cohort%leaf_resp_accum(1)     = 0.0_wp
+      site%cohort%stem_resp_accum(1)     = STEM_RESP_DAY
+      site%cohort%root_resp_accum(1)     = 0.0_wp
+   end subroutine leafless_stand
 
 end program test_mortality_pathways

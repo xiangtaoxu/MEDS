@@ -2,27 +2,28 @@
 !==========================================================================================!
 ! meds_c_api_leaf -- the C-API shim for LEAF GAS EXCHANGE (`meds.plant.leaf`).                !
 !                                                                                          !
-! One shim per subsystem, mirroring the Fortran tree (structure plan §7.6 #3), so a change to !
-! one subsystem's ABI rebuilds and re-tests only that shim.                                    !
+! One shim per subsystem, mirroring the Fortran tree (src/README.md), so a change to one       !
+! subsystem's ABI rebuilds and re-tests only that shim.                                        !
 !                                                                                          !
 ! EVERY bind(c) struct here is an ABI CONTRACT with `python/meds/plant/_ffi.py`: the field     !
 ! ORDER must match, member for member. It is compiled by a mandatory ctest target              !
-! (`test_c_api_leaf`) precisely so a mismatch is a BUILD failure -- issue #95 -> #100 was a     !
-! component inserted mid-type in `leaf_photo_params_t` that broke the C API while the whole     !
-! suite stayed green, because this file was compiled only by an optional target.                 !
+! (`test_c_api_leaf`) precisely so a mismatch is a BUILD failure, not a silent wrong answer: a !
+! component inserted mid-type in `leaf_photo_params_t` breaks the C API while the rest of the  !
+! suite stays green, and only a target that compiles this file sees it.                        !
 !==========================================================================================!
 module meds_c_api_leaf
    use iso_c_binding,          only : c_double, c_int
    use meds_kinds,             only : wp, ik
    use meds_plant_types,       only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
-   use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j
+   use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j, rubisco_kinetics
    use meds_temp_response,     only : peaked_arrhenius_scale, arrhenius_scale
    implicit none
    private
 
-   public :: leaf_env_c, leaf_params_c, leaf_flux_c, leaf_c3_demand_c
+   public :: leaf_env_c, leaf_params_c, leaf_flux_c, leaf_c3_demand_c, leaf_kinetics_c
    public :: meds_leaf_solve, meds_leaf_solve_batch, meds_assimilation_demand_c3, meds_electron_transport_j
+   public :: meds_rubisco_kinetics
    public :: meds_peaked_arrhenius, meds_arrhenius
 
    !----- C-interoperable mirror of leaf_env_t (8 doubles). --------------------------------!
@@ -37,7 +38,8 @@ module meds_c_api_leaf
       integer(c_int) :: converged
    end type leaf_flux_c
 
-   !----- C-interoperable mirror of leaf_photo_params_t (1 int + 37 doubles, same order). ---!
+   !----- C-interoperable mirror of leaf_photo_params_t (1 int + 37 doubles, same order), less  !
+   !      psi_onset and medlyn_vpd_min (see to_params). ---------------------------------------!
    type, bind(c) :: leaf_params_c
       integer(c_int) :: pathway
       real(c_double) :: vcmax25, jmax25, tpu25, rd25, kp25
@@ -54,6 +56,11 @@ module meds_c_api_leaf
    type, bind(c) :: leaf_c3_demand_c
       real(c_double) :: A_gross, Ac, Aj, Ap
    end type leaf_c3_demand_c
+
+   !----- C-interoperable C3 Rubisco kinetics as mole fractions [umol/mol] (4 doubles). -----!
+   type, bind(c) :: leaf_kinetics_c
+      real(c_double) :: kc, ko, gstar, o2
+   end type leaf_kinetics_c
 
 contains
 
@@ -104,8 +111,9 @@ contains
    ! electron-transport RATE, from meds_electron_transport_j), tpu, and the mole-fraction        !
    ! kinetics gstar/kc/ko/o2 [umol/mol]. Returns gross A and the Ac/Aj/Ap limitation rates      !
    ! (net = gross - Rd is the caller's business). colim is a COLIM_* code; theta_cj and theta_ip  !
-   ! are the TWO C3 co-limitation curvatures -- Ac/Aj and then (Ac,Aj)/Ap (#118). Neither is      !
-   ! theta_j, the electron-transport hyperbola's curvature. Use COLIM_MIN for a sharp min().      !
+   ! are the TWO C3 co-limitation curvatures -- Ac/Aj and then (Ac,Aj)/Ap. Neither is            !
+   ! theta_j, the electron-transport hyperbola's curvature (docs/science/leaf_gas_exchange.md §2, !
+   ! eq. (2)). Use COLIM_MIN for a sharp min().                                                   !
    !---------------------------------------------------------------------------------------!
    subroutine meds_assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta_cj,      &
                                    theta_ip, dem_c) bind(c, name="meds_assimilation_demand_c3")
@@ -118,6 +126,22 @@ contains
                            int(colim), real(theta_cj, wp), real(theta_ip, wp), a_gross, ac, aj, ap)
       dem_c%A_gross = a_gross ; dem_c%Ac = ac ; dem_c%Aj = aj ; dem_c%Ap = ap
    end subroutine meds_assimilation_demand_c3
+
+   !---------------------------------------------------------------------------------------!
+   ! The C3 Rubisco kinetics Kc, Ko, Gamma* and O2 as mole fractions [umol/mol] at a leaf    !
+   ! temperature [K] and pressure [Pa] (rubisco_kinetics; docs/science/leaf_gas_exchange.md  !
+   ! eq. (3)): the solver's own values, for callers of meds_assimilation_demand_c3.          !
+   !---------------------------------------------------------------------------------------!
+   subroutine meds_rubisco_kinetics(params_c, t_leaf, pressure, kin_c) bind(c, name="meds_rubisco_kinetics")
+      type(leaf_params_c),   intent(in)  :: params_c
+      real(c_double), value, intent(in)  :: t_leaf, pressure
+      type(leaf_kinetics_c), intent(out) :: kin_c
+      type(leaf_photo_params_t) :: p
+      real(wp) :: kc, ko, gstar, o2
+      p = to_params(params_c)
+      call rubisco_kinetics(p, real(t_leaf, wp), real(pressure, wp), kc, ko, gstar, o2)
+      kin_c%kc = kc ; kin_c%ko = ko ; kin_c%gstar = gstar ; kin_c%o2 = o2
+   end subroutine meds_rubisco_kinetics
 
    !---------------------------------------------------------------------------------------!
    ! Electron-transport rate J from Jmax and incident PAR (non-rectangular hyperbola).      !
@@ -153,10 +177,10 @@ contains
    pure function to_env(env_c) result(env)
       type(leaf_env_c), intent(in) :: env_c
       type(leaf_env_t)             :: env
-      !----- KEYWORD form, deliberately. A positional structure constructor silently re-binds every  !
-      !      value when a component is inserted mid-type, and components WITH defaults cannot be      !
-      !      skipped positionally at all -- which is exactly how this file stopped compiling when      !
-      !      #95 added psi_tlp and an arrestor selector to leaf_photo_params_t (see to_params below). -!
+      !----- KEYWORD form, deliberately. A positional structure constructor silently re-binds every !
+      !      value when a component is inserted mid-type, and components WITH defaults cannot be    !
+      !      skipped positionally at all; leaf_photo_params_t has such components (see to_params    !
+      !      below). -------------------------------------------------------------------------------!
       env = leaf_env_t(par=env_c%par, leaf_temp=env_c%leaf_temp, vpd=env_c%vpd, ca=env_c%ca,      &
                        pressure=env_c%pressure, psi_leaf=env_c%psi_leaf, gb=env_c%gb,             &
                        psi=env_c%psi)
@@ -165,18 +189,16 @@ contains
    pure function to_params(p_c) result(p)
       type(leaf_params_c), intent(in) :: p_c
       type(leaf_photo_params_t)       :: p
-      !----- KEYWORD form (see to_env). This constructor was POSITIONAL and broke the moment           !
-      !      leaf_photo_params_t grew components in the middle: #95 inserted psi_tlp and an arrestor     !
-      !      selector after sref_stomata, so the trailing values shifted by three and ifx                !
-      !      rejected the file with "Omitted component is not initialized" for o2_mol_frac /             !
-      !      absorptance / phi_psii. The pylib is NOT part of the default build or of ctest, so nothing  !
-      !      caught it -- see issue #100.                                                                !
+      !----- KEYWORD form (see to_env). A positional constructor here would shift every trailing value !
+      !      by one each time leaf_photo_params_t gains a component mid-type, and could not omit       !
+      !      psi_onset and medlyn_vpd_min, which carry defaults.                                       !
       !                                                                                          !
-      !      psi_onset and medlyn_vpd_min are absent from leaf_params_c and take their type defaults  !
+      !      psi_onset and medlyn_vpd_min are absent from leaf_params_c and take their type defaults   !
       !      (0 MPa, 0.05 kPa; meds.canopy builds its parameters from the run's config instead).       !
-      !      Exposing them across the C ABI is a deliberate follow-up, not an oversight: adding a field !
-      !      to a bind(c) struct is an ABI break for any existing caller. psi_open/psi_close do cross: !
-      !      the caller sets the ramp of the fast limb, which is always applied. ---------------------!
+      !      Adding a field to a bind(c) struct breaks the ABI for every existing caller, so they stay !
+      !      out. psi_open/psi_close do cross: the caller sets the ramp of the fast capacity limb      !
+      !      (docs/science/leaf_gas_exchange.md §4.1, eq. (9)), which is always applied; sref_stomata  !
+      !      with the default psi_onset sets the slow stomatal factor (§4.2, eq. (10)). ---------------!
       p = leaf_photo_params_t(pathway=p_c%pathway, vcmax25=p_c%vcmax25, jmax25=p_c%jmax25,        &
              tpu25=p_c%tpu25, rd25=p_c%rd25, kp25=p_c%kp25, g0=p_c%g0, g1=p_c%g1, d0=p_c%d0,      &
              quantum_yield=p_c%quantum_yield, theta_j=p_c%theta_j,                                &

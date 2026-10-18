@@ -13,7 +13,7 @@
 ! return a potential or a water content, with floors that keep a diagnostic finite. The water   !
 ! relations (*_water_relations) give the soil-plant water solver (meds_spac_solver) a store's    !
 ! potential, water and conductivity with their derivatives, in the variable it solves for, with  !
-! no floors (MEDS_SPAC_WATER_NETWORK_PLAN.md §12.1 D1).                                         !
+! no floors (docs/science/soil_plant_water.md §2).                                              !
 !                                                                                          !
 ! How water moves between the stores -- the rhizosphere, the xylem and its vulnerability curve,  !
 ! the root profile -- is in meds_hydr_lib, and between soil layers in meds_soil_water.            !
@@ -27,7 +27,8 @@ module meds_water_retention
    !----- Tissue pressure-volume family. ---------------------------------------------------!
    public :: water_curve_t
    public :: pv_psi_tlp, pv_rwc_tlp, rwc_from_psi, psi_from_rwc
-   public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity
+   public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity, shared_potential
+   public :: wood_thermal_water
    !----- Soil retention family: the soil-water analogue of the tissue curve -- theta(psi) and    !
    !      psi(theta) read-offs.                                                                    !
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
@@ -56,13 +57,18 @@ module meds_water_retention
    !      K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2. The one place it is set. -1 after Schaap & Leij     !
    !      (2000, SSSA J. 64:843), as ED2 uses with van Genuchten (soil_hydro_scheme 2). With        !
    !      Mualem's 0.5 a soil of n near 1.4 conducts less than ED2's 1.16e-13 m/s from about       !
-   !      -0.7 MPa, far wetter than UNSODA's measurements; -1 keeps it above that to about -2 MPa.  !
-   !      A film-flow term for drier soil is #390. ------------------------------------------------!
+   !      -0.7 MPa, far wetter than UNSODA's measurements; -1 keeps it above that to about -2 MPa   !
+   !      (docs/science/soil_biophysics.md eq. (2)). Drier soil has no film-flow term (see          !
+   !      docs/ROADMAP.md). -----------------------------------------------------------------------!
    real(wp), parameter :: VG_PORE_CONNECTIVITY = -1.0_wp
 
    !----- Read-off floors, which keep a diagnostic finite; the solver's curves have none. -----!
    real(wp), parameter :: SE_MIN = 1.0e-9_wp      !< effective-saturation floor (residual/air-dry)
    real(wp), parameter :: rwc_floor = 1.0e-4_wp   !< keep R strictly positive in the flaccid tail
+   !----- A cap on shared_potential's halvings. Its bracket, about 1.5e4 MPa wide, reaches the       !
+   !      resolution of the arithmetic at a root near -1 MPa in about 70, where the loop stops; the   !
+   !      cap ends only a root at 0, whose resolution has no floor. ---------------------------------!
+   integer(ik), parameter :: BISECTION_STEPS_MAX = 200_ik
 
    !----- Water a saturated soil layer gains per metre of pressure head [1/m]: the compressibility !
    !      of the soil matrix and of water, a typical value for clays and loams (Freeze and Cherry   !
@@ -95,7 +101,8 @@ module meds_water_retention
 contains
 
    !=======================================================================================!
-   !     Pressure-volume (Bartlett / Tyree-Hammel) constitutive curves.                     !
+   !     Pressure-volume (Bartlett / Tyree-Hammel) constitutive curves                      !
+   !     (docs/science/plant_hydraulics.md §2, eqs. (3)-(6)).                               !
    !=======================================================================================!
 
    !----- Turgor loss point [MPa] (Bartlett eqn 1). ---------------------------------------!
@@ -169,11 +176,11 @@ contains
       c = w_sat_sym*cr
    end function capacitance
 
-   !----- Exact inverse of water_content: water potential [MPa] from total tissue water [kg,      !
-   !      per plant] (MEDS_ED2_RK45_DESIGN.md sec 4 -- diagnoses psi from the prognostic mass      !
-   !      state). Recovers the symplastic RWC by removing the constant apoplastic reservoir, then   !
-   !      composes the existing exact psi_from_rwc inverse -- every constituent already exists,     !
-   !      this only inverts water_content's own forward map (w = (1-apo)*w_sat*rwc + apo*w_sat).    !
+   !----- Exact inverse of water_content: water potential [MPa] from total tissue water [kg,        !
+   !      per plant], which diagnoses psi from the prognostic water mass. Recovers the symplastic   !
+   !      RWC by removing the constant apoplastic reservoir, then composes the exact psi_from_rwc   !
+   !      inverse -- it only inverts water_content's own forward map (w = (1-apo)*w_sat*rwc +       !
+   !      apo*w_sat, docs/science/plant_hydraulics.md eq. (5)).                                     !
    elemental real(wp) function psi_from_water_content(w, curve, biomass) result(psi)
       real(wp),            intent(in) :: w, biomass
       type(water_curve_t), intent(in) :: curve
@@ -183,24 +190,82 @@ contains
       psi   = psi_from_rwc(rwc, curve%pi0, curve%elastic_mod)
    end function psi_from_water_content
 
-   !----- Cap tissue water mass at the saturation ceiling W_sat = water_sat*biomass (rwc=1): the     !
-   !      slow/fast SEAM guard (MEDS_ED2_RK45_DESIGN.md P3). Mass, not psi, is the seam-continuous     !
-   !      quantity across a biomass update -- a persisted leaf/wood_water_mass carries forward         !
-   !      UNCHANGED into new biomass, so a capacity GROWTH simply reads as a lower rwc/psi next touch  !
-   !      (the physically-correct signal that draws more water from the soil, not a defect to patch    !
-   !      over). Only a capacity SHRINK needs a guard: a discontinuous biomass drop (e.g. the           !
-   !      phenology dormant-canopy leaf snap-to-bare in meds_vegetation_dynamics%update_biomass_        !
-   !      turnover) can leave more mass than the new, smaller ceiling admits -- a tissue state that     !
-   !      is not reachable (rwc>1 has no valid inverse on the turgid PV branch). The caller bookkeeps  !
-   !      the released excess (w - result) rather than silently retaining a supersaturated pool.        !
+   !----- The potential [MPa] at which two tissues holding `w_total` [kg] between them are at rest     !
+   !      with each other: tissue a at psi, tissue b at psi - head_b, b hanging head_b [MPa] above a   !
+   !      (docs/science/plant_hydraulics.md eq. (2) with no flow). Each tissue's water rises with its  !
+   !      potential (eq. (5)), so their sum is monotone in psi and bisection on a bracket finds it:     !
+   !      `lo`, where both curves sit on their dry floor, and `hi`, where tissue a is saturated. A     !
+   !      total beyond the bracket returns its nearer end. The bisection stops when the bracket is     !
+   !      as narrow as the arithmetic can resolve; the caller moves water by the curves at the result, !
+   !      so what it moves is exact whatever the residual. -------------------------------------------!
+   elemental real(wp) function shared_potential(w_total, curve_a, biomass_a, curve_b, biomass_b, head_b)  &
+                                                result(psi)
+      real(wp),            intent(in) :: w_total               !< [kg] the water the two hold together
+      type(water_curve_t), intent(in) :: curve_a, curve_b
+      real(wp),            intent(in) :: biomass_a, biomass_b  !< [kgC]
+      real(wp),            intent(in) :: head_b                !< [MPa] how far b sits below a at rest
+      real(wp)    :: lo, hi
+      integer(ik) :: k
+      lo = min(curve_a%pi0, curve_b%pi0 + head_b) / rwc_floor
+      hi = 0.0_wp
+      if (w_total <= held(lo)) then
+         psi = lo
+         return
+      end if
+      if (w_total >= held(hi)) then
+         psi = hi
+         return
+      end if
+      do k = 1_ik, BISECTION_STEPS_MAX
+         psi = 0.5_wp * (lo + hi)
+         if (held(psi) < w_total) then
+            lo = psi
+         else
+            hi = psi
+         end if
+         if (hi - lo <= epsilon(psi) * max(abs(lo), abs(hi))) exit
+      end do
+      psi = 0.5_wp * (lo + hi)
+   contains
+      pure real(wp) function held(p)
+         real(wp), intent(in) :: p
+         held = water_content(p, curve_a, biomass_a) + water_content(p - head_b, curve_b, biomass_b)
+      end function held
+   end function shared_potential
+
+   !----- Cap tissue water mass at the saturation ceiling W_sat = water_sat*biomass (rwc=1): the       !
+   !      slow tier's guard before the fast loop (shed_excess_tissue_water;                            !
+   !      docs/science/soil_plant_water.md §2). Mass, not psi, is what carries across a biomass        !
+   !      update -- a persisted wood_water_mass carries forward UNCHANGED into new biomass, so the     !
+   !      wood's capacity GROWTH simply reads as a lower rwc/psi next touch (the signal that draws     !
+   !      more water from the soil), and new leaves are filled from the wood (fill_new_leaf_water).    !
+   !      Only a capacity SHRINK needs a guard: an                                                     !
+   !      operator that drops biomass without its water (a rising SLA resorbing leaf carbon, a fusion  !
+   !      re-deriving the sapwood ring) can leave more mass than the new, smaller ceiling admits -- a  !
+   !      tissue state that is not reachable (rwc>1 has no valid inverse on the turgid PV branch).     !
+   !      The caller sheds the excess (w - result) to the ground and declares it.                      !
    elemental real(wp) function clamp_water_to_capacity(w, curve, biomass) result(w_capped)
       real(wp),            intent(in) :: w, biomass
       type(water_curve_t), intent(in) :: curve
       w_capped = min(w, curve%water_sat*biomass)
    end function clamp_water_to_capacity
 
+   !----- The wood's THERMAL water [kg/plant]: the sapwood share of the store the water network        !
+   !      carries on the sapwood and the fine roots together (wood_water_mass), split in proportion   !
+   !      to their carbon, as the store's capacity is (docs/science/vegetation_energy_dynamics.md     !
+   !      eq. (8)). The fine roots sit in the soil, so their share is not in the wood's heat          !
+   !      capacity; heartwood holds none, which is what makes it heartwood. One function for the     !
+   !      fast loop's frozen capacity and the state layer's shared capacity. ------------------------!
+   elemental real(wp) function wood_thermal_water(w_wood, bsap, broot) result(w)
+      real(wp), intent(in) :: w_wood   !< [kg/plant]  water in the network's wood store
+      real(wp), intent(in) :: bsap     !< [kgC/plant] sapwood carbon
+      real(wp), intent(in) :: broot    !< [kgC/plant] fine-root carbon
+      w = max(w_wood, 0.0_wp) * bsap / max(bsap + broot, tiny_num)
+   end function wood_thermal_water
+
    !=======================================================================================!
-   !  SOIL retention curves: van Genuchten-Mualem (default) or Campbell / Clapp-Hornberger.     !
+   !  SOIL retention curves: van Genuchten-Mualem (default) or Campbell / Clapp-Hornberger     !
+   !  (docs/science/soil_biophysics.md §The soil water column, eq. (2)).                        !
    !  par_a/par_n carry {alpha [1/m], n} for van Genuchten and {psi_sat [m, < 0], b} for         !
    !  Campbell; heads are in metres of water, below zero when unsaturated. Four kernels at the   !
    !  end of this section hold the curve, and every soil-water routine -- the read-offs here and !
@@ -315,10 +380,10 @@ contains
       end if
    end subroutine soil_water_relations
 
-   !----- The unknown of a layer holding theta [m3/m3]: the inverse of soil_water_relations's water. A     !
-   !      layer at or below residual -- which an earlier model's floor could leave -- starts just  !
-   !      inside the curve, at SE_START. A Campbell layer at exactly saturation starts at its      !
-   !      air-entry point, the one potential its water content can name. -----------------------!
+   !----- The unknown of a layer holding theta [m3/m3]: the inverse of soil_water_relations's      !
+   !      water. A layer at or below residual starts just inside the curve, at SE_START. A         !
+   !      Campbell layer at exactly saturation starts at its air-entry point, the one potential its!
+   !      water content can name. -----------------------------------------------------------------!
    elemental function soil_unknown_from_theta(c, theta) result(tau)
       type(soil_layer_curve_t), intent(in) :: c
       real(wp),                 intent(in) :: theta

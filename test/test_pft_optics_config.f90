@@ -3,14 +3,14 @@
 ! test_pft_optics_config -- the [pft] canopy optics reach the two-stream's per-PFT table,    !
 ! and DIFFERENTIATE the PFTs.                                                                !
 !                                                                                          !
-! These fourteen traits were literals broadcast over every PFT, which meant two plant        !
-! functional types could not differ in how they intercept or scatter light -- in a model      !
-! whose two-stream solver exists to resolve that competition. Moving them to the table is      !
-! only worth anything if the values arrive per PFT, and that wiring fails silently: a          !
-! mis-threaded index leaves every PFT on the first one's optics, the radiation still solves,   !
-! the energy budget still closes, and the canopy is quietly one optical type again. So this    !
-! asserts the values arrive AND that PFTs differ, not merely that the code compiles. The same   !
-! holds for the per-PFT hydraulics, down to the daily tissue-water reconcile.                   !
+! These fourteen traits are what lets two plant functional types differ in how they        !
+! intercept or scatter light -- the competition the two-stream solver exists to resolve.   !
+! They are only worth anything if the values arrive per PFT, and that wiring fails         !
+! silently: a mis-threaded index leaves every PFT on the first one's optics, the radiation !
+! still solves, the energy budget still closes, and the canopy is quietly one optical      !
+! type. So this asserts the values arrive AND that PFTs differ, not merely that the code   !
+! compiles. The same holds for the per-PFT hydraulics, down to a cohort's water at birth   !
+! and the slow tier's shed of water above capacity.                                       !
 !==========================================================================================!
 program test_pft_optics_config
    use meds_kinds,          only : wp, ik
@@ -22,7 +22,7 @@ program test_pft_optics_config
    use meds_water_retention, only : pv_psi_tlp, water_content
    use meds_site_state_types, only : site_t
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
-   use meds_fast_reconcile, only : reconcile_tissue_water_capacity
+   use meds_vegetation_dynamics, only : shed_excess_tissue_water
    use meds_column_params,  only : PSI_INIT
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
@@ -36,7 +36,7 @@ program test_pft_optics_config
    call banner('[pft] canopy optics: per PFT, and reaching the two-stream')
    cfg = build_test_config()
 
-   !=== 1. The DEFAULTS are the literals the fast driver used to carry. =====================!
+   !=== 1. The test configuration's DEFAULT optics. ========================================!
    call check_close(cfg%pft%leaf_reflect_vis(1),  0.10_wp,  1.0e-14_wp, 'default leaf VIS reflectance changed')
    call check_close(cfg%pft%leaf_transmit_nir(1), 0.25_wp,  1.0e-14_wp, 'default leaf NIR transmittance changed')
    call check_close(cfg%pft%leaf_emissivity(1),   0.97_wp,  1.0e-14_wp, 'default leaf emissivity changed')
@@ -86,11 +86,11 @@ program test_pft_optics_config
    call check(abs(ctx%rad_opt%bf(2) - ctx%rad_opt%bf(1)) > 1.0e-6_wp,                            &
               'a different leaf-angle mean must give a different angle distribution')
 
-   !=== 5b. PER-PFT HYDRAULIC TRAITS (#179). Same shape as the optics checks above, and for the =!
-   !        same reason: until now every PFT shared ONE hydraulic parameter set, so wood density
-   !        was the only axis on which PFTs could differ hydraulically -- in a model whose point is
-   !        that plant strategies differ. Assert that the table SEPARATES them and that the
-   !        separation CHANGES the answer, not merely that it compiles.
+   !=== 5b. PER-PFT HYDRAULIC TRAITS. Same shape as the optics checks above, and for the =====!
+   !        same reason: with ONE shared hydraulic parameter set, wood density would be the only
+   !        axis on which PFTs could differ hydraulically -- in a model whose point is that plant
+   !        strategies differ. Assert that the table SEPARATES them and that the separation
+   !        CHANGES the answer, not merely that it compiles.
    block
       type(hydro_params_table_t) :: tab
       real(wp) :: plc1, plc2
@@ -128,40 +128,40 @@ program test_pft_optics_config
                        'the phenology reads the same per-PFT turgor-loss point')
    end block
 
-   !=== The daily tissue-water reconcile seeds and caps each cohort on ITS PFT's curve, the one  !
-   !    the fast loop reads the water back on. It used to take the shared [hydraulics] values,   !
-   !    so a PFT with its own saturated leaf water was seeded off its own curve. ================!
+   !=== A cohort is born with its tissue water on ITS PFT's curve, the one the fast loop reads    !
+   !    the water back on, and the slow tier caps a store on that curve too. Taking the shared     !
+   !    [hydraulics] values would put a PFT with its own saturated leaf water off its own curve. ===!
    block
       type(hydro_params_table_t) :: tab
       type(site_t) :: site
-      real(wp) :: w_expect
+      real(wp) :: w_expect, w_shed
+      integer(ik) :: i2
       cfg%pft%hyd_leaf_water_sat(2) = 3.0_wp      ! vs the shared 2.0
       call apply_hydraulics_config(cfg%hydraulics, cfg%pft, tab)
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 20.0_wp)
       call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 20.0_wp)
       call finalize_init(site)
-      site%cohort%leaf_water_mass(1:2) = 0.0_wp    ! empty stores: the reconcile seeds them
-      site%cohort%wood_water_mass(1:2) = 0.0_wp
-      call reconcile_tissue_water_capacity(site, tab)
-      w_expect = water_content(PSI_INIT, tab%pft(2)%leaf_curve, site%cohort%leaf_carbon(2))
-      call check_close(site%cohort%leaf_water_mass(2), w_expect, 1.0e-12_wp,                       &
-                       'PFT 2 leaf water is seeded on its own curve')
-      call check(abs(w_expect - water_content(PSI_INIT, tab%pft(1)%leaf_curve, site%cohort%leaf_carbon(2)))  &
-                 > 1.0e-6_wp * w_expect, 'the two PFTs'' curves give different seeds (the fixture bites)')
+      i2 = merge(1_ik, 2_ik, site%cohort%pft(1) == 2_ik)        ! the PFT-2 cohort, after the sort
+      w_expect = water_content(PSI_INIT, tab%pft(2)%leaf_curve, site%cohort%leaf_carbon(i2))
+      call check_close(site%cohort%leaf_water_mass(i2), w_expect, 1.0e-12_wp,                      &
+                       'PFT 2 leaf water at birth is on its own curve')
+      call check(abs(w_expect - water_content(PSI_INIT, tab%pft(1)%leaf_curve, site%cohort%leaf_carbon(i2))) &
+                 > 1.0e-6_wp * w_expect, 'the two PFTs'' curves give different birth water (the fixture bites)')
       !----- Capped on its own ceiling too: a supersaturated store falls to 3.0 x leaf carbon. ---!
-      site%cohort%leaf_water_mass(2) = 10.0_wp * site%cohort%leaf_carbon(2)
-      call reconcile_tissue_water_capacity(site, tab)
-      call check_close(site%cohort%leaf_water_mass(2), 3.0_wp * site%cohort%leaf_carbon(2), 1.0e-12_wp, &
+      site%cohort%leaf_water_mass(i2) = 10.0_wp * site%cohort%leaf_carbon(i2)
+      call shed_excess_tissue_water(site, cfg, w_shed)
+      call check_close(site%cohort%leaf_water_mass(i2), 3.0_wp * site%cohort%leaf_carbon(i2), 1.0e-12_wp, &
                        'PFT 2 leaf water is capped at its own saturation')
    end block
 
    !=== 6. The PFT-parameter CSV dump has as many values as it has column headers. ==========!
    !        A Fortran format SHORTER than its output list does not fail: it REVERTS to the last  !
    !        repeat group and keeps going, so an integer edit descriptor silently receives a real  !
-   !        and prints its bit pattern, and the trailing columns disappear. That is exactly what  !
-   !        adding two PFT traits did (#118), and nothing in the suite noticed, because the run   !
-   !        completed and every budget still closed. Counting the two lines is the whole test.    !
+   !        and prints its bit pattern, and the trailing columns disappear. Adding PFT traits     !
+   !        without widening the format does exactly that, and nothing else in the suite notices, !
+   !        because the run completes and every budget still closes. Counting the two lines is   !
+   !        the whole test.                                                                       !
    block
       character(len=*), parameter :: CSVFILE = 'test_pft_params_tmp.csv'
       character(len=8192) :: head_line, val_line

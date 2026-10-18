@@ -2,7 +2,8 @@
 !==========================================================================================!
 ! test_plant_carbon_allocation -- unit tests for the elemental, GROWTH-ONLY daily carbon      !
 ! allocation kernel + growth_respiration. (Leaf loss is applied upstream by the driver from   !
-! meds_phenology::leaf_turnover_step -- tested in test_plant_phenology.)                     !
+! meds_phenology::leaf_turnover_step -- tested in test_plant_phenology.) The equations are   !
+! docs/science/plant_carbon_allocation.md eqs. (4)-(6).                                    !
 !                                                                                          !
 !   1. GROWTH RESP     : growth_respiration = g * max(0, npp_growth).                            !
 !   2. CLOSURE         : (growth pools + npp_store) - deficit = (gpp - resp) - growth_resp.       !
@@ -22,11 +23,12 @@ program test_plant_carbon_allocation
    use meds_kinds,           only : wp, ik
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
    use meds_sink_limitation,         only : growth_sink_limitation
-   use meds_allometry,               only : size2wood_carbon, wood_to_dbh, dbh_to_height
+   use meds_allometry,               only : allometry_t, size2wood_carbon, wood_to_dbh, dbh_to_height
    implicit none
 
    !----- A stem for the sink-limit tests: wood density, height cap and aboveground share. -----!
    real(wp), parameter :: RHO = 0.6_wp, HMAX = 35.0_wp, AGF = 0.7_wp
+   type(allometry_t), parameter :: allom = allometry_t()   ! the shipped pan-tropical coefficients
 
    call test_growth_respiration()
    call test_closure()
@@ -50,7 +52,7 @@ contains
       call check_close(name, (gl + gf + gw + gr + gs) - def, (gpp - resp) - gresp)
    end subroutine check_closure
 
-   !----- 1. growth_respiration = g * max(0, npp_growth) (relocated from the respiration module). !
+   !----- 1. growth_respiration = g * max(0, npp_growth). -----------------------------------!
    subroutine test_growth_respiration()
       call check_close('growth_resp: 0.3 * 10 = 3', growth_respiration(10.0_wp, 0.3_wp), 3.0_wp)
       call check_close('growth_resp: npp<=0 => 0',  growth_respiration(-5.0_wp, 0.3_wp), 0.0_wp)
@@ -131,17 +133,17 @@ contains
       !----- A sapling below the height cap and a big tree above it (35 m is reached near 60 cm). -!
       do k = 1, 2
          d   = merge(3.0_wp, 90.0_wp, k == 1)
-         w   = size2wood_carbon(d, dbh_to_height(d, HMAX), RHO, AGF)
+         w   = size2wood_carbon(allom, d, dbh_to_height(allom, d, HMAX), RHO, AGF)
          cap = limit(w, d, 0.0_wp, 0.4_wp, 0.5_wp)
          call check_close('sink limit: absolute => dbh grows by rate x dt',                          &
-                          wood_to_dbh(w + cap, RHO, HMAX, AGF) - d, 0.2_wp, 1.0e-9_wp)
+                          wood_to_dbh(allom, w + cap, RHO, HMAX, AGF) - d, 0.2_wp, 1.0e-9_wp)
          !----- With exponent 0.5 the cap is rate x sqrt(dbh): 0.4 x sqrt(d) x 0.5 yr. ----------!
          cap = limit(w, d, 0.0_wp, 0.4_wp, 0.5_wp, 0.5_wp)
          call check_close('sink limit: absolute x dbh^0.5 => dbh grows by rate x sqrt(dbh) x dt',     &
-                          wood_to_dbh(w + cap, RHO, HMAX, AGF) - d, 0.2_wp * sqrt(d), 1.0e-9_wp)
+                          wood_to_dbh(allom, w + cap, RHO, HMAX, AGF) - d, 0.2_wp * sqrt(d), 1.0e-9_wp)
       end do
       !----- Both set: the tighter one. At 3 cm a 0.4 cm/yr cap is ~30 % of wood a year. -------!
-      d = 3.0_wp ; w = size2wood_carbon(d, dbh_to_height(d, HMAX), RHO, AGF)
+      d = 3.0_wp ; w = size2wood_carbon(allom, d, dbh_to_height(allom, d, HMAX), RHO, AGF)
       call check_close('sink limit: both => the tighter (relative)', limit(w, d, 0.05_wp, 0.4_wp, 1.0_wp), 0.05_wp * w)
       call check_close('sink limit: both => the tighter (absolute)', limit(w, d, 5.0_wp, 0.4_wp, 1.0_wp),  &
                        limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp))
@@ -150,10 +152,10 @@ contains
       !      0.1 cm may grow 0.3; one that has grown the 0.4 may grow nothing. ---------------------!
       cap = limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp / 365.0_wp, window=1.0_wp, grown=0.0_wp)
       call check_close('sink limit: window, nothing grown => the window''s growth in one step',       &
-                       wood_to_dbh(w + cap, RHO, HMAX, AGF) - d, 0.4_wp, 1.0e-9_wp)
+                       wood_to_dbh(allom, w + cap, RHO, HMAX, AGF) - d, 0.4_wp, 1.0e-9_wp)
       cap = limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp / 365.0_wp, window=1.0_wp, grown=0.1_wp)
       call check_close('sink limit: window, 0.1 cm grown => 0.3 cm left',                             &
-                       wood_to_dbh(w + cap, RHO, HMAX, AGF) - d, 0.3_wp, 1.0e-9_wp)
+                       wood_to_dbh(allom, w + cap, RHO, HMAX, AGF) - d, 0.3_wp, 1.0e-9_wp)
       call check_close('sink limit: window used up => no wood',                                       &
                        limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp / 365.0_wp, window=1.0_wp, grown=0.5_wp), 0.0_wp)
    end subroutine test_sink_limitation
@@ -168,7 +170,7 @@ contains
       if (present(expo))   e   = expo
       if (present(window)) win = window
       if (present(grown))  gro = grown
-      limit = growth_sink_limitation(wood_carbon=wood, dbh=dbh, wood_density=RHO, hgt_max=HMAX,           &
+      limit = growth_sink_limitation(allom, wood_carbon=wood, dbh=dbh, wood_density=RHO, hgt_max=HMAX,           &
                                      aboveground_frac=AGF, max_relative_growth_rate=rgr,                  &
                                      max_absolute_growth_rate=agr, max_absolute_growth_exponent=e,        &
                                      dt_yr=dt, window_yr=win, grown_in_window=gro)

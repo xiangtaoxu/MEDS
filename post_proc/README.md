@@ -5,20 +5,34 @@ Five scripts and a notebook that read MEDS output and make sense of it. They nee
 (`pip install -e python/[viz]`, which adds **pyvista** and **scipy**), and the notebook needs
 **jupyter**.
 
-The scripts take a file and an output path:
+## Which file each one reads
+
+They read two different layouts, and a script given the other layout stops on a missing variable.
+
+**`meds_main`'s diagnostic output** (also what `meds.model` writes): one series of files per tier in
+`[output].dir`, named from `[output].prefix` — `<prefix>-F-YYYYMMDD.nc` (fast), `<prefix>-D-YYYYMM.nc`
+(daily), `<prefix>-M-YYYYMM.nc` (monthly) and `<prefix>-Y.nc` (annual) with the shipped `file_chunk`s
+(the monthly tier is one file per month while it carries cohort or patch variables, and per its
+`file_chunk` otherwise). Two readers take it:
 
 ```bash
-python post_proc/plot_site_timeseries.py     out-D-output.nc -o timeseries.png
-python post_proc/plot_forest_structure.py    out-D-output.nc -o forest.gif
-python post_proc/plot_pft_size.py            'out/*-M-*.nc'  -o pft_size.png
-python post_proc/plot_landscape_3d.py        out-D-output.nc -o landscape.png   # viz extra
-python post_proc/animate_landscape_growth.py out-D-output.nc -o growth.gif      # viz extra
+python post_proc/plot_pft_size.py 'OUTDIR/PREFIX-M-*.nc' -o pft_size.png     # a file, or a glob over a tier's files
+python post_proc/plot_pft_size.py examples/example05_forest_regeneration/output/regen-M.nc -o pft_size.png
+MEDS_RUN=OUTDIR jupyter notebook post_proc/evaluate_ithaca.ipynb             # the notebook takes the directory
 ```
 
-The notebook takes an output **directory**:
+**Example 03's stand file** (`examples/example03_demography/_write_nc.py`; `run_demography.py` writes
+`output/bare.nc` and `output/census.nc`): one record a year of the cohorts and patches under the
+names `pft`, `nplant`, `height`, `owner_patch`, `patch_area`, `total_lai`, …, which are not
+`meds_main`'s. The other four read only this layout:
 
 ```bash
-MEDS_RUN=runs/ithaca_ark30/out jupyter notebook post_proc/evaluate_ithaca.ipynb
+E=examples/example03_demography
+PYTHONPATH=python python $E/run_demography.py --start bare                      # 300 years, about a minute
+python post_proc/plot_site_timeseries.py     $E/output/bare.nc -o timeseries.png
+python post_proc/plot_forest_structure.py    $E/output/bare.nc -o forest.gif
+python post_proc/plot_landscape_3d.py        $E/output/bare.nc -o landscape.png    # viz extra
+python post_proc/animate_landscape_growth.py $E/output/bare.nc -o growth.gif       # viz extra
 ```
 
 ## What each one draws
@@ -87,15 +101,15 @@ demographic trajectories and the closure identities from **MONTHLY/ANNUAL**.
 It is not a benchmark. MEDS has never been scored against flux-tower or inventory data, and the
 notebook does not pretend to. What it checks is what is knowable without observations: identities
 the output must satisfy, and magnitudes and shapes that are either physically possible or are not.
-That is still enough to catch a great deal — the first run of it turned up three defects (#245,
-#246, #247) and one documented-behaviour surprise.
+That is still enough to catch a great deal — a process silently switched off, padding written as
+data, a stale row count — that the model's own conservation checks do not see.
 
 Two things it teaches that are easy to get wrong when reading these files by hand:
 
 - **Turning a rate back into an amount needs the width of its own window**, `t[i+1] - t[i]`, and the
   trailing partial window has to be dropped because its width is unknown. Pairing a rate with the
-  *previous* window's width is silently fine until the end of a run, where it turned one disturbance
-  event into a 10.8 kgC/m² phantom.
+  *previous* window's width is silently fine until the end of a run, where it can turn one
+  disturbance event into a 10.8 kgC/m² phantom.
 - **`litter_*_site` is not all the carbon entering the soil.** The cull and disturbance mortality
   pathways add necromass straight to the patch soil-carbon pools, bypassing the litter accumulator
   the litter variables read. Closing the soil-carbon budget from file needs the

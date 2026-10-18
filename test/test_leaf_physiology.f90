@@ -1,6 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !----- Leaf physiology: temperature response, FvCB C3 + Collatz C4 demand, the three stomatal !
-!      models, the coupled A-gs-Ci solver, water stress, and the night/closed branch.         !
+!      models, the coupled A-gs-Ci solver, water stress, and the night/closed branch          !
+!      (docs/science/leaf_gas_exchange.md). ----------------------------------------------------!
 program test_leaf_physiology
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_kelvin
@@ -10,10 +11,11 @@ program test_leaf_physiology
    use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale,                        &
                                  kattge_knorr_entropy, kattge_knorr_jv_ratio
-   use meds_leaf_gas_exchange,only : assimilation_demand_c3
+   use meds_leaf_gas_exchange,only : assimilation_demand_c3, rubisco_kinetics
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
-   use meds_fast_config, only : leaf_gas_exchange
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, &
+                                LIM_C4_PEP
+   use meds_fast_config, only : leaf_gas_exchange, leaf_photo_params_for_pft
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
@@ -52,7 +54,7 @@ program test_leaf_physiology
    call check_close(ap, 45.0_wp,     1.0e-6_wp, 'C3 Ap known-answer')
    call check_close(a_gross, 20.52632_wp, 1.0e-4_wp, 'C3 min co-limitation picks Aj')
 
-   !=== 1b. THERMAL ACCLIMATION, Kattge & Knorr (2007) -- issue #176. ======================!
+   !=== 1b. THERMAL ACCLIMATION, Kattge & Knorr (2007): docs/science/leaf_gas_exchange.md eq. (4). =!
    !        dS = a - b*T_growth[degC] is an arithmetic identity, so what these assert is that
    !        the CODE computes the published relation -- and then that the shift does what it is
    !        for: moving where the response peaks.
@@ -80,15 +82,16 @@ program test_leaf_physiology
       topt_warm = peak_temperature(ds_warm)
       call check(topt_warm > topt_cold + 1.0_wp,                                                 &
                  'the thermal optimum moves UP with growth temperature (> 1 K over a 20 K range)')
-      print '(a,2(f7.2,a))', '   [#176] Vcmax optimum: cold-grown ', topt_cold - t_kelvin,       &
+      print '(a,2(f7.2,a))', '   [acclimation] Vcmax optimum: cold-grown ', topt_cold - t_kelvin,       &
             ' C, warm-grown ', topt_warm - t_kelvin, ' C'
    end block
 
-   !=== 2b. CO-LIMITATION strength (#118). The two C3 smoothings must use the CO-LIMITATION ==!
-   !        curvatures, not theta_j. This is a REGIME assertion: at ambient CO2 Ac and Aj sit   !
-   !        close together, so the smoothing penalty lands exactly where the model spends most  !
-   !        of its time, and borrowing theta_j = 0.85 cost ~29 % of assimilation against the    !
-   !        sharp min(Ac,Aj,Ap). Measured here at PFT-1 kinetics, Ci = 280, saturating light.   !
+   !=== 2b. CO-LIMITATION strength. The two C3 smoothings must use the CO-LIMITATION ========!
+   !        curvatures, not theta_j (docs/science/leaf_gas_exchange.md §2). This is a REGIME     !
+   !        assertion: at ambient CO2 Ac and Aj sit close together, so the smoothing penalty     !
+   !        lands exactly where the model spends most of its time, and borrowing theta_j = 0.85  !
+   !        costs ~29 % of assimilation against the sharp min(Ac,Aj,Ap). Measured here at PFT-1  !
+   !        kinetics, Ci = 280, saturating light.                                                !
    block
       real(wp) :: a_min, a_new, a_old
       real(wp), parameter :: CI = 280.0_wp, VC = 60.0_wp, JR = 108.0_wp, TP = 15.0_wp
@@ -98,7 +101,7 @@ program test_leaf_physiology
       !----- The shipped curvatures. --------------------------------------------------------!
       call assimilation_demand_c3(CI, VC, JR, TP, GS, KC, KO, O2, COLIM_QUADRATIC,               &
                            0.98_wp, 0.95_wp, a_new, ac, aj, ap)
-      !----- What borrowing theta_j used to do, kept as the measured size of the defect. -----!
+      !----- What borrowing theta_j would do: the size of the error it makes. ----------------!
       call assimilation_demand_c3(CI, VC, JR, TP, GS, KC, KO, O2, COLIM_QUADRATIC,               &
                            0.85_wp, 0.85_wp, a_old, ac, aj, ap)
       call check(a_old < 0.80_wp * a_min,                                                        &
@@ -107,7 +110,7 @@ program test_leaf_physiology
                  'co-limitation curvatures must keep the smoothed rate within 12 % of min()')
       call check(a_new < a_min,                                                                  &
                  'smoothing must still sit below the sharp min(), not above it')
-      print '(a,3(f8.4,a))', '   [#118] min(Ac,Aj,Ap) = ', a_min, ' | theta_*_c3 = ', a_new,     &
+      print '(a,3(f8.4,a))', '   [co-limitation] min(Ac,Aj,Ap) = ', a_min, ' | theta_*_c3 = ', a_new,     &
             ' | theta_j borrowed = ', a_old, ''
    end block
 
@@ -165,8 +168,8 @@ program test_leaf_physiology
               flux2%limitation == LIM_C4_PEP, 'C4 limitation flag must be a C4-valid regime')
    call check(flux2%ci / flux2%cs < flux%ci / flux%cs, 'C4 should operate at a lower Ci/Cs than C3')
 
-   !=== 6b. C4 kp temperature response (BUG4): at a CO2/PEP-limiting Ci the PEP-limited gross    !
-   !     rate must RISE with leaf temperature -- kp was previously FROZEN at its 25 degC value. ==!
+   !=== 6b. C4 kp temperature response: at a CO2/PEP-limiting Ci the PEP-limited gross rate     !
+   !     must RISE with leaf temperature, which it cannot with kp held at its 25 degC value. =====!
    block
       real(wp) :: a_cold, a_warm
       env = std_env() ; env%ca = 40.0_wp                     ! very low CO2 -> C4 PEP-limited
@@ -182,7 +185,7 @@ program test_leaf_physiology
    end block
 
    !=== 6c. Transpiration puts stomata gs and the boundary layer gb in SERIES when use_boundary_layer is on   !
-   !     (was gs alone, overestimating the water flux). ==========================================!
+   !     (gs alone would overestimate the water flux). ===========================================!
    block
       real(wp) :: e_series
       cfg%leaf_use_boundary_layer = .true.
@@ -320,10 +323,11 @@ program test_leaf_physiology
       prev = flux%A_net
    end do
 
-   !=== 9. O2 propagates to BOTH places oxygen enters the C3 demand (#117). ================!
-   !      Gamma* = 0.5*O/S_(c/o) is proportional to the O2 partial pressure. Before the fix,
-   !      o2_mol_frac reached only the Michaelis term Kc(1+O/Ko), so raising O2 inhibited
-   !      carboxylation while leaving the photorespiratory penalty on Aj untouched.
+   !=== 9. O2 propagates to BOTH places oxygen enters the C3 demand. =======================!
+   !      Gamma* = 0.5*O/S_(c/o) is proportional to the O2 partial pressure
+   !      (docs/science/leaf_gas_exchange.md eq. (3)). If o2_mol_frac reached only the Michaelis
+   !      term Kc(1+O/Ko), raising O2 would inhibit carboxylation while leaving the
+   !      photorespiratory penalty on Aj untouched.
    env = std_env()
    cfg%o2_mol_frac = 0.209_wp
    call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an0 = flux%A_net       ! the calibration point
@@ -336,20 +340,41 @@ program test_leaf_physiology
    call check(an1 > an0, 'halving O2 must RAISE A_net (less photorespiration)')
    call check(an2 < an0, 'raising O2 to 35% must LOWER A_net (more photorespiration)')
    !----- The response must run through Gamma*, NOT just the Michaelis term. This is the assertion -!
-   !      that fails on the pre-fix code, and the thresholds are set from measuring BOTH versions   !
-   !      on this exact fixture rather than guessed:                                                !
+   !      a frozen Gamma* fails, and the thresholds are set from measuring BOTH on this exact       !
+   !      fixture rather than guessed:                                                              !
    !                                                                                          !
    !                        O2 = 10.5%      O2 = 35%                                                !
    !        with Gamma*(O2)   +22.0 %       -23.7 %                                                  !
    !        frozen Gamma*      +8.2 %       -10.5 %   <- Kc(1+O/Ko) acting alone                      !
    !                                                                                          !
-   !      A >5% gate would pass on BOTH, which is how the first version of this test let the         !
-   !      pre-fix code through. 15% separates them with room on either side.                          !
+   !      A >5% gate would pass on BOTH; 15% separates them with room on either side.                 !
    call check((an1 - an0) / abs(an0) > 0.15_wp,                                                  &
               'halving O2 must raise A_net > 15% -- the response runs through Gamma*, not just Kc')
    call check((an2 - an0) / abs(an0) < -0.15_wp,                                                 &
               'raising O2 to 35% must cut A_net > 15% -- likewise')
    cfg%o2_mol_frac = 0.209_wp                 ! back to the shipped default
+
+   !=== 10. Gamma* as a mole fraction does not depend on pressure (docs/science/leaf_gas_exchange.md!
+   !       eq. (3)): it is proportional to the O2 partial pressure, which scales with pressure as   !
+   !       the CO2 partial pressure does. At 25 C and 21 % O2 it is Bernacchi et al. (2001)'s       !
+   !       42.75 umol/mol at sea level and at 3000 m (70 kPa) alike. Kc and Ko are partial          !
+   !       pressures, so as mole fractions they scale as 1/P. ======================================!
+   block
+      type(leaf_photo_params_t) :: pp
+      real(wp) :: kc_low, ko_low, gstar_low, o2_low, kc_high, ko_high, gstar_high, o2_high
+      call leaf_photo_params_for_pft(cfg, 1_ik, pp)
+      call rubisco_kinetics(pp, t_kelvin + 25.0_wp, 101325.0_wp, kc_low, ko_low, gstar_low, o2_low)
+      call rubisco_kinetics(pp, t_kelvin + 25.0_wp, 70000.0_wp, kc_high, ko_high, gstar_high, o2_high)
+      call check(gstar_high == gstar_low, 'Gamma* in umol/mol does not depend on pressure')
+      call check_close(gstar_low, 42.75_wp, 1.0e-12_wp, 'Gamma* at 25 C and 21 % O2 is 42.75 umol/mol')
+      call check(o2_high == o2_low, 'O2 in umol/mol does not depend on pressure')
+      call check_close(kc_high * 70000.0_wp, kc_low * 101325.0_wp, 1.0e-12_wp, 'Kc is a partial pressure')
+      call check_close(ko_high * 70000.0_wp, ko_low * 101325.0_wp, 1.0e-12_wp, 'Ko is a partial pressure')
+      !----- The same Gamma* at 35 C, where the Arrhenius factor is not 1. -----------------------!
+      call rubisco_kinetics(pp, t_kelvin + 35.0_wp, 101325.0_wp, kc_low, ko_low, gstar_low, o2_low)
+      call rubisco_kinetics(pp, t_kelvin + 35.0_wp, 70000.0_wp, kc_high, ko_high, gstar_high, o2_high)
+      call check(gstar_high == gstar_low, 'Gamma* in umol/mol does not depend on pressure at 35 C')
+   end block
 
    write(*,'(a)') '   PASS'
 
@@ -357,7 +382,7 @@ contains
 
    !----- Locate the peak of the peaked-Arrhenius response by a coarse scan, so the optimum is   !
    !      MEASURED from the function rather than re-derived from a formula the test would then    !
-   !      be checking against itself (#176). -----------------------------------------------------!
+   !      be checking against itself. ------------------------------------------------------------!
    pure real(wp) function peak_temperature(ds) result(t_opt)
       real(wp), intent(in) :: ds
       real(wp)    :: t, k, k_best

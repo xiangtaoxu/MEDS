@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """make_forcing_file.py -- write a MEDS single forcing file, the (time, grid) NetCDF that
-[forcing].format = "ED_default" reads (src/forcing/meds_met_driver.f90), from either source of ERA5-Land
+[forcing].format = "ED_default" reads (src/io/input/forcing/meds_met_driver.f90), from either source of ERA5-Land
 data this folder produces:
 
   --data-path DIR   an ED_ERA5land archive (build_era5land_archive.py), for the days --start..--end.
@@ -16,7 +16,7 @@ data this folder produces:
 The location is required, as the period is: --lat with --lon, --cells for several locations, or
 --all-cells (box files) for every cell of the box.
 
-Both inputs give the same file (MEDS_FORCING_DESIGN.md §7.1):
+Both inputs give the same file (docs/science/forcing.md §1):
   * dims (time, grid); coordinates time (seconds since the first record), latitude, longitude per
     grid point, and elevation where the source knows it (the archive);
   * Tair [K], PSurf [Pa], the dewpoint Tdew [K] as ERA5-Land delivers it (the model makes specific
@@ -30,7 +30,7 @@ No CO2air: CO2 is not meteorology, and the model takes it from [forcing].co2_sou
 a MEDS CO2 file such as data/co2/), never from this file -- it rejects a file that carries one.
 MEDS never gap-fills: a missing value is an error, here as in the model.
 
-De-accumulation of the box files (the 00Z trap, MEDS_FORCING_DESIGN.md §7.3): ERA5-Land accumulates
+De-accumulation of the box files (the 00Z trap, docs/science/forcing.md §1): ERA5-Land accumulates
 from 00 UTC and resets daily, and the 00:00 stamp holds the WHOLE previous day. Ordered by valid
 time, per-hour(H) = raw(H) - raw(H-1) everywhere except at 01:00 UTC, where per-hour = raw(01:00).
 A leading sample that is not 01:00 cannot be differenced and is dropped (a boundary, not a gap).
@@ -323,10 +323,10 @@ def main(argv=None):
         history="make_forcing_file.py",
         timestep_seconds=3600,
         avg_convention="end",          # flux vars: mean over the hour ENDING at the stamp
-        sw_input_kind="total",         # total SWdown; the Fortran reader partitions (design §5.6)
+        sw_input_kind="total",         # total SWdown; the Fortran reader partitions (docs/science/forcing.md §6)
         wind_meas_height_m=10.0,       # ERA5-Land wind is at 10 m; checked against [forcing].wind_height
         tq_height_m=2.0,               # 2 m temperature and dewpoint; checked against [forcing].tq_height
-        height_above="zero_plane",     # the IFS surface layer has no displacement height (forcing.md sec. 8)
+        height_above="zero_plane",     # the IFS surface layer has no displacement height (docs/science/forcing.md §8)
     )
     write_meds_forcing(args.out, times, grid, arrays, attrs)
     print(f"wrote {args.out}: ntime={len(times)} ({times[0]:%Y-%m-%d %H:%M} .. {times[-1]:%Y-%m-%d %H:%M} UTC), "

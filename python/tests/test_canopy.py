@@ -52,6 +52,20 @@ def test_plastic_traits_follow_the_switch(tmp_path):
     assert off.n_pft >= 1
 
 
+def test_a_config_rewritten_at_the_same_path_is_read_again(tmp_path):
+    """A calibration loop rewrites its trial's config at one path: each new Canopy reads the file
+    as it is now, not the configuration the library last opened from that path."""
+    _lib_or_skip()
+    from meds.canopy import Canopy
+    pft = np.array([1, 1], dtype=np.int32)
+    lai_above = np.array([0.0, 5.0])
+    path = _config(tmp_path, trait_dynamics__trait_plasticity_on=False)
+    v_off, _ = Canopy(path).plastic_traits(pft, lai_above)
+    assert path == _config(tmp_path, trait_dynamics__trait_plasticity_on=True)
+    v_on, _ = Canopy(path).plastic_traits(pft, lai_above)
+    assert v_off[0] == v_off[1] and v_on[0] > v_on[1]
+
+
 def test_the_two_stream_conserves_the_beam(tmp_path):
     _lib_or_skip()
     from meds.canopy import Canopy
@@ -63,7 +77,7 @@ def test_the_two_stream_conserves_the_beam(tmp_path):
     assert r["cohort_leaf_vis"].shape == (3, 2)
     assert np.allclose(r["cohort_leaf_vis"].sum(axis=1), r["leaf_vis"])
     inc = vb + vd
-    alb = 0.15                                                       # the reference's bare-soil VIS albedo
+    alb = 0.15                                                       # ground_albedo_vis in meds_config_main.toml
     #----- every VIS photon is reflected to the sky, absorbed by leaves or wood, or absorbed by the ground
     absorbed_ground = (1.0 - alb) * r["ground_vis"]
     assert np.allclose(r["up_vis"] + r["leaf_vis"] + r["wood_vis"] + absorbed_ground, inc, atol=1e-9)

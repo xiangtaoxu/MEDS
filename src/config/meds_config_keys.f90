@@ -1,16 +1,17 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_config_keys -- which keys a config may hold (N-10).                                    !
+! meds_config_keys -- which keys a config may hold (docs/configuration.md).                !
 !                                                                                          !
-! The two reference configs, meds_config_main.toml and meds_config_pft.toml, list every key   !
-! MEDS reads, set or commented out at its default. A run checks each of its two files against !
-! its reference: a key the reference does not list stops the run, because a key that parses   !
-! and does nothing is worse than one that is absent -- `dt_forcing = 7200` (the key is         !
-! `timestep`) used to run silently at the file's own spacing. A retired key is named with what  !
-! replaced it; any other unknown key with the listed key it most likely meant.                  !
+! The two reference configs, meds_config_main.toml and meds_config_pft.toml, list every    !
+! key MEDS reads, set or commented out at its default. A run checks each of its two files  !
+! against its reference: a key the reference does not list stops the run, because a key    !
+! that parses and does nothing is worse than one that is absent -- `dt_forcing = 7200`     !
+! (the key is `timestep`) would otherwise run silently at the file's own spacing. A        !
+! retired key is named with what replaced it; any other unknown key with the listed key it !
+! most likely meant.                                                                       !
 !                                                                                          !
-! The lists come from the references at build time (cmake/meds_config_keys.cmake), and the     !
-! test check_config_keys.cmake holds the references equal to the keys the loader reads.         !
+! The lists come from the references at build time (cmake/meds_config_keys.cmake), and the !
+! test check_config_keys.cmake holds the references equal to the keys the loader reads.    !
 !==========================================================================================!
 module meds_config_keys
    use meds_kinds, only : ik
@@ -23,8 +24,8 @@ module meds_config_keys
    integer, parameter :: KEY_LEN = 64            !< meds_toml's key length
    include 'meds_config_keys.inc'                ! MAIN_KEYS, PFT_KEYS
 
-   !----- Keys MEDS used to read. Each is refused with what replaced it, so a config written    !
-   !      against an older MEDS says what to change rather than only that something is wrong. ---!
+   !----- Retired keys. Each is refused with what replaced it, so a config written against       !
+   !      an older MEDS says what to change rather than only that something is wrong. -----------!
    character(len=*), parameter :: GROWTH_CURVE_GONE = 'growth is carbon-driven, by the NPP the '// &
                                                       'cohort allocates; the empirical growth curve is gone'
    character(len=*), parameter :: PHENO_SHARP = 'every phenology switch is sigma(s (x - x*)) with one '// &
@@ -43,6 +44,13 @@ module meds_config_keys
    character(len=*), parameter :: SOIL_NETWORK = 'soil water is solved with the plants'' water as '// &
       'one network (implicit Euler, Newton, its own sub-steps), whose error is set by [soil].rtol '// &
       'and [soil].atol; the Richards solver''s linearization and sub-step controls are gone'
+   character(len=*), parameter :: NITROGEN = 'the nitrogen cycle is not built; it is planned after '// &
+      'the move to ED-MORE, and MEDS is carbon-only until then: delete the key'
+   character(len=*), parameter :: LITTER_SPLIT = 'the litter is split by the tissue it comes from, with '// &
+      'each PFT''s f_labile_leaf, f_labile_stem and aboveground_frac; delete the key'
+   character(len=*), parameter :: CROWN_AREA = 'every crown closes over its patch (crown area 1, '// &
+      'ED2''s closed-crown path), so the crown-area allometry and the crown fraction are gone; the '// &
+      'in-canopy wind attenuates by leaf area alone: delete the key'
    type :: retired_key_t
       character(len=KEY_LEN) :: key
       character(len=320)     :: why
@@ -96,6 +104,15 @@ module meds_config_keys
                     'always on now (the freeze/thaw plateau always was); delete the key'),       &
       retired_key_t('output.strict_caps', 'a run always stops at the step its live cohort or '//  &
                     'patch count exceeds output.cohort_max or patch_max; raise the cap'),        &
+      retired_key_t('pft.leaf_lifespan_toc', 'leaves are parameterized by their turnover rate: '// &
+                    'set pft.leaf_turnover_rate_toc [1/yr] = 1 / the lifespan [yr] (a 2-yr '//      &
+                    'lifespan is 0.5)'),                                                         &
+      retired_key_t('derived.kplastic_llspan', 'the leaf turnover rate is plastic in its place: '// &
+                    'set derived.kplastic_leaf_turnover = -kplastic_llspan (<= 0: rate = '//       &
+                    'leaf_turnover_rate_toc * exp(k * LAI above), slower in shade)'),             &
+      retired_key_t('trait_dynamics.fineroot_lifespan_plastic', 'renamed '//                  &
+                    'trait_dynamics.fineroot_turnover_plastic: fine-root turnover x (the '//       &
+                    'cohort''s leaf turnover rate / the top-of-canopy one)'),                    &
       retired_key_t('pft.repro_carbon_efficiency', 'renamed pft.recruit_carbon_efficiency: the '// &
                     'share of reproduction carbon that becomes recruits (seed set, '//         &
                     'germination and seedling survival together)'),                            &
@@ -167,7 +184,20 @@ module meds_config_keys
       retired_key_t('pft.growth_dbh_slope', GROWTH_CURVE_GONE),                                  &
       retired_key_t('pft.growth_dbh_cap',   GROWTH_CURVE_GONE),                                  &
       retired_key_t('pft.growth_dbh_max',   GROWTH_CURVE_GONE),                                  &
-      retired_key_t('pft.growth_lai_slope', GROWTH_CURVE_GONE) ]
+      retired_key_t('pft.growth_lai_slope', GROWTH_CURVE_GONE),                                  &
+      retired_key_t('soil_carbon.agf_fast', LITTER_SPLIT),                                      &
+      retired_key_t('soil_carbon.agf_struct', LITTER_SPLIT),                                    &
+      retired_key_t('soil_carbon.n_cycle_on', NITROGEN),                                        &
+      retired_key_t('soil_carbon.c2n_structural', NITROGEN),                                    &
+      retired_key_t('soil_carbon.c2n_slow', NITROGEN),                                          &
+      retired_key_t('soil_carbon.c2n_fast', NITROGEN),                                          &
+      retired_key_t('soil_carbon.n_immobil_supply_scale', NITROGEN),                            &
+      retired_key_t('allometry.ca_b1', CROWN_AREA),                                             &
+      retired_key_t('allometry.ca_b2', CROWN_AREA),                                             &
+      retired_key_t('pft.crown_area_frac', CROWN_AREA),                                         &
+      retired_key_t('region.detail_polygons', 'the region files hold every variable and tier for '// &
+                    'every polygon, cohort, patch and sub-daily output included; choose the '//      &
+                    'variables with [output].io_config') ]
 
    !----- What the check found, one line per key, reported with the missing required keys. -----!
    integer, parameter :: MAX_REPORT = 256

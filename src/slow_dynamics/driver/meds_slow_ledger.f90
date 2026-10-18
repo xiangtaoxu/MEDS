@@ -1,6 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_slow_ledger -- the SITE conservation ledger across a slow step (plan §10.2).            !
+! meds_slow_ledger -- the SITE conservation ledger across a slow step. Its design record is       !
+! MEDS_SLOW_LOOP_CONSERVATION_LEDGER.md §10.2 (docs/dev_plans/archive/).                          !
 !                                                                                          !
 ! WHY A SECOND LEDGER EXISTS AT ALL. `budget_t` already gives every fast store a closure test, !
 ! and fast_dynamics merges those into the run-level energy/water ledgers. But those accumulate  !
@@ -9,8 +10,7 @@
 ! the SLOW step. A discontinuous jump between the end of one fast window and the start of the    !
 ! next -- a cull discarding tissue water, a fusion mixing canopy air on the wrong weights, a      !
 ! recruit endowed with carbon nobody paid for -- is therefore invisible BY CONSTRUCTION, not by   !
-! oversight. That is why a conservation-focused review and two conservation PRs all passed over   !
-! the items §10.2 lists.                                                                          !
+! oversight.                                                                                      !
 !                                                                                          !
 ! So this ledger is the fast one turned inside out: a SNAPSHOT ledger. Store before, declared     !
 ! boundary terms, store after; whatever is left is the imbalance. It is SITE-LEVEL and AREA-       !
@@ -18,13 +18,11 @@
 ! patch, fuse_2_patches destroys one, terminate_patches renormalizes every area -- so a per-patch   !
 ! ledger would have nothing to compare against.                                                     !
 !                                                                                          !
-! WHAT THIS MODULE DELIBERATELY DOES NOT DO: fix anything. Every term §10.2 identifies is still     !
-! wrong after this lands. The point is to make each one MEASURABLE, attributed to the phase that    !
-! produced it, before deciding what it deserves -- measurement inverted the expected ranking twice  !
-! in #128/#129, and the prediction that growth respiration dominates the carbon bucket is recorded  !
-! in §10.2 precisely so the numbers can overturn it. Terms that are already honest are DECLARED     !
-! (see slow_ledger_declare); everything else lands in the phase's residual, which is the model's    !
-! own admission of what it cannot account for.                                                      !
+! WHAT THIS MODULE DELIBERATELY DOES NOT DO: fix anything. The point is to make each term           !
+! MEASURABLE, attributed to the phase that produced it, before deciding what it deserves --         !
+! measurement has more than once inverted the expected ranking of the terms. Terms that are         !
+! honest boundary crossings are DECLARED (see slow_ledger_declare); everything else lands in        !
+! the phase's residual, which is the model's own admission of what it cannot account for.           !
 !                                                                                          !
 ! PHASE ATTRIBUTION is the whole value. A single number for the step would say "carbon does not     !
 ! close" and leave the search to the reader. Marking at each operator boundary says WHICH operator, !
@@ -33,10 +31,10 @@
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : rho_h2o
-   use meds_config,             only : meds_config_t, soil_column_layers
+   use meds_config,             only : meds_config_t, soil_column_params
    use meds_site_state_types,   only : site_t, cohort_tissue_heat_capacity,                    &
-                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
-   use meds_column_params,      only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
+                                       TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
+   use meds_column_params,      only : soil_params_t
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
    use meds_budget_check,       only : budget_rtol_flux
@@ -51,7 +49,8 @@ module meds_slow_ledger
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
    public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
-             SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC
+             SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,              &
+             SLOW_PHASE_TISSUE_WATER
 
    !----- The phases a slow step is divided into. Each is marked at the boundary of the operator  !
    !      group that owns it, so a residual names the operator that produced it. -----------------!
@@ -63,7 +62,8 @@ module meds_slow_ledger
    integer(ik), parameter :: SLOW_PHASE_PATCH    = 6_ik  !< patch sort / fuse / terminate (+ trailing cohort ops)
    integer(ik), parameter :: SLOW_PHASE_CANOPY   = 7_ik  !< refresh_canopy_depth (the open CAS control volume)
    integer(ik), parameter :: SLOW_PHASE_SOILC    = 8_ik  !< the CENTURY daily step
-   integer(ik), parameter :: N_SLOW_PHASE        = 8_ik
+   integer(ik), parameter :: SLOW_PHASE_TISSUE_WATER = 9_ik  !< tissue water above capacity shed, before the fast loop
+   integer(ik), parameter :: N_SLOW_PHASE        = 9_ik
 
    !----- Carbon of one mole of CO2 [kgC/umol]: 1e-6 mol * 0.012 kgC/mol. Turns the CAS mixing     !
    !      ratio into the same currency as the plant and soil pools, so all four carbon stores add. !
@@ -79,9 +79,10 @@ module meds_slow_ledger
    !      for a phase that DECLARES nothing but rearranges a large store: the structural          !
    !      operators permute, merge and renormalise ~25 kgC/m2 of live carbon, and the arithmetic  !
    !      cost of that is ~1e-11 kgC/m2 -- above a 3e-12 floor and utterly below anything the     !
-   !      ledger exists to find (the smallest REAL term it caught was 2.96e-6). This is NOT the   !
+   !      ledger exists to find (the smallest REAL term it has found is 2.96e-6). This is NOT the !
    !      store-relative tolerance budget_check's header warns against: 1e-11 is a round-off      !
-   !      bound, five orders tighter than the 1e-6 that let a sustained leak hide.  -------------!
+   !      bound, five orders tighter than the 1e-6 store-relative tolerance that can hide a       !
+   !      sustained leak. ------------------------------------------------------------------------!
    real(wp), parameter :: SLOW_ROUNDOFF_FRAC = 1.0e-11_wp !< [-] of the store, per mark
 
    !----- One site total per currency, per m2 of SITE (already area-weighted over patches). -------!
@@ -283,16 +284,17 @@ contains
    !                                                                                          !
    !    * `recruit_pool * carbon_min` -- reproduction carbon converted to recruit density and     !
    !      carried forward until a pool crosses the spawn threshold. Valued at carbon_min because  !
-   !      that is the conversion the model itself used; the gap between that and what init_cohort !
-   !      actually endows is §10.2.2 item 3, and valuing it this way is what makes that gap land  !
-   !      in the RECRUIT phase's residual instead of being absorbed silently.                     !
+   !      that is the conversion the model itself used; the rest of what init_cohort endows is    !
+   !      the recruit's external draw, which apply_recruitment reports and the RECRUIT phase      !
+   !      declares, so a gap between the two lands in the RECRUIT phase's residual instead of     !
+   !      being absorbed silently.                                                                !
    !                                                                                          !
-   !  `shed_water_rate` is deliberately NOT a store, though it looks like one. It is a HANDOFF   !
+   !  `shed_water_rate` is deliberately NOT a store, though it looks like one. It is a HANDOFF    !
    !  to the fast tier, live across the FAST window rather than across the slow step: by the      !
    !  time the next slow step opens, that water is already in the soil and the rate variable      !
-   !  still holds it. Carrying it as a store double-counts it at every open, which reads as a     !
-   !  steady one-signed water leak in the allocate phase -- measured at ~8e-7 kg/step before this !
-   !  was corrected. It is DECLARED instead, the exact mirror of the fast->slow carbon handover.  !
+   !  still holds it. Carrying it as a store would double-count it at every open, a steady        !
+   !  one-signed water leak in the allocate phase. It is DECLARED instead, the exact mirror of    !
+   !  the fast->slow carbon handover.                                                             !
    !=======================================================================================!
    pure function slow_site_store(site, cfg, soil, rho_air) result(store)
       type(site_t),        intent(in) :: site
@@ -306,7 +308,7 @@ contains
 
       !----- Recruit-pool valuation, one per PFT (the same conversion compute_vital_rates used). -!
       do pf = 1_ik, cfg%pft%n
-         c_min(pf) = min_cohort_carbon(cfg%pft%min_cohort_height, cfg%pft%wood_density(pf))
+         c_min(pf) = min_cohort_carbon(site%cohort%allom, cfg%pft%min_cohort_height, cfg%pft%wood_density(pf))
       end do
 
       do ip = 1_ik, site%patch%n
@@ -331,7 +333,7 @@ contains
 
          !----- Canopy air. The capacities are rho*depth and dmol*depth, exactly as the fast       !
          !      prepass forms them, so a depth change moves the store by the amount the open        !
-         !      control volume entrained or detrained (plan §10.2.4).  ---------------------------!
+         !      control volume entrained or detrained (refresh_canopy_depth declares it). ---------!
          associate (cas => site%patch%cas(ip))
             dmol     = cas_molar_density(rho_air, cas%can_shv)
             cap_mass = rho_air * cas%can_depth
@@ -357,7 +359,7 @@ contains
 
          !----- Cohorts of this patch. nplant is per m2 of PATCH ground, so the patch area weight  !
          !      converts to site; the interception films are ALREADY ground-referenced and must    !
-         !      not take the nplant factor (the distinction PR #119 had to fix by hand).           !
+         !      not take the nplant factor.                                                        !
          i0 = site%patch%cohort_offset(ip)
          i1 = i0 + site%patch%cohort_count(ip) - 1_ik
          associate (c => site%cohort)
@@ -368,9 +370,8 @@ contains
                store%water  = store%water  + a * (c%leaf_surf_water(i) + c%wood_surf_water(i))
                !----- Tissue heat, through the SHARED capacity (state/site), so the ledger, the    !
                !      demography operators and the slow driver cannot drift apart on what a        !
-               !      cohort's thermal mass is. This module carried its own copy until the shared  !
-               !      one existed; keeping two was always going to end one way.  -----------------!
-               call cohort_tissue_heat_capacity(c, i, TISSUE_C_LEAF, TISSUE_C_SAPW,               &
+               !      cohort's thermal mass is. ---------------------------------------------------!
+               call cohort_tissue_heat_capacity(c, i, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,           &
                                                 TISSUE_HCAP_MIN, cap_leaf, cap_wood)
                store%energy = store%energy + a * (cap_leaf * c%leaf_temp(i) + cap_wood * c%wood_temp(i))
             end do
@@ -392,7 +393,7 @@ contains
          i0 = site%patch%cohort_offset(ip)
          i1 = i0 + site%patch%cohort_count(ip) - 1_ik
          do i = i0, i1
-            call cohort_tissue_heat_capacity(site%cohort, i, TISSUE_C_LEAF, TISSUE_C_SAPW,        &
+            call cohort_tissue_heat_capacity(site%cohort, i, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,    &
                                              TISSUE_HCAP_MIN, cap_leaf, cap_wood)
             e = e + site%patch%area(ip) * (cap_leaf * site%cohort%leaf_temp(i)                    &
                                          + cap_wood * site%cohort%wood_temp(i))
@@ -439,15 +440,8 @@ contains
    subroutine ensure_soil_geometry(ledger, cfg)
       type(slow_ledger_t), intent(inout) :: ledger
       type(meds_config_t), intent(in)    :: cfg
-      real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms
-      integer(ik) :: n_soil_layer
       if (ledger%soil_ready) return
-      associate (sc => cfg%soil_column)
-         call soil_column_layers(sc, soil_bottoms, n_soil_layer)
-         call build_soil_hydr_params(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat,       &
-                                     sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,        &
-                                     sc%psi_fc, ledger%soil)
-      end associate
+      call soil_column_params(cfg%soil_column, ledger%soil)
       ledger%soil_ready = .true.
    end subroutine ensure_soil_geometry
 
@@ -464,6 +458,7 @@ contains
       case (SLOW_PHASE_PATCH)    ; nm = 'patch fuse/term'
       case (SLOW_PHASE_CANOPY)   ; nm = 'canopy depth'
       case (SLOW_PHASE_SOILC)    ; nm = 'soil carbon'
+      case (SLOW_PHASE_TISSUE_WATER) ; nm = 'tissue water'
       case default               ; nm = '?'
       end select
    end function slow_phase_name
@@ -520,11 +515,10 @@ contains
          print '(a,i0,a)', 'WARNING: ', nbad, ' phase/currency residual(s) exceed tolerance --'
          print '(a)', '         a slow-step operator is moving something it does not declare.'
       end if
-      !----- ...and the OTHER verdict. This one is not a tolerance question: a negative carbon    !
-      !      mass or a pool past the divergence ceiling is impossible, however well it balances.   !
-      !      It is reported SEPARATELY and after, because a run can close perfectly on all three   !
-      !      currencies while holding a state that cannot exist -- which is exactly what a 50-year  !
-      !      spin-up did before this check existed.                                                 !
+      !----- ...and the OTHER verdict. This one is not a tolerance question: a negative carbon      !
+      !      mass or a pool past the divergence ceiling is impossible, however well it balances.    !
+      !      It is reported SEPARATELY and after, because a run can close perfectly on all three    !
+      !      currencies while holding a state that cannot exist (a runaway soil-carbon pool).       !
       if (ledger%bad_phase /= 0_ik) then
          print '(a)', '--------------------------------------------------------------------------'
          print '(a)', 'IMPOSSIBLE STORE: a phase left a CENTURY pool that cannot exist.'

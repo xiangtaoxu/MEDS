@@ -1,19 +1,17 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_config -- the ONE seam from meds_config_t to the fast loop's options leaves.     !
+! meds_fast_config -- the ONE seam from meds_config_t to the fast loop's options leaves.   !
 !                                                                                          !
-! Every procedure here reads the whole run configuration and produces a self-contained record !
-! the fast loop carries: the per-PFT leaf-photosynthesis table, the tolerance set, the error   !
-! controller, the integrator knobs. They run ONCE per run, from build_fast_context.             !
+! Every procedure here reads the whole run configuration and produces a self-contained     !
+! record the fast loop carries: the per-PFT leaf-photosynthesis table, the canopy optics   !
+! table, the tolerance set, the error controller, the integrator knobs. The builders run   !
+! ONCE per run, from build_fast_context; acclimate_leaf_photo_table refreshes the leaf     !
+! table each slow step, and leaf_gas_exchange is the single-leaf wrapper the tests call.   !
 !                                                                                          !
-! They are here rather than where they used to live for one reason (structure-plan rule 5 and   !
-! rule 6): a kernel takes an OPTIONS LEAF, never a config handle, so a procedure that takes      !
-! meds_config_t is by definition driver code. Two of these sat in meds_fast_config, which     !
-! made a facade that was supposed to be pure re-export also carry logic; three sat in              !
-! meds_fast_control, a numerics module, which now keeps only the norm and the step controller.     !
-!                                                                                          !
-! Consequence worth stating: NOTHING below this module reads meds_config_t. The kernels take       !
-! leaves, and the leaves are built here.                                                            !
+! They are driver code by definition (MEDS_CODE_STRUCTURE_DESIGN.md §6, rule 5): a kernel  !
+! takes an OPTIONS LEAF, never a config handle, so a procedure that takes meds_config_t    !
+! lives here, not in a kernel, a facade (rule 6) or a numerics module. NOTHING below this  !
+! module reads meds_config_t: the kernels take leaves, and the leaves are built here.      !
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
@@ -103,19 +101,21 @@ contains
    end subroutine build_leaf_photo_table
 
    !=======================================================================================!
-   !  acclimate_leaf_photo_table -- refresh the peaked-form entropy terms and the Jmax:Vcmax   !
-   !  ratio from a running-mean GROWTH temperature (#176, Kattge & Knorr 2007).                 !
-   !                                                                                          !
-   !  WHY THE TABLE AND NOT THE KERNEL. dS and the capacity ratio are already table fields, so   !
-   !  acclimation is a parameter refresh, not a new quantity the solver has to be told about --  !
-   !  no kernel signature changes, no per-cohort argument, and the law stays in one place. The   !
-   !  REFERENCE values live in cfg and are never overwritten, so this is idempotent: calling it  !
-   !  twice with the same temperature gives the same table, and it can be called every slow step !
-   !  without drifting.                                                                          !
-   !                                                                                          !
-   !  SITE-LEVEL, not per cohort. Kattge & Knorr fit dS against the mean AIR temperature of the  !
-   !  preceding weeks, so a per-cohort leaf temperature would apply the relation well outside    !
-   !  its calibration. Per-cohort acclimation is on the ROADMAP as a separate question.          !
+   !  acclimate_leaf_photo_table -- refresh the peaked-form entropy terms and the          !
+   !  Jmax:Vcmax ratio from a running-mean GROWTH temperature (Kattge & Knorr 2007;        !
+   !  docs/science/leaf_gas_exchange.md eq. (4)).                                          !
+   !                                                                                       !
+   !  WHY THE TABLE AND NOT THE KERNEL. dS and the capacity ratio are already table        !
+   !  fields, so acclimation is a parameter refresh, not a new quantity the solver has to  !
+   !  be told about -- no kernel signature changes, no per-cohort argument, and the law    !
+   !  stays in one place. The REFERENCE values live in cfg and are never overwritten, so   !
+   !  this is idempotent: calling it twice with the same temperature gives the same table, !
+   !  and it can be called every slow step without drifting.                               !
+   !                                                                                       !
+   !  SITE-LEVEL, not per cohort. Kattge & Knorr fit dS against the mean AIR temperature   !
+   !  of the preceding weeks, so a per-cohort leaf temperature would apply the relation    !
+   !  well outside its calibration. Per-cohort acclimation is a separate question (see     !
+   !  docs/ROADMAP.md).                                                                    !
    !=======================================================================================!
    subroutine acclimate_leaf_photo_table(cfg, t_growth, table)
       type(meds_config_t),      intent(in)    :: cfg
@@ -131,9 +131,10 @@ contains
       end do
    end subroutine acclimate_leaf_photo_table
 
-   !----- build_rad_optics -- the canopy two-stream's per-PFT optics table, from the [pft] trait     !
-   !      table, once per run. Per-PFT, so two PFTs can differ in how they intercept light. The fast  !
-   !      loop builds it in build_fast_context; the canopy C API (meds.canopy) builds the same. -----!
+   !----- build_rad_optics -- the canopy two-stream's per-PFT optics table                          !
+   !      (docs/science/canopy_radiation_transfer.md §1-§2), from the [pft] trait table, once per   !
+   !      run. Per-PFT, so two PFTs can differ in how they intercept light. The fast loop builds it !
+   !      in build_fast_context; the canopy C API (meds.canopy) builds the same. -------------------!
    subroutine build_rad_optics(cfg, optics)
       type(meds_config_t),    intent(in)  :: cfg
       type(rad_pft_optics_t), intent(out) :: optics
@@ -144,11 +145,11 @@ contains
       real(wp) :: bpp, bqq
       np = cfg%pft%n
       allocate(rl(NB,np), tl(NB,np), rw(NB,np), tw(NB,np), cl(np), cw(np), bp(np), bq(np))
-      !----- PER-PFT now, from the [pft] table. Shortwave arrives as reflectance and           !
-      !      transmittance; LONGWAVE arrives as emissivity, and the band's reflectance is       !
-      !      1 - emissivity with zero transmittance, because a leaf is opaque at thermal        !
-      !      wavelengths. That is physics, so it is derived here rather than offered as two     !
-      !      more knobs a user could set inconsistently. ---------------------------------------!
+      !----- PER-PFT, from the [pft] table. Shortwave arrives as reflectance and transmittance;  !
+      !      LONGWAVE arrives as emissivity, and the band's reflectance is 1 - emissivity with   !
+      !      zero transmittance, because a leaf is opaque at thermal wavelengths. That is        !
+      !      physics, so it is derived here rather than offered as two more knobs a user could   !
+      !      set inconsistently. ----------------------------------------------------------------!
       associate (t => cfg%pft)
          rl(RAD_VIS,1:np) = t%leaf_reflect_vis(1:np) ; tl(RAD_VIS,1:np) = t%leaf_transmit_vis(1:np)
          rl(RAD_NIR,1:np) = t%leaf_reflect_nir(1:np) ; tl(RAD_NIR,1:np) = t%leaf_transmit_nir(1:np)
@@ -191,41 +192,40 @@ contains
 
 
    !---------------------------------------------------------------------------------------!
-   ! build_tol_set -- THE single tolerance source for the whole fast loop (§8c Layer 1). Each group   !
-   ! is SEEDED from the setting that governs it today, so the result is byte-identical to the         !
-   ! pre-unification behaviour:                                                                        !
-   !   * ARK/RK45-integrated groups (enthalpy/shv/CO2/soil-energy/leaf_w/wood_w) <- [fast].ark_rtol +   !
-   !     historical atols;                                                                              !
-   !   * GRP_THETA   <- the [soil]   (rtol, atol) -- the soil-plant water network's sub-step control;   !
-   !   * GRP_LEAF_W/GRP_WOOD_W (MEDS_ED2_RK45_DESIGN.md sec 6, P2, replaces the retired GRP_PSI): only     !
-   !     RK45 actually folds these into its embedded-error WRMS (mass is operator-split out of ARK's      !
-   !     ESDIRK tableau, like psi was, via with_mass=.false.) -- seeded here regardless so the group        !
-   !     exists uniformly. --------------------------------------------------------------------------------!
-   !                                                                                          !
-   ! ONE MASTER DIAL: when cfg%rtol_all > 0 it OVERRIDES every group's rtol, so a single number sets the  !
-   ! relative accuracy of the entire hierarchy (the "target accuracy" axis goals (b)/(c) need). Left at   !
-   ! its 0 default, each group keeps its own per-sub-solver value => byte-identical, even for a config    !
-   ! that already customised [soil]/[energy] tolerances.                                                  !
+   ! build_tol_set -- THE single tolerance source for the whole fast loop: the per-group   !
+   ! tolerances of the grouped error norm (docs/science/numerical_scheme.md eq. (3)).      !
+   !   * ARK/RK45-integrated groups (enthalpy, shv, CO2, soil energy, leaf_w, wood_w)      !
+   !     <- [fast].ark_rtol and each group's default atol;                                 !
+   !   * GRP_THETA <- the [soil] (rtol, atol), the soil-plant water network's control;     !
+   !   * GRP_LEAF_W/GRP_WOOD_W: only RK45 integrates plant water mass in its stages; ARK   !
+   !     advances it outside the ESDIRK tableau, so these terms are structurally zero      !
+   !     there. Seeded regardless, so every group exists uniformly.                        !
+   !                                                                                       !
+   ! ONE MASTER DIAL: when cfg%rtol_all > 0 it OVERRIDES every group's rtol, so a single   !
+   ! number sets the relative accuracy of the entire hierarchy. Left at its 0 default,     !
+   ! each group keeps its own per-sub-solver value, even for a config that customises the  !
+   ! [soil] tolerances.                                                                    !
    !---------------------------------------------------------------------------------------!
    pure function build_tol_set(cfg) result(tols)
       type(meds_config_t), intent(in) :: cfg
       type(tol_set_t)                 :: tols
-      !----- ARK/RK45-integrated groups: the single ark_rtol, historical atols (atol defaults kept). --!
+      !----- ARK/RK45-integrated groups: the single ark_rtol; each group keeps its default atol. -----!
       tols%rtol(GRP_ENTH)   = cfg%ark_rtol
       tols%rtol(GRP_SHV)    = cfg%ark_rtol
       tols%rtol(GRP_CO2)    = cfg%ark_rtol
       tols%rtol(GRP_SE)     = cfg%ark_rtol
       tols%rtol(GRP_LEAF_W) = cfg%ark_rtol
       tols%rtol(GRP_WOOD_W) = cfg%ark_rtol
-      !----- Sub-solver groups: seed from the opts that drive them today. ----------------------------!
+      !----- Sub-solver groups: seed from the opts that drive them. ----------------------------------!
       tols%rtol(GRP_THETA)  = cfg%soil%rtol   ; tols%atol(GRP_THETA)  = cfg%soil%atol
       !----- The one master accuracy dial (0 => unset => keep the per-group values above). ------------!
       if (cfg%rtol_all > 0.0_wp) tols%rtol = cfg%rtol_all
-      !----- ...and its ABSOLUTE companion. The WRMS denominator is atol + rtol*|y|, so rtol_all alone   !
-      !      SATURATES once atol dominates: measured on the split path, rtol 1e-3 -> 1e-6 raises the      !
-      !      soil-water error estimate only ~4x (4e-4 -> 1e-4 denominator) -- never enough to force a     !
-      !      substep, while scaling BOTH does. atol is dimensional and differs per group, so it scales    !
-      !      rather than broadcasts. The default 1.0 is an exact IEEE identity => byte-identical. --------!
+      !----- ...and its ABSOLUTE companion. The WRMS denominator is atol + rtol*|y|, so rtol_all      !
+      !      alone SATURATES once atol dominates (docs/science/numerical_scheme.md §6): tightening    !
+      !      rtol from 1e-3 to 1e-6 raises the soil-water error estimate only ~4x (4e-4 -> 1e-4       !
+      !      denominator) -- never enough to force a substep -- while scaling BOTH does. atol is      !
+      !      dimensional and differs per group, so it scales rather than broadcasts. The default 1.0  !
+      !      is an exact IEEE identity, so it changes nothing. ---------------------------------------!
       tols%atol = tols%atol * cfg%atol_scale
    end function build_tol_set
 

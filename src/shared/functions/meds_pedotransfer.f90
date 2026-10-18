@@ -15,7 +15,12 @@
 !     (2006, SSSA J. 70:1569) eq. 22.                                                      !
 !                                                                                          !
 ! The result is the van Genuchten-Mualem curve meds_water_retention evaluates. The science !
-! page (docs/science/soil_biophysics.md) has the equations and the tests behind the choice.!
+! page has the equations and the tests behind the choice: docs/science/soil_biophysics.md  !
+! §Hydraulic parameters from soil texture.                                                 !
+!                                                                                          !
+! The layer's thermal properties come from the same texture, by CLM5's mineral-soil        !
+! formulas (soil_thermal_from_texture; docs/science/soil_biophysics.md §The column from   !
+! the soil maps).                                                                          !
 !==========================================================================================!
 module meds_pedotransfer
    use meds_kinds,           only : wp
@@ -24,7 +29,7 @@ module meds_pedotransfer
    implicit none
    private
 
-   public :: soil_texture_t, soil_hydraulics_from_texture
+   public :: soil_texture_t, soil_hydraulics_from_texture, soil_thermal_from_texture
 
    !----- One soil layer as the soil maps describe it (SoilGrids 2.0's quantities). -------!
    type :: soil_texture_t
@@ -47,13 +52,23 @@ module meds_pedotransfer
    !----- Density of the mineral grains and of the fragments (Saxton & Rawls 2006). -------!
    real(wp), parameter :: particle_density = 2.65_wp                 !< [g/cm3]
 
+   !----- CLM5 mineral soil (Lawrence & Slater 2008; CLM5 technote 2.7.2): the solids'    !
+   !      conductivity and heat capacity per sand and clay, and the dry soil's conductivity !
+   !      from its bulk density (Johansen 1975), with grains of 2700 kg/m3. ------------------!
+   real(wp), parameter :: k_quartz         = 8.80_wp     !< [W/m/K]    sand grains
+   real(wp), parameter :: k_clay_mineral   = 2.92_wp     !< [W/m/K]    clay grains
+   real(wp), parameter :: cv_sand          = 2.128e6_wp  !< [J/m3/K]   sand grains
+   real(wp), parameter :: cv_clay          = 2.385e6_wp  !< [J/m3/K]   clay grains
+   real(wp), parameter :: clm_grain_density = 2700.0_wp  !< [kg/m3]
+
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! The van Genuchten curve and Ks of one soil layer. Hodnett & Tomasella fit every       !
-   ! parameter as a polynomial in percent, with sand, silt, clay and organic carbon in %,  !
-   ! CEC in cmol(c)/kg and bulk density in g/cm3. Alpha comes out per kPa and is turned    !
-   ! into per metre of water head, the unit of MEDS's soil potential.                      !
+   ! The van Genuchten curve and Ks of one soil layer (docs/science/soil_biophysics.md     !
+   ! eqs. (6)-(8)). Hodnett & Tomasella fit every parameter as a polynomial in percent,    !
+   ! with sand, silt, clay and organic carbon in %, CEC in cmol(c)/kg and bulk density in  !
+   ! g/cm3. Alpha comes out per kPa and is turned into per metre of water head, the unit   !
+   ! of MEDS's soil potential.                                                             !
    !---------------------------------------------------------------------------------------!
    elemental subroutine soil_hydraulics_from_texture(texture, theta_sat, theta_res, vg_alpha, vg_n, ksat)
       type(soil_texture_t), intent(in)  :: texture
@@ -99,5 +114,29 @@ contains
          ksat      = ksat * (1.0_wp - rock_mass) / (1.0_wp - rock_mass*(1.0_wp - 1.5_wp*matrix_density_ratio))
       end associate
    end subroutine soil_hydraulics_from_texture
+
+   !---------------------------------------------------------------------------------------!
+   ! The thermal properties of one soil layer, by CLM5's mineral-soil formulas             !
+   ! (docs/science/soil_biophysics.md eq. (9)): the solids' conductivity and heat capacity !
+   ! weight sand and clay (silt is left out, as in CLM5), and the dry soil's conductivity  !
+   ! follows the bulk density the porosity implies. The heat capacity is per m3 of layer   !
+   ! and holds the solids only: MEDS counts the water and ice itself. theta_sat is the     !
+   ! layer's porosity, as soil_hydraulics_from_texture gives it.                           !
+   !---------------------------------------------------------------------------------------!
+   elemental subroutine soil_thermal_from_texture(texture, theta_sat, k_solid, k_dry, dry_cvol)
+      type(soil_texture_t), intent(in)  :: texture
+      real(wp),             intent(in)  :: theta_sat  !< [m3/m3] porosity of the layer
+      real(wp),             intent(out) :: k_solid    !< [W/m/K]  conductivity of the soil solids
+      real(wp),             intent(out) :: k_dry      !< [W/m/K]  conductivity of the dry soil
+      real(wp),             intent(out) :: dry_cvol   !< [J/m3/K] heat capacity of the solids per layer volume
+      real(wp) :: bulk_density
+
+      associate(sand => texture%sand, clay => texture%clay)
+         k_solid      = (k_quartz*sand + k_clay_mineral*clay) / (sand + clay)
+         bulk_density = clm_grain_density * (1.0_wp - theta_sat)
+         k_dry        = (0.135_wp*bulk_density + 64.7_wp) / (clm_grain_density - 0.947_wp*bulk_density)
+         dry_cvol     = (cv_sand*sand + cv_clay*clay) / (sand + clay) * (1.0_wp - theta_sat)
+      end associate
+   end subroutine soil_thermal_from_texture
 
 end module meds_pedotransfer

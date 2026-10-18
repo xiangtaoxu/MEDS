@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Locate and load ``libmeds.so`` — the ONE compiled backend behind every sub-package.
 
-There used to be two shared libraries (``libmeds_plant_c`` for leaf + phenology, ``libmeds_c``
-for the site driver) and two copies of this search logic, one per sub-package. Structure-plan
-decision #1 merged them: per-subsystem independence lives at the CALL level now (``meds.plant.leaf``,
-``meds.plant.pheno``, ``meds.demography`` are verbs over one backend), not at the link level. So the
-search lives here once, and a sub-package that wants the library asks for it.
+Per-subsystem independence lives at the CALL level (``meds.plant.leaf``, ``meds.plant.pheno``,
+``meds.demography`` are verbs over one backend), not at the link level, so there is one binary, one
+ABI and one search (python/README.md). The search lives here once, and a sub-package that wants the
+library asks for it.
 
 Search order:
   1. ``$MEDS_LIB`` — an explicit path, which always wins.
@@ -23,8 +22,8 @@ from pathlib import Path
 _SONAME = "libmeds.so"
 #----- Build dirs an editable install might be paired with, most specific first. ----------------#
 _BUILD_DIRS = ("build-py", "build-pylib", "build", "build-ifx")
-#----- Retired env vars, still recognised so an old command line says what to do rather than -----#
-#      failing with a path that no longer exists.                                                 #
+#----- Env vars MEDS does not read, still recognised so a command line that sets one is told -----#
+#      to use MEDS_LIB instead of failing with a path that does not exist.                        #
 _LEGACY_ENV = ("MEDS_PLANT_LIB",)
 
 _LIB = None

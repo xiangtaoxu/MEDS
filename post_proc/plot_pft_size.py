@@ -15,7 +15,8 @@ It draws six panels:
     5. biomass by DBH class over time, stacked      -- how the structure moves
     6. growth and mortality by DBH class            -- the size dependence of the vital rates
 
-and prints the two closure identities the aggregation contract promises:
+and prints the two closure identities the aggregation contract promises
+(docs/science/diagnostics.md eq. (3)):
 
     sum over PFTs of agb_pft  ==  agb_site
     sum over classes of agb_size  ==  agb_site

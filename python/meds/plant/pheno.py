@@ -19,6 +19,9 @@ leaf_turnover_step through the C-API) with carbon never limiting the flush: sene
 shed_rate_max * leaf_shed_tendency down to min_leaf_cover, background turnover while the canopy
 flushes and drops no leaves, and a flush of up to flush_rate_max * leaf_flush_tendency per day toward full cover.
 Requires the compiled libmeds.so (see meds._libmeds).
+
+The equations are in docs/science/plant_phenology.md: the cues in §2, the switches and their
+combination in eqs. (2), (6) and (7), the smoothing in eq. (8) and the leaf rule in eq. (9).
 """
 from __future__ import annotations
 
@@ -204,9 +207,10 @@ def leaf_step(leaf_cover, leaf_flush_tendency, leaf_shed_tendency, params, dt=1.
     """Advance leaf cover (leaf / full leaf) ONE step with the coupled model's leaf rule.
 
     Returns (new_leaf_cover, senescence, background). The loss terms come from the Fortran
-    leaf_turnover_step (the carbon layer calls the same routine); the flush then refills the
-    post-loss canopy toward full by up to flush_rate_max * leaf_flush_tendency * dt, with carbon
-    never limiting. Litter is (senescence + background) * (1 - resorption).
+    leaf_turnover_step (the carbon layer calls the same routine; docs/science/plant_phenology.md
+    eq. (9)); the flush then refills the post-loss canopy toward full by up to
+    flush_rate_max * leaf_flush_tendency * dt, with carbon never limiting. Litter is
+    (senescence + background) * (1 - resorption).
     """
     sen, bg, cap = c_double(), c_double(), c_double()
     _pheno_lib().meds_leaf_turnover_step(

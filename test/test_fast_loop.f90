@@ -13,11 +13,13 @@
 program test_fast_loop
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t
+   use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params, n_soil_layer_max
-   use meds_water_retention, only : SOIL_RETENTION_VG
+   use meds_water_retention, only : SOIL_RETENTION_VG, water_content
+   use meds_column_params,   only : PSI_INIT
+   use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
    use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config
@@ -53,7 +55,7 @@ program test_fast_loop
    cfg%dt_fast            = 150.0_wp
    cfg%n_fast_per_slow    = 48_ik           ! 48 x 150 s = 2 h of fast integration per slow step
 
-   !----- Build the (MVP) column config + reference met inside the fast context. -----------!
+   !----- Build the column config + reference met inside the fast context. -----------------!
    call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
@@ -73,8 +75,8 @@ program test_fast_loop
 
    t_cas0    = site%patch%cas(1)%can_temp
    theta0_1  = site%patch%soil_w(1)%theta(1)
-   !----- The CORE-layer sentinel (0): meds_fast_dynamics's lazy-init hasn't touched this cohort yet -!
-   !      (it seeds water_content(PSI_INIT,...) on first gather, INSIDE fast_dynamics below). --------!
+   !----- A cohort is born holding its tissue water at PSI_INIT, so the fast loop's first touch     !
+   !      reads a real store, not a sentinel to seed. ----------------------------------------------!
    mass0_leaf = site%cohort%leaf_water_mass(1)
 
    !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
@@ -88,12 +90,13 @@ program test_fast_loop
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(site%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
-   call check(mass0_leaf == 0.0_wp .and. mass1_leaf > 0.0_wp,                                     &
-              'leaf water mass lazy-init seeded (sentinel 0 -> a physical value) on first touch')
-   !----- A SECOND call starts from mass1_leaf (already seeded, non-sentinel), so its own evolution  !
-   !      is a clean round-trip proof isolated from the first call's one-time lazy-init seeding: the  !
-   !      fast loop READ leaf_water_mass from the cohort block, evolved it, and WROTE it back          !
-   !      (persist) onto the SoA, not just a local/scratch copy. --------------------------------------!
+   call check_close(mass0_leaf, water_content(PSI_INIT, ctx%col_config%hydraulics_table%pft(1)%leaf_curve, &
+                    site%cohort%leaf_carbon(1)), 1.0e-12_wp, 'a cohort is born with its leaf water at PSI_INIT')
+   call check(mass1_leaf > 0.0_wp .and. mass1_leaf /= mass0_leaf,                                 &
+              'the fast loop evolved the birth water and wrote it back')
+   !----- A SECOND call starts from mass1_leaf, so its own evolution is a clean round-trip proof:   !
+   !      the fast loop READ leaf_water_mass from the cohort block, evolved it, and WROTE it back   !
+   !      (persist) onto the SoA, not just a local/scratch copy. -----------------------------------!
    call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
    mass2_leaf = site%cohort%leaf_water_mass(1)
    call check(abs(mass2_leaf - mass1_leaf) > 1.0e-9_wp,                                           &
@@ -102,8 +105,8 @@ program test_fast_loop
    call check(site%cohort%gpp_accum(1) > 0.0_wp, 'fast loop accumulated positive gross GPP (fast->slow bridge)')
 
    !=== 3. Stepper wiring + gate. The gate is cfg%fast_biophysics_on; when it is ON a fast      !
-   !    context is REQUIRED (advance_one_step error-stops otherwise -- the hardened BUG1 guard,  !
-   !    not exercised here since asserting an abort would kill the process). =====================!
+   !    context is REQUIRED (advance_one_step error-stops otherwise -- not exercised here,      !
+   !    since asserting an abort would kill the process). ======================================!
    block
       real(wp) :: t_before
       !----- Gate OFF (fast_biophysics_on = .false.): the fast loop must NOT run, even with a ctx. !
@@ -121,11 +124,11 @@ program test_fast_loop
       call check(abs(site%patch%cas(1)%can_temp - t_before) > 0.05_wp, &
                  'advance_one_step ran the fast loop when gated on')
 
-      !----- CAS DEPTH tracks the stand. Before refresh_canopy_depth existed, cas%can_depth was a  !
-      !      hardcoded 20 m that NOTHING ever assigned (the aerodynamics computed the right value  !
-      !      and discarded it), so cas_mass_capacity/cas_molar_capacity were the same for a 1 m gap and a 35 m canopy. Since  !
-      !      cas_mass_capacity IS the canopy air's heat capacity, that fed straight into how fast the canopy air !
-      !      responds. Asserted end-to-end through the stepper, because the slow loop owns it. -----!
+      !----- CAS DEPTH tracks the stand: refresh_canopy_depth sets it to the tallest cohort plus a   !
+      !      freeboard (docs/science/canopy_air_space_biophysics.md, The three CAS twins).           !
+      !      cas_mass_capacity IS the canopy air's heat capacity, so a fixed depth would give a 1 m  !
+      !      gap and a 35 m canopy the same response time. Asserted end-to-end through the stepper,  !
+      !      because the slow loop owns it. ---------------------------------------------------------!
       block
          real(wp)    :: h_top, expect
          integer(ik) :: i
@@ -135,9 +138,9 @@ program test_fast_loop
          end do
          expect = max(cfg%aero%min_canopy_depth, h_top + cfg%aero%canopy_freeboard)
          call check_close(site%patch%cas(1)%can_depth, expect, 1.0e-12_wp,                        &
-                          'CAS depth = tallest cohort + freeboard (not the hardcoded 20 m)')
+                          'CAS depth = tallest cohort + freeboard')
          call check(abs(site%patch%cas(1)%can_depth - 20.0_wp) > 1.0e-6_wp,                       &
-                    'CAS depth is no longer pinned at the old 20 m default')
+                    'CAS depth is not pinned at a fixed 20 m')
       end block
    end block
 
@@ -165,14 +168,14 @@ program test_fast_loop
          + site%cohort%wood_carbon(1) + site%cohort%nonstructural_carbon(1)
 
    call check(cbal1 > cbal0, 'fast GPP raised carbon vs fast-off (gpp_ref=0): the fast->slow bridge is live')
-   !----- BUG3: the fast loop accumulated POSITIVE maintenance respiration (leaf Rd + stem + root), !
-   !      which compute_carbon_allocation now nets out of GPP. Before the fix these were never       !
-   !      tracked. --------------------------------------------------------------------------------!
+   !----- The fast loop accumulates POSITIVE maintenance respiration (leaf Rd + stem + root),      !
+   !      which compute_carbon_allocation nets out of GPP                                          !
+   !      (docs/science/plant_carbon_allocation.md eq. (1)). --------------------------------------!
    call check(site%cohort%leaf_resp_accum(1) > 0.0_wp .and. site%cohort%stem_resp_accum(1) > 0.0_wp &
               .and. site%cohort%root_resp_accum(1) > 0.0_wp,                                        &
-              'fast loop accumulated positive leaf/stem/root maintenance respiration (BUG3)')
+              'fast loop accumulated positive leaf/stem/root maintenance respiration')
 
-   !=== 5. FORCING-DRIVEN diurnal cycle (Phase B end-to-end). Drive the SAME fast loop from a real  !
+   !=== 5. FORCING-DRIVEN diurnal cycle, end to end. Drive the SAME fast loop from a real             !
    !    MEDS forcing NetCDF (SW peaks ~17 UTC at Ithaca). A 2 h NIGHT window (02-04 UTC, SW=0) must   !
    !    accumulate ~0 GPP; a 2 h DAY window (15-17 UTC, high SW) must accumulate clearly more -- i.e. !
    !    the forcing's diurnal shortwave really propagates through met_instant -> the fast loop.  =====!
@@ -180,7 +183,7 @@ program test_fast_loop
       type(met_source_t) :: drv
       type(met_cursor_t) :: cur
       real(wp)           :: gpp_night, gpp_day, tcas_n, light_night, light_day
-      real(wp)           :: g1_ref, g2_ref, g3_ref   ! 1-thread multi-patch GPP, for the section 7 C5 check
+      real(wp)           :: g1_ref, g2_ref, g3_ref   ! 1-thread multi-patch GPP, for the thread-invariance check
       cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
@@ -191,7 +194,7 @@ program test_fast_loop
       cfg%forcing%avg_convention = METAVG_END ; cfg%forcing%sw_partition = SWPART_CLEARIDX
       cfg%forcing%latitude_deg = 42.44_wp ; cfg%forcing%longitude_deg = -76.50_wp
       cfg%forcing%recycle = .false.
-      cfg%forcing%co2_const = 415.0_wp          ! the file's old CO2air: CO2 is config-only now (#184)
+      cfg%forcing%co2_const = 415.0_wp          ! CO2 comes from config, not the file (docs/science/forcing.md §12)
 
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
@@ -251,16 +254,17 @@ program test_fast_loop
          end do
          w = site%diag%w
          call check(ob%n_fast_sub == cfg%n_fast_per_slow .and. exact,                              &
-                    'the fast tier stages each sub-step''s forcing sample exactly (§6.7)')
+                    'the fast tier stages each sub-step''s forcing sample exactly')
          !----- The soil slabs fold the ACTIVE layers only, so the inactive tail reads back as the   !
-         !      fill value, as on the coarse tiers (#246). The fixture needs such a tail. -----------!
+         !      fill value, as on the coarse tiers. The fixture needs such a tail. ------------------!
          call check(ctx%col_config%soil%n_active < n_soil_layer_max,                               &
                     'fixture has an inactive soil tail to be worth anything')
          call check(ob%fast_n_soil == ctx%col_config%soil%n_active,                                &
                     'the fast tier folds only the active soil layers')
-         !----- The patch axis (#270): each patch's staged row is its own, unweighted -- the last     !
+         !----- The patch axis: each patch's staged row is its own, unweighted -- the last           !
          !      sub-step's is the state the step wrote back -- and the site mean is their area-      !
-         !      weighted sum, in patch order. -------------------------------------------------------!
+         !      weighted sum, in patch order (docs/science/diagnostics.md §4, The FAST tier by       !
+         !      patch). -----------------------------------------------------------------------------!
          block
             integer(ik) :: ip, nsub, na, kb
             real(wp)    :: site_cas
@@ -273,7 +277,8 @@ program test_fast_loop
                          .and. all(ob%fast_soil_temp_patch(kb+1_ik:kb+na, nsub)                        &
                                    == site%patch%soil_e(ip)%soil_temp(1:na))
                site_cas = site_cas + site%patch%area(ip) * ob%fast_patch(PD_CAS_TEMP, ip, nsub)
-               !----- The skin temperature is the black-body temperature of the longwave up (#275). -!
+               !----- The skin temperature is the black-body temperature of the longwave up        !
+               !      (docs/science/diagnostics.md §4, The skin temperature). ---------------------!
                skin = skin .and. abs(stefan * ob%fast_patch(PD_SKIN_TEMP, ip, nsub)**4                  &
                                      - ob%fast_patch(PD_LW_UP, ip, nsub)) <= 1.0e-9_wp * ob%fast_patch(PD_LW_UP, ip, nsub)
             end do
@@ -307,11 +312,10 @@ program test_fast_loop
       call check(abs(light_day - cfg%n_fast_per_slow * cfg%dt_fast / 3600.0_wp) < 1.0e-9_wp, &
                  'day window -> every fast step counted as light (the window''s hours)')
 
-      !=== MULTI-PATCH x FORCING (§7 C1). ================================================================!
+      !=== MULTI-PATCH x FORCING. ===========================================================================!
       !    The forced block above runs ONE patch, so it cannot see the patch loop's interaction with the   !
-      !    met reader at all -- and that interaction is exactly what C1 changed (met_advance/met_instant    !
-      !    were called n_patch times over the same t sequence; they are now hoisted and called once).       !
-      !    A single-patch fixture makes the hoist trivially order-identical, so a green suite proved         !
+      !    met reader at all: met_advance/met_instant are called once per sub-step, outside the patch        !
+      !    loop, and a single-patch fixture is order-identical whether or not they are, so it proves         !
       !    nothing about it. This runs the SAME window over THREE patches carrying identical cohorts and     !
       !    asserts they get identical GPP: the met stream is site-uniform, so any per-patch divergence       !
       !    means the reader's state leaked across the patch loop. -------------------------------------------!
@@ -336,32 +340,31 @@ program test_fast_loop
          g2 = site%cohort%gpp_accum(site%patch%cohort_offset(2))
          g3 = site%cohort%gpp_accum(site%patch%cohort_offset(3))
          call check(g1 > 1.0e-7_wp, 'multi-patch forced run produces GPP at all')
-         !----- C1's own assertion: patches 2 and 3 are BOTH downstream of patch 1 in the loop, so if   !
-         !      the met reader were still being advanced per patch they would see different streams.    !
-         !      They must agree EXACTLY. ------------------------------------------------------------!
+         !----- The reader-hoist assertion: patches 2 and 3 are BOTH downstream of patch 1 in the loop, !
+         !      so if the met reader were advanced per patch they would see different                   !
+         !      streams. They must agree EXACTLY. ------------------------------------------------------!
          call check(abs(g3 - g2) <= 1.0e-14_wp * max(abs(g2), 1.0e-30_wp),                   &
                     'patches 2 and 3 see the SAME met stream (reader not advanced per patch)')
-         !----- issue #106, FIXED. adapt_dt_last (the adaptive controller's warm start) used to live   !
-         !      only on the per-patch SCRATCH that BB1 phase 1 hoisted out of the patch loop, so it     !
-         !      was loop-carried -- patch 1 cold-started and patches 2..N inherited their predecessor's !
-         !      step, and patch 1 came out ~1e-8 relative from the rest on IDENTICAL cohorts and        !
-         !      IDENTICAL forcing. It now has real per-patch storage and rides the patch lockstep, so   !
-         !      identical patches must agree EXACTLY. This is also the section 7 precondition: without  !
-         !      it the answer depends on patch ORDER serially and on THREAD SCHEDULING in parallel. ----!
+         !----- adapt_dt_last (the adaptive controller's warm start) has per-patch storage and rides the !
+         !      patch lockstep, so identical patches must agree EXACTLY. Held on scratch shared across  !
+         !      the patch loop it would be loop-carried -- patch 1 cold-starts and patches 2..N inherit !
+         !      their predecessor's step, ~1e-8 relative apart on IDENTICAL cohorts and forcing -- and  !
+         !      the answer would depend on patch ORDER serially and on THREAD SCHEDULING in parallel    !
+         !      (docs/science/numerical_scheme.md §6a). ------------------------------------------------!
          call check(abs(g1 - g2) <= 1.0e-14_wp * max(abs(g2), 1.0e-30_wp),                   &
-                    'patch 1 == patch 2 exactly: no loop-carried controller warm start (issue #106)')
-         g1_ref = g1 ; g2_ref = g2 ; g3_ref = g3     ! the 1-thread reference for the C5 check below
+                    'patch 1 == patch 2 exactly: no loop-carried controller warm start')
+         g1_ref = g1 ; g2_ref = g2 ; g3_ref = g3     ! the 1-thread reference for the thread-invariance check below
       end block
 
-      !=== THREAD INVARIANCE (§7 C5). ==================================================================!
+      !=== THREAD INVARIANCE (docs/science/numerical_scheme.md §6a). =====================================!
       !    Re-run the identical multi-patch forced window at [run].n_threads = 4 and require the answer  !
       !    to be BYTE-identical to the 1-thread run above. In a build without OpenMP flags the directives !
       !    are comments and this passes trivially -- but it is the assertion that fails the moment the    !
       !    reductions stop being folded in patch order, or a per-thread buffer starts being shared, and    !
       !    those are exactly the two failure modes that produce plausible wrong numbers rather than a       !
-      !    crash. (Both were live during development: ifx builds `private`/`firstprivate` copies of a       !
-      !    derived type through a STATIC mold that every thread writes, and the kernel libraries' local     !
-      !    arrays were in static storage until -auto was applied build-wide.) --------------------------!
+      !    crash. (The two traps behind them: ifx builds `private`/`firstprivate` copies of a derived     !
+      !    type through a STATIC mold that every thread writes, and the kernel libraries' local arrays    !
+      !    sit in static storage without -auto; see docs/building.md.) -----------------------------------!
       block
          type(met_source_t)  :: drv4
          type(met_cursor_t)  :: cur4
@@ -385,30 +388,28 @@ program test_fast_loop
          h2 = site%cohort%gpp_accum(site%patch%cohort_offset(2))
          h3 = site%cohort%gpp_accum(site%patch%cohort_offset(3))
          call check(h1 == g1_ref .and. h2 == g2_ref .and. h3 == g3_ref,                      &
-                    'n_threads = 4 reproduces n_threads = 1 EXACTLY (section 7 C3/C5)')
+                    'n_threads = 4 reproduces n_threads = 1 EXACTLY')
       end block
       !----- Net-longwave wiring: at night (SW=0) the sky (LWdown=340) is far colder than the surface !
       !      (~sigma*T^4 ~ 385 W/m2), so the two-stream NET longwave (leaf + ground) is a radiative    !
-      !      LOSS that drives the canopy air down to ~285.6 K -- well below its ~288 K start and the   !
-      !      288.5-291.5 K atmosphere. With abs_lw dropped to 0 (sensible + a little latent only) the  !
-      !      CAS holds ~287.9 K; the 287.0 K threshold sits between the two, so it fails without the   !
-      !      wiring. (Verified by reverting abs_lw/abs_lw_ground to 0.)  ----------------------------- !
-      !----- RE-PINNED for the prognostic tissue store. Measured 2x2 (2 h night window):           !
+      !      LOSS that drives the canopy air below its ~288 K start and the 288.5-291.5 K atmosphere. !
+      !----- The threshold, measured 2x2 (2 h night window; LW off = abs_lw/abs_lw_ground at 0;     !
+      !      store off = the leaf and wood heat capacities at 0):                                     !
       !                        LW on     LW off    LW signal                                        !
-      !          store off     286.09    288.48    2.39 K                                           !
-      !          store on      287.66    288.56    0.90 K                                           !
-      !      The store warms the night canopy air by 1.57 K, which is REAL: leaf and wood carry      !
-      !      ~1.5e4 J/m2/K against the canopy air's ~3.0e4, so tissue shedding a ~3 K excess lifts    !
-      !      the air by ~0.5*3 K -- and the observed 1.57 K matches. It also eats most of the LW      !
-      !      signal, so the threshold has to sit between the store-on pair, not the store-off pair.   !
-      !      288.0 K discriminates in BOTH configurations (margins 0.34/0.56 K with the store on,     !
-      !      1.91/0.48 K with it off). Re-measure both controls if either is touched. ---------------!
+      !          store off     285.95    288.39    2.44 K                                           !
+      !          store on      286.80    288.41    1.60 K                                           !
+      !      The tissue heat store warms the night canopy air by 0.85 K, which is REAL: leaf and wood !
+      !      carry a heat capacity comparable to the canopy air's, so tissue shedding its excess      !
+      !      lifts the air. It also eats part of the LW signal, so the threshold has to sit between   !
+      !      the store-on pair, not the store-off pair. 288.0 K discriminates in BOTH configurations  !
+      !      (margins 1.20/0.41 K with the store on, 2.05/0.39 K with it off). Re-measure both        !
+      !      controls if either is touched. ----------------------------------------------------------!
       call check(tcas_n < 288.0_wp, 'net longwave wired: canopy air radiatively cools (net-LW loss to the cold sky)')
       write(*,'(a,es10.3,a,es10.3,a)') '   (forcing GPP: night=', gpp_night, '  day=', gpp_day, ' kgC/plant)'
       write(*,'(a,f7.3,a)') '   (night CAS temp=', tcas_n, ' K, radiatively cooled below the ~288 K start)'
    end block
 
-   !=== 6. FORCING + canopy-RT cohort ORDER (Phase 1). Two same-PFT cohorts -- a TALL overstory and !
+   !=== 6. FORCING + canopy-RT cohort ORDER. Two same-PFT cohorts -- a TALL overstory and              !
    !    a SHORT understory -- share one patch, with EQUAL per-cohort LAI (so per-leaf PAR is a clean  !
    !    overstory-vs-understory discriminator, not diluted by differing leaf area). The two-stream    !
    !    canopy RT + the wind cascade must hand the TOP cohort more absorbed PAR AND more in-canopy     !
@@ -498,11 +499,10 @@ program test_fast_loop
       write(*,'(a,i0,a,es10.3,a)') '   (multi-patch cohorts=', ncoh_all, '  min day GPP=', gpp_min, ' kgC/plant)'
    end block
 
-   !=== 8. SEAM CONTINUITY (P3): a forced leaf-carbon collapse (standing in for one slow-loop day  !
-   !    of the phenology dormant-canopy leaf snap-to-bare, meds_vegetation_dynamics%update_biomass_  !
-   !    turnover) between two fast_dynamics calls must trigger the saturation-ceiling clamp in the    !
-   !    driver's daily gather (meds_fast_dynamics's else-branch of the lazy-init check), not just     !
-   !    leave the old, now-supersaturated mass sitting unchanged on the cohort. ======================!
+   !=== 8. SEAM CONTINUITY: a forced leaf-carbon collapse between two fast_dynamics calls (an        !
+   !    operator that drops leaf carbon without its water) must not reach the fast loop as a          !
+   !    supersaturated store: settle_tissue_water, which the stepper runs before the fast loop, sheds  !
+   !    the water above the new ceiling to the ground, and the fast loop then closes its budgets. ====!
    block
       real(wp) :: mass_before, leaf_carbon_before
 
@@ -512,41 +512,46 @@ program test_fast_loop
       call finalize_init(site)
       call init_fast_reservoirs(site, ctx)
 
-      !----- One normal call: lazy-init seeds + evolves leaf_water_mass to a physical value (the    !
-      !      same round-trip block 1 exercises). ----------------------------------------------------!
+      !----- One normal call evolves the birth water (the round trip block 1 exercises). ----------!
       call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
       mass_before        = site%cohort%leaf_water_mass(1)
       leaf_carbon_before = site%cohort%leaf_carbon(1)
-      call check(mass_before > 0.0_wp, 'seam test: leaf water mass seeded before the forced collapse')
+      call check(mass_before > 0.0_wp, 'seam test: the leaves hold water before the forced collapse')
 
       !----- Force a snap-to-bare-sized leaf-carbon collapse directly on the cohort: bleaf drops to  !
       !      1% of its former value, so the OLD mass is now ~100x above the new ceiling               !
       !      water_sat*bleaf -- exactly the state a real dormant-canopy snap would leave behind.  ----!
       site%cohort%leaf_carbon(1) = leaf_carbon_before * 0.01_wp
 
+      call settle_tissue_water(site, cfg)
+      call check_close(site%cohort%leaf_water_mass(1),                                              &
+                       ctx%col_config%hydraulics_table%pft(1)%leaf_curve%water_sat                  &
+                       * site%cohort%leaf_carbon(1), 1.0e-12_wp,                                    &
+                       'seam test: the settle capped the leaf water at its new saturation')
+      call check(site%patch%shed_water_rate(1) > 0.0_wp, 'seam test: the excess went to the ground')
       call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
       call check(n_budget_fail == 0_ik, 'seam test: whole-column budgets still close after the forced collapse')
       call check(site%cohort%leaf_water_mass(1) < 0.5_wp*mass_before,                               &
-                 'seam test: leaf water mass dropped sharply (saturation-ceiling clamp fired), not left at the old value')
+                 'seam test: leaf water mass dropped sharply (the excess was shed), not left at the old value')
       write(*,'(a,es10.3,a,es10.3,a)') '   (seam clamp: leaf water mass ', mass_before, ' -> ',      &
                                        site%cohort%leaf_water_mass(1), ' kg/plant after a 100x bleaf collapse)'
 
-      !----- REVIEW 2026-09 (item 1B #3): a BARE cohort (leaf_carbon = 0 -> leaf_water_mass = 0, its  !
-      !      physical state) must NOT have its wood water re-seeded. The old shared sentinel test      !
-      !      re-seeded both stores at PSI_INIT on every dormant day. Perturb the wood store to a value !
-      !      the seed cannot produce, run a day with no leaves (no transpiration, so the wood store   !
-      !      barely moves), and assert it carried through. -----------------------------------------!
+      !----- A BARE cohort (leaf_carbon = 0 -> leaf_water_mass = 0, its physical state) keeps its    !
+      !      wood water: nothing resets a store to PSI_INIT, so a dormant cohort carries its deficit   !
+      !      through the winter. Perturb the wood store to a value PSI_INIT cannot produce, run a    !
+      !      day with no leaves (no transpiration, so the wood store barely moves), and assert it    !
+      !      carried through. ----------------------------------------------------------------------!
       block
          real(wp)    :: wood_set, wood_after, dt_fast_save
          integer(ik) :: nsub_save
          site%cohort%leaf_carbon(1)     = 0.0_wp
          site%cohort%leaf_water_mass(1) = 0.0_wp
-         wood_set = 0.98_wp * site%cohort%wood_water_mass(1)  ! a 2% deficit the PSI_INIT seed cannot produce
+         wood_set = 0.98_wp * site%cohort%wood_water_mass(1)  ! a 2% deficit PSI_INIT cannot produce
          site%cohort%wood_water_mass(1) = wood_set
          !----- ONE short sub-step with a SMALL deficit: near saturation the PV curve gives a small    !
          !      driving potential, so root uptake moves the store by << 0.5% in 60 s (a 30% deficit,   !
-         !      by contrast, refills a third of the way in that minute). The old shared sentinel      !
-         !      re-seeded the store at PSI_INIT, i.e. back to 100% -- a 2% jump this check sees. -----!
+         !      by contrast, refills a third of the way in that minute). A shared-sentinel re-seed at  !
+         !      PSI_INIT puts the store back to 100% -- a 2% jump this check sees. --------------------!
          !----- ...and with the plant-hydraulics process MASKED (frozen tissue water), because the    !
          !      fixture's leafless cohort refills even a 2% wood deficit within the minute: the store   !
          !      must come out exactly as it went in, so the only thing that can move it is the seed. --!
@@ -564,6 +569,70 @@ program test_fast_loop
          call check(site%cohort%leaf_water_mass(1) == 0.0_wp,                                        &
                     'dormant seam: a bare cohort holds no leaf water')
       end block
+   end block
+
+   !=== 9. SPLIT INVARIANCE and the LEAFLESS LEAF (docs/science/vegetation_energy_dynamics.md, "A      !
+   !    thin tissue is a small tissue" and "A tissue with no area"). A thin stand -- 20 stems per      !
+   !    hectare of a 20 cm tree, wood area index ~0.01 -- as one cohort and as two cohorts at half the !
+   !    density, through the whole fast loop (two-stream, aerodynamics, water network, ARK) over a     !
+   !    forced day window: the tissue temperatures, the canopy air and the per-plant GPP must agree.   !
+   !    A floor in ground units on a tissue's coupling or heat capacity, which only the half-density   !
+   !    pair would cross, fails this. The step controller is held off (rtol_all and atol_scale large)  !
+   !    so both stands take the same steps: its error norm (docs/science/numerical_scheme.md eq. (3))  !
+   !    counts the pair's states twice, each against the same atol, so under a stiff ground coupling   !
+   !    the two sub-step differently, by ~1e-3 K -- the integrator's error, not the physics'. Then the !
+   !    same tree without leaves: its leaf temperature is its wood's (a bud sits on its twig), and the !
+   !    budgets close. ================================================================================!
+   block
+      type(met_source_t) :: drv
+      type(met_cursor_t) :: cur
+      integer(ik)        :: icase, nfail(3)
+      real(wp)           :: t_leaf(3), t_wood(3), t_cas(3), gpp(3), d_split
+      real(wp), parameter :: NPLANT_THIN = 0.002_wp, DBH_THIN = 20.0_wp
+      real(wp), parameter :: HOLD_OFF = 1.0e6_wp     ! tolerances no step error reaches
+      real(wp)           :: rtol_all0, atol_scale0
+      cfg%forcing%forcing_on = .true.
+      rtol_all0 = cfg%rtol_all ; atol_scale0 = cfg%atol_scale
+      cfg%rtol_all = HOLD_OFF ; cfg%atol_scale = HOLD_OFF
+      call build_fast_context(cfg, ctx)
+      do icase = 1_ik, 3_ik
+         call init_bare_ground(site, cfg, 1_ik)
+         if (icase == 2_ik) then
+            call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp*NPLANT_THIN, DBH_THIN)
+            call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp*NPLANT_THIN, DBH_THIN)
+         else
+            call add_cohort(site, cfg, 1_ik, 1_ik, NPLANT_THIN, DBH_THIN)
+         end if
+         call finalize_init(site)
+         if (icase == 3_ik) then                     ! leafless: no leaf carbon, so no leaf area
+            site%cohort%leaf_carbon(1) = 0.0_wp
+            site%cohort%leaf_water_mass(1) = 0.0_wp
+            call set_cohort_size_from_carbon(site%cohort, 1_ik)
+         end if
+         call met_open(drv, cfg%forcing)
+         call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg,        &
+                              cfg%forcing%elevation_m)
+         call init_fast_reservoirs(site, ctx)
+         call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur, step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik), &
+                            n_budget_fail=nfail(icase))
+         call met_close(drv)
+         t_leaf(icase) = site%cohort%leaf_temp(site%cohort%n) ; t_wood(icase) = site%cohort%wood_temp(site%cohort%n)
+         t_cas(icase)  = site%patch%cas(1)%can_temp          ; gpp(icase)    = site%cohort%gpp_accum(site%cohort%n)
+         if (icase == 2_ik) call check(site%cohort%leaf_temp(1) == site%cohort%leaf_temp(2) .and.              &
+                                       site%cohort%wood_temp(1) == site%cohort%wood_temp(2),                   &
+                                       'split: the two half-density cohorts are identical')
+      end do
+      d_split = max(abs(t_leaf(2) - t_leaf(1)), abs(t_wood(2) - t_wood(1)), abs(t_cas(2) - t_cas(1)))
+      write(*,'(a,es10.3,a,es10.3,a,f8.3,a,f8.3,a)') '   (split: worst temperature difference ', d_split,         &
+            ' K, per-plant GPP ', abs(gpp(2) - gpp(1)) / gpp(1), ' relative; wood ', t_wood(1), ' K, canopy air ', &
+            t_cas(1), ' K)'
+      call check(d_split < 1.0e-6_wp, 'split: one cohort and two at half density reach the same temperatures')
+      call check(abs(gpp(2) - gpp(1)) <= 1.0e-6_wp * gpp(1), 'split: the same GPP per plant')
+      call check(all(nfail(1:3) == 0_ik), 'split and leafless: the whole-column budgets close')
+      call check(site%cohort%leaf_area(1) == 0.0_wp, 'leafless: the cohort has no leaf area')
+      call check(t_leaf(3) == t_wood(3), 'leafless: the leaf takes its wood''s temperature')
+      call check(abs(t_wood(3) - t_cas(3)) > 1.0e-3_wp, 'leafless: the wood is not at the canopy air''s temperature')
+      cfg%rtol_all = rtol_all0 ; cfg%atol_scale = atol_scale0
    end block
 
    write(*,'(a)')          '   PASS'

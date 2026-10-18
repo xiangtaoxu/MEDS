@@ -3,151 +3,145 @@
 program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
-                                dbh_to_leaf_area, set_allometry,                              &
+                                dbh_to_leaf_area, allometry_t,                                &
                                 size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM, HEIGHT_CHAVE, &
                                 local_hmax
    use meds_test_support, only : banner, check, check_close
    implicit none
 
    real(wp), parameter :: rho  = 0.60_wp
-   real(wp), parameter :: hcap = 46.0_wp        ! per-PFT asymptotic height cap (an argument now)
+   real(wp), parameter :: hcap = 46.0_wp        ! per-PFT asymptotic height cap, passed as an argument
    real(wp), parameter :: sla  = 13.0_wp        ! [m2/kgC] specific leaf area
    real(wp), parameter :: agf  = 0.70_wp        ! aboveground fraction of woody carbon
    real(wp) :: dbh, h, agb, dbh_back, wood_c
    integer(ik) :: i
+   type(allometry_t) :: allom
    real(wp), dimension(3) :: dvec = [ 5.0_wp, 30.0_wp, 80.0_wp ]
 
    call banner('pan-tropical allometry')
-   !----- Install the global allometry coefficients (the model no longer hard-codes them). --!
-   call set_allometry(1.139963_wp, 0.564899_wp, 0.03365_wp, 0.976_wp,         &
-                      0.370_wp, 0.464_wp, 0.23384770_wp, 0.6410495_wp, 0.5_wp)
+   !----- The shipped pan-tropical coefficients: the record's initializers. ----------------!
+   allom = allometry_t()
 
    !=== Height <-> diameter round-trip below the height cap. ==============================!
    do i = 1_ik, 3_ik
       dbh = dvec(i)
-      h   = dbh_to_height(dbh, hcap)
+      h   = dbh_to_height(allom, dbh, hcap)
       call check(h < hcap, 'test sizes must stay below the height cap')
-      call check_close(height_to_dbh(h), dbh, 1.0e-9_wp, 'dbh<->height round-trip failed')
+      call check_close(height_to_dbh(allom, h), dbh, 1.0e-9_wp, 'dbh<->height round-trip failed')
    end do
 
    !=== Height saturates at the cap for very large diameters. ============================!
-   call check_close(dbh_to_height(500.0_wp, hcap), hcap, 1.0e-12_wp, 'height did not cap at hgt_max')
+   call check_close(dbh_to_height(allom, 500.0_wp, hcap), hcap, 1.0e-12_wp, 'height did not cap at hgt_max')
 
    !=== AGB and leaf area increase monotonically with diameter. ==========================!
-   call check(dbh_to_agb(20.0_wp, dbh_to_height(20.0_wp, hcap), rho) >                        &
-              dbh_to_agb(10.0_wp, dbh_to_height(10.0_wp, hcap), rho), 'AGB not increasing with dbh')
-   call check(dbh_to_leaf_area(20.0_wp, dbh_to_height(20.0_wp, hcap)) >                       &
-              dbh_to_leaf_area(10.0_wp, dbh_to_height(10.0_wp, hcap)), 'leaf area not increasing with dbh')
-   call check(dbh_to_agb(30.0_wp, dbh_to_height(30.0_wp, hcap), rho) > 0.0_wp, 'AGB must be positive')
+   call check(dbh_to_agb(allom, 20.0_wp, dbh_to_height(allom, 20.0_wp, hcap), rho) >                        &
+              dbh_to_agb(allom, 10.0_wp, dbh_to_height(allom, 10.0_wp, hcap), rho), 'AGB not increasing with dbh')
+   call check(dbh_to_leaf_area(allom, 20.0_wp, dbh_to_height(allom, 20.0_wp, hcap)) >                       &
+              dbh_to_leaf_area(allom, 10.0_wp, dbh_to_height(allom, 10.0_wp, hcap)), 'leaf area not increasing with dbh')
+   call check(dbh_to_agb(allom, 30.0_wp, dbh_to_height(allom, 30.0_wp, hcap), rho) > 0.0_wp, 'AGB must be positive')
 
    !=== AGB heavier for denser wood at the same size. ====================================!
-   call check(dbh_to_agb(30.0_wp, dbh_to_height(30.0_wp, hcap), 0.90_wp) >                    &
-              dbh_to_agb(30.0_wp, dbh_to_height(30.0_wp, hcap), 0.40_wp), 'denser wood should weigh more')
+   call check(dbh_to_agb(allom, 30.0_wp, dbh_to_height(allom, 30.0_wp, hcap), 0.90_wp) >                    &
+              dbh_to_agb(allom, 30.0_wp, dbh_to_height(allom, 30.0_wp, hcap), 0.40_wp), 'denser wood should weigh more')
 
    !=== agb_to_dbh inverts dbh_to_agb in BOTH regimes. ===================================!
    !----- uncapped (small): height(30) < hcap. ------------------------------------------------!
    dbh      = 30.0_wp
-   agb      = dbh_to_agb(dbh, dbh_to_height(dbh, hcap), rho)
-   dbh_back = agb_to_dbh(agb, rho, hcap)
+   agb      = dbh_to_agb(allom, dbh, dbh_to_height(allom, dbh, hcap), rho)
+   dbh_back = agb_to_dbh(allom, agb, rho, hcap)
    call check_close(dbh_back, dbh, 1.0e-8_wp, 'agb_to_dbh inverse failed (uncapped)')
    !----- capped (large): height(130) saturates at hcap. --------------------------------------!
    dbh      = 130.0_wp
-   call check_close(dbh_to_height(dbh, hcap), hcap, 1.0e-12_wp, 'large stem should be at the cap')
-   agb      = dbh_to_agb(dbh, dbh_to_height(dbh, hcap), rho)
-   dbh_back = agb_to_dbh(agb, rho, hcap)
+   call check_close(dbh_to_height(allom, dbh, hcap), hcap, 1.0e-12_wp, 'large stem should be at the cap')
+   agb      = dbh_to_agb(allom, dbh, dbh_to_height(allom, dbh, hcap), rho)
+   dbh_back = agb_to_dbh(allom, agb, rho, hcap)
    call check_close(dbh_back, dbh, 1.0e-8_wp, 'agb_to_dbh inverse failed (capped)')
 
-   !=== Carbon-pool targets: EXACT re-expressions of the size allometry (behavior-preserving). =!
+   !=== Carbon-pool targets: EXACT re-expressions of the size allometry. =====================!
    do i = 1_ik, 3_ik
       dbh = dvec(i)
-      h   = dbh_to_height(dbh, hcap)
-      !----- leaf_carbon * SLA reproduces the leaf area exactly (LAI unchanged). ---------------!
-      call check_close(size2leaf_carbon(dbh, h, sla) * sla, dbh_to_leaf_area(dbh, h), 1.0e-12_wp, &
+      h   = dbh_to_height(allom, dbh, hcap)
+      !----- leaf_carbon * SLA reproduces the leaf area exactly. -------------------------------!
+      call check_close(size2leaf_carbon(allom, dbh, h, sla) * sla, dbh_to_leaf_area(allom, dbh, h), 1.0e-12_wp, &
                        'size2leaf_carbon * sla /= leaf_area')
       !----- aboveground_frac * wood_carbon reproduces the Chave AGB exactly. ------------------!
-      call check_close(size2wood_carbon(dbh, h, rho, agf) * agf, dbh_to_agb(dbh, h, rho), 1.0e-12_wp, &
+      call check_close(size2wood_carbon(allom, dbh, h, rho, agf) * agf, dbh_to_agb(allom, dbh, h, rho), 1.0e-12_wp, &
                        'aboveground_frac * wood_carbon /= agb')
    end do
 
    !=== Carbon targets increase with diameter. ==========================================!
-   call check(size2leaf_carbon(20.0_wp, dbh_to_height(20.0_wp, hcap), sla) >                   &
-              size2leaf_carbon(10.0_wp, dbh_to_height(10.0_wp, hcap), sla), 'leaf carbon not increasing')
-   call check(size2wood_carbon(20.0_wp, dbh_to_height(20.0_wp, hcap), rho, agf) >              &
-              size2wood_carbon(10.0_wp, dbh_to_height(10.0_wp, hcap), rho, agf), 'wood carbon not increasing')
+   call check(size2leaf_carbon(allom, 20.0_wp, dbh_to_height(allom, 20.0_wp, hcap), sla) >                   &
+              size2leaf_carbon(allom, 10.0_wp, dbh_to_height(allom, 10.0_wp, hcap), sla), 'leaf carbon not increasing')
+   call check(size2wood_carbon(allom, 20.0_wp, dbh_to_height(allom, 20.0_wp, hcap), rho, agf) >              &
+              size2wood_carbon(allom, 10.0_wp, dbh_to_height(allom, 10.0_wp, hcap), rho, agf), 'wood carbon not increasing')
 
    !=== wood_to_dbh inverts size2wood_carbon in BOTH regimes (the carbon-prognostic anchor). ==!
    dbh    = 30.0_wp                                        ! uncapped
-   wood_c = size2wood_carbon(dbh, dbh_to_height(dbh, hcap), rho, agf)
-   call check_close(wood_to_dbh(wood_c, rho, hcap, agf), dbh, 1.0e-8_wp, 'wood_to_dbh inverse failed (uncapped)')
+   wood_c = size2wood_carbon(allom, dbh, dbh_to_height(allom, dbh, hcap), rho, agf)
+   call check_close(wood_to_dbh(allom, wood_c, rho, hcap, agf), dbh, 1.0e-8_wp, 'wood_to_dbh inverse failed (uncapped)')
    dbh    = 130.0_wp                                       ! capped
-   wood_c = size2wood_carbon(dbh, dbh_to_height(dbh, hcap), rho, agf)
-   call check_close(wood_to_dbh(wood_c, rho, hcap, agf), dbh, 1.0e-8_wp, 'wood_to_dbh inverse failed (capped)')
+   wood_c = size2wood_carbon(allom, dbh, dbh_to_height(allom, dbh, hcap), rho, agf)
+   call check_close(wood_to_dbh(allom, wood_c, rho, hcap, agf), dbh, 1.0e-8_wp, 'wood_to_dbh inverse failed (capped)')
 
    !=== The gMM height curve (Cano et al. 2019 eq. 7) and its two inverses. ===============!
-   call set_allometry(1.139963_wp, 0.564899_wp, 0.03365_wp, 0.976_wp,         &
-                      0.370_wp, 0.464_wp, 0.23384770_wp, 0.6410495_wp, 0.5_wp, &
-                      HEIGHT_GMM, 58.0_wp, 0.73_wp, 21.8_wp)
-   call check_close(dbh_to_height(1.0_wp, 100.0_wp), 58.0_wp / 22.8_wp, 1.0e-12_wp,                 &
+   allom = allometry_t(height_form = HEIGHT_GMM, gmm_a = 58.0_wp, gmm_b = 0.73_wp, gmm_k = 21.8_wp)
+   call check_close(dbh_to_height(allom, 1.0_wp, 100.0_wp), 58.0_wp / 22.8_wp, 1.0e-12_wp,                 &
                     'gMM height at 1 cm is gmm_a / (gmm_k + 1)')
-   call check_close(dbh_to_height(100.0_wp, 100.0_wp),                                                &
+   call check_close(dbh_to_height(allom, 100.0_wp, 100.0_wp),                                                &
                     58.0_wp * 100.0_wp**0.73_wp / (21.8_wp + 100.0_wp**0.73_wp), 1.0e-12_wp,           &
                     'gMM height at 100 cm follows the formula')
-   call check(dbh_to_height(300.0_wp, 100.0_wp) < 58.0_wp, 'gMM height stays below its asymptote')
-   call check_close(dbh_to_height(300.0_wp, 35.0_wp), 35.0_wp, 1.0e-12_wp, 'gMM height caps at hgt_max')
+   call check(dbh_to_height(allom, 300.0_wp, 100.0_wp) < 58.0_wp, 'gMM height stays below its asymptote')
+   call check_close(dbh_to_height(allom, 300.0_wp, 35.0_wp), 35.0_wp, 1.0e-12_wp, 'gMM height caps at hgt_max')
    do i = 1_ik, 3_ik
       dbh = dvec(i)
-      call check_close(height_to_dbh(dbh_to_height(dbh, 100.0_wp)), dbh, 1.0e-9_wp,                &
+      call check_close(height_to_dbh(allom, dbh_to_height(allom, dbh, 100.0_wp)), dbh, 1.0e-9_wp,                &
                        'gMM dbh<->height round trip')
    end do
    !----- agb -> dbh by Newton's method: uncapped, and on the capped branch (hgt_max = 35 m). --!
    do i = 1_ik, 3_ik
       dbh = dvec(i)
-      agb = dbh_to_agb(dbh, dbh_to_height(dbh, 100.0_wp), rho)
-      call check_close(agb_to_dbh(agb, rho, 100.0_wp), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (uncapped)')
+      agb = dbh_to_agb(allom, dbh, dbh_to_height(allom, dbh, 100.0_wp), rho)
+      call check_close(agb_to_dbh(allom, agb, rho, 100.0_wp), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (uncapped)')
    end do
    dbh = 250.0_wp
-   call check_close(dbh_to_height(dbh, 35.0_wp), 35.0_wp, 1.0e-12_wp, 'a 250 cm stem is at a 35 m cap')
-   agb = dbh_to_agb(dbh, dbh_to_height(dbh, 35.0_wp), rho)
-   call check_close(agb_to_dbh(agb, rho, 35.0_wp), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (capped)')
-   wood_c = size2wood_carbon(80.0_wp, dbh_to_height(80.0_wp, 100.0_wp), rho, agf)
-   call check_close(wood_to_dbh(wood_c, rho, 100.0_wp, agf), 80.0_wp, 1.0e-9_wp, 'gMM wood_to_dbh inverse')
+   call check_close(dbh_to_height(allom, dbh, 35.0_wp), 35.0_wp, 1.0e-12_wp, 'a 250 cm stem is at a 35 m cap')
+   agb = dbh_to_agb(allom, dbh, dbh_to_height(allom, dbh, 35.0_wp), rho)
+   call check_close(agb_to_dbh(allom, agb, rho, 35.0_wp), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (capped)')
+   wood_c = size2wood_carbon(allom, 80.0_wp, dbh_to_height(allom, 80.0_wp, 100.0_wp), rho, agf)
+   call check_close(wood_to_dbh(allom, wood_c, rho, 100.0_wp, agf), 80.0_wp, 1.0e-9_wp, 'gMM wood_to_dbh inverse')
 
    !=== Chave et al. (2014) eq. 6a at E = 0.2 and its two inverses. The expected heights are     !
    !    BIOMASS's retrieveH: exp(0.893 - E + 0.760 ln D - 0.0340 (ln D)^2 + 0.243^2/2). =========!
-   call set_allometry(1.139963_wp, 0.564899_wp, 0.03365_wp, 0.976_wp,         &
-                      0.370_wp, 0.464_wp, 0.23384770_wp, 0.6410495_wp, 0.5_wp, &
-                      HEIGHT_CHAVE, chave_e_in=0.2_wp)
-   call check_close(dbh_to_height(1.0_wp, 100.0_wp), 2.0596261794_wp, 1.0e-9_wp, 'Chave height at 1 cm')
-   call check_close(dbh_to_height(10.0_wp, 100.0_wp), 9.8969302660_wp, 1.0e-9_wp, 'Chave height at 10 cm')
-   call check_close(dbh_to_height(30.0_wp, 100.0_wp), 18.4325408427_wp, 1.0e-9_wp, 'Chave height at 30 cm')
-   call check_close(dbh_to_height(60.0_wp, 100.0_wp), 26.1607976122_wp, 1.0e-9_wp, 'Chave height at 60 cm')
-   call check_close(dbh_to_height(100.0_wp, 30.0_wp), 30.0_wp, 1.0e-12_wp, 'Chave height caps at hgt_max')
+   allom = allometry_t(height_form = HEIGHT_CHAVE, chave_e = 0.2_wp)
+   call check_close(dbh_to_height(allom, 1.0_wp, 100.0_wp), 2.0596261794_wp, 1.0e-9_wp, 'Chave height at 1 cm')
+   call check_close(dbh_to_height(allom, 10.0_wp, 100.0_wp), 9.8969302660_wp, 1.0e-9_wp, 'Chave height at 10 cm')
+   call check_close(dbh_to_height(allom, 30.0_wp, 100.0_wp), 18.4325408427_wp, 1.0e-9_wp, 'Chave height at 30 cm')
+   call check_close(dbh_to_height(allom, 60.0_wp, 100.0_wp), 26.1607976122_wp, 1.0e-9_wp, 'Chave height at 60 cm')
+   call check_close(dbh_to_height(allom, 100.0_wp, 30.0_wp), 30.0_wp, 1.0e-12_wp, 'Chave height caps at hgt_max')
    do i = 1_ik, 3_ik
       dbh = dvec(i)
-      call check_close(height_to_dbh(dbh_to_height(dbh, 100.0_wp)), dbh, 1.0e-9_wp,                &
+      call check_close(height_to_dbh(allom, dbh_to_height(allom, dbh, 100.0_wp)), dbh, 1.0e-9_wp,                &
                        'Chave dbh<->height round trip')
-      agb = dbh_to_agb(dbh, dbh_to_height(dbh, 100.0_wp), rho)
-      call check_close(agb_to_dbh(agb, rho, 100.0_wp), dbh, 1.0e-9_wp, 'Chave agb_to_dbh inverse (uncapped)')
+      agb = dbh_to_agb(allom, dbh, dbh_to_height(allom, dbh, 100.0_wp), rho)
+      call check_close(agb_to_dbh(allom, agb, rho, 100.0_wp), dbh, 1.0e-9_wp, 'Chave agb_to_dbh inverse (uncapped)')
    end do
    dbh = 120.0_wp
-   call check_close(dbh_to_height(dbh, 30.0_wp), 30.0_wp, 1.0e-12_wp, 'a 120 cm stem is at a 30 m cap')
-   agb = dbh_to_agb(dbh, dbh_to_height(dbh, 30.0_wp), rho)
-   call check_close(agb_to_dbh(agb, rho, 30.0_wp), dbh, 1.0e-9_wp, 'Chave agb_to_dbh inverse (capped)')
-   wood_c = size2wood_carbon(80.0_wp, dbh_to_height(80.0_wp, 100.0_wp), rho, agf)
-   call check_close(wood_to_dbh(wood_c, rho, 100.0_wp, agf), 80.0_wp, 1.0e-9_wp, 'Chave wood_to_dbh inverse')
+   call check_close(dbh_to_height(allom, dbh, 30.0_wp), 30.0_wp, 1.0e-12_wp, 'a 120 cm stem is at a 30 m cap')
+   agb = dbh_to_agb(allom, dbh, dbh_to_height(allom, dbh, 30.0_wp), rho)
+   call check_close(agb_to_dbh(allom, agb, rho, 30.0_wp), dbh, 1.0e-9_wp, 'Chave agb_to_dbh inverse (capped)')
+   wood_c = size2wood_carbon(allom, 80.0_wp, dbh_to_height(allom, 80.0_wp, 100.0_wp), rho, agf)
+   call check_close(wood_to_dbh(allom, wood_c, rho, 100.0_wp, agf), 80.0_wp, 1.0e-9_wp, 'Chave wood_to_dbh inverse')
 
    !=== The local maximum height is a 100 cm tree's height, capped at hgt_max. Chave's E scales it  !
    !    like every other height, so a fixed share of it falls at the same diameter at any E. ======!
-   call check_close(local_hmax(100.0_wp), dbh_to_height(100.0_wp, 100.0_wp), 0.0_wp,               &
+   call check_close(local_hmax(allom, 100.0_wp), dbh_to_height(allom, 100.0_wp, 100.0_wp), 0.0_wp,               &
                     'local_hmax is the height of a 100 cm tree')
-   call check_close(local_hmax(20.0_wp), 20.0_wp, 0.0_wp, 'local_hmax caps at hgt_max')
-   h        = local_hmax(100.0_wp)
-   dbh_back = height_to_dbh(0.4_wp * h)
-   call set_allometry(1.139963_wp, 0.564899_wp, 0.03365_wp, 0.976_wp,         &
-                      0.370_wp, 0.464_wp, 0.23384770_wp, 0.6410495_wp, 0.5_wp, &
-                      HEIGHT_CHAVE, chave_e_in=1.0_wp)
-   call check_close(local_hmax(100.0_wp), h * exp(-0.8_wp), 1.0e-12_wp, 'local_hmax scales by exp(-dE)')
-   call check_close(height_to_dbh(0.4_wp * local_hmax(100.0_wp)), dbh_back, 1.0e-9_wp,               &
+   call check_close(local_hmax(allom, 20.0_wp), 20.0_wp, 0.0_wp, 'local_hmax caps at hgt_max')
+   h        = local_hmax(allom, 100.0_wp)
+   dbh_back = height_to_dbh(allom, 0.4_wp * h)
+   allom%chave_e = 1.0_wp
+   call check_close(local_hmax(allom, 100.0_wp), h * exp(-0.8_wp), 1.0e-12_wp, 'local_hmax scales by exp(-dE)')
+   call check_close(height_to_dbh(allom, 0.4_wp * local_hmax(allom, 100.0_wp)), dbh_back, 1.0e-9_wp,               &
                     'a share of local_hmax falls at the same dbh at any E')
 
    write(*,'(a)') '   PASS'

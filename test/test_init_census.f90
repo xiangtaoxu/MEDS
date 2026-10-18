@@ -1,5 +1,5 @@
 ! SPDX-License-Identifier: Apache-2.0
-!----- Census restart: build a site from a cohort CSV (site filter, patch map, allometry). --!
+!----- Census start: build a site from a cohort CSV (site filter, patch map, allometry). ----!
 program test_init_census
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
@@ -14,6 +14,7 @@ program test_init_census
    integer(ik)         :: u, i, ip
    logical             :: found
    real(wp)            :: n0, agb0
+   character(len=:), allocatable :: why
 
    call banner('init: from census CSV')
    cfg = build_test_config()
@@ -113,9 +114,14 @@ program test_init_census
    cfg%do_cohort_fissfuse = .true. ; cfg%do_patch_fissfuse = .true.
    open(newunit=u, file='test_census_cells.csv', status='old', action='read')
    close(u, status='delete')
-   !=== A missing file is reported (found=.false.), not a crash. ===========================!
-   call init_from_census(site, cfg, 'no_such_census_file.csv', found)
+   !=== A missing file, or a site the file has no row for, is reported (found=.false.) with  !
+   !    the reason, not a crash: the driver stops the run with it. ========================!
+   call init_from_census(site, cfg, 'no_such_census_file.csv', found, why=why)
    call check(.not. found, 'missing census file should report found=.false.')
+   call check(why == 'cannot be opened', 'a missing census file should say it cannot be opened')
+   call init_from_census(site, cfg, 'test_census_tmp.csv', found, use_site_id=7_ik, why=why)
+   call check(.not. found, 'a site with no row should report found=.false.')
+   call check(why == 'holds no cohort for the site', 'a site with no row should say the file holds none')
 
    open(newunit=u, file='test_census_tmp.csv', status='old', action='read')
    close(u, status='delete')

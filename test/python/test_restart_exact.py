@@ -100,16 +100,16 @@ def test_reacclimate_matches_census_start(tmp_path, plasticity):
     a, _ = read_state(written)
     b, _ = read_state(census_b)
     r, _ = read_state(restart_b)
-    for trait in ("sla", "vcmax25", "rd25", "llspan"):
+    for trait in ("sla", "vcmax25", "rd25", "leaf_turnover_rate"):
         assert np.array_equal(r[trait], b[trait]), trait
     assert not np.array_equal(r["vcmax25"], a["vcmax25"]), "the changed vcmax25 did not reach the cohorts"
-    # leaf area is derived from carbon (sla * leaf_carbon, #389), and leaf carbon was rescaled by
-    # sla_old / sla_new, so the leaf area is kept to round-off rather than bit for bit
+    # leaf area is derived from carbon (sla * leaf_carbon), and re-acclimation rescales leaf carbon
+    # by sla_old / sla_new, so the leaf area is kept to round-off rather than bit for bit
     np.testing.assert_allclose(r["leaf_area"], a["leaf_area"], rtol=1e-14, atol=0,
                                err_msg="re-acclimation moved the leaf area")
     # a restart whose PFT file gives the traits the state already has changes nothing
     same = run(tmp_path / "s", base_config(tmp_path / "s", "2001-06-02", "2001-06-03", slow_on=False,
                                              plasticity=plasticity, restart_file=str(written), reacclimate=True))
     s, _ = read_state(same)
-    for v in ("sla", "vcmax25", "rd25", "llspan", "leaf_area", "leaf_carbon", "nonstructural_carbon"):
+    for v in ("sla", "vcmax25", "rd25", "leaf_turnover_rate", "leaf_area", "leaf_carbon", "nonstructural_carbon"):
         assert np.array_equal(s[v], a[v]), v

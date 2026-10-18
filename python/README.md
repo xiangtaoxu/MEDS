@@ -1,7 +1,7 @@
 # `meds` — Python interface to MEDS
 
 The Python front end to MEDS: clean, ctypes-free wrappers over the compiled Fortran model. **One
-shared library, `libmeds.so`, backs every sub-module** (structure-plan decision #1) — per-subsystem
+shared library, `libmeds.so`, backs every sub-module** — per-subsystem
 independence lives at the CALL level, not the link level, so there is one binary, one ABI, and one
 place for it to break.
 
@@ -84,7 +84,8 @@ PYTHONPATH=python pytest python/tests
 
 `meds._libmeds` finds the library via (in order) the `MEDS_LIB` env var, a copy beside the package
 (how a wheel ships it), then a CMake build dir in the source tree — so both paths above work with no
-configuration. The retired `MEDS_PLANT_LIB` is recognised only to tell you it has been replaced.
+configuration. `MEDS_PLANT_LIB` is not read; if it is set when no library is found, the error says
+to use `MEDS_LIB`.
 
 ## Road to a distributable package
 

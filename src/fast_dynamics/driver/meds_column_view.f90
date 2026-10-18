@@ -1,35 +1,36 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_column_view -- the ONE way a column_cohort_t gets built.                              !
+! meds_column_view -- the ONE way a column_cohort_t gets built.                            !
 !                                                                                          !
-! `column_cohort_t` is the per-patch demographic slice the fast loop reads: a read-only SoA !
-! of one patch's cohorts. It is not state -- every field is a copy of, or a per-ground index  !
-! over, a field the cohort block already owns -- so the only question it raises is whether     !
-! two different fillers can disagree. They could, and they did.                                !
+! `column_cohort_t` is the per-patch demographic slice the fast loop reads: a read-only    !
+! SoA of one patch's cohorts. It is not state -- every field is a copy of, or a per-ground !
+! index over, a field the cohort block already owns -- so the only question it raises is   !
+! whether two different fillers can disagree.                                              !
 !                                                                                          !
-! THE DEFECT THIS MODULE CLOSES. The production filler copied a contiguous CSR section, but  !
-! every column test hand-assembled its own view field by field. Those hand-built trees were   !
-! not allometrically consistent -- dbh 20 cm with a 16 m height, a leaf area of 10 m2/plant    !
-! and an LAI of 3 that does not equal nplant*leaf_area -- and none of them set `bwood` at all, !
-! which is allocated and never initialized, so the wood heat capacity in those tests ran on    !
-! uninitialized memory. A fixture that cannot represent a real tree cannot falsify anything     !
-! about one.                                                                                     !
+! WHY ONE FILLER. A view assembled field by field need not be allometrically consistent    !
+! (dbh 20 cm with a 16 m height, a leaf area of 10 m2/plant and an LAI of 3 that does not  !
+! equal nplant*leaf_area), and a field it forgets keeps a zero or stale value: an unset    !
+! `bwood` gives the tree a wrong wood heat capacity. A fixture that cannot represent a     !
+! real tree cannot falsify anything about one.                                             !
 !                                                                                          !
-! So there are exactly two entry points, and both go through the cohort block:                  !
-!   * copy_column_cohort  -- production: copy one patch's contiguous CSR section into the view. !
-!   * column_cohort_init  -- tests and probes: INITIALIZE a cohort block through the canonical  !
-!                            birth path (init_cohort + set_cohort_size), then copy that, so a    !
-!                            fixture tree is on-allometry by construction rather than by the     !
-!                            author remembering to make it so.                                    !
+! So there are exactly two entry points, and both go through the cohort block:             !
+!   * copy_column_cohort -- production: copy one patch's contiguous CSR section into the   !
+!                           view.                                                          !
+!   * column_cohort_init -- tests and probes: INITIALIZE a cohort block through the        !
+!                           canonical birth path (init_cohort, which sizes it with         !
+!                           set_cohort_size), then copy that, so a fixture tree is         !
+!                           on-allometry by construction rather than by the author         !
+!                           remembering to make it so.                                     !
 !                                                                                          !
-! Adding a per-cohort INPUT to column physics is therefore: one field on the cohort block, one   !
-! on column_cohort_t, one line here. Tests inherit it with no edit.                               !
+! Adding a per-cohort INPUT to column physics is therefore: one field on the cohort block, !
+! one on column_cohort_t, one line here. Tests inherit it with no edit.                    !
 !==========================================================================================!
 module meds_column_view
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cm2_to_m2
    use meds_site_state_types, only : cohort_block, cohort_alloc, init_cohort, set_cohort_size, C2B_WOOD
    use meds_pft_params,       only : pft_table_t
+   use meds_config,           only : hydraulics_config_t
    use meds_fast_types,       only : column_cohort_t, ensure_column_cohort_capacity
    implicit none
    private
@@ -76,7 +77,6 @@ contains
          cc%rd25(j)          = cohort%rd25(i)
          cc%dmax_psi_leaf(j) = cohort%dmax_psi_leaf(i)
          !----- Canopy-element geometry (per-PFT traits, gathered on the block). ----------!
-         cc%crown(j)         = cohort%p_crown_area_frac(i)
          cc%leaf_width(j)    = cohort%p_leaf_width(i)
          cc%branch_diam(j)   = cohort%p_branch_diameter(i)
          cc%aboveground_frac(j) = cohort%p_aboveground_frac(i)
@@ -109,7 +109,9 @@ contains
       call cohort_alloc(block, n, 1_ik)   ! growth ring buffer irrelevant to a fixture
       block%n = n
       do j = 1_ik, n
-         call init_cohort(block, j, pft, ipft(j), 1_ik, nplant(j), dbh(j))
+         !----- The [hydraulics] defaults stand in for the birth water's curves: the view carries no !
+         !      tissue water (the column's stores are the caller's), so the choice reaches nothing. -!
+         call init_cohort(block, j, pft, ipft(j), 1_ik, nplant(j), dbh(j), hydraulics_config_t())
       end do
       call copy_column_cohort(cc, block, 1_ik, n)
    end subroutine column_cohort_init

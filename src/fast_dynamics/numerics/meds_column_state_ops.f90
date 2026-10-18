@@ -3,14 +3,14 @@
 ! meds_column_state_ops -- the algebra and bookkeeping helpers on the fast loop's column state     !
 ! (column_state_t / column_tend_t / stage_bflux_t / column_bflux_t), owned by the types they act   !
 ! on rather than by one integrator. Both schemes (meds_fast_ark, meds_fast_rk45) and the test-only  !
-! oracle import from here, so RK45 no longer depends on the ARK module for non-ARK code.            !
+! oracle import from here, so RK45 does not depend on the ARK module.                               !
 !                                                                                          !
 !   * the state's fields, listed once -- state_to_array / array_to_state / tend_to_array, and      !
 !                           state_entry_rules (how each field is treated)                          !
 !   * state combinators  -- state_init / state_axpy / state_accum / state_extrap / state_sub /       !
 !                           state_err_diff / zero_like, as operations on the flat array              !
 !   * boundary-flux ledger accumulators -- bflux_zero / bflux_add / bflux_bweight                   !
-!   * stage-domain clamps -- clamp_cas / clamp_soil_energy                                           !
+!   * the stage-domain clamp -- clamp_cas                                                            !
 !   * whole-column store totals for the ledgers -- soil_water_store / soil_energy_store /            !
 !                           plant_water_store / canopy_film_store  (one loop order, so the two       !
 !                           schemes' ledgers are the same arithmetic)                                !
@@ -24,7 +24,7 @@
 module meds_column_state_ops
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num, mmh2o
-   use meds_therm_lib,        only : internal_energy_to_temp, temp_to_internal_energy, cas_temp_of_enthalpy, cas_enthalpy_of_temp
+   use meds_therm_lib,        only : internal_energy_to_temp, cas_temp_of_enthalpy, cas_enthalpy_of_temp
    use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t, column_frozen_t,   &
                                      stage_bflux_t, column_bflux_t, process_mask_t,                    &
                                      GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W
@@ -37,7 +37,7 @@ module meds_column_state_ops
    public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight, transp_per_leaf_area
    public :: assemble_soil_energy_forcing, apply_process_mask
-   public :: clamp_cas, clamp_soil_energy
+   public :: clamp_cas
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
    public :: clamp_canopy_film, deposit_condensate, unpack_column_state, diagnose_soil_temps
 
@@ -300,8 +300,9 @@ contains
       if (nplant * leaf_area > tiny_num) rate = amount / dt / (nplant * leaf_area) / mmh2o
    end function transp_per_leaf_area
 
-   !----- out = (1-b)*y + b*Y2, the ARS stage-3 extrapolation base. The plant water, the films   !
-   !      and the pond are frozen through the stages, so for them this is y again (up to rounding). !
+   !----- out = (1-b)*y + b*Y2, the ARS stage-3 extrapolation base (b = (1-gamma)/gamma,            !
+   !      docs/science/numerical_scheme.md eq. (1)). The plant water, the films and the pond are    !
+   !      frozen through the stages, so for them this is y again (up to rounding). -----------------!
    pure subroutine state_extrap(y, b, Y2, n, nsl, out)
       type(column_state_t), intent(in)    :: y, Y2
       real(wp),             intent(in)    :: b
@@ -338,45 +339,9 @@ contains
       end if
    end subroutine clamp_cas
 
-
-   !----- clamp each soil layer's internal energy into a wide PHYSICAL temperature range, the      !
-   !      soil-column analogue of clamp_cas above: an explicit-stage overshoot in soil_energy         !
-   !      otherwise diagnoses (internal_energy_to_temp) a wild soil temperature that overflows ground_evaporation's  !
-   !      fractional pow() (a negative base to a non-integer exponent is a domain error, not just an     !
-   !      overflow) or qsat. Reconstructs soil_energy (temp_to_internal_energy) at the CLAMPED temperature and the    !
-   !      SAME liquid fraction the (possibly wild) input diagnosed -- an in-range input is untouched, and  !
-   !      the step is rejected normally by the adaptive controller when this bites. Uses the stage's     !
-   !      theta for the water-mass term of the phase-change inverter. ----------------------------------!
-   !      denergy (optional) accumulates |energy| moved, in J/m2 of GROUND -- the energy this clamp    !
-   !      creates or destroys with no ledger entry. -------------------------------------------------!
-   pure subroutine clamp_soil_energy(s, col_config, nsl, nfire, denergy)
-      type(column_state_t),  intent(inout) :: s
-      type(column_config_t), intent(in)    :: col_config
-      integer(ik),           intent(in)    :: nsl
-      integer(ik), optional, intent(inout) :: nfire
-      real(wp),    optional, intent(inout) :: denergy
-      real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp
-      real(wp) :: temp, fliq, wmass, e_in
-      integer(ik) :: k
-      do k = 1_ik, nsl
-         wmass = s%theta(k) * rho_h2o
-         e_in  = s%soil_energy(k)
-         call internal_energy_to_temp(s%soil_energy(k), wmass, col_config%soil_thermal%soil_dry_heat_capacity(k), temp, fliq)
-         fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
-         temp  = min(max(temp, T_LO), T_HI)
-         s%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k), wmass, temp, fliq)
-         !----- compare against the INPUT, not the T bounds: the internal_energy_to_temp/temp_to_internal_energy round trip   !
-         !      is the identity only for an in-range state, so this also catches a clamp that bit       !
-         !      through the liquid-fraction bound rather than the temperature bound. -------------------!
-         if (s%soil_energy(k) /= e_in) then
-            if (present(nfire))   nfire   = nfire   + 1_ik
-            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * col_config%soil%dz(k)
-         end if
-      end do
-   end subroutine clamp_soil_energy
-
-   !----- The embedded error estimate of the ARS(2,2,2) step: err = (Y3 - base3) - (Y2 - y), for   !
-   !      the entries state_entry_rules counts, and 0 for the rest. ---------------------------------!
+   !----- The embedded error estimate of the ARS(2,2,2) step, err = (Y3 - base3) - (Y2 - y)          !
+   !      (docs/science/numerical_scheme.md eq. (2)), for the entries state_entry_rules counts, and  !
+   !      0 for the rest. ---------------------------------------------------------------------------!
    pure subroutine state_err_diff(Y3, base3, Y2, y, n, nsl, err)
       type(column_state_t), intent(in)    :: Y3, base3, Y2, y
       integer(ik),          intent(in)    :: n, nsl
@@ -422,9 +387,8 @@ contains
    end function zero_like
 
    !---------------------------------------------------------------------------------------!
-   ! Whole-column STORE TOTALS for the conservation ledgers [per m2 ground]. Written as the         !
-   ! ascending loops the two schemes used to carry inline, so a ledger built from these is the      !
-   ! same arithmetic on both.                                                                       !
+   ! Whole-column STORE TOTALS for the conservation ledgers [per m2 ground]. Plain ascending loops, !
+   ! shared by both schemes, so a ledger built from these is the same arithmetic on both.           !
    !---------------------------------------------------------------------------------------!
    pure function soil_water_store(theta, dz, nsl) result(w)     ! [kg/m2]
       real(wp),    intent(in) :: theta(:), dz(:)
@@ -535,17 +499,18 @@ contains
    end subroutine diagnose_soil_temps
 
    !---------------------------------------------------------------------------------------!
-   ! assemble_soil_energy_forcing -- the soil-heat column's boundary and volumetric forcing from  !
-   ! the surface ground heat flux and the water that moves through it. The ONE assembler for the  !
-   ! ARK stage (meds_fast_be_stage%column_be_stage) and the whole-column RHS                       !
-   ! (meds_fast_time_derivs%column_derivs); both take every water flow from the soil-plant water  !
-   ! network's step (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.4), so the energy advects the water the   !
-   ! committed theta actually moved. One sign convention:                                          !
-   !                                                                                                  !
-   !   * face_flux(k) [m/s] is the network's DOWN-positive time-mean flow at layer k's lower face;   !
-   !     the energy kernel wants UP-positive, hence the sign flip;                                    !
-   !   * water_heat_out(k) [W/m2] is the enthalpy leaving layer k with water that leaves it other     !
-   !     than across a face -- root uptake at the layer's temperature, and in the top layer the       !
+   ! assemble_soil_energy_forcing -- the soil-heat column's boundary and volumetric forcing from       !
+   ! the surface ground heat flux and the water that moves through it. The ONE assembler for the       !
+   ! ARK stage (meds_fast_be_stage%column_be_stage) and the whole-column RHS                           !
+   ! (meds_fast_time_derivs%column_derivs); both take every water flow from the soil-plant water       !
+   ! network's step, so the energy advects the water the committed theta actually moved                !
+   ! (docs/science/numerical_scheme.md §5b, docs/science/soil_plant_water.md §5). One sign             !
+   ! convention:                                                                                       !
+   !                                                                                                   !
+   !   * face_flux(k) [m/s] is the network's DOWN-positive time-mean flow at layer k's lower face;     !
+   !     the energy kernel wants UP-positive, hence the sign flip;                                     !
+   !   * water_heat_out(k) [W/m2] is the enthalpy leaving layer k with water that leaves it other      !
+   !     than across a face -- root uptake at the layer's temperature, and in the top layer the        !
    !     water it pushes up into the pond -- plus, in the bottom layer, the drainage enthalpy e_drain; !
    !   * the TOP face carries infiltration at the pond temperature t_infil as a kernel term with the   !
    !     same upwind rule as the interior faces; the BOTTOM face is 0 here because the drainage        !
@@ -578,13 +543,12 @@ contains
    end subroutine assemble_soil_energy_forcing
 
    !---------------------------------------------------------------------------------------!
-   ! apply_process_mask -- hold every masked-OFF process at its start-of-step state. The process    !
+   ! apply_process_mask -- hold every masked-OFF process at its start-of-step state. The process      !
    ! mask reduces the column for diagnosis (a frozen store still exchanges with its neighbours, so a  !
    ! reduced column cannot conserve -- see mask_is_full); the march integrates everything and the     !
-   ! masked fields are then restored here, once, on the committed state. ONE routine for both        !
-   ! schemes: they used to carry their own copies, which had already diverged on the pond fields     !
-   ! (2026-09 review, item 5 #3). The pond rides with soil water; on a scheme that passes it through  !
-   ! the stages the restore is an identity.                                                           !
+   ! masked fields are then restored here, once, on the committed state. ONE routine for both         !
+   ! schemes, so the two cannot restore different fields. The pond rides with soil water; on a scheme !
+   ! that passes it through the stages the restore is an identity.                                    !
    !---------------------------------------------------------------------------------------!
    pure subroutine apply_process_mask(mask, y, y_out, n, nsl)
       type(process_mask_t), intent(in)    :: mask

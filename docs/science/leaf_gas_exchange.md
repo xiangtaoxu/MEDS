@@ -24,7 +24,7 @@ Assimilation is fixed by the intersection of two curves in $C_i$:
 - **Diffusive supply** — CO₂ drawn down through the stomata:
 
 ```math
-A = \frac{g_s}{1.6}\,(C_s - C_i), \qquad C_s = C_a - 1.4\,\frac{A}{g_b}
+A = \frac{g_s}{1.6}\,(C_s - C_i), \qquad C_s = C_a - 1.4\,\frac{A}{g_b} \qquad(1)
 ```
 
   (the $C_s$ term applies only when the boundary layer is resolved, `use_boundary_layer`;
@@ -42,7 +42,7 @@ reduces to **one nonlinear equation in $C_i$**, solved by bracketing and bisecti
 ```math
 A_c = V_{cmax}\frac{C_i-\Gamma^*}{C_i + K_c\left(1 + O/K_o\right)},\quad
 A_j = J\frac{C_i-\Gamma^*}{4C_i + 8\Gamma^*},\quad
-A_p = 3\,\mathrm{TPU}
+A_p = 3\,\mathrm{TPU} \qquad(2)
 ```
 
 where $A_c$ is Rubisco-limited, $A_j$ RuBP/light-limited, $A_p$ triose-phosphate-limited;
@@ -52,18 +52,28 @@ $`\theta J^2 - (I_2 + J_{max})J + I_2 J_{max}=0`$ (smaller root), with
 $`I_2 = \tfrac12\,\phi_{\text{PSII}}\,\alpha_{\text{leaf}}\,\mathrm{PAR}`$.
 
 **$`\Gamma^*`$ is proportional to the oxygen partial pressure**, because it is set by Rubisco's
-specificity for CO₂ over O₂: $`\Gamma^* = \tfrac{1}{2} O / S_{c/o}`$. MEDS therefore scales it off
-the O₂ its reference value was measured at,
+specificity for CO₂ over O₂: $`\Gamma^* = \tfrac{1}{2} O / S_{c/o}`$. The O₂ partial pressure is
+the O₂ mole fraction times the air's pressure, as the CO₂ one is, so $`\Gamma^*`$ as a mole fraction
+depends on the O₂ mole fraction and **not on pressure**. MEDS computes it as a mole fraction from the
+O₂ and the pressure its reference value is stated at,
 
 ```math
-\Gamma^*(T, O) = \Gamma^*_{25}\,f_{\mathrm{Arr}}(T)\;\frac{O}{O_\mathrm{ref}},
-\qquad O_\mathrm{ref} = 0.209 \qquad(1)
+\Gamma^*(T, O) = \frac{\Gamma^*_{25}}{P_\mathrm{ref}}\,f_{\mathrm{Arr}}(T)\;\frac{O}{O_\mathrm{ref}},
+\qquad O_\mathrm{ref} = 0.209,\quad P_\mathrm{ref} = 100\ \mathrm{kPa} \qquad(3)
 ```
 
-so `o2_mol_frac` reaches **both** places oxygen enters the C3 demand — the Michaelis term
-$`K_c(1 + O/K_o)`$ and the compensation point. The shipped `gstar25` = 4.275 Pa is Bernacchi et al.
-(2001), measured at 21 % O₂, so the factor is exactly 1 in any default run. It matters for
-palaeo-atmosphere work (Carboniferous/Permian O₂ is reconstructed near 30–35 %) and for the low-O₂
+The shipped `gstar25` = 4.275 Pa is Bernacchi et al. (2001)'s 42.75 µmol mol⁻¹ at 21 % O₂, written
+as a partial pressure at 100 kPa, so $`\Gamma^*`$ at 25 °C is 42.75 µmol mol⁻¹ at any elevation.
+$`K_c`$ and $`K_o`$, the Michaelis constants of dissolved CO₂ and O₂, are partial pressures and are
+divided by the local pressure; $`O/K_o`$ is then the ratio of the two partial pressures
+(`rubisco_kinetics` in `meds_leaf_gas_exchange`, `meds.plant.leaf.rubisco_kinetics` in Python).
+Dividing `gstar25` by the local pressure instead would raise $`\Gamma^*`$ by 11 % at 1000 m and by
+43 % at 3000 m, cutting gross photosynthesis in dim light, where photorespiration sets the quantum
+yield, by about 4 % and 14 % (25 °C, 400 µmol mol⁻¹, PAR 100).
+
+The O₂ factor makes `o2_mol_frac` reach **both** places oxygen enters the C3 demand — the Michaelis
+term $`K_c(1 + O/K_o)`$ and the compensation point — and is exactly 1 in any default run. It matters
+for palaeo-atmosphere work (Carboniferous/Permian O₂ is reconstructed near 30–35 %) and for the low-O₂
 sensitivity experiment that is the standard way to isolate photorespiration: measured on a
 midday tropical leaf, halving O₂ raises $`A_\mathrm{net}`$ by 22 % and 35 % O₂ cuts it by 24 %.
 
@@ -90,24 +100,29 @@ They share units and a functional form, and nothing else. Implementations genera
 co-limitation curvature much closer to 1 (CLM and FATES use ~0.98 for the C3 $A_c/A_j$ transition)
 than the 0.7–0.9 that fits the $J$ hyperbola.
 
-C3 used to pass `theta_j` into **both** of its smoothings while C4 already had its own pair. Because
-$A_c$ and $A_j$ sit close together at ambient CO₂, that penalty landed exactly where the model spends
-most of its time. Measured at PFT-1 kinetics, $C_i = 280$ µmol mol⁻¹, saturating light:
+Using a $J$ curvature for the co-limitation would cost assimilation exactly where the model spends
+most of its time, because $A_c$ and $A_j$ sit close together at ambient CO₂. Measured with
+`meds.plant.leaf` at 25 °C and 101.325 kPa, $C_i = 280$ µmol mol⁻¹, with PFT 1's ratios
+($`J_{max} = 1.8\,V_{cmax}`$, $`\mathrm{TPU} = 0.167\,V_{cmax}`$, $`R_d = 0.015\,V_{cmax}`$),
+against the sharp $\min(A_c,A_j,A_p)$:
 
-| curvature used | $A_g$ | vs $\min(A_c,A_j,A_p) = 14.40$ |
+| `theta_cj_c3` / `theta_ip_c3` | gross $A$, saturating light ($J = J_{max}$) | net $A$, PAR 1500–2000 µmol m⁻² s⁻¹ |
 |---|---|---|
-| `theta_j` = 0.85 (before) | 10.80 | **−25.0 %** |
-| `theta_cj_c3` = 0.98, `theta_ip_c3` = 0.95 | 13.22 | −8.2 % |
+| 0.85 / 0.85 (a $J$ curvature on both transitions) | **−27.4 %** | **−31 to −34 %** |
+| 0.85 / 0.95 (on $A_c$/$A_j$ only) | −23.7 % | −27 to −31 % |
+| 0.98 / 0.95 (shipped) | −9.8 % | −12 to −15 % |
 
-The shortfall was nearly independent of $V_{cmax}$ — 30, 31, 31, 32 % at $V_{cmax,25}$ = 60, 90, 120,
-150 — so it was a systematic offset rather than a regime effect, and **no measured $V_{cmax}$
-reproduced a measured assimilation rate**. The shipped $V_{cmax,25}$ presets were checked against
-this and left alone: they were set when the leaf module first landed and never revised, they sit
-mid-range for their PFT descriptions, and the only other GPP-facing knob (`gpp_ref`) is the stub used
-when the fast loop is off. The smoothing loss was therefore never compensated anywhere — so removing
-it is a correction, not the unwinding of a hidden calibration.
+At saturating light the shortfall is the same at every $V_{cmax,25}$ from 60 to 150, because all
+three rates scale with $V_{cmax}$ (at $V_{cmax,25}$ = 60 the min is 14.51 µmol m⁻² s⁻¹ and the three
+pairs give 10.53, 11.06 and 13.09). The finite-light column spans PAR 1500 and 2000 and
+$V_{cmax,25}$ = 60, 90, 120, 150, with $J$ from the hyperbola (`theta_j` 0.70, absorptance 0.85,
+$`\phi_{\text{PSII}}`$ 0.74); the net rate loses more than the gross because $R_d$ does not shrink
+with it. Either way the loss is a systematic offset rather than a regime effect, so **no measured
+$V_{cmax}$ would reproduce a measured assimilation rate**. The shipped $V_{cmax,25}$ presets sit
+mid-range for their PFT descriptions and are not tuned to offset a smoothing loss.
 
-Kernels: `assimilation_demand_c3`, `assimilation_demand_c4`, `electron_transport_j`, `combine_limits`.
+Kernels: `rubisco_kinetics`, `assimilation_demand_c3`, `assimilation_demand_c4`, `electron_transport_j`,
+`combine_limits`.
 
 ---
 
@@ -119,7 +134,7 @@ ratio follow the growth temperature (Kattge & Knorr 2007):
 ```math
 \Delta S_{V} = 668.39 - 1.07\,T_g, \qquad
 \Delta S_{J} = 659.70 - 0.75\,T_g, \qquad
-\frac{J_{max,25}}{V_{cmax,25}} = 2.59 - 0.035\,T_g \qquad(2)
+\frac{J_{max,25}}{V_{cmax,25}} = 2.59 - 0.035\,T_g \qquad(4)
 ```
 
 with $T_g$ in °C. $`\Delta S`$ sets where the response **peaks**, so a warm-grown stand runs a higher
@@ -136,8 +151,8 @@ Three things about this are deliberate:
   daily-mean air temperature (window `acclim_window_days`, default 30 d) and feeds that. An
   instantaneous leaf temperature would use the relation far outside what it was fitted to.
 - **It is site-level, not per cohort**, for the same reason. Per-cohort acclimation is a different
-  question — it would need a relation calibrated on leaf rather than air temperature — and is on the
-  ROADMAP.
+  question — it would need a relation calibrated on leaf rather than air temperature (see
+  `docs/ROADMAP.md`).
 
 The running mean is prognostic and slow, so it is written to the state file: rebuilding a month of
 memory after every restart would make the acclimated optimum jump. It is applied by refreshing the
@@ -154,7 +169,7 @@ Selected by `stomatal_model` (`SM_LEUNING` | `SM_MEDLYN` | `SM_KATUL`). The firs
 ### 3.1 Leuning (1995)
 
 ```math
-g_s = g_0 + \frac{g_1\,A}{(C_s - \Gamma^*)\,(1 + D/D_0)}
+g_s = g_0 + \frac{g_1\,A}{(C_s - \Gamma^*)\,(1 + D/D_0)} \qquad(5)
 ```
 
 A semi-empirical law: conductance tracks assimilation, discounted by CO₂ drawdown
@@ -164,9 +179,10 @@ $`(C_s-\Gamma^*)`$ and by a hyperbolic humidity response $(1 + D/D_0)$. Paramete
 ### 3.2 Medlyn et al. (2011) — unified stomatal optimization (USO)
 
 ```math
-g_s = g_0 + 1.6\left(1 + \frac{g_1}{\sqrt{D}}\right)\frac{A}{C_s}, \qquad D \text{ in kPa}
+g_s = g_0 + 1.6\left(1 + \frac{g_1}{\sqrt{D}}\right)\frac{A}{C_s}, \qquad D \text{ in kPa} \qquad(6)
 ```
 
+with $D$ floored at `medlyn_vpd_min` (`[leaf_physiology]`), since $g_1/\sqrt{D}$ is undefined at 0.
 Derived from the same $\max(A-\lambda E)$ optimization as Katul but solved analytically under a
 linearized $A(C_i)$, giving a closed form. Here $g_1 \propto \lambda^{-1/2}$ — a key relation used
 by the water-stress limbs (§4). Parameters: `stomatal_g0`, `stomatal_g1`. Code: `stomata_gs_medlyn`.
@@ -176,7 +192,7 @@ by the water-stress limbs (§4). Parameters: `stomatal_g0`, `stomatal_g1`. Code:
 Stomata are assumed to **maximize carbon gain net of a water cost**:
 
 ```math
-\max_{g_s}\bigl(A - \lambda E\bigr)
+\max_{g_s}\bigl(A - \lambda E\bigr) \qquad(7)
 ```
 
 where $E = g_s D$ is transpiration and $\lambda$ is the **marginal water-use efficiency** — the
@@ -186,7 +202,7 @@ $`g_s = 1.6\,A/(C_s-C_i)`$ and $`E = 1.6\,D\,A/(C_s-C_i)`$) and setting
 $`dA/dC_i = \lambda\,dE/dC_i`$ rearranges to the residual root-found on $C_i$:
 
 ```math
-A'\,(C_s - C_i)^2 \;=\; 1.6\,D\,\lambda\,\bigl(A'(C_s - C_i) + A\bigr), \qquad A' \equiv \frac{dA}{dC_i}
+A'\,(C_s - C_i)^2 \;=\; 1.6\,D\,\lambda\,\bigl(A'(C_s - C_i) + A\bigr), \qquad A' \equiv \frac{dA}{dC_i} \qquad(8)
 ```
 
 $A'$ is taken by central difference (the co-limited $A(C_i)$ has no clean analytic slope). Unlike
@@ -212,7 +228,7 @@ downregulation is a biochemistry effect, scheme-independent). $R_d$ is not scale
 
 ```math
 \beta_{ns} = \mathrm{clamp}\!\left(\frac{\psi_{leaf} - \psi_{close}}{\psi_{open} - \psi_{close}},\,0,\,1\right),
-\qquad \{V_{cmax}, J_{max}, \mathrm{TPU}\} \mathrel{*}= \beta_{ns}
+\qquad \{V_{cmax}, J_{max}, \mathrm{TPU}\} \mathrel{*}= \beta_{ns} \qquad(9)
 ```
 
 $`\psi_{open}`$ is the PFT's leaf turgor-loss point $`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$
@@ -232,7 +248,7 @@ rather than a fitted intercept: a large $`g_0`$ keeps transpiration running from
 An exponential in the **predawn** water potential, downregulating the *aperture*:
 
 ```math
-\beta_s = \min\!\bigl(1,\ \exp\bigl(s_{ref}\,(\psi - \psi_{onset})\bigr)\bigr)
+\beta_s = \min\!\bigl(1,\ \exp\bigl(s_{ref}\,(\psi - \psi_{onset})\bigr)\bigr) \qquad(10)
 ```
 
 - **Leuning / Medlyn:** scale the slope, $`g_{1,\text{eff}} = g_1\,\beta_s`$.
@@ -247,10 +263,9 @@ tall tree has in wet soil does not read as drought).
 > **Note.** The stomatal driver is the *supply-side* potential $\psi$ (via `leaf_env_t%psi`,
 > default 0 = well-watered); the capacity driver is the current $\psi_{leaf}$, the *demand-side*
 > tension. Sabot writes $\psi$ as soil/predawn potential; MEDS supplies the cohort's own **predawn
-> (previous-day daily-max) leaf** potential — see below. The field was called `psi_soil` until
-> issue #99; it was renamed because it never carried a soil potential. This mirrors ED2's Katul
+> (previous-day daily-max) leaf** potential — see below. This mirrors ED2's Katul
 > `stoma_beta` (with $`s_{ref}\,e \equiv`$ ED2's `stoma_beta`, and $\psi \equiv$ ED2's
-> `dmax_leaf_psi`); the divergences are tracked in **issue #47**.
+> `dmax_leaf_psi`); the divergences are in §4.3.
 
 > **What drives $`\beta_s`$.** The **previous day's daily-maximum leaf water potential** — the
 > model's predawn potential, which is what the field measurement behind $`s_{ref}`$ actually is, and
@@ -266,9 +281,9 @@ tall tree has in wet soil does not read as drought).
 > monotonically to the least-negative $`\psi`$ the run has ever seen, silently disabling the closure
 > forever. The supply potential and soil $`\psi`$ coincide only in wet soil: the wood↔soil relaxation
 > time is ~9 s at $`\theta`$ 0.25 but ~4.8 **days** at $`\theta`$ 0.10, so a droughted cohort never
-> equilibrates overnight — which is why the kernel field is named plainly `psi` (issue #99).
+> equilibrates overnight — which is why the kernel field is named plainly `psi`.
 
-### 4.3 Where this diverges from ED2 (issue #47)
+### 4.3 Where this diverges from ED2
 
 ED2's `farq_katul.f90` (Xu et al. 2016's scheme, `H2O_PLANT_LIM = 4`) has the same two time scales:
 a turgor-loss capacity term on the leaf potential at the start of each step, and a Manzoni-style
@@ -295,7 +310,7 @@ the same error harder.
 schemes with no stomatal drought response at all. MEDS applies it to both, and the exponent
 $e = 2$ makes them exactly equivalent because Medlyn gives $`g_1 \propto \lambda^{-1/2}`$ (§4.2).
 
-**Parameter split.** MEDS's $s_{ref}\,e$ is precisely ED2's `stoma_beta` — the same exponential in
+**Parameter split.** MEDS's $`s_{ref}\,e`$ is precisely ED2's `stoma_beta` — the same exponential in
 the same potential — so a value calibrated for one transfers to the other as
 $`\texttt{stoma\_beta} = -s_{ref}\,e`$. For Katul alone only the product matters, so the split is
 degenerate there; it earns its keep because $s_{ref}$ *alone* drives the Leuning/Medlyn limb, which
@@ -307,27 +322,28 @@ $`\beta_s`$ scales $`g_1`$ only, so on its own it leaves a drought-stressed leaf
 $`g_0 + 1.6\,A/C_s`$ (Medlyn's "1 +" term) for as long as it still photosynthesises. The fast control
 removes the $`A`$-driven part as the leaf wilts, so no further factor on $`g_s`$ is needed: what is
 left is $`g_0`$, the cuticular loss, which a real leaf has too. At a VPD of 3.5 kPa a $`g_0`$ of
-0.46 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.016 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
+0.28 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.010 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
 shipped PFT file loses 0.35 mmol m⁻² s⁻¹, which is why $`g_0`$ should be set to a measured minimum
 conductance.
 
-**Dynamic vapour pressure — built, measured, REMOVED (issue #96).** The substomatal air is in
-equilibrium with leaf water at $`\psi_{leaf}`$, so its humidity is the Kelvin value
-$`\mathrm{RH}=\exp\!\big(\psi/(\rho_w R_v T)\big)`$, not 1. Transpiration would then use
-$`e_i=\mathrm{RH}\cdot e_{sat}`$, shrinking the gradient continuously as the leaf dries and
-**reversing** it once $`e_i<e_a`$ — i.e. foliar water uptake — which arrests transpiration with no
-threshold parameter at all, at $`\psi=\rho_w R_v T\ln(\mathrm{RH}_{air})`$. MEDS already applies this
-exact relation to **soil** evaporation (`ground_evaporation`'s `alpha_soil`), so the model presently
-assumes sub-saturated vapour over soil at −10 MPa but saturated vapour over leaf water at −100 MPa.
+**The substomatal air is taken as saturated.** It is in equilibrium with leaf water at
+$`\psi_{leaf}`$, so strictly its humidity is the Kelvin value
+$`\mathrm{RH}=\exp\!\big(\psi/(\rho_w R_v T)\big)`$, not 1. Transpiration on
+$`e_i=\mathrm{RH}\cdot e_{sat}`$ would shrink the gradient continuously as the leaf dries and
+**reverse** it once $`e_i<e_a`$ — i.e. foliar water uptake — arresting transpiration with no
+threshold parameter at all, at $`\psi=\rho_w R_v T\ln(\mathrm{RH}_{air})`$. MEDS applies this exact
+relation to **soil** evaporation (`ground_evaporation_rate`'s `alpha_soil`) but not to leaves, so the
+model assumes sub-saturated vapour over soil at −10 MPa but saturated vapour over leaf water at
+−100 MPa.
 
-It was implemented and **removed**: it produced NaN by day 2 of the dry test. The physics is sound;
-the wiring was not. `le_ref` in `surface_derivs` is the latent flux *linearised about* $`T_{cas}`$,
-with the leaf–air temperature difference carried by `le_slope`·$`\Delta T_l`$, so scaling both terms
-by RH moves the base point and the slope inconsistently — the symptom was −1.24 mm day⁻¹ of
-*condensation* at midday on a nearly-turgid leaf. Flooring RH did **not** help, confirming the fault
-is the linearisation rather than the magnitude. Doing it properly means rebuilding the flux *and* its
-temperature derivative from $`\mathrm{RH}\cdot q_{sat}(T_{leaf})`$ inside the leaf energy balance.
-Its likely future value is as a route to **foliar water uptake**, not as a stress arrestor.
+The leaf RH cannot simply scale the latent flux. `le_ref` in `surface_derivs` is the latent flux
+*linearised about* $`T_{cas}`$, with the leaf–air temperature difference carried by
+`le_slope`·$`\Delta T_l`$, so scaling both terms by RH moves the base point and the slope
+inconsistently: on a nearly turgid leaf it gives *condensation* at midday, and flooring RH does not
+help, because the fault is the linearisation rather than the magnitude. Doing it properly means
+rebuilding the flux *and* its temperature derivative from $`\mathrm{RH}\cdot q_{sat}(T_{leaf})`$
+inside the leaf energy balance. Its likely value is as a route to **foliar water uptake**, not as a
+drought response (see `docs/ROADMAP.md`).
 
 > Note the Kelvin correction is deliberately kept out of the **stomatal** model: Medlyn/Leuning
 > $`g_1`$ were calibrated against $`e_{sat}`$-based VPD, so feeding them a corrected VPD would
@@ -338,17 +354,18 @@ Its likely future value is as a route to **foliar water uptake**, not as a stres
 ## 5. The coupled solver
 
 `solve_leaf_gas_exchange` brackets $`C_i \in (\Gamma^*, C_a]`$ and bisects the residual to a
-tolerance `ci_tol_ppm` (shared `meds_numerics%bisect_root`):
+tolerance `ci_tol_ppm` (the module's private `bisect_ci`):
 
 - **Night / closed branch** — if the best-case net rate $A(C_a) \le 0$, stomata sit at $g_0$ and
   the solve returns immediately.
-- **Two residual providers** — `residual_explicit_gs` (Leuning/Medlyn diffusion identity, and the
-  g0-pinned fallback with $g_s := g_0$) and `residual_optimality` (Katul, §3.3). Both are `pure`.
-- **`force_g0` fallback** — if the model yields no sign change (e.g. Katul under strong stress
-  wanting $g_s < g_0$), the solver retries g0-pinned, which always brackets when $A(C_a) > 0$.
+- **Two residual providers**, chosen by `ci_residual` — `residual_explicit_gs` (Leuning/Medlyn
+  diffusion identity, eq. (1), and the g0-pinned fallback with $g_s := g_0$) and
+  `residual_optimality` (Katul, eq. (8)). Both are `pure`.
+- **Cuticular fallback** (`GS_CUTICULAR`) — if the model yields no sign change (e.g. Katul under
+  strong stress wanting $g_s < g_0$), the solver retries g0-pinned, which always brackets when
+  $A(C_a) > 0$.
 
-Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently. See
-[`docs/dev_plans`](../dev_plans) for the design history if you need the *why* behind the structure.
+Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently.
 
 ---
 
@@ -384,9 +401,10 @@ Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently. See
 
 | Concept | Routine (`meds_leaf_gas_exchange`) |
 |---|---|
+| Rubisco kinetics $K_c$, $K_o$, $`\Gamma^*`$ in µmol mol⁻¹, eq. (3) | `rubisco_kinetics` |
 | C3 / C4 demand | `assimilation_demand_c3`, `assimilation_demand_c4` |
 | electron transport $J$ | `electron_transport_j` |
 | Leuning / Medlyn / Katul-$\lambda$ | `stomata_gs_leuning`, `stomata_gs_medlyn`, `katul_lambda` |
 | coupled solve | `solve_leaf_gas_exchange` |
-| residuals | `residual_explicit_gs`, `residual_optimality` |
-| root finder | `meds_numerics%bisect_root` |
+| residuals | `ci_residual` → `residual_explicit_gs`, `residual_optimality` |
+| root finder | `bisect_ci` (private) |

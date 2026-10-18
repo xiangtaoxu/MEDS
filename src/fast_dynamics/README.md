@@ -48,7 +48,8 @@ so every symbol has exactly one legal spelling.
   paths (soil faces, infiltration, root uptake, xylem, transpiration). Each `dt_fast` it is solved
   implicitly, with Newton iterations on each store's own unknown and adaptive sub-steps. The
   processes stay with their owners: **`meds_soil_water`** has the soil water flux between layers,
-  the dry-surface-layer ground evaporation and the bottom boundary (free drain, bedrock, aquifer);
+  the dry-surface-layer ground evaporation and the bottom boundary (drainage at a factor of free
+  drainage, from 1 to 0 for bedrock, or an aquifer);
   `meds_hydr_lib` the rhizosphere, xylem and transpiration flows, and `meds_water_retention` the
   stores' water relations (both in `src/shared/functions/`). Closes a machine-precision water
   budget.

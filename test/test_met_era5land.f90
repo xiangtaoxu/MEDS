@@ -1,11 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_met_era5land -- the ED_ERA5land archive backend of the met reader (MEDS_FORCING_DESIGN  !
-! .md §15.6). A tiny synthetic archive is written through the netCDF C API: a 4 x 18 grid      !
-! (10 deg x 20 deg) spanning the antimeridian and two 16-cell chunk columns wide, every month   !
-! of 2021 and January 2022, two no-data cells, and values that are analytic functions of cell   !
-! and hour, so every check below has a known answer. It is read back through met_open /         !
-! met_advance / met_instant and through the reader's own selection and month-load routines.      !
+! test_met_era5land -- the ED_ERA5land archive backend of the met reader                   !
+! (docs/science/forcing.md §1, §2 and §9). A tiny synthetic archive is written through the !
+! netCDF C API: a 4 x 18 grid (10 deg x 20 deg) spanning the antimeridian and two 16-cell  !
+! chunk columns wide, every month of 2021 and January 2022, two no-data cells, and values  !
+! that are analytic functions of cell and hour, so every check below has a known answer.   !
+! It is read back through met_open / met_advance / met_instant and through the reader's    !
+! own selection and month-load routines.                                                   !
 !==========================================================================================!
 program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
@@ -156,8 +157,9 @@ contains
    end subroutine test_box_selection
 
    !=======================================================================================!
-   !  4. MEDS never gap-fills: a selected cell with no data is an error, never a fill. The      !
-   !     second static file claims data at (0,5), where the month files hold NaN.                !
+   !  4. MEDS never gap-fills (docs/science/forcing.md §10): a selected cell with no data  !
+   !     is an error, never a fill. The second static file claims data at (0,5), where the !
+   !     month files hold NaN.                                                             !
    !=======================================================================================!
    subroutine test_nan_rejected()
       type(met_cells_t) :: dom
@@ -173,7 +175,7 @@ contains
    end subroutine test_nan_rejected
 
    !----- 4b. A missing value is recognised as NaN only, so a file whose _FillValue is a number would  !
-   !      pass that number off as data: it is refused (#311 F11). One month of every variable is     !
+   !      pass that number off as data: it is refused. One month of every variable is                !
    !      written again, into a directory of its own, declaring _FillValue = -9999. -----------------!
    subroutine test_fill_rejected()
       character(len=*), parameter :: DIR2 = 'era5land_test_fill_tmp'
@@ -257,16 +259,16 @@ contains
       call check('the vector interpolates linearly (v)', met%wind_v, 0.5_wp * (v1 + v2), 1.0e-12_wp)
       call check_true('the energy-form speed is at least the vector''s length',                    &
                       met%wind >= sqrt(met%wind_u**2 + met%wind_v**2) - 1.0e-12_wp)
-      !----- R1: January loaded at open, February at its first day's prefetch; the seam's 00:00      !
+      !----- January loaded at open, February at its first day's prefetch; the seam's 00:00          !
       !      record came from January's buffer, not from a second read. -----------------------------!
       call check_true('each month read once: January, then February', src%n_loads == 2_ik,          &
                       real(src%n_loads, wp))
       call met_close(src)
 
-      !----- The TERRAIN lapse (docs/science/forcing.md §8): a site 500 m above its cell, in January, !
-      !      with twelve distinct monthly rates. T by January's rate, P hydrostatically, q at constant   !
-      !      relative humidity, file LW by eps*T^4. The reader no longer touches the wind: the move to   !
-      !      the canopy-air top is per patch, in the fast loop. ------------------------------------------!
+      !----- The TERRAIN lapse (docs/science/forcing.md §8, eqs. (13)-(14)): a site 500 m above its  !
+      !      cell, in January, with twelve distinct monthly rates. T by January's rate, P               !
+      !      hydrostatically, q at constant relative humidity, file LW by eps*T^4. The reader leaves    !
+      !      the wind alone: the move to the canopy-air top is per patch, in the fast loop. ------------!
       fc%apply_elevation_lapse = .true.
       fc%lapse_rate_tair = [(0.0040_wp + 0.0002_wp * real(k, wp), k = 1, 12)]   ! January: 0.0042 K/m
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),               &
@@ -363,7 +365,7 @@ contains
    end subroutine test_driver_rejections
 
    !=======================================================================================!
-   !  8. One source, many cursors (MEDS_POLYGON_RUNTIME_PLAN.md R2): a region opens the archive  !
+   !  8. One source, many cursors (docs/science/forcing.md §2): a region opens the archive       !
    !     once for its cells, and each polygon walks it with its own cursor. Each cursor must read !
    !     what a site run at its cell reads, bit for bit, and one prefetch must serve them all.    !
    !=======================================================================================!

@@ -19,14 +19,13 @@ module meds_demography_patch_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL
-   use meds_allometry,  only : light_ext
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_site_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
                                       cohort_ensure_capacity, copy_cohort_slot,                    &
                                       scale_cohort_ground_fields,                                  &
                                       patch_ensure_capacity, assign_cohort_id, assign_patch_id,     &
                                       cohort_tissue_heat_capacity, cohort_tissue_water,             &
-                                      TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
+                                      TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
                                      patch_diag_inherit, PD_DISTURB_AREA,                        &
                                      PD_MORT_C_DISTURB
@@ -124,7 +123,7 @@ contains
          cum_lai(ihgt) = cum_lai(ihgt) + cum_lai(ihgt + 1_ik)
       end do
       do ihgt = 1_ik, nl
-         light(ihgt) = exp(-light_ext * cum_lai(ihgt))
+         light(ihgt) = exp(-site%cohort%allom%light_ext * cum_lai(ihgt))
       end do
    end subroutine patch_light_profile
 
@@ -256,7 +255,7 @@ contains
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
          !----- adapt_dt_last is a controller SEED, not a conserved amount -- any value is valid and   !
          !      the controller re-adapts within a step. Area-weight it like its neighbours purely so    !
-         !      the result is DETERMINISTIC and order-independent (issue #106's whole point). ---------!
+         !      the result is DETERMINISTIC and order-independent. ------------------------------------!
          patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
          !----- Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so    !
          !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
@@ -309,12 +308,11 @@ contains
       if (.not. all(pkeep)) then
          !----- A patch too small to track is MERGED INTO the largest survivor, not deleted.    !
          !                                                                                     !
-         !      It used to be dropped outright and the survivors' areas renormalized back to 1. !
-         !      That silently redistributed the whole site: every conserved quantity changed by !
+         !      Dropping it and renormalizing the survivors' areas back to 1 would silently     !
+         !      redistribute the whole site: every conserved quantity would change by           !
          !      (a/(1-a)).sum_kept(a_i.X_i) - a.X_dropped, which vanishes only if the doomed    !
-         !      patch happened to hold the survivors' mean -- and a doomed patch is atypical by !
-         !      construction, usually a fresh disturbance gap. Its carbon, water, soil and      !
-         !      canopy air simply ceased to exist (review item 1B #9).                          !
+         !      patch held the survivors' mean -- and a doomed patch is atypical by             !
+         !      construction, usually a fresh disturbance gap.                                  !
          !                                                                                     !
          !      Fusing instead conserves exactly, reuses the operator patch fusion already      !
          !      relies on, and says something defensible: a sliver of ground joins its biggest  !
@@ -423,8 +421,8 @@ contains
       type(site_t),          intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
-      !----- What the KILLED CANOPY handed on, for the caller to declare (plan §10.2). The engine  !
-      !      applies and reports; the driver accounts. -------------------------------------------!
+      !----- What the KILLED CANOPY handed on, for the caller to declare to the slow ledger. The   !
+      !      engine applies and reports; the driver accounts. -------------------------------------!
       real(wp), optional,  intent(out)   :: water_shed  !< [kg/m2 site] tissue + film water -> the gap's ground
       integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf
       real(wp)    :: frac, new_area, atot, wd
@@ -443,20 +441,16 @@ contains
       new_area = frac * sum(site%patch%area(1:np0))
       if (new_area <= tiny_num) return
 
-      !----- Report the disturbed-area flux (#170). The slot was declared and never written, so     !
-      !      PD_DISTURB_AREA read as a silent zero rather than a missing variable -- the harder      !
-      !      failure to notice.                                                                      !
-      !      WRITTEN ON THE DONORS, and written HERE, before patch%n grows: every patch loses the    !
-      !      same fraction `frac`, and at this point the diag block's slots still line up with the   !
-      !      donor patches. The gap then inherits the donors' blended slot (patch_diag_inherit, at   !
-      !      the end of this routine), so Sum(area * value) counts the rate on all of the ground it  !
-      !      was disturbed on. Writing after the append is the out-of-bounds trap that has already   !
-      !      been paid for once in this file's history.                                              !
-      !      UNITS (#239): the block's weight is Sum(dt) in SECONDS, so the contribution is the      !
+      !----- Report the disturbed-area flux, WRITTEN ON THE DONORS and written HERE, before          !
+      !      patch%n grows: every patch loses the same fraction `frac`, and at this point the diag   !
+      !      block's slots still line up with the donor patches. The gap then inherits the           !
+      !      donors' blended slot (patch_diag_inherit, at the end of this routine), so               !
+      !      Sum(area * value) counts the rate on all of the ground it was disturbed on.             !
+      !      UNITS: the block's weight is Sum(dt) in SECONDS, so the contribution is the             !
       !      declared [1/yr] rate times this step's weight in seconds. `frac` is the fraction        !
-      !      disturbed over dt_yr, so the rate is frac/dt_yr and this step's weight is           !
-      !      dt_yr*yr_sec -- their product is frac*yr_sec, with dt_yr cancelling. Contributing the   !
-      !      bare `frac` emitted a per-SECOND rate under the per-year label.                         !
+      !      disturbed over dt_yr, so the rate is frac/dt_yr and this step's weight is               !
+      !      dt_yr*yr_sec -- their product is frac*yr_sec, with dt_yr cancelling (the bare `frac`    !
+      !      would be a per-SECOND rate under the per-year label).                                   !
       if (site%patch%diag%active) then
          do i = 1_ik, np0
             site%patch%diag%v(PD_DISTURB_AREA, i) = site%patch%diag%v(PD_DISTURB_AREA, i)          &
@@ -466,7 +460,7 @@ contains
 
       !----- Count understorey survivors (all current cohorts live in donor patches). ------!
       !                                                                                          !
-      !      The same sweep records the DISTURBANCE pathway's mortality carbon (#169) off the other !
+      !      The same sweep records the DISTURBANCE pathway's mortality carbon off the other         !
       !      branch of the same test, so the split and the kill can never drift apart. Written on   !
       !      the DONORS and written HERE, before patch%n grows -- the same rule PD_DISTURB_AREA     !
       !      above follows.                                                                        !
@@ -476,7 +470,7 @@ contains
       !      shrunk to (1-frac)*area by then, and the gap -- the frac part the carbon stood on --    !
       !      inherits the donors' slot, so together they weigh the value by the donors' original     !
       !      area and the site total is exact.                                                       !
-      !      Rate [kgC/m2/yr] x weight in seconds is the block's contract (#239); dt_yr cancels     !
+      !      Rate [kgC/m2/yr] x weight in seconds is the block's contract; dt_yr cancels             !
       !      against the weight dt_yr*yr_sec, as it does for PD_DISTURB_AREA.                        !
       nsurv = 0_ik
       do i = 1_ik, site%cohort%n
@@ -521,12 +515,10 @@ contains
             patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
             patch%litter_in(newp) = blend_litter_input(patch%area(1)/atot, patch%litter_in(1),      &
                                                        0.0_wp, patch%litter_in(1))
-            !----- The SEED BANK is inherited material too, and it used to be zeroed here. A       !
-            !      treefall gap does not sterilise the ground it opens: the carry-forward recruit  !
-            !      pool sits in the soil with the litter and the CENTURY carbon, both of which the !
-            !      gap already inherits. Zeroing it destroyed the pool's carbon on the disturbed   !
-            !      fraction -- the last non-round-off carbon term in the ledger, measured at       !
-            !      -2.96e-6 kgC/m2 over three events.  --------------------------------------!
+            !----- The SEED BANK is inherited material too. A treefall gap does not sterilise      !
+            !      the ground it opens: the carry-forward recruit pool sits in the soil with the   !
+            !      litter and the CENTURY carbon, both of which the gap inherits. Zeroing it would !
+            !      destroy the pool's carbon on the disturbed fraction. ---------------------------!
             patch%recruit_pool(:,newp) = (patch%area(1)/atot) * patch%recruit_pool(:,1)
             do d = 2_ik, np0
                wd = patch%area(d) / atot
@@ -542,24 +534,24 @@ contains
             end do
          end if
 
-         !----- Move understorey survivors into the gap at area-weighted density; the killed       !
-         !      canopy's carbon becomes litter into the SAME gap patch (B1, MEDS_SLOW_DYNAMICS_     !
-         !      DESIGN.md Part II; gated on [soil_carbon].soil_carbon_on, default on) -- the            !
-         !      density it would have carried into the gap had it                                      !
-         !      survived (the same conversion factor line 394 uses for survivors), times its per-      !
-         !      plant carbon pools. Added directly onto soil_carbon(newp) since this module cannot     !
-         !      link biogeochemistry (necromass_to_litter is DAG-safe: plain scalars). -----------------!
+         !----- Move understorey survivors into the gap at area-weighted density; the killed           !
+         !      canopy's carbon becomes litter in the SAME gap patch when soil carbon is on            !
+         !      ([soil_carbon].soil_carbon_on, default on; docs/science/soil_carbon.md §5): the        !
+         !      density it would have carried into the gap had it survived (the conversion factor      !
+         !      the survivor branch below uses), times its per-plant carbon pools. Added directly onto !
+         !      soil_carbon(newp), since this module cannot link biogeochemistry (necromass_to_litter  !
+         !      takes plain scalars). -----------------------------------------------------------------!
          m = cohort%n
          do d = 1_ik, np0
             i0 = patch%cohort_offset(d) ; i1 = i0 + patch%cohort_count(d) - 1_ik
             do i = i0, i1
                if (cohort%height(i) >= cfg%disturbance_survive_height) then   ! canopy dies in gap
                   !----- The killed canopy's WATER goes to the gap's ground down the same channel   !
-                  !      turnover shedding uses; it was discarded outright before (review item 1B   !
-                  !      #7), and this is the largest single occurrence of it -- a whole canopy dies !
-                  !      at once. Its tissue HEAT is a thermal-mass change, declared with the rest  !
-                  !      of the phase's by the caller. `kill_frac` is the fraction of the cohort's  !
-                  !      area-density the gap takes -- the SAME factor the survivor branch uses. ---!
+                  !      turnover shedding uses; this is its largest single use -- a whole canopy   !
+                  !      dies at once. Its tissue HEAT is a thermal-mass change, declared with the  !
+                  !      rest of the phase's by the caller. `kill_frac` is the fraction of the      !
+                  !      cohort's area-density the gap takes -- the SAME factor the survivor branch !
+                  !      uses. ---------------------------------------------------------------------!
                   kill_frac = frac * patch%area(d)
                   w_kill = kill_frac * (cohort_tissue_water(cohort, i)                              &
                                       + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))

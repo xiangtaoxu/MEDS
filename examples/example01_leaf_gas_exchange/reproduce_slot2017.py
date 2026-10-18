@@ -4,7 +4,7 @@
 
 The species parameters, drivers and sweeps live in this script. The photosynthesis and stomatal
 kernels are the compiled Fortran that also runs inside the coupled model, reached through
-`meds.plant.leaf`.
+`meds.plant.leaf`; their equations are docs/science/leaf_gas_exchange.md §1-§3.
 
   (a)   A-Ci demand curve for F. insipida (Fig 1b), from the paper's in-situ Vcmax and Jmax.
   (b-f) Vcmax, Jmax, gs, Anet and Rlight against leaf temperature for four species (Fig 2),
@@ -75,17 +75,13 @@ def run_aci(prefix):
     """Fig 1(b): net Ac, Aj and A against Ci for F. insipida at 25 C; A is the sharp min(Ac, Aj)."""
     tk = 25.0 + T_KELVIN
     p = leaf.c3_params()                       # Bernacchi et al. (2001) Rubisco kinetics
-    to_ppm = 1e6 / PRESSURE                    # partial pressure [Pa] -> mole fraction [umol/mol]
-    kc = leaf.arrhenius(p.kc25, p.ea_kc, tk) * to_ppm
-    ko = leaf.arrhenius(p.ko25, p.ea_ko, tk) * to_ppm
-    gstar = leaf.arrhenius(p.gstar25, p.ea_gstar, tk) * to_ppm
+    k = leaf.rubisco_kinetics(p, tk, PRESSURE)  # the solver's, as mole fractions [umol/mol]
     j = leaf.electron_transport_j(PAR, JMAX_ACI, absorptance=p.absorptance,
                                   phi_psii=p.phi_psii, theta=p.theta_j)
     rd = RD_FRAC * VCMAX_ACI
     rows = []
     for ci in np.linspace(40.0, 1400.0, 90):
-        r = leaf.assimilation_demand_c3(ci, VCMAX_ACI, j, gstar=gstar, kc=kc, ko=ko,
-                                        o2=p.o2_mol_frac * 1e6,
+        r = leaf.assimilation_demand_c3(ci, VCMAX_ACI, j, gstar=k.gstar, kc=k.kc, ko=k.ko, o2=k.o2,
                                         colimitation=leaf.Colimitation.MINIMUM)
         rows.append((ci, r.Ac - rd, r.Aj - rd, r.A_gross - rd))
     save_csv(f"{prefix}_aci.csv", "ci,ac,aj,anet", rows)

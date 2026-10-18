@@ -3,7 +3,7 @@
 ! meds_constants -- compile-time constants and a few pure scalar helpers.                  !
 !                                                                                          !
 ! No mutable state lives here. Calendar constants follow ED2 (proleptic Gregorian mean     !
-! year). Tolerances default to the values used by the fusion/fission conservation checks.   !
+! year). area_tol is the tolerance of the end-of-run check that the patch areas sum to one.  !
 !==========================================================================================!
 module meds_constants
    use meds_kinds, only : wp
@@ -30,7 +30,6 @@ module meds_constants
    real(wp), parameter :: t_ref_photo = 298.15_wp            !< [K] 25 degC reference for photosynthesis
    real(wp), parameter :: stefan      = 5.670374419e-8_wp    !< [W/m2/K4] Stefan-Boltzmann (canopy RT longwave)
    real(wp), parameter :: halfpi      = 0.5_wp * pi          !< [rad] pi/2 (leaf-inclination domain upper bound)
-   real(wp), parameter :: grav_head   = 9.804e-3_wp          !< [MPa/m] hydrostatic head (rho_w*g); plant hydraulics
    !----- Leaf gas-exchange diffusion (H2O:CO2 diffusivity ratios) + mole-fraction -> ppm. -!
    real(wp), parameter :: gsw_2_gsc  = 1.6_wp    !< [-] stomatal H2O:CO2 diffusivity ratio; gs(CO2) = gs(H2O)/gsw_2_gsc
    real(wp), parameter :: gbw_2_gbc  = 1.4_wp    !< [-] boundary-layer H2O:CO2 diffusivity ratio; gb(CO2) = gb(H2O)/gbw_2_gbc
@@ -43,11 +42,11 @@ module meds_constants
    real(wp), parameter :: kgC_2_umol     = 1.0_wp / umol_2_kgC !< [umol/kgC]  (~8.3259e7)
    real(wp), parameter :: kgCday_2_umols = kgC_2_umol / day_sec  !< [(umol/m2/s) per (kgC/m2/day)]  (~963.6)
    real(wp), parameter :: umols_per_kgCyr = kgC_2_umol / yr_sec  !< [(umol/m2/s) per (kgC/m2/yr)]   (~2.638)
-                                     !< [(umol/m2/s) per (mgC cm-3 h-1 . cm)] ~ 231.27: cm2/m2, /h->/s, mgC->umol
 
    !----- Soil hydrology (vertical water column). -----------------------------------------!
    real(wp), parameter :: rho_h2o     = 1000.0_wp            !< [kg/m3] liquid-water density (kg/m2 <-> m <-> m3/m3)
-   real(wp), parameter :: grav        = 9.80665_wp           !< [m/s2] gravitational acceleration (head + alpha_soil)
+   real(wp), parameter :: grav        = 9.80665_wp           !< [m/s2] standard gravity (alpha_soil, aerodynamics, lapse)
+   real(wp), parameter :: grav_head   = rho_h2o * grav * 1.0e-6_wp  !< [MPa/m] rho_w*g, potential per metre of head (soil, plant)
    real(wp), parameter :: vonkarman   = 0.4_wp               !< [-] von Karman constant (Monin-Obukhov surface layer)
    real(wp), parameter :: r_wv        = 461.5_wp             !< [J/kg/K] water-vapour gas constant (Philip alpha_soil)
    real(wp), parameter :: latent_heat_vap = 2.501e6_wp       !< [J/kg] latent heat of vaporization
@@ -59,13 +58,16 @@ module meds_constants
    real(wp), parameter :: cp_ice = 2093.0_wp                 !< ice cp (frozen-store heat capacity)
    real(wp), parameter :: latent_heat_fusion = 3.34e5_wp     !< [J/kg] latent heat of fusion (freeze/thaw plateau)
 
-   !----- PAR (VIS, 400-700 nm) energy -> photon flux [umol photon / J] (~4.57). ---------------!
+   !----- PAR (VIS, 400-700 nm) energy -> photon flux [umol photon / J]; the 400-700 nm solar     !
+   !      spectrum gives ~4.57. ------------------------------------------------------------------!
    real(wp), parameter :: par_w_2_umol = 4.6_wp
+   !----- Thermal conductivities [W/m/K] and the triple point. -----------------------------------!
    real(wp), parameter :: k_water = 0.57_wp                  !< liquid-water thermal conductivity
    real(wp), parameter :: k_ice   = 2.29_wp                  !< ice thermal conductivity
    real(wp), parameter :: k_air   = 0.025_wp                 !< air thermal conductivity
    real(wp), parameter :: t_3ple  = 273.16_wp                !< [K] triple point (distinct from t_kelvin = 273.15)
-   !----- Internal-energy zero references (ED2 cmtl2uext-consistent; see meds_therm_lib, design 3.1). --!
+   !----- Internal-energy zero references (ED2 cmtl2uext-consistent; see meds_therm_lib and       !
+   !      MEDS_ENERGY_BALANCE_DESIGN.md §3.1). ---------------------------------------------------!
    real(wp), parameter :: tsupercool_liq = t_3ple - (cp_ice * t_3ple + latent_heat_fusion) / cp_liq
    real(wp), parameter :: tsupercool_vap = t_3ple                                                     &
                           - (cp_ice * t_3ple + latent_heat_vap + latent_heat_fusion) / cp_vap
@@ -76,8 +78,7 @@ module meds_constants
    real(wp), parameter :: lnexp_min  = -38.0_wp               !< clamp for exp() arguments
    real(wp), parameter :: lnexp_max  =  38.0_wp
 
-   !----- Default conservation tolerances. ------------------------------------------------!
-   real(wp), parameter :: size_tol = 0.01_wp                  !< 1% basal-area conservation
+   !----- Conservation tolerance. --------------------------------------------------------!
    real(wp), parameter :: area_tol = 1.0e-5_wp                !< patch-area sum tolerance
 
 contains

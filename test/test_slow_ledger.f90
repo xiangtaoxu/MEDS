@@ -18,24 +18,30 @@
 ! The third test binds the canopy-air open-volume terms to the store they are supposed to        !
 ! explain: resize the control volume, and the three declared terms must equal the three store    !
 ! changes EXACTLY. That is the one declaration in the skeleton that does real arithmetic rather   !
-! than passing a quantity through, and the run it was written against closes it to 1e-17.         !
+! than passing a quantity through, and a production run closes it to 1e-17.                      !
 !==========================================================================================!
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t, soil_column_layers
-   use meds_site_state_types,   only : site_t
+   use meds_site_state_types,   only : site_t, carbon_flux_block
    use meds_column_state_types, only : cas_set_depth
    use meds_column_params,      only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
-   use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity,                  &
-                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
+   use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity, set_cohort_size_from_carbon, &
+                                       TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : fuse_2_patches
-   use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand
+   use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand, shed_turnover_water
    use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
-                                       slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW
+                                       slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW, &
+                                       SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
+   use meds_slow_dynamics,      only : settle_tissue_water
+   use meds_config,             only : pft_tissue_curves
+   use meds_water_retention,    only : water_curve_t, psi_from_water_content
+   use meds_constants,          only : grav_head
+   use meds_column_params,      only : PSI_INIT
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
@@ -140,10 +146,10 @@ program test_slow_ledger
    hand   = slow_fast_carbon_handover(site, cfg)
    call check_close(hand, expect, 1.0e-14_wp, 'handover = area * sum(nplant * (gpp - maintenance resp))')
 
-   !=== 5. A CULL hands its water to the ground channel and reports its heat. =================!
-   !       Before this, cohort_compact simply dropped both (review item 1B #7). The assertion is  !
-   !       the TRANSFER, not the disappearance: what leaves the cohort must arrive in the patch's !
-   !       shed channel, and the reported heat must be the capacity the cohort actually had.      !
+   !=== 5. A CULL hands its water to the ground channel, and the store sees its heat go. =======!
+   !       The assertion is the TRANSFER, not the disappearance: what leaves the cohort must     !
+   !       arrive in the patch's shed channel, and the tissue heat store must fall by what the   !
+   !       cohort carried.                                                                       !
    call check_cull()
 
    !=== 6. A recruit is born at its PATCH's temperature, not at the global constant. ===========!
@@ -161,10 +167,9 @@ program test_slow_ledger
    call check_tissue_thermal_mass()
 
    !=== 9. Mortality's water LEAVES the tissue and ARRIVES in the shed channel, exactly. ======!
-   !       This identity broke twice while it was being written -- once by not routing the water  !
-   !       at all, once by scaling the loss with the SURVIVORS' density instead of the density     !
-   !       DROP -- and in both cases every other assertion in this file still passed. It is the    !
-   !       one property that pins the basis.                                                        !
+   !       It guards two errors every other assertion in this file passes through: not routing the !
+   !       water at all, and scaling the loss with the SURVIVORS' density instead of the density   !
+   !       DROP. It is the one property that pins the basis.                                        !
    call check_mortality_water()
    call check_litter_patch_lockstep()
    call check_litter_without_soil_carbon()
@@ -172,13 +177,152 @@ program test_slow_ledger
    !=== 10. Reproduction carbon reaches the recruit pool, every step and in proportion. =======!
    call check_recruit_pool()
 
+   !=== 11. The turnover shed takes its water's HEAT with it, and declares it. =================!
+   !        The leaf's heat capacity counts its water and the wood's counts the sapwood share of   !
+   !        its store, so shedding either moves the tissue heat store; the declared energy must    !
+   !        explain that move exactly.                                                              !
+   call check_shed_heat()
+   !=== 12. Tissue water is booked when it is made, shed or moved: a recruit's birth water, a    !
+   !        canopy's snap to bare, and water above a store's capacity. ======================!
+   call check_tissue_water_ledger()
+
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
 contains
 
+   !----- Every water amount a slow step moves into or out of the tissue is declared, so the       !
+   !       ledger's water residual is zero across each: (a) a recruitment, whose recruits are born   !
+   !       holding their water at PSI_INIT, drawn from outside like their carbon; (b) a canopy that  !
+   !       snaps to bare, whose leaf water goes to the ground with the leaves; (c) a store left      !
+   !       above its capacity, whose excess the settle before the fast loop sheds to the ground.     !
+   subroutine check_tissue_water_ledger()
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      type(slow_ledger_t) :: lg
+      type(water_curve_t) :: leaf_curve, wood_curve
+      real(wp) :: shed0, excess, n_new, tol
+      integer(ik) :: p, ph(3)
+
+      c = build_test_config()
+      tol = 1.0e-12_wp
+
+      !----- (a) A recruitment: water in, declared, and the recruit's leaves at PSI_INIT. ----------!
+      call init_bare_ground(st, c, 1_ik)
+      st%patch%recruit_pool(:, 1) = 0.0_wp
+      st%patch%recruit_pool(2, 1) = 5.0_wp * c%min_recruit_size
+      lg = slow_ledger_t() ; lg%active = .true.
+      call slow_ledger_open(lg, st, c, RHO)
+      call restructure_stand(st, c, .true., .false., lg)
+      call check(st%cohort%n == 1_ik, 'tissue water (a): one recruit is born')
+      call check(lg%decl_gross(SLOW_PHASE_RECRUIT)%water > 0.0_wp,                                 &
+                 'tissue water (a): the recruit''s birth water is declared as drawn in')
+      call check(abs(lg%resid_sum(SLOW_PHASE_RECRUIT)%water) <= tol * lg%decl_gross(SLOW_PHASE_RECRUIT)%water, &
+                 'tissue water (a): the recruit phase''s water residual is zero')
+      call pft_tissue_curves(c%hydraulics, c%pft, 2_ik, leaf_curve, wood_curve)
+      call check_close(psi_from_water_content(st%cohort%leaf_water_mass(1), leaf_curve,            &
+                       st%cohort%leaf_carbon(1)), PSI_INIT, 1.0e-9_wp,                             &
+                       'tissue water (a): a recruit''s leaves are born at PSI_INIT')
+
+      !----- (b) A dormant canopy sheds every leaf in one step, its water with it. ------------------!
+      c%fast_biophysics_on = .true.
+      c%demography_on      = .false.
+      c%pft%pheno_shed_rate_max(:) = 1.0_wp          ! [1/day]: the whole canopy in one day
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
+      call finalize_init(st)
+      st%cohort%leaf_flush_tendency(1) = 0.0_wp
+      st%cohort%leaf_shed_tendency(1)  = 1.0_wp
+      st%cohort%gpp_accum(1)       = 0.0_wp
+      st%cohort%leaf_resp_accum(1) = 0.0_wp
+      st%cohort%stem_resp_accum(1) = 0.0_wp
+      st%cohort%root_resp_accum(1) = 0.0_wp
+      lg = slow_ledger_t() ; lg%active = .true.
+      call slow_ledger_open(lg, st, c, RHO)
+      call vegetation_dynamics(st, c, ledger=lg)
+      call settle_tissue_water(st, c, lg)
+      call check(st%cohort%leaf_carbon(1) == 0.0_wp .and. st%cohort%leaf_water_mass(1) == 0.0_wp, &
+                 'tissue water (b): the canopy went bare, and its leaves hold no water')
+      ph = [SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_TISSUE_WATER]
+      do p = 1_ik, 3_ik
+         call check(abs(lg%resid_sum(ph(p))%water) <= tol * max(lg%decl_gross(ph(p))%water, 1.0_wp), &
+                    'tissue water (b): the snap to bare closes the water ledger, phase by phase')
+      end do
+      call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%water > 0.0_wp,                                &
+                 'tissue water (b): the shed leaves'' water is declared as leaving')
+
+      !----- (c) Leaf carbon taken without its water: the settle sheds the excess, declared. -----!
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
+      call finalize_init(st)
+      call pft_tissue_curves(c%hydraulics, c%pft, 1_ik, leaf_curve, wood_curve)
+      st%cohort%leaf_carbon(1) = 0.5_wp * st%cohort%leaf_carbon(1)
+      call set_cohort_size_from_carbon(st%cohort, 1_ik)
+      excess = st%cohort%leaf_water_mass(1) - leaf_curve%water_sat * st%cohort%leaf_carbon(1)
+      call check(excess > 0.0_wp, 'tissue water (c): the fixture leaves the leaves above their capacity')
+      shed0 = shed_total(st, c)
+      n_new = st%cohort%nplant(1)
+      lg = slow_ledger_t() ; lg%active = .true.            ! no window yet: the settle takes its reference
+      call settle_tissue_water(st, c, lg)
+      call check_close(lg%decl_gross(SLOW_PHASE_TISSUE_WATER)%water, st%patch%area(1) * n_new * excess, &
+                       1.0e-12_wp, 'tissue water (c): the excess is declared as leaving')
+      call check_close(shed_total(st, c) - shed0, st%patch%area(1) * n_new * excess, 1.0e-12_wp,    &
+                       'tissue water (c): and it arrives in the patch shed channel')
+      call check(abs(lg%resid_sum(SLOW_PHASE_TISSUE_WATER)%water) <= tol * lg%decl_gross(SLOW_PHASE_TISSUE_WATER)%water, &
+                 'tissue water (c): the settle phase''s water residual is zero')
+      call check(abs(lg%resid_sum(SLOW_PHASE_TISSUE_WATER)%energy) <= 1.0e-12_wp                   &
+                 * lg%decl_gross(SLOW_PHASE_TISSUE_WATER)%energy, 'tissue water (c): and its energy residual')
+
+      !----- (d) A bare cohort re-flushes from storage: its new leaves take their water from the  !
+      !      wood, at the potential the two share at rest, so the leaves start where the stem is   !
+      !      (less the crown's gravity head) rather than at the dry end of their curve, and the    !
+      !      plant's water is unchanged. --------------------------------------------------------!
+      call check_reflush_water()
+   end subroutine check_tissue_water_ledger
+
+   subroutine check_reflush_water()
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      type(slow_ledger_t) :: lg
+      type(water_curve_t) :: leaf_curve, wood_curve
+      real(wp) :: w_plant0, w_plant1, psi_leaf, psi_wood
+      c = build_test_config()
+      c%fast_biophysics_on = .true.
+      c%demography_on      = .false.
+      c%pft%fineroot_turnover_rate(:) = 0.0_wp      ! no fine-root shed: only the fill moves water
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
+      call finalize_init(st)
+      call pft_tissue_curves(c%hydraulics, c%pft, 1_ik, leaf_curve, wood_curve)
+      st%cohort%leaf_carbon(1)     = 0.0_wp           ! bare, with its storage, at a drier stem
+      st%cohort%leaf_water_mass(1) = 0.0_wp
+      call set_cohort_size_from_carbon(st%cohort, 1_ik)
+      st%cohort%wood_water_mass(1) = 0.9_wp * st%cohort%wood_water_mass(1)
+      st%cohort%leaf_flush_tendency(1) = 1.0_wp
+      st%cohort%leaf_shed_tendency(1)  = 0.0_wp
+      st%cohort%gpp_accum(1)       = 0.0_wp
+      st%cohort%leaf_resp_accum(1) = 0.0_wp
+      st%cohort%stem_resp_accum(1) = 0.0_wp
+      st%cohort%root_resp_accum(1) = 0.0_wp
+      w_plant0 = st%cohort%leaf_water_mass(1) + st%cohort%wood_water_mass(1)
+      lg = slow_ledger_t() ; lg%active = .true.
+      call slow_ledger_open(lg, st, c, RHO)
+      call vegetation_dynamics(st, c, ledger=lg)
+      call check(st%cohort%leaf_carbon(1) > 0.0_wp, 'reflush: the bare cohort grew leaves')
+      w_plant1 = st%cohort%leaf_water_mass(1) + st%cohort%wood_water_mass(1)
+      call check_close(w_plant1, w_plant0, 1.0e-14_wp, 'reflush: the plant''s water is unchanged')
+      psi_leaf = psi_from_water_content(st%cohort%leaf_water_mass(1), leaf_curve, st%cohort%leaf_carbon(1))
+      psi_wood = psi_from_water_content(st%cohort%wood_water_mass(1), wood_curve,                   &
+                                        st%cohort%sapwood_carbon(1) + st%cohort%fineroot_carbon(1))
+      call check(psi_wood < -0.1_wp, 'reflush: the fixture''s stem is drier than the birth potential')
+      call check(abs(psi_leaf - (psi_wood - grav_head * st%cohort%height(1))) <= 1.0e-9_wp,        &
+                 'reflush: the new leaves start at the wood''s potential less the crown head')
+      call check(abs(lg%resid_sum(SLOW_PHASE_GROW)%water) <= 1.0e-12_wp,                           &
+                 'reflush: the fill moves water inside the plant; the ledger sees no residual')
+   end subroutine check_reflush_water
+
    !----- The recruit pool is credited EVERY step, and what it holds is the reproduction carbon   !
-   !       the parents were debited for. Two assertions, because the fix has two halves: the      !
-   !       CADENCE (it used to be credited only on month boundaries, from that one day's rate     !
+   !       the parents were debited for. Two assertions, one per half of the contract: the       !
+   !       CADENCE (credited every step, not sampled on month boundaries from one day's rate      !
    !       scaled up to stand for the month) and the CARBON LINK (the credit must follow          !
    !       recruit_carbon_efficiency, which is what makes pool x carbon_min the debited carbon). ---!
    !       A third: under recruit_shade_decay the credit falls as exp(-k * LAI) of the patch.      !
@@ -189,7 +333,7 @@ contains
       call check(p1 > 0.0_wp, 'recruit pool: credited on an ordinary step, not only at month end')
       !----- Six steps credit about twice what three do. NOT exactly twice: the stand grows       !
       !      between steps, so later steps produce a little more reproduction carbon. The point   !
-      !      is that every step contributes -- under the old monthly sampling p1 and p2 were both !
+      !      is that every step contributes -- a monthly sampling would leave p1 and p2 both      !
       !      identically zero, since neither run crosses a month boundary.  --------------------!
       call check(abs(p2 - 2.0_wp * p1) <= 0.01_wp * p2,                                            &
                  'recruit pool: six steps credit ~twice what three do (it integrates, not samples)')
@@ -222,7 +366,7 @@ contains
       c%pft%recruit_carbon_efficiency(:) = repro_eff
       if (present(shade_decay)) c%pft%recruit_shade_decay(:) = shade_decay
       c%pft%seed_rain_recruits(:)      = 0.0_wp
-      c%pft%leaf_lifespan_toc(:)       = 100.0_wp   ! keep turnover from eating the supply
+      c%pft%leaf_turnover_rate_toc(:)  = 0.01_wp    ! [1/yr] keep turnover from eating the supply
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)   ! above the reproduction height
       call finalize_init(st)
@@ -241,21 +385,19 @@ contains
    !---------------------------------------------------------------------------------------!
    ! THE LITTER ACCUMULATOR MUST RIDE THE PATCH ARRAY.                                           !
    !                                                                                          !
-   ! `lit` used to be a LOCAL array in vegetation_dynamics, sized to the patch count on entry --  !
-   ! and apply_patch_disturbance CREATES a patch partway through that same routine. The consumer  !
-   ! (advance_biogeochem_dynamics) then looped to the NEW patch count and read past the end,       !
-   ! feeding undefined memory into the CENTURY litter input. A 50-year spin-up reached 1.8e9        !
-   ! kgC/m2 on a gap patch born that step.                                                          !
+   ! restructure_stand (apply_patch_disturbance) CREATES patches after vegetation_dynamics has   !
+   ! filled the step's litter, and the consumer (advance_biogeochem_dynamics) loops to the NEW   !
+   ! patch count. An accumulator sized to the patch count when it was filled is read past its    !
+   ! end, feeding undefined memory into the CENTURY litter input (1.8e9 kgC/m2 on a gap patch    !
+   ! born that step, over a 50-year spin-up).                                                    !
    !                                                                                          !
-   ! Nothing caught it. The whole suite was green; the slow ledger closed on every phase and         !
-   ! currency, because the ledger DECLARED the same out-of-bounds read as a boundary term and so     !
-   ! balanced perfectly against the garbage. Only `-check bounds` saw it, and only a config with     !
-   ! soil carbon on ever reached the code.                                                            !
+   ! The slow ledger cannot catch that: it DECLARES the same out-of-bounds read as a boundary    !
+   ! term and so balances perfectly against the garbage. Only `-check bounds` sees it.           !
    !                                                                                          !
-   ! So the assertion is the INVARIANT that was violated -- the accumulator is at least as long as   !
-   ! the patch array, after the operators that change the patch count have run -- plus the quieter   !
-   ! half: a FUSION must carry the litter across area-weighted rather than dropping or duplicating   !
-   ! it (the old local array silently misattributed one patch's litter to another).                   !
+   ! So the assertion is the INVARIANT -- the accumulator is patch state, at least as long as    !
+   ! the patch array after the operators that change the patch count have run -- plus the        !
+   ! quieter half: a FUSION must carry the litter across area-weighted rather than dropping or   !
+   ! duplicating it (a local array misattributes one patch's litter to another).                 !
    !---------------------------------------------------------------------------------------!
    subroutine check_litter_patch_lockstep()
       type(meds_config_t) :: c
@@ -300,8 +442,8 @@ contains
    end subroutine check_litter_patch_lockstep
 
    !----- With the soil-carbon pools off, the litter is still recorded and still declared leaving at !
-   !      the growth phase (#316): the same litter, and the same growth-phase residual, as with them    !
-   !      on. Before, it was neither recorded nor declared, and the phase read it as a carbon leak. ---!
+   !      the growth phase: the same litter, and the same growth-phase residual, as with them on.     !
+   !      Undeclared, the phase would read it as a carbon leak. -----------------------------------!
    subroutine check_litter_without_soil_carbon()
       real(wp) :: lit_on, lit_off, res_on, res_off
       call grow_one_step(.true.,  lit_on,  res_on)
@@ -376,6 +518,30 @@ contains
                        'every kg that leaves tissue must arrive in the patch shed channel')
    end subroutine check_mortality_water
 
+   subroutine check_shed_heat()
+      type(carbon_flux_block) :: npp
+      type(slow_ledger_t)     :: lg
+      integer(ik) :: nc
+      nc = site%cohort%n
+      allocate(npp%leaf(nc), npp%fineroot(nc), npp%wood(nc), npp%nonstructural(nc))
+      npp%wood = 0.0_wp ; npp%nonstructural = 0.0_wp
+      npp%leaf     = -0.25_wp * site%cohort%leaf_carbon(1:nc)       ! a quarter of the leaves shed
+      npp%fineroot = -0.10_wp * site%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
+      site%cohort%leaf_water_mass(1:nc) = 0.7_wp
+      site%cohort%wood_water_mass(1:nc) = 2.3_wp
+      lg%active = .true.
+      call slow_ledger_open(lg, site, cfg, RHO)
+      call shed_turnover_water(site, cfg, npp, lg)
+      call slow_ledger_mark(lg, site, cfg, SLOW_PHASE_ALLOCATE)
+      call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy > 0.0_wp, 'shed heat: the shed declares energy')
+      call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%energy)                                      &
+                 <= 1.0e-12_wp * lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy,                            &
+                 'shed heat: the declared energy is the tissue heat store''s change')
+      call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%water)                                       &
+                 <= 1.0e-12_wp * lg%decl_gross(SLOW_PHASE_ALLOCATE)%water,                             &
+                 'shed heat: the declared water is the tissue water store''s change')
+   end subroutine check_shed_heat
+
    pure function tissue_water_total(st) result(w)
       type(site_t), intent(in) :: st
       real(wp)    :: w
@@ -432,8 +598,7 @@ contains
       real(wp) :: lab0, lab1, wood0, wood1, n0, dd, dty
       !----- Each variant runs on a FRESH stand. vegetation_dynamics COMMITS growth, so calling it !
       !      twice on one site compares two different forests and the second comparison passes for !
-      !      the wrong reason -- which is exactly what happened before this was rebuilt, and the    !
-      !      mutation that should have failed it did not.  ---------------------------------------!
+      !      the wrong reason (a mutation that should fail it does not).  -------------------------!
       call run_variant(0.3_wp, 1.0_wp, co2_on,  dummy)
       call run_variant(0.0_wp, 1.0_wp, co2_off, dummy)
       call check(co2_on > 0.0_wp, 'routing: growth respiration reaches patch%slow_co2_rate')
@@ -470,7 +635,7 @@ contains
       call check_close(dd, 0.2_wp * dty, 1.0e-9_wp, 'sink limit: a binding absolute limit grows dbh by rate x dt')
    end subroutine check_routing
 
-   !----- One slow step on a FRESH stand, returning the two quantities this PR routes. ------------!
+   !----- One slow step on a FRESH stand, returning the two routed quantities (CO2 rate, litter). --!
    subroutine run_variant(g_resp, repro_eff, co2_rate, litter_total, starve, max_rgr,              &
                           lab_soil, wood, nplant0, immortal, max_agr, ddbh, dt_yr)
       real(wp), intent(in)  :: g_resp, repro_eff
@@ -493,12 +658,12 @@ contains
       c%soil_carbon_on     = .true.
       c%pft%growth_resp_factor(:)      = g_resp
       c%pft%recruit_carbon_efficiency(:) = repro_eff
-      !----- A LONG leaf lifespan, so turnover does not eat the whole supply before reproduction  !
+      !----- A SLOW leaf turnover, so turnover does not eat the whole supply before reproduction !
       !      is reached. The allocator's priority order is leaf/root growth, then storage, then    !
-      !      reproduction, then wood -- with the default ~1 yr lifespan this cohort's daily leaf   !
+      !      reproduction, then wood -- with the default ~1 /yr turnover this cohort's daily leaf  !
       !      replacement is 14x the photosynthate below and `avail` reaches zero before any seed   !
-      !      is made, which is how the first version of this test passed while asserting nothing.  !
-      c%pft%leaf_lifespan_toc(:) = 100.0_wp
+      !      is made, so the seed-loss assertion would pass while asserting nothing.               !
+      c%pft%leaf_turnover_rate_toc(:) = 0.01_wp
       if (present(max_rgr)) c%pft%max_relative_growth_rate(:) = max_rgr
       if (present(max_agr)) c%pft%max_absolute_growth_rate(:) = max_agr
       if (present(dt_yr))   dt_yr = c%dt_years
@@ -532,7 +697,7 @@ contains
       if (present(lab_soil)) lab_soil = st%patch%litter_in(1)%labile_soil
       if (present(wood))     wood     = st%cohort%wood_carbon(1)
       co2_rate     = st%patch%slow_co2_rate(1)
-      !----- The litter accumulator is patch state now, so it is read off the site rather than
+      !----- The litter accumulator is patch state, so it is read off the site rather than
       !      returned: st%patch%litter_in(1), in lockstep with patch 1.
       litter_total = st%patch%litter_in(1)%labile_grnd + st%patch%litter_in(1)%labile_soil          &
                    + st%patch%litter_in(1)%struct_grnd + st%patch%litter_in(1)%struct_soil
@@ -557,7 +722,7 @@ contains
       call check_close(w_shed, expect_w, 1.0e-12_wp, 'cull: reports the tissue + film water it carried')
       call check_close(site%patch%shed_water_rate(1) - shed_before, w_before / cfg%dt_slow,       &
                        1.0e-12_wp, 'cull: the water reaches the patch shed channel, not the void')
-      !----- The cull's tissue HEAT is no longer reported by the operator: it is one part of the  !
+      !----- The cull's tissue HEAT is not reported by the operator: it is one part of the        !
       !      phase's thermal-mass change, which the driver brackets with slow_tissue_heat. Assert !
       !      that the store SEES the loss, which is what makes that bracket able to declare it.   !
       heat_after = slow_tissue_heat(site)
@@ -568,11 +733,11 @@ contains
       integer(ik) :: m
       m = site%cohort%n + 1_ik
       site%patch%cas(1)%can_temp = 268.0_wp        ! a cold patch: LEAF_TEMP_INIT would be 20 K out
-      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, birth_temp=268.0_wp)
+      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics, birth_temp=268.0_wp)
       call check_close(site%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
       call check_close(site%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
-      !----- and the default is still the constant, for a setup call with no environment yet. ----!
-      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp)
+      !----- and the default is the constant, for a setup call with no environment yet. ----------!
+      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics)
       call check(site%cohort%leaf_temp(m) > 280.0_wp, 'birth: absent a patch temperature, the constant stands')
    end subroutine check_birth_temp
 

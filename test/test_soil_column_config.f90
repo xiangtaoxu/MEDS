@@ -2,14 +2,15 @@
 !==========================================================================================!
 ! test_soil_column_config -- the [soil_column] keys reach the column they describe.         !
 !                                                                                          !
-! The soil column's grid, texture and thermal properties used to be literals inside          !
-! build_fast_context. Moving them to config is only worth anything if the keys actually       !
-! change the column, and that wiring is the kind that breaks silently: a mis-threaded          !
-! argument leaves the model running the old placeholder, every budget still closes, and the    !
-! run looks healthy. So this asserts the knobs turn, not merely that the code compiles.        !
+! The soil column's grid, texture and thermal properties are config keys, worth anything   !
+! only if they actually change the column, and that wiring is the kind that breaks         !
+! silently: a mis-threaded argument leaves the model running on a default, every budget    !
+! still closes, and the run looks healthy. So this asserts the knobs turn, not merely that !
+! the code compiles.                                                                       !
 !                                                                                          !
 ! It also pins the default column: SOIL_LAYER_TEMPLATE (SoilGrids' depths, then deeper) cut at  !
-! the 2 m default depth, and the cut and merge rule of soil_layer_grid.                         !
+! the 2 m default depth, and the cut and merge rule of soil_layer_grid                          !
+! (docs/science/soil_biophysics.md §The soil layers).                                      !
 !==========================================================================================!
 program test_soil_column_config
    use meds_kinds,         only : wp, ik

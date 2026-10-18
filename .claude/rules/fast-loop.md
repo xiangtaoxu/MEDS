@@ -17,25 +17,27 @@ the integration.
 
 ## The freeze, and what it costs
 
-Each `dt_fast` step builds a **frozen work record** and marches against it. Leaf gas exchange and
-leaf water potential are frozen across the step, so daily photosynthesis drifts with `dt_fast` when
-the non-stomatal water-stress limb is on.
+Each `dt_fast` step builds a **frozen work record** and marches against it. Leaf gas exchange, and
+the leaf water potential that sets it, are frozen across the step, and the fast water-stress control
+amplifies an error in that potential: that is why leaf and wood water are solved implicitly with the
+soil's (`docs/science/numerical_scheme.md` §5a).
 
-**`dt_fast` is an ACCURACY parameter, not a stability one.** It buys sub-daily detail. It used to be
-stability-bound — a period-2 canopy-air oscillation above ~150–225 s that no conservation ledger
-detected — and that was traced to a single frozen coefficient, the canopy-air-to-atmosphere
-conductance, now refreshed at every integrator stage. Shipped configs use **900 s**; the config
-warns above 225 s only when the non-stomatal limb is on.
+**`dt_fast` is an ACCURACY parameter, not a stability one.** It buys sub-daily detail. A frozen
+canopy-air-to-atmosphere conductance drives a period-2 canopy-air oscillation that no conservation
+ledger detects (`numerical_scheme.md` §5a′), so that one coefficient is re-solved at every
+integrator stage. Shipped configs use **900 s**; the config warns above 900 s, the edge of the
+measured range.
 
 ## Two integrators, one dispatch
 
 - **`ark`** (default) — an L-stable ESDIRK2 on the ARS(2,2,2) tableau, with a 2×2 Newton arrowhead
-  for the leaf ↔ canopy-air surface solve. Despite the historical "IMEX-ARK" name the explicit part
-  is empty, so it is diagonally implicit.
+  for the leaf ↔ canopy-air surface solve. Despite the `ark` label the explicit part is empty, so it
+  is diagonally implicit, not IMEX.
 - **`rk45`** — adaptive Cash-Karp 5(4), the accuracy baseline.
 
 `meds_fast_step` dispatches and owns the **RK45-to-ARK stiff rescue**. There is no operator-split
-scheme; it was retired for converging to a different limit that refinement never removed.
+scheme: it converges to a different limit that refinement does not remove
+(`numerical_scheme.md` §3, "Why there is no operator-split scheme").
 
 **Soil and plant water are one network, on both schemes.** `run_spac_solver` (in
 `build_column_frozen`) solves the pond, soil layers and every cohort's wood and leaves together; the
@@ -49,11 +51,12 @@ A new water flow belongs in the network (its law in `meds_hydr_lib` or `meds_soi
   `site_t` is driver code.
 - **Build a column cohort view through `meds_column_view`.** `copy_column_cohort` for production,
   `column_cohort_init` for tests and probes — the latter builds the block through the canonical
-  birth path, so a fixture tree is on-allometry by construction. Hand-assembling one is how three
-  column tests ended up running on trees that could not exist.
+  birth path, so a fixture tree is on-allometry by construction. A hand-assembled one can describe a
+  tree that cannot exist, and the column test then passes on it.
 - **Declare a fast-loop field's fusion kind once**, in `fuse_cohort_fast_state`: intensive fields
-  blend leaf-area-weighted, extensive ones by plant number, ground-referenced ones sum. Getting it
-  wrong at a call site is invisible — the biomass assertion passes and both ledgers close.
+  (the tissue temperatures) blend on the heat capacity that carries them, extensive ones by plant
+  number, ground-referenced ones sum. Getting it wrong at a call site is invisible — the biomass
+  assertion passes and both ledgers close.
 - **Every store closes a budget every step**, asserted in the suite. But **a closed budget proves
   bookkeeping, not plausibility**: several real leaks sat behind ledgers that balanced, because the
   ledger declared the same quantity it consumed. Watch consecutive-step traces, not just residuals.

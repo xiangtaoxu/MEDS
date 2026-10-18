@@ -1,20 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_c_api_leaf -- COVERAGE FOR THE LEAF C-API SHIM (issue #100).                                   !
+! test_c_api_leaf -- COVERAGE FOR THE LEAF C-API SHIM.                                     !
 !                                                                                          !
-! WHY THIS TEST EXISTS -- and why it is MANDATORY, not gated on the pylib option. The shim is        !
-! library (`-DMEDS_BUILD_PYLIB=ON`), which is in neither the default build nor ctest. So a change   !
-! to `leaf_env_t` or `leaf_photo_params_t` could pass the whole suite on BOTH back ends while       !
-! leaving the C API unable to compile -- and that is exactly what happened: #95 inserted `psi_tlp`  !
-! and `stress_arrestor` into the middle of `leaf_photo_params_t`, the POSITIONAL structure          !
-! constructor in `to_params` shifted every trailing value by three, and the file stopped compiling  !
-! ("Omitted component is not initialized" for o2_mol_frac / absorptance / phi_psii). It sat on main !
-! through a fully green suite and was found only by hand-running the Python API.                     !
+! WHY THIS TEST EXISTS -- and why it is MANDATORY, not gated on the pylib option. Outside  !
+! this target the shim is compiled only by the optional shared library                     !
+! (`-DMEDS_BUILD_PYLIB=ON`), which is in neither the default build nor ctest. So a change  !
+! to `leaf_env_t` or `leaf_photo_params_t` -- a component inserted mid-type shifts every   !
+! trailing value of a POSITIONAL structure constructor -- could pass the whole suite on    !
+! both back ends while leaving the C API unable to compile. Every C-API shim is therefore  !
+! compiled into a ctest target, so an interface mismatch fails the build (docs/building.md !
+! §Running the tests).                                                                     !
 !                                                                                          !
-! Registering this test COMPILES the shim in every build, which is the fix -- the constructors are  !
-! keyword-form now, so the remaining failure mode is a compile error, and this makes that error     !
-! impossible to miss. The assertions below then cover the part a compile cannot: that the bind(c)   !
-! structs actually map onto the Fortran types field-for-field.                                       !
+! The constructors in `to_env` and `to_params` are keyword-form, so the remaining failure  !
+! mode is a compile error, and this target makes it impossible to miss. The assertions     !
+! below then cover the part a compile cannot: that the bind(c) structs actually map onto   !
+! the Fortran types field-for-field.                                                       !
 !                                                                                          !
 ! Deliberately does NOT need the .so, Python, or MEDS_BUILD_PYLIB -- it calls the bind(c) procedures !
 ! directly as Fortran.                                                                              !
@@ -23,7 +23,8 @@ program test_c_api_leaf
    use, intrinsic :: iso_c_binding, only : c_double, c_int
    use meds_kinds,        only : wp, ik
    use meds_c_api_leaf,    only : leaf_env_c, leaf_params_c, leaf_flux_c, meds_leaf_solve,        &
-                                 meds_arrhenius, meds_peaked_arrhenius
+                                 meds_arrhenius, meds_peaked_arrhenius, leaf_kinetics_c,          &
+                                 meds_rubisco_kinetics
    use meds_plant_types, only : PATH_C3
    use meds_leaf_opts,    only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_PEAKED
@@ -33,9 +34,10 @@ program test_c_api_leaf
    type(leaf_env_c)    :: env
    type(leaf_params_c) :: p
    type(leaf_flux_c)   :: f0, f1, f2, fb
+   type(leaf_kinetics_c) :: kin
    real(wp)            :: k25, arr
 
-   call banner('plant C-API shim (issue #100)')
+   call banner('leaf C-API shim')
 
    p = c3_defaults()
 
@@ -48,7 +50,7 @@ program test_c_api_leaf
    call check(f0%gs    > 0.0_wp,  'C-API gs > 0 when unstressed')
    call check(f0%ci > 0.0_wp .and. f0%ci < 400.0_wp, 'C-API ci is between 0 and ca')
 
-   !=== 2. `psi` (renamed from psi_soil, #99) actually reaches beta_stomata. ================!
+   !=== 2. `psi` actually reaches beta_stomata (docs/science/leaf_gas_exchange.md eq. (10)). =!
    !      This is the ABI assertion a compile cannot make: if leaf_env_c's components were         !
    !      mis-bound, `psi` would land on some other field and gs would not respond.                !
    env = make_env(-1.0_c_double)
@@ -75,6 +77,17 @@ program test_c_api_leaf
                         int(COLIM_QUADRATIC, c_int), 1_c_int, fb)
    call check(fb%converged /= 0_c_int, 'C-API solve converges with the boundary layer ON')
    call check(fb%cs < 400.0_wp, 'C-API boundary layer draws cs below ca (flag reached the kernel)')
+
+   !=== 5. The kinetics entry reads the parameters it is given: at 25 C and 21 % O2 Gamma* is    !
+   !      gstar25 at 100 kPa as a mole fraction (42.75 umol/mol), Kc and Ko are their partial     !
+   !      pressures over the air's pressure, and O2 is o2_mol_frac (leaf_gas_exchange.md eq. (3)). !
+   call meds_rubisco_kinetics(p, 298.15_c_double, 101325.0_c_double, kin)
+   call check_close(real(kin%gstar, wp), 42.75_wp, 1.0e-12_wp, 'C-API Gamma* is 42.75 umol/mol at 25 C')
+   call check_close(real(kin%kc, wp), 40.49_wp / 101325.0_wp * 1.0e6_wp, 1.0e-12_wp,            &
+                    'C-API Kc is kc25 over the pressure at 25 C')
+   call check_close(real(kin%ko, wp), 27840.0_wp / 101325.0_wp * 1.0e6_wp, 1.0e-12_wp,          &
+                    'C-API Ko is ko25 over the pressure at 25 C')
+   call check_close(real(kin%o2, wp), 209000.0_wp, 1.0e-12_wp, 'C-API O2 is o2_mol_frac in umol/mol')
 
    write(*,'(a)') '   PASS'
 

@@ -11,6 +11,8 @@
 !   4. ROOTS          : ED2's root profile and rooting depth; Gardner's root conductance.        !
 !   5. SEAM           : growth at conserved water lowers psi; the capacity clamp on a shrink.    !
 !   6. LEAFLESS       : a leafless cohort's leaf node sits at the wood less the crown head.      !
+!   7. AT REST        : the potential two tissues share at rest holds exactly their water.       !
+! The laws are docs/science/plant_hydraulics.md §2-§4 (eqs. (3)-(15)).                     !
 !==========================================================================================!
 program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
@@ -20,7 +22,8 @@ program test_plant_hydraulics
                                   flux_potential_lin, wood_kmax_from_density, root_fraction_profile,      &
                                   xylem_max_conductance, rhizosphere_conductance, xylem_sapflow
    use meds_water_retention, only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content, capacitance, &
-                                    psi_from_water_content, clamp_water_to_capacity, water_curve_t
+                                    psi_from_water_content, clamp_water_to_capacity, water_curve_t,  &
+                                    shared_potential
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_plant_hydraulics, only : cohort_root_depth, cohort_root_profile
@@ -37,12 +40,11 @@ program test_plant_hydraulics
    call test_seam_capacity_clamp()
    call test_leafless_leaf_psi()
    call test_kirchhoff_far_tail()
+   call test_shared_potential()
 
    call test_report('test_plant_hydraulics')
 
 contains
-
-   !----- Assertion. -----------------------------------------------------------------------!
 
    !----- A pioneer-like default trait set + cohort environment. ---------------------------!
    subroutine defaults(p, o)
@@ -221,14 +223,14 @@ contains
    end subroutine test_root_profile
 
    !=======================================================================================!
-   ! Biomass fast/slow SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is conserved across a     !
-   ! slow-loop biomass update, so a day of wood growth at FIXED water mass reads as a drier wood,  !
-   ! which then draws more water from the soil (the network's uptake follows its potential). ----!
+   ! Biomass fast/slow SEAM: mass, not psi, is conserved across a slow-loop biomass update, so a !
+   ! day of wood growth at FIXED water mass reads as a drier wood, which then draws more water   !
+   ! from the soil (the network's uptake follows its potential). --------------------------------!
    !=======================================================================================!
    subroutine test_growth_seam()
       type(hydro_params_t) :: p ; type(hydro_opts_t) :: o
       real(wp) :: bwood0, bwood1, psi_wood0, psi_wood1, w0
-      print '(a)', '-- Biomass fast/slow seam (P3): mass-conserving growth --'
+      print '(a)', '-- Biomass fast/slow seam: mass-conserving growth --'
       call defaults(p, o)
       bwood0    = 7.0_wp
       psi_wood0 = psi_from_rwc(0.90_wp, p%wood_curve%pi0, p%wood_curve%elastic_mod)
@@ -276,7 +278,7 @@ contains
    end subroutine test_cohort_roots
 
    !=======================================================================================!
-   ! Saturation-CEILING clamp (P3, the guard mass-conservation needs): a persisted mass can only   !
+   ! Saturation-CEILING clamp (the guard mass conservation needs): a persisted mass can only       !
    ! exceed the current capacity after biomass SHRINKS (e.g. the phenology dormant-canopy leaf       !
    ! snap-to-bare), never after it grows. clamp_water_to_capacity must be an exact no-op on growth,   !
    ! must cap exactly at the new ceiling on a shrink, and must reduce a fully-bare tissue to exactly  !
@@ -286,7 +288,7 @@ contains
       real(wp), parameter :: pi0 = -1.0_wp, eps = 8.0_wp, af = 0.20_wp, ws = 1.0_wp
       type(water_curve_t), parameter :: curve = water_curve_t(pi0, eps, af, ws)
       real(wp) :: biomass0, biomass_shrunk, biomass_grown, w0, ceiling_shrunk, w_capped
-      print '(a)', '-- Biomass fast/slow seam (P3): saturation-ceiling clamp --'
+      print '(a)', '-- Biomass fast/slow seam: saturation-ceiling clamp --'
       biomass0 = 7.0_wp
       w0 = water_content(psi_from_rwc(0.97_wp, pi0, eps), curve, biomass0)   ! near-saturated
 
@@ -339,6 +341,34 @@ contains
       call check('with leaves: the leaf curve', psi_l, psi_from_water_content(w_leaf, p%leaf_curve, bleaf), 0.0_wp)
       call check('with leaves: -0.8 MPa recovered', psi_l, -0.8_wp, 1.0e-9_wp)
    end subroutine test_leafless_leaf_psi
+
+   !=======================================================================================!
+   ! Two tissues at rest share one potential, the second a head below the first: the water each  !
+   ! holds there sums to what they hold together, on either branch of the curves, and a total    !
+   ! beyond the curves' reach returns the nearer end of the bracket.                             !
+   !=======================================================================================!
+   subroutine test_shared_potential()
+      type(hydro_params_t) :: p ; type(hydro_opts_t) :: o
+      real(wp), parameter :: bwood = 7.0_wp, bleaf = 0.8_wp, head = 0.2_wp
+      real(wp) :: w_total, psi, psi_set(3)
+      integer  :: k
+      print '(a)', '-- Two tissues at rest: the shared potential --'
+      call defaults(p, o)
+      psi_set = [-0.3_wp, -2.5_wp, -40.0_wp]          ! turgid, flaccid, deep in the flaccid tail
+      do k = 1, 3
+         w_total = water_content(psi_set(k), p%wood_curve, bwood)                                    &
+                 + water_content(psi_set(k) - head, p%leaf_curve, bleaf)
+         psi = shared_potential(w_total, p%wood_curve, bwood, p%leaf_curve, bleaf, head)
+         call check('at rest: the shared potential is recovered', psi, psi_set(k), 1.0e-9_wp * abs(psi_set(k)))
+         call check('at rest: the two hold the total', water_content(psi, p%wood_curve, bwood)          &
+                    + water_content(psi - head, p%leaf_curve, bleaf), w_total, 1.0e-12_wp * w_total)
+      end do
+      psi = shared_potential(10.0_wp * (p%wood_curve%water_sat * bwood + p%leaf_curve%water_sat * bleaf), &
+                             p%wood_curve, bwood, p%leaf_curve, bleaf, head)
+      call check('at rest: more than saturation returns the wet end', psi, 0.0_wp, 0.0_wp)
+      psi = shared_potential(0.0_wp, p%wood_curve, bwood, p%leaf_curve, bleaf, head)
+      call check_true('at rest: nothing at all returns the dry end', psi < -1.0e3_wp)
+   end subroutine test_shared_potential
 
    !=======================================================================================!
    ! Far beyond the table (a leaf dried to the apoplastic floor reads about pi0 * 1e4 MPa), the     !

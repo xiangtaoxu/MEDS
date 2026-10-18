@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """build_era5land_archive.py -- build the global per-variable monthly ED_ERA5land archive from raw
-GDEX files or global CDS GRIB files (docs/dev_plans/archive/MEDS_FORCING_DESIGN.md sections 13.2 and 14).
+GDEX files or global CDS GRIB files (docs/science/forcing.md §1).
 
 Output, one file per variable per month, directly in data_path (no subfolders; the name carries the
 variable and month, so a prefix glob selects any subset):
@@ -35,10 +35,10 @@ above Tair by more than 0.5 K, on a sample of chunk columns.
 Each output is written via a .part file and recorded in <data_path>/manifest.json with its sha256.
 --work-dir writes the .part on another disk (node-local, say) and then copies the finished file into
 data_path in one sequential stream: HDF5 writes thousands of small chunks and index updates, which
-are slow over a network filesystem, while one large sequential copy is not. Raw
-files are then deleted (decision OD2) unless --keep-raw: a GDEX file serves one variable-month and goes at
-once; a CDS GRIB file goes once every archive month it supplies is in the manifest, counting only months
-the raw pool holds more of than their closing stamp (see cds_index). A rerun skips outputs that the
+are slow over a network filesystem, while one large sequential copy is not. Raw files are then
+deleted unless --keep-raw (reprocessing means downloading them again): a GDEX file serves one
+variable-month and goes at once; a CDS GRIB file goes once every archive month it supplies is in the
+manifest, counting only months the raw pool holds more of than their closing stamp (see cds_index). A rerun skips outputs that the
 manifest already records, unless --force.
 
 Needs the static file first (build_era5land_static.py). Examples:
@@ -276,7 +276,7 @@ def write_bands(out_v, read_band, spec, static, expect, rows):
         row_ranges = [(r0, r1) for r0, r1 in row_ranges if r1 > rows[0] and r0 < rows[1]]
     for r0, r1 in row_ranges:
         band = read_band(r0, r1)
-        if spec["kind"] == "accum":                         # MEDS_FORCING_DESIGN.md section 7.3
+        if spec["kind"] == "accum":                         # the 00Z trap: docs/science/forcing.md §1
             band = common.deaccumulate(band, hour_is_01, spec["clip_negative"])
             band *= np.float32(spec["factor"])
         vband = valid[r0:r1]
@@ -324,7 +324,7 @@ def publish(part, final):
 
 
 def delete_raw(var, data_path, paths, cds):
-    """OD2: raw files go once what they supply is built. A GDEX file serves only this variable-month; a CDS
+    """Raw files go once what they supply is built. A GDEX file serves only this variable-month; a CDS
     file goes once every archive month it supplies is in the manifest. Returns how many were deleted."""
     if cds is None:
         for p in paths:
@@ -462,7 +462,7 @@ def parse_args(argv):
     ap.add_argument("--end", required=True, help="last month, YYYY-MM (inclusive)")
     ap.add_argument("--variables", default="all", help=f"comma list from {list(common.ARCHIVE_VARIABLES)}, or 'all'")
     ap.add_argument("--workers", type=int, default=1, help="variable-months built in parallel processes")
-    ap.add_argument("--keep-raw", action="store_true", help="keep raw files after a verified build (default: delete, OD2)")
+    ap.add_argument("--keep-raw", action="store_true", help="keep raw files after a verified build (default: delete)")
     ap.add_argument("--force", action="store_true", help="rebuild variable-months the manifest already records")
     ap.add_argument("--rows", default=None, help="debug: build only rows R0:R1 into a .subset.nc file (no manifest, no deletion)")
     ap.add_argument("--work-dir", default=None,

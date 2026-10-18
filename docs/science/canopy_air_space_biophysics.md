@@ -34,17 +34,13 @@ energy instead — rescaling `can_enthalpy` by the mass ratio — would cool the
 the trees grew.
 
 > $`W_{cap}`$ is not a bookkeeping detail: it is the canopy air's heat capacity, so it sets how fast
-> the CAS responds. It was a **hardcoded 20 m with no writer** until 2026-07-31 — the aerodynamics
-> computed the right value and it was discarded — which meant a 1 m regenerating gap and a 35 m
-> tropical canopy were given the same box.
+> the CAS responds, and a 1 m regenerating gap and a 35 m tropical canopy need very different boxes.
 >
-> $`W_{cap}`$ used to set a hard *stability* bound on `dt_fast`, because it is the damping term
-> opposing a lagged ventilation feedback. That feedback is no longer lagged (the surface layer is
-> re-solved per stage, [canopy_aerodynamics](canopy_aerodynamics.md) §2), so the bound is gone.
-> Measured across stand heights, the worst case was in any case a *mid-height* canopy rather than a
-> short one — leaf area falls with height faster than canopy-air volume does at the low end — so the
-> intuition that a regenerating gap is always the strictest case is wrong. See
-> [numerical_scheme](numerical_scheme.md) §5a′.
+> It is also the damping term opposing the ventilation feedback, but it does not bound `dt_fast`: the
+> surface layer is re-solved at every integrator stage ([canopy_aerodynamics](canopy_aerodynamics.md)
+> §2), so that feedback is not lagged. Nor is a regenerating gap the strictest stand for a lagged
+> feedback: leaf area falls with height faster than canopy-air volume does at the low end, so the worst
+> case is a *mid-height* canopy ([numerical_scheme](numerical_scheme.md) §5a′).
 
 All three twins (enthalpy, humidity, CO₂) are advanced by the shared
 two-form box kernel `cas_column_step_implicit` / `cas_column_time_deriv` (`meds_cas_biophysics`),
@@ -65,22 +61,26 @@ H^{n+1} = \frac{W_{cap}H^n + \Delta t\,(F_{sens} + g_{atm}\,H_{atm})}{W_{cap} + 
 \text{resid} = W_{cap}(H^{n+1}-H^n) - \Delta t\big(F_{sens}+g_{atm}(H_{atm}-H^{n+1})\big) = 0 \qquad(2)
 ```
 
-The **vapour** twin is identical with $`g_{aw}=\rho u_*\,\mathrm{temp2}`$ and a non-negativity clamp.
+The **vapour** twin is identical with $`g_{aw}=\rho u_*\,\mathrm{temp2}`$.
 The **CO₂** twin differs only in units: CO₂ is a molar mixing ratio, so the capacity is the dry-air
 **molar** column $`C_{cap}=\rho\,(1-q)/M_{d}\cdot D_{can}`$ [mol m⁻²] and the conductance is
 $`g_{ac}=\rho_{mol}\,u_*\,\mathrm{temp2}`$. Its biotic source is
-$`F_{bio}=R_a+R_h-\mathrm{GPP}`$ (net ecosystem exchange), assembled by the driver (`column_fast_step`)
-from the aggregated cohort GPP/leaf-respiration ($`\times`$ LAI), stem/root maintenance respiration
-($`\times n_{plant}`$), and the heterotrophic soil flux (see [soil_biophysics](soil_biophysics.md#soil-heterotrophic-respiration)).
+$`F_{bio}=R_a+R_h-\mathrm{GPP}`$ (net ecosystem exchange), assembled once per `dt_fast` by
+`column_prepass` (`meds_fast_prepass`) from the aggregated cohort GPP/leaf-respiration ($`\times`$ LAI),
+stem/root maintenance respiration ($`\times n_{plant}`$), the growth respiration the slow loop charges
+once a day on the growth it built (handed down as the rate `slow_co2_rate`), and the heterotrophic soil
+flux (see [soil_biophysics](soil_biophysics.md#soil-heterotrophic-respiration)).
 CAS temperature is re-diagnosed from $(H^{n+1},q^{n+1})$ each step. Sharing $`u_*`$ **and** the profile
-factor across all three twins keeps them on one turbulence basis — the fix for the nocturnal-CO₂
-over-coupling bug (see [canopy_aerodynamics](canopy_aerodynamics.md)).
+factor across all three twins keeps them on one turbulence basis; a CO₂ twin without the profile factor
+would be over-coupled to the free atmosphere and lose its nocturnal build-up (see
+[canopy_aerodynamics](canopy_aerodynamics.md) eq. (5)).
 
 The two forms of the box kernel are the two-integrator seam: `cas_column_step_implicit` is the
-backward-Euler advance; `cas_column_time_deriv` is the explicit RHS the ESDIRK2 (`ark`) stepper calls. Both take the pre-assembled sources (`cas_source_t`) and the
-capacities/conductances/atmospheric BCs (`cas_column_t`) — any scheme-specific adjustment (the ARK
-condensation sink, snow sublimation) is folded into the source by the driver, so the box math
-itself is scheme-shared.
+backward-Euler box commit of each `ark` (ESDIRK2) stage (`meds_fast_be_stage`); `cas_column_time_deriv`
+is the explicit right-hand side the `rk45` stepper integrates (`surface_derivs`, `meds_fast_time_derivs`).
+Both take the pre-assembled sources (`cas_source_t`) and the capacities/conductances/atmospheric BCs
+(`cas_column_t`) — any scheme-specific adjustment (the condensation sink, snow sublimation) is folded
+into the source by the driver, so the box math itself is scheme-shared.
 
 ---
 
@@ -94,8 +94,11 @@ itself is scheme-shared.
 
 | Concept | Routine |
 |---|---|
-| CAS enthalpy + vapour + CO₂ twins (two-form box) | `meds_cas_biophysics`: `cas_column_step_implicit`, `cas_column_time_deriv` |
+| CAS twins (two-form box), eqs. (1)–(2) | `meds_cas_biophysics`: `cas_column_step_implicit`, `cas_column_time_deriv` |
 | source / capacity / conductance bundles | `meds_cas_biophysics`: `cas_source_t`, `cas_column_t` |
+| capacities $`W_{cap}`$, $`C_{cap}`$ + conductances | `meds_fast_prepass`: `cas_capacities_and_conductances` |
+| biotic CO₂ source $`F_{bio}`$ | `meds_fast_prepass`: `column_prepass` |
+| CAS depth + open-volume exchange | `refresh_canopy_depth` (`meds_slow_dynamics`), `cas_set_depth` (`meds_column_state_types`) |
 | $`u_*`$ conductance (temp1/temp2) | `meds_canopy_aerodynamics` (see [canopy_aerodynamics](canopy_aerodynamics.md)) |
 
 ## References

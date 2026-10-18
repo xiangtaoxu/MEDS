@@ -1,20 +1,30 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_column_energy -- unit tests for the soil THERMAL column + shared enthalpy inverter.    !
-!   1. INVERTER round-trip (liquid + ice) and CONTINUITY at u_freeze/u_melt (temp = t_3ple).   !
-!   2. CLAUSIUS slope d(e_sat)/dT vs finite difference; and the ICE saturation branch (#89):    !
-!      continuity at the triple point, accuracy against Murphy & Koop (2005), and the guarantee  !
-!      that an ABSENT fliq is bit-identical to the pre-#89 liquid-only behaviour.                !
-!   3. SOIL energy CONSERVATION to ~round-off (a G_top warming; and with advective w_flux).     !
-!   4. STEADY STATE: a sealed isothermal column does not drift.                                 !
-!   5. ICE-AWARE conductivity: frozen saturated soil conducts more than liquid (k_ice>k_water). !
-!   6. FREEZE plateau (P2a zero-curtain): cooling a wet layer pins soil_temp at t_3ple while     !
-!      soil_fliq falls 1->0, absorbing exactly wmass*L_f; energy conserved through the plateau.   !
-!   7. THAW plateau (P2a): warming a frozen layer pins at t_3ple while soil_fliq rises 0->1.       !
-!   8. ANNUAL DAMPING (#145): the amplitude of an annual surface wave must decay with depth as      !
-!      exp(-z/d), d = sqrt(2*alpha/omega), the semi-infinite analytic solution. This is a REGIME     !
-!      test, not a budget test -- the adiabatic bottom BC conserves energy to round-off while        !
-!      reflecting the wave and holding the amplitude 81% too high at the column base.                 !
+! test_column_energy -- unit tests for the soil THERMAL column + shared enthalpy inverter. !
+!   1. INVERTER round-trip (liquid + ice) and CONTINUITY at u_freeze/u_melt (temp =        !
+!      t_3ple).                                                                            !
+!   2. CLAUSIUS slope d(e_sat)/dT vs finite difference; and the ICE saturation branch:     !
+!      continuity at the triple point, accuracy against Murphy & Koop (2005), and the      !
+!      guarantee that an ABSENT fliq is bit-identical to the liquid curve (fliq = 1).      !
+!   3. SOIL energy CONSERVATION to ~round-off (a G_top warming; and with advective         !
+!      w_flux).                                                                            !
+!   4. STEADY STATE: a sealed isothermal column does not drift.                            !
+!   5. ICE-AWARE conductivity: frozen saturated soil conducts more than liquid             !
+!      (k_ice>k_water).                                                                    !
+!   6. FREEZE plateau (the zero curtain): cooling a wet layer pins soil_temp at t_3ple     !
+!      while soil_fliq falls 1->0, absorbing exactly wmass*L_f; energy conserved through   !
+!      the plateau.                                                                        !
+!   7. THAW plateau: warming a frozen layer pins at t_3ple while soil_fliq rises 0->1.     !
+!   8. ANNUAL DAMPING: the amplitude of an annual surface wave must decay with depth as    !
+!      exp(-z/d), d = sqrt(2*alpha/omega), the semi-infinite analytic solution. This is a  !
+!      REGIME test, not a budget test -- the adiabatic bottom BC conserves energy to       !
+!      round-off while reflecting the wave and holding the amplitude 81% too high at the   !
+!      column base.                                                                        !
+!   9. MASS-CHANGE NEUTRALITY: water that leaves or enters a layer with its own enthalpy   !
+!      leaves the layer's temperature unchanged.                                           !
+! The equations are docs/science/soil_biophysics.md §The soil thermal column and §The      !
+! bottom thermal boundary (eqs. (10)-(12)), and docs/science/snow_biophysics.md eq. (1)    !
+! for the saturation over ice.                                                             !
 !==========================================================================================!
 program test_column_energy
    use meds_test_assert, only : check, check_true, test_report
@@ -32,7 +42,7 @@ program test_column_energy
                                      sat_vapor_pressure_temp_deriv, internal_energy_liquid
    use meds_soil_energy,      only : soil_energy_step_implicit
    implicit none
-   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
 
    call test_inverter()
    call test_clausius()
@@ -42,7 +52,7 @@ program test_column_energy
    call test_ice_conductivity()
    call test_freeze_plateau()
    call test_thaw_plateau()
-   call test_mass_correction_neutrality()
+   call test_mass_change_neutrality()
    call test_soil_annual_damping()
 
    call test_report('test_column_energy')
@@ -52,7 +62,7 @@ contains
 
 
    !---------------------------------------------------------------------------------------!
-   ! 8. ANNUAL-WAVE DAMPING vs the analytic semi-infinite solution (#145).                      !
+   ! 8. ANNUAL-WAVE DAMPING vs the analytic semi-infinite solution.                             !
    !                                                                                          !
    ! A homogeneous column at constant theta has constant kappa and C, so the classical result   !
    ! applies exactly: a harmonic surface forcing of angular frequency omega decays with depth as !
@@ -92,11 +102,11 @@ contains
       !      thermal parameters ever change, this test's premise changes with them. --------------!
       call check('analytic damping depth [m]', dd, 1.9731_wp, 1.0e-3_wp)
 
-      !----- The DEFECT, stated as a number: the adiabatic base holds far too much amplitude at    !
-      !      the bottom node. A regression that quietly restored it would trip here. -------------!
+      !----- The adiabatic base's reflection, stated as a number: it holds far too much amplitude !
+      !      at the bottom node. This pins the oracle's power to tell the two BCs apart. ---------!
       call check_true('adiabatic base over-amplifies (>1.6x analytic)',                            &
                       amp_neu(NL) > 1.6_wp * ana(NL), amp_neu(NL) / ana(NL))
-      !----- The FIX: the Dirichlet anchor tracks the analytic profile to a few percent. ---------!
+      !----- The Dirichlet anchor tracks the analytic profile to a few percent. -----------------!
       call check_true('dirichlet base within 10% of analytic',                                     &
                       abs(amp_dir(NL) - ana(NL)) < 0.10_wp * ana(NL), amp_dir(NL) / ana(NL))
       !----- And it is better over the WHOLE profile, not just at the base -- by a wide enough     !
@@ -190,10 +200,10 @@ contains
    end subroutine test_clausius
 
    !---------------------------------------------------------------------------------------!
-   ! 2b. SATURATION OVER ICE (#89). The liquid curve over a frozen surface overstates e_sat by  !
-   ! 10 % at -10 C and 34 % at -30 C, which is what drove sublimation from the snow pack and     !
-   ! from frozen soil. Three things must hold for the fix to be safe:                            !
-   !   (a) an ABSENT fliq reproduces the old liquid-only result BIT-IDENTICALLY;                 !
+   ! 2b. SATURATION OVER ICE (docs/science/snow_biophysics.md eq. (1)). The liquid curve over a !
+   ! frozen surface overstates e_sat by 10 % at -10 C and 34 % at -30 C, which would overdrive   !
+   ! sublimation from the snow pack and from frozen soil. Three things must hold:                !
+   !   (a) an ABSENT fliq gives the liquid curve (fliq = 1) BIT-IDENTICALLY;                     !
    !   (b) the two branches meet EXACTLY at the triple point, so the blend puts no jump into the !
    !       right-hand side an adaptive controller integrates;                                    !
    !   (c) the ice branch is actually accurate -- checked against Murphy & Koop (2005).          !
@@ -203,7 +213,7 @@ contains
       real(wp), parameter :: DT = 1.0e-3_wp
       print '(a)', 'test_ice_saturation:'
 
-      !----- (a) absent fliq == fliq = 1 == the pre-#89 liquid curve, to the last bit. ---------!
+      !----- (a) absent fliq == fliq = 1 == the liquid curve, to the last bit. ----------------!
       call check_true('absent fliq is bit-identical to fliq = 1 at 283 K',                        &
                       sat_vapor_pressure(283.15_wp) == sat_vapor_pressure(283.15_wp, 1.0_wp), 0.0_wp)
       call check_true('absent fliq is bit-identical to fliq = 1 at 253 K',                        &
@@ -224,7 +234,7 @@ contains
                       < 5.0e-4_wp * sat_vapor_pressure(t_3ple, 1.0_wp),                           &
                       sat_vapor_pressure(t_3ple, 0.0_wp) / sat_vapor_pressure(t_3ple, 1.0_wp))
 
-      !----- (c) accuracy against Murphy & Koop (2005) over ice, and the SIZE of the defect. ---!
+      !----- (c) accuracy against Murphy & Koop (2005) over ice, and the liquid curve's error. --!
       call check('e_sat over ice at -10 C (Murphy-Koop 259.892 Pa)',                              &
                  sat_vapor_pressure(t_3ple - 10.0_wp, 0.0_wp), 259.892_wp, 0.4_wp)
       call check('e_sat over ice at -20 C (Murphy-Koop 103.252 Pa)',                              &
@@ -424,51 +434,51 @@ contains
    end subroutine test_thaw_plateau
 
    !=======================================================================================!
-   !  TEMPERATURE-NEUTRALITY of an unfaced mass correction -- the identity the driver's       !
-   !  clip / theta_res-floor compensation rests on.                                            !
-   !                                                                                          !
-   !  The hydrology applies post-solve corrections to theta that no face accounts for. The      !
-   !  energy column then inverts the CORRECTED water mass against the OLD internal energy, so    !
-   !  an uncompensated correction lands entirely in the diagnosed temperature. It is large:      !
-   !  internal_energy_liquid carries the tsupercool_liq datum, so liquid water is ~1.0 MJ/kg in   !
-   !  ABSOLUTE terms and only differences are physical. Moving the matching enthalpy with the      !
-   !  mass, at the layer's OWN temperature, must leave the temperature exactly where it was --     !
-   !  a numerical fix-up may not heat or cool the soil.                                             !
-   !                                                                                                !
-   !  Both branches are asserted: uncompensated must MOVE the temperature (so the test would          !
-   !  fail if the datum were ever rebased to make u_liq ~ 0 and the bug went quiet), compensated       !
-   !  must not. --------------------------------------------------------------------------------------!
-   subroutine test_mass_correction_neutrality()
+   !  TEMPERATURE-NEUTRALITY of a mass change that carries its own enthalpy.               !
+   !                                                                                       !
+   !  The energy column inverts a layer's water mass against its internal energy, so water !
+   !  that leaves or enters a layer without its matching enthalpy lands entirely in the    !
+   !  diagnosed temperature. It is large: internal_energy_liquid carries the               !
+   !  tsupercool_liq datum, so liquid water is ~1.0 MJ/kg in ABSOLUTE terms and only       !
+   !  differences are physical. Moving the matching enthalpy with the mass, at the layer's !
+   !  OWN temperature, must leave the temperature exactly where it was.                    !
+   !                                                                                       !
+   !  Both branches are asserted: water moved without its enthalpy must MOVE the          !
+   !  temperature (so the test fails if the datum is ever rebased to make u_liq ~ 0), and  !
+   !  water moved with it must not. --------------------------------------------------------!
+   subroutine test_mass_change_neutrality()
       real(wp) :: dry_hcap, wmass0, wmass1, dw, temp0, temp_raw, temp_fix, fliq0, fliq, uext0, u_liq
-      print '(a)', 'test_mass_correction_neutrality:'
+      print '(a)', 'test_mass_change_neutrality:'
       dry_hcap = 1.3e6_wp                                   ! [J/m3/K] typical dry-soil volumetric capacity
       temp0    = 291.0_wp
       wmass0   = 0.40_wp * rho_h2o                          ! [kg/m3] theta = 0.40 in the layer
       uext0    = temp_to_internal_energy(dry_hcap, wmass0, temp0, 1.0_wp)
       call internal_energy_to_temp(uext0, wmass0, dry_hcap, temp0, fliq0)   ! exact round-trip seed
 
-      !----- A 1 kg/m2 clip out of a 0.1 m layer: dtheta = -0.01, i.e. -10 kg/m3. -----------------!
+      !----- 1 kg/m2 removed from a 0.1 m layer: dtheta = -0.01, i.e. -10 kg/m3. -----------------!
       dw     = -10.0_wp
       wmass1 = wmass0 + dw
 
       !----- (a) mass removed, energy untouched: the layer's temperature jumps. -------------------!
       call internal_energy_to_temp(uext0, wmass1, dry_hcap, temp_raw, fliq)
-      call check_true('uncompensated clip visibly moves soil temperature',                        &
+      call check_true('water removed without its enthalpy visibly moves soil temperature',       &
                       abs(temp_raw - temp0) > 1.0_wp, temp_raw - temp0)
 
       !----- (b) mass AND its enthalpy removed at the layer's own temperature: T is unchanged. ----!
-      !      Uses the very function the driver's compensation calls. ------------------------------!
+      !      internal_energy_liquid is what the model values every liquid-water flow with. -------!
       u_liq = internal_energy_liquid(temp0)                      ! [J/kg] ~1.0e6, NOT ~0 -- that is the point
       call internal_energy_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
-      call check('compensated clip leaves soil temperature exactly unchanged', temp_fix, temp0,   &
+      call check('water removed with its enthalpy leaves soil temperature unchanged', temp_fix, temp0, &
                  1.0e-9_wp)
-      call check_true('compensated clip leaves the layer all-liquid', abs(fliq - 1.0_wp) < 1.0e-12_wp, fliq)
+      call check_true('water removed with its enthalpy leaves the layer all-liquid',                &
+                      abs(fliq - 1.0_wp) < 1.0e-12_wp, fliq)
 
-      !----- Same for the OPPOSITE sign (the theta_res hard floor CREATES water in the layer). ----!
+      !----- Same for the OPPOSITE sign (water added to the layer). ------------------------------!
       dw     = 10.0_wp
       wmass1 = wmass0 + dw
       call internal_energy_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
-      call check('compensated floor add is temperature-neutral too', temp_fix, temp0, 1.0e-9_wp)
-   end subroutine test_mass_correction_neutrality
+      call check('water added with its enthalpy leaves soil temperature unchanged', temp_fix, temp0, &
+                 1.0e-9_wp)
+   end subroutine test_mass_change_neutrality
 
 end program test_column_energy

@@ -1,10 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_slow_dynamics -- the THIN slow-tier coordinator (MEDS_SLOW_DYNAMICS_DESIGN.md Part II,   !
-! section 10a). Sequences the slow-tier domain drivers as PEERS -- vegetation dynamics, then     !
-! biogeochemistry -- and owns the shared per-patch slow-state application (update_patch_states,  !
-! hoisted out of meds_vegetation_dynamics) between them. It stays a coordinator, not a numerical   !
-! stepper: every actual computation lives in the domain drivers it calls.                          !
+! meds_slow_dynamics -- the THIN slow-tier coordinator (docs/science/order_of_processes.md       !
+! §4). Sequences the slow-tier domain drivers as PEERS -- vegetation dynamics, then              !
+! biogeochemistry -- and owns the shared per-patch slow-state application                        !
+! (update_patch_states) between them. It stays a coordinator, not a numerical stepper: every     !
+! actual computation lives in the domain drivers it calls.                                       !
 !==========================================================================================!
 module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
@@ -12,18 +12,18 @@ module meds_slow_dynamics
    use meds_time,                  only : meds_time_t, day_of_year
    use meds_site_state_types, only : site_t
    use meds_demography_update, only : update_patch_states
-   use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand
+   use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand, shed_excess_tissue_water
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_column_state_types, only : cas_set_depth
    use meds_slow_ledger,           only : slow_ledger_t, slow_ledger_open, slow_ledger_mark,       &
-                                          slow_ledger_rebase,                                     &
+                                          slow_ledger_rebase, slow_tissue_heat,                   &
                                           slow_ledger_declare, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC, &
-                                          KGC_PER_UMOL_C
+                                          SLOW_PHASE_TISSUE_WATER, KGC_PER_UMOL_C
    implicit none
    private
 
-   public :: advance_slow_dynamics, advance_boundary_dynamics, refresh_canopy_depth
+   public :: advance_slow_dynamics, advance_boundary_dynamics, refresh_canopy_depth, settle_tissue_water
 
 contains
 
@@ -39,9 +39,10 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       type(meds_time_t),   intent(in), optional :: step_start   !< the slow step's start (its day of year)
       type(soilc_seam_t),  intent(inout), optional :: seam   !< per-run seam diagnostics (see the biogeochem driver)
-      !----- The site conservation ledger (plan §10.2). Optional so a test, a probe or the C-API   !
-      !      can advance a slow step without one; every entry point is a no-op when it is absent   !
-      !      or inactive. `rho_air` values the canopy-air store and comes from the fast context.   !
+      !----- The site conservation ledger (meds_slow_ledger). Optional so a test, a probe or the   !
+      !      C-API can advance a slow step without one; every entry point is a no-op when it is    !
+      !      absent or inactive. `rho_air` values the canopy-air store and comes from the fast     !
+      !      context.                                                                              !
       type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp),            intent(in),    optional :: rho_air
       real(wp),            intent(in),    optional :: latitude_deg   !< the polygon's (default [site])
@@ -63,8 +64,8 @@ contains
       call refresh_canopy_depth(site, cfg, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
 
-      !----- `seam` is intent(inout) and accumulates over the run, so unlike the old intent(out) real !
-      !      there is nothing to define here when soil carbon is off -- it simply stays as it was.  ---!
+      !----- `seam` is intent(inout) and accumulates over the run, so when soil carbon is off it     !
+      !      simply stays as it was. ----------------------------------------------------------------!
       if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, seam, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
@@ -94,12 +95,36 @@ contains
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
    end subroutine advance_boundary_dynamics
 
+   !---------------------------------------------------------------------------------------!
+   ! settle_tissue_water -- before the fast loop reads the plants' water, shed what lies above  !
+   ! the capacity their biomass now allows (shed_excess_tissue_water) and book it: the water as !
+   ! a handoff to the ground, the heat it takes as a change in the tissue's thermal mass. It    !
+   ! runs once per step, after the slow step and any calendar boundary have changed the stand,  !
+   ! so it continues their ledger window in a phase of its own. Before a run's first step       !
+   ! there is no window yet, and it takes the reference store, as a resumed run's boundary does. !
+   !---------------------------------------------------------------------------------------!
+   subroutine settle_tissue_water(site, cfg, ledger)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      type(slow_ledger_t), intent(inout), optional :: ledger
+      real(wp) :: water_shed, heat0
+      heat0 = 0.0_wp
+      if (present(ledger)) then
+         if (.not. ledger%has_first) call slow_ledger_rebase(ledger, site, cfg)
+         heat0 = slow_tissue_heat(site)
+      end if
+      call shed_excess_tissue_water(site, cfg, water_shed)
+      if (present(ledger)) then
+         call slow_ledger_declare(ledger, water_out = water_shed, energy_in = slow_tissue_heat(site) - heat0)
+         call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_TISSUE_WATER)
+      end if
+   end subroutine settle_tissue_water
 
    !---------------------------------------------------------------------------------------!
    ! refresh_canopy_depth -- per-patch CAS depth = tallest cohort height + freeboard, floored.  !
    !                                                                                          !
    ! The ONLY writer of cas%can_depth, called by the slow step, at a calendar boundary and once   !
-   ! when a polygon is prepared (#306). The depth sets the canopy air's mass and heat capacity,    !
+   ! when a polygon is prepared. The depth sets the canopy air's mass and heat capacity,          !
    ! so it sets how fast the canopy air responds and the freeze-cadence stability limit on         !
    ! dt_fast, and the forcing is moved to its top. A fixed depth would be 4x too much canopy air   !
    ! over a 1 m regenerating gap and ~1.8x too little under a 35 m tropical canopy.                !
@@ -132,9 +157,7 @@ contains
          if (book) then
             !----- Growing the canopy ENTRAINS air from just above; shrinking DETRAINS it. The     !
             !      intensive state is the invariant, so the extensive content moves, and that is   !
-            !      a genuine exchange with the atmosphere -- a DECLARED boundary term, not a leak. !
-            !      The hook has existed on cas_set_depth since the field was made prognostic; this !
-            !      is the first caller to ask for it (plan §10.2.4). ----------------------------!
+            !      a genuine exchange with the atmosphere -- a DECLARED boundary term, not a leak. ----!
             call cas_set_depth(site%patch%cas(ip), depth_new, rho_air=rho,                         &
                                de_open=de, dw_open=dw, dc_open=dc)
             call slow_ledger_declare(ledger,                                                       &

@@ -1,9 +1,9 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_water_processes -- the water relations and flows the soil-plant water solver uses        !
-! (MEDS_SPAC_WATER_NETWORK_PLAN.md P1): every analytic derivative against a central finite   !
-! difference, over dry, wet and saturated states, and every value against the read-offs of    !
-! meds_water_retention, where those read-offs' floors do not bind.                            !
+! test_water_processes -- the water relations and flows the soil-plant water solver uses   !
+! (docs/science/soil_plant_water.md): every analytic derivative against a central finite   !
+! difference, over dry, wet and saturated states, and every value against the read-offs of !
+! meds_water_retention, where those read-offs' floors do not bind.                         !
 !                                                                                          !
 !   1. SOIL LAYERS  : two van Genuchten soils and a Campbell soil; the two branches of the      !
 !                     unknown meet with equal value and slope; theta and K match the            !
@@ -16,6 +16,7 @@
 !                     tabled 3.                                                                 !
 !   7. TRANSPIRATION: zero at an empty leaf, the demand above the closing water content.        !
 !   8. EVAPORATION  : the closed form where no dry surface layer forms.                          !
+!   9. HEAD         : one constant, rho_w g, converts head to potential for soil and plant.      !
 !==========================================================================================!
 program test_water_processes
    use meds_test_assert, only : check_true, check_close, test_report
@@ -46,6 +47,7 @@ program test_water_processes
    call test_xylem()
    call test_transpiration()
    call test_evaporation()
+   call test_hydrostatic_head()
    call test_report('test_water_processes')
 
 contains
@@ -224,7 +226,7 @@ contains
       call soil_water_flux(ka, kb - h, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
       if (.not. fd_agrees(dkb, (qa - qb) / (2*h), 1.0e-6_wp, 0.0_wp)) ok = .false.
       call check_true('darcy: derivatives match finite differences', ok)
-      !----- The pond face at zero head: today's infiltration capacity,                           !
+      !----- The pond face at zero head: the infiltration capacity,                               !
       !      sqrt(K1 Ksat) (1 + (-psi1)/(-z1)), times the water density. -------------------------!
       psi1 = -3.0_wp ; k1 = 2.0e-9_wp ; ks = 4.5e-6_wp ; z1 = -0.015_wp
       call soil_water_flux(ks, k1, 0.5_wp, 0.0_wp, grav_head * psi1, -z1, -z1, q, dum, dum, dum, dum)
@@ -358,7 +360,7 @@ contains
       logical  :: ok_d, ok_v
       sp%n_active = 3 ; sp%retention = SOIL_RETENTION_VG
       sp%dz(1:3) = 0.03_wp ; sp%theta_sat(1:3) = 0.4314_wp ; sp%theta_res(1:3) = 0.0981_wp
-      sp%vg_alpha(1:3) = 0.7607_wp ; sp%vg_n(1:3) = 1.3554_wp ; sp%ksat(1:3) = 4.54e-6_wp
+      sp%curve_par_a(1:3) = 0.7607_wp ; sp%curve_par_n(1:3) = 1.3554_wp ; sp%ksat(1:3) = 4.54e-6_wp
       f%t_ground = 300.0_wp ; f%q_air = 0.012_wp ; f%rho_air = 1.15_wp ; f%r_aero = 60.0_wp
       ok_d = .true. ; ok_v = .true.
       do i = 1, 30
@@ -385,5 +387,17 @@ contains
       call check_true('evaporation: derivatives match finite differences', ok_d)
       call check_true('evaporation: the closed form where no dry surface layer forms', ok_v)
    end subroutine test_evaporation
+
+   !=======================================================================================!
+   !----- Head and potential: the soil curves, the soil faces, root uptake and the crown's      !
+   !      gravity all convert with grav_head, which is water's density times standard gravity   !
+   !      (docs/science/plant_hydraulics.md, the total head; soil_plant_water.md). 10 m of water  !
+   !      is 98.0665 kPa. ------------------------------------------------------------------------!
+   subroutine test_hydrostatic_head()
+      call check_close('head: grav_head is rho_w g in MPa per metre', grav_head, rho_h2o * grav * 1.0e-6_wp,      &
+                       epsilon(1.0_wp) * grav_head)
+      call check_close('head: 10 m of water is 98.0665 kPa', 10.0_wp * grav_head, 0.0980665_wp,                  &
+                       4.0_wp * epsilon(1.0_wp) * 0.0980665_wp)
+   end subroutine test_hydrostatic_head
 
 end program test_water_processes

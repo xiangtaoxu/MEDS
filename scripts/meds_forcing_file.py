@@ -6,7 +6,7 @@ file from flux-tower data).
 
 The file is always on a UTC clock. Its time dimension has a fixed length, so every variable is
 stored in one contiguous block: the model reads a whole series at open in one pass, where a file
-stored one time record per chunk takes seconds (docs/science/forcing.md).
+stored one time record per chunk takes seconds (docs/science/forcing.md §1).
 
 Dependencies: numpy + netCDF4.
 """

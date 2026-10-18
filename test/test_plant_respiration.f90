@@ -6,11 +6,14 @@
 !   2. STEM @25C  : at 25 degC the peaked scale is 1, so R = factor25 * stem_area (cylinder).   !
 !   3. T-RESP     : at T /= 25 degC, R = factor25 * peaked_scale(T) * stem_area.                    !
 !   4. WAI        : the WAI branch term adds pi*wai/nplant/aboveground_frac to the stem area.       !
-!   5. SIZE       : the DBH size scaler multiplies the baseline by 10^(scaler*dbh).                  !
-!   6. ROOT       : R = factor25 * broot at 25 degC; broot = 0 => 0; monotone up to the optimum.     !
-!   (Growth/construction respiration moved to meds_plant_carbon_allocation; see test_plant_carbon_allocation.)!
-! Oracle = a reference implementation of the chosen form, evaluated in-test (no ecosystem consumer   !
-! yet, so numerical agreement -- not "it runs" -- is the correctness check).                           !
+!   5. ROOT       : R = factor25 * broot at 25 degC; broot = 0 => 0; monotone up to the optimum.     !
+!                   The response is summed over the root layers.                                    !
+!   6. PFT TRAITS : the stem and root baselines and is_woody are per PFT and change the answer.     !
+!   7. SAPWOOD    : the sapwood-volume term adds to the surface term.                               !
+! (Growth respiration is in meds_plant_carbon_allocation; see test_plant_carbon_allocation.)        !
+! Oracle = a reference implementation of the chosen form, evaluated in-test, so numerical agreement !
+! -- not "it runs" -- is the correctness check. The equations are                                   !
+! docs/science/plant_respiration.md eqs. (3)-(5).                                                   !
 !==========================================================================================!
 program test_plant_respiration
    use meds_test_assert, only : check_close, check_true, test_report
@@ -21,7 +24,7 @@ program test_plant_respiration
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,     &
                                      root_zone_temp_scale
    implicit none
-   real(wp), parameter :: AGF  = 0.7_wp   !< the PFT aboveground fraction, once (issue #128)
+   real(wp), parameter :: AGF  = 0.7_wp   !< the PFT aboveground fraction, passed per cohort
    real(wp), parameter :: SRF  = 0.06_wp  !< [umol/m2 stem/s @25C] the PFT stem baseline
    real(wp), parameter :: RRF  = 0.30_wp  !< [umol/kgC root/s @25C] the PFT root baseline
    logical,  parameter :: WOODY = .true.
@@ -32,7 +35,6 @@ program test_plant_respiration
    call test_tresponse()
    call test_wai_branch()
    call test_aboveground_frac_scales()
-   call test_size_scaler()
    call test_root()
    call test_pft_respiration_traits()
    call test_sapwood_term()
@@ -53,7 +55,7 @@ contains
    subroutine test_grass_zero()
       type(wood_params_t) :: p
       real(wp)            :: stem_resp
-      !----- is_woody is a per-PFT TRAIT now, passed per cohort, not a field on wood_params_t. --!
+      !----- is_woody is a per-PFT TRAIT, passed per cohort. -----------------------------------!
       call stem_maintenance_respiration(300.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, .false., SRF, 0.0_wp, 0.0_wp, &
                                         p, stem_resp)
       call check_true('grass: stem_resp == 0', stem_resp == 0.0_wp)
@@ -63,7 +65,6 @@ contains
    subroutine test_stem_identity_25c()
       type(wood_params_t) :: p
       real(wp) :: expect, stem_resp
-      p%stem_resp_size_scaler = 0.0_wp
       call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, &
                                         0.0_wp, 0.0_wp, p, stem_resp)
       expect = 0.06_wp * stem_area_ref(20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, 0.7_wp)
@@ -74,7 +75,6 @@ contains
    subroutine test_tresponse()
       type(wood_params_t) :: p
       real(wp) :: expect, tscale, stem_resp
-      p%stem_resp_size_scaler = 0.0_wp
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p, stem_resp)
       tscale = peaked_arrhenius_scale(1.0_wp, p%ea, p%hd, p%ds, 305.0_wp)
       expect = 0.06_wp * tscale * stem_area_ref(20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, 0.7_wp)
@@ -85,7 +85,6 @@ contains
    subroutine test_wai_branch()
       type(wood_params_t) :: p
       real(wp) :: tscale, expect_delta, r0, r1
-      p%stem_resp_size_scaler = 0.0_wp
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p, r0)
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p, r1)
       tscale = peaked_arrhenius_scale(1.0_wp, p%ea, p%hd, p%ds, 305.0_wp)
@@ -94,32 +93,20 @@ contains
    end subroutine test_wai_branch
 
    !----- 4b. The aboveground fraction is a PER-COHORT trait and must scale the stem area.    !
-   !          Before issue #128 this was a run-uniform 0.7 on wood_params_t, so two PFTs with  !
-   !          different allocation respired identically while demography used their real       !
-   !          values. The kernel divides the stem area by it, so halving the fraction must      !
-   !          double the respiration EXACTLY -- an inverse-proportionality, not just a change.   !
+   !          A run-uniform value would make two PFTs with different allocation respire         !
+   !          identically while demography used their real values. The kernel divides the stem  !
+   !          area by it, so halving the fraction must double the respiration EXACTLY -- an     !
+   !          inverse-proportionality, not just a change.                                       !
    subroutine test_aboveground_frac_scales()
       type(wood_params_t) :: p
       real(wp) :: r_high, r_low
-      p%stem_resp_size_scaler = 0.0_wp
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, 0.7_wp,  WOODY, SRF, 0.0_wp, 0.0_wp, p, r_high)
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, 0.35_wp, WOODY, SRF, 0.0_wp, 0.0_wp, p, r_low)
       call check_close('aboveground_frac scales stem respiration inversely', r_low, 2.0_wp * r_high)
    end subroutine test_aboveground_frac_scales
 
-   !----- 5. The DBH size scaler multiplies the baseline by 10^(scaler*dbh). ----------------!
-   subroutine test_size_scaler()
-      type(wood_params_t) :: p0, p1
-      real(wp) :: r0, r1
-      p0%stem_resp_size_scaler = 0.0_wp
-      p1%stem_resp_size_scaler = 0.0041_wp
-      call stem_maintenance_respiration(t_ref_photo, 50.0_wp, 25.0_wp, 0.0_wp, 0.05_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p0, r0)
-      call stem_maintenance_respiration(t_ref_photo, 50.0_wp, 25.0_wp, 0.0_wp, 0.05_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p1, r1)
-      call check_close('size scaler = x 10^(scaler*dbh)', r1, r0 * 10.0_wp**(0.0041_wp*50.0_wp))
-   end subroutine test_size_scaler
-
-   !----- 6. Fine root: identity at 25C, zero at broot=0, monotone below the optimum. The rate  !
-   !         is the PFT's `root_resp_factor25`, passed per cohort now, so the expected value    !
+   !----- 5. Fine root: identity at 25C, zero at broot=0, monotone below the optimum. The rate  !
+   !         is the PFT's `root_resp_factor25`, passed per cohort, so the expected value        !
    !         is written against the same constant the call uses -- not a literal that can drift. !
    subroutine test_root()
       type(root_params_t) :: p
@@ -134,10 +121,11 @@ contains
       call fine_root_maintenance_respiration(f_cold, 2.0_wp, RRF, r_cold)
       call check_true('root: warmer (below optimum) respires more', r_hot > r_cold)
 
-      !----- #178: the response is summed OVER LAYERS, not taken at a mean temperature. A       !
-      !      UNIFORM profile must give exactly the old answer (so the change is inert where      !
-      !      there is no gradient), and a SPLIT profile with the same mean must NOT -- which is  !
-      !      the whole point, and what a mean-temperature formulation cannot express.            !
+      !----- The response is summed OVER LAYERS (docs/science/plant_respiration.md eq. (4)), not  !
+      !      taken at a mean temperature. A UNIFORM profile must give exactly the mean-           !
+      !      temperature answer (the layer sum is inert where there is no gradient), and a SPLIT !
+      !      profile with the same mean must NOT -- which is the whole point, and what a         !
+      !      mean-temperature formulation cannot express.                                        !
       frac      = [0.4_wp, 0.3_wp, 0.2_wp, 0.1_wp]
       t_uniform = [285.0_wp, 285.0_wp, 285.0_wp, 285.0_wp]
       f_layer = root_zone_temp_scale(t_uniform, frac, 4_ik, p)
@@ -154,16 +142,14 @@ contains
                       f_layer > f_mean, f_layer / f_mean)
    end subroutine test_root
 
-   !----- 7. The three non-leaf respiration traits are PER-PFT and must differentiate cohorts.  !
-   !         They were run-uniform literals in the fast driver until now, so two PFTs respired   !
-   !         their stems and roots identically however they differed. Same shape as the          !
-   !         aboveground_frac check above: assert the trait CHANGES the answer, not merely that   !
-   !         the argument compiles.                                                                !
+   !----- 6. The three non-leaf respiration traits are PER-PFT and must differentiate cohorts.  !
+   !         As run-uniform literals they would make two PFTs respire their stems and roots     !
+   !         identically however they differed. Same shape as the aboveground_frac check above: !
+   !         assert the trait CHANGES the answer, not merely that the argument compiles.        !
    subroutine test_pft_respiration_traits()
       type(wood_params_t) :: pw
       type(root_params_t) :: pr
       real(wp) :: r_a, r_b
-      pw%stem_resp_size_scaler = 0.0_wp
       !----- stem baseline is a plain multiplier: double it, double the flux. ------------------!
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY,      &
                                         SRF, 0.0_wp, 0.0_wp, pw, r_a)
@@ -182,13 +168,12 @@ contains
       call check_close('root_resp_factor25 is per-PFT and scales the flux', r_b, 2.0_wp * r_a)
    end subroutine test_pft_respiration_traits
 
-   !----- 8. The sapwood term: rate x sapwood volume x the same temperature response, added to    !
+   !----- 7. The sapwood term: rate x sapwood volume x the same temperature response, added to    !
    !         the surface term. With no surface rate it is the whole flux; with both, they add. ------!
    subroutine test_sapwood_term()
       type(wood_params_t) :: pw
       real(wp), parameter :: RSAP = 40.0_wp, VSAP = 0.05_wp   ! [umol/m3/s @25C], [m3/plant]
       real(wp) :: r_sap, r_surf, r_both, tscale
-      pw%stem_resp_size_scaler = 0.0_wp
       call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY,   &
                                         0.0_wp, VSAP, RSAP, pw, r_sap)
       call check_close('sapwood term @25C = rate x volume', r_sap, RSAP * VSAP)

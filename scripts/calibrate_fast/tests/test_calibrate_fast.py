@@ -95,8 +95,8 @@ def test_defaults_come_from_the_base_then_the_record():
 
 
 def test_a_setting_comes_from_the_base_then_the_record_and_flags_read_text():
-    """The record holds a logical as text: "false" must read as false (it once switched off the
-    Kattge & Knorr values, as if the model's own acclimation were on)."""
+    """The record holds a logical as text: "false" must read as false (read as true, it would switch
+    off the Kattge & Knorr values, as if the model's own acclimation were on)."""
     cal = Calibration.__new__(Calibration)
     cal.base = RunConfig({"leaf_physiology": {}}, {"pft": {"vcmax25": [40.0, 50.0]}})
     cal.record = {("main", "leaf_physiology.thermal_acclimation", 0): (False, "false"),
@@ -1028,3 +1028,19 @@ def test_the_coordination_vcmax25_balances_the_two_rates():
     assert 20.0 < v25 < 80.0
     brighter = priors.eeo_vcmax25(lp, pft, {**clim, "par_day": 1200.0}, 400.0)
     assert brighter > v25                                            # more light: more Rubisco to match it
+
+
+@pytest.mark.skipif(not os.environ.get("MEDS_LIB"), reason="compares with MEDS's own leaf kinetics (libmeds.so)")
+def test_the_priors_kinetics_are_the_leafs():
+    # The least-cost g1 needs no library, so priors.kinetics computes the kinetics itself, as partial
+    # pressures; they must be the leaf kernel's at any pressure (Gamma* as a mole fraction does not
+    # depend on it: docs/science/leaf_gas_exchange.md eq. (3)).
+    from meds.plant import leaf
+    for p_pa in (99300.0, 70000.0):
+        k = priors.kinetics(dict(priors.LEAF_DEFAULTS), 303.15, p_pa)
+        m = leaf.rubisco_kinetics(leaf.c3_params(), 303.15, p_pa)
+        to_mf = 1.0e6 / p_pa
+        assert k["gstar"] * to_mf == pytest.approx(m.gstar, rel=1e-10)
+        assert k["kc"] * to_mf == pytest.approx(m.kc, rel=1e-10)
+        assert k["ko"] * to_mf == pytest.approx(m.ko, rel=1e-10)
+        assert k["o2"] * to_mf == pytest.approx(m.o2, rel=1e-12)

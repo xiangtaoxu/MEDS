@@ -4,27 +4,30 @@
 ! `meds_main` program can drive it. `meds_main` is a thin shell over it, and the C-API shim        !
 ! `meds_c_api_run` is a second caller, which lets Python drive the full coupled model              !
 ! (`meds.model`). The site is one polygon (meds_polygon); a region of polygons is meds_region.     !
+! The sequence of a run is docs/science/order_of_processes.md §1.                                  !
 !                                                                                          !
 !   type(meds_run_t) :: run                                                                      !
 !   call driver_open('meds_config_main.toml', run, ok)                                            !
 !   do while (.not. driver_done(run)) ; call driver_step(run, status) ; end do                     !
 !   call driver_finalize(run) ; call driver_free(run)                                              !
 !                                                                                          !
-! A NaN state or an impossible soil-carbon pool is a STATUS RETURN, not an `error stop`. This       !
+! A NaN state or a state out of its bounds is a STATUS RETURN, not an `error stop`. This            !
 ! module is compiled into a shared library that a Python interpreter dlopens, and `error stop`     !
 ! there takes the interpreter down with it -- no traceback, no chance to inspect the state that    !
 ! went bad. `meds_main` turns the status into an `error stop`.                                     !
 !==========================================================================================!
 module meds_driver
    use meds_kinds,                  only : wp, ik
-   use meds_constants,              only : day_sec, yr_day
-   use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART
+   use meds_constants,              only : day_sec, yr_day, area_tol
+   use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART, soil_maps_on
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
                                            time_to_string, years_between
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_site_state_types,       only : site_t, site_free
    use meds_demography_update,      only : update_overtopping_lai
-   use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
+   use meds_init,                   only : init_bare_ground, seed_bare_ground, init_from_census,      &
+                                           restructure_census_stand
+   use meds_surface_maps,           only : site_map_inputs
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_vegetation_dynamics,    only : advance_plant_traits, reacclimate_plant_traits
    use meds_forcing_types,          only : met_source_t
@@ -36,7 +39,7 @@ module meds_driver
                                            ensure_output_dir, DRIVER_OK, DRIVER_FINISHED,         &
                                            DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS,      &
                                            N_PATCH_INIT
-   use meds_io,                     only : state_write_state, io_read_state
+   use meds_io,                     only : state_write_state, io_read_state, state_file_refusal
    use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_manager,         only : output_serialize, output_close
    use meds_toml,                   only : toml_write_record
@@ -62,7 +65,6 @@ module meds_driver
       type(meds_time_t)      :: now, prev
       integer(ik)            :: istep = 0_ik, iyear = 0_ik
       integer(ik)            :: step_days = 1_ik, steps_per_year = 365_ik
-      logical                :: is_open = .false.
       logical                :: verbose = .true.  !< the progress lines meds_main prints
    end type meds_run_t
 
@@ -87,7 +89,8 @@ contains
       logical,           intent(out)   :: ok
       logical, optional, intent(in)    :: verbose
       type(meds_time_t) :: restart_time
-      logical           :: init_ok, fast_state_found
+      logical           :: found, fast_state_found
+      character(len=:), allocatable :: msg
       type(output_buffers_t) :: fresh_bufs      !< default-initialised, never written: the reset value
 
       ok = .false.
@@ -116,71 +119,81 @@ contains
       !----- 1. Read the run configuration. --------------------------------------------------!
       call load_meds_config(trim(path), run%cfg)   ! hard error if a file or required key is missing
       if (run%verbose) write(*,'(2a)') ' config: ', trim(path)
+      !----- 1a. The [maps] files, at the forcing cell the site reads: its soil column and its   !
+      !          height allometry's site index, before anything is built on them. -----------------!
+      if (soil_maps_on(run%cfg%maps) .or. len_trim(run%cfg%maps%chave_e_map) > 0) then
+         call site_map_inputs(run%cfg, msg)
+         if (len(msg) > 0) then
+            write(*,'(2a)') ' maps  : ', msg
+            return
+         end if
+         if (run%verbose) write(*,'(a)') ' maps  : soil and site index from the [maps] files'
+      end if
 
       !----- 2. Initial community per [init].init_mode (0 bare | 1 census | 2 restart); the file  !
-      !         for the non-selected mode is ignored. Unusable input -> bare ground. A successful  !
-      !         restart also recovers the calendar date to continue from.  ------------------------!
-      init_ok = .false. ; fast_state_found = .false. ; run%now = run%cfg%start_time
+      !         for the non-selected mode is ignored. A census or state file that cannot start   !
+      !         the run stops it, naming the mode and the file: a run that asked for a stand     !
+      !         never starts from bare ground instead. A restart also recovers the calendar date !
+      !         to continue from.  ---------------------------------------------------------------!
+      fast_state_found = .false. ; run%now = run%cfg%start_time
       select case (run%cfg%init_mode)
       case (INIT_RESTART)
          call io_read_state(run%poly%site, run%cfg, trim(run%cfg%init_restart_file), restart_time,   &
-                            init_ok, fast_found=fast_state_found,                                &
+                            found, fast_found=fast_state_found,                                  &
                             restructure_pending=run%poly%restructure_pending,                    &
                             restructure_new_year=run%poly%restructure_new_year)
-         if (init_ok) then
-            run%now = restart_time
-            if (run%verbose) then
-               write(*,'(4a)') ' init  : restart (mode 2) ', trim(run%cfg%init_restart_file),   &
-                               ' @ ', time_to_string(run%now)
-               if (fast_state_found) then
-                  write(*,'(a)') '         (CAS/soil/snow fast reservoirs restored -- exact restart)'
-               else
-                  write(*,'(a)') '         (state file predates fast-reservoir persistence -- re-seeding)'
-               end if
-               if (run%poly%restructure_pending)                                                  &
-                  write(*,'(a)') '         (the boundary''s restructuring is pending: it runs before the first step)'
+         if (.not. found) then
+            write(*,'(4a)') ' init  : restart (mode 2): the state file ', trim(run%cfg%init_restart_file), &
+                            ' ', state_file_refusal(trim(run%cfg%init_restart_file), region=.false.)
+            return
+         end if
+         run%now = restart_time
+         if (run%verbose) then
+            write(*,'(4a)') ' init  : restart (mode 2) ', trim(run%cfg%init_restart_file),      &
+                            ' @ ', time_to_string(run%now)
+            if (fast_state_found) then
+               write(*,'(a)') '         (CAS/soil/snow fast reservoirs restored -- exact restart)'
+            else
+               write(*,'(a)') '         (state file predates fast-reservoir persistence -- re-seeding)'
             end if
-         else if (run%verbose) then
-            write(*,'(3a)') ' init  : restart (mode 2) ', trim(run%cfg%init_restart_file),      &
-                            ' not usable -- falling back to bare ground'
+            if (run%poly%restructure_pending)                                                     &
+               write(*,'(a)') '         (the boundary''s restructuring is pending: it runs before the first step)'
          end if
       case (INIT_CENSUS)
-         call init_from_census(run%poly%site, run%cfg, trim(run%cfg%init_census_file), init_ok)
-         if (run%verbose) then
-            if (init_ok) then
-               write(*,'(2a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file)
-               write(*,'(a,i0,a,i0,a)') '         read ', run%poly%site%patch%n, ' patches, ',      &
-                                        run%poly%site%cohort%n, ' cohorts'
-            else
-               write(*,'(3a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file),     &
-                               ' not usable -- falling back to bare ground'
-            end if
+         call init_from_census(run%poly%site, run%cfg, trim(run%cfg%init_census_file), found, why=msg)
+         if (.not. found) then
+            write(*,'(4a)') ' init  : census (mode 1): the census file ', trim(run%cfg%init_census_file), &
+                            ' ', msg
+            return
          end if
-      end select
-      !----- A census stand is restructured by the slow step's own operators before the first step: !
-      !      it arrives with a cohort per measured size and a patch per plot cell.  ------------------!
-      if (run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
+         if (run%verbose) then
+            write(*,'(2a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file)
+            write(*,'(a,i0,a,i0,a)') '         read ', run%poly%site%patch%n, ' patches, ',         &
+                                     run%poly%site%cohort%n, ' cohorts'
+         end if
+         !----- A census stand is restructured by the slow step's own operators before the first  !
+         !      step: it arrives with a cohort per measured size and a patch per plot cell.  -------!
          call restructure_census_stand(run%poly%site, run%cfg)
          if (run%verbose) write(*,'(a,i0,a,i0,a,i0,a)') '         restructured to ',              &
                run%poly%site%patch%n, ' patches, ', run%poly%site%cohort%n, ' cohorts (at most ',  &
                max_cohort_count(run%poly%site), ' in a patch)'
-      end if
-      if (.not. init_ok) then
+      case default
          call init_bare_ground(run%poly%site, run%cfg, N_PATCH_INIT)
+         call seed_bare_ground(run%poly%site, run%cfg)
          if (run%verbose) write(*,'(a)') ' init  : bare ground (mode 0)'
-      end if
+      end select
 
-      !----- 2a. Census restart with plasticity ON: census cohorts sit in an established stand but !
+      !----- 2a. Census start with plasticity ON: census cohorts sit in an established stand but   !
       !          carry NO trait history, so acclimate their leaf traits to the current light        !
       !          environment INSTANTANEOUSLY (after the competition sweep). Bare ground legitimately !
       !          starts at top-of-canopy; a state restart already read the plastic traits from file, !
       !          unless [init].reacclimate_traits asks for this run's PFT file instead (a calibration   !
       !          trial that restarts from a shared state with changed traits).                       !
-      if (run%cfg%trait_plasticity_on .and. run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
+      if (run%cfg%trait_plasticity_on .and. run%cfg%init_mode == INIT_CENSUS) then
          call update_overtopping_lai(run%poly%site)
          call advance_plant_traits(run%poly%site, run%cfg, run%cfg%dt_years, instantaneous=.true.)
       end if
-      if (run%cfg%init_reacclimate_traits .and. run%cfg%init_mode == INIT_RESTART .and. init_ok) then
+      if (run%cfg%init_reacclimate_traits .and. run%cfg%init_mode == INIT_RESTART) then
          call reacclimate_plant_traits(run%poly%site, run%cfg)
          if (run%verbose) write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
       end if
@@ -200,9 +213,8 @@ contains
       end if
       call polygon_prepare(run%cfg, run%met_src, run%poly, run%cfg%forcing%latitude_deg,          &
                            run%cfg%forcing%longitude_deg, run%cfg%forcing%elevation_m,            &
-                           keep_fast_state=run%cfg%init_mode == INIT_RESTART .and. init_ok .and.  &
-                                           fast_state_found,                                     &
-                           keep_soil_carbon=run%cfg%init_mode == INIT_RESTART .and. init_ok,      &
+                           keep_fast_state=fast_state_found,                                     &
+                           keep_soil_carbon=run%cfg%init_mode == INIT_RESTART,                   &
                            patch_threads=run%cfg%n_threads, verbose=run%verbose)
 
       run%step_days      = max(1_ik, nint(run%cfg%dt_slow / day_sec, ik))
@@ -228,8 +240,8 @@ contains
       !          writes them.                                                                      !
       if (run%cfg%output%enabled) then
          call ensure_output_dir(trim(run%cfg%output%dir))
-         call open_output_files(run%cfg, run%poly%fast_ctx%col_config%soil, run%out_files, run%verbose)
-         call attach_output(run%out_files, run%out_bufs(1), run%poly%site)
+         call open_output_files(run%cfg, run%out_files, run%verbose, soil=run%poly%fast_ctx%col_config%soil)
+         call attach_output(run%out_files, run%out_bufs(1), run%poly)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
 
@@ -248,7 +260,6 @@ contains
          call print_summary(run%poly%site, 'start')
       end if
 
-      run%is_open = .true.
       ok = .true.
    end subroutine driver_open
 
@@ -275,10 +286,11 @@ contains
       is_new_month = is_new_year .or. (run%now%month /= run%prev%month)
 
       !----- I/O before the compute phase: the step's forcing is loaded here, so nothing below reads  !
-      !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
+      !      a file (docs/science/order_of_processes.md §1). A no-op unless a new archive month       !
+      !      starts.                                                                                  !
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_src, run%prev)
 
-      call polygon_step(run%cfg, run%met_src, run%out_files, run%out_bufs(1), run%poly, run%prev,      &
+      call polygon_step(run%met_src, run%out_files, run%out_bufs(1), run%poly, run%prev,      &
                         run%now, run%step_days, is_new_month, is_new_year, status)
 
       if (is_new_year) then
@@ -288,7 +300,7 @@ contains
             call print_summary(run%poly%site, datestr(1:10))
          end if
       end if
-      !----- A failed step (NaN, impossible soil carbon) still writes the output up to it. ---------!
+      !----- A failed step (NaN, a state out of bounds) still writes the output up to it. ----------!
       if (status /= DRIVER_OK) then
          if (run%cfg%output%enabled) call output_serialize(run%out_files, run%out_bufs)
          return
@@ -299,9 +311,9 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! driver_io_phase -- the file work of a closed month, done outside the compute phase so a step !
-   ! makes no netCDF call (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1): write the queued output records, !
-   ! then the yearly checkpoint. The next month's forcing is loaded by met_prefetch before the     !
-   ! next step.                                                                                     !
+   ! makes no netCDF call (docs/science/order_of_processes.md §6): write the queued output        !
+   ! records, then the yearly checkpoint. The next month's forcing is loaded by met_prefetch      !
+   ! before the next step.                                                                        !
    !---------------------------------------------------------------------------------------!
    subroutine driver_io_phase(run, is_new_year)
       type(meds_run_t), intent(inout) :: run
@@ -338,13 +350,12 @@ contains
          write(*,'(a)') '-----------------------------------------------------------------------------'
          write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%poly%area_start, '  end=', a1
       end if
-      if (abs(a1 - 1.0_wp) > 1.0e-5_wp) st = DRIVER_ERR_AREA
+      if (abs(a1 - 1.0_wp) > area_tol) st = DRIVER_ERR_AREA
 
-      if (run%verbose) call polygon_report(run%cfg, run%poly)
+      if (run%verbose) call polygon_report(run%poly)
 
       if (run%cfg%output%enabled) call output_close(run%out_files, run%out_bufs)
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)
-      run%is_open = .false.
       if (present(status)) status = st
    end subroutine driver_finalize
 

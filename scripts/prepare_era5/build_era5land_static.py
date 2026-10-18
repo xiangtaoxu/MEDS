@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """build_era5land_static.py -- build the ED_ERA5land archive's static file,
-<data_path>/ED_ERA5land_static.nc (docs/dev_plans/archive/MEDS_FORCING_DESIGN.md section 14.3).
+<data_path>/ED_ERA5land_static.nc (docs/science/forcing.md §1).
 
 Contents, on the regular 0.1 deg grid (lat 90 -> -90, lon -179.9 -> 180.0):
   valid          int8  1 where ERA5-Land supplies data. Taken from the DATA (non-NaN at every hour of
@@ -14,8 +14,8 @@ Contents, on the regular 0.1 deg grid (lat 90 -> -90, lon -179.9 -> 180.0):
 
 Inputs come from the GDEX raw pool (download_era5land_gdex.py's --out-dir): the invariants lsm and z
 (e5land.oper.invariant/202601/, fetched here if missing) and one raw data file for the mask. Once the
-static file is written and recorded in the manifest, the raw invariants are deleted (decision OD2)
-unless --keep-raw.
+static file is written and recorded in the manifest, the raw invariants are deleted unless
+--keep-raw.
 
 Example:
   python build_era5land_static.py --raw-dir $ERA5LAND_ROOT/raw/gdex --data-path $ERA5LAND_ROOT/ED_ERA5land \
@@ -110,7 +110,7 @@ def parse_args(argv):
     ap.add_argument("--raw-dir", required=True, help="GDEX raw pool root (download_era5land_gdex.py --out-dir)")
     ap.add_argument("--data-path", required=True, help="archive root (the reader's data_path)")
     ap.add_argument("--mask-from", required=True, help="a raw GDEX data file, relative to --raw-dir, defining `valid`")
-    ap.add_argument("--keep-raw", action="store_true", help="keep the raw invariant files (default: delete, OD2)")
+    ap.add_argument("--keep-raw", action="store_true", help="keep the raw invariant files (default: delete)")
     ap.add_argument("--force", action="store_true", help="rebuild even if the static file exists")
     return ap.parse_args(argv)
 
@@ -143,7 +143,7 @@ def main(argv=None):
     if not args.keep_raw:
         for rel in INVARIANTS.values():
             os.remove(os.path.join(args.raw_dir, rel))
-        print("deleted the raw invariant files (OD2)")
+        print("deleted the raw invariant files")
 
 
 if __name__ == "__main__":

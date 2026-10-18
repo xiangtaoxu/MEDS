@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! test_output_roundtrip -- the netCDF serializer end to end: build a manager, walk a 3-day        !
 ! calendar folding site state, flush per-stream files, then RE-OPEN them and assert record counts,  !
-! averaged values, calendar, and CF layout. MEDS_IO_DESIGN.md tests 5 & 6 (P0 subset).             !
+! averaged values, calendar, and CF layout (docs/science/diagnostics.md §3 and §4).                !
 !==========================================================================================!
 module test_ro_support
    use meds_kinds,            only : wp, ik
@@ -17,7 +17,7 @@ contains
       site%cohort%agb(1) = a
    end subroutine set_site_agb
 
-   !----- Opaque setters for the P1 flux/state sources (fast-loop accumulators + soil column). ----!
+   !----- Opaque setters for the flux/state sources (fast-loop accumulators + soil column). -------!
    subroutine set_site_gpp(site, g)
       type(site_t), intent(inout) :: site
       real(wp),     intent(in)    :: g
@@ -37,6 +37,7 @@ program test_output_roundtrip
    use meds_config,           only : meds_config_t
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_site_state_types, only : site_t, site_alloc, site_free
+   use meds_allometry,        only : allometry_t
    use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_registry,  only : manager_alloc
@@ -51,7 +52,7 @@ program test_output_roundtrip
    use meds_test_support, only : banner, check, check_close
    use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp
    implicit none
-   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
 
    type(meds_config_t)    :: cfg
    type(site_t)           :: site
@@ -66,7 +67,7 @@ program test_output_roundtrip
    call banner('output_roundtrip')
 
    !----- A fixed 1-cohort / 1-patch site (constant slot set). -----!
-   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik)
+   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik, allometry_t())
    site%cohort%n = 1_ik ; site%patch%n = 1_ik
    site%cohort%nplant(1) = 1.0_wp ; site%cohort%dbh(1) = 5.0_wp
    site%cohort%height(1) = 4.0_wp ; site%cohort%basal_area(1) = 19.6_wp
@@ -86,16 +87,18 @@ program test_output_roundtrip
    dt  = 86400.0_wp
    call manager_alloc(files, bufs(1), cfg)
 
-   !----- A soil column with FEWER active layers than the compile-time ceiling (#246). That gap    !
-   !      is the whole point: soil-dimensioned variables used to be emitted over all               !
-   !      n_soil_layer_max slots, so the inactive tail was written as DATA (0 for a state, NaN for  !
-   !      a derived quantity) instead of being left for netCDF to fill. Reducing over the axis      !
-   !      then gave nonsense -- a 136 K soil column on a real run -- and soil_matric_potential was  !
-   !      evaluated on padding whose theta_sat is 0, which a -fpe0 build aborts on.  ---------------!
+   !----- A soil column with FEWER active layers than the compile-time ceiling. That gap is the   !
+   !      whole point: a soil-dimensioned variable emitted over all n_soil_layer_max slots would  !
+   !      write the inactive tail as DATA (0 for a state, NaN for a derived quantity) instead of  !
+   !      leaving it for netCDF to fill. Reducing over the axis then gives nonsense -- a 136 K    !
+   !      soil column on a real run -- and soil_matric_potential evaluated on padding whose       !
+   !      theta_sat is 0 aborts a -fpe0 build. ---------------------------------------------------!
    call geometric_layer_bottoms(2.0_wp, N_ACTIVE, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
                                2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
-   call manager_set_soil_params(files, soilp)
+   !----- The file set's copy gives the files their layer depths; the buffer's, the extraction. --!
+   call manager_set_soil_params(files%diag, soilp)
+   call manager_set_soil_params(bufs(1)%diag, soilp)
    call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 
    !----- Walk 3 daily steps of 2000-01, as polygon_step calls the tick: the step from `prev` to  !
@@ -130,8 +133,8 @@ contains
       c%output%sync_every = SYNC_FLUSH
       c%output%freq_on    = [.false., .true., .false., .true.]     ! daily + annual
       c%output%file_chunk = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
-      !----- structure + carbon + ENERGY (soil); water/radiation/ecophys/biogeochem/numerics off. !
-      !      Order: STRUCTURE CARBON WATER ENERGY NUMERICS RADIATION ECOPHYS BIOGEOCHEM.  --------!
+      !----- structure + carbon + ENERGY (soil); the other groups off. Order: STRUCTURE CARBON  !
+      !      WATER ENERGY NUMERICS RADIATION ECOPHYS BIOGEOCHEM FORCING. ----------------------!
       c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false., .false.]
    end function build_cfg
 
@@ -150,7 +153,7 @@ contains
       call check_close(real(agbs(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_site day1')
       call check_close(real(agbs(2), wp), 20.0_wp, 1.0e-9_wp, 'daily agb_site day2')
       call check_close(real(agbs(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_site day3')
-      !----- Each record is stamped with the day its step started (#294): the step from 1 to 2      !
+      !----- Each record is stamped with the day its step started: the step from 1 to 2            !
       !      January is the 1 January record, not the 2 January one. ------------------------------!
       call nc_check(nc_inq_varid_f(ncid, 'day', vid), 'daily day id')
       call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t], [3_c_size_t], days), 'get day')
@@ -162,19 +165,19 @@ contains
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], agbc), 'get agb_cohort')
       call check_close(real(agbc(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_cohort day1 slot1')
       call check_close(real(agbc(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_cohort day3 slot1')
-      !----- P1 carbon: gpp_site AGG_SUM over 1 step/day = 2.0 each day. -----!
+      !----- Carbon: gpp_site AGG_SUM over 1 step/day = 2.0 each day. -----!
       call nc_check(nc_inq_varid_f(ncid, 'gpp_site', vid), 'daily gpp_site id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t], [3_c_size_t], gpp), 'get gpp_site')
       call check_close(real(gpp(2), wp), 2.0_wp, 1.0e-9_wp, 'daily gpp_site (AGG_SUM) = 2')
-      !----- P1 soil (DIM_SOIL): soil_temp_site(time, soil) AGG_TMEAN = 290 K per layer. -----!
+      !----- Soil (DIM_SOIL): soil_temp_site(time, soil) AGG_TMEAN = 290 K per layer. -----!
       call nc_check(nc_inq_varid_f(ncid, 'soil_temp_site', vid), 'daily soil_temp_site id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], soilt), 'get soil_temp')
       call check_close(real(soilt(1), wp), 290.0_wp, 1.0e-9_wp, 'daily soil_temp_site layer1 = 290')
 
-      !----- ...and the INACTIVE tail is fill, not data (#246). The source array is 290 K in every !
+      !----- ...and the INACTIVE tail is fill, not data. The source array is 290 K in every       !
       !      slot including the padding, so if the writer emitted the full ceiling this would read  !
-      !      290 and pass for the wrong reason. It has to read _FillValue, which is what the        !
-      !      cohort and patch axes have always done with their own unused capacity.  ---------------!
+      !      290 and pass for the wrong reason. It has to read _FillValue, as the cohort and patch  !
+      !      axes do with their own unused capacity. -----------------------------------------------!
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, int(N_ACTIVE, c_size_t)],          &
                     [1_c_size_t, 1_c_size_t], soilt), 'get soil_temp padding')
       call check_close(real(soilt(1), wp), MISSING_VALUE, 1.0e-9_wp,                              &

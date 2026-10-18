@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Runs meds_main on the reference config with three keys added that MEDS does not read, and fails
-# unless the run stops before simulating and names each one (N-10): a misspelling with the key it
+# unless the run stops before simulating and names each one: a misspelling with the key it
 # meant, a key that moved section with its new home, and a retired key with what replaced it.
 #
 # Usage: cmake -DMEDS_MAIN=<meds_main> -DSOURCE_DIR=<repo> -DWORK_FILE=<scratch toml>

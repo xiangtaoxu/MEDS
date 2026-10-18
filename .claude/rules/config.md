@@ -23,28 +23,28 @@ place "default" values live in code.
 
 ## The absent-key trap
 
-A few late-added blocks read each key with a fallback to its in-type default so the feature needs no
-TOML edits. **When you do that, the fallback you pass to the reader must equal the in-type default.**
-They disagreed once for the soil-carbon switch — the type said on, the loader passed off — and since
-the reader returns the supplied default whenever the key is absent, the loader won for every config
-that omitted the key, including the shipped one. An entire subsystem ran off for weeks, and it hid
-two real defects from every code path anyone ran.
+A few blocks read each key with a fallback to its in-type default so the feature needs no TOML
+edits. **When you do that, the fallback you pass to the reader must equal the in-type default.** The
+reader returns the supplied fallback whenever the key is absent, so if the two disagree the loader
+wins for every config that omits the key, including the shipped one. A subsystem switch the type
+declares on, read with an off fallback, turns the whole subsystem off in silence, and hides every
+defect in it from every code path anyone runs.
 
 If a value is genuinely required, make it required and let the presence map catch it.
 
 ## `[soil_column]` is the ground; `[soil]` is the solver over it
 
-The physical column — layer count, depth, grid growth, hydraulic texture, retention family, root
-profile, thermal properties — is validated at load, because a layer count over the compile-time
-ceiling or a saturated water content below the residual produces a silently wrong column rather than
-a crash.
+The physical column — depth and layer bottoms, hydraulic texture, retention family, thermal
+properties — is validated at load, because a layer count over the compile-time ceiling, layer
+bottoms that do not increase or a saturated water content below the residual produce a silently
+wrong column rather than a crash. The root profile is a plant trait: it lives in `[hydraulics]`,
+with optional per-PFT values in the PFT file.
 
 ## Do not add a flag whose off path is known-wrong physics
 
-Several have been deleted for exactly this: the snow switch, two water-balance switches, the soil
-advection switch, the multi-layer root switch, the phase-change switch. A flag whose off path is the
-cruder physics gets plumbed through every call site forever and eventually reads as "this cannot
-happen". Delete the branch instead.
+That is why there is no switch for snow, the water balance, soil advection, multi-layer roots or
+phase change. A flag whose off path is the cruder physics gets plumbed through every call site
+forever and eventually reads as "this cannot happen". Delete the branch instead.
 
 The corollary: a config value that parses but does nothing is worse than one that is absent. If a
 selector is unimplemented, reject it in `validate_config`.

@@ -2,15 +2,15 @@
 !==========================================================================================!
 ! meds_toml -- a minimal TOML reader for MEDS run configuration.                           !
 !                                                                                          !
-! A full TOML library (toml-f) is not usable here: like netCDF-Fortran, its compiled `.mod` !
-! is compiler-specific and unavailable for ifx/nvfortran on this machine. MEDS configs are   !
-! a flat set of `key = value` lines under `[section]` headers, so we parse that subset        !
-! directly: `# comments`, `[section]` headers, and scalar int/real/bool/string values plus    !
-! `[a, b, c]` real arrays. Keys are stored fully qualified as `section.key`. The typed        !
-! getters return the supplied default ONLY when the key is ABSENT; a key that is PRESENT but    !
-! unparseable is a HARD ERROR (error stop with the offending key + raw text) -- silently zero-  !
-! filling malformed values would let a typo'd REQUIRED parameter pass validation (see the       !
-! meds_config_io 'every parameter required, no defaults' contract).                             !
+! A full TOML library (toml-f) is not usable here: like netCDF-Fortran, its compiled       !
+! `.mod` is compiler-specific and unavailable for ifx/nvfortran on this machine. MEDS      !
+! configs are a flat set of `key = value` lines under `[section]` headers, so we parse     !
+! that subset directly: `# comments`, `[section]` headers, and scalar int/real/bool/string !
+! values plus `[a, b, c]` real arrays. Keys are stored fully qualified as `section.key`.   !
+! The typed getters return the supplied default ONLY when the key is ABSENT; a key that is !
+! PRESENT but unparseable is a HARD ERROR (error stop with the offending key + raw text)   !
+! -- silently zero-filling malformed values would let a typo'd REQUIRED parameter (every   !
+! PFT trait is one) pass validation.                                                       !
 !==========================================================================================!
 module meds_toml
    use meds_kinds, only : wp, ik
@@ -21,8 +21,8 @@ module meds_toml
    public :: toml_has, toml_has_section, toml_int, toml_real, toml_logical, toml_string, toml_real_array
    public :: toml_write_record, toml_record_reset
 
-   !----- VALLEN is also the line buffer, so it bounds a whole `key = value` line. 1024 holds the   !
-   !      forcing path fields (MET_PATH_LEN, MEDS_FORCING_DESIGN.md §15.2) with room for the key.     !
+   !----- VALLEN is also the line buffer, so it bounds a whole `key = value` line. 1024 holds     !
+   !      the forcing path fields (MET_PATH_LEN) with room for the key. --------------------------!
    integer, parameter :: KEYLEN = 64, VALLEN = 1024, MAXKEYS = 512
 
    type :: toml_table_t
@@ -135,15 +135,15 @@ contains
       yes = find_key(t, key) > 0_ik
    end function toml_has
 
-   !----- Is there ANY key under `[section]`? Keys are stored flattened ("section.key"), so a       !
-   !      section header leaves no entry of its own and toml_has cannot see one (#245).             !
-   !                                                                                          !
-   !      This is the right gate for an optional block whose keys become REQUIRED once the block    !
-   !      is present. Sentinelling that on one chosen key inside the block instead means a config   !
-   !      that writes the block under a stale or misspelled name is skipped in silence, with the    !
-   !      presence map never consulted -- which is how MEDS shipped an entire subsystem switched    !
-   !      off (the phenology cue masks). Ask whether the AUTHOR meant to configure this section,    !
-   !      not whether they happened to spell one particular key correctly.  ---------------------!
+   !----- Is there ANY key under `[section]`? Keys are stored flattened ("section.key"), so a     !
+   !      section header leaves no entry of its own and toml_has cannot see one.                  !
+   !                                                                                              !
+   !      This is the right gate for an optional block whose keys become REQUIRED once the        !
+   !      block is present. Sentinelling that on one chosen key inside the block instead          !
+   !      means a config that writes the block under a stale or misspelled name is skipped in     !
+   !      silence, with the presence map never consulted: a whole subsystem can be switched       !
+   !      off that way. Ask whether the AUTHOR meant to configure this section, not whether       !
+   !      they happened to spell one particular key correctly. -----------------------------------!
    pure logical function toml_has_section(t, section) result(yes)
       type(toml_table_t), intent(in) :: t
       character(len=*),   intent(in) :: section
@@ -209,8 +209,8 @@ contains
          return
       end if
       s = adjustl(t%val(idx))
-      !----- Exact match (documented lowercase true/false + common Fortran/case variants).      !
-      !      Kills the old fixed-position prefix bug ('trueish' -> .true., '.true.' -> default). !
+      !----- Exact match (documented lowercase true/false + common Fortran/case variants),       !
+      !      not a prefix test: 'trueish' is an error, and '.true.' is .true. -------------------!
       select case (trim(s))
       case ('true', '.true.', 'True', 'TRUE')
          v = .true.

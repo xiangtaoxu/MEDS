@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_soil_biogeochem -- THE stateless SLOW soil-carbon kernels (design MEDS_BIOGEOCHEMISTRY_ !
-! DESIGN.md). The per-patch decomposable soil carbon obeys the CENTURY-family carbon matrix ODE  !
+! meds_soil_biogeochem -- THE stateless SLOW soil-carbon kernels (docs/science/soil_carbon.md).  !
+! The per-patch decomposable soil carbon obeys the CENTURY-family carbon matrix ODE (eq. (1))    !
 !                                                                                          !
 !         dX/dt = B*I(t) + A*xi(t)*K*X(t)        [kgC/m2/day]                                       !
 !                                                                                          !
@@ -11,7 +11,7 @@
 ! semi-analytic accelerated spin-up (SASU) and traceability diagnostics fall out of the same             !
 ! assembled (A, xi, K).                                                                                   !
 !                                                                                          !
-! LOAD-BEARING CORRECTNESS RULES (design §3):                                                             !
+! LOAD-BEARING CORRECTNESS RULES (docs/science/soil_carbon.md §3, §4, §6, §8):                            !
 !   * Scalar placement is A*(xi*K*X), NOT xi*(A*K*X): each donor decays at ITS OWN xi_j*K_j, and ONLY     !
 !     THEN is the loss split. xi and K are diagonal (commute), but neither commutes with A.               !
 !   * a_jj = -1 UNIFORMLY for every pool (all decayed carbon leaves the donor). er_j = 1 - sum_{i!=j}a_ij.!
@@ -20,11 +20,12 @@
 !     A*xi*K is SINGULAR when inert pools have K=0 (the DEFAULT scheme). Inert pools are held at 0.        !
 !   * soil_carbon_step decrements each donor by the fast loop's ACCUMULATED per-pool loss integral         !
 !     xi_int_j = INT_day xi_j dt [day] (NOT xi recomputed from daily-mean T/theta) -- so the pool loss     !
-!     equals the day's integrated atmospheric Rh BY CONSTRUCTION (closes the Jensen gap, §2.4/§5.4).       !
+!     equals the day's integrated atmospheric Rh BY CONSTRUCTION (closes the Jensen gap, §6).              !
 !                                                                                          !
-! All compute kernels take bare scalars/arrays + small derived types and link src/shared ONLY (via         !
-! meds_biogeochem_types); they are `pure` where the arithmetic allows and allocation/LAPACK-free           !
-! (the active-block solve is a hand-rolled small dense Gaussian elimination), so they are GPU-eligible.     !
+! All compute kernels take bare scalars/arrays + small derived types and link only the shared,             !
+! state_column and config libraries; they are `pure` where the arithmetic allows and                       !
+! allocation/LAPACK-free (the active-block solve is a hand-rolled small dense Gaussian                     !
+! elimination), so they are GPU-eligible.                                                                  !
 !==========================================================================================!
 module meds_soil_biogeochem
    use meds_kinds,            only : wp, ik
@@ -43,16 +44,13 @@ module meds_soil_biogeochem
    public :: solve_soil_carbon_steady_state, soil_carbon_diagnostics
    public :: pack_pool_vector, unpack_pool_vector
    public :: soil_carbon_bad_pool, soil_carbon_pool_name, SOILC_MAX_PLAUSIBLE, SOILC_NEG_TOL
-   !----- FAST heterotrophic respiration (the CAS-CO2 source; the driver's single Rh authority). --!
 
    !=======================================================================================!
    !  PLAUSIBILITY, as distinct from CONSERVATION.                                           !
    !                                                                                          !
-   !  A closed budget proves bookkeeping, not physics. A 50-year coupled spin-up drove one     !
-   !  patch's litter pools to 7e7 kgC/m2 with NEGATIVE structural and slow carbon, and the      !
-   !  slow-loop ledger closed on every phase and every currency the whole way -- because the    !
-   !  runaway CONSERVED carbon, it just moved absurd amounts of it. The whole test suite was     !
-   !  green, and no shipped config had soil carbon on, so nothing looked.                        !
+   !  A closed budget proves bookkeeping, not physics: a runaway that CONSERVES carbon closes    !
+   !  every phase and every currency of the slow ledger while moving absurd amounts of it        !
+   !  (docs/science/soil_carbon.md §9).                                                          !
    !                                                                                          !
    !  These two numbers are what "physically impossible" means for a CENTURY pool:                !
    !    * a carbon pool is a MASS. It is never negative. The tolerance is round-off only --       !
@@ -98,21 +96,21 @@ contains
    !  ENVIRONMENTAL SCALAR xi = temperature x moisture x oxygen, per pool. Grnd pools (1,3) use   !
    !  the SURFACE temperature (ED2 A_decomp); below pools (2,4,5,6,7) the ACTIVE-layer temperature  !
    !  (B_decomp). Structural pools (3,4) additionally carry the lignin brake L = exp(-e_lignin*      !
-   !  f_lignin) and (N on) the immobilization brake f_decomp. Temperature form: scheme 5 = Collatz    !
-   !  Q10 (UNCAPPED; xi can exceed 1), else ED2 scheme-0 capped exp min(1, exp(a*(T-T_sat))). Moisture !
-   !  is the one-sided exponential about resp_opt_water (dry side) / anoxia (wet side) -- the SAME      !
-   !  functional form assemble_env_scalar's own moisture modifier uses, so xi and the fast Rh reconcile    !
-   !  at matched inputs. Invariant: xi > 0 (scheme-0 additionally <= 1). For spin-up, evaluate at       !
-   !  climatological-mean T/theta to build xi_bar.                                                       !
+   !  f_lignin). Temperature form: scheme 5 = Collatz Q10 (UNCAPPED; xi can exceed 1), else ED2         !
+   !  scheme-0 capped exp min(1, exp(a*(T-T_sat))).                                                      !
+   !  Moisture is the one-sided exponential about resp_opt_water (dry side) / anoxia (wet side).         !
+   !  The fast loop's sub-daily Rh calls this same routine, so xi and the fast Rh reconcile at           !
+   !  matched inputs. Invariant: xi > 0 (scheme-0 additionally <= 1). For spin-up, evaluate at           !
+   !  climatological-mean T/theta to build xi_bar. docs/science/soil_carbon.md eqs. (3)-(4).             !
    !=======================================================================================!
    pure subroutine assemble_env_scalar(soil_temp_surf, soil_temp_active, theta_active, theta_dry, &
                                        theta_sat, pools, opts, xi)
       real(wp),            intent(in)  :: soil_temp_surf, soil_temp_active     !< [K]
       real(wp),            intent(in)  :: theta_active, theta_dry, theta_sat   !< [m3/m3]
-      type(soil_carbon_t), intent(in)  :: pools                               !< for f_lignin (and N f_decomp)
+      type(soil_carbon_t), intent(in)  :: pools                               !< for f_lignin
       type(decomp_opts_t), intent(in)  :: opts
       real(wp),            intent(out) :: xi(n_soil_pool)                     !< [-] diagonal scalar, > 0
-      real(wp) :: f_temp_surf, f_temp_active, f_water, rel, f_lig_g, f_lig_s, brake_g, brake_s, f_decomp
+      real(wp) :: f_temp_surf, f_temp_active, f_water, rel, f_lig_g, f_lig_s, brake_g, brake_s
 
       f_temp_surf   = decomp_temperature_factor(soil_temp_surf,   opts)
       f_temp_active = decomp_temperature_factor(soil_temp_active, opts)
@@ -123,12 +121,11 @@ contains
       f_lig_s = lignin_fraction(pools%struct_soil_lignin, pools%struct_soil_carbon)
       brake_g = exp(-opts%e_lignin * f_lig_g)
       brake_s = exp(-opts%e_lignin * f_lig_s)
-      f_decomp = 1.0_wp                                    ! N off (default) => inert; N on is P1 (§2.3)
 
       xi(IP_FAST_GRND)   = f_temp_surf   * f_water
       xi(IP_FAST_SOIL)   = f_temp_active * f_water
-      xi(IP_STRUCT_GRND) = f_temp_surf   * f_water * brake_g * f_decomp
-      xi(IP_STRUCT_SOIL) = f_temp_active * f_water * brake_s * f_decomp
+      xi(IP_STRUCT_GRND) = f_temp_surf   * f_water * brake_g
+      xi(IP_STRUCT_SOIL) = f_temp_active * f_water * brake_s
       xi(IP_MICR)        = f_temp_active * f_water
       xi(IP_SLOW)        = f_temp_active * f_water
       xi(IP_PASSIVE)     = f_temp_active * f_water
@@ -164,7 +161,7 @@ contains
       if (carbon > tiny_num) then
          f_lignin = min(1.0_wp, max(0.0_wp, lignin / carbon))
       else
-         f_lignin = 0.0_wp                                            ! C=0 => f_lignin undefined, read as 0 (§2.4)
+         f_lignin = 0.0_wp                                            ! C=0 => f_lignin undefined, read as 0
       end if
    end function lignin_fraction
 
@@ -242,9 +239,9 @@ contains
    !=======================================================================================!
    !  Map the ALREADY-PARTITIONED, pool-destined litter fluxes onto the input vector u = B*I. The   !
    !  per-PFT labile/structural (f_labile) and above/below (agf) split is applied PER-COHORT by the   !
-   !  driver BEFORE summing to the patch (§2.2, §5.4); this kernel does NO f_labile arithmetic -- it    !
-   !  just places the four pre-split streams (+ lignin) into the pool vector. CWD -> structural is       !
-   !  part of the driver split (wood uses f_labile_stem).                                                !
+   !  driver BEFORE summing to the patch (docs/science/soil_carbon.md §5); this kernel does NO          !
+   !  f_labile arithmetic -- it just places the four pre-split streams (+ lignin) into the pool         !
+   !  vector. CWD -> structural is part of the driver split (wood uses f_labile_stem).                  !
    !=======================================================================================!
    pure subroutine build_litter_input(litter, u, lignin_in)
       type(litter_input_t), intent(in)  :: litter
@@ -266,8 +263,7 @@ contains
    !  daily pool -- which is what makes the day's atmospheric Rh equal the daily step's pool debit by    !
    !  construction (the rh_seam_gap contract). Callers crossing into the CAS must convert with           !
    !  kgCday_2_umols; patch_heterotrophic_respiration is where that happens.                             !
-   !  (An older note here named meds_cas_biophysics's heterotrophic_respiration_flux as the sole CAS Rh  !
-   !  authority. It is not called from anywhere any more -- the matrix form took that role.)             !
+   !  docs/science/soil_carbon.md eq. (2) and §7.                                                        !
    !=======================================================================================!
    pure function heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools) result(rh)
       real(wp),            intent(in) :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool)
@@ -287,22 +283,25 @@ contains
    !  Advance the pools ONE DAILY step: X_new = X + u_day + A*diag(xi_int*K)*X, decrementing each      !
    !  donor by the TRUE sub-daily loss integral. xi_int_j = INT_day xi_j dt [day] (the fast loop's       !
    !  accumulator), NOT xi recomputed from daily-mean T/theta -- so the pool loss equals the day's        !
-   !  integrated atmospheric Rh by construction (§5.4). Two frozen-operator solvers:                       !
+   !  integrated atmospheric Rh by construction (docs/science/soil_carbon.md eqs. (5)-(6)). Two            !
+   !  frozen-operator solvers:                                                                             !
    !    DECOMP_STEP_EULER -- ED2-faithful forward Euler (one step; daily k*dt << 1, already stable).       !
    !    DECOMP_STEP_EXPM  -- exact matrix exponential of the frozen operator (EXACTNESS for LARGE           !
    !                         accelerated/spin-up steps; via an augmented (n+1) exponential so no A inverse).!
    !  rh_today is reported SOLVER-CONSISTENTLY as the actual pool loss to atmosphere, rh_today =            !
    !  litter_in - dC_pool (inter-pool transfers cancel in the total), so it matches the pool decrement      !
-   !  for BOTH solvers and equals the fast loop's today_rh. It is an AUDIT value -- NOT re-fed to CAS.       !
-   !  Structural lignin decays in proportion (L_s *= 1 - d_s) + lignin_in (a passive tracer, its OWN         !
-   !  balance, outside the carbon mass vector). dt_day is one day (u in [kgC/m2/day], xi_int in [day]).       !
+   !  for BOTH solvers and equals the fast loop's accumulated Rh. It is an AUDIT value -- NOT re-fed     !
+   !  to CAS.                                                                                            !
+   !  Structural lignin decays with its host (L_s *= 1 - d_s, or exp(-d_s) under EXPM) + lignin_in          !
+   !  (a passive tracer, its OWN balance, outside the carbon mass vector). dt_day is one day (u in          !
+   !  [kgC/m2/day], xi_int in [day]).                                                                       !
    !=======================================================================================!
    subroutine soil_carbon_step(pools, u, lignin_in, xi_int, opts, rh_today, audit)
       type(soil_carbon_t), intent(inout) :: pools
       real(wp),            intent(in)    :: u(n_soil_pool), lignin_in(2)
       real(wp),            intent(in)    :: xi_int(n_soil_pool)   !< [day] INT_day xi_j dt (fast accumulator)
       type(decomp_opts_t), intent(in)    :: opts
-      real(wp),            intent(out)   :: rh_today              !< [kgC/m2/day] actual pool loss = fast today_rh
+      real(wp),            intent(out)   :: rh_today              !< [kgC/m2/day] actual pool loss = fast loop's Rh
       type(soilc_audit_t), intent(out)   :: audit
       real(wp) :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
       real(wp) :: x0(n_soil_pool), x1(n_soil_pool), dvec(n_soil_pool), loss(n_soil_pool)
@@ -337,9 +336,10 @@ contains
       !----- lignin passive tracer: it decays in LOCKSTEP with its host structural CARBON, so         !
       !      f_lignin is conserved under pure decomposition and 0 <= L <= C -- which requires the      !
       !      SOLVER-CONSISTENT survival fraction. EULER carbon decays by the linear (1 - d_s) (the      !
-      !      design §2.1 law); EXPM decays a pure-donor structural pool by the exact exp(-d_s), so      !
-      !      lignin must too. Using (1 - d_s) under EXPM would drift f_lignin and drive L NEGATIVE for  !
-      !      the large d_s of accelerated spin-up steps (the EXPM-specific bug the daily EULER hides).  !
+      !      docs/science/soil_carbon.md §6 law); EXPM decays a pure-donor structural pool by the      !
+      !      exact exp(-d_s), so lignin must too. Using (1 - d_s) under EXPM would drift f_lignin      !
+      !      and drive L NEGATIVE for the large d_s of accelerated spin-up steps, which the daily      !
+      !      EULER step never shows.                                                                   !
       d_s(1) = dvec(IP_STRUCT_GRND)
       d_s(2) = dvec(IP_STRUCT_SOIL)
       select case (opts%step_solver)
@@ -361,11 +361,11 @@ contains
       audit%litter_in_matrix = litter_in
       audit%rh_out       = rh_today
       audit%dC_pool      = dc_pool
-      !----- `resid = dC_pool - (litter_in - rh_today)` used to be reported here. With rh_today      !
-      !      DEFINED just above as `litter_in - dC_pool`, substituting gives identically zero for any !
-      !      inputs -- it could not fail, and test_soil_biogeochem asserted it twice. The independent !
-      !      check (recompute Rh from er*xi_int*K*X0 and compare) lives in that test and is the one    !
-      !      that can catch a dropped-litter or misattributed-transfer bug. Deleted, not reported.    !
+      !----- No pool-mass residual is reported: with rh_today DEFINED just above as                   !
+      !      `litter_in - dC_pool`, `dC_pool - (litter_in - rh_today)` is identically zero. The       !
+      !      independent check (recompute Rh from er*xi_int*K*X0 and compare) lives in                !
+      !      test_soil_biogeochem and is the one that can catch a dropped-litter or                   !
+      !      misattributed-transfer bug (docs/science/soil_carbon.md §9).                             !
       !----- THE FREEZE NUMBER: the largest fraction of any pool this step withdraws. See its comment !
       !      in soilc_audit_t for why this is the number that says whether freezing the pool across   !
       !      the slow step is sound, and how it differs from rh_seam_gap.  ---------------------------!
@@ -377,10 +377,10 @@ contains
             audit%lambda_pool = i
          end if
       end do
-      audit%rh_fast_accum= rh_today                                  ! filled by the driver from today_rh at P3
-      audit%rh_seam_gap  = 0.0_wp                                    ! rh_out - rh_fast_accum (driver-checked at P3)
+      audit%rh_fast_accum= rh_today                                  ! the driver overwrites it with the fast loop's Rh
+      audit%rh_seam_gap  = 0.0_wp                                    ! rh_out - rh_fast_accum (set by the driver)
       !----- lignin passive-tracer balance: dL_s == lignin_in_s - (1-surv_s)*L_s, 0 by construction   !
-      !      for EITHER solver (EULER loss (1-surv)=d_s recovers the design's d_s*L_s). ---------------!
+      !      for EITHER solver (EULER loss (1-surv)=d_s recovers d_s*L_s). ----------------------------!
       lig_resid = 0.0_wp
       do i = 1_ik, 2_ik
          lig_resid = max(lig_resid, abs( (lig1(i) - lig0(i)) - (lignin_in(i) - (1.0_wp - surv(i)) * lig0(i)) ))
@@ -389,7 +389,8 @@ contains
    end subroutine soil_carbon_step
 
    !=======================================================================================!
-   !  SEMI-ANALYTIC SPIN-UP (SASU). Steady state under climatological-mean drivers is a direct linear !
+   !  SEMI-ANALYTIC SPIN-UP (SASU; docs/science/soil_carbon.md eq. (7)). Steady state under           !
+   !  climatological-mean drivers is a direct linear                                                  !
    !  solve, X_ss = -(A*xi_bar*K)^{-1} * B*I_bar, over the ACTIVE sub-block {j: K_j>0} ONLY -- the full !
    !  n_soil_pool system is SINGULAR (inert pools have K=0). Inert pools are held at their conserved      !
    !  value (0: no litter input, no transfer into them in the default scheme). The reduced block is       !
@@ -402,11 +403,11 @@ contains
       type(decomp_opts_t), intent(in)  :: opts
       type(soil_carbon_t), intent(out) :: pools_ss
       real(wp)    :: x_ss(n_soil_pool)
-      !----- opts is retained in the interface (design keys the active set on decomp_scheme, and the  !
-      !      P1 iterated scheme-5/N SASU needs it); the active set {K_j>0} is derived inside           !
-      !      steady_state_vector, which already encodes the scheme via k_micr/k_pass = 0. -------------!
+      !----- opts is not read: the active set {K_j>0} is derived inside steady_state_vector,           !
+      !      which already encodes the scheme via k_micr/k_pass = 0. It stays in the interface for     !
+      !      an iterated scheme-5 steady state. --------------------------------------------------------!
       call steady_state_vector(a_mat, k_diag, xi_bar, u_bar, x_ss)
-      pools_ss = soil_carbon_t()                       ! zero all (inert pools + lignin + N stay 0)
+      pools_ss = soil_carbon_t()                       ! zero all (inert pools + lignin stay 0)
       call unpack_pool_vector(x_ss, pools_ss)
    end subroutine solve_soil_carbon_steady_state
 
@@ -447,7 +448,8 @@ contains
    end subroutine steady_state_vector
 
    !=======================================================================================!
-   !  TRACEABILITY DIAGNOSTICS (pure post-processing off the assembled matrices, §4.2-4.3):          !
+   !  TRACEABILITY DIAGNOSTICS (pure post-processing off the assembled matrices;                     !
+   !  docs/science/soil_carbon.md eq. (8)):                                                          !
    !    X_c = -(A*xi*K)^{-1}*u    storage CAPACITY (equilibrium chased under current climate+input)     !
    !    X_p = X_c - X             storage POTENTIAL (remaining sink; <0 = a source)                     !
    !    tau_E = sum(X_c)/sum(u)   ecosystem residence time [yr] (stock/throughput; u in /day -> /yr).    !
@@ -532,9 +534,9 @@ contains
    !  and constant day-input u, the exact evolution of [X;1] is exp(Aug)*[X0;1] with                    !
    !  Aug = [[M, u],[0, 0]] -- this handles the constant input WITHOUT inverting M (safe for the         !
    !  singular inert-pool rows). exp is the shared meds_numerics::matrix_exp (scaling-and-squaring +      !
-   !  Taylor series) on the (n+1)x(n+1) augmented matrix (fixed size, allocation-free, GPU-safe; promoted !
-   !  to meds_numerics per MEDS_NUMERICS_SCOPING.md QW4 so this is no longer the only implicit-RC scheme  !
-   !  with its own expm). Mass closes by construction since rh_today is reported as litter_in - dC_pool.  !
+   !  Taylor series) on the (n+1)x(n+1) augmented matrix (fixed size, allocation-free, GPU-safe).         !
+   !  Mass closes by construction since rh_today is reported as litter_in - dC_pool.                      !
+   !  docs/science/soil_carbon.md eq. (6).                                                                !
    !=======================================================================================!
    pure subroutine step_expm(a_mat, dvec, u, x0, x1)
       real(wp), intent(in)  :: a_mat(n_soil_pool, n_soil_pool)
@@ -567,15 +569,6 @@ contains
       end do
       x1 = y1(1:n_soil_pool)
    end subroutine step_expm
-
-   !=======================================================================================!
-   !  FAST heterotrophic respiration -- the CAS-CO2 source (design MEDS_COLUMN_CO2_BALANCE_    !
-   !  DESIGN.md). Read-only on the fast loop's frozen soil-carbon pool; the driver calls it     !
-   !  (its single Rh authority) to build the biotic CO2 source for the CAS twin. Kept beside      !
-   !  the slow matrix Rh (heterotrophic_respiration_matrix) so all decomposition lives here.       !
-   !=======================================================================================!
-
-
 
    !---------------------------------------------------------------------------------------!
    ! soil_carbon_bad_pool -- 0 when every CENTURY pool is physically possible, else the index of  !

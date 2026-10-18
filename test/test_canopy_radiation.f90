@@ -1,6 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_canopy_radiation -- unit tests for the canopy two-stream RT library (src/biophysics). !
+! test_canopy_radiation -- unit tests for the canopy two-stream RT library                 !
+! (src/fast_dynamics/canopy; docs/science/canopy_radiation_transfer.md).                   !
 !                                                                                          !
 ! Checks the physical invariants that a correct two-stream must satisfy:                     !
 !   1. ENERGY CONSERVATION  (per shortwave band): absorbed + net-ground + reflected = incident.!
@@ -9,8 +10,12 @@
 !   4. LEAF-ANGLE LIMITS     : bf and the diffuse backscatter beta hit their analytic limits    !
 !                              (uniform LAD -> bf=0.5; horizontal -> beta -> rho/(rho+tau)).      !
 !   5. MULTI-PFT PATCH       : cohorts of different PFTs get their OWN diffuse optics (MEDS        !
-!                              avoids ED2 bug B1 by construction), and energy still conserves.      !
+!                              avoids ED2 bug B1 of docs/ed2_comparison.md by construction), and    !
+!                              energy still conserves.                                               !
 !   6. LONGWAVE EQUILIBRIUM  : an isothermal canopy+ground+sky has ~zero net thermal absorption.    !
+!   7. DELTA LIDF            : a zero-spread leaf-angle distribution gives finite Beta (p, q).      !
+!   8. COHORT ORDER          : the upper of two equal cohorts absorbs more and sees the top light.  !
+!   9. TIED COHORTS          : equal-height cohorts share one layer, whatever their order.          !
 !==========================================================================================!
 program test_canopy_radiation
    use meds_test_assert, only : check, check_true, test_report
@@ -44,7 +49,7 @@ contains
 
 
    !----- A delta leaf-angle distribution (std_deg = 0) must give FINITE Beta (p, q): the variance !
-   !      floor keeps kappa finite instead of the old mt(1-mt)/0 -> NaN LIDF. --------------------!
+   !      floor keeps kappa finite, where mt(1-mt)/0 would give a NaN LIDF. ----------------------!
    subroutine test_lidf_delta()
       real(wp) :: p, q
       print '(a)', 'test_lidf_delta:'
@@ -193,14 +198,11 @@ contains
    end subroutine test_cohort_order
 
    !=======================================================================================!
-   !  EXACTLY-TIED cohorts are CO-DOMINANT, not stacked (#207).                             !
-   !                                                                                         !
-   !  `update_overtopping_lai` already treats equal-height cohorts as co-dominant, but the    !
-   !  two-stream builds one RT layer per cohort, so a merely-sorted input STACKED them and     !
-   !  whichever sorted first was placed above. Recruits tie BIT-EXACTLY -- one scalar           !
-   !  `recruit_dbh` for every PFT -- and the sort is stable, so the winner was the lower PFT     !
-   !  INDEX. Measured before the fix: the lower slot absorbed 12.6 % less shortwave at zero       !
-   !  overstory, rising to 15.1 % under LAI 6.                                                    !
+   !  EXACTLY-TIED cohorts are CO-DOMINANT, not stacked: cohorts of equal height share one RT      !
+   !  layer (docs/science/canopy_radiation_transfer.md §4, eq. (13)), as `update_overtopping_lai`  !
+   !  treats them. Recruits tie BIT-EXACTLY -- one scalar `recruit_dbh` for every PFT -- and the   !
+   !  sort is stable, so stacking them would put the lower PFT INDEX on top: the lower slot then   !
+   !  absorbs 12.6 % less shortwave at zero overstory, rising to 15.1 % under LAI 6.               !
    !                                                                                               !
    !  Asserted two ways, because either alone is weak. Equal absorption for optically identical    !
    !  twins could be met by a broken solver returning zeros; permutation invariance could be met   !
@@ -214,7 +216,7 @@ contains
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
       real(wp) :: a_pft1, a_pft2, b_pft1, b_pft2, total_a, total_b
-      print '(a)', '[9] exactly-tied cohorts are co-dominant, not stacked (#207)'
+      print '(a)', '[9] exactly-tied cohorts are co-dominant, not stacked'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       !----- slots 1,2 tie exactly; slot 3 is a real overstory, the regime where the bias is worst. -!
@@ -235,8 +237,8 @@ contains
                       flux%abs_leaf(RAD_NIR,1))
 
       !----- (b) PERMUTING the PFT order of the tied pair must not move either one's absorption.    !
-      !      This is the defect as filed: creation order is `do pf = 1, n_pft`, so the sort handed   !
-      !      PFT 1 the upper slot at every recruitment event. ------------------------------------!
+      !      This is the defect it guards: creation order is `do pf = 1, n_pft`, so a stacking sort  !
+      !      hands PFT 1 the upper slot at every recruitment event. -------------------------------!
       pft = [1_ik, 2_ik, 1_ik]
       call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
       a_pft1 = flux%abs_leaf(RAD_NIR,1) ; a_pft2 = flux%abs_leaf(RAD_NIR,2)

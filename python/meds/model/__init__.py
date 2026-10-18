@@ -2,14 +2,15 @@
 """meds.model — drive the FULL coupled MEDS model from Python.
 
 The other sub-packages expose pieces: ``meds.plant.leaf`` and ``meds.plant.pheno`` are
-stateless kernels, and ``meds.demography`` drives the slow loop alone. This one drives
+stateless kernels, ``meds.canopy`` runs the canopy's kernels over a frozen stand, and
+``meds.demography`` drives the slow loop alone. This one drives
 what the ``meds_main`` executable drives — coupled fast biophysics + slow demography,
 live met forcing, netCDF output, both conservation ledgers — with the time loop in
 Python:
 
     from meds.model import Run
 
-    with Run("meds_config_july.toml") as run:
+    with Run("meds_config_main.toml") as run:
         for step in run:
             if step.is_new_year:
                 print(step.date, run.total_agb, run.soil_carbon)

@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Internal ctypes bridge to libmeds.so. NOT part of the public API.
 
-This is the only module that touches ctypes; everything user-facing lives in `meds.plant`
-(dataclasses + enums). The struct field order below MUST match the bind(c) mirror types in
+This module holds the leaf gas exchange's ctypes code; everything user-facing lives in
+`meds.plant.leaf` (dataclasses + enums), and `meds.plant.pheno` binds its own phenology entries on
+the same library. The struct field order below MUST match the bind(c) mirror types in
 src/c_api/meds_c_api_leaf.f90 exactly.
 
 Locating and loading the library is `meds._libmeds`'s job, not this module's -- there is ONE
-libmeds.so behind every sub-package now (structure-plan decision #1), so there is one search.
+libmeds.so behind every sub-package, so there is one search.
 """
 import ctypes
 from ctypes import c_double, c_int, byref, POINTER
@@ -48,6 +49,13 @@ class _C3DemandC(ctypes.Structure):
     _fields_ = [(n, c_double) for n in _C3_DEMAND_FIELDS]
 
 
+_KINETICS_FIELDS = ("kc", "ko", "gstar", "o2")
+
+
+class _KineticsC(ctypes.Structure):
+    _fields_ = [(n, c_double) for n in _KINETICS_FIELDS]
+
+
 _LIB = None
 
 
@@ -65,6 +73,8 @@ def _lib():
         lib.meds_assimilation_demand_c3.restype = None
         lib.meds_assimilation_demand_c3.argtypes = [c_double] * 8 + [c_int, c_double, c_double,
                                                     POINTER(_C3DemandC)]
+        lib.meds_rubisco_kinetics.restype = None
+        lib.meds_rubisco_kinetics.argtypes = [POINTER(_ParamsC), c_double, c_double, POINTER(_KineticsC)]
         lib.meds_electron_transport_j.restype = c_double
         lib.meds_electron_transport_j.argtypes = [c_double] * 5
         lib.meds_peaked_arrhenius.restype = c_double
@@ -116,6 +126,15 @@ def assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colimitation, t
                                 float(kc), float(ko), float(o2), int(colimitation),
                                 float(theta_cj), float(theta_ip), byref(dem_c))
     return {n: getattr(dem_c, n) for n in _C3_DEMAND_FIELDS}
+
+
+def rubisco_kinetics(params, t_leaf, pressure):
+    """The solver's C3 Rubisco kinetics (kc, ko, gstar, o2) [umol/mol] at t_leaf [K] and pressure [Pa]."""
+    params_c = _ParamsC(pathway=int(params["pathway"]),
+                        **{k: float(params[k]) for k in PARAM_FIELDS})
+    kin_c = _KineticsC()
+    _lib().meds_rubisco_kinetics(byref(params_c), float(t_leaf), float(pressure), byref(kin_c))
+    return {n: getattr(kin_c, n) for n in _KINETICS_FIELDS}
 
 
 def electron_transport_j(par, absorptance, phi_psii, jmax, theta):

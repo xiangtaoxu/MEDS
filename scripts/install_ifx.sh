@@ -16,7 +16,7 @@
 # Notes:                                                                                    #
 #   * System install needs root; the script uses sudo and will prompt for your password.   #
 #   * Intel MPI / MKL are separate oneAPI packages (intel-oneapi-mpi-devel, intel-oneapi-  #
-#     mkl-devel) — install them too if/when MEDS is built with MPI or uses MKL.            #
+#     mkl-devel); MEDS uses neither, so this script does not install them.                 #
 #==========================================================================================#
 set -euo pipefail
 

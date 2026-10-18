@@ -11,13 +11,15 @@ module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
-   use meds_allometry,  only : set_allometry, HEIGHT_POWER
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
+   use meds_allometry,  only : allometry_t, HEIGHT_CHAVE
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params,               &
+   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp, water_curve_t
+   use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t,                &
+                                  build_soil_hydr_params_layers, build_soil_therm_params_layers,         &
                                   SOIL_LAYER_TEMPLATE, soil_layer_grid
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
                                    METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
@@ -27,112 +29,96 @@ module meds_config
    use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
    use meds_biogeochem_opts, only : decomp_opts_t
    use meds_region_opts,   only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
+   use meds_maps_opts,  only : maps_opts_t, soil_maps_on
    implicit none
    private
 
-   public :: meds_config_t, allometry_config_t, hydraulics_config_t, soil_column_config_t
+   public :: meds_config_t, hydraulics_config_t, soil_column_config_t
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
-   public :: validate_config, growth_window_steps, soil_column_layers
-   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
+   public :: validate_config, growth_window_steps, soil_column_layers, soil_column_params
+   public :: pft_tissue_curves, pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
+   public :: maps_opts_t, soil_maps_on
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: INTEG_ARK, INTEG_RK45
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
-   !----- Time-step modes. ----------------------------------------------------------------!
    !----- Parallel backend labels (the actual backend is chosen at COMPILE time via the    !
    !      compiler's do-concurrent target; this is for reporting/reproducibility only).    !
    integer(ik), parameter :: BK_SERIAL    = 0_ik
    integer(ik), parameter :: BK_MULTICORE = 1_ik
    integer(ik), parameter :: BK_GPU       = 2_ik
-   !----- Patch disturbance / land-use classes. -------------------------------------------!
    !----- Upper bound on the declared forcing recycle window, in whole calendar years. Purely a  !
    !      search bound for the whole-year test (no real met record spans centuries). -------------!
    integer(ik), parameter :: MAX_RECYCLE_YEARS = 200_ik
 
+   !----- Patch disturbance / land-use classes. -------------------------------------------!
    integer(ik), parameter :: DIST_PRIMARY  = 1_ik   !< undisturbed / primary stand
    integer(ik), parameter :: DIST_TREEFALL = 2_ik   !< treefall-gap (age-0) patch
    !----- Initialization modes (selected by [init].init_mode). ----------------------------!
    integer(ik), parameter :: INIT_BARE    = 0_ik    !< near-bare ground
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
-   !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the        !
-   !      temperature-response selectors (TRESP_*) by meds_temp_response. Imported above for    !
-   !      LOADING and VALIDATION only -- not re-exported, so a caller that switches on one       !
-   !      imports it from the module that defines it (decision #8).                              !
+   !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the         !
+   !      temperature-response selectors (TRESP_*) by meds_temp_response. Imported above       !
+   !      for LOADING and VALIDATION only -- not re-exported, so a caller that switches on     !
+   !      one imports it from the module that defines it. -------------------------------------!
 
 
-   !----- Fast-loop TIME integrator ([fast].time_integrator). TWO schemes, and there is deliberately  !
-   !      no third: docs/science/numerical_scheme.md section 3 records why there is no operator-split   !
-   !      path, and there is no separate coupling-sweep selector because nothing is swept.              !
-   !                                                                                          !
-   !      NAMING, stated once so it stops propagating: INTEG_ARK is NOT an IMEX method. The biotic     !
-   !      CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and the scheme    !
-   !      is a 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2) (the ARS(2,2,2) value). The config string    !
-   !      stays "ark" for compatibility. ------------------------------------------------------------!
-   !----- RESERVED: a "dynamic vapour pressure" control -- the substomatal air held at the Kelvin     !
-   !      humidity exp(psi/(rho_w*Rv*T)) rather than saturated, so the transpiration gradient shrinks  !
-   !      with psi and REVERSES into foliar water uptake once e_i < e_a. It was implemented, measured  !
-   !      and REMOVED (see issue #96 for the pro/con and docs/science/leaf_gas_exchange.md): scaling   !
-   !      the existing latent flux by a humidity factor is not sound, because that flux is linearised  !
-   !      about T_cas. It needs the flux AND its temperature derivative rebuilt from                   !
-   !      rh_leaf*qsat(T_leaf) inside the leaf energy balance. Deferred, and interesting mainly as a   !
-   !      route to representing foliar uptake rather than as a stress arrestor. ---------------------!
+   !----- Fast-loop TIME integrator ([fast].time_integrator). TWO schemes, and there is             !
+   !      deliberately no third: docs/science/numerical_scheme.md §3 ("Why there is no              !
+   !      operator-split scheme") records why, and there is no separate coupling-sweep selector     !
+   !      because nothing is swept.                                                                 !
+   !                                                                                                !
+   !      NAMING, stated once so it stops propagating: INTEG_ARK is NOT an IMEX method. The         !
+   !      biotic CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and     !
+   !      the scheme is a 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2) (the ARS(2,2,2) value;         !
+   !      docs/science/numerical_scheme.md eq. (1)). The config string stays "ark". ----------------!
+   !----- NOT IMPLEMENTED: a "dynamic vapour pressure" control -- the substomatal air held at       !
+   !      the Kelvin humidity exp(psi/(rho_w*Rv*T)) rather than saturated, so the transpiration     !
+   !      gradient shrinks with psi and REVERSES into foliar water uptake once e_i < e_a.           !
+   !      Scaling the existing latent flux by a humidity factor is not sound, because that flux     !
+   !      is linearised about T_cas: it needs the flux AND its temperature derivative rebuilt       !
+   !      from rh_leaf*qsat(T_leaf) inside the leaf energy balance. It matters mainly as a          !
+   !      route to foliar uptake, not as a stress control: the leaf's water stress is the fast      !
+   !      capacity ramp and the slow stomatal factor (docs/science/leaf_gas_exchange.md eqs.        !
+   !      (9) and (10)). See docs/ROADMAP.md. ------------------------------------------------------!
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
    integer(ik), parameter :: INTEG_RK45   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
 
-   !----- Fast-loop ERROR-CONTROL selectors (MEDS_NUMERICS_SCOPING.md goal (a); consumed by            !
-   !      meds_fast_control). Strictness LEVEL ([fast].error_level): L0 fixed / L1 adaptive (default) / !
-   !      L2 strict (adaptive + hard failure when a floor step can't meet tolerance). CONTROLLER        !
-   !      ([fast].step_controller): I = integral (default, legacy) / PI = Gustafsson proportional-      !
-   !      integral (damps step-size hunting). ---------------------------------------------------------!
+   !----- Fast-loop ERROR-CONTROL selectors (consumed by meds_fast_control;                         !
+   !      docs/science/numerical_scheme.md eqs. (3)-(4)). Strictness LEVEL                          !
+   !      ([fast].error_level): L0 fixed / L1 adaptive (default) / L2 strict (adaptive + hard       !
+   !      failure when a floor step can't meet tolerance). CONTROLLER ([fast].step_controller):     !
+   !      I = integral (default) / PI = Gustafsson proportional-integral (damps step-size           !
+   !      hunting). --------------------------------------------------------------------------------!
    integer(ik), parameter :: CTRL_L0_FIXED    = 0_ik
    integer(ik), parameter :: CTRL_L1_ADAPTIVE = 1_ik
    integer(ik), parameter :: CTRL_L2_STRICT   = 2_ik
    integer(ik), parameter :: CTRL_I  = 1_ik
    integer(ik), parameter :: CTRL_PI = 2_ik
 
-   !----- NO hard-coded defaults: every field is set by the config reader (presence-mapped) or  !
-   !       derived (derive_config / derive_pft_rates). DERIVED fields are noted.  --------------!
-   !----- Global (PFT-independent, ED2 iallom==3) allometry coefficients. Held on cfg so the run  !
-   !       config is the complete record; installed into meds_allometry's protected module state    !
-   !       by derive_parameters (mirroring how every other derived quantity is computed at load).    !
-   type :: allometry_config_t
-      real(wp) :: b1Ht = 0.0_wp, b2Ht = 0.0_wp        !< height <-> diameter intercept / slope
-      real(wp) :: agb_c1 = 0.0_wp, agb_c2 = 0.0_wp    !< AGB scale / exponent (Chave-2014)
-      real(wp) :: ca_b1 = 0.0_wp, ca_b2 = 0.0_wp      !< crown-area scale / exponent
-      real(wp) :: lai_b1 = 0.0_wp, lai_b2 = 0.0_wp    !< per-stem leaf-area scale / exponent
-      real(wp) :: light_ext = 0.0_wp                  !< Beer-Lambert extinction through overtopping LAI
-      integer(ik) :: height_form = HEIGHT_POWER       !< the height curve: power law, gMM or Chave (2014)
-      real(wp) :: gmm_a = 0.0_wp, gmm_b = 0.0_wp, gmm_k = 0.0_wp   !< gMM height coefficients
-      real(wp) :: chave_e = 0.0_wp                    !< Chave (2014) stress index E
-   end type allometry_config_t
+   !----- A field with no in-type default is set by the config reader (presence-mapped) or     !
+   !      derived (derive_config / derive_pft_rates). DERIVED fields are noted. ---------------!
 
-   !----- SOIL COLUMN: the site's geometry, texture and thermal properties. Consumed once per run  !
-   !       by the fast-context builder, which turns them into soil_params_t + soil_thermal_params_t. !
-   !                                                                                          !
-   !       These were HARD-CODED literals in build_fast_context, with a comment promising this      !
-   !       block. That mattered for three reasons: the source is supposed to define only true        !
-   !       constants; the column could not be given a second site's texture without a recompile;     !
-   !       and `depth` is the value docs/dev_plans note is shallower than the ~2.5 m annual thermal  !
-   !       damping depth, so the fix for that was unreachable from a config file.                     !
-   !                                                                                          !
-   !       Every key is OPTIONAL and defaults to the literal it replaced, so a config without the     !
-   !       block is bit-identical to the old behaviour. NOTE the distinction from [soil], which holds  !
-   !       the soil water's options (bottom BC, the water network's tolerances, the pond): this block   !
-   !       is the PHYSICAL column they apply to.                                                         !
+   !----- SOIL COLUMN ([soil_column]): the site's geometry, texture and thermal properties          !
+   !      (docs/science/soil_biophysics.md). Consumed once per run by the fast-context builder      !
+   !      (build_fast_context), which turns them into soil_params_t + soil_thermal_params_t.        !
+   !      Every key is OPTIONAL and defaults to the value below. NOTE the distinction from          !
+   !      [soil], which holds the soil water's options (bottom BC, the water network's              !
+   !      tolerances, the pond): this block is the PHYSICAL column they apply to. ------------------!
    type :: soil_column_config_t
       !----- Vertical grid: SOIL_LAYER_TEMPLATE, or the `layer_bottoms` list when          !
       !      set, cut at `depth` (soil_column_layers). ----------------------------------- !
       real(wp)    :: depth           = 2.0_wp    !< [m]  total column depth (positive; z is negative down)
       integer(ik) :: n_layer_bottoms = 0_ik      !< [-]  entries of layer_bottoms; 0 = the template
       real(wp)    :: layer_bottoms(n_soil_layer_max) = 0.0_wp   !< [m] layer bottoms, positive down
-      !----- Hydraulic texture (uniform over the column in this MVP; per-layer texture is future). --!
+      !----- Hydraulic texture, one for the whole column (or per layer: n_layer_values below). ------!
       integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
       real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
       real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
@@ -144,39 +130,60 @@ module meds_config
       real(wp)    :: solid_conductivity = 3.0_wp    !< [W/m/K]  mineral-solid conductivity
       real(wp)    :: dry_conductivity   = 0.15_wp   !< [W/m/K]  dry-matrix conductivity
       real(wp)    :: dry_heat_capacity  = 2.0e6_wp  !< [J/m3/K] dry-matrix volumetric heat capacity
+      !----- A texture per layer, from the soil maps ([maps], meds_surface_maps), in place of the  !
+      !      one texture above: n_layer_values is the column's layer count, and each array holds    !
+      !      one value per layer. 0 = the one texture. No config key sets these. -------------------!
+      integer(ik) :: n_layer_values = 0_ik
+      real(wp)    :: layer_theta_sat(n_soil_layer_max)          = 0.0_wp
+      real(wp)    :: layer_theta_res(n_soil_layer_max)          = 0.0_wp
+      real(wp)    :: layer_ksat(n_soil_layer_max)               = 0.0_wp
+      real(wp)    :: layer_curve_par_a(n_soil_layer_max)        = 0.0_wp
+      real(wp)    :: layer_curve_par_n(n_soil_layer_max)        = 0.0_wp
+      real(wp)    :: layer_solid_conductivity(n_soil_layer_max) = 0.0_wp
+      real(wp)    :: layer_dry_conductivity(n_soil_layer_max)   = 0.0_wp
+      real(wp)    :: layer_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp
    end type soil_column_config_t
 
-   !----- Plant-hydraulics parameters (PFT-uniform MVP). Consumed only by the opt-in fast loop;    !
-   !       flattened into the plant hydro_params_t by the fast-context builder. Defaults are the     !
-   !       former hardcoded fast-loop placeholders; a [hydraulics] TOML block overrides any field.    !
+   !----- The column's texture, one value per layer: the per-layer arrays, or the one texture   !
+   !      repeated (soil_column_texture). --------------------------------------------------------!
+   type :: soil_texture_layers_t
+      real(wp) :: theta_sat(n_soil_layer_max), theta_res(n_soil_layer_max), ksat(n_soil_layer_max)
+      real(wp) :: par_a(n_soil_layer_max), par_n(n_soil_layer_max)
+      real(wp) :: k_solid(n_soil_layer_max), k_dry(n_soil_layer_max), dry_cvol(n_soil_layer_max)
+   end type soil_texture_layers_t
+
+   !----- Plant-hydraulics parameters ([hydraulics]; docs/science/plant_hydraulics.md): the        !
+   !      run-wide value of each hydraulic trait, which the PFT file's pft.<key> overrides per     !
+   !      PFT. Consumed only by the fast loop; flattened into the plant hydro_params_t by the      !
+   !      fast-context builder (apply_hydraulics_config). -----------------------------------------!
    type :: hydraulics_config_t
-      !----- Pressure-volume (Bartlett/Tyree-Hammel), per tissue. --------------------------!
+      !----- Pressure-volume (Bartlett/Tyree-Hammel), per tissue: docs/science/plant_hydraulics.md eqs. (3)-(6). -!
       real(wp) :: leaf_pi0 = -1.5_wp, leaf_elastic_mod = 12.0_wp, leaf_apoplast_frac = 0.30_wp   !< [MPa],[MPa],[-]
       real(wp) :: leaf_water_sat = 2.0_wp                                     !< [kg H2O/kgC] at saturation
       real(wp) :: wood_pi0 = -1.0_wp, wood_elastic_mod =  8.0_wp, wood_apoplast_frac = 0.20_wp
       real(wp) :: wood_water_sat = 1.0_wp
-      !----- Xylem vulnerability + conductance. -------------------------------------------!
+      !----- Xylem vulnerability (docs/science/plant_hydraulics.md eq. (7)). ---------------!
       real(wp) :: wood_psi50 = -2.0_wp   !< [MPa,<0] potential at 50% loss
       real(wp) :: wood_kexp  =  2.0_wp   !< [-]  vulnerability shape (a)
-      !----- The plant's maximum internal conductance is the sapwood's: wood_kmax * sapwood area /     !
-      !      (height * vessel_curl). wood_kmax is a PFT trait from wood density (Xu et al. 2016), which  !
-      !      pft.wood_kmax overrides; vessel_curl stretches the path beyond the plant's height. -------!
+      !----- The plant's maximum internal conductance is the sapwood's: wood_kmax * sapwood area      !
+      !      / (height * vessel_curl) (docs/science/plant_hydraulics.md eqs. (10)-(11)).              !
+      !      wood_kmax is a PFT trait from wood density (Xu et al. 2016), which pft.wood_kmax         !
+      !      overrides; vessel_curl stretches the path beyond the plant's height. --------------------!
       real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor (ED2)
-      !----- Roots, plant traits (each a default that pft.<key> overrides per PFT). A cohort roots to  !
-      !       root_depth_b1 * height^root_depth_b2 (ED2's height allometry, IALLOM 1), capped at the     !
-      !       soil column, and its fine roots fall off within that depth as ED2's (1 - beta^(d/D)) /    !
-      !       (1 - beta). Its root length, fine-root carbon * specific_root_length, sets the soil->root   !
-      !       conductance of each layer (the single-root form, Gardner 1960). Hydraulic redistribution  !
-      !       stays off -- per-layer efflux is floored at zero in both the plant solver and the soil    !
-      !       sink (docs/ROADMAP.md section 7). -------------------------------------------------------!
+      !----- Roots, plant traits (each a default that pft.<key> overrides per PFT). A cohort         !
+      !      roots to root_depth_b1 * height^root_depth_b2 (ED2's height allometry, IALLOM 1),       !
+      !      capped at the soil column, and its fine roots fall off within that depth as ED2's       !
+      !      (1 - beta^(d/D)) / (1 - beta). Its root length, fine-root carbon *                      !
+      !      specific_root_length, sets the soil->root conductance of each layer (the single-        !
+      !      root form, Gardner 1960); docs/science/plant_hydraulics.md eqs. (12)-(14).              !
+      !      Hydraulic redistribution is off -- per-layer efflux is floored at zero in both the      !
+      !      plant solver and the soil sink (see docs/ROADMAP.md). ----------------------------------!
       real(wp) :: root_beta            = 0.1_wp        !< [-] share of the profile left below the rooting depth (0,1)
       real(wp) :: root_depth_b1        = 1.1140580_wp  !< [m] rooting depth = b1 * height[m]^b2 (ED2 IALLOM 1:
       real(wp) :: root_depth_b2        = 0.4223014_wp  !< [-]   5 m at 35 m; Christoffersen 2013)
       real(wp) :: specific_root_length = 2.0e4_wp      !< [m/kgC] fine-root length per unit fine-root carbon:
                                                        !<   10 m/g dry for tropical fine roots (Panama, GRooT) * 2
       real(wp) :: fine_root_radius     = 2.5e-4_wp     !< [m] fine-root radius: tropical diameters 0.4-0.6 mm
-      !----- OPT-IN: couple the plant hydraulics to the per-layer soil column (feed per-layer psi_soil  !
-      !       + rhizosphere conductance into the multi-layer root boundary) instead of a single root-    !
    end type hydraulics_config_t
 
    type :: meds_config_t
@@ -185,34 +192,38 @@ module meds_config
       real(wp)          :: dt_years              !< DERIVED = dt_slow / yr_sec
       type(meds_time_t) :: start_time, end_time
       logical     :: demography_on               !< if .false. structure is frozen
-      !----- Master SLOW-TIER freeze ([run].slow_on, DEFAULTED true): .false. skips the WHOLE slow   !
-      !      tier (vegetation_dynamics -- growth/mortality/phenology/traits/demography -- and the      !
-      !      future biogeochemistry step) every step, holding cohort/patch/soil-carbon state static    !
-      !      while the fast loop still runs. Broader than demography_on, which only freezes the        !
-      !      structural fuse/fiss/disturbance triggers within an otherwise-active slow loop.           !
+      !----- Master SLOW-TIER freeze ([run].slow_on, DEFAULTED true): .false. skips the WHOLE        !
+      !      slow tier (vegetation dynamics -- growth/mortality/phenology/traits/demography --       !
+      !      and the soil-carbon step) every step, holding cohort/patch/soil-carbon state static     !
+      !      while the fast loop still runs. Broader than demography_on, which only freezes the      !
+      !      structural fuse/fiss/disturbance triggers within an otherwise-active slow loop. --------!
       logical     :: slow_on = .true.
-      !----- The SLOW-tier conservation ledger ([run].slow_ledger_on, DEFAULTED true). It snapshots  !
-      !      the site store either side of every slow-step operator and reports what did not close   !
-      !      (plan §10.2). ON by default for the same reason the fast loop's whole-column ledgers    !
-      !      are: a conservation check nobody runs is a conservation check nobody has. It writes no  !
-      !      state and changes no answer -- only an end-of-run table -- so the only cost of leaving  !
-      !      it on is a handful of reductions per simulated day.  ---------------------------------!
+      !----- The SLOW-tier conservation ledger ([run].slow_ledger_on, DEFAULTED true). It            !
+      !      snapshots the site store either side of every slow-step operator and reports what       !
+      !      did not close (docs/science/order_of_processes.md §4). ON by default for the same       !
+      !      reason the fast loop's whole-column ledgers are: a conservation check nobody runs       !
+      !      is a conservation check nobody has. It writes no state and changes no answer --         !
+      !      only an end-of-run table -- so the only cost of leaving it on is a handful of           !
+      !      reductions per simulated day. ----------------------------------------------------------!
       logical     :: slow_ledger_on = .true.
-      !----- Host THREADS ([run].n_threads, DEFAULTED 1). A site run puts them on the fast loop's    !
-      !      PATCH axis (§7 C2); a region run puts them on its POLYGONS, each polygon's patch loop   !
-      !      then running on one (#183 R3). Patches, and polygons, are independent within a step, so !
-      !      this is the one lever that costs no accuracy -- PROVIDED the answer does not move with  !
-      !      the thread count, which is why the site-level reductions are staged per (sub-step,       !
-      !      patch) and folded back in patch order (§7 C3). Default 1 so no existing result moves without opt-in, and so a build that       !
-      !      happens to carry OpenMP flags (NVHPC MEDS_GPU=multicore puts -mp PUBLIC on               !
-      !      meds_demography, which its dependents inherit) stays serial until asked. Has effect only !
-      !      in an OpenMP build, which is the default; with -DMEDS_OPENMP=OFF the directives are      !
-      !      comments and this is ignored.                                                            !
+      !----- Host THREADS ([run].n_threads, DEFAULTED 1; docs/science/numerical_scheme.md §6a).      !
+      !      A site run puts them on the fast loop's PATCH axis; a region run puts them on its       !
+      !      POLYGONS, each polygon's patch loop then running on one. Patches, and polygons, are     !
+      !      independent within a step, so this is the one lever that costs no accuracy --           !
+      !      PROVIDED the answer does not move with the thread count, which is why the site-         !
+      !      level reductions are staged per (sub-step, patch) and folded back in patch order.       !
+      !      Default 1, so a build that happens to carry OpenMP flags (NVHPC MEDS_GPU=multicore      !
+      !      puts -mp PUBLIC on meds_demography, which its dependents inherit) stays serial          !
+      !      until asked. Has effect only in an OpenMP build, which is the default; with             !
+      !      -DMEDS_OPENMP=OFF the directives are comments and this is ignored. ---------------------!
       integer(ik) :: n_threads = 1_ik
-      !----- [run].mode: one site, or every selected cell of a box as its own polygon, with the box  !
-      !      and the selection rules in [region] (MEDS_POLYGON_RUNTIME_PLAN.md §9).                  !
+      !----- [run].mode: one site, or every selected cell of a box as its own polygon, with the     !
+      !      box and the selection rules in [region] (docs/configuration.md, "Regional runs"). -----!
       integer(ik)         :: run_mode = RUN_MODE_SITE
       type(region_opts_t) :: region
+      !----- [maps]: the static maps a run takes its soil and its Chave site index from, at         !
+      !      each polygon's cell (meds_surface_maps; docs/configuration.md, "Input maps"). ---------!
+      type(maps_opts_t) :: maps
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
@@ -220,44 +231,44 @@ module meds_config
       real(wp)    :: snow_init_swe        = 0.0_wp     !< [kg/m2] initial snow water-equivalent seeded at run start
       real(wp)    :: snow_init_temp       = 270.0_wp   !< [K] initial snow temperature (for the seeded pack)
       logical     :: canopy_water_on      = .false.    !< opt-in canopy interception film + film-evap/dew
-      !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads). ----------------!
-      !      every existing config + the golden anchor byte-identical). --------------------------------!
+      !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads;               !
+      !      docs/science/numerical_scheme.md §3, §6). ---------------------------------------------!
       integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK45
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
-      !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !
-      !      overrides every tolerance group's rtol -- the ARK march AND the nested soil-water /         !
-      !      soil-energy / plant-hydraulics sub-solvers. 0 (default) => each keeps its own per-sub-       !
-      !      solver value, i.e. byte-identical to before the unification. -------------------------------!
+      !----- ONE master relative-accuracy dial for the WHOLE fast loop: when > 0 it overrides        !
+      !      every tolerance group's rtol -- the ARK march AND the nested soil-water / soil-         !
+      !      energy / plant-hydraulics sub-solvers. 0 (default) => each keeps its own per-sub-       !
+      !      solver value. --------------------------------------------------------------------------!
       real(wp)    :: rtol_all             = 0.0_wp      !< [-] 0 = unset; > 0 = the single accuracy target
-      !----- The ABSOLUTE-tolerance companion to rtol_all. Every group's atol is physically scaled (J/kg,  !
-      !      kg/kg, m3/m3, K, ...), so they cannot share one number the way rtol can; instead this is a     !
-      !      dimensionless MULTIPLIER applied to the whole atol vector. It matters because the WRMS         !
-      !      denominator is atol + rtol*|y|: tightening rtol_all ALONE saturates once atol dominates the    !
-      !      denominator (measured: 1e-3 -> 1e-6 on the soil-water group only raises the error estimate     !
-      !      ~4x, too little to force a substep), so the accuracy dial is only half-effective without it.   !
-      !      1.0 (default) is an EXACT IEEE identity => byte-identical. -----------------------------------!
+      !----- The ABSOLUTE-tolerance companion to rtol_all. Every group's atol is physically scaled     !
+      !      (J/kg, kg/kg, m3/m3, K, ...), so they cannot share one number the way rtol can;           !
+      !      instead this is a dimensionless MULTIPLIER applied to the whole atol vector. It           !
+      !      matters because the WRMS denominator is atol + rtol*|y|                                   !
+      !      (docs/science/numerical_scheme.md eq. (3)): tightening rtol_all ALONE saturates once      !
+      !      atol dominates the denominator (measured: 1e-3 -> 1e-6 on the soil-water group only       !
+      !      raises the error estimate ~4x, too little to force a substep), so the accuracy dial       !
+      !      is only half-effective without it. 1.0 (default) leaves every atol exactly as set. -------!
       real(wp)    :: atol_scale           = 1.0_wp      !< [-] multiplier on every group's atol (1 = unset)
-      !----- WHERE IN THE SUB-STEP THE MET FORCING IS SAMPLED, as a fraction of dt_fast (§8f). The     !
-      !      fast loop samples met at (isub - 1 + f)*dt_fast while column_prepass freezes every        !
-      !      coefficient (gs/GPP/Rd/aerodynamics/radiation) on the STATE at t^n. f = 0.5 (the historic !
-      !      default) is the better quadrature of the forcing alone, but it pairs t+dt/2 forcing with  !
-      !      t^n state -- a FIRST-ORDER inconsistency in the frozen coefficients. Measured on the      !
-      !      forced ERA5 census stand at dt_fast = 900 s, CAS-T RMSE traces a clean U in f with its    !
-      !      minimum at f = 0 (forcing and state agreeing), worth ~2x. Kept at 0.5 by default so       !
-      !      existing runs are unchanged; f = 0 is the state-consistent choice, and a true midpoint    !
-      !      freeze (f = 0.5 WITH a state predictor) is the second-order version. -----------------!
+      !----- WHERE IN THE SUB-STEP THE MET FORCING IS SAMPLED, as a fraction of dt_fast. The         !
+      !      fast loop samples met at (isub - 1 + f)*dt_fast while column_prepass freezes every      !
+      !      coefficient (gs/GPP/Rd/aerodynamics/radiation) on the STATE at t^n. f = 0.5 (the        !
+      !      default) is the better quadrature of the forcing alone, but it pairs t+dt/2 forcing     !
+      !      with t^n state -- a FIRST-ORDER inconsistency in the frozen coefficients; f = 0 is      !
+      !      the state-consistent choice, and a true midpoint freeze (f = 0.5 WITH a state           !
+      !      predictor) is the second-order version. It is a trade: f = 0 improves canopy-air        !
+      !      temperature and degrades soil temperature (docs/science/numerical_scheme.md §7,         !
+      !      item 5). -------------------------------------------------------------------------------!
       real(wp)    :: forcing_sample_frac  = 0.5_wp      !< [-] met sample point within the sub-step, in [0,1]
-      !----- §8g SCHEME-ASYMMETRY GUARD: the CAS supersaturation (condensation) sink lives in
-      !      surface_derivs, which ONLY the ARK stages reach -- so split-vs-ARK has been comparing two
-      !      different models. Default .true. keeps the ARK unchanged; set .false. for a like-for-like
-      !      scheme comparison. Whether the sink should also exist on the split path is a MODEL question.
+      !----- The CAS supersaturation (condensation) sink in surface_derivs, which both schemes      !
+      !      reach. Default .true.; .false. drops the sink, for an experiment that wants the        !
+      !      canopy air allowed above saturation. --------------------------------------------------!
       logical     :: cas_condensation     = .true.     !< apply the CAS supersaturation sink (ARK path)
-      !----- PROCESS MASK (§5.1): which column processes actually EVOLVE. All true = the full column   !
-      !      (default, byte-identical); flipping one off freezes that store so the driver integrates a   !
-      !      REDUCED ODE. This is the process-complexity axis of the goal-(b) sweep. The mask type       !
-      !      itself lives in meds_fast_types (with column_config_t); config carries plain logicals so     !
-      !      shared/ does not gain a driver dependency. --------------------------------------------------!
+      !----- PROCESS MASK: which column processes actually EVOLVE. All true = the full column        !
+      !      (default); flipping one off freezes that store so the driver integrates a REDUCED       !
+      !      ODE, for numerical studies of process complexity. The mask type itself lives in         !
+      !      meds_fast_types (with column_config_t); config carries plain logicals so config/        !
+      !      does not gain a driver dependency. -----------------------------------------------------!
       logical     :: mask_veg_energy = .true.   !< leaf + wood energy stores
       logical     :: mask_cas_energy = .true.   !< canopy-air-space enthalpy
       logical     :: mask_cas_vapour = .true.   !< canopy-air-space specific humidity
@@ -265,17 +276,13 @@ module meds_config
       logical     :: mask_soil_heat  = .true.   !< soil thermal column
       logical     :: mask_soil_water = .true.   !< soil water column
       logical     :: mask_hydraulics = .true.   !< plant hydraulics (psi)
-      integer(ik) :: step_controller      = CTRL_I      !< CTRL_I (default, legacy) | CTRL_PI (goal a; §9.3)
+      integer(ik) :: step_controller      = CTRL_I      !< CTRL_I (default) | CTRL_PI
       integer(ik) :: error_level          = CTRL_L1_ADAPTIVE !< CTRL_L0_FIXED | CTRL_L1_ADAPTIVE (default) | CTRL_L2_STRICT
       real(wp)    :: ark_dt_init          = 0.0_wp      !< [s] initial adaptive substep (0 => dt_fast)
       integer(ik) :: ark_fixed_substep    = 4_ik        !< fixed substeps/dt_fast (GPU warp-uniform path)
-      !----- The leaf<->CAS surface solve is EITHER the uncoupled single-BE pass OR the coupled 2x2   !
-      !      Newton -- there is nothing in between. `ark_niter` was typed as an iteration cap but is    !
-      !      only ever tested as `np <= 1` (column_be_stage), so every value > 1 behaved identically    !
-      !      and the real cap is the NEWT_MAX = 4 parameter. It is a boolean, so it is spelled as one   !
-      !      now (plan E4): `fast.ark_coupled`. The old `fast.ark_niter` is refused as retired         !
-      !      (meds_config_keys), naming it. `ark_relax` was deleted -- it was vestigial on the Newton     !
-      !      branch and read by nothing. --------------------------------------------------------------!
+      !----- The leaf<->CAS surface solve is EITHER the uncoupled single-BE pass OR the coupled     !
+      !      2x2 Newton (its own iteration cap is NEWT_MAX) -- there is nothing in between, so      !
+      !      [fast].ark_coupled is a boolean. ------------------------------------------------------!
       logical     :: ark_coupled          = .true.      !< .false. = uncoupled single BE pass; .true. = 2x2 Newton
       !----- Sub-daily fast-loop diagnostic PROBE (opt-in; for the integrator/dt_fast evaluation): dumps !
       !      per-(patch,sub-step) CAS temp / GPP / ET / soil-top temp / leaf temp to a CSV. -------------!
@@ -315,9 +322,8 @@ module meds_config
       !----- Initial conditions (init_mode: 0 bare | 1 census | 2 restart). ---------------!
       integer(ik)        :: init_mode
       character(len=256) :: init_restart_file, init_census_file
-      !----- The soil state a run starts from when no state file restores one: every layer of   !
-      !      every patch at this temperature and volumetric water content. The defaults are the   !
-      !      constants the fast context carried before they were keys.  -------------------------!
+      !----- The soil state a run starts from when no state file restores one: every layer of    !
+      !      every patch at this temperature and volumetric water content. ----------------------!
       real(wp)           :: init_soil_temp  = 288.0_wp   !< [K]
       real(wp)           :: init_soil_theta = 0.30_wp    !< [m3/m3]
       !----- A restart's plastic leaf traits from THIS run's PFT file rather than the state file's   !
@@ -345,13 +351,13 @@ module meds_config
       real(wp) :: ea_vcmax, ea_jmax, ea_rd              !< [J/mol] activation energies
       real(wp) :: hd_vcmax, hd_jmax, hd_rd              !< [J/mol] deactivation energies (peaked form)
       real(wp) :: ds_vcmax, ds_jmax, ds_rd              !< [J/mol/K] entropy terms (peaked form)
-      !----- THERMAL ACCLIMATION (#176, Kattge & Knorr 2007). OFF by default, so the shipped        !
-      !      behaviour is unchanged and `ds_vcmax`/`ds_jmax`/`jmax_vcmax_ratio` stay exactly the     !
-      !      fixed values above. ON, the driver recomputes those three from a running-mean GROWTH    !
-      !      temperature once per slow step, so a warm-grown and a cold-grown stand of the same PFT  !
-      !      no longer share one temperature response. Only meaningful with temp_response = peaked:  !
-      !      the Arrhenius form has no dS to shift, and validate_config says so rather than letting  !
-      !      the flag be silently inert.  -------------------------------------------------------------!
+      !----- THERMAL ACCLIMATION (Kattge & Knorr 2007; docs/science/leaf_gas_exchange.md eq.         !
+      !      (4)). OFF by default: `ds_vcmax`/`ds_jmax`/`jmax_vcmax_ratio` stay the fixed values     !
+      !      above. ON, the driver recomputes those three from a running-mean GROWTH temperature     !
+      !      once per slow step, so a warm-grown and a cold-grown stand of the same PFT do not       !
+      !      share one temperature response. Only meaningful with temp_response = peaked: the        !
+      !      Arrhenius form has no dS to shift, and validate_config says so rather than letting      !
+      !      the flag be silently inert. ------------------------------------------------------------!
       logical  :: leaf_thermal_acclimation = .false.
       real(wp) :: acclim_ds_vcmax_a = 668.39_wp, acclim_ds_vcmax_b = 1.07_wp   !< [J/mol/K], [J/mol/K2]
       real(wp) :: acclim_ds_jmax_a  = 659.70_wp, acclim_ds_jmax_b  = 0.75_wp
@@ -368,62 +374,67 @@ module meds_config
       !       the size anchor, driven by NPP). gpp_ref is the stub GPP when the fast loop is off.  !
       real(wp)    :: gpp_ref                  !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
 
-      !----- Light trait plasticity ([trait_dynamics]). OPT-IN: default .false. => cohort leaf traits !
-      !       (sla/vcmax25/rd25/llspan) stay at their top-of-canopy PFT values (bit-identical to the   !
-      !       static path). When ON, the slow-loop driver acclimates them to cumulative LAI above.     !
+      !----- Light trait plasticity ([trait_dynamics]; docs/science/plant_traits.md). OPT-IN:       !
+      !      default .false. => cohort leaf traits (sla/vcmax25/rd25/leaf_turnover_rate) stay at   !
+      !      their top-of-canopy PFT values. When ON, the slow-loop driver acclimates them to       !
+      !      cumulative LAI above. -----------------------------------------------------------------!
       logical     :: trait_plasticity_on = .false.
-      !----- Fine roots live as long as the leaves they feed: with plasticity on, a cohort's       !
-      !       fine-root turnover is its PFT's times (top-of-canopy leaf lifespan / its own), so a   !
-      !       shaded cohort replaces its roots as slowly as its leaves. OPT-IN: default .false.     !
-      logical     :: fineroot_lifespan_plastic = .false.
+      !----- Fine roots turn over with the leaves they feed: with plasticity on, a cohort's        !
+      !       fine-root turnover is its PFT's times (its own leaf turnover rate / the top-of-canopy   !
+      !       one), so a shaded cohort replaces its roots as slowly as its leaves. OPT-IN: default    !
+      !       .false. docs/science/plant_traits.md §4. ------------------------------------------!
+      logical     :: fineroot_turnover_plastic = .false.
 
-      !----- Meteorological forcing ([forcing]/[site]). OPT-IN: forcing_on default .false. (the   !
-      !       whole [forcing] block is gated on it), so a config with no [forcing] block runs the   !
-      !       constant-forcing MVP unchanged. Defaults are the Ithaca NY / ERA5-Land reference.     !
+      !----- Meteorological forcing ([forcing]/[site]; docs/science/forcing.md). OPT-IN:           !
+      !      forcing_on default .false. (the whole [forcing] block is gated on it), so a           !
+      !      config with no [forcing] block runs on constant forcing, the met_forcing_t            !
+      !      reference climate. Defaults are the Ithaca NY / ERA5-Land reference. -----------------!
       type(forcing_config_t) :: forcing
 
-      !----- Diagnostic-aggregation output ([output]). OPT-IN: enabled default .false. (a config    !
-      !       with no [output] block emits no diagnostic stream). The per-variable overrides        !
-      !       live in the optional meds_io_config.toml named by output%io_config (§6, MEDS_IO_DESIGN). !
+      !----- Diagnostic-aggregation output ([output]). OPT-IN: enabled default .false. (a           !
+      !      config with no [output] block emits no diagnostic stream). The per-variable            !
+      !      overrides live in the optional meds_io_config.toml named by output%io_config           !
+      !      (docs/science/diagnostics.md §5). -----------------------------------------------------!
       type(output_config_t) :: output
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
 
       !----- Global allometry coefficients (populated by the loader; installed by derive_parameters). !
-      type(allometry_config_t) :: allom
+      type(allometry_t) :: allom              !< the allometry coefficients ([allometry]); each site
+                                              !< carries a copy on its cohort block (cohort%allom)
 
-      !----- Plant-hydraulics parameters ([hydraulics], opt-in; defaults = MVP placeholders). ------!
+      !----- The physical soil column ([soil_column]) and the plant hydraulics ([hydraulics]). --!
       type(soil_column_config_t) :: soil_column  !< [soil_column] the physical soil column
       type(hydraulics_config_t) :: hydraulics
 
-      !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
-      !       defaults = meds_biophysics_opts placeholders). build_fast_context copies each verbatim !
-      !       into the column config (col_config%soil_water_opts/energy/snow/aero); an absent block is a no-op. ------!
+      !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], every key      !
+      !      optional, defaults in meds_biophysics_opts). build_fast_context copies each            !
+      !      verbatim into the column config (col_config%soil_water_opts/energy/snow/aero). --------!
       type(soil_opts_t)   :: soil        !< [soil]         soil water and water-network opts (-> col_config%soil_water_opts)
       type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> col_config%energy)
       type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> col_config%snow)
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)
 
-      !----- Slow soil-carbon matrix ([soil_carbon], ON by default; MEDS_SLOW_DYNAMICS_DESIGN.md   !
-      !      Part II B0). soil_carbon_on gates the FEATURE. It does NOT gate whether the fields       !
-      !      are required: every key is a DEFAULTED read (like [snow]), falling back to its             !
-      !      ED2-verified in-type default, so the feature needs no TOML edits beyond this flag.        !
-      !                                                                                          !
-      !      DEFAULT .true. since 2026-09-11. Off is not a coarser soil-carbon model, it is NO soil    !
-      !      carbon: litter is discarded at the slow step and patch_heterotrophic_respiration returns  !
-      !      rh = 0, so Reco carries only its autotrophic limb. Measured over a year at Ithaca, off    !
-      !      reports annual-mean NEE at -4.657 against -2.464 umol/m2/s -- an 89% stronger apparent    !
-      !      sink -- with Rh identically zero against 0.833 kgC/m2/yr, for no wall-clock saving.       !
-      !      It also kept two real defects (PRs #139, #140) out of every code path anyone ran, for as  !
-      !      long as they existed, because no shipped config turned it on.  --------------------------!
+      !----- Slow soil-carbon matrix ([soil_carbon], ON by default;                                  !
+      !      docs/science/soil_carbon.md). soil_carbon_on gates the FEATURE. It does NOT gate        !
+      !      whether the fields are required: every key is a DEFAULTED read (like [snow]),           !
+      !      falling back to its ED2 in-type default, so the feature needs no TOML edits beyond      !
+      !      this flag.                                                                              !
+      !                                                                                              !
+      !      Off is not a coarser soil-carbon model, it is NO soil carbon: litter is discarded       !
+      !      at the slow step and patch_heterotrophic_respiration returns rh = 0, so Reco            !
+      !      carries only its autotrophic limb. Measured over a year at Ithaca, off reports          !
+      !      annual-mean NEE at -4.657 against -2.464 umol/m2/s -- an 89% stronger apparent sink     !
+      !      -- with Rh identically zero against 0.833 kgC/m2/yr, for no wall-clock saving. ---------!
       logical            :: soil_carbon_on = .true.
       type(decomp_opts_t) :: soil_carbon   !< [soil_carbon] decomposition selectors + rate parameters
       !----- Cold-start spin-up ([soil_carbon], consumed only when soil_carbon_on): zero-init        !
-      !      (default) leaves every pool at 0, matching bare-ground philosophy; steady-state solves     !
-      !      SASU (solve_soil_carbon_steady_state) from a scalar climatological environmental factor    !
-      !      and a constant litter-input estimate (pools 5-7 get zero input, matching build_litter_    !
-      !      input's own behavior -- only 1-4 are ever populated from real litter). ---------------------!
+      !      (default) leaves every pool at 0, matching bare-ground philosophy; steady-state         !
+      !      solves SASU (solve_soil_carbon_steady_state; docs/science/soil_carbon.md eq. (7))       !
+      !      from a scalar climatological environmental factor and a constant litter-input           !
+      !      estimate (pools 5-7 get zero input, as in build_litter_input -- only 1-4 ever           !
+      !      receive litter). -----------------------------------------------------------------------!
       logical  :: soil_carbon_spinup_steady      = .false.
       real(wp) :: soil_carbon_spinup_xi          = 1.0_wp   !< [-] climatological mean env. scalar (broadcast, all pools)
       real(wp) :: soil_carbon_spinup_labile_grnd = 0.0_wp   !< [kgC/m2/day] u_bar(1), steady-state litter estimate
@@ -450,6 +461,43 @@ contains
       end if
    end subroutine soil_column_layers
 
+   !----- The column's texture per layer: the map's per-layer values, or the one texture. -------!
+   pure subroutine soil_column_texture(sc, tex)
+      type(soil_column_config_t),  intent(in)  :: sc
+      type(soil_texture_layers_t), intent(out) :: tex
+      if (sc%n_layer_values > 0_ik) then
+         tex%theta_sat = sc%layer_theta_sat ; tex%theta_res = sc%layer_theta_res ; tex%ksat = sc%layer_ksat
+         tex%par_a     = sc%layer_curve_par_a ; tex%par_n   = sc%layer_curve_par_n
+         tex%k_solid   = sc%layer_solid_conductivity ; tex%k_dry = sc%layer_dry_conductivity
+         tex%dry_cvol  = sc%layer_dry_heat_capacity
+      else
+         tex%theta_sat = sc%theta_sat ; tex%theta_res = sc%theta_res ; tex%ksat = sc%ksat
+         tex%par_a     = sc%curve_par_a ; tex%par_n   = sc%curve_par_n
+         tex%k_solid   = sc%solid_conductivity ; tex%k_dry = sc%dry_conductivity
+         tex%dry_cvol  = sc%dry_heat_capacity
+      end if
+   end subroutine soil_column_texture
+
+   !---------------------------------------------------------------------------------------!
+   ! The soil column the [soil_column] block describes: its layers (soil_column_layers),    !
+   ! each layer's retention curve and Ks, and, when asked, each layer's thermal texture.   !
+   ! The fast loop, the slow ledger and validate_config all build the column here.         !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_column_params(sc, soil, therm)
+      type(soil_column_config_t),            intent(in)  :: sc
+      type(soil_params_t),                   intent(out) :: soil
+      type(soil_thermal_params_t), optional, intent(out) :: therm
+      type(soil_texture_layers_t) :: tex
+      real(wp)    :: bottoms(n_soil_layer_max)
+      integer(ik) :: n_layer
+      call soil_column_layers(sc, bottoms, n_layer)
+      call soil_column_texture(sc, tex)
+      call build_soil_hydr_params_layers(n_layer, sc%retention, bottoms, tex%theta_sat, tex%theta_res,  &
+                                         tex%ksat, tex%par_a, tex%par_n, sc%psi_fc, soil)
+      if (present(therm)) call build_soil_therm_params_layers(n_layer, tex%k_solid, tex%k_dry,        &
+                                                              tex%dry_cvol, therm)
+   end subroutine soil_column_params
+
    !---------------------------------------------------------------------------------------!
    ! Compute the DERIVED configuration from the (already-loaded) primary parameters: the      !
    ! timestep dt, the geometric cohort-fusion tolerance multiplier, and the evenly-spaced      !
@@ -460,7 +508,7 @@ contains
       type(meds_config_t), intent(inout) :: cfg
       integer(ik) :: i
 
-      !----- Slow-process timestep in years (demography currency); source is now dt_slow. --!
+      !----- Slow-process timestep in years (demography currency). ---------------------!
       cfg%dt_years = cfg%dt_slow / yr_sec
 
       !----- Fast sub-steps nested within one slow step (>=1; guarded against dt_fast = 0). --!
@@ -495,21 +543,16 @@ contains
    end subroutine derive_config
 
    !---------------------------------------------------------------------------------------!
-   ! Install + derive EVERY parameter that is a function of the primary (loaded) config: the   !
-   ! global allometry coefficients (into meds_allometry's protected state), the derived run      !
+   ! Derive EVERY parameter that is a function of the primary (loaded) config: the derived run   !
    ! scalars (derive_config), the wood-density mortality hazard (derive_pft_rates), and the       !
    ! leaf-capacity ratios (derive_leaf_params). The single consolidation point for both the        !
    ! production loader (load_meds_config) and the test builder (build_test_config), so the          !
-   ! derivation sequence lives in ONE place. The four calls are mutually order-independent (each     !
-   ! reads only primary loaded fields; set_allometry installs a global none of them consume).        !
+   ! derivation sequence lives in ONE place. The three calls are mutually order-independent (each    !
+   ! reads only primary loaded fields).                                                               !
    ! Callers apply any [derived] override and validate AFTER this returns.                            !
    !---------------------------------------------------------------------------------------!
    subroutine derive_parameters(cfg)
       type(meds_config_t), intent(inout) :: cfg
-      call set_allometry(cfg%allom%b1Ht, cfg%allom%b2Ht, cfg%allom%agb_c1, cfg%allom%agb_c2,       &
-                         cfg%allom%ca_b1, cfg%allom%ca_b2, cfg%allom%lai_b1, cfg%allom%lai_b2,      &
-                         cfg%allom%light_ext, cfg%allom%height_form, cfg%allom%gmm_a,               &
-                         cfg%allom%gmm_b, cfg%allom%gmm_k, cfg%allom%chave_e)
       call derive_config(cfg)
       call derive_pft_rates(cfg%pft)
       call derive_leaf_params(cfg%pft)
@@ -524,22 +567,48 @@ contains
       nw = max(1_ik, nint(cfg%growth_memory_days / (cfg%dt_years * yr_day), ik))
    end function growth_window_steps
 
-   !----- A PFT's leaf turgor-loss point [MPa], from its own pressure-volume traits: the [pft]       !
-   !      leaf_pi0 and leaf_elastic_mod where given, else the shared [hydraulics] ones. That is the   !
-   !      rule apply_hydraulics_config uses for the plant-water solver, so the stomatal closure and   !
-   !      the phenology's drought counter see the curve the solver stores leaf water on. ------------!
+   !----- A PFT's leaf and wood pressure-volume curves (docs/science/plant_hydraulics.md eqs.       !
+   !      (3)-(6)): each trait the [pft] table gives (HYD_UNSET: not given), else the shared           !
+   !      [hydraulics] one. The one rule for the curves: the plant-water solver's table               !
+   !      (apply_hydraulics_config), a cohort's water at birth and the slow step's tissue water all    !
+   !      read them from here, so no two can store water on different curves. -------------------------!
+   pure subroutine pft_tissue_curves(hydraulics, pft, ipft, leaf_curve, wood_curve)
+      type(hydraulics_config_t), intent(in)  :: hydraulics
+      type(pft_table_t),         intent(in)  :: pft
+      integer(ik),               intent(in)  :: ipft
+      type(water_curve_t),       intent(out) :: leaf_curve, wood_curve
+      leaf_curve = water_curve_t(pi0 = hydraulics%leaf_pi0, elastic_mod = hydraulics%leaf_elastic_mod,      &
+                                 apoplast_frac = hydraulics%leaf_apoplast_frac,                             &
+                                 water_sat = hydraulics%leaf_water_sat)
+      wood_curve = water_curve_t(pi0 = hydraulics%wood_pi0, elastic_mod = hydraulics%wood_elastic_mod,      &
+                                 apoplast_frac = hydraulics%wood_apoplast_frac,                             &
+                                 water_sat = hydraulics%wood_water_sat)
+      call take(leaf_curve%pi0,           pft%hyd_leaf_pi0)
+      call take(leaf_curve%elastic_mod,   pft%hyd_leaf_elastic_mod)
+      call take(leaf_curve%apoplast_frac, pft%hyd_leaf_apoplast_frac)
+      call take(leaf_curve%water_sat,     pft%hyd_leaf_water_sat)
+      call take(wood_curve%pi0,           pft%hyd_wood_pi0)
+      call take(wood_curve%elastic_mod,   pft%hyd_wood_elastic_mod)
+      call take(wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac)
+      call take(wood_curve%water_sat,     pft%hyd_wood_water_sat)
+   contains
+      pure subroutine take(trait, per_pft)
+         real(wp),              intent(inout) :: trait
+         real(wp), allocatable, intent(in)    :: per_pft(:)
+         if (.not. allocated(per_pft)) return
+         if (per_pft(ipft) > HYD_UNSET) trait = per_pft(ipft)
+      end subroutine take
+   end subroutine pft_tissue_curves
+
+   !----- A PFT's leaf turgor-loss point [MPa], from its own leaf pressure-volume curve, so the      !
+   !      stomatal closure and the phenology's drought counter see the curve the solver stores leaf  !
+   !      water on. -----------------------------------------------------------------------------------!
    pure real(wp) function pft_leaf_psi_tlp(cfg, ipft) result(psi_tlp)
       type(meds_config_t), intent(in) :: cfg
       integer(ik),         intent(in) :: ipft
-      real(wp) :: pi0, elastic_mod
-      pi0 = cfg%hydraulics%leaf_pi0 ; elastic_mod = cfg%hydraulics%leaf_elastic_mod
-      if (allocated(cfg%pft%hyd_leaf_pi0)) then
-         if (cfg%pft%hyd_leaf_pi0(ipft) > HYD_UNSET) pi0 = cfg%pft%hyd_leaf_pi0(ipft)
-      end if
-      if (allocated(cfg%pft%hyd_leaf_elastic_mod)) then
-         if (cfg%pft%hyd_leaf_elastic_mod(ipft) > HYD_UNSET) elastic_mod = cfg%pft%hyd_leaf_elastic_mod(ipft)
-      end if
-      psi_tlp = pv_psi_tlp(pi0, elastic_mod)
+      type(water_curve_t) :: leaf_curve, wood_curve
+      call pft_tissue_curves(cfg%hydraulics, cfg%pft, ipft, leaf_curve, wood_curve)
+      psi_tlp = pv_psi_tlp(leaf_curve%pi0, leaf_curve%elastic_mod)
    end function pft_leaf_psi_tlp
 
    !----- Where a PFT's stomatal water stress begins [MPa of predawn leaf potential]: the [pft]       !
@@ -612,7 +681,12 @@ contains
       !----- [soil_column]. Every one of these produces a silently WRONG column rather than a     !
       !      crash: a layer count over the compile-time ceiling writes past the active region, a   !
       !      non-positive depth or a theta_sat <= theta_res divides by zero in the retention curve, !
-      !      and a van Genuchten n <= 1 makes the curve's exponent negative. Fail loud instead. ----!
+      !      and a van Genuchten n <= 1 makes the curve's exponent negative. Fail loud instead.    !
+      !      A texture per layer (from the soil maps) is checked layer by layer. ------------------!
+      soil_column: block
+      type(soil_texture_layers_t) :: tex
+      real(wp)    :: bottoms(n_soil_layer_max)
+      integer(ik) :: n
       associate (sc => cfg%soil_column)
          if (sc%depth <= 0.0_wp)          error stop tag//'soil_column.depth <= 0'
          if (sc%n_layer_bottoms > 0_ik) then
@@ -625,43 +699,54 @@ contains
             error stop tag//'soil_column.depth is below the deepest default layer (27 m): '//       &
                        'set soil_column.layer_bottoms'
          end if
-         if (sc%theta_sat <= sc%theta_res) error stop tag//'soil_column.theta_sat <= theta_res'
-         if (sc%theta_res < 0.0_wp)       error stop tag//'soil_column.theta_res < 0'
-         if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)             &
-            error stop tag//'init.soil_theta must lie in (soil_column.theta_res, theta_sat]'
-         if (sc%ksat <= 0.0_wp)           error stop tag//'soil_column.ksat <= 0'
+         call soil_column_layers(sc, bottoms, n)
+         if (sc%n_layer_values > 0_ik .and. sc%n_layer_values /= n)                                 &
+            error stop tag//'soil_column: the per-layer texture does not match the column''s layers'
+         call soil_column_texture(sc, tex)
+         if (any(tex%theta_sat(1:n) <= tex%theta_res(1:n))) error stop tag//'soil_column.theta_sat <= theta_res'
+         if (any(tex%theta_res(1:n) < 0.0_wp))       error stop tag//'soil_column.theta_res < 0'
+         !----- With a texture per layer, the run starts each layer at its field capacity, so      !
+         !      init.soil_theta is not used (build_fast_context). ----------------------------------!
+         if (sc%n_layer_values == 0_ik) then
+            if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)          &
+               error stop tag//'init.soil_theta must lie in (soil_column.theta_res, theta_sat]'
+         end if
+         if (any(tex%ksat(1:n) <= 0.0_wp))           error stop tag//'soil_column.ksat <= 0'
          !----- curve_par_a and curve_par_n mean different things per family: van Genuchten's alpha  !
          !      [1/m] > 0 and n > 1, Campbell's air-entry suction psi_sat [m] < 0 and exponent b > 0.  !
          !      The other family's pair makes the curve raise a negative base to a fractional power. -!
          if (sc%retention == SOIL_RETENTION_VG) then
-            if (sc%curve_par_a <= 0.0_wp)                                                          &
+            if (any(tex%par_a(1:n) <= 0.0_wp))                                                    &
                error stop tag//'soil_column.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
-            if (sc%curve_par_n <= 1.0_wp)                                                          &
+            if (any(tex%par_n(1:n) <= 1.0_wp))                                                    &
                error stop tag//'soil_column.curve_par_n must exceed 1 for van Genuchten'
          else
-            if (sc%curve_par_a >= 0.0_wp)                                                          &
+            if (any(tex%par_a(1:n) >= 0.0_wp))                                                    &
                error stop tag//'soil_column.curve_par_a (Campbell psi_sat, m) must be < 0'
-            if (sc%curve_par_n <= 0.0_wp)                                                          &
+            if (any(tex%par_n(1:n) <= 0.0_wp))                                                    &
                error stop tag//'soil_column.curve_par_n (Campbell b) must be > 0'
          end if
          if (sc%psi_fc >= 0.0_wp)         error stop tag//'soil_column.psi_fc must be negative (a suction head)'
-         if (sc%solid_conductivity <= 0.0_wp .or. sc%dry_conductivity <= 0.0_wp)                  &
+         if (any(tex%k_solid(1:n) <= 0.0_wp) .or. any(tex%k_dry(1:n) <= 0.0_wp))                  &
             error stop tag//'soil_column conductivities must be positive'
-         if (sc%dry_heat_capacity <= 0.0_wp) error stop tag//'soil_column.dry_heat_capacity <= 0'
+         if (any(tex%dry_cvol(1:n) <= 0.0_wp)) error stop tag//'soil_column.dry_heat_capacity <= 0'
       end associate
+      end block soil_column
 
-      !----- [energy] bottom thermal BC (#145). The Dirichlet anchor needs a SITE temperature and a  !
-      !      depth BELOW the bottom node; neither can be guessed. `deep_temp` is the mean annual soil !
-      !      temperature below the damping depth (close to mean annual AIR temperature), and an error !
-      !      in it is a steady flux into the column base, so a silent default would be a silent mean- !
-      !      annual bias -- exactly the defect #145 exists to remove. `deep_depth` at or above the    !
-      !      bottom NODE gives a non-positive conduction length, i.e. a division by zero or a sign    !
-      !      flip that would pump heat the wrong way.  ------------------------------------------------!
-      if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET) then
+      !----- [energy] bottom thermal BC (docs/science/soil_biophysics.md, "The bottom thermal       !
+      !      boundary"). The Dirichlet anchor needs a SITE temperature and a depth BELOW the        !
+      !      bottom node; neither can be guessed. `deep_temp` is the mean annual soil               !
+      !      temperature below the damping depth (close to mean annual AIR temperature), and an     !
+      !      error in it is a steady flux into the column base, so a silent default would be a      !
+      !      silent mean-annual bias -- the very bias the anchor exists to remove. `deep_depth`     !
+      !      at or above the bottom NODE gives a non-positive conduction length, i.e. a             !
+      !      division by zero or a sign flip that would pump heat the wrong way. With the soil      !
+      !      maps, the anchor is each polygon's (apply_map_inputs), so a configuration the maps     !
+      !      have not filled yet has none to check. ------------------------------------------------!
+      if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET .and.                                         &
+          .not. (soil_maps_on(cfg%maps) .and. cfg%soil_column%n_layer_values == 0_ik)) then
          block
             type(soil_params_t) :: sp
-            real(wp)            :: bottoms(n_soil_layer_max)
-            integer(ik)         :: n_layer
             if (cfg%energy%deep_temp <= 0.0_wp)                                                  &
                error stop tag//'energy.bottom_bc = "dirichlet" requires energy.deep_temp [K] -- '// &
                           'the mean annual soil temperature below the damping depth. It is a site '//&
@@ -670,21 +755,19 @@ contains
                error stop tag//'energy.deep_temp outside 200..330 K -- it is an absolute temperature'
             !----- Build the real grid rather than re-deriving the bottom node here: the grid rule  !
             !      lives in ONE place and a second copy would drift from it silently. --------------!
-            associate (sc => cfg%soil_column)
-               call soil_column_layers(sc, bottoms, n_layer)
-               call build_soil_hydr_params(n_layer, sc%retention, bottoms, sc%theta_sat,          &
-                    sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, sp)
-            end associate
-            if (cfg%energy%deep_depth <= abs(sp%z_node(n_layer)))                                &
+            call soil_column_params(cfg%soil_column, sp)
+            if (cfg%energy%deep_depth <= abs(sp%z_node(sp%n_active)))                            &
                error stop tag//'energy.deep_depth must lie BELOW the bottom soil node '//          &
                           '(it is measured down from the surface, and the anchor conducts to it)'
          end block
       end if
 
-      !----- Co-limitation and hyperbola curvatures must lie in (0, 1]. A curvature of zero makes the  !
-      !      smoothing quadratic degenerate and a value above one has no root in the physical branch,   !
-      !      so either produces a silently wrong assimilation rather than a crash. This guard exists    !
-      !      because #118's own fixture reached the solver with the two new C3 curvatures unset. -------!
+      if (any(cfg%pft%nbg_init_density < 0.0_wp)) error stop tag//'pft.nbg_init_density must be >= 0'
+
+      !----- Co-limitation and hyperbola curvatures must lie in (0, 1]. A curvature of zero          !
+      !      makes the smoothing quadratic degenerate and a value above one has no root in the       !
+      !      physical branch, so either produces a silently wrong assimilation rather than a         !
+      !      crash; an unset curvature in a test fixture reaches the solver as zero. ----------------!
       block
          integer(ik) :: pf
          do pf = 1_ik, cfg%pft%n
@@ -736,32 +819,14 @@ contains
       if (cfg%dt_slow <= 0.0_wp)                        error stop tag//'dt_slow <= 0'
       if (cfg%fast_biophysics_on) then
          if (cfg%dt_fast <= 0.0_wp)                     error stop tag//'dt_fast <= 0'
-         !----- dt_fast USED TO BE A STABILITY PARAMETER. It is now an ACCURACY parameter, and the     !
-         !      binding quantity has changed with it.                                                  !
-         !                                                                                          !
-         !      WAS: the CAS<->atmosphere conductance was frozen for the whole step, and that one lag  !
-         !      drove a sustained period-2 canopy-air oscillation (peak-to-peak ~8 K at 900 s) that no  !
-         !      conservation ledger detected. The surface layer is now re-solved at every stage        !
-         !      (meds_fast_types%mo_live), which removes it: the freeze-cadence multiplier goes from   !
-         !      Phi' = -23.2 to -0.14 at 900 s, and peak-to-peak from 7.7 K to 0.10 K.                 !
-         !                                                                                          !
-         !      IS: what still degrades with dt_fast is the CARBON and WATER budget, because the leaf  !
-         !      gas-exchange pre-pass -- and with it the leaf water potential that sets stomatal       !
-         !      conductance -- is still frozen at state^n. MEASURED on a high-LAI sunlit stand against !
-         !      a 12.5 s reference:                                                                   !
-         !                                                                                          !
-         !        dt_fast     150 s     225 s     300 s     450 s     900 s                            !
-         !        GPP        -3.8%     -8.4%    -12.6%    -19.8%    -33.1%                             !
-         !        ET         -2.6%     -5.8%     -8.7%    -14.5%    -23.8%                             !
-         !        CAS-T RMSE  0.02 K    0.04 K    0.06 K    0.09 K    0.16 K                           !
-         !                                                                                          !
-         !      Attributed: freezing the plant-hydraulics store (mask%hydraulics) removes the GPP      !
-         !      bias entirely (-33.1% -> +0.9% at 900 s, and flat in dt_fast), so it is the LAGGED     !
-         !      leaf-water-potential feedback, not a quadrature error. Until that lag gets the same    !
-         !      per-stage treatment the conductances just got, a long dt_fast is cheap in wall-clock   !
-         !      and expensive in carbon. The transpiration corrector (#91) removed most of that psi    !
-         !      error; the soil-plant water network now solves leaf water implicitly with the soil's   !
-         !      on both schemes. The table predates both (numerical_scheme.md 5a). -------------------!
+         !----- dt_fast is an ACCURACY parameter, not a stability one                               !
+         !      (docs/science/numerical_scheme.md §5a): the surface layer is re-solved at every     !
+         !      stage, so the canopy air is stable at every dt_fast measured, and what a longer     !
+         !      step costs is in the carbon and water budget, through the leaf gas exchange         !
+         !      frozen at the step start. The default 900 s suits production, including spin-       !
+         !      ups; sub-daily fidelity (flux-tower comparison, diel cycles, energy                 !
+         !      partitioning) wants <= 150 s (§6). Above 900 s nothing has been measured, hence     !
+         !      the warnings. ----------------------------------------------------------------------!
          if (cfg%dt_fast > 900.0_wp) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. At'
             print '(a)', '  900 s the canopy air is stable and carbon and daily leaf water potential'
@@ -786,19 +851,21 @@ contains
             error stop tag//'error_level out of range (L0|L1|L2)'
          if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
          if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
-         !----- §7 C3: the sub-daily probe is the ONE fast-loop writer that is not thread-safe --      !
-         !      it holds a `save`d unit and appends to a shared file, so under threads its rows would   !
-         !      interleave in thread-arrival order and stop being a reproducible diagnostic. Serializing !
-         !      the write would fix the corruption but not the ORDER, which is the property the probe    !
-         !      exists for, so the two are mutually exclusive by construction rather than by luck. ------!
+         !----- The sub-daily probe is the ONE fast-loop writer that is not thread-safe -- it        !
+         !      holds a `save`d unit and appends to a shared file, so under threads its rows         !
+         !      would interleave in thread-arrival order and stop being a reproducible               !
+         !      diagnostic. Serializing the write would fix the corruption but not the ORDER,        !
+         !      which is the property the probe exists for, so the two are mutually exclusive by     !
+         !      construction rather than by luck (docs/science/numerical_scheme.md §6a). ------------!
          if (cfg%fast_probe .and. cfg%n_threads > 1_ik)                                            &
             error stop tag//'fast_probe requires n_threads = 1 (the probe writes one shared, &
-                           &order-significant CSV; see plan sec 7 C3)'
+                           &order-significant CSV)'
       end if
       if (cfg%n_threads < 1_ik)               error stop tag//'n_threads < 1'
-      !----- The FAST output tier closes a window every fast_interval_steps sub-steps, counted over   !
-      !      the run. A window must not straddle two slow steps: the stand can be restructured between !
-      !      them, and a window's cohort and patch slots are fixed when it opens (#312 O10).  ---------!
+      !----- The FAST output tier closes a window every fast_interval_steps sub-steps, counted       !
+      !      over the run. A window must not straddle two slow steps: the stand can be               !
+      !      restructured between them, and a window's cohort and patch slots are fixed when it      !
+      !      opens. ---------------------------------------------------------------------------------!
       if (cfg%fast_biophysics_on .and. cfg%output%enabled) then
          if (cfg%output%fast_interval_steps < 1_ik)                                                &
             error stop tag//'output.fast_interval_steps < 1'
@@ -806,10 +873,11 @@ contains
             error stop tag//'output.fast_interval_steps must divide the fast steps in a slow step '// &
                             '(dt_slow / dt_fast), so no fast-tier window straddles two slow steps'
       end if
-      !----- REGION MODE (MEDS_POLYGON_RUNTIME_PLAN.md §9). Every polygon reads its own cell of the   !
-      !      ED_ERA5land archive, so a region needs the archive, live forcing and the fast loop. Until  !
-      !      the ragged restart exists (R4) a region starts from bare ground and writes no            !
-      !      checkpoints, and the one-file probe stays off (every polygon would write into it). ------!
+      !----- REGION MODE (docs/configuration.md, "Regional runs"). Every polygon reads its own       !
+      !      cell of the ED_ERA5land archive, so a region needs the archive, live forcing and        !
+      !      the fast loop. A region starts from bare ground or from a region state file (one        !
+      !      census does not describe many cells), and the one-file probe stays off (every           !
+      !      polygon would write into it). ----------------------------------------------------------!
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                         &
             error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
@@ -817,10 +885,9 @@ contains
             error stop tag//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
          if (cfg%fast_probe)                                                                       &
             error stop tag//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
-         if (cfg%init_mode /= INIT_BARE)                                                           &
-            error stop tag//'[run].mode = "region" starts from bare ground (init.init_mode = 0) until R4'
-         if (cfg%state_write_state)                                                                &
-            error stop tag//'[run].mode = "region" writes no checkpoints (state.write_state = false) until R4'
+         if (cfg%init_mode == INIT_CENSUS)                                                         &
+            error stop tag//'[run].mode = "region" starts from bare ground or a region state file '// &
+                            '(init.init_mode = 0 or 2), not a census'
          associate (b => cfg%region%box_nwse)
             if (.not. (b(1) > b(3) .and. b(1) <= 90.0_wp .and. b(3) >= -90.0_wp))               &
                error stop tag//'region.box_nwse needs -90 <= S < N <= 90 ([N, W, S, E])'
@@ -829,6 +896,18 @@ contains
          end associate
          if (cfg%region%land_fraction_min < 0.0_wp .or. cfg%region%land_fraction_min > 1.0_wp)     &
             error stop tag//'region.land_fraction_min must lie in [0, 1]'
+         if (len_trim(cfg%region%cell_mask) > 0 .and. len_trim(cfg%region%cell_mask_var) == 0)       &
+            error stop tag//'region.cell_mask_var must name the mask''s variable'
+         if (.not. ieee_is_finite(cfg%region%cell_mask_min))                                       &
+            error stop tag//'region.cell_mask_min must be a finite number'
+         !----- Every polygon takes its soil from its own cell, and so does its height              !
+         !      allometry's site index: a region does not run one hand-set soil everywhere. --------!
+         if (.not. soil_maps_on(cfg%maps))                                                       &
+            error stop tag//'[run].mode = "region" needs the soil maps: maps.soil_depth_map, '//    &
+                            'soil_texture_map and soil_chemistry_map'
+         if (cfg%allom%height_form == HEIGHT_CHAVE .and. len_trim(cfg%maps%chave_e_map) == 0)     &
+            error stop tag//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//   &
+                            'needs maps.chave_e_map'
          !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
          !      recycle seam must fall on a month boundary: a window starting at 00:00 or 01:00 on the !
          !      1st. A site run takes a window starting at any record stamp. ------------------------!
@@ -840,9 +919,17 @@ contains
             end associate
          end if
       end if
+      !----- [maps]: the maps are on the ED_ERA5land grid, and a site reads them at its forcing    !
+      !      cell, so they need that archive. A chave_e map serves the Chave height allometry only. -!
+      if (soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0) then
+         if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND))     &
+            error stop tag//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
+      end if
+      if (len_trim(cfg%maps%chave_e_map) > 0 .and. cfg%allom%height_form /= HEIGHT_CHAVE)          &
+         error stop tag//'maps.chave_e_map needs allometry.height_allometry = "chave2014"'
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !
-      !      has to clear the canopy any more: the forcing is moved to each patch's canopy-air top.     !
+      !      has to clear the canopy: the forcing is moved to each patch's canopy-air top.              !
       if (cfg%forcing%forcing_on) then
          if (cfg%forcing%tq_height <= 0.0_wp)   error stop tag//'forcing.tq_height must be > 0'
          if (cfg%forcing%wind_height <= 0.0_wp) error stop tag//'forcing.wind_height must be > 0'
@@ -856,29 +943,25 @@ contains
          !----- The terrain lapse rate: between isothermal and about the dry adiabat. --------------!
          if (any(cfg%forcing%lapse_rate_tair < 0.0_wp) .or. any(cfg%forcing%lapse_rate_tair > 0.01_wp)) &
             error stop tag//'site.lapse_rate_tair must lie in [0, 0.01] K/m'
-         !----- lwdown_source = "synthesize" is DECLARED but NOT IMPLEMENTED: meds_met_driver      !
-         !      always reads LWdown from the file. Accepting the value silently ran the file path    !
-         !      under a name that promised Brutsaert/Idso clear-sky synthesis. Reject it until the    !
-         !      synthesis exists (MEDS_FORCING_DESIGN.md section 5.7, docs/ROADMAP.md), because a      !
-         !      forcing switch that does nothing is worse than one that is absent. -------------------!
-         !----- #182: the synthesis is implemented, so the rejection is gone. What is validated     !
-         !      instead is that its coefficient is physical -- a negative cloud term would make a    !
-         !      cloudy sky emit LESS than a clear one.  --------------------------------------------!
+         !----- Longwave synthesis (docs/science/forcing.md eq. (17)): its cloud coefficient       !
+         !      must be physical -- a negative cloud term would make a cloudy sky emit LESS        !
+         !      than a clear one. -----------------------------------------------------------------!
          if (cfg%forcing%lwdown_source == LW_SYNTHESIZE .and. cfg%forcing%lw_cloud_a < 0.0_wp)     &
             error stop tag//'forcing.lw_cloud_a must be >= 0 (a cloudy sky emits MORE, not less)'
-         !----- avg_convention: "instant" and "center" PARSE and then run the end-of-interval      !
-         !      disaggregation path anyway, because only METAVG_BEGIN has a branch and everything   !
-         !      else falls through to METAVG_END. Selecting either therefore got a scheme the user   !
-         !      did not ask for, silently. Reject until each has its own branch (#185), on the same  !
-         !      precedent as lwdown_source above. ----------------------------------------------------!
+         !----- avg_convention: "instant" and "center" PARSE, but only METAVG_BEGIN and            !
+         !      METAVG_END have a disaggregation branch, and everything else would fall            !
+         !      through to METAVG_END -- a scheme the user did not ask for, silently. Each is      !
+         !      refused until it has its own branch, because a forcing switch that does            !
+         !      nothing is worse than one that is absent. -----------------------------------------!
          if (cfg%forcing%avg_convention == METAVG_INSTANT)                                       &
             error stop tag//'forcing.avg_convention = "instant" is not implemented (it would '//  &
                             'silently run the "end" path); use "end" or "begin"'
          if (cfg%forcing%avg_convention == METAVG_CENTER)                                        &
             error stop tag//'forcing.avg_convention = "center" is not implemented (it would '//   &
                             'silently run the "end" path); use "end" or "begin"'
-         !----- The ED_ERA5land archive (§14-15) is hourly, end-stamped and stores TOTAL shortwave;  !
-         !      a config that says otherwise would mis-time or mis-partition every record. ---------!
+         !----- The ED_ERA5land archive (docs/science/forcing.md §1) is hourly, end-stamped        !
+         !      and stores TOTAL shortwave; a config that says otherwise would mis-time or         !
+         !      mis-partition every record. -------------------------------------------------------!
          if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
             if (len_trim(cfg%forcing%data_path) == 0) error stop tag//'forcing.data_path is empty'
             if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)      &
@@ -890,23 +973,24 @@ contains
             if (cfg%forcing%sw_partition == SWPART_PASSTHROUGH)                                    &
                error stop tag//'forcing.sw_partition cannot be "passthrough" for format = "ED_ERA5land" '// &
                                '(the archive stores total shortwave)'
-            !----- The reader loads an archive month, plus the record before it, before each step     !
-            !      (R1, MEDS_POLYGON_RUNTIME_PLAN.md §4). A daily step from midnight reads exactly that; !
-            !      a longer step, or one starting mid-day, can straddle two months.  --------------------!
+            !----- The reader loads an archive month, plus the record before it, before each         !
+            !      step. A daily step from midnight reads exactly that; a longer step, or one        !
+            !      starting mid-day, can straddle two months. ---------------------------------------!
             if (abs(cfg%dt_slow - 86400.0_wp) > 0.5_wp)                                             &
                error stop tag//'format = "ED_ERA5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
             if (cfg%start_time%hour /= 0_ik .or. cfg%start_time%minute /= 0_ik .or.                 &
                 cfg%start_time%second /= 0_ik)                                                     &
                error stop tag//'format = "ED_ERA5land" needs [run].start_time at 00:00:00'
          end if
-         !----- V1 RECYCLE WINDOW: declared, never inferred, and required to be an exact whole      !
-         !      number of calendar years. A window of any other length cannot be wrapped without     !
-         !      drifting BOTH hour-of-day and day-of-year: the real ERA5-Land Ithaca file spans       !
-         !      366 d 22 h, and wrapping on that span shifted the sub-daily shortwave phase by ~10 h   !
-         !      and the season by ~48 d over a 29-yr run, while the daily MEAN stayed correct (the     !
-         !      cosz reconstruction is mean-conserving) so nothing downstream ever complained. Reject  !
-         !      here rather than drift silently. The anchor may sit anywhere in the calendar -- a       !
-         !      mid-year window is fine -- only the SPAN must be whole years. -------------------------!
+         !----- RECYCLE WINDOW (docs/science/forcing.md §9): declared, never inferred, and           !
+         !      required to be an exact whole number of calendar years. A window of any other        !
+         !      length cannot be wrapped without drifting BOTH hour-of-day and day-of-year:          !
+         !      wrapping on the 366 d 22 h span of an ERA5-Land Ithaca file shifts the sub-daily     !
+         !      shortwave phase by ~10 h and the season by ~48 d over a 29-yr run, while the         !
+         !      daily MEAN stays correct (the cosz reconstruction is mean-conserving), so            !
+         !      nothing downstream complains. Reject here rather than drift silently. The anchor     !
+         !      may sit anywhere in the calendar -- a mid-year window is fine -- only the SPAN       !
+         !      must be whole years. ----------------------------------------------------------------!
          if (cfg%forcing%recycle) then
             if (.not. time_valid(cfg%forcing%recycle_start))                                    &
                error stop tag//'forcing.recycle_start is not a valid date/time'
@@ -964,8 +1048,8 @@ contains
          error stop tag//'init.soil_temp outside 233-333 K'
       if (cfg%init_reacclimate_traits .and. cfg%init_mode /= INIT_RESTART)                          &
          error stop tag//'init.reacclimate_traits applies to a restart (init.init_mode = 2) only'
-      if (cfg%fineroot_lifespan_plastic .and. .not. cfg%trait_plasticity_on)                          &
-         error stop tag//'trait_dynamics.fineroot_lifespan_plastic needs trait_plasticity_on = true'
+      if (cfg%fineroot_turnover_plastic .and. .not. cfg%trait_plasticity_on)                          &
+         error stop tag//'trait_dynamics.fineroot_turnover_plastic needs trait_plasticity_on = true'
       if (cfg%patch_light_tol_max < cfg%patch_light_tol)   error stop tag//'patch_light_tol_max < patch_light_tol'
       if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
@@ -974,6 +1058,9 @@ contains
       if (cfg%patch_disturbance_rate < 0.0_wp)       error stop tag//'patch_disturbance_rate < 0'
       if (cfg%disturbance_survive_height <= 0.0_wp)  error stop tag//'disturbance_survive_height <= 0'
       if (any(cfg%pft%wood_density <= 0.0_wp))       error stop tag//'wood_density <= 0'
+      !----- A leaf turnover rate of 0 would keep every leaf forever, and the plasticity slope    !
+      !      (docs/science/plant_traits.md eq. (4)) and the fine roots' share of it divide by it.  !
+      if (any(cfg%pft%leaf_turnover_rate_toc <= 0.0_wp)) error stop tag//'leaf_turnover_rate_toc <= 0'
       if (any(cfg%pft%stem_resp_sapwood25 < 0.0_wp)) error stop tag//'stem_resp_sapwood25 < 0'
       if (any(cfg%pft%max_relative_growth_rate < 0.0_wp))                                          &
          error stop tag//'max_relative_growth_rate < 0'
@@ -983,9 +1070,10 @@ contains
       if (cfg%min_recruit_size <= cfg%negligible_nplant)                                   &
          error stop tag//'min_recruit_size must exceed negligible_nplant'
 
-      !----- THERMAL ACCLIMATION (#176) shifts the PEAKED form's entropy term. The Arrhenius form   !
-      !      has no dS, so the flag would be silently inert -- refuse rather than let a config       !
-      !      believe acclimation is on when nothing acclimates.  --------------------------------------!
+      !----- THERMAL ACCLIMATION shifts the PEAKED form's entropy term                              !
+      !      (docs/science/leaf_gas_exchange.md eq. (4)). The Arrhenius form has no dS, so the      !
+      !      flag would be silently inert -- refuse rather than let a config believe                !
+      !      acclimation is on when nothing acclimates. --------------------------------------------!
       if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= TRESP_PEAKED)              &
          error stop tag//'leaf_physiology.thermal_acclimation requires temp_response_form = '//    &
                     '"peaked" (the Arrhenius form has no entropy term to shift)'

@@ -3,13 +3,14 @@
 ! meds_init -- helpers to build the initial community a run starts from.                    !
 !                                                                                          !
 ! Two entry points exist: a near-bare-ground site (for spin-up demos and the test suite),  !
-! and a start from a cohort CENSUS file (init_from_census) -- a CSV produced by a previous   !
-! MEDS run or a field inventory. add_cohort/finalize_init are the low-level builders both    !
-! the demo/tests and the census reader share.                                              !
+! which seed_bare_ground plants with each PFT's nbg_init_density, and a start from a cohort !
+! CENSUS file (init_from_census) -- a CSV produced by a previous MEDS run or a field        !
+! inventory. add_cohort/finalize_init are the low-level builders both share.               !
 !==========================================================================================!
 module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
+   use meds_allometry,  only : height_to_dbh
    use meds_site_state_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
                                           assign_cohort_id, assign_patch_id, init_cohort
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
@@ -18,7 +19,8 @@ module meds_init
    implicit none
    private
 
-   public :: init_bare_ground, add_cohort, finalize_init, init_from_census, restructure_census_stand
+   public :: init_bare_ground, seed_bare_ground, add_cohort, finalize_init, init_from_census
+   public :: restructure_census_stand
 
    !----- The census file's column layout: each index is the column's position, 0 if absent. -!
    integer, parameter :: CENSUS_MAX_COLS = 32, CENSUS_FIELD_LEN = 64
@@ -39,7 +41,7 @@ contains
       integer(ik),         intent(in)  :: n_patch
       integer(ik) :: ip
       call site_alloc(site, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),          &
-                      n_growth_window = growth_window_steps(cfg))
+                      n_growth_window = growth_window_steps(cfg), allom = cfg%allom)
       site%patch%n = n_patch
       do ip = 1_ik, n_patch
          site%patch%area(ip)      = 1.0_wp / real(n_patch, wp)
@@ -53,6 +55,27 @@ contains
    end subroutine init_bare_ground
 
    !---------------------------------------------------------------------------------------!
+   ! A near-bare-ground start's seedlings (ED2's init_density): every patch gets one cohort of !
+   ! each PFT with nbg_init_density > 0, that many plants per m2, at min_cohort_height on the  !
+   ! site's own height curve, where recruits are born. All densities 0 leave the site empty.   !
+   !---------------------------------------------------------------------------------------!
+   subroutine seed_bare_ground(site, cfg)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp)    :: dbh
+      integer(ik) :: ip, ipft
+      if (.not. any(cfg%pft%nbg_init_density > 0.0_wp)) return
+      dbh = height_to_dbh(site%cohort%allom, cfg%pft%min_cohort_height)
+      do ip = 1_ik, site%patch%n
+         do ipft = 1_ik, cfg%pft%n
+            if (cfg%pft%nbg_init_density(ipft) > 0.0_wp)                                         &
+               call add_cohort(site, cfg, ip, ipft, cfg%pft%nbg_init_density(ipft), dbh)
+         end do
+      end do
+      call finalize_init(site)
+   end subroutine seed_bare_ground
+
+   !---------------------------------------------------------------------------------------!
    ! Append one cohort to patch ip (caller invokes finalize_init afterwards).               !
    !---------------------------------------------------------------------------------------!
    subroutine add_cohort(site, cfg, ip, ipft, nplant, dbh)
@@ -63,7 +86,7 @@ contains
       integer(ik) :: m
       call cohort_ensure_capacity(site%cohort, site%cohort%n + 1_ik)
       m = site%cohort%n + 1_ik
-      call init_cohort(site%cohort, m, cfg%pft, ipft, ip, nplant, dbh)
+      call init_cohort(site%cohort, m, cfg%pft, ipft, ip, nplant, dbh, cfg%hydraulics)
       call assign_cohort_id(site, m)
       site%cohort%n = m
    end subroutine add_cohort
@@ -87,22 +110,24 @@ contains
    ! file without the column is one site. `dbh` drives the allometry (set_cohort_size), so      !
    ! `height` and `cohort_id` are provenance: height, when present, must be positive.          !
    !                                                                                          !
-   ! A file whose first data line is seven numbers is read positionally as                      !
-   ! `site_id, patch_id, cohort_id, dbh, height, pft, nplant`, which is how census files        !
-   ! without a header were written.                                                            !
+   ! A file whose first data line is seven numbers is read positionally as                    !
+   ! `site_id, patch_id, cohort_id, dbh, height, pft, nplant`, the layout of a census file    !
+   ! without a header.                                                                        !
    !                                                                                          !
    ! Blank lines and lines beginning with '#' are ignored. found=.false. (the site is left      !
-   ! unbuilt) if the file cannot be opened or holds no row for the selected site, so the caller !
-   ! can fall back to bare ground. An unknown or duplicated column, a missing required one, a  !
-   ! malformed row, a non-positive value, or a patch whose rows disagree on patch_area stops    !
-   ! the run. The file is read twice (patches, then cohorts), so no row buffer is needed.      !
+   ! unbuilt) if the file cannot be opened or holds no row for the selected site, and `why`     !
+   ! says which, so the caller can stop and say so. An unknown or duplicated column, a missing  !
+   ! required one, a malformed row, a non-positive value, or a patch whose rows disagree on     !
+   ! patch_area stops the run. The file is read twice (patches, then cohorts), so no row buffer !
+   ! is needed.                                                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine init_from_census(site, cfg, path, found, use_site_id)
+   subroutine init_from_census(site, cfg, path, found, use_site_id, why)
       type(site_t),        intent(out) :: site
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
       logical,             intent(out) :: found
       integer(ik), intent(in), optional :: use_site_id
+      character(len=:), allocatable, intent(out), optional :: why   !< why found = .false.; '' when found
 
       integer,     parameter :: LINELEN = 1024
       character(len=LINELEN) :: line
@@ -116,8 +141,10 @@ contains
       character(len=24)      :: pid_str
 
       found = .false.
+      if (present(why)) why = 'cannot be opened'
       open(newunit=u, file=path, status='old', action='read', iostat=ios)
       if (ios /= 0) return
+      if (present(why)) why = 'holds no cohort for the site'
 
       target_known = present(use_site_id)
       if (target_known) sel_site = use_site_id
@@ -173,6 +200,7 @@ contains
 
       call finalize_init(site)
       found = .true.
+      if (present(why)) why = ''
    end subroutine init_from_census
 
    !---------------------------------------------------------------------------------------!

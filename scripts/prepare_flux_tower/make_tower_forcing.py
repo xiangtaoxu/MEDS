@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """make_tower_forcing.py -- build a MEDS forcing file ([forcing].format = "ED_default") from
 flux-tower meteorology: AmeriFlux BASE, FLUXNET/ONEFlux, or any CSV a site TOML describes
-(docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md sec. 7-9).
+(scripts/prepare_flux_tower/README.md).
 
 What it does, in order:
   1. reads the site TOML, which DECLARES the file, the location, the clock (UTC offset and which
@@ -106,7 +106,7 @@ def prepare(site, short_gap_max=4, lw_holdout=None):
         raise SystemExit(f"ERROR: Rainf has {int(missing_rain.sum())} missing records. MEDS does not invent rain: "
                          f"fill them in the tower file (from a nearby gauge or a reanalysis) before the build.")
 
-    # the pressure at the ground, where MEDS keeps it (docs/science/forcing.md sec. 8)
+    # the pressure at the ground, where MEDS keeps it (docs/science/forcing.md §8)
     y["PSurf"] = conv.pressure_at_height(y["PSurf"], y["Tair"], -site.pressure_height)
 
     # the longwave, last, because the synthesis needs the filled states

@@ -17,7 +17,7 @@ dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
-canopy_water_on     = true       # the canopy intercepts rain and dew, and its film evaporates
+canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
 [demography]
 demography_on             = true
@@ -104,8 +104,9 @@ file_chunk = "run"
 override_derived = false
 
 # The leaf traits follow the canopy's light gradient: each cohort's Vcmax25, Rd25, SLA and leaf
-# lifespan are its PFT's top-of-canopy values times exp(k * LAI above it), set at the census start
-# and followed as the canopy changes. The calibration keeps it on (calibration.toml, plan D6).
+# turnover rate are its PFT's top-of-canopy values times exp(k * LAI above it), set at the census start
+# and followed as the canopy changes (docs/science/plant_traits.md §1-§2). The calibration keeps it
+# on (calibration.toml).
 [trait_dynamics]
 trait_plasticity_on = true
 
@@ -134,7 +135,7 @@ ds_jmax   = 640.0
 ds_rd     = 490.0
 o2_mol_frac      = 0.209
 leaf_absorptance = 0.85
-phi_psii         = 0.74    # the electron yield of linear transport in low light (#351): 0.37 electrons per absorbed
+phi_psii         = 0.74    # [--] the electron yield of linear transport in low light: 0.37 electrons per absorbed
                            #   photon, the measured maximum CO2 yield 0.093 at 4 electrons per CO2
 
 [site]
@@ -151,7 +152,7 @@ grid_index     = 1
 grid_match     = "explicit"
 # The tower's own heights, above the ground at its base (41 m). Each sample is moved from them to
 # the top of every patch's canopy air space: along the dry adiabat, and down the patch's own log
-# wind profile (docs/science/forcing.md sec. 8). The file states the same heights, and met_open
+# wind profile (docs/science/forcing.md §8). The file states the same heights, and met_open
 # stops if they disagree.
 tq_height      = 41.0
 wind_height    = 41.0
@@ -194,4 +195,5 @@ ksat        = 1.0e-5             # [m/s]
 [energy]
 bottom_bc  = "dirichlet"
 deep_temp  = 298.65                # [K] the tower's mean air temperature, 2012-08 to 2017-08
-deep_depth = 3.145                  # [m] the bottom node (1.75 m) + 1.973 / sqrt(2), the default's rule
+deep_depth = 3.145                  # [m] the bottom node (1.75 m) + 1.973 / sqrt(2), the default's rule:
+                                    #   docs/science/soil_biophysics.md eq. (13)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Turn a ForestGEO tree table into a MEDS census file (MEDS_BCI_CENSUS_INIT_PLAN.md sec. 6).
+"""Turn a ForestGEO tree table into a MEDS census file (scripts/prepare_census/README.md).
 
 The tool only maps trees to patches. Each square plot cell is one patch, and each distinct
 (cell, diameter) is one row, with `nplant` the number of those trees over the cell's area. It does
@@ -151,7 +151,7 @@ def pft_params(pft_file, pft):
             "gmm": (a.get("gmm_a"), a.get("gmm_b"), a.get("gmm_k")),
             "lai_b1": a["lai_b1"], "lai_b2": a["lai_b2"], "hgt_max": pick("hgt_max"),
             "rho": pick("wood_density"), "sla": pick("sla"), "root_to_leaf": pick("root_to_leaf_ratio"),
-            "aboveground_frac": pick("aboveground_frac"), "leaf_lifespan": pick("leaf_lifespan_toc"),
+            "aboveground_frac": pick("aboveground_frac"), "leaf_turnover": pick("leaf_turnover_rate_toc"),
             "fineroot_turnover": pick("fineroot_turnover_rate"), "f_labile_leaf": pick("f_labile_leaf"),
             "f_labile_stem": pick("f_labile_stem")}
 
@@ -187,7 +187,7 @@ def litter_input(dbh_cm, plot_area, pp, wood_mortality):
     leaf_c = la.sum() / pp["sla"] / plot_area
     root_c = pp["root_to_leaf"] * leaf_c
     wood_c = agb.sum() / pp["aboveground_frac"] / plot_area
-    leaf_l = leaf_c / pp["leaf_lifespan"]              # [kgC m-2 yr-1]
+    leaf_l = leaf_c * pp["leaf_turnover"]              # [kgC m-2 yr-1]
     root_l = root_c * pp["fineroot_turnover"]
     wood_l = wood_c * wood_mortality
     fl, fs, agf = pp["f_labile_leaf"], pp["f_labile_stem"], pp["aboveground_frac"]

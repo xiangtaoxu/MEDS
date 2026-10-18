@@ -17,7 +17,7 @@ from ._ffi import lib
 _REAL = {"dbh": 0, "height": 1, "nplant": 2, "agb": 3, "leaf_area": 4,
          "overtopping_lai": 5, "growth_avg": 6, "wood_carbon": 7}
 _INT = {"pft": 0, "owner_patch": 1, "global_id": 2}
-#----- PATCH-level fields (#260). Every extensive cohort quantity is per m2 of its OWN patch, so
+#----- PATCH-level fields. Every extensive cohort quantity is per m2 of its OWN patch, so
 #      reaching the site needs `area`; `cohort_offset`/`cohort_count` are the CSR map that says
 #      which cohorts belong to which patch, and without them a copied-out stand cannot be read.
 _PATCH_REAL = {"area": 0, "age": 1}

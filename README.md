@@ -56,19 +56,18 @@ census and is calibrated against the tower's fluxes:
 | Soil carbon | ED2's CENTURY network as a carbon matrix ODE | [soil_carbon](docs/science/soil_carbon.md) |
 | Demography | cohort and patch fusion/fission, treefall disturbance, wood-density PFT axis | [ed2_comparison](docs/ed2_comparison.md) |
 | Time integration | ESDIRK2 by default, adaptive Cash-Karp RK45 as the accuracy baseline | [numerical_scheme](docs/science/numerical_scheme.md) |
-| Output | 252 variables, 7 axes, individually switchable per timescale | [diagnostics](docs/science/diagnostics.md) |
+| Output | 284 variables, 7 axes, individually switchable per timescale | [diagnostics](docs/science/diagnostics.md) |
 | Regional runs | every cell of a box of the ERA5-Land grid as its own polygon, in one process | [configuration](docs/configuration.md#regional-runs) |
 
 Every process closes a conservation budget each step, asserted in the test suite. The patch axis is
 threaded and the output is byte-identical at any thread count.
 
-**Status: v0.3.4, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
+**Status: v0.3.5, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
 been compared flux-for-flux, and no output has been scored against observations. What is verified is
 internal: the test suite on two compilers, per-step conservation ledgers, and thread invariance.
 Treat the numbers a MEDS run produces as a working model's numbers.
-[`CHANGELOG.md`](CHANGELOG.md) states the release's known limitations, and
-[`docs/ed2_comparison.md` §0](docs/ed2_comparison.md) says which v0.1.0 numbers are no longer
-comparable.
+[`CHANGELOG.md`](CHANGELOG.md) states the release's known limitations and which numbers each release
+moved.
 
 ## Quick start
 
@@ -76,18 +75,22 @@ comparable.
 ./scripts/install_netcdf.sh                    # if you do not have netCDF; prints the prefix
 
 cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+      -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 
-./build/meds_main examples/example03_demography/example_config_main.toml
+# A forest regrowing from near-bare ground for 300 years (example 03's demography; about a minute)
+PYTHONPATH=python python examples/example03_demography/run_demography.py --start bare
 python post_proc/plot_site_timeseries.py \
-       examples/example03_demography/output/example_output-D-output.nc -o timeseries.png
+       examples/example03_demography/output/bare.nc -o timeseries.png
 ```
 
 netCDF is a hard dependency and gfortran, ifx and nvfortran are all supported. Details, including
 the parallel builds and three compiler traps that cost real time, are in
-[`docs/building.md`](docs/building.md).
+[`docs/building.md`](docs/building.md). `-DMEDS_BUILD_PYLIB=ON` adds the library the Python front end
+loads ([`python/README.md`](python/README.md)); the plotting needs numpy, matplotlib and netCDF4. A
+run of `meds_main` itself takes a config, `./build/meds_main CONFIG.toml`: the examples' READMEs say
+which data each needs, and [`post_proc/README.md`](post_proc/README.md) which plots read its output.
 
 ## Where to go next
 

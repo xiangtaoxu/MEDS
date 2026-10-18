@@ -48,7 +48,6 @@ each bitten at least once, and each was invisible to ifx:
 - **Never pass an array-valued function result straight into a call.** nvfortran's whole-program
   optimizer miscompiles the temporary descriptor — silently wrong values at `-O2`, a segfault at
   `-O0` — while `ifx -stand f18 -check all` emits only a remark. Bind to a named array first.
-  (Issue #7.)
 - **nvfortran rejects a `BLOCK` construct** anywhere inside a parallel region.
 - **ifx builds `private` and `firstprivate` copies of a derived type through a compiler-generated
   static mold** that every thread writes. This is why the fast loop's per-patch scratch is an
@@ -103,8 +102,8 @@ Output is **byte-identical at any thread count**, and the test suite asserts it.
 
 - `-DMEDS_OPENMP=OFF` builds serial. A compiler with no Fortran OpenMP falls back to serial with a
   CMake warning.
-- A build directory configured while the default was serial keeps its cached `MEDS_OPENMP=OFF`.
-  Pass `-DMEDS_OPENMP=ON` or configure a fresh directory.
+- A build directory whose CMake cache holds `MEDS_OPENMP=OFF` keeps it. Pass `-DMEDS_OPENMP=ON` or
+  configure a fresh directory.
 - The Python wheel builds serial (`python/pyproject.toml`), so `libmeds.so` never brings a second
   OpenMP runtime into a Python process.
 - gfortran with a conda netCDF prefix warns that the prefix's `libgomp.so.1` may hide the
@@ -137,11 +136,11 @@ of two runs:
 
 - **The patches are the parallel axis,** so a site run gains while it has more patches than
   threads: at BCI 16 threads run 8× faster than one, and 32 only 20 % faster than 16.
-- **v0.3.1 was slower above four threads** (#325: 41.5 s at 8 threads and 56.7 s at 16 on the
-  60-day case). ifx allocates a lock-guarded record on every call of a routine that hands one of
-  its contained functions to another routine, and two such routines sat in the fast loop. No MEDS
-  source passes a procedure as an argument now; the `no_procedure_arguments` test keeps it that
-  way.
+- **No routine passes a procedure as an argument.** ifx allocates a lock-guarded record on every
+  call of a routine that hands one of its contained functions to another routine, so the threads
+  queue on it: two such routines in the fast loop are enough to make 8 and 16 threads slower than 4
+  (41.5 s and 56.7 s on the 60-day case). The `no_procedure_arguments` test keeps every MEDS source free of
+  them.
 
 **OpenMP `target` offload** (NVHPC only):
 
@@ -155,11 +154,11 @@ cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Re
 `MEDS_GPU` (`none|multicore|gpu`) affects NVHPC builds only; ifx and gfortran ignore it, because
 the `!$omp` lines are comments without an OpenMP flag.
 
-**On the GPU, honestly:** offload was measured in 2026-08 and is **not viable for the current
-model**. The GPU build ran 1.4× slower than the CPU (49.8 s against 36.2 s), with one kernel at
-0.4 % occupancy. `MEDS_GPU=multicore` is useful; `MEDS_GPU=gpu` builds and runs correctly and is
-kept so the offload path does not rot, but it is not a speedup. The measurement and what to do
-instead are in [`dev_plans/archive/MEDS_GPU_EVALUATION.md`](dev_plans/archive/MEDS_GPU_EVALUATION.md).
+**On the GPU, honestly:** offload is **not viable for the current model**. The GPU build runs 1.4×
+slower than the CPU (49.8 s against 36.2 s), with one kernel at 0.4 % occupancy.
+`MEDS_GPU=multicore` is useful; `MEDS_GPU=gpu` builds and runs correctly and is kept so the offload
+path does not rot, but it is not a speedup. The measurement and what to do instead are in
+[`dev_plans/archive/MEDS_GPU_EVALUATION.md`](dev_plans/archive/MEDS_GPU_EVALUATION.md).
 
 **Do not use `-stdpar=gpu`.** It forces the global CUDA managed allocator, whose deep copy and
 finalize of the allocatable-component site type double-frees on the host. OpenMP `target` with

@@ -2,14 +2,15 @@
 !==========================================================================================!
 ! test_numerics -- unit tests for the shared numerical primitives + the conservation checker.  !
 !   1. thomas_solve: recover a known solution of a diagonally-dominant tridiagonal system, with  !
-!      the ACTUAL arrays longer than the active count n (the explicit-shape / self-contained path !
-!      that let the solver move out of biophysics into shared).                                  !
+!      the ACTUAL arrays longer than the active count n (the explicit-shape interface).          !
 !   2. quadratic_smaller_root: -> min(a,b) as theta -> 1; strictly below min for theta < 1.       !
 !   3. adaptive_step_update: grow-capped (fmax), shrink-floored (fmin), identity-ish at err = 1.  !
 !   4. meds_budget_check: closure predicate, imbalance algebra, accumulator fail-count, and the    !
 !      no-op behaviour of the Debug hard-stop when debug = .false.                                 !
 !   5. ascending_order: the reverse on a non-increasing input, ties included; the sort otherwise,  !
 !      with the same tie rule (the larger index first).                                          !
+!   6. conserved: the tolerance scales with the terms' absolute sum, not the net total.         !
+!   7. pair_mean: the two-member weighted mean fusion blends with; weights of any size count.   !
 !==========================================================================================!
 program test_numerics
    use meds_test_assert, only : check, check_true, test_report
@@ -106,8 +107,8 @@ contains
       call check('accumulator abs_sum', b%abs_sum, 3.0_wp, 1.0e-14_wp)
       call check('accumulator flux_gross', b%flux_gross, 8.0_wp, 1.0e-14_wp)   ! 2 checks x (3+1)
       !----- budget_check: FLUX-scaled tolerance. A residual of 1e-5 on a gross flux of 4 breaches   !
-      !      rtol=1e-6 (tol 4e-6 + floor*dt); the same residual on a gross flux of 1e4 does not. The !
-      !      store-scaled rule this replaced would have judged both against store1 = 12. -----------!
+      !      rtol=1e-6 (tol 4e-6 + floor*dt); the same residual on a gross flux of 1e4 does not. A   !
+      !      store-scaled rule would judge both against store1 = 12. -------------------------------!
       block
          type(budget_t) :: c, d, r
          call budget_check(c, 10.0_wp, 12.0_wp + 1.0e-5_wp, 3.0_wp, 1.0_wp, 900.0_wp, 1.0e-12_wp, 'small flux', .false.)
@@ -153,12 +154,11 @@ contains
       call check_true('ascending_order: one cohort', ord1(1) == 1_ik, real(ord1(1), wp))
    end subroutine test_ascending_order
 
-   !----- conserved: the tolerance scales with the terms' absolute sum, not the net total (#389). --!
    !----- The two-member weighted mean fusion blends with: weights of any size count. -------!
    subroutine test_pair_mean()
       call check('pair_mean: equal weights', pair_mean(12.0_wp, 1.0_wp, 24.0_wp, 1.0_wp), 18.0_wp, 1.0e-15_wp)
-      !----- The #389 BCI failure: two leafless cohorts' leaf carbon, ~1e-193. A threshold at 1e-30  !
-      !      kept the first SLA; the mean must blend as it does at any other size. -----------------!
+      !----- Two leafless cohorts' leaf carbon, ~1e-193, as in a BCI run. A threshold at 1e-30      !
+      !      would keep the first SLA; the mean must blend as it does at any other size. -----------!
       call check('pair_mean: weights of 1e-193 still blend',                                         &
                  pair_mean(12.0_wp, 1.0e-193_wp, 24.0_wp, 3.0e-193_wp), 21.0_wp, 1.0e-14_wp)
       call check('pair_mean: no weight at all keeps the first value',                                &
@@ -167,10 +167,11 @@ contains
                  pair_mean(12.0_wp, 0.0_wp, 24.0_wp, 5.0_wp), 24.0_wp, 0.0_wp)
    end subroutine test_pair_mean
 
+   !----- conserved: the tolerance scales with the terms' absolute sum, not the net total. -------!
    subroutine test_conserved()
       real(wp) :: nan_v
-      !----- The #389 failure: a dry canopy whose film total is a tiny NEGATIVE number, reordered.  !
-      !      Relative to the net total floored at 1e-30 this round-off (3.7e-40) failed.         !
+      !----- A dry canopy whose film total is a tiny NEGATIVE number, reordered. Relative to the  !
+      !      net total floored at 1e-30 this round-off (3.7e-40) would fail.                     !
       call check_true('conserved: round-off of a near-zero mixed-sign total passes',                 &
                       conserved(-2.8665915636071925e-24_wp, -2.8665915636071928e-24_wp,             &
                                 2.927102e-24_wp, ROUNDOFF_RTOL), 0.0_wp)
@@ -180,7 +181,7 @@ contains
                       conserved(0.0_wp, 0.0_wp, 0.0_wp, ROUNDOFF_RTOL), 0.0_wp)
       call check_true('conserved: something from nothing fails',                                     &
                       .not. conserved(0.0_wp, 1.0e-30_wp, 0.0_wp, ROUNDOFF_RTOL), 0.0_wp)
-      !----- The BCI fusion: leaf area at the bottom of the double range flushed to zero. The format !
+      !----- A BCI fusion: leaf area at the bottom of the double range flushes to zero. The format  !
       !      resolves nothing below tiny/epsilon, so that is not a conservation failure. ----------!
       call check_true('conserved: an amount below what the format resolves may flush to zero',        &
                       conserved(1.4029406990646508e-307_wp, 0.0_wp, 1.4029406990646508e-307_wp,       &

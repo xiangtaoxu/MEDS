@@ -1,5 +1,27 @@
 # MEDS v0.3.0, for people who use ED2
 
+> **This page describes MEDS v0.3.0, and a rewrite against the current code is planned
+> ([`ROADMAP.md`](ROADMAP.md) §12).** Until then, where the page disagrees with this list, the list
+> is right:
+>
+> - **Water stress and resorption.** The non-stomatal capacity limb is always on
+>   ([`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) §4.1), and leaf and fine-root resorption
+>   default to 0.3 ([`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) §1).
+> - **Leaf water potential converges at 900 s.** Soil and plant water are solved together, implicitly
+>   ([`soil_plant_water.md`](science/soil_plant_water.md)); the midday leaf potential agrees between
+>   75 and 900 s ([`numerical_scheme.md`](science/numerical_scheme.md) §5a), so a study of it needs
+>   no shorter `dt_fast`. A drought season does: 900 s runs Palo Verde's driest months' GPP and ET
+>   about 6 % high, and 300 s is the advice for dry-season leaf-habit timing (§5a). The canopy air is
+>   stable at 900 s in light wind as in strong (§5a′, §7).
+> - **Roots and sapwood.** Each cohort roots to a depth set by its height, and its sapwood's
+>   conductivity follows its wood density ([`plant_hydraulics.md`](science/plant_hydraulics.md) §3–§4).
+> - **Setup.** Height can follow Chave et al. (2014) ([`configuration.md`](configuration.md), "The PFT
+>   file"); a soil column can come from texture through a pedotransfer function, and from the soil
+>   maps ([`soil_biophysics.md`](science/soil_biophysics.md), "Hydraulic parameters from soil texture"
+>   and "The column from the soil maps"); and a region runs its polygons on OpenMP threads, one polygon
+>   per thread ([`configuration.md`](configuration.md), "Regional runs").
+> - **Counts.** The suite has 72 tests and the output registry 284 variables.
+
 MEDS is a ground-up reimplementation of [ED2](https://github.com/EDmodel/ED2) in Fortran 2018. If you
 already run ED2, this page tells you what carried over, what changed, what is missing, and what a MEDS
 run costs you to set up.
@@ -8,45 +30,14 @@ run costs you to set up.
 options are named by their `ED2IN` namelist key, and "ED2 default" means the value in the shipped
 `ED/run/ED2IN`.
 
-**If you read the v0.1.0 version of this page, start at [§0](#0-what-changed-since-v010).** v0.2.0
-moved real numbers, and one of the things it changed is that phenology now runs at all.
-
-**What v0.3.0 adds** (the CHANGELOG has the numbers): **regional runs**, every cell of a box of the
-ERA5-Land grid as its own polygon in one process; a reader for a global **ERA5-Land archive**; the
-forcing moved from its own heights to each patch's **canopy-air top**, with an optional terrain lapse;
-**prescribed CO₂** from a file, on model time; and fixes that move numbers, of which the largest is a
-closed whole-column energy ledger under the Dirichlet soil base.
+**What changed between releases**, and which numbers each change moved, is in
+[`CHANGELOG.md`](../CHANGELOG.md); this page describes the code as it is.
 
 **One thing to establish up front: MEDS has not been benchmarked against ED2.** No EDTS-equivalent
 regression suite has been run, no site has been compared flux-for-flux, and no output of any kind has
 been scored against observations. What has been verified is internal — 53 unit tests on two compilers,
 per-step conservation ledgers, and thread-invariant output. Everything below describes *what the code
 does*, not *how well it does it*. Treat the numbers a MEDS run produces as a working model's numbers.
-
----
-
-## 0. What changed since v0.1.0
-
-Numbers a v0.1.0 run produced are not comparable with a v0.2.0 run's. The changes that move them:
-
-| | What moved | Size |
-|---|---|---|
-| **Phenology ran for the first time** | The `[phenology]` block was skipped unless it contained a key the shipped PFT file never documented, so the cue masks kept their `CUE_NONE` defaults and every PFT fell back to the evergreen fixed point **whatever leaf habit it declared**. Any run configured from the shipped documentation was evergreen. | At Ithaca: a flat LAI of 5.5 year-round becomes a cycle bottoming at **0.0** and peaking at **4.3–4.7**. |
-| **C3 co-limitation curvatures** | C3 now has its own `theta_cj_c3` / `theta_ip_c3` (0.98 / 0.95) instead of sharing C4's. | Leaf A **+22.4%**; coupled GPP **+18.4%** at frozen demography. |
-| **Saturation vapour pressure over ice** | Below 0 °C the Magnus ice curve replaces the liquid one, behind an optional liquid fraction. | Latent heat **−4.26%** over months with snow. |
-| **Solar declination unified** | `solar_cosz` and `daylength` had two different formulae; both now use Cooper 1969. | Daylength ±3.7 min; autumn phenology cue ~2 days earlier. |
-| **Litterfall and recruitment diagnostics** | Five output variables emitted a per-**second** rate under a per-**year** label. | Every one read a factor **3.16e7** too small. If you plotted litterfall from a v0.1.0 run, re-read it. |
-
-New and **off by default**, so they do not move a v0.1.0 comparison unless you turn them on:
-Kattge–Knorr thermal acclimation, storage-pool maintenance respiration, leaf resorption on shed,
-the non-stomatal water-stress limb, and a **Dirichlet soil thermal anchor** — the alternative to
-deepening the column, validated against the analytic semi-infinite solution, where the adiabatic
-base holds +82% too much annual amplitude at the base node and the anchor −2% (§2.3).
-
-New and **on**: soil biogeochemistry (see §2.3 — the switch said opt-in and the loader disagreed
-with it; both now say on), synthesized longwave when the forcing file has none, and per-PFT
-hydraulic traits (selectable, but MEDS ships hydraulically identical PFTs, so no number moves until
-you differentiate them).
 
 ---
 
@@ -78,11 +69,9 @@ allometry, ED2's negative-*z* soil geometry, Chambers-2004 stem respiration.
   its RK4). Phenology is
   unconditional and rate-based.
 - **Some are more conservative.** Snow is a single bulk layer against ED2's multi-layer temporary
-  surface water. (Two things that used to be listed here as opt-in are not. Soil freeze/thaw never
-  was — the plateau is inherent to a column prognostic in internal energy, and the flag that gated
-  ice-aware conductivity and heat capacity has been retired. Soil biogeochemistry reads as **on**:
-  the in-type default said on and the loader passed off, so every config that omitted the key ran it
-  off; they now agree, on.)
+  surface water. (Soil freeze/thaw and soil biogeochemistry are not opt-in: the freeze/thaw plateau
+  is inherent to a column prognostic in internal energy, with ice-aware conductivity and heat capacity
+  always active, and soil biogeochemistry is on by default.)
 - **Configuration and output are wholly rebuilt.** TOML instead of `ED2IN` + XML; netCDF instead of
   HDF5; and roughly 200 output variables individually switchable per timescale rather than a fixed
   schema gated by frequency flags.
@@ -120,20 +109,20 @@ Read the notes column — that is where the qualifications live.
 
 | | MEDS v0.3.0 | ED2 (ED-2.2) | Notes |
 |---|---|---|---|
-| **Photosynthesis** | FvCB (C3) with Rubisco / RuBP-regeneration / TPU limitation; Collatz (C4). Arrhenius or peaked temperature response. C3 and C4 carry **separate co-limitation curvatures** (`theta_cj_c3` 0.98 / `theta_ip_c3` 0.95) | `IPHYSIOL` 0–3; default 2 (Collatz Q10 with Moorcroft high/low-T corrections). Options 1 and 3 add Jmax and TPU | MEDS is closest to `IPHYSIOL = 3` in structure (explicit Jmax + TPU) but exposes the temperature response as a per-trait choice rather than a bundled scheme number. The C3 curvatures were C4's until v0.2.0; giving C3 its own moved leaf A **+22.4%** and coupled GPP **+18.4%**. |
-| **Thermal acclimation** | Kattge & Knorr 2007: entropy terms and the Jmax:Vcmax ratio track a 30-day running mean growth temperature. **Opt-in, default off** | `IPHYSIOL` has no acclimation; `TRAIT_PLASTICITY_SCHEME` acclimates to *light*, not temperature | New in v0.2.0. Vcmax optimum moves 28.2 → 35.0 °C over a 20 K growth range. Coupled GPP **+42.8%** when enabled — and two thirds of that is the **Jmax:Vcmax ratio**, which K&K puts at 2.24 at Ithaca's growth temperature against the PFT file's fixed 1.7. Requires the peaked temperature response. |
+| **Photosynthesis** | FvCB (C3) with Rubisco / RuBP-regeneration / TPU limitation; Collatz (C4). Arrhenius or peaked temperature response. C3 and C4 carry **separate co-limitation curvatures** (`theta_cj_c3` 0.98 / `theta_ip_c3` 0.95) | `IPHYSIOL` 0–3; default 2 (Collatz Q10 with Moorcroft high/low-T corrections). Options 1 and 3 add Jmax and TPU | MEDS is closest to `IPHYSIOL = 3` in structure (explicit Jmax + TPU) but exposes the temperature response as a per-trait choice rather than a bundled scheme number. C3's own curvatures raise leaf A **22.4%** and coupled GPP **18.4%** over sharing C4's. |
+| **Thermal acclimation** | Kattge & Knorr 2007: entropy terms and the Jmax:Vcmax ratio track a 30-day running mean growth temperature. **Opt-in, default off** | `IPHYSIOL` has no acclimation; `TRAIT_PLASTICITY_SCHEME` acclimates to *light*, not temperature | Vcmax optimum moves 28.2 → 35.0 °C over a 20 K growth range. Coupled GPP **+42.8%** when enabled — and two thirds of that is the **Jmax:Vcmax ratio**, which K&K puts at 2.24 at Ithaca's growth temperature against the PFT file's fixed 1.7. Requires the peaked temperature response. |
 | **Stomatal conductance** | Leuning 1995, Medlyn 2011 (USO), Katul 2010 optimality | `ISTOMATA_SCHEME` 0 (Leuning) or 1 (Katul) | Medlyn USO is the addition. |
 | **A–Ci coupling** | One nonlinear equation in Ci, solved by bracketing + bisection; uniform across all three gs models and both pathways | Analytical solution per case in `farq_leuning.f90`; separate solver in `farq_katul.f90` | MEDS trades ED2's analytic speed for one code path that every model shares. |
 | **Water stress on carbon** | Two limbs. Stomatal limb (Sabot 2022, driven by soil water potential) **on**; non-stomatal capacity limb (ramp on Vcmax/Jmax/TPU in leaf water potential) **off by default** | `H2O_PLANT_LIM` 0–5, default 2 (supply/demand FSW from rooting-zone water) | Different formulation entirely. The capacity limb is off because its two parameters are weakly constrained and it is rarely measured directly, and because leaf water potential is not converged at production `dt_fast` (§3.3) — wiring an unconverged potential into carbon through a poorly constrained ramp is not a trade worth making. The limb's formulation is itself under review. |
-| **Plant hydraulics** | **Always on, unconditional.** Two stores per cohort (leaf, wood), nonlinear Bartlett pressure–volume capacitance, Kirchhoff-integrated xylem conductance, per-layer Gardner rhizosphere conductances, solved implicitly with the soil as one network | `PLANT_HYDRO_SCHEME` 0 (default, off — tissues always saturated), 1 or 2 (Xu 2016 / Christoffersen 2016) | The single biggest default difference. MEDS has no "no hydraulics" path. Hydraulic redistribution is deliberately **not** enabled (no uptake from a layer drier than the wood). Thirteen hydraulic traits became **per-PFT** in v0.2.0 (byte-identical by default); they are selectable but **uncalibrated**, so MEDS ships hydraulically identical PFTs. |
-| **Trait plasticity** | Light-driven SLA / Vcmax25 / Rd25 / leaf lifespan, turnover-limited; opt-in, default off | `TRAIT_PLASTICITY_SCHEME` 0–3 and −1/−2, default 0 | MEDS's single scheme corresponds most closely to ED2's option 3 (change constrained by leaf turnover). |
+| **Plant hydraulics** | **Always on, unconditional.** Two stores per cohort (leaf, wood), nonlinear Bartlett pressure–volume capacitance, Kirchhoff-integrated xylem conductance, per-layer Gardner rhizosphere conductances, solved implicitly with the soil as one network | `PLANT_HYDRO_SCHEME` 0 (default, off — tissues always saturated), 1 or 2 (Xu 2016 / Christoffersen 2016) | The single biggest default difference. MEDS has no "no hydraulics" path. Hydraulic redistribution is deliberately **not** enabled (no uptake from a layer drier than the wood). Thirteen hydraulic traits are **per-PFT**; they are selectable but **uncalibrated**, so MEDS ships hydraulically identical PFTs. |
+| **Trait plasticity** | Light-driven SLA / Vcmax25 / Rd25 / leaf turnover rate, turnover-limited; opt-in, default off | `TRAIT_PLASTICITY_SCHEME` 0–3 and −1/−2, default 0 | MEDS's single scheme corresponds most closely to ED2's option 3 (change constrained by leaf turnover). |
 | **Phenology** | One generic cue kernel: daily cues → a smoothed flush tendency and a smoothed senescence tendency. Per-PFT **flush** and **shed** cue masks select which of three cues drive each side: temperature (warmth and cold degree-day sums), the hours of light (a running mean of the hours the PAR reaching each cohort's top exceeds the PFT's `par_min`; a low `par_min` counts the photoperiod) and water (predawn leaf potential summed against the turgor-loss point). Evergreen is a leaf-cover floor, not a flag | `IPHEN_SCHEME` −1 … 4 (evergreen / drought-deciduous old and new / prescribed / light / hydraulic) | A genuine restructuring, not a port. ED2's scheme numbers become per-PFT cue masks, so cold-deciduous, drought-deciduous and light-driven habits coexist in one run without a global switch. Prescribed phenology from files (`IPHEN_SCHEME = 1`, `PHENPATH`) has **no MEDS equivalent**. **Read the caveat in §2.2a before using any of it.** |
 | **Carbon allocation** | FATES PARTEH-H1: four pools (leaf, fine root, wood, non-structural), allometric targets, daily priority ladder, wood as the residual sink and the prognostic size anchor | `growth_balive` (daily) + `structural_growth` (monthly), `ISTRUCT_GROWTH_SCHEME` 0/1 | Unified into one daily step. Growth respiration is charged on realized growth only. Leaf **resorption** on shed is available (a retained fraction returns to storage instead of becoming litter), **default 0** — the shipped `leaf_turnover_rate` is calibrated on observed litterfall, which already has resorption in it. |
 | **Maintenance respiration** | Leaf (from the gas-exchange kernel), stem (Chambers 2004, surface-area based), fine root (summed **over layers**, so the temperature response is applied per layer rather than to a mean), and storage-pool maintenance | `GROWTH_RESP_SCHEME`, `STORAGE_RESP_SCHEME`, `ISTEM_RESPIRATION_SCHEME` (default 1 = Chambers) | Same stem formulation as ED2's current default. Storage maintenance is ED2's `growth_balive` form but **default 0**: at ED2's temperate-broadleaf 0.6243/yr an Ithaca run loses 35% GPP and 43% AGB, which is not a rate to inherit silently. |
-| **Mortality** | One hazard: Camac 2018 additive `gamma + alpha·exp(−beta·growth)`, on a tracked moving-average carbon growth rate, with per-PFT coefficients as power laws in wood density. Plus treefall. | Six additive pathways: ageing, carbon-starvation (`CARBON_MORTALITY_SCHEME`, `IDDMORT_SCHEME`, `CBR_SCHEME`), treefall background, cold/frost, hydraulic failure (`HYDRAULIC_MORTALITY_SCHEME`), and disturbance | **The largest science gap.** MEDS has no frost mortality, no explicit hydraulic-failure mortality, and no separate carbon-starvation term — growth-dependence carries all of it. ED2's Camac option (`CARBON_MORTALITY_SCHEME = 2`) is the closest analogue. The **carbon** leaving by each pathway (background hazard / cull at the tracking floor / treefall) is reported separately since v0.2.0, which ED2 does not do. |
+| **Mortality** | One hazard: Camac 2018 additive `gamma + alpha·exp(−beta·growth)`, on a tracked moving-average carbon growth rate, with per-PFT coefficients as power laws in wood density. Plus treefall. | Six additive pathways: ageing, carbon-starvation (`CARBON_MORTALITY_SCHEME`, `IDDMORT_SCHEME`, `CBR_SCHEME`), treefall background, cold/frost, hydraulic failure (`HYDRAULIC_MORTALITY_SCHEME`), and disturbance | **The largest science gap.** MEDS has no frost mortality, no explicit hydraulic-failure mortality, and no separate carbon-starvation term — growth-dependence carries all of it. ED2's Camac option (`CARBON_MORTALITY_SCHEME = 2`) is the closest analogue. The **carbon** leaving by each pathway (background hazard / cull at the tracking floor / treefall) is reported separately, which ED2 does not do. |
 | **Recruitment** | Reproduction carbon → recruits **within the parent patch**, plus a per-PFT external seed rain; pooled until a minimum size, then spawned | `REPRO_SCHEME` 0–3, default 2 (seeds exchanged among all patches of a polygon) | MEDS does **not** disperse seeds between patches. In a strongly heterogeneous stand this matters. |
 
-### 2.2a Two caveats on what v0.2.0 makes selectable
+### 2.2a Two caveats on what is selectable
 
 **Phenology is selectable and self-consistent. The coupled model is not validated.** The cue
 kernel has been fitted offline at four sites (Harvard Forest, Hyytiälä, Barro Colorado Island, Palo
@@ -143,16 +132,9 @@ and by a MEDS run's leaf water potential without the shed-to-water feedback. Thr
 biome-specific: a bright-hours senescence trigger set for a tropical dry season, used at a temperate
 site, strips the canopy every summer.
 
-And until v0.2.0 it did not run at all: the `[phenology]` block was skipped unless it contained a
-key the shipped PFT file never documented, so the cue masks kept their `CUE_NONE` defaults and every
-PFT was evergreen regardless of what it declared. A config written against the shipped
-`meds_config_pft.toml` could not have selected a cue, so if you are comparing against a MEDS result
-produced before v0.2.0, assume it came from an evergreen model unless you can see `flush_cue_mask`
-in the PFT file it used.
-
 **Thermal acclimation, storage-pool maintenance respiration, leaf resorption and the non-stomatal
-water-stress limb all ship off.** Each moves numbers substantially, and v0.2.0's rebaseline window
-closed before they landed. Turning any of them on is a decision to leave the shipped baseline.
+water-stress limb all ship off.** Each moves numbers substantially; turning any of them on is a
+decision to leave the shipped baseline.
 
 ### 2.3 Biophysics
 
@@ -161,17 +143,17 @@ closed before they landed. Turning any of them on is a decision to leave the shi
 | **Canopy radiative transfer** | Two-stream, multi-layer, one solver run per band (VIS, NIR, thermal LW); Beta leaf-angle distribution; absolute W m⁻² throughout | `ICANRAD` 0/1/2, default 2 (Liou two-stream) | Ported from `twostream_rad.f90`. MEDS generalises the band loop and drops ED2's normalise-to-unit-incidence convention. No horizontal shading (`IHRZRAD`), no finite crown radius (`CROWN_MOD`). |
 | **Canopy turbulence** | CLM5 Monin–Obukhov surface layer + per-cohort exponential wind extinction + ED2 Nusselt leaf/wood boundary layers + CLM ground conductance | `ICANTURB` 0–4, default 2 (Massman 1997); `ISFCLYRM` 1–4, default 3 (Beljaars–Holtslag) | MEDS's combination is closest to ED2's `ICANTURB = 4` / `ISFCLYRM = 4` (the CLM-based branches), not to the ED2 defaults. |
 | **Canopy air space** | Prognostic temperature, humidity **and CO₂** — three twins in one box model | Prognostic in the RK4 state, same three | Equivalent. MEDS's CAS depth is per-patch state derived from the tallest cohort plus freeboard. |
-| **Leaf / wood energy** | Separate leaf and wood temperatures, relaxed **exactly** over the step (the tissue ODE is linear under the frozen coefficients, so a closed-form exponential with an endpoint weight and a step-average weight) | `IBRANCH_THERMO` 0/1/2, default 1 (branch and leaf as one pool in the biophysics) | MEDS is closest to `IBRANCH_THERMO = 2`. Caveat carried in the code: the wood area index and sapwood placeholders make the modelled wood time constant several times too small. |
+| **Leaf / wood energy** | Separate leaf and wood temperatures, relaxed **exactly** over the step (the tissue ODE is linear under the frozen coefficients, so a closed-form exponential with an endpoint weight and a step-average weight) | `IBRANCH_THERMO` 0/1/2, default 1 (branch and leaf as one pool in the biophysics) | MEDS is closest to `IBRANCH_THERMO = 2`. The wood's heat capacity is sized from the ED2 allometry (all the wood dry, the sapwood ring wet), which gives it a time constant of ~20–30 min. |
 | **Soil water** | Mixed-form Richards, solved by implicit Euler with Newton and adaptive sub-steps together with the pond and the plants' water (one network); thickness-weighted geometric-mean face K; no saturation clip (a specific storage above saturation). van Genuchten (default) or Campbell retention | Integrated inside the RK4 patch state; Campbell(-Mualem) with Cosby PTF by default (`SOIL_HYDRO_SCHEME` 0), Tomasella-Hodnett or van Genuchten as beta options 1/2 | Different numerical treatment (see §3) and a different default retention curve. |
 | **Soil hydraulic parameters** | Given directly per column (saturated water content, Ksat, curve parameters); uniform texture broadcast over layers; no pedotransfer function, no texture classes | 17 texture classes, PTFs on sand/silt/clay (+ SOC, pH, CEC, bulk density for scheme 2), soil-texture and soil-depth map databases | **A real setup difference.** ED2 will build a soil column from a texture map; MEDS wants numbers. |
-| **Soil bottom BC** | free drain / bedrock / aquifer, where the aquifer is a head-driven two-way boundary against a saturated zone at the column base | `ISOILBC` 0–3 (bedrock / free drainage / lateral drainage with `SLDRAIN` / aquifer) | No lateral-drainage-by-slope option in MEDS. |
-| **Soil thermal** | Implicit backward-Euler heat diffusion on prognostic internal energy; the freeze/thaw plateau and ice-aware conductivity/heat capacity are **always active**; bottom boundary geothermal (default) or an optional **Dirichlet anchor** below the column | Prognostic internal energy in the RK4 state, phase change always active | Equivalent on the plateau. The caveat that stands: MEDS's default 2 m column is shallower than the annual damping depth, so the annual wave reflects off a near-zero-flux base — at Ithaca the annual swing at −1.73 m is **18.6 K in a 2 m column against 13.6 K in a 3 m one**, and 3 m is not converged either. v0.2.0 adds the alternative to deepening: anchor the base at a fixed temperature at a derived depth (`d/√2` below the deepest node, 3.12 m for the shipped column). Validated against the analytic semi-infinite solution `exp(−z/d)` — the adiabatic base holds **+82%** too much amplitude at the base node, the anchor **−2%**. Off by default, so the shipped configuration is unchanged. |
+| **Soil bottom BC** | drainage $`q = f\,K`$ (free drain $f = 1$, a soil map's leaky base at its `f_leak`, bedrock $f = 0$) / aquifer, where the aquifer is a head-driven two-way boundary against a saturated zone at the column base | `ISOILBC` 0–3 (bedrock / free drainage / lateral drainage with `SLDRAIN` / aquifer) | No lateral-drainage-by-slope option in MEDS; ED2's `SLDRAIN` scales free drainage by the slope, MEDS's leaky base by the map's factor. |
+| **Soil thermal** | Implicit backward-Euler heat diffusion on prognostic internal energy; the freeze/thaw plateau and ice-aware conductivity/heat capacity are **always active**; bottom boundary geothermal (default) or an optional **Dirichlet anchor** below the column | Prognostic internal energy in the RK4 state, phase change always active | Equivalent on the plateau. The caveat that stands: MEDS's default 2 m column is shallower than the annual damping depth, so the annual wave reflects off a near-zero-flux base — at Ithaca the annual swing at −1.73 m is **18.6 K in a 2 m column against 13.6 K in a 3 m one**, and 3 m is not converged either. The alternative to deepening is to anchor the base at a fixed temperature at a derived depth (`d/√2` below the deepest node, 3.12 m for the shipped column). Validated against the analytic semi-infinite solution `exp(−z/d)` — the adiabatic base holds **+82%** too much amplitude at the base node, the anchor **−2%**. Off by default, so the shipped configuration is unchanged. |
 | **Snow / temporary surface water** | **Single bulk layer**; Niu–Yang cover fraction, accumulation, meltwater percolation, surface energy balance, snow-base conductance | Up to `NZS` layers (default 4), `IPERCOL` 0–2 | The clearest resolution downgrade in MEDS. |
-| **Saturation vapour pressure** | Bolton 1980 over liquid, Magnus over ice, blended on a liquid fraction that crosses at exactly 0 °C | Murphy–Koop family in `therm_lib8` | The liquid branch was checked against Murphy–Koop and is fine to 0.2% — the defect was that there was no ice branch at all. Adding it moved latent heat **−4.26%** over months with snow. |
+| **Saturation vapour pressure** | Bolton 1980 over liquid, Magnus over ice, blended on a liquid fraction that crosses at exactly 0 °C | Murphy–Koop family in `therm_lib8` | The liquid branch agrees with Murphy–Koop to 0.2%. The ice branch matters: over months with snow it lowers latent heat **4.26%** against the liquid curve alone. |
 | **Ground evaporation** | Dry-surface-layer resistance formulation | `IED_GRNDVAP` 0–5, default 0 (modified Lee–Pielke) | Different formulation. |
 | **Interception** | Per-cohort Beer-law interception with a per-PAI storage capacity | `LEAF_MAXWHC` | Comparable. |
 | **Soil biogeochemistry** | CENTURY reorganised as an explicit carbon matrix ODE: 7 pools (metabolic and structural litter × above/below, microbial, slow, passive) with a lignin sub-tracer; daily forward Euler on the fast loop's accumulated environmental scalar; exact matrix-exponential and a SASU steady-state solve for spin-up. **On by default** | `DECOMP_SCHEME` 0–5, default 2 (CENTURY-like, 3 active pools); scheme 5 is the 5-pool Bolker CENTURY | MEDS's pool structure corresponds to ED2's `DECOMP_SCHEME = 5`. The matrix form is what makes the fast-loop heterotrophic respiration and the daily pool debit agree **by construction** — the seam closes to ~1e-13. The SASU steady-state solve has no ED2 equivalent and is a real spin-up accelerator. |
-| **Nitrogen** | Scaffolded in the types, **not active** (carbon-only) | `N_PLANT_LIM`, `N_DECOMP_LIM` | |
+| **Nitrogen** | **Not built** (carbon-only); planned after the move to ED-MORE | `N_PLANT_LIM`, `N_DECOMP_LIM` | |
 
 ---
 
@@ -207,7 +189,6 @@ page — *conservation is not stability*, and it applies to any model with this 
 |---|---|---|
 | **Default** | `ark` — a 2-stage, second-order, **L-stable ESDIRK2** implicit scheme with an embedded error estimate and adaptive sub-stepping inside each `dt_fast` | `INTEGRATION_SCHEME = 1` — **fourth-order Runge–Kutta**, adaptive, `RK4_TOLERANCE = 0.01` |
 | **Alternative** | `rk45` — adaptive explicit **Cash–Karp 5(4)** over the whole column state, kept as the accuracy baseline and the closest analogue of ED2's RK4 | `0` Euler (`NSUB_EULER`), `2` Heun, `3` hybrid (BDF2 implicit canopy + explicit rest) |
-| **Retired** | An operator-split backward-Euler scheme was the historical default and was **removed** in 2026-07 | — |
 | **Soil water** | Advanced once per step by the soil-plant water network, on both schemes; the stages move it at the network's time-mean rates | Inside the RK4 state |
 | **Leaf ↔ canopy-air coupling** | Solved implicitly within every ARK stage by a direct 2×2 Newton | Explicit within the RK stages (except `INTEGRATION_SCHEME = 3`) |
 | **Fallback** | When the explicit RK45 march cannot resolve a step (cold night, closed canopy), the driver discards it and redoes that `dt_fast` on `ark`. A counter reports how often | — |
@@ -219,10 +200,10 @@ the biotic CO₂ source is folded implicit, the explicit tableau is empty, and i
 
 ### 3.3 What the step size costs, measured
 
-Against a 12.5 s reference on a high-LAI sunlit stand over 24 h. **These are convergence errors
-measured at v0.1.0 and not re-run for v0.2.0** — Phase 3 moved absolute GPP by ~18%, but these
-numbers are about how far a coarse step sits from a resolved one, which that does not obviously
-change. Read them as the shape of the `dt_fast` trade, not as v0.2.0 measurements:
+Against a 12.5 s reference on a high-LAI sunlit stand over 24 h. **These convergence errors were
+measured at v0.1.0**, whose absolute GPP differs from the current model's by ~18%; they are about how
+far a coarse step sits from a resolved one, which that does not obviously change. Read them as the
+shape of the `dt_fast` trade, not as current measurements:
 
 | `dt_fast` | 150 s | 300 s | 900 s |
 |---|---|---|---|
@@ -231,7 +212,7 @@ change. Read them as the shape of the `dt_fast` trade, not as v0.2.0 measurement
 | GPP error (default config) | −0.0% | — | **−0.05%** |
 
 Two things an ED2 user should take from this. First, `dt_fast` in MEDS is an **accuracy** parameter,
-not a stability boundary — that changed when the conductances stopped being frozen. In the default
+not a stability boundary, because the conductances are re-solved at every stage (§3.1). In the default
 configuration the 900 s production step is cheap: daily GPP within 0.05% of a resolved reference, ET
 within ~1%, canopy-air temperature within 0.16 K, with soil-surface temperature the loosest at 0.70 K.
 
@@ -253,13 +234,12 @@ Two hard-won qualifications, both stated in the MEDS docs and worth repeating to
 analysis code:
 
 - A **whole-column** ledger cannot detect enthalpy placed in the wrong *layer* — the error is purely
-  vertical and still sums correctly against the boundary. Three such defects were found in MEDS, all
-  of them by a temperature that stopped being plausible, which is not a detector. v0.2.0 adds one:
-  `faces[soil_layer_mass]` reports, per interior layer, the mass the soil-energy equation was charged
-  for minus the mass the committed water actually moved. Reintroducing the worst of the three defects
-  leaves **both** whole-column ledgers at zero failures over 103 680 checks while this number moves
-  from 2.3e-13 to 1.1e-01 kg m⁻². If you maintain a model with this structure, that comparison is the
-  most useful thing on this page.
+  vertical and still sums correctly against the boundary, and a temperature that stops being
+  plausible is not a detector. `faces[soil_layer_mass]` is: it reports, per interior layer, the mass
+  the soil-energy equation was charged for minus the mass the committed water actually moved.
+  Reintroducing a wrong-layer defect leaves **both** whole-column ledgers at zero failures over
+  103 680 checks while this number moves from 2.3e-13 to 1.1e-01 kg m⁻². If you maintain a model with
+  this structure, that comparison is the most useful thing on this page.
 - A closed budget says the bookkeeping is right and nothing at all about whether the trajectory is
   physical (see the 8 K oscillation in §3.1).
 
@@ -280,9 +260,10 @@ count, so a bare-ground spin-up is the worst case.
 
 Carried verbatim from the MEDS docs, because they are the things that would bite you:
 
-1. Leaf water potential at coarse `dt_fast`: converged since the transpiration corrector (#91), and
-   since 2026-10 solved implicitly with the soil by the water network (the midday probe agrees to
-   0.005 MPa between 75 and 900 s; `science/numerical_scheme.md` §5a).
+1. Leaf water potential converges in `dt_fast`: it is solved implicitly with the soil by the water
+   network, and the midday probe agrees to 0.005 MPa between 75 and 900 s
+   (`science/numerical_scheme.md` §5a). The wood potential and a restart's first day at 900 s are
+   not yet scored on the network (see [`ROADMAP.md`](ROADMAP.md)).
 2. The stability threshold has been mapped on one synthetic forcing at one wind speed; the feedback
    involved is wind-dependent and light-to-moderate wind is the dangerous band.
 3. The ARK error norm carries structurally-zero terms (soil moisture and plant water are split out of
@@ -325,7 +306,7 @@ simplification; for anything regional it is a wall.
 |---|---|---|
 | Format | One netCDF file on a `(time, grid)` layout, or a constant-forcing backend with no file | `ED_MET_DRIVER_HEADER` pointing at HDF5 files, `IMETTYPE` |
 | Gap filling | **None — a NaN in a required field is a hard error** | — |
-| Shortwave partitioning | Erbs (default), Weiss–Norman, or a clearness-index scheme. MEDS's Weiss–Norman uses the paper's 600 / 720 W m⁻² visible / NIR beam, where ED2 uses 0.43 / 0.57 of the solar constant (#369) | `IMETRAD` 0–5 (as-is, SiB, Weiss–Norman, all-diffuse, all-direct, clearness index) |
+| Shortwave partitioning | Erbs (default), Weiss–Norman, or a clearness-index scheme. MEDS's Weiss–Norman uses the paper's 600 / 720 W m⁻² visible / NIR beam, where ED2 uses 0.43 / 0.57 of the solar constant | `IMETRAD` 0–5 (as-is, SiB, Weiss–Norman, all-diffuse, all-direct, clearness index) |
 | Sub-daily reconstruction | Interval-mean-conserving disaggregation anchored on the model sun (UTC + longitude + equation of time) | `IMETAVG` 0–3 declares the averaging convention |
 | Multi-year cycling | Calendar recycling with Feb-29 reconciliation, day-of-year exact | `METCYC1` / `METCYCF`, `ISHUFFLE` |
 | Preparation | ERA5-Land tools in `scripts/prepare_era5/` | Community drivers in ED2 format |
@@ -339,14 +320,12 @@ term alone is −29.9 W m⁻² biased (RMSE 43.6 on a 312.3 mean), so the cloud 
 and a run on synthesized LW sits 1.37 K cooler at the soil surface than the same run on the file's.
 Use it when your forcing has no longwave, not in preference to one that does.
 
-*(The v0.1.0 version of this page carried a warning about anti-phased sub-daily shortwave on
-multi-decade recycled met. That bug was fixed before v0.1.0 shipped — the recycle window is declared
-in config and validated at open, and `test_met_driver` checks recycle phase over 29 years. The
-warning was stale on the day it was written.)*
+Recycled met keeps its sub-daily phase over multi-decade runs: the recycle window is declared in
+config and validated at open, and `test_met_driver` checks recycle phase over 29 years.
 
 ### 4.4 Output
 
-This is the part v0.1 rebuilt, and the largest usability difference.
+This is the largest usability difference.
 
 | | MEDS | ED2 |
 |---|---|---|
@@ -454,11 +433,11 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 | Phenology | `src/slow_dynamics/plant/meds_phenology.f90`; [`plant_phenology.md`](science/plant_phenology.md) | `phenology_driv.f90`, `phenology_aux.f90` |
 | Mortality / recruitment | `src/slow_dynamics/demography/meds_demography_rates.f90` | `mortality.f90`, `reproduction.f90` |
 | Disturbance | `src/slow_dynamics/demography/meds_demography_patch_fusefiss.f90` | `disturbance.f90`, `fire.f90`, `forestry.f90` |
-| Forcing | `src/forcing/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
+| Forcing | `src/io/input/forcing/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
 | Fusion / fission | `src/slow_dynamics/demography/meds_demography_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
 | Parameters | `src/config/` (TOML, all required); [`docs/configuration.md`](configuration.md) | `ed_params.f90`, the `*_coms` modules, `ED2IN` |
 | State | `src/state/site/meds_site_state_types.f90` | `memory/ed_state_vars.F90` |
-| Output | `src/io/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |
+| Output | `src/io/output/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |
 
 Background reading for both: Moorcroft et al. 2001 (*Ecol. Monogr.*), Medvigy et al. 2009 (*JGR*),
 and **Longo et al. 2019** (*GMD* 12:4309) — the ED-2.2 technical description, whose Supporting

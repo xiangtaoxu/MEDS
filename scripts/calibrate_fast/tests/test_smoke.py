@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The calibration tool with MEDS itself: a self-contained site -- the demography example's census,
-a synthetic forcing file and tower -- through `calibrate_fast.py check` (a state chain, a trial
-restarted from it with its parameter record checked, one gradient column that must move the output,
-a repeated trial that must match byte for byte, and a stand unchanged at the trial's end) and through
-a whole `fit`. The check runs once with meds_main (MEDS_MAIN names it) and once through the Python API
-(MEDS_LIB names libmeds.so); CTest sets both, and a run whose model is missing is skipped. The tower
-is half-hourly and the forcing hourly: the trials' output must come out on the tower's interval."""
+"""The calibration tool with MEDS itself: a self-contained site -- the pseudo census in
+data/census_example.csv, a synthetic forcing file and tower -- through `calibrate_fast.py check` (a
+state chain, a trial restarted from it with its parameter record checked, one gradient column that
+must move the output, a repeated trial that must match byte for byte, and a stand unchanged at the
+trial's end) and through a whole `fit`. The check runs once with meds_main (MEDS_MAIN names it) and
+once through the Python API (MEDS_LIB names libmeds.so); CTest sets both, and a run whose model is
+missing is skipped. The tower is half-hourly and the forcing hourly: the trials' output must come out
+on the tower's interval."""
 import os
 import subprocess
 import sys
@@ -103,8 +104,8 @@ def synthetic_forcing(path, start="2001-05-31", days=7):
 
 
 def make_site(tmp_path, windows, head=""):
-    """The synthetic site: the demography example's census, a synthetic forcing and tower, a
-    one-key registry, and a calibration.toml with these windows."""
+    """The synthetic site: the pseudo census in data/census_example.csv, a synthetic forcing and
+    tower, a one-key registry, and a calibration.toml with these windows."""
     cfg = RunConfig.load(ROOT / "meds_config_main.toml")
     main = cfg.main
     main["fast"]["fast_biophysics_on"] = True

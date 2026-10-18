@@ -21,8 +21,8 @@ Per patch, with $X$ in $`[\mathrm{kgC\,m^{-2}}]`$, and element-wise the mass bal
 $`u = B\,I`$ is the litter input (§5); $K$ the diagonal of baseline decay rates, carried in
 $`[\mathrm{yr^{-1}}]`$ by the config and divided by `yr_day` at assembly so the kernels run in
 $`[\mathrm{day^{-1}}]`$; $\xi$ the diagonal per-pool environmental scalar (§4); $A$ the dimensionless
-donor/transfer matrix (§3). The input is **litter carbon, never GPP** — autotrophic respiration was
-removed upstream in the plant carbon budget.
+donor/transfer matrix (§3). The input is **litter carbon, never GPP** — autotrophic respiration is
+taken out upstream, in the plant carbon budget.
 
 ## 2. The seven pools and the lignin sub-tracer
 
@@ -49,9 +49,9 @@ through `f_labile_stem`, ED2's convention.
 
 The structural pools carry a **lignin sub-tracer** `struct_grnd_lignin` / `struct_soil_lignin`, bounded
 $`0\le L_s\le C_s`$. It is not an eighth pool — its carbon is already counted inside the structural
-pools, so it stays outside the mass vector and keeps its own balance (§6). The nitrogen twin is shaped
-into the type but inert (§10); `pack_pool_vector` / `unpack_pool_vector` marshal the named fields to
-and from the length-7 array the kernels use.
+pools, so it stays outside the mass vector and keeps its own balance (§6). There is no nitrogen
+(§10). `pack_pool_vector` / `unpack_pool_vector` marshal the named fields to and from the length-7
+array the kernels use.
 
 ## 3. The transfer matrix, and the respired complement
 
@@ -92,13 +92,14 @@ f_T = \begin{cases} q_{10}^{\,(T-T_{\mathrm{ref}})/10} & \text{scheme 5, UNCAPPE
 \qquad
 f_\theta = \begin{cases} \exp[(m-m_{\mathrm{opt}})\,b_{\mathrm{dry}}] & m \le m_{\mathrm{opt}}\\
 \exp[(m_{\mathrm{opt}}-m)\,b_{\mathrm{wet}}] & m > m_{\mathrm{opt}}\end{cases}
+\qquad(3)
 ```
 
 ```math
 m = \frac{\theta-\theta_{\mathrm{dry}}}{\theta_{\mathrm{sat}}-\theta_{\mathrm{dry}}}, \qquad
 \xi_j = f_T(T_j)\,f_\theta(\theta)\,\Lambda_j, \qquad
 \Lambda_j = \begin{cases}\exp(-e_{\mathrm{lig}}f_{\ell,j})\cdot f_{\mathrm{decomp}} & j\in\{3,4\}\\
-1 & \text{otherwise}\end{cases} \qquad(3)
+1 & \text{otherwise}\end{cases} \qquad(4)
 ```
 
 One one-sided exponential covers both moisture limbs — dry-side substrate diffusion, wet-side anoxia —
@@ -112,13 +113,13 @@ is off). The invariant is $`\xi>0`$, not $`\xi\le1`$: scheme 5's Q10 is uncapped
 $`\xi\,(A K X)`$: **each donor decomposes at its own rate $`\xi_j K_j`$, and only then is the loss
 split** into respired and transferred parts. $\xi$ and $K$ commute with each other but neither commutes
 with $A$, so the receiver-scalar ordering silently breaks mass balance and every capacity/residence
-formula. The tests assert it: the correct form's total loss equals $`R_h`$ of eq (2); the other's does not.
+formula. The tests assert it: the correct form's total loss equals $`R_h`$ of eq. (2); the other's does not.
 
 ## 5. Litter input
 
 Dead plant carbon becomes litter in one place — `necromass_to_litter` (`meds_litter_partition`), whose
 arguments are plain carbon amounts and plain PFT traits, which is what lets both the slow driver and the
-demographic operators call it. Each tissue goes where it is (#399):
+demographic operators call it. Each tissue goes where it is:
 
 | Tissue | Labile share | Above / below ground |
 |---|---|---|
@@ -151,7 +152,7 @@ Euler on the frozen operator ($`a_{ii}=-1`$ removes donor $i$'s own loss, the of
 ```math
 \xi^{\mathrm{int}}_j = \int_{\mathrm{day}} \xi_j(t)\,dt \ [\mathrm{day}], \qquad
 d_j = \xi^{\mathrm{int}}_j K_j \ [-], \qquad
-X^{n+1}_i = X^n_i + u_i + \sum_j a_{ij}\,d_j\,X^n_j \qquad(4)
+X^{n+1}_i = X^n_i + u_i + \sum_j a_{ij}\,d_j\,X^n_j \qquad(5)
 ```
 
 For **large accelerated steps** `DECOMP_STEP_EXPM` takes the *exact* exponential of that same frozen
@@ -162,7 +163,7 @@ matters because $`A\,\mathrm{diag}(d)`$ is singular whenever a pool is inert:
 \begin{bmatrix} X^{n+1}\\ 1\end{bmatrix}
 = \exp\!\left(\begin{bmatrix} A\,\mathrm{diag}(d) & u\\ 0 & 0\end{bmatrix}\right)
 \begin{bmatrix} X^{n}\\ 1\end{bmatrix}, \qquad
-R_h^{\mathrm{day}} = \sum_i u_i - \Big(\sum_i X^{n+1}_i - \sum_i X^{n}_i\Big) \qquad(5)
+R_h^{\mathrm{day}} = \sum_i u_i - \Big(\sum_i X^{n+1}_i - \sum_i X^{n}_i\Big) \qquad(6)
 ```
 
 The day's respiration on the right is reported **solver-consistently** as the actual loss to the
@@ -191,9 +192,9 @@ Heterotrophic respiration must reach the canopy air **sub-daily**, but the pools
 **daily** — the classic double-counting hazard. MEDS resolves it by having both ends read the same
 object: once per day the fast driver copies the patch's pools into the fast state, and that **frozen**
 copy is what every sub-step respires, through the very kernel the daily step's bookkeeping uses. Each
-sub-step, `heterotrophic_respiration_matrix` evaluates eq (2) on it and converts $`R_h`$ to
+sub-step, `heterotrophic_respiration_matrix` evaluates eq. (2) on it and converts $`R_h`$ to
 $`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgCday_2_umols` for the canopy-air CO₂ twin; the driver
-integrates $`\xi_j`$ into the per-patch `xi_accum` (the $`\xi^{\mathrm{int}}`$ of eq (4)) and $`R_h`$
+integrates $`\xi_j`$ into the per-patch `xi_accum` (the $`\xi^{\mathrm{int}}`$ of eq. (5)) and $`R_h`$
 into `rh_fast_accum`, both reset once per slow step; and the daily `soil_carbon_step` is the **sole
 writer** of the real pools, debiting them with exactly that $`\xi^{\mathrm{int}}`$.
 
@@ -204,6 +205,14 @@ worst value. Note what it is *not*: $\lambda$ (§6) catches the frozen-pool appr
 `rh_seam_gap` catches the contract being broken. This is the **single documented fast↔slow kernel seam
 in the whole model** — one kernel called from both timescales, co-located with the pools it debits.
 
+The gap is zero by construction only while the patch composition is fixed. On a day the patch
+structure changes (the annual patch fusion, a termination or a disturbance), the fast loop has
+accumulated `rh_fast_accum` against one composition while the daily step debits another:
+`blend_xi_accum` and `blend_soil_carbon` area-weight the two ends separately, through a matrix that is
+nonlinear in the lignin fraction. The gap is then nonzero and expected (8.4×10⁻⁴ kgC m⁻² at a year
+rollover of a 50-year spin-up). A nonzero gap on an ordinary day is a broken contract; do not widen
+the tolerance to absorb the structural-change days, which would blind the check on every other day.
+
 ## 8. Steady state (SASU) and traceability diagnostics
 
 Under climatological-mean drivers the equilibrium is a direct linear solve rather than a
@@ -212,12 +221,12 @@ and $u$, gives the traceability trio:
 
 ```math
 0 = \bar u + A\,\bar\xi K X_{ss} \Longrightarrow M X_{ss}[\mathcal{A}] = -\bar u[\mathcal{A}],\ \
-M = \big(A\bar\xi K\big)[\mathcal{A},\mathcal{A}],\ \ \mathcal{A}=\{j: K_j>0\} \qquad(6)
+M = \big(A\bar\xi K\big)[\mathcal{A},\mathcal{A}],\ \ \mathcal{A}=\{j: K_j>0\} \qquad(7)
 ```
 
 ```math
 X_c = -\big(A\,\xi K\big)^{-1}u, \qquad X_p = X_c - X, \qquad
-\tau_E = \frac{\sum_i X_{c,i}}{\sum_i u_i}\Big/\texttt{yr\_day} \qquad(7)
+\tau_E = \frac{\sum_i X_{c,i}}{\sum_i u_i}\Big/\texttt{yr\_day} \qquad(8)
 ```
 
 **The solve runs on the active sub-block only, because the full 7×7 system is singular** — an inert
@@ -225,12 +234,12 @@ pool's column of $`A\,\bar\xi K`$ is identically zero, so the inverse does not e
 back-substitution divides by zero on its diagonal. That is not a corner case; it is the *default*
 scheme. Inert pools are held at their conserved value of zero. The reduced block is solved by a small
 dense **Gaussian elimination with partial pivoting** — allocation- and LAPACK-free, and valid for
-scheme 5's non-triangular back-transfers as well as the default block. A run can start from eq (6)
+scheme 5's non-triangular back-transfers as well as the default block. A run can start from eq. (7)
 (`[soil_carbon].spinup_steady`, a scalar climatological $`\bar\xi`$ and a constant litter estimate),
 with two caveats: those means are **prescribed**, not fed back from a live canopy, and a mean-driver
 equilibrium discards the covariance of periodic forcing.
 
-In eq (7), $`X_c`$ is the **storage capacity** — the equilibrium the patch is chasing under today's
+In eq. (8), $`X_c`$ is the **storage capacity** — the equilibrium the patch is chasing under today's
 climate and litter input, a moving attractor rather than a fixed point; $`X_p`$ is the **storage
 potential**, the remaining sink (negative means a source); $`\tau_E`$ is the ecosystem **residence
 time** in years, stock over throughput. The transient relaxes toward $`X_c`$ at a rate set by
@@ -242,7 +251,7 @@ Every step fills a `soilc_audit_t`: `litter_in_matrix`, `dC_pool`, `rh_out`, `rh
 $\lambda$ with the pool that attained it, and the lignin passive-tracer residual
 $`\max_s|\Delta L_s-(\ell_s-(1-\sigma_s)L_s)|`$, zero by construction for either solver. The carbon
 check that can actually fail is the *independent* one, in the tests: recompute $`R_h`$ from
-$`e_r\,\xi^{\mathrm{int}}K X^n`$ and compare against $`\sum u-\Delta X`$ — comparing eq (5) against
+$`e_r\,\xi^{\mathrm{int}}K X^n`$ and compare against $`\sum u-\Delta X`$ — comparing eq. (6) against
 itself cannot catch dropped litter or a misattributed transfer.
 
 Conservation is not plausibility: a runaway that conserves carbon closes every budget while moving
@@ -254,14 +263,14 @@ Euler step produces them routinely — and the ceiling catches divergence, not i
 
 ## 10. What is not here
 
-- **Nitrogen.** `soil_carbon_t` and `litter_input_t` carry N fields and `decomp_opts_t` the C:N ratios
-  and `n_cycle_on`, but **no kernel reads the flag**: $`f_{\mathrm{decomp}}\equiv1`$ and every N field
-  stays zero. The cycle is shaped in, not implemented.
+- **Nitrogen.** The soil is carbon-only: no nitrogen pools, no C:N stoichiometry, no nitrogen
+  limitation of decomposition or of plant growth. The nitrogen cycle and its coupling to carbon are
+  planned after the move to ED-MORE.
 - **DAMM, or any other respiration form.** The matrix form (§7) is the only heterotrophic
   respiration. Davidson's dual Arrhenius/Michaelis–Menten scheme (soluble-C and O₂ limitation, a
-  unimodal moisture response *emergent* rather than imposed), a Q10 form and ED2's capped exponential
-  had no config key and no production caller, and were deleted (#153); they are kept on branch
-  `archive/damm-hr`.
+  unimodal moisture response *emergent* rather than imposed) is not available, nor are separate Q10
+  or capped-exponential respiration kernels: those two temperature responses live inside $\xi$,
+  eq. (3).
 - **No vertical resolution.** Pools are per-patch scalars, as in ED2; only the environmental scalar
   sees layer-resolved temperature and moisture.
 - **No fire**, so nothing yet consumes the above-ground pools; treefall is the only disturbance.
@@ -276,8 +285,7 @@ See `docs/ROADMAP.md` for where these stand.
 | `k_fast`, `k_struct`, `k_micr`, `k_slow`, `k_pass` | baseline decay rates $`[\mathrm{yr^{-1}}]`$ |
 | `er_fast`, `er_struct_nonlig`, `er_struct_lig`, `er_slow`, `er_pass`, `e_lignin` | respired fractions + the lignin brake |
 | `er_micr_*`, `xsand`; `fx_micr_pass_*`, `fx_slow_pass_*`, `xclay` | scheme-5 texture control (sand → microbial respired fraction, clay → routing to passive) |
-| `rh_q10`, `rh_t_ref`, `resp_temp_increase`, `resp_temp_ref`, `resp_opt_water`, `resp_water_{below,above}_opt` | the $\xi$ responses, eq (3) |
-| `n_cycle_on`, `c2n_*`, `n_immobil_supply_scale` | nitrogen (shaped in, inert — §10) |
+| `rh_q10`, `rh_t_ref`, `resp_temp_increase`, `resp_temp_ref`, `resp_opt_water`, `resp_water_{below,above}_opt` | the $\xi$ responses, eqs. (3)–(4) |
 | `spinup_steady`, `spinup_xi`, `spinup_{labile,struct}_*` | SASU cold start, §8 |
 
 The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`, `f_labile_stem`,

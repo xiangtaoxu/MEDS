@@ -1,23 +1,22 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_time_derivs -- the pure whole-column tendency (RHS) for the fast-loop IMEX-ARK        !
-! integrator (design docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md, phase P0). The overhaul replaces the       !
-! operator-split + Picard fast step with ONE additive Runge-Kutta advance; an ARK needs a         !
-! side-effect-free f(y) = dy/dt for the whole column, whereas today every kernel is               !
-! *advance-and-commit* (forms a flux, hides it inside a backward-Euler denominator, and mutates   !
-! its `intent(inout)` store). This module gives the ARK stepper that RHS.                          !
-!                                                                                          !
-! TWO ENTRY POINTS:                                                                               !
-!   * surface_derivs -- the CAS surface block (leaf-energy diagnostic + ground skin + the three    !
-!     CAS twins). Depends only on meds_therm_lib; validated bit-for-bit against the split.            !
+! meds_fast_time_derivs -- the pure whole-column tendency (RHS) the fast-loop integrators share      !
+! (docs/science/numerical_scheme.md §3): a side-effect-free f(y) = dy/dt for the whole column, with  !
+! no flux hidden inside a backward-Euler denominator and no store mutated, so any tableau can        !
+! combine its evaluations.                                                                           !
+!                                                                                                    !
+! TWO ENTRY POINTS:                                                                                  !
+!   * surface_derivs -- the CAS surface block (leaf/wood energy balance + ground skin + the three    !
+!     CAS twins).                                                                                    !
 !   * column_derivs  -- the WHOLE column: surface_derivs + the soil-heat column (the tendency-       !
-!     exposing soil_energy_time_deriv, a side-effect-free sibling of its BE kernel) + soil and plant  !
-!     water, which move at the soil-plant water network's steady rates over the step.                 !
-!                                                                                          !
-! Faithfulness: the soil-heat tendency is the EXPLICIT RHS whose backward-Euler advance reproduces    !
-! its BE kernel as dt -> 0, and the CAS twins' exactly (implicit in the atmosphere). Verified per-    !
+!     exposing soil_energy_time_deriv, a side-effect-free sibling of its BE kernel) + soil and plant !
+!     water, which move at the soil-plant water network's steady rates over the step.                !
+!                                                                                                    !
+! Faithfulness: the soil-heat tendency is the EXPLICIT RHS whose backward-Euler advance reproduces   !
+! its BE kernel as dt -> 0, and the CAS twins' exactly (implicit in the atmosphere). Verified per-   !
 ! reservoir in test_column_derivs. The water network's flows and the leaf gas-exchange pre-pass are  !
-! the frozen, explicit part of the additive split (held constant across the macro-step).            !
+! the frozen part of the step (Category 0, docs/science/numerical_scheme.md §2), held constant       !
+! across the dt_fast.                                                                                !
 !==========================================================================================!
 module meds_fast_time_derivs
    use meds_kinds, only : wp, ik
@@ -42,8 +41,8 @@ module meds_fast_time_derivs
    private
 
    public :: surface_derivs, column_derivs, cas_conductances
-   !----- exported so the split path relaxes on the SAME timescale rather than keeping a copy    !
-   !      that could drift out of step with this one. -------------------------------------------!
+   !----- public so any other user of the condensation timescale reads this one rather than     !
+   !      keeping a copy that could drift out of step with it. ---------------------------------!
    public :: TAU_COND
 
    !----- CAS supersaturation relaxation timescale [s] for the smooth condensation sink: q relaxes to    !
@@ -56,13 +55,14 @@ module meds_fast_time_derivs
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! refresh_cas_conductances -- N2a.  Re-solve ONLY the bulk Monin-Obukhov surface layer at a live   !
-   ! canopy-air state and return the three CAS<->atmosphere conductances.  Deliberately NOT a full     !
-   ! canopy_aerodynamics call: the per-cohort boundary layers (leaf_gbw/leaf_gbh, and therefore        !
-   ! h_coeff_leaf/g_transp_leaf) stay frozen, because the sec-1g decomposition puts <= 0.7% of the lag gain on    !
-   ! them while they are what makes a full refresh expensive.  Canopy geometry (displacement,           !
-   ! roughness) and the reference-level state are frozen inputs -- only (T_cas, q_cas) is live, which   !
-   ! is exactly the loop that was oscillating.                                                          !
+   ! refresh_cas_conductances -- re-solve ONLY the bulk Monin-Obukhov surface layer at a live         !
+   ! canopy-air state and return the three CAS<->atmosphere conductances                              !
+   ! (docs/science/canopy_aerodynamics.md eq. (5)). Deliberately NOT a full canopy_aerodynamics       !
+   ! call: the per-cohort boundary layers (leaf_gbw/leaf_gbh, and therefore h_coeff_leaf/             !
+   ! g_transp_leaf) stay frozen, because each carries <= 0.7% of the lag gain while they are what     !
+   ! makes a full refresh expensive (docs/science/numerical_scheme.md §2). Canopy geometry            !
+   ! (displacement, roughness) and the reference-level state are frozen inputs -- only (T_cas, q_cas) !
+   ! is live, which is exactly the loop that oscillates when frozen.                                  !
    !                                                                                          !
    ! temp2 == temp1 in canopy_aerodynamics (z0q = z0h), so vapour reuses the heat transfer factor;      !
    ! the CO2 conductance rides the same factor on the MOLAR capacity, computed at the live humidity.    !
@@ -103,11 +103,10 @@ contains
 
 
    !---------------------------------------------------------------------------------------!
-   ! surface_derivs -- the CAS surface-block RHS (leaf-energy diagnostic + ground skin + the three  !
-   ! CAS twins). Faithful, side-effect-free transcription of column_fast_step's surface path         !
-   ! (build_column_frozen). The longwave emission base is the current tcas, so the   !
-   ! split's `tcas - te` term is identically zero. Integrating d_cas_* with a backward-Euler-in-the-  !
-   ! atmosphere step reproduces the split's committed enth1/shv1/co21 exactly.                        !
+   ! surface_derivs -- the CAS surface-block RHS (leaf/wood energy balance + ground skin + the three !
+   ! CAS twins), side-effect-free. Every tissue flux is linearized about the current tcas, which is  !
+   ! also the longwave emission base (docs/science/vegetation_energy_dynamics.md eqs. (1)-(2)); the  !
+   ! twins' tendencies are docs/science/canopy_air_space_biophysics.md eq. (1).                      !
    !---------------------------------------------------------------------------------------!
    pure subroutine surface_derivs(y, cas, tissue, film, ground, snow, t_ground, n, f)
       type(surface_state_t),        intent(in)  :: y
@@ -119,25 +118,24 @@ contains
       real(wp),               intent(in)  :: t_ground   !< [K] soil-top temperature at THIS evaluation (a live input, not frozen)
       integer(ik),            intent(in)  :: n
       !----- Filled in place: every field is assigned below, and the per-cohort arrays are allocated  !
-      !      only when missing or of another length, so a Newton solve that evaluates this many times  !
-      !      on one record allocates them once (#195). -----------------------------------------------!
+      !      only when missing or of another length, so a Newton solve that evaluates this many times !
+      !      on one record allocates them once. ------------------------------------------------------!
       type(surface_tend_t),   intent(inout) :: f
 
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
-      real(wp)    :: lw_slope_w, dtw, tw, transp_w                    !< diagnostic WOOD balance (own store)
+      real(wp)    :: lw_slope_w, dtw, tw, transp_w, dh_w, drnet_w    !< WOOD balance (own store)
       real(wp)    :: coh_h, coh_qw, coh_transp, coh_rnet, coh_film_evap
       real(wp)    :: h_evap_l, h_film_l, h_evap_w, h_film_w   !< [J/kg] energy per kg evaporated (leaf/wood; transp/film)
-      real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend (C4)
-      !----- Canopy-SURFACE water (sec 3.4, P2c): the wetted-fraction film-evap latent terms, using the  !
-      !      FROZEN conductance (film%g_film_leaf/w, sec 3.4/P1's leaf_film_coeff, precomputed once in the    !
-      !      Act-1 pre-pass) but state-dependent dqdt/qsat_c-qcas -- mirrors le_slope/le_ref's own          !
-      !      frozen-conductance/live-state split for the dry pathway just above. Harmless when              !
-      !      canopy_water_on is off: film%f_wet_c(i) stays 0.0 there, which makes veg_energy_balance's     !
-      !      wet pathway vanish identically (proven in its own docstring), so these are pure no-ops on        !
-      !      the byte-identical default path. --------------------------------------------------------------!
+      real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend
+      !----- Canopy-SURFACE water: the wetted-fraction film-evap latent terms, using the FROZEN     !
+      !      conductance (film%g_film_leaf/w, from leaf_film_coeff in the pre-pass) but the state-  !
+      !      dependent dqdt/qsat_c-qcas -- mirroring le_slope/le_ref's own frozen-conductance/      !
+      !      live-state split for the dry pathway. Harmless when canopy_water_on is off:            !
+      !      film%f_wet_c(i) stays 0.0 there, which makes veg_energy_balance's wet pathway vanish   !
+      !      identically, so these are pure no-ops. ------------------------------------------------!
       real(wp)    :: le_slope_wet, le_ref_wet, le_slope_wet_w, le_ref_wet_w
-      real(wp)    :: gah_l, gaw_l, gac_l      !< N2a: the conductances this evaluation uses
+      real(wp)    :: gah_l, gaw_l, gac_l      !< the conductances this evaluation uses
       type(cas_source_t) :: cas_src
       type(cas_column_t) :: cas_col
       integer(ik) :: i
@@ -153,17 +151,17 @@ contains
       coh_film_evap = 0.0_wp
       do i = 1_ik, n
          lw_slope = lw_emission_slope(tissue%leaf_emiss(i), tcas, tissue%lai(i))
-         !----- The leaf pays the FULL specific enthalpy of the vapour it sheds, h_evap = enthalpy_vapor  !
-         !      at the canopy-air temperature the balance is linearized around (the same reference        !
-         !      qsat_c/dqdt use; the cp_vap*(t_leaf - t_cas) difference is ~0.2% of h_evap), and the      !
-         !      CAS receives the SAME number -- one flux, both sides. It used to pay latent_heat_vap      !
-         !      only, with the liquid part (h_evap - L) charged to the SOIL through coh_qsoil. Once P2    !
-         !      added the explicit soil -> wood -> leaf advected-enthalpy chain (qloss, qwflux_wl) that   !
-         !      proxy charged the soil TWICE and heated the leaf for free (~30 W/m2 at 3 mm/day). ED2's   !
-         !      rk4_derivs charges the leaf tq2enthalpy(T_leaf) and the soil uint_water once; so does    !
-         !      this now (2026-09 review, item 1A #10). The FILM pays h_evap minus the liquid enthalpy    !
-         !      the intercepted water arrived with (film_liquid_enthalpy), so film store + leaf + CAS close with no !
-         !      slack term (item 1A #2). ------------------------------------------------------------------!
+         !----- The leaf pays the FULL specific enthalpy of the vapour it sheds, h_evap = enthalpy_vapor !
+         !      at the canopy-air temperature the balance is linearized around (the same reference       !
+         !      qsat_c/dqdt use; the cp_vap*(t_leaf - t_cas) difference is ~0.2% of h_evap), and the     !
+         !      CAS receives the SAME number -- one flux, both sides. Charging the leaf latent_heat_vap  !
+         !      only, with the liquid part (h_evap - L) charged to the soil, would charge the soil twice !
+         !      beside the explicit soil -> wood -> leaf advected-enthalpy chain (qloss, qwflux_wl) and  !
+         !      heat the leaf for free (~30 W/m2 at 3 mm/day). ED2's rk4_derivs charges the leaf         !
+         !      tq2enthalpy(T_leaf) and the soil uint_water once, as this does. The FILM pays h_evap     !
+         !      minus the liquid enthalpy the intercepted water arrived with (film_liquid_enthalpy), so  !
+         !      film store + leaf + CAS close with no slack term                                         !
+         !      (docs/science/vegetation_energy_dynamics.md eq. (2)). -----------------------------------!
          h_evap_l = enthalpy_vapor(tcas)
          h_film_l = h_evap_l - film%film_liquid_enthalpy
          if (tissue%transp_held) then
@@ -178,62 +176,62 @@ contains
          end if
          le_slope_wet = h_film_l * cas%rho * film%g_film_leaf(i) * dqdt
          le_ref_wet   = h_film_l * cas%rho * film%g_film_leaf(i) * (qsat_c - qcas)
-         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, store_hcap_per_dt = 0).   !
-         !      qwflux_wl (sapflow's advected enthalpy, sec 2/6, P2) folds in via q_extra -- it shifts   !
-         !      the equilibrium temperature (and hence dh/transp) like any other absorbed energy, but    !
-         !      is kept OUT of drnet (an internal soil<->leaf transfer, not a boundary radiative input;   !
-         !      see veg_energy_balance's own doc-comment). 0.0 when unset (every existing caller), so  !
-         !      this is a no-op unless build_column_frozen populates it. --------------------------------!
-         call veg_energy_balance(tissue%abs_sw(i), tissue%abs_lw(i), tissue%h_coeff_leaf(i), le_slope,          &
-                                    lw_slope, le_ref, tcas, tcas, tissue%leaf_hcap_per_dt(i), tissue%t_leaf0(i),  &
-                                    dtl, tl, transp_i, dh, drnet, q_extra=tissue%qwflux_wl(i),        &
-                                    f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet,               &
-                                    le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i),          &
-                                    h_evap=h_evap_l, h_evap_wet=h_film_l)
-         f%leaf_temp(i) = tl
-         f%transp_c(i)  = transp_i                                          ! per-cohort demand (pre src_frac)
-         coh_h      = coh_h      + dh
-         coh_qw     = coh_qw     + (transp_i + f%film_evap_leaf(i)) * h_evap_l   ! what the leaf paid
-         coh_transp = coh_transp + transp_i
-         coh_film_evap = coh_film_evap + f%film_evap_leaf(i)
-         coh_rnet   = coh_rnet   + drnet
-         !----- Diagnostic WOOD balance (own store; emission base = tcas, no transpiration). Wood        !
-         !      sensible + net-LW join coh_h / coh_rnet; a diagnostic wood has no storage so the two     !
-         !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
-         !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
+         !----- WOOD = the le_slope = le_ref = 0 case of the same kernel (no transpiration), solved     !
+         !      first because a leaf with no area takes its wood's temperature (a bud sits on its      !
+         !      twig), and wood with no area takes the canopy air's                                    !
+         !      (docs/science/vegetation_energy_dynamics.md, "A tissue with no area"). q_wood_net      !
+         !      (qloss - qwflux_wl) folds in via q_extra the same way qwflux_wl does for the leaf      !
+         !      below (kept out of drnet). ------------------------------------------------------------!
          lw_slope_w = lw_emission_slope(tissue%wood_emiss(i), tcas, tissue%wai(i))
          h_evap_w = h_evap_l
          h_film_w = h_evap_w - film%film_liquid_enthalpy
          le_slope_wet_w = h_film_w * cas%rho * film%g_film_w(i) * dqdt
          le_ref_wet_w   = h_film_w * cas%rho * film%g_film_w(i) * (qsat_c - qcas)
-         !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp).       !
-         !      q_wood_net (qloss - qwflux_wl, sec 2/6, P2) folds in via q_extra the same way qwflux_wl   !
-         !      does for leaf above (kept out of drnet) -- 0.0 when unset. ------------------------------!
          call veg_energy_balance(tissue%abs_sw_wood(i), tissue%abs_lw_wood(i), tissue%h_coeff_w(i),          &
                                     0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, tissue%wood_hcap_per_dt(i),        &
                                     tissue%t_wood0(i),                                                &
-                                    dtw, tw, transp_w, dh, drnet, q_extra=tissue%q_wood_net(i),       &
+                                    dtw, tw, transp_w, dh_w, drnet_w, q_extra=tissue%q_wood_net(i),   &
                                     f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
                                     le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i),        &
                                     h_evap=h_evap_w, h_evap_wet=h_film_w)
          f%wood_temp(i) = tw
-         coh_h    = coh_h    + dh
+         !----- LEAF: linearized about t_cas, relaxing with its own heat store (leaf_hcap_per_dt,        !
+         !      t_leaf0; docs/science/vegetation_energy_dynamics.md eqs. (3)-(6)). qwflux_wl (sapflow's  !
+         !      advected enthalpy) folds in via q_extra -- it shifts the equilibrium temperature (and    !
+         !      hence dh/transp) like any other absorbed energy, but is kept OUT of drnet (an internal   !
+         !      soil<->leaf transfer, not a boundary radiative input; see veg_energy_balance's own       !
+         !      doc-comment). ---------------------------------------------------------------------------!
+         call veg_energy_balance(tissue%abs_sw(i), tissue%abs_lw(i), tissue%h_coeff_leaf(i), le_slope,          &
+                                    lw_slope, le_ref, tcas, tw, tissue%leaf_hcap_per_dt(i), tissue%t_leaf0(i),    &
+                                    dtl, tl, transp_i, dh, drnet, q_extra=tissue%qwflux_wl(i),        &
+                                    f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet,               &
+                                    le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i),          &
+                                    h_evap=h_evap_l, h_evap_wet=h_film_l)
+         f%leaf_temp(i) = tl
+         f%transp_c(i)  = transp_i                                          ! per-cohort transpiration this stage charges
+         coh_h      = coh_h      + dh
+         coh_qw     = coh_qw     + (transp_i + f%film_evap_leaf(i)) * h_evap_l   ! what the leaf paid
+         coh_transp = coh_transp + transp_i
+         coh_film_evap = coh_film_evap + f%film_evap_leaf(i)
+         coh_rnet   = coh_rnet   + drnet
+         !----- The wood's sensible heat, film evaporation and net longwave join coh_h, coh_qw and   !
+         !      coh_rnet after the leaf's. ---------------------------------------------------------!
+         coh_h    = coh_h    + dh_w
          coh_qw   = coh_qw   + f%film_evap_wood(i) * h_evap_w   ! wood film-evap -> CAS, what the wood paid
          coh_film_evap = coh_film_evap + f%film_evap_wood(i)
-         coh_rnet = coh_rnet + drnet
+         coh_rnet = coh_rnet + drnet_w
       end do
 
-      !----- GROUND SURFACE = snowfac-blended snow + (1-snowfac) bare soil (C4, issue #76). The snow  !
-      !      terms come from the shared pre-column stage (meds_fast_snow) and are ALREADY snowfac-     !
-      !      weighted; the bare-soil sensible is scaled by (1-snowfac). soil_evap already carries its  !
-      !      own (1-snowfac) AREA factor via chydro_forcing_t%snow_free_frac, so le_soil is an         !
-      !      area-integrated tile flux and is added whole -- do NOT scale it again.                    !
-      !                                                                                                !
-      !      With no snow every added term is 0 and snowfac = 0, so this reduces to                    !
-      !        h_ground = h_bare, le_ground = le_soil, g_top = rad - h_bare - le_soil                  !
-      !      which is the pre-C4 expression EXACTLY -- snow-off bit-identity is structural here, not   !
-      !      a property to re-verify. snow%ground_rad is seeded to abs_sw_ground + abs_lw_ground by     !
-      !      build_column_frozen for the same reason. -------------------------------------------------!
+      !----- GROUND SURFACE = snowfac-blended snow + (1-snowfac) bare soil. The snow terms come from !
+      !      the shared pre-column stage (meds_fast_frozen%advance_snow_stage) and are ALREADY       !
+      !      snowfac-weighted; the bare-soil sensible is scaled by (1-snowfac). soil_evap already    !
+      !      carries its own (1-snowfac) AREA factor via chydro_forcing_t%snow_free_frac, so le_soil !
+      !      is an area-integrated tile flux and is added whole -- do NOT scale it again.            !
+      !                                                                                              !
+      !      With no snow every added term is 0 and snowfac = 0, so this reduces EXACTLY to          !
+      !        h_ground = h_bare, le_ground = le_soil, g_top = rad - h_bare - le_soil                !
+      !      and a snow-free column needs no branch. snow%ground_rad is seeded to abs_sw_ground +    !
+      !      abs_lw_ground by advance_snow_stage for the same reason. -------------------------------!
       call ground_surface_fluxes(t_ground, tcas, ground%ggnet, cas%rho, ground%soil_evap, h_bare, le_soil)
       f%h_ground  = snow%h_snow  + (1.0_wp - snow%snowfac) * h_bare
       f%le_ground = snow%le_snow + le_soil
@@ -244,17 +242,14 @@ contains
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
       f%src_vap    = coh_transp + coh_film_evap + ground%soil_evap + snow%subl_rate
       f%coh_rnet   = coh_rnet
-      f%coh_transp = coh_transp
 
-      !----- SMOOTH condensation sink (dew/fog): when the CAS is supersaturated, condense the excess as a  !
-      !      continuous relaxation of q toward qsat with timescale TAU_COND -- C1-smooth except a mild kink !
-      !      at RH=1 (vs the removed HARD state clamp). The condensed vapour leaves as liquid at Tcas: the  !
-      !      CAS loses vapour mass (src_vap) AND only the LIQUID enthalpy (src_enth -= cond*u_liq); the     !
-      !      latent heat (enthalpy_vapor - u_liq) STAYS in the air (warming it, as real condensation does). !
-      !      Replaces the discontinuous clamp -> keeps the ARK2 embedded error smooth through saturation.   !
-      !      §8g: gated so a split-vs-ARK comparison can hold the MODEL fixed (the split never reaches
-      !      this routine, so leaving it always-on made the two schemes different models, not just
-      !      different integrators).
+      !----- SMOOTH condensation sink (dew/fog): when the CAS is supersaturated, condense the excess as a   !
+      !      relaxation of q toward qsat with timescale TAU_COND -- continuous, with only a kink           !
+      !      in slope at RH=1, where a HARD state clamp would jump. The condensed vapour leaves as liquid   !
+      !      at Tcas: the CAS loses vapour mass (src_vap) AND only the LIQUID enthalpy (src_enth -=         !
+      !      cond*u_liq); the latent heat (enthalpy_vapor - u_liq) STAYS in the air (warming it, as real    !
+      !      condensation does). Being smooth keeps the ARK2 embedded error smooth through saturation.      !
+      !      cas%cas_condensation ([fast].cas_condensation, default on) switches the sink off.              !
       if (cas%cas_condensation) then
          f%cond     = (cas%cas_mass_capacity / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
       else
@@ -308,13 +303,14 @@ contains
    ! column_derivs -- the WHOLE-column RHS. Diagnoses the soil-top temperature from the state (so    !
    ! the ground skin couples to the current soil-top energy), runs the surface block, then assembles !
    ! the soil-heat, soil-water, and per-cohort plant-water-MASS tendencies from the frozen forcing +   !
-   ! the surface couplings. Commits nothing. It is the tendency an RK45 (or RK4 oracle) stage         !
-   ! evaluates.                                                                                        !
-   !                                                                                          !
-   ! WATER is the soil-plant water network's (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.4): soil water,       !
-   ! sapflow and root uptake move at the network's time-mean rates, and the leaves transpire what the  !
-   ! network gave them (surface_derivs holds it), so every stage sees the same water and the step    !
-   ! ends at the network's state. Only the energy and the canopy air are integrated here. ----------!
+   ! the surface couplings. Commits nothing. It is the tendency an RK45 (or RK4 oracle) stage        !
+   ! evaluates.                                                                                      !
+   !                                                                                                 !
+   ! WATER is the soil-plant water network's (docs/science/numerical_scheme.md §5b,                  !
+   ! docs/science/soil_plant_water.md §4): soil water, sapflow and root uptake move at the network's !
+   ! time-mean rates, and the leaves transpire what the network gave them (surface_derivs holds it), !
+   ! so every stage sees the same water and the step ends at the network's state. Only the energy    !
+   ! and the canopy air are integrated here. --------------------------------------------------------!
    pure subroutine column_derivs(y, frozen, col_config, n, nsl, f, sf_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
@@ -322,9 +318,9 @@ contains
       integer(ik),           intent(in)  :: n      !< number of cohorts
       integer(ik),           intent(in)  :: nsl    !< number of active soil layers
       type(column_tend_t),   intent(out) :: f
-      !----- this stage's OWN surface tendencies (coh_rnet, src_enth/src_vap, ...), for a fully-        !
-      !      explicit multi-stage integrator (RK45) to b-weight into its OWN whole-column boundary-      !
-      !      flux ledger -- mirrors column_be_stage's sf_out (meds_fast_ark.f90), same rationale. --------!
+      !----- this stage's OWN surface tendencies (coh_rnet, src_enth/src_vap, ...), for a fully-    !
+      !      explicit multi-stage integrator (RK45) to b-weight into its OWN whole-column boundary- !
+      !      flux ledger -- mirrors column_be_stage's surf_tend output (meds_fast_be_stage). -------!
       type(surface_tend_t),  intent(out), optional :: sf_out
 
       type(surface_state_t)      :: y_stage
@@ -349,7 +345,7 @@ contains
       f%d_cas_enthalpy = surf_tend%d_cas_enthalpy ; f%d_cas_shv = surf_tend%d_cas_shv ; f%d_cas_co2 = surf_tend%d_cas_co2
       f%g_top = surf_tend%g_top ; f%leaf_temp(1:n) = surf_tend%leaf_temp(1:n)
 
-      !----- 3. Soil water moves at the soil-plant water network's steady rate over the step: the     !
+      !----- 2. Soil water moves at the soil-plant water network's steady rate over the step: the     !
       !      network is the one authority for soil water on every scheme, as it is on ARK, so RK45's    !
       !      theta ends the step exactly where the network's did (a steady rate integrates exactly     !
       !      under any consistent tableau). Its drainage and root uptake are the network's too. ------!
@@ -357,12 +353,12 @@ contains
       f%drainage_rate    = frozen%hydrology%drainage
       f%uptake_rate      = frozen%roots%uptake
 
-      !----- 2. Soil-heat column: g_top from the surface; the water's enthalpy moves with the          !
-      !      network's flows -- its time-mean faces, infiltration at the pond's temperature, root       !
-      !      uptake and the top layer's exfiltration at each layer's start-of-step temperature, and     !
-      !      drainage at the bottom layer's -- the same numbers the ARK stage uses, and the ones the     !
-      !      committed theta actually moved (#78 item 3). The leaf pays the full vapour enthalpy of what !
-      !      it transpires in surface_derivs, as ED2 does. -----------------------------------------!
+      !----- 3. Soil-heat column: g_top from the surface; the water's enthalpy moves with the         !
+      !      network's flows -- its time-mean faces, infiltration at the pond's temperature, root     !
+      !      uptake and the top layer's exfiltration at each layer's start-of-step temperature, and   !
+      !      drainage at the bottom layer's -- the same numbers the ARK stage uses, and the ones the  !
+      !      committed theta actually moved (docs/science/numerical_scheme.md §5b). The leaf pays the !
+      !      full vapour enthalpy of what it transpires in surface_derivs, as ED2 does. --------------!
       soil_e%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
       water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
@@ -370,9 +366,9 @@ contains
       call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%hydrology%geothermal, y%theta,          &
                                         water_heat, frozen%hydrology%w_flux_frozen,                                &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
-      !----- Record the faces the ENERGY equation was just given, so the stepper can check them        !
-      !      against the theta it actually commits (#189). Taken from eforc -- the assembled forcing   !
-      !      -- so the check keeps its meaning if the argument above changes. -------------------------!
+      !----- Record the faces the ENERGY equation was just given, so the stepper can check them     !
+      !      against the theta it actually commits. Taken from eforc -- the assembled forcing -- so !
+      !      the check keeps its meaning if the argument above changes. ----------------------------!
       f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store DOWNWARD
       call soil_energy_time_deriv(soil_e, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, &
                                   f%dedt, bottom_face=f%g_bottom)
@@ -387,12 +383,11 @@ contains
          f%d_wood_water_mass(i) = frozen%plant%uptake_frozen(i)  - frozen%plant%sapflow_frozen(i)
       end do
 
-      !----- 5. Canopy-SURFACE water (sec 3.4, P2c): frozen interception (Act 1) in, REFRESHED         !
-      !      per-stage film evaporation out -- the surface-film analogue of the internal mass ODE        !
-      !      just above. Already per-m2-ground on both sides (unlike leaf_water_mass, no nplant          !
-      !      division needed: frozen%film%intercept_leaf/wood and surf_tend%film_evap_leaf/wood share that convention). !
-      !      Zero when canopy_water_on is off (frozen%film%intercept_leaf/wood and surf_tend%film_evap_leaf/wood all      !
-      !      0.0 then), so this is a no-op unless build_column_frozen populates it. --------------------!
+      !----- 5. Canopy-SURFACE water: frozen interception in, REFRESHED per-stage film evaporation out  !
+      !      -- the surface-film analogue of the internal mass ODE just above. Already per m2 of ground !
+      !      on both sides (unlike leaf_water_mass, no nplant division: frozen%film%intercept_leaf/wood !
+      !      and surf_tend%film_evap_leaf/wood share that convention). Zero when canopy_water_on is     !
+      !      off, so this is a no-op unless build_column_frozen populates it. --------------------------!
       f%d_leaf_surf_water(1:n) = frozen%film%intercept_leaf(1:n) - surf_tend%film_evap_leaf(1:n)
       f%d_wood_surf_water(1:n) = frozen%film%intercept_wood(1:n) - surf_tend%film_evap_wood(1:n)
       if (present(sf_out)) sf_out = surf_tend

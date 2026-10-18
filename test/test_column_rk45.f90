@@ -1,19 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_rk45 -- the INTEG_RK45 wiring of the ED2-faithful adaptive Cash-Karp integrator    !
-! into column_fast_step (MEDS_ED2_RK45_DESIGN.md P2).                                          !
-!   A. GPP PARITY: build_column_frozen (shared with ARK) runs the SAME frozen pre-pass as the     !
-!      split, so gpp_coh from the RK45 path is bit-identical to the split's on step 1.            !
+! into column_fast_step (docs/science/numerical_scheme.md §3, `rk45`).                           !
+!   A. GPP PARITY: build_column_frozen (shared with ARK) runs the SAME frozen pre-pass under     !
+!      both schemes, so gpp_coh from the RK45 path is bit-identical to ARK's on step 1.          !
 !   B. PHYSICAL: a 24-step dry-window march under INTEG_RK45 keeps the CAS / soil / leaf / plant    !
 !      water-mass state finite, bounded, and sub-saturated.                                        !
 !   C. WHOLE-COLUMN CONSERVATION LEDGER: the water AND energy budgets close over a 24 h dry          !
-!      diurnal march, machine-precision (the design doc's headline gates 2/3) -- unlike ARK,         !
-!      RK45 has no operator split at all (mass and soil water are genuinely integrated), so there   !
-!      is no tolerance inflation to remove; it is gated at split's own tight tolerance directly.     !
+!      diurnal march to machine precision. RK45 carries every store in its tableau, so it is     !
+!      gated at a tight tolerance directly.                                                      !
+!   K. CAMPBELL SEED: on a Campbell soil the pre-pass seeds a new cohort's predawn potential     !
+!      from the top layer through the Campbell curve.                                            !
 !==========================================================================================!
 program test_column_rk45
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o
+   use meds_constants,           only : rho_h2o, grav_head
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -21,11 +22,12 @@ program test_column_rk45
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
-   use meds_water_retention, only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
+   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : n_soil_layer_max
+   use meds_column_params, only : n_soil_layer_max, soil_params_t
+   use meds_site_diag_types, only : N_CDIAG, CD_PSI_PREDAWN
    use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
@@ -39,6 +41,10 @@ program test_column_rk45
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
    real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   !----- Durations and times of day are written in hours and turned into steps here, so a change of  !
+   !      dt_fast keeps what each test covers: set_diurnal_forcing puts step i at (i - 1/2)*dt_fast    !
+   !      after midnight, and the sun follows the clock. -------------------------------------------!
+   integer(ik), parameter :: steps_per_hour = nint(3600.0_wp / dt_fast, ik)
    !----- seed moisture, a VARIABLE so the saturated test can drive the column to theta_sat.   !
    real(wp) :: theta_seed = theta0
    type(meds_config_t)    :: cfg
@@ -63,13 +69,10 @@ program test_column_rk45
    cfg = build_test_config()
    ageom%veg_height = 18.0_wp ; ageom%opencan_frac = 0.0_wp ; ageom%snowfac = 0.0_wp
    aenv%u_ref = 2.0_wp ; aenv%zref = 30.0_wp ; aenv%press = 101325.0_wp ; aenv%rho_air = 1.2_wp
-   !----- On-allometry fixture: born through the canonical path (init_cohort + set_cohort_size)  !
-   !      and gathered by the production gather, so every field is mutually consistent. The hand- !
-   !      built view this replaces was not: dbh 20 cm with a 16 m height and a leaf area of       !
-   !      10 m2/plant, an LAI that did not equal nplant*leaf_area, and `bwood` never set at all,   !
-   !      so the wood heat capacity ran on uninitialized memory. Golden values below moved with    !
-   !      the fixture; they describe a real 20 cm tree now: 224 stems/ha, which is the density   !
-   !      that gives the LAI ~3 the old view asserted while being consistent with the allometry.  !
+   !----- On-allometry fixture, a 20 cm tree at 224 stems/ha (LAI ~3): born through the canonical !
+   !      path (init_cohort + set_cohort_size) and gathered by the production gather, so every    !
+   !      field -- height, leaf area, the wood carbon the wood heat capacity is sized from -- is  !
+   !      mutually consistent. -------------------------------------------------------------------!
    call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
    call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
@@ -85,7 +88,7 @@ program test_column_rk45
 
    print '(a)', '[test_column_rk45]'
 
-   !=== A. GPP parity on step 1 (identical initial state; RK45 pre-pass == split pre-pass). ====!
+   !=== A. GPP parity on step 1 (identical initial state; RK45 pre-pass == ARK pre-pass). ======!
    call set_noon_forcing()
    call reset_state()
    cfg%time_integrator = INTEG_ARK
@@ -97,7 +100,7 @@ program test_column_rk45
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
    gpp_rk45 = gpp_coh
-   call check_true('RK45 pre-pass gpp bit-identical to the split (build_column_frozen)',                              &
+   call check_true('RK45 pre-pass gpp bit-identical to the ARK pre-pass (build_column_frozen)',                       &
            abs(gpp_rk45(1) - gpp_split(1)) < 1.0e-12_wp, abs(gpp_rk45(1) - gpp_split(1)))
    call check_true('RK45 midday gpp > 0', gpp_rk45(1) > 0.0_wp, gpp_rk45(1))
 
@@ -106,7 +109,7 @@ program test_column_rk45
    cfg%time_integrator = INTEG_RK45
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    physical = .true. ; worst_super = -1.0_wp
-   do is = 1_ik, 24_ik
+   do is = 1_ik, 6_ik * steps_per_hour
       call set_diurnal_forcing(is)
       call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       tcas = biophys%cas%can_temp
@@ -123,34 +126,28 @@ program test_column_rk45
             col_cohort%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
-   call check_true('INTEG_RK45 dry-window march stays physical + bounded (24 steps)', physical, biophys%cas%can_temp)
+   call check_true('INTEG_RK45 dry-window march stays physical + bounded (00:00-06:00)', physical, biophys%cas%can_temp)
    call check_true('INTEG_RK45 CAS stays sub-saturated', worst_super <= 1.0e-4_wp, worst_super)
 
    !=== C. WHOLE-COLUMN CONSERVATION LEDGER: the water AND energy budgets close over a 24 h dry   !
-   !       diurnal march -- RK45 has no operator split (mass + soil water are genuinely             !
-   !       integrated), so this is gated at split's own tight tolerance (1e-4 water, 1 J energy),    !
-   !       not ARK's inflated one. =================================================================!
+   !       diurnal march at the ledger's tight tolerance, with the energy residual under 1 J. ====!
    call test_rk45_budgets()
 
    !=== D. PRECIP>0: a WET diurnal march runs and still closes the whole-column water AND energy   !
-   !       budgets to the SAME tight (split/gate 2-3) tolerance -- unlike ARK's wet test (which        !
-   !       needs the lagged-ponding operator-split water tolerance), RK45 genuinely integrates soil     !
-   !       water, so there is no split-vs-continuous mismatch to tolerate; this is the test that        !
-   !       exercises the P2-part-3 boundary water-enthalpy advection fix (column_derivs's e_infil/       !
-   !       e_runof/e_drain -> root_heat_sink) under a REAL, substantial rainfall rate, not just the         !
-   !       incidental background drainage that first caught it. ===================================!
+   !       budgets to the SAME tight tolerance. It exercises the boundary water-enthalpy advection !
+   !       (infiltration and drainage enthalpy into the boundary soil layers, e_infil/e_drain)     !
+   !       under a REAL, substantial rainfall rate, not just incidental background drainage. ======!
    call test_rk45_budgets_wet()
 
-   !=== E. CANOPY-SURFACE WATER (opt-in, MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c): a diurnal march with   !
-   !       a morning rain pulse actually gets intercepted; whole_water closes exactly, whole_energy        !
-   !       stays BOUNDED (known deferred sensible-heat approx, same category as sec 2's qloss/qwflux_wl     !
-   !       upwind-temperature approximation; mirrors test_column_dynamics.f90's own RUN 6 for the split      !
-   !       path and test_column_ark.f90's Test G for ARK). Proves the WIRING end to end for RK45's           !
-   !       genuinely-integrated surf_water ODE (not the wetted-fraction algebra itself, already unit-         !
-   !       tested in test_surface_energy.f90). =========================================================!
+   !=== E. CANOPY-SURFACE WATER (opt-in): a diurnal march with a morning rain pulse actually gets        !
+   !       intercepted; whole_water closes exactly, whole_energy stays BOUNDED (the film has no thermal  !
+   !       state of its own, so its sensible heat at the tissue temperature offset is not counted; see   !
+   !       docs/ROADMAP.md; mirrors test_column_dynamics.f90's RUN 6 and test_column_ark.f90's           !
+   !       test_ark_canopy_water). Proves the WIRING end to end for RK45's integrated surf_water ODE     !
+   !       (not the wetted-fraction algebra itself, unit-tested in test_surface_energy.f90). ============!
    call test_rk45_canopy_water()
 
-   !=== F. LEAF/ROOT-TURNOVER SHED WATER (P4, MEDS_ED2_RK45_DESIGN.md): a constant shed_water_rate    !
+   !=== F. LEAF/ROOT-TURNOVER SHED WATER: a constant shed_water_rate                                     !
    !       (distinct from rainfall) wets the soil and both whole_water/whole_energy still close. ========!
    call test_rk45_shed_water()
    call test_rk45_saturated()
@@ -161,57 +158,56 @@ program test_column_rk45
    !       down toward that floor. =======================================================================!
    call test_rk45_drydown()
 
-   !=== G. TINY NEWLY-RECRUITED COHORT: LAI/WAI at a just-recruited cohort's real magnitude (an        !
-   !       actual 30-yr Ithaca run's first recruitment event) reproduces two RK45-only failures a        !
-   !       mature-canopy cohort (LAI=3/WAI=0.5, tests A-F above) never exercises: (1) leaf/wood_temp       !
-   !       overflowing via a near-zero veg_energy_balance denominator (fixed by the coupling floor,     !
-   !       meds_plant_biophysics.f90), and (2) soil theta/soil_energy escaping their physical          !
-   !       domain within a single explicit stage for a near-bare patch, crashing ground_evaporation's       !
-   !       fractional pow() (fixed by clamp_cas/clamp_soil_energy in every RK45 stage,                     !
-   !       meds_fast_rk45.f90). Neither fix is exercised by a mature canopy, whose                     !
-   !       coupling/heat-capacity terms sit far above the floor and whose surface<->soil coupling is far     !
-   !       from stiff -- this test is the ONLY one in the suite with a cohort small enough to trip either.  !
+   !=== G. TINY NEWLY-RECRUITED COHORT: LAI/WAI at a just-recruited cohort's real magnitude (a 30-yr         !
+   !       Ithaca run's first recruitment event) guards two RK45-only failure modes a mature-canopy          !
+   !       cohort (LAI=3/WAI=0.5, tests A-F above) never exercises: (1) leaf/wood_temp overflowing           !
+   !       through a near-zero veg_energy_balance denominator, which cannot happen because the forcing,      !
+   !       the coupling and the heat capacity all scale with the tissue's area                               !
+   !       (docs/science/vegetation_energy_dynamics.md eqs. (1), (8)), and (2) the canopy air or the soil    !
+   !       leaving its physical domain within a single explicit stage for a near-bare patch, which the       !
+   !       RK45 stage clamp on the canopy air and the frozen ground evaporation keep evaluable               !
+   !       (meds_fast_rk45.f90). A mature canopy, whose coupling and heat capacity are large and whose       !
+   !       surface<->soil coupling is far from stiff, trips neither -- this test is the ONLY one in the      !
+   !       suite with a cohort that small.                                                                   !
    call test_rk45_tiny_cohort()
 
-   !=== H. DENSE COLD CANOPY (P6, MEDS_ED2_RK45_DESIGN.md): a mature canopy (LAI=3) under a hard cold    !
-   !       snap makes the diagnostic leaf<->CAS coupling stiff enough that the FULLY-EXPLICIT RK45        !
-   !       surface oscillates and rails the CAS/soil to the clamp bounds within one dt_fast -- the        !
-   !       instability that collapsed the 30-yr Ithaca run at LAI~1 in winter 2050. The dispatcher's      !
-   !       hybrid rescue must detect the railed commit and REDO the step on the stable implicit-CAS       !
-   !       split path, keeping the state physical. Asserts: the rescue actually fires (budget%rk45_rescue   !
-   !       > 0, i.e. the test exercises the fix, not a no-op), and CAS/soil/leaf stay in [250,340] K      !
-   !       with GPP finite throughout. ================================================================!
+   !=== H. DENSE COLD CANOPY: a very dense canopy (LAI=8) under a hard cold snap makes the diagnostic    !
+   !       leaf<->CAS coupling stiff enough that the FULLY-EXPLICIT RK45 surface can oscillate and rail  !
+   !       the CAS/soil to the clamp bounds within one dt_fast. The dispatcher's hybrid rescue detects   !
+   !       the railed commit and REDOES the step on ARK (docs/science/numerical_scheme.md §3, `rk45`),   !
+   !       keeping the state physical. Asserts that CAS/soil/leaf stay in [250,340] K with GPP finite    !
+   !       throughout; the rescue count is reported, not asserted (see the routine). ====================!
    call test_rk45_dense_cold_canopy()
    call test_rk45_bedrock_and_aquifer()
    call test_rk45_prognostic_wood()
 
-   !=== I. REVIEW 2026-09 (item 2 #1): the dispatcher must report psi_leaf_coh on the RK45 success !
-   !       path too. It used to fill it only after the RK45 block, whose success branch returns      !
-   !       early, so under time_integrator=rk45 the daily-max accumulator read whatever the caller's  !
-   !       per-thread buffer held (another patch, or uninitialised memory) and beta_stomata was       !
-   !       computed from garbage. Seed the buffer with an impossible POSITIVE potential and assert     !
-   !       the step overwrote it with a physical (<= 0) value without an ARK rescue having run. ======!
+   !=== I. The dispatcher must report psi_leaf_coh on the RK45 success path too. Filled only after    !
+   !       the RK45 block, whose success branch returns early, the daily-max accumulator would read   !
+   !       whatever the caller's per-thread buffer held (another patch, or uninitialised memory) and  !
+   !       compute beta_stomata from it. Seed the buffer with an impossible POSITIVE potential and    !
+   !       assert the step overwrote it with a physical (<= 0) value without an ARK rescue having     !
+   !       run. ======================================================================================!
    call test_rk45_reports_psi_leaf()
 
-   !=== J. REVIEW 2026-09 (item 2 #3): on moderately DRY soil the wood<->soil interface must cancel !
+   !=== J. On moderately DRY soil the wood<->soil interface must cancel                                 !
    !       to machine precision: the soil loses exactly the uptake the wood gains. The existing         !
    !       dry-down sits near theta_res and the moist tests in wet soil; this one sits in between, and  !
    !       asks for closure at the ledger's own round-off rather than at its 1e-4 relative tolerance. ==!
    call test_rk45_dry_uptake_seam()
 
+   !=== K. A new cohort's predawn potential is seeded from the top soil layer's (the leaf kernel's   !
+   !       stomatal limb reads it until the cohort has a day of its own). On a Campbell soil the      !
+   !       seed must come from the Campbell curve: the column's one parameter pair is (psi_sat, b)    !
+   !       there, and reading it as van Genuchten's would give a wrong potential, or none. ===========!
+   call test_campbell_predawn_seed()
+
    call test_report('test_column_rk45')
 
 contains
 
-   !----- march 96 sub-steps (24 h) of INTEG_RK45 over MOIST free-draining soil and assert the      !
-   !      whole-column water + energy budgets close (design doc sec 8 gates 2/3). -----------------!
-   !----- PHASE 0/2/3 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the ARK/RK45 bottom-BC guard is    !
-   !      GONE. All three BCs are pure boundary conditions with no prognostic state behind them:     !
-   !      bedrock seals the face; the aquifer is head-driven and TWO-WAY, and the water network      !
-   !      takes it like any other face. --------------------------------------------------------------!
-   !----- PHASE 4: prognostic WOOD on RK45, via the SAME shared advance_wood_energy_full the ARK uses !
-   !      (test_column_ark's test_wood_prognostic carries the full rationale and the bsap dual-purpose !
-   !      trap). Keeping both adaptive schemes on one wood model is the point of the phase. -----------!
+   !----- Prognostic WOOD on RK45, via the SAME exact tissue-store relaxation the ARK uses          !
+   !      (docs/science/vegetation_energy_dynamics.md eqs. (3)-(4); test_column_ark's               !
+   !      test_wood_prognostic carries the rationale). Both adaptive schemes run one wood model. ---!
    subroutine test_rk45_prognostic_wood()
       integer(ik) :: istep
       real(wp)    :: dmax_lag
@@ -219,7 +215,7 @@ contains
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       dmax_lag = 0.0_wp
-      do istep = 1_ik, 576_ik
+      do istep = 1_ik, 24_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
          dmax_lag = max(dmax_lag, abs(biophys%wood_temp(1) - biophys%cas%can_temp))
@@ -228,8 +224,9 @@ contains
               real(budget%whole_energy%n_fail, wp))
       call check_true('RK45 PROG-WOOD: whole_water closes', budget%whole_water%n_fail == 0_ik,                        &
               real(budget%whole_water%n_fail, wp))
-      !----- #189: RK45 is the path all three historical instances of the borrowed-face defect lived    !
-      !      on. The per-layer residual is measured at RK45's own commit, on the b-weighted state. -----!
+      !----- RK45 is the path where a borrowed advective face would hide: a flux taken from one solve  !
+      !      with state committed from the scheme's own stages. The per-layer residual is measured at  !
+      !      RK45's own commit, on the b-weighted state (docs/science/numerical_scheme.md §5b). -------!
       call check_true('RK45 PROG-WOOD: per-layer face closure holds', budget%soil_face_mass%worst < 1.0e-8_wp, &
               budget%soil_face_mass%worst)
       call check_true('RK45 PROG-WOOD: the face check actually ran', budget%soil_face_mass%n_check > 0_ik, &
@@ -241,6 +238,9 @@ contains
             ' , rescues = ', budget%rk45_rescue
    end subroutine test_rk45_prognostic_wood
 
+   !----- All three bottom BCs are pure boundary conditions with no prognostic state behind them:  !
+   !      bedrock seals the face; the aquifer is head-driven and TWO-WAY, and the water network    !
+   !      takes it like any other face. -----------------------------------------------------------!
    subroutine test_rk45_bedrock_and_aquifer()
       integer(ik) :: istep
       real(wp)    :: theta_bot0
@@ -248,8 +248,8 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK
-      do istep = 1_ik, 48_ik
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 0.0_wp
+      do istep = 1_ik, 12_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
@@ -258,16 +258,15 @@ contains
       call check_true('BEDROCK/RK45: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                        &
               real(budget%whole_energy%n_fail, wp))
 
-      !----- (b) aquifer BC on RK45: it used to hard error-stop here. A column started DRY must wet  !
-      !          from below, and both ledgers must close with the bottom flux running UPWARD -- the   !
-      !          direction that did not exist before Phase 0. -----------------------------------!
+      !----- (b) aquifer BC on RK45. A column started DRY must wet from below, and both ledgers     !
+      !          must close with the bottom flux running UPWARD. -----------------------------------!
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_w%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_w%theta(col_config%soil%n_active)
-      do istep = 1_ik, 48_ik
+      do istep = 1_ik, 12_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
@@ -278,19 +277,21 @@ contains
       call check_true('AQUIFER/RK45: dry column wets from below',                                                     &
               biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                            &
               biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
-      !----- The plan's open risk: K_bot/Delta with Delta = dz(n)/2 is a fast boundary term the       !
-      !      implicit paths absorb and an explicit march may not. Report the cost rather than assume. !
+      !----- K_bot/Delta with Delta = dz(n)/2 is a fast boundary term the implicit paths absorb and   !
+      !      an explicit march may not, so report the substep cost rather than assume it. ------------!
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
             ' , rejects = ', budget%integ_nrej, ' , rescues = ', budget%rk45_rescue
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_rk45_bedrock_and_aquifer
 
+   !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert the                     !
+   !      whole-column water + energy budgets close. -----------------------------------------------!
    subroutine test_rk45_budgets()
       integer(ik) :: istep
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      do istep = 1_ik, 576_ik
+      do istep = 1_ik, 24_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
@@ -298,11 +299,11 @@ contains
               real(budget%whole_water%n_fail, wp))
       call check_true('RK45: whole_energy closes (n_fail==0)', budget%whole_energy%n_fail == 0_ik,                    &
               real(budget%whole_energy%n_fail, wp))
-      call check_true('RK45: ledger fired every dispatched dt_fast', budget%whole_water%n_check == 576_ik,            &
+      call check_true('RK45: ledger fired every dispatched dt_fast', budget%whole_water%n_check == 24_ik * steps_per_hour, &
               real(budget%whole_water%n_check, wp))
       call check_true('RK45: whole-energy closes < 1 J', budget%whole_energy%worst < 1.0_wp,                          &
               budget%whole_energy%worst)
-      call check_true('RK45: adaptive substeps bounded (sec 6: ~3 expected, cap 64)',                                 &
+      call check_true('RK45: adaptive substeps bounded (~3 expected, cap 64)',                                        &
               budget%integ_nsteps >= 1_ik .and. budget%integ_nsteps <= 64_ik, real(budget%integ_nsteps, wp))
       print '(a,i0,a,i0)', '   RK45 last dt_fast: substeps = ', budget%integ_nsteps,                 &
             ' , rejects = ', budget%integ_nrej
@@ -310,9 +311,9 @@ contains
             ' J/m2  water= ', budget%whole_water%worst, ' kg/m2)'
    end subroutine test_rk45_budgets
 
-   !----- march 96 sub-steps (24 h) of INTEG_RK45 over free-draining soil WITH continuous rain       !
+   !----- march 24 h of INTEG_RK45 over free-draining soil WITH continuous rain                        !
    !      (rainfall>0), mirroring test_column_ark's test_ark_budgets_wet. Asserts the run completes,   !
-   !      the soil wets, and BOTH whole-column budgets close at the tight (non-inflated) tolerance.   !
+   !      the soil wets, and BOTH whole-column budgets close at the tight tolerance.                   !
    subroutine test_rk45_budgets_wet()
       integer(ik) :: istep
       real(wp)    :: theta_dry, theta_col1
@@ -321,13 +322,14 @@ contains
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       call march_dry_day(theta_dry)                       ! the same day without the rain
       call reset_state()
-      do istep = 1_ik, 576_ik
+      do istep = 1_ik, 24_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
-      call check_true('RK45 wet: ran 96 wet steps (no guard error stop)', budget%whole_water%n_check == 576_ik,       &
+      call check_true('RK45 wet: ran a full day of wet steps (no guard error stop)', &
+            budget%whole_water%n_check == 24_ik * steps_per_hour, &
               real(budget%whole_water%n_check, wp))
       call check_true('RK45 wet: rain wetted the soil column (wetter than the day without rain)',   &
               theta_col1 > theta_dry, theta_col1 - theta_dry)
@@ -341,9 +343,9 @@ contains
             budget%whole_energy%worst, ' J/m2  water= ', budget%whole_water%worst, ' kg/m2)'
    end subroutine test_rk45_budgets_wet
 
-   !----- march 96 sub-steps (24 h) of INTEG_RK45 with canopy_water_on and a 5-step morning rain pulse   !
-   !      (istep 20-24); assert some of it was intercepted and the budgets close (mirrors                !
-   !      test_column_dynamics.f90's own RUN 6 / test_column_ark.f90's Test G). -----------------------!
+   !----- march 24 h of INTEG_RK45 with canopy_water_on and a morning rain pulse                         !
+   !      (04:45-06:00); assert some of it was intercepted and the budgets close (mirrors                !
+   !      test_column_dynamics.f90's RUN 6 / test_column_ark.f90's test_ark_canopy_water). --------------!
    subroutine test_rk45_canopy_water()
       integer(ik) :: istep
       real(wp)    :: surf_water_peak
@@ -352,29 +354,30 @@ contains
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
-      do istep = 1_ik, 576_ik
+      do istep = 1_ik, 24_ik * steps_per_hour
          call set_diurnal_forcing(istep)
-         if (istep >= 20_ik .and. istep <= 24_ik) forc%rainfall = 5.0e-5_wp   ! a morning rain pulse
+         if (istep > (19_ik * steps_per_hour) / 4_ik .and. istep <= 6_ik * steps_per_hour) &
+            forc%rainfall = 5.0e-5_wp                    ! a morning rain pulse, 04:45-06:00
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
          surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
       end do
       col_config%canopy_water_on = .false.   ! restore default for any test added after this
       call check_true('RK45 canopy water: whole-column water still closes', budget%whole_water%n_fail == 0_ik,        &
               real(budget%whole_water%n_fail, wp))
-      call check_true('RK45 canopy water: the morning rain pulse was intercepted', surf_water_peak > 0.0_wp,          &
+      call check_true('RK45 canopy water: the morning rain pulse was intercepted', surf_water_peak > 0.0_wp,            &
               surf_water_peak)
-      call check_true('RK45 canopy water: whole-column energy stays BOUNDED (known deferred approx)',                 &
+      call check_true('RK45 canopy water: whole-column energy stays BOUNDED (film sensible heat not counted)',        &
               budget%whole_energy%worst < 5.0e6_wp, budget%whole_energy%worst)
       print '(a,es10.3,a)', '   (RK45 canopy water peak film=', surf_water_peak, ' kg/m2)'
    end subroutine test_rk45_canopy_water
 
-   !----- march 96 sub-steps (24 h) of INTEG_RK45 with a constant leaf/root-turnover shed-water rate  !
-   !      (MEDS_ED2_RK45_DESIGN.md P4, biophys%shed_water_rate -- a PATCH-level input, not atmospheric      !
+   !----- march 24 h of INTEG_RK45 with a constant leaf/root-turnover shed-water rate                        !
+   !      (biophys%shed_water_rate -- a PATCH-level input, not atmospheric                                   !
    !      forcing, so it is frozen on biophys for the whole day rather than living on forc; distinct from    !
    !      rainfall, which stays 0 throughout), mirroring test_column_ark's test_ark_shed_water: the soil    !
    !      must wet from THIS input alone, and both whole_water AND whole_energy must still close at        !
-   !      RK45's own tight (non-split-inflated) tolerance -- energy closing needs no separate wiring         !
-   !      (rides the SAME e_infil/t_film_valuation treatment every other infiltrating input already gets). ---------!
+   !      RK45's own tight tolerance -- energy closing needs no separate wiring (the shed water rides        !
+   !      the SAME infiltration-enthalpy treatment, e_infil, every other infiltrating input gets). ----------!
    subroutine test_rk45_shed_water()
       integer(ik) :: istep
       real(wp)    :: theta_dry, theta_col1
@@ -383,8 +386,8 @@ contains
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       call march_dry_day(theta_dry)                       ! the same day without the shed water
       call reset_state()
-      biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (rainfall stays 0)
-      do istep = 1_ik, 576_ik
+      biophys%shed_water_rate = 8.0e-5_wp                     ! frozen for the whole day (rainfall stays 0)
+      do istep = 1_ik, 24_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
@@ -400,12 +403,12 @@ contains
               budget%whole_energy%worst)
    end subroutine test_rk45_shed_water
 
-   !----- march 48 sub-steps (12 h, spanning full daylight) of INTEG_RK45 with the cohort shrunk to a   !
-   !      just-recruited size (LAI/WAI/nplant/bleaf/bsap/broot at the actual magnitude the 30-yr Ithaca   !
-   !      run's first recruitment event produced, MEDS_ED2_RK45_DESIGN.md bug report). Before the two      !
-   !      fixes above, this reproduced BOTH failures directly: leaf/wood_temp overflowing (T**4 in the     !
-   !      RT forcing) and, once that was patched alone, a SEPARATE ground_evaporation crash from theta/     !
-   !      soil_energy escaping their domain. Restores the shared col_cohort/biophys state on exit. -------------------!
+   !----- march 00:00-12:00 of INTEG_RK45 with the cohort shrunk to a                                   !
+   !      just-recruited size (LAI/WAI/nplant/bleaf/bsap/broot at the magnitude of a 30-yr Ithaca       !
+   !      run's first recruitment event). Without the two guards above this reproduces BOTH failures    !
+   !      directly: leaf/wood_temp overflowing (T**4 in the RT forcing) and, with that guard alone, a   !
+   !      SEPARATE ground_evaporation_rate crash from theta/soil_energy escaping their domain.          !
+   !      Restores the shared col_cohort/biophys state on exit. ----------------------------------------!
    subroutine test_rk45_tiny_cohort()
       integer(ik) :: istep, k
       real(wp) :: lai0, wai0, leaf_area0, bleaf0, bsap0, broot0, sap_area0, nplant0
@@ -422,14 +425,14 @@ contains
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       physical = .true.
-      do istep = 1_ik, 48_ik
+      do istep = 1_ik, 12_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          !----- The shared fixture hands EVERY cohort a full-canopy absorbed load; for a near-zero-LAI  !
          !      cohort that is unphysical (the real two-stream RT, apply_rt_forcing, scales absorption   !
          !      by leaf area, so a 0.0027-LAI seedling intercepts ~0.1% of the beam). Apply the same     !
          !      Beer-law scaling here, else the test asserts on a leaf absorbing 500 W/m2 through        !
-         !      essentially zero area -- which genuinely MUST run hot, and which the pre-P6 discontinuous !
-         !      floor only hid by zeroing the whole balance. -------------------------------------------!
+         !      essentially zero area -- which genuinely MUST run hot, and which only a discontinuous    !
+         !      floor that zeroes the whole balance would hide. -----------------------------------------!
          block
             real(wp) :: rad_frac
             rad_frac      = 1.0_wp - exp(-0.5_wp * col_cohort%lai(1))
@@ -447,7 +450,7 @@ contains
          end do
          physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
       end do
-      call check_true('RK45 tiny (just-recruited) cohort stays physical + bounded (48 steps)', physical,              &
+      call check_true('RK45 tiny (just-recruited) cohort stays physical + bounded (00:00-12:00)', physical,              &
               biophys%leaf_temp(1))
       call check_true('RK45 tiny cohort: gpp is not NaN', gpp_coh(1) == gpp_coh(1), gpp_coh(1))
 
@@ -456,15 +459,14 @@ contains
       col_cohort%sap_area(1) = sap_area0 ; col_cohort%nplant(1) = nplant0
    end subroutine test_rk45_tiny_cohort
 
-   !----- ROBUSTNESS STRESS (P6, MEDS_ED2_RK45_DESIGN.md): a very dense canopy (LAI=8) under a hard      !
-   !      cold snap (dry −20 C air) at the production macro-step (2*dt_fast = 1800 s, the Ithaca step)    !
-   !      -- the operating-point FAMILY that rails the explicit RK45 surface at scale. Whether the        !
-   !      hybrid rescue fires on this exact synthetic point or the P5 stage/y_out clamps alone hold it,   !
-   !      the committed state MUST stay physical (CAS/leaf/soil in [250,340] K, GPP finite): a regression !
-   !      that lost surface stability here would rail. (The rescue path itself is proven at integration    !
-   !      scale by the 30-yr Ithaca run, which collapses at LAI~1 in winter 2050 WITHOUT the rescue and    !
-   !      completes healthy WITH it -- a delicate decades-evolved point no short march reproduces; the     !
-   !      rescue count here is reported for information, not asserted.) Restores col_cohort geometry on exit. ----!
+   !----- ROBUSTNESS STRESS: a very dense canopy (LAI=8) under a hard cold snap (dry -20 C air) at      !
+   !      a macro-step of 2*dt_fast -- the operating-point FAMILY that rails the explicit RK45 surface  !
+   !      at scale. Whether the hybrid rescue fires on this exact synthetic point or the stage/y_out    !
+   !      clamps alone hold it, the committed state MUST stay physical (CAS/leaf/soil in [250,340] K,   !
+   !      GPP finite): a regression that lost surface stability here would rail. (A 30-yr Ithaca run    !
+   !      collapses at LAI~1 in its winter 2050 without the rescue and completes healthy with it -- a   !
+   !      decades-evolved point no short march reproduces, so the rescue count here is reported for     !
+   !      information, not asserted.) Restores col_cohort geometry on exit. ----------------------------!
    subroutine test_rk45_dense_cold_canopy()
       integer(ik) :: istep, k, total_rescue
       real(wp) :: lai0, wai0, la0
@@ -478,7 +480,7 @@ contains
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       physical = .true. ; total_rescue = 0_ik
-      do istep = 1_ik, 576_ik
+      do istep = 1_ik, 24_ik * steps_per_hour
          call set_coldsnap_forcing(istep)
          call column_fast_step(2.0_wp*dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
                gpp_coh=gpp_coh)
@@ -490,27 +492,13 @@ contains
          end do
          physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
       end do
-      call check_true('RK45 dense cold-snap canopy stays physical (P6 surface stability)', physical,                  &
+      call check_true('RK45 dense cold-snap canopy stays physical (surface stability)', physical,                     &
               biophys%cas%can_temp)
-      print '(a,i0,a)', '   (dense cold-snap: ', total_rescue, ' RK45->split rescues over 96 steps)'
+      print '(a,i0,a)', '   (dense cold-snap: ', total_rescue, ' RK45->ARK rescues over 24 h)'
       col_cohort%lai(1) = lai0 ; col_cohort%wai(1) = wai0 ; col_cohort%leaf_area(1) = la0
    end subroutine test_rk45_dense_cold_canopy
 
 
-   !----- SATURATED sealed column: the ARK/RK45 twin of test_column_dynamics RUN 7. A bedrock bottom   !
-   !      seeded just below theta_sat under heavy rain both SATURATES (firing meds_soil_water's post-   !
-   !      solve theta clip, which moves water with no face) and OVERFLOWS the ponding store (surface     !
-   !      runoff). None of the other RK45 runs reach either state -- they are free-draining at           !
-   !      theta = 0.30 -- so the enthalpy bookkeeping for both was entirely uncovered on this path:       !
-   !        * the clip's per-layer enthalpy, frozen at each layer's own temperature in                    !
-   !          build_column_frozen and carried into the stages' root_heat_sink column, and                 !
-   !        * runoff, which must contribute NO enthalpy term at all -- it leaves the ponding store,       !
-   !          which holds mass but no enthalpy, so the e_runof term this path used to apply at layer 1    !
-   !          removed ~1 MJ per kg the soil never received.                                               !
-   !      whole_energy closing is the assertion that both are booked with the right sign; the            !
-   !      temperature bound is the assertion that the INTERIOR advective faces (previously hardcoded     !
-   !      to zero here) actually connect the boundary faces -- without them layer 1 accumulates the      !
-   !      full infiltration enthalpy while a deeper layer sheds it, and the ledger cannot see it. -------!
    !----- Drive the column down toward theta_res: seed just above it, no rainfall, and a dry atmosphere   !
    !      so ground evaporation and transpiration both pull hard. The assertion is the DOMAIN INVARIANT  !
    !      -- theta never commits below theta_res -- plus closure of both whole-column ledgers. Both     !
@@ -526,7 +514,7 @@ contains
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       theta_min = 1.0e9_wp
       res_min   = minval(col_config%soil%theta_res(1:nsl))
-      do istep = 1_ik, 192_ik
+      do istep = 1_ik, 48_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          forc%rainfall = 0.0_wp
          forc%shv_atm = 0.5_wp * forc%shv_atm            ! halve the atmospheric humidity: dry the air
@@ -545,6 +533,17 @@ contains
             res_min, ')'
    end subroutine test_rk45_drydown
 
+   !----- SATURATED sealed column: the ARK/RK45 twin of test_column_dynamics RUN 7. A bedrock bottom    !
+   !      seeded just below theta_sat under heavy rain both SATURATES (the water network raises the     !
+   !      layer's potential and drives the excess to the pond and the next layer) and OVERFLOWS the     !
+   !      ponding store (surface runoff). None of the other RK45 runs reach either state -- they are    !
+   !      free-draining at theta = 0.30. Both paths move mass and enthalpy as a pair: the pond holds    !
+   !      its own enthalpy and runoff leaves at the pond's temperature, so no soil layer is debited     !
+   !      for water it never received (docs/science/numerical_scheme.md §5b).                           !
+   !      whole_energy closing is the assertion that both are booked with the right sign; the           !
+   !      temperature bound is the assertion that the INTERIOR advective faces actually connect the     !
+   !      boundary faces -- without them layer 1 accumulates the full infiltration enthalpy while a     !
+   !      deeper layer sheds it, and the ledger cannot see it. -----------------------------------------!
    subroutine test_rk45_saturated()
       integer(ik) :: istep
       real(wp)    :: pond_peak, theta_peak, ss_min, ss_max, ood_peak
@@ -555,7 +554,7 @@ contains
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       ood_peak = 0.0_wp
-      do istep = 1_ik, 576_ik
+      do istep = 1_ik, 24_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          forc%rainfall = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
@@ -565,58 +564,44 @@ contains
          ood_peak      = max(ood_peak,   budget%theta_ood_max)
       end do
       theta_seed = theta0                                 ! restore for any test added after this
-      call check_true('RK45 saturated: column reached theta_sat (clip path is live)',                                 &
+      call check_true('RK45 saturated: column reached theta_sat (saturation path is live)',                           &
               theta_peak >= 0.43_wp - 1.0e-12_wp, theta_peak)
       call check_true('RK45 saturated: ponding store overflowed (runoff path is live)',                               &
               pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
-      !----- ENERGY is asserted as a BOUND, not exact closure. Before C1, clamp_soil_energy rebuilt the !
-      !      COMMITTED soil_energy at a clamped temperature with no ledger term (1.5e5 J/m2 here on      !
-      !      nvfortran, never on ifx). Nothing clamps the committed state now, but whether a stage clamp !
-      !      bites is trajectory- and compiler-dependent, so the bound stays. -------------------------!
-      call check_true('RK45 saturated: whole-column ENERGY closes (C1 removed the unbookkept clamp)',                 &
+      !----- ENERGY is asserted as a BOUND, not exact closure. Nothing clamps the committed state, but   !
+      !      whether a stage clamp bites is trajectory- and compiler-dependent. A clamp that rebuilt the !
+      !      COMMITTED soil_energy at a clamped temperature with no ledger term would show here (1.5e5   !
+      !      J/m2 on nvfortran, never on ifx). ----------------------------------------------------------!
+      call check_true('RK45 saturated: whole-column ENERGY closes (no unbooked clamp on the commit)',                 &
               budget%whole_energy%worst < 1.0e-3_wp, budget%whole_energy%worst)
-      !----- WATER now closes to MACHINE PRECISION here, which it did not for most of this file's    !
-      !      history. The trajectory is worth keeping because each step was a distinct defect:         !
-      !        4.35  -- RK45 committed its own theta but took drainage, ponding and runoff from the    !
-      !                 frozen Act-1 scratch solve                                                     !
-      !        5.86  -- C2 made DRAINAGE state-consistent while runoff was not, so the imbalance MOVED !
-      !                 rather than shrank (the expected cost of fixing half a pair)                   !
-      !        3.33  -- the residual saturation clip closed that pair, routing RK45's own excess to    !
-      !                 the pond with paired enthalpy                                                  !
-      !        1e-13 -- the pond is rebuilt from RK45's OWN trajectory. frozen%hydrology%w_surface1 already held    !
-      !                 the SCRATCH solve's clip, mass this theta never shed, so adding RK45's clip    !
-      !                 on top counted that water twice (issue #75).                                   !
-      !      Assert closure, not a bound: there is no longer a known gap to tolerate. -----------------!
+      !----- WATER closes to MACHINE PRECISION: drainage, ponding and runoff come from the same water   !
+      !      network solve whose theta RK45 commits, so every water flow and the state it moves agree   !
+      !      (docs/science/numerical_scheme.md §5b). Assert closure, not a bound: there is no known     !
+      !      gap to tolerate. --------------------------------------------------------------------------!
       call check_true('RK45 saturated: whole-column WATER closes (n_fail==0)', budget%whole_water%n_fail == 0_ik,     &
               real(budget%whole_water%n_fail, wp))
       call check_true('RK45 saturated: whole-column WATER closes to machine precision',                               &
               budget%whole_water%worst < 1.0e-6_wp, budget%whole_water%worst)
-      !----- SOIL-SURFACE TEMPERATURE is the one assertion that names #78 item 3's mechanism, so it is  !
-      !      bounded at 310 K rather than the 340 K that used to be needed. The history is worth the      !
-      !      lines, because two defects of matched magnitude and OPPOSITE sign lived here:                !
-      !        285.3 K -- column_derivs advected interior soil enthalpy on the SCRATCH solve's frozen     !
-      !                   faces while committing RK45's own theta (a ~2.6e6 J/m2/step vertical            !
-      !                   misplacement, invisible to any whole-column ledger), and separately took the    !
-      !                   scratch's clip ENTHALPY as a stage sink for mass this trajectory never shed     !
-      !                   (~2.6e6 J/m2/step of spurious cooling). The two very nearly cancelled.          !
-      !        345.0 K -- removing ONLY the borrowed clip enthalpy, which is what exposed the faces.      !
-      !        295.1 K -- both fixed: the faces now carry the flux this stage's own theta is using.       !
-      !      A 29 mm/hr rain event cannot warm a soil surface past ~300 K, so 310 K is a bound with       !
-      !      real diagnostic power; 340 K only ever tolerated the defect. -------------------------------!
+      !----- SOIL-SURFACE TEMPERATURE is the assertion that sees soil heat advected on faces that are     !
+      !      not the scheme's own (a vertical misplacement invisible to any whole-column ledger). Two     !
+      !      such errors of matched magnitude and OPPOSITE sign can nearly cancel in this number, and     !
+      !      one alone moves it by ~50 K; with the faces carrying the flux this stage's own theta is      !
+      !      using it sits near 295 K. A 29 mm/hr rain event cannot warm a soil surface past ~300 K, so   !
+      !      310 K is a bound with real diagnostic power; 340 K would tolerate the defect. ---------------!
       call check_true('RK45 saturated: soil surface temp stays physical (interior faces on OWN theta)',               &
               ss_min > 250.0_wp .and. ss_max < 310.0_wp, ss_max)
       !----- Soil water is the water network's: a saturated layer holds a little more only through its  !
       !      specific storage, at a positive pressure head that pushes the excess up to the pond and     !
-      !      down to the next layer within the step (MEDS_SPAC_WATER_NETWORK_PLAN.md §12.2 M2). So      !
-      !      theta may commit a hair above theta_sat -- the specific storage times a head of           !
-      !      centimetres -- and never by the 0.0236 the unbooked overshoot once reached. -------------!
+      !      down to the next layer within the step (docs/science/numerical_scheme.md §5b,              !
+      !      "Saturation is the water network's"). So theta may commit a hair above theta_sat -- the    !
+      !      specific storage times a head of centimetres. ---------------------------------------------!
       call check_true('RK45 saturated: theta above theta_sat only through specific storage (< 1e-4)',                &
               theta_peak <= 0.43_wp + 1.0e-4_wp, theta_peak)
-      !----- ISSUE #78 ITEM 2, bounded rather than merely inspected: how far a sub-step's starting    !
-      !      theta lies outside [theta_res, theta_sat]. Under the water network it can only lie above   !
-      !      saturation, by the specific storage, so the bound is far looser than what is reached (it    !
-      !      once measured 7.9e-3 in theta here; it is now below 1e-4). ------------------------------!
-      call check_true('RK45 saturated: constitutive-domain excursion stays small (#78 item 2)', ood_peak < 2.0e-2_wp, &
+      !----- The constitutive-domain excursion, bounded rather than merely inspected: how far a         !
+      !      sub-step's starting theta lies outside [theta_res, theta_sat]. Under the water network it  !
+      !      can only lie above saturation, by the specific storage, so the bound is far looser than    !
+      !      what is reached (below 1e-4). -------------------------------------------------------------!
+      call check_true('RK45 saturated: constitutive-domain excursion stays small', ood_peak < 2.0e-2_wp,              &
               ood_peak)
       print '(a,es10.3)', '   (RK45 saturated: worst constitutive-domain excursion in theta= ', ood_peak
    end subroutine test_rk45_saturated
@@ -642,14 +627,15 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      do istep = 1_ik, 48_ik
+      do istep = 1_ik, 12_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          forc%rainfall = 0.0_wp
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       w_worst = budget%whole_water%worst
       psi_top = soil_psi_from_theta(col_config%soil%retention, biophys%soil_w%theta(1), col_config%soil%theta_sat(1), &
-                                    col_config%soil%theta_res(1), col_config%soil%vg_alpha(1), col_config%soil%vg_n(1))
+                                    col_config%soil%theta_res(1), col_config%soil%curve_par_a(1),          &
+                                    col_config%soil%curve_par_n(1))
       theta_seed = theta0
       call check_true('RK45 dry seam: the fixture really is moderately dry (-150 m < psi < -3 m)',                    &
               psi_top < -3.0_wp .and. psi_top > -150.0_wp, psi_top)
@@ -659,6 +645,29 @@ contains
               w_worst < 1.0e-8_wp, w_worst)
    end subroutine test_rk45_dry_uptake_seam
 
+
+   subroutine test_campbell_predawn_seed()
+      real(wp), parameter :: theta_sat = 0.43_wp, theta_res = 0.0_wp, psi_sat = -0.26_wp, b = 5.65_wp
+      type(soil_params_t) :: vg_soil
+      real(wp) :: cdiag(N_CDIAG, n), seed
+      vg_soil = col_config%soil
+      call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, test_bottoms, theta_sat, theta_res,     &
+                                  2.89e-6_wp, psi_sat, b, -3.37_wp, col_config%soil)
+      call set_noon_forcing()
+      call reset_state()
+      cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
+      cdiag = 0.0_wp
+      call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws,           &
+                            gpp_coh=gpp_coh, cdiag=cdiag)
+      col_config%soil = vg_soil
+      seed = grav_head * soil_psi_from_theta(SOIL_RETENTION_CAMPBELL, theta_seed, theta_sat, theta_res, psi_sat, b)
+      call check_true('Campbell seed: the cohort has no predawn potential of its own yet',                            &
+              col_cohort%dmax_psi_leaf(1) > 0.0_wp, col_cohort%dmax_psi_leaf(1))
+      call check_true('Campbell seed: the top layer is unsaturated (a seed below zero)', seed < 0.0_wp, seed)
+      call check_true('Campbell seed: the predawn seed is the Campbell curve''s top-layer potential',                 &
+              abs(cdiag(CD_PSI_PREDAWN, 1) - seed) <= 1.0e-12_wp * abs(seed), cdiag(CD_PSI_PREDAWN, 1))
+   end subroutine test_campbell_predawn_seed
 
    subroutine reset_state()
       integer(ik) :: kk
@@ -683,7 +692,7 @@ contains
       forc%rainfall = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(295.0_wp, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
-      call set_aero_env_atm(aenv, 295.0_wp, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
+      call set_aero_env_atm(aenv, 295.0_wp, forc%shv_atm, forc%co2_atm)   ! MO reference = this air, not 298.15 K
    end subroutine set_noon_forcing
 
    subroutine set_diurnal_forcing(istep)
@@ -697,12 +706,12 @@ contains
       forc%rainfall = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
-      call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
+      call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! MO reference = this air, not 298.15 K
    end subroutine set_diurnal_forcing
 
    !----- HARD cold snap: very cold, very dry reference air (~248-256 K) with a weak winter sun over the !
    !      warm (t0=288 K) soil the reset_state seeds -- a large canopy-through gradient that makes the    !
-   !      dense-canopy leaf<->CAS coupling stiff enough to rail the explicit RK45 surface (P6). ----------!
+   !      dense-canopy leaf<->CAS coupling stiff enough to rail the explicit RK45 surface. --------------!
    subroutine set_coldsnap_forcing(istep)
       integer(ik), intent(in) :: istep
       real(wp) :: t_sec, cosz, t_air
@@ -714,7 +723,7 @@ contains
       forc%rainfall = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.001_wp)   ! very dry cold air
       forc%shv_atm = 0.001_wp ; forc%co2_atm = 400.0_wp
-      call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
+      call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! MO reference = this air, not 298.15 K
    end subroutine set_coldsnap_forcing
 
 
@@ -725,7 +734,7 @@ contains
       real(wp), intent(out) :: theta_sum
       integer(ik) :: istep
       biophys%shed_water_rate = 0.0_wp
-      do istep = 1_ik, 576_ik
+      do istep = 1_ik, 24_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          forc%rainfall = 0.0_wp
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)

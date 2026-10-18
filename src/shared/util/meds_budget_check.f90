@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_budget_check -- shared CONSERVATION-checking facility for the coupled fast loop           !
-! (MEDS_COLUMN_DYNAMICS_DESIGN.md Part IV). Coupling makes conservation a CROSS-module property: !
+! (docs/science/numerical_scheme.md §5b). Coupling makes conservation a CROSS-module property:   !
 ! once the column driver sums cohort + ground + atmosphere fluxes into the canopy-air-space      !
 ! twins and threads soil<->plant water, the meaningful invariant is the COLUMN TOTAL, which no    !
 ! single kernel can see -- only the driver. This module gives everyone ONE closure predicate, a   !
@@ -12,9 +12,9 @@
 ! non-pure entries. It lives in `shared` (root of the DAG, deps meds_kinds only) so every process  !
 ! module and the driver test conservation identically.                                             !
 !                                                                                          !
-! TOLERANCE POLICY (2026-09 review, item 1A #1/#2). A residual is judged against the GROSS FLUX     !
-! that crossed the store's boundary over the window, never against the store itself: a soil column   !
-! holds ~1e9 J/m2, so a store-relative 1e-6 let a sustained ~1 W/m2 leak through every step. Pass    !
+! TOLERANCE POLICY. A residual is judged against the GROSS FLUX that crossed the store's boundary    !
+! over the window, never against the store itself: a soil column holds ~1e9 J/m2, so a               !
+! store-relative 1e-6 would let a sustained ~1 W/m2 leak through every step. Pass                    !
 ! scale = |influx| + |outflux| and atol = <rate floor> * dt, with the floors below. The accumulator  !
 ! also keeps the SIGNED cumulative residual, because a one-signed bias below the per-step tolerance  !
 ! is invisible to a running maximum and only shows up as a drift over a season.                      !
@@ -30,12 +30,12 @@ module meds_budget_check
 
    !----- Closure tolerances shared by every ledger (see the header). -------------------------!
    real(wp), parameter :: budget_rtol_flux         = 1.0e-6_wp  !< [-] relative to the gross boundary flux
-   !----- The energy floor is 1e-2 W/m2, not the 1e-3 the water/CO2 floors' precision would suggest:  !
-   !      under a melting snow pack the whole-column ledger carries an unattributed, sign-oscillating  !
-   !      residual of up to ~0.7 J/m2 per 150 s step (5e-3 W/m2; the CAS, soil, pack and pond ledgers  !
-   !      each close to 1e-9 on the same steps). It is 100x below the old store-scaled tolerance and    !
-   !      sums to ~-14 J/m2 over a day, but it is not round-off -- an open item (review 2026-09). -----!
-   real(wp), parameter :: budget_energy_rate_floor = 1.0e-2_wp  !< [W/m2]      absolute floor, as a rate
+   !----- The energy floor, 1e-3 W/m2, is 0.9 J/m2 over a 900 s step. It sits far above the round-off  !
+   !      of the column's energy stores (each ~1e9 J/m2, so ~1e-7 J/m2 a step; every energy ledger,    !
+   !      the whole column's under a melting snow pack included, closes to ~1e-6 J/m2 a step) and far  !
+   !      below any flux the column resolves. It is the water floor's order: 1e-9 kg/m2/s of           !
+   !      evaporation carries 2.5e-3 W/m2 of latent heat. ---------------------------------------------!
+   real(wp), parameter :: budget_energy_rate_floor = 1.0e-3_wp  !< [W/m2]      absolute floor, as a rate
    real(wp), parameter :: budget_water_rate_floor  = 1.0e-9_wp  !< [kg/m2/s]   (~1e-4 mm/day)
    real(wp), parameter :: budget_co2_rate_floor    = 1.0e-6_wp  !< [umol/m2/s]
 

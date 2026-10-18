@@ -3,14 +3,12 @@
 ! meds_diagnostic_reduce -- generic WEIGHTED aggregation of the demographic state across scales. !
 ! ONE weighted aggregation, in place of a bag of hand-written per-patch total_* loops.            !
 !                                                                                          !
-! Stage [3] of the diagnostic wall (MEDS_IO_V01_PLAN.md section 3.1). The idea it replaces: each    !
-! site-level number used to be its own subroutine that re-walked the patch/CSR loop with its own    !
-! weighting inlined, so a new one cost ~10 lines of boilerplate and a per-PATCH or per-PFT twin      !
-! of the same quantity was simply not expressible. Here there is ONE reduction, parameterized by     !
-! an explicit WEIGHT KIND, and every scale is a different entry point into it -- which is what lets  !
-! one registry line emit a quantity's cohort / patch / site / PFT / size-class variants.             !
+! Stage [3] of the diagnostic wall (docs/science/diagnostics.md §1-§2). There is ONE reduction,      !
+! parameterized by an explicit WEIGHT KIND, and every scale is a different entry point into it --    !
+! which is what lets one registry line emit a quantity's cohort / patch / site / PFT / size-class    !
+! variants, with no per-quantity loop.                                                               !
 !                                                                                          !
-! THE TWO RULES THAT MAKE AGGREGATION CORRECT (getting either wrong is the classic diagnostics bug): !
+! THE TWO RULES THAT MAKE AGGREGATION CORRECT (docs/science/diagnostics.md §2):                      !
 !                                                                                          !
 !   EXTENSIVE vs INTENSIVE. An extensive per-plant quantity (agb [kgC/plant], leaf_area [m2/plant])  !
 !   aggregates as a weighted SUM and lands in per-ground-area units. An intensive one (dbh,          !
@@ -23,13 +21,11 @@
 !   one of those has a zero denominator. They return `valid = .false.` and the caller emits            !
 !   _FillValue; they never return 0/0, and a MEAN never silently reports 0 for "nothing here".         !
 !                                                                                          !
-! ASSOCIATION ORDER IS PART OF THE CONTRACT. The reductions below deliberately use the same           !
-! `sum(array-expression)` construct, in the same order, as the total_* routines they replace, so the   !
-! port is bit-identical rather than merely close (the P0 acceptance test asserts exactly that). Do     !
-! not "tidy" a sum() into an explicit loop here -- the compiler is free to associate the two            !
-! differently, and the last bit is what the gate tests.                                                !
+! ASSOCIATION ORDER. The reductions below use the `sum(array-expression)` construct in a fixed        !
+! order. Do not "tidy" a sum() into an explicit loop here: the compiler is free to associate the two   !
+! differently, which moves every reported total in its last bit.                                      !
 !                                                                                          !
-! netCDF-FREE: links meds_core (site_t) + meds_shared. Part of the meds_io_prep target.                !
+! netCDF-FREE: part of the meds_io_prep target, which links meds_demography (and through it site_t). !
 !==========================================================================================!
 module meds_diagnostic_reduce
    use meds_kinds,     only : wp, ik
@@ -47,8 +43,8 @@ module meds_diagnostic_reduce
    public :: cohort_weight, reduce_cohort_to_site, reduce_cohort_to_patch
    public :: reduce_cohort_to_pft, reduce_cohort_to_size
    public :: reduce_patch_to_site, reduce_patch_column_to_site, gather_patch_columns
-   !----- Convenience site totals, kept as thin wrappers so existing callers (meds_main, the   !
-   !      legacy meds_io writer, the conservation tests) do not change.                         !
+   !----- Convenience site totals, thin wrappers for the callers that want one number (the    !
+   !      driver's summaries, the C API, the tests).                                            !
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area, mean_dbh
    public :: total_gpp, total_npp, site_soil_temp_column, site_soil_water_column
    public :: mean_can_temp, mean_soil_temp_top, total_et
@@ -59,7 +55,8 @@ module meds_diagnostic_reduce
 
    !=======================================================================================!
    !  WEIGHT KINDS. A weight is a PER-COHORT quantity w_i; patch area is applied separately    !
-   !  at the patch -> site step, never folded in here, so the same w works at every scale.      !
+   !  at the patch -> site step, never folded in here, so the same w works at every scale       !
+   !  (docs/science/diagnostics.md eqs. (1)-(2)):                                               !
    !                                                                                          !
    !    patch value (sum)  = SUM_{i in p} w_i * x_i                                             !
    !    patch value (mean) = SUM_{i in p} w_i * x_i / SUM_{i in p} w_i                          !
@@ -105,9 +102,9 @@ contains
 
    !----- Reduce a per-cohort field x(1:ncohort) to one site scalar.                          !
    !                                                                                          !
-   !      `scale` multiplies the per-patch contribution BEFORE it is accumulated, matching the  !
-   !      `area * sum(...) * cm2_to_m2` order the total_* routines used -- applying it once at   !
-   !      the end instead would change the rounding and break the bit-identity gate.            !
+   !      `scale` multiplies the per-patch contribution BEFORE it is accumulated               !
+   !      (`area * sum(...) * scale`); applying it once at the end instead would change the     !
+   !      rounding of every scaled total.                                                       !
    pure subroutine reduce_cohort_to_site(site, x, wkind, mean, val, valid, scale)
       type(site_t),       intent(in)  :: site
       real(wp),           intent(in)  :: x(:)
@@ -266,10 +263,9 @@ contains
    !                                                                                          !
    !      `mean = .false.` gives the plain SUM_p area_p * x_p. For a per-ground-area quantity   !
    !      that IS the area-weighted mean, because MEDS renormalizes patch area to 1 on every     !
-   !      restructuring (meds_main asserts |sum-1| < 1e-5 at the end of a run). `mean = .true.`  !
+   !      restructuring (the driver checks |sum-1| < 1e-5 at the end of a run). `mean = .true.`  !
    !      divides by SUM area anyway, which differs only in the last bit but is robust to a      !
-   !      caller that has not renormalized. Both forms exist because the routines this module    !
-   !      replaces used both, and the port is bit-identical.                                     !
+   !      caller that has not renormalized.                                                      !
    pure subroutine reduce_patch_to_site(site, x, mean, val, valid)
       type(site_t), intent(in)  :: site
       real(wp),     intent(in)  :: x(:)
@@ -310,7 +306,7 @@ contains
    end subroutine reduce_patch_column_to_site
 
    !----- FLATTEN per-patch columns into the 2-D (layer, patch) slab, no reduction at all      !
-   !      (DIM_SOIL_PATCH, MEDS_IO_V01_PLAN.md section 3.6.1).                                   !
+   !      (DIM_SOIL_PATCH; docs/science/diagnostics.md §3).                                      !
    !                                                                                          !
    !      The stride is the COMPILE-TIME n_soil_layer_max, never the live layer count. That is   !
    !      the load-bearing detail: striding by a live count would silently re-map every profile   !
@@ -338,10 +334,6 @@ contains
 
    !=======================================================================================!
    !  Convenience site totals (thin wrappers over the generic reduction).                    !
-   !                                                                                        !
-   !  These are the names meds_main, the legacy meds_io writer and the conservation tests     !
-   !  already call. They are kept -- and kept EXACTLY equivalent, association order included --  !
-   !  so the reduction refactor is invisible to every existing caller.                          !
    !=======================================================================================!
 
    !----- Site plant number [plant m-2 ground]. -------------------------------------------!
@@ -499,7 +491,7 @@ contains
 
    !----- Site heterotrophic respiration over the slow step [kgC m-2 ground]: the fast loop's  !
    !      independently-accumulated matrix Rh. Equals the daily soil_carbon_step's rh_today by  !
-   !      construction (the B2 double-count identity), so this is exact, not an approximation.  !
+   !      construction (docs/science/soil_carbon.md §7), so this is exact, not an approximation. !
    pure real(wp) function total_rh(site) result(tot)
       type(site_t), intent(in) :: site
       real(wp) :: x(max(site%patch%n, 1_ik))
@@ -536,7 +528,7 @@ contains
    end subroutine site_soil_water_column
 
    !=======================================================================================!
-   !  Health checks / reporting (unchanged behaviour, moved here with their neighbours).     !
+   !  Health checks / reporting                                                              !
    !=======================================================================================!
 
    pure integer(ik) function count_cohorts(site) result(nc)
