@@ -340,15 +340,18 @@ contains
       logical,                 intent(in)    :: active
       integer(ik), optional,   intent(in)    :: nfield   !< default N_CDIAG (the fast block)
       integer(ik) :: nf
-      nf = N_CDIAG ; if (present(nfield)) nf = nfield
+      nf = N_CDIAG
+      if (present(nfield)) nf = nfield
       d%active = active
       d%nfield = nf
       if (.not. active) return
       if (allocated(d%v)) deallocate(d%v)
       if (allocated(d%w)) deallocate(d%w)
       allocate(d%v(nf, max(cap,1_ik)), d%w(max(cap,1_ik)))
-      d%v = 0.0_wp ; d%w = 0.0_wp          ! the first window starts empty: nothing zeroes it later
-      d%cap = max(cap, 1_ik) ; d%n = 0_ik
+      d%v = 0.0_wp
+      d%w = 0.0_wp          ! the first window starts empty: nothing zeroes it later
+      d%cap = max(cap, 1_ik)
+      d%n = 0_ik
       call cohort_diag_reset(d)
    end subroutine cohort_diag_alloc
 
@@ -356,7 +359,9 @@ contains
       type(cohort_diag_block), intent(inout) :: d
       if (allocated(d%v)) deallocate(d%v)
       if (allocated(d%w)) deallocate(d%w)
-      d%cap = 0_ik ; d%n = 0_ik ; d%active = .false.
+      d%cap = 0_ik
+      d%n = 0_ik
+      d%active = .false.
    end subroutine cohort_diag_free
 
    !----- Grow to at least `need` slots, preserving the live prefix (the ensure_capacity twin). !
@@ -371,11 +376,14 @@ contains
       !      ahead of the count (a boundary's restructuring before any fast loop has set n). ---------!
       m = d%cap
       allocate(v2(int(size(d%v,1),ik), need), w2(need))
-      v2 = 0.0_wp ; w2 = 0.0_wp
+      v2 = 0.0_wp
+      w2 = 0.0_wp
       if (m > 0_ik) then
-         v2(:, 1:m) = d%v(:, 1:m) ; w2(1:m) = d%w(1:m)
+         v2(:, 1:m) = d%v(:, 1:m)
+         w2(1:m) = d%w(1:m)
       end if
-      call move_alloc(v2, d%v) ; call move_alloc(w2, d%w)
+      call move_alloc(v2, d%v)
+      call move_alloc(w2, d%w)
       d%cap = need
    end subroutine cohort_diag_grow
 
@@ -422,7 +430,8 @@ contains
       integer(ik),             intent(in)    :: i
       if (.not. d%active) return
       if (i < 1_ik .or. i > d%cap) return
-      d%v(:, i) = 0.0_wp ; d%w(i) = 0.0_wp
+      d%v(:, i) = 0.0_wp
+      d%w(i) = 0.0_wp
    end subroutine cohort_diag_clear_slot
 
    !----- Blend the donor into the survivor on cohort fusion, each field by its own kind.      !
@@ -501,8 +510,10 @@ contains
       if (allocated(d%v)) deallocate(d%v)
       if (allocated(d%w)) deallocate(d%w)
       allocate(d%v(N_PDIAG, max(cap,1_ik)), d%w(max(cap,1_ik)))
-      d%v = 0.0_wp ; d%w = 0.0_wp          ! as cohort_diag_alloc
-      d%cap = max(cap, 1_ik) ; d%n = 0_ik
+      d%v = 0.0_wp
+      d%w = 0.0_wp          ! as cohort_diag_alloc
+      d%cap = max(cap, 1_ik)
+      d%n = 0_ik
       call patch_diag_reset(d)
    end subroutine patch_diag_alloc
 
@@ -510,7 +521,9 @@ contains
       type(patch_diag_block), intent(inout) :: d
       if (allocated(d%v)) deallocate(d%v)
       if (allocated(d%w)) deallocate(d%w)
-      d%cap = 0_ik ; d%n = 0_ik ; d%active = .false.
+      d%cap = 0_ik
+      d%n = 0_ik
+      d%active = .false.
    end subroutine patch_diag_free
 
    subroutine patch_diag_grow(d, need)
@@ -522,11 +535,14 @@ contains
       if (need <= d%cap) return
       m = d%cap                              ! every existing slot (see cohort_diag_grow)
       allocate(v2(N_PDIAG, need), w2(need))
-      v2 = 0.0_wp ; w2 = 0.0_wp
+      v2 = 0.0_wp
+      w2 = 0.0_wp
       if (m > 0_ik) then
-         v2(:, 1:m) = d%v(:, 1:m) ; w2(1:m) = d%w(1:m)
+         v2(:, 1:m) = d%v(:, 1:m)
+         w2(1:m) = d%w(1:m)
       end if
-      call move_alloc(v2, d%v) ; call move_alloc(w2, d%w)
+      call move_alloc(v2, d%v)
+      call move_alloc(w2, d%w)
       d%cap = need
    end subroutine patch_diag_grow
 
@@ -561,7 +577,8 @@ contains
       integer(ik),            intent(in)    :: i
       if (.not. d%active) return
       if (i < 1_ik .or. i > d%cap) return
-      d%v(:, i) = 0.0_wp ; d%w(i) = 0.0_wp
+      d%v(:, i) = 0.0_wp
+      d%w(i) = 0.0_wp
    end subroutine patch_diag_clear_slot
 
    !----- Area-weighted blend on patch fusion. Every patch diagnostic is per m2 of ITS OWN     !
@@ -593,7 +610,8 @@ contains
       integer(ik) :: i
       if (.not. d%active) return
       if (dst < 1_ik .or. dst > d%cap) return
-      d%v(:, dst) = 0.0_wp ; d%w(dst) = 0.0_wp
+      d%v(:, dst) = 0.0_wp
+      d%w(dst) = 0.0_wp
       d%n = max(d%n, dst)
       atot = sum(donor_area)
       if (atot <= tiny_num) return
@@ -633,7 +651,8 @@ contains
    subroutine polygon_diag_reset(d)
       type(polygon_diag_block), intent(inout) :: d
       if (.not. d%active) return
-      d%v = 0.0_wp ; d%w = 0.0_wp
+      d%v = 0.0_wp
+      d%w = 0.0_wp
    end subroutine polygon_diag_reset
 
    !----- The step mean of one field; 0 if nothing was accumulated, as the patch block reads. --!

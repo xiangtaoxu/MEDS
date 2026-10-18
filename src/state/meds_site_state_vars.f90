@@ -148,7 +148,8 @@ contains
       type(site_t), intent(inout) :: site
       integer(ik), allocatable :: perm(:), pos(:), slot(:)
       integer(ik)              :: i, ip, np, nc
-      np = site%patch%n ; nc = site%cohort%n
+      np = site%patch%n
+      nc = site%cohort%n
       if (np < 1_ik) then                                  ! no patches: nothing to group
          if (nc > 0_ik) error stop 'rebuild_csr: cohorts present with no patches'
          return

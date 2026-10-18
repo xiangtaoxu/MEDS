@@ -783,6 +783,15 @@ each file's own alignment.
   the stand, at setup). The type's other unseeded values are 0, and `cohort_birth_state` reads
   `can_temp > 0` as "seeded". Making the two 0 as well would change test fixtures and runs without the
   fast loop, so it is its own change.
+- **Tissue energy as the integrated variable (owner, 2026-10-18).** `leaf_energy` and `wood_energy`
+  become prognostic next to `leaf_temp` and `wood_temp`, with temperature and liquid fraction
+  diagnosed from energy, so that leaves and wood can freeze in temperate and boreal runs. The same
+  plan decides where heat capacity lives. Today it is computed on demand: `tissue_heat_capacity`
+  (`meds_therm_lib`) is called through the `cohort_tissue_heat_capacity` wrapper, read only by the slow
+  step (fusion, the slow ledger, death and birth). The fast loop builds its own copy each sub-step
+  (`leaf_hcap_per_dt` in `meds_fast_frozen`). Heat capacity depends on tissue water, which both loops
+  write in several places, so it is not stored. Once temperature is diagnosed from energy in both
+  loops, there should be one heat-capacity formula, called by both.
 - **The TOML site file** (the location, ground and starting state split from the model settings): the
   owner will revisit.
 - **"column" elsewhere.** The fast loop's `column_cohort_t`, `meds_column_view`, `build_column_frozen`
@@ -874,3 +883,9 @@ Bit-identical.
 `free_cohort_block`, and the patch twins `alloc_patch_block`, `expand_patch_block`,
 `reorder_patch_block`, `free_patch_block`. `copy_cohort` copies one cohort into another slot.
 `allometry_t` stays as it is; the owner will revisit the allometry separately. Bit-identical.
+
+**One statement per line (2026-10-18).** The owner found no rule for when short statements may share a
+line with `;`, so the four state files have none: each statement is on its own line, and a trailing
+comment stays with the last statement it followed. The rest of `src/` (about 1,100 lines in 70 files)
+and a lint that keeps `;` out follow in their own change. A tissue's heat capacity stays computed on
+demand; where it lives is part of the tissue-energy plan (§9). Bit-identical.

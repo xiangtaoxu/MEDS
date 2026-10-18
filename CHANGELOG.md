@@ -78,6 +78,7 @@ reorganized by model hierarchy, with no change to any result (#448).
     is `set_cohort_wood_allometry`.
   - The "no value yet" markers and a newborn's phenology are in `meds_state_defaults`, and a tissue's
     heat capacity is `tissue_heat_capacity` in `meds_therm_lib`.
+  - The four files write one statement per line: no `;` joins two statements.
   - The diagnostic rows are renumbered by section, the patch's slow rows after its fast rows; every
     reader takes them by name.
   - The kernels' rule never to see `site_t` is checked by a lint (ctest `kernels_no_site_state`),

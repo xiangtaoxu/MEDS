@@ -310,7 +310,9 @@ contains
       type(cas_state_t), intent(in) :: a, b
       type(cas_state_t)             :: c
       real(wp) :: m1, m2, mt
-      m1 = w1 * a%can_depth ; m2 = w2 * b%can_depth ; mt = m1 + m2
+      m1 = w1 * a%can_depth
+      m2 = w2 * b%can_depth
+      mt = m1 + m2
       c%can_depth = mt                                   ! = w1*d1 + w2*d2, the area-weighted depth
       if (mt > tiny_num) then        ! below it, a blend has no air mass to conserve
          c%can_enthalpy = (m1 * a%can_enthalpy + m2 * b%can_enthalpy) / mt
@@ -363,7 +365,8 @@ contains
       real(wp), optional, intent(out)   :: dw_open    !< [kg/m2]    vapour    entrained (+) / detrained (-)
       real(wp), optional, intent(out)   :: dc_open    !< [umol/m2]  CO2       entrained (+) / detrained (-)
       real(wp) :: dmass, dmol
-      dmass = 0.0_wp ; dmol = 0.0_wp
+      dmass = 0.0_wp
+      dmol = 0.0_wp
       if (present(rho_air)) then
          dmass = rho_air * (depth_new - cas%can_depth)
          dmol  = cas_molar_density(rho_air, cas%can_shv) * (depth_new - cas%can_depth)
@@ -482,13 +485,18 @@ contains
    subroutine alloc_patch_block(patch, cap, n_pft)
       type(patch_block), intent(inout) :: patch
       integer(ik),       intent(in)    :: cap, n_pft
-      patch%cap = cap ; patch%n = 0_ik
+      patch%cap = cap
+      patch%n = 0_ik
       !----- 1. Identity and area ---------------------------------------------------------------!
       allocate(patch%global_id(cap), patch%dist_type(cap), patch%area(cap), patch%age(cap))
-      patch%global_id = 0_ik ; patch%dist_type = DIST_PRIMARY ; patch%area = 0.0_wp ; patch%age = 0.0_wp
+      patch%global_id = 0_ik
+      patch%dist_type = DIST_PRIMARY
+      patch%area = 0.0_wp
+      patch%age = 0.0_wp
       !----- 2. Cohort map ----------------------------------------------------------------------!
       allocate(patch%cohort_offset(cap), patch%cohort_count(cap))
-      patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik
+      patch%cohort_offset = 0_ik
+      patch%cohort_count = 0_ik
       !----- 3. Recruit bank --------------------------------------------------------------------!
       allocate(patch%recruit_pool(n_pft, cap))
       patch%recruit_pool = 0.0_wp
@@ -502,7 +510,8 @@ contains
       allocate(patch%soil_carbon(cap))                      ! default-initialised by its type
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
       allocate(patch%shed_water_rate(cap), patch%slow_co2_rate(cap))
-      patch%shed_water_rate = 0.0_wp ; patch%slow_co2_rate = 0.0_wp
+      patch%shed_water_rate = 0.0_wp
+      patch%slow_co2_rate = 0.0_wp
       !----- 9. Within-step accumulators --------------------------------------------------------!
       allocate(patch%xi_accum(cap), patch%litter_in(cap))   ! default-initialised by its type
       !----- 10. Solver memory ------------------------------------------------------------------!
@@ -527,7 +536,8 @@ contains
       !----- Grow the diagnostic block in place; the move_alloc list below leaves it alone.  -----!
       call patch_diag_grow(patch%diag, newcap)
       call alloc_patch_block(tmp, newcap, n_pft)
-      m = patch%n ; tmp%n = m
+      m = patch%n
+      tmp%n = m
       !----- 1. Identity and area ---------------------------------------------------------------!
       tmp%global_id(1:m) = patch%global_id(1:m)
       tmp%dist_type(1:m) = patch%dist_type(1:m)
@@ -555,7 +565,8 @@ contains
       tmp%litter_in(1:m) = patch%litter_in(1:m)
       !----- 10. Solver memory ------------------------------------------------------------------!
       tmp%adapt_dt_last(1:m) = patch%adapt_dt_last(1:m)
-      patch%n = tmp%n ; patch%cap = tmp%cap
+      patch%n = tmp%n
+      patch%cap = tmp%cap
       !----- 1. Identity and area ---------------------------------------------------------------!
       call move_alloc(tmp%global_id, patch%global_id)
       call move_alloc(tmp%dist_type, patch%dist_type)
@@ -629,7 +640,8 @@ contains
    !----- Free every per-patch array. -------------------------------------------------------!
    subroutine free_patch_block(patch)
       type(patch_block), intent(inout) :: patch
-      patch%n = 0_ik ; patch%cap = 0_ik
+      patch%n = 0_ik
+      patch%cap = 0_ik
       if (allocated(patch%area)) deallocate(patch%global_id, patch%dist_type, patch%area, patch%age,           &
                                             patch%cohort_offset, patch%cohort_count, patch%recruit_pool,       &
                                             patch%cas, patch%snow, patch%soil_w, patch%soil_e,                 &

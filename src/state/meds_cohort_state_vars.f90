@@ -155,58 +155,86 @@ contains
    subroutine alloc_cohort_block(cohort, cap, nwin)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: cap, nwin
-      cohort%cap = cap ; cohort%n = 0_ik
+      cohort%cap = cap
+      cohort%n = 0_ik
       !----- 1. Identity and density ------------------------------------------------------------!
       allocate(cohort%pft(cap), cohort%global_id(cap), cohort%owner_patch(cap), cohort%nplant(cap))
-      cohort%pft = 0_ik ; cohort%global_id = 0_ik ; cohort%owner_patch = 0_ik ; cohort%nplant = 0.0_wp
+      cohort%pft = 0_ik
+      cohort%global_id = 0_ik
+      cohort%owner_patch = 0_ik
+      cohort%nplant = 0.0_wp
       !----- 2. Carbon pools --------------------------------------------------------------------!
       allocate(cohort%leaf_carbon(cap), cohort%fineroot_carbon(cap), cohort%wood_carbon(cap),                  &
                cohort%nonstructural_carbon(cap))
-      cohort%leaf_carbon = 0.0_wp ; cohort%fineroot_carbon = 0.0_wp ; cohort%wood_carbon = 0.0_wp
+      cohort%leaf_carbon = 0.0_wp
+      cohort%fineroot_carbon = 0.0_wp
+      cohort%wood_carbon = 0.0_wp
       cohort%nonstructural_carbon = 0.0_wp
       !----- 3. Size, derived from the carbon pools ---------------------------------------------!
       allocate(cohort%dbh(cap), cohort%height(cap), cohort%basal_area(cap), cohort%agb(cap),                   &
                cohort%leaf_area(cap), cohort%wood_area(cap), cohort%sapwood_carbon(cap),                       &
                cohort%sapwood_area(cap), cohort%overtopping_lai(cap))
-      cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp ; cohort%agb = 0.0_wp
-      cohort%leaf_area = 0.0_wp ; cohort%wood_area = 0.0_wp ; cohort%sapwood_carbon = 0.0_wp
-      cohort%sapwood_area = 0.0_wp ; cohort%overtopping_lai = 0.0_wp
+      cohort%dbh = 0.0_wp
+      cohort%height = 0.0_wp
+      cohort%basal_area = 0.0_wp
+      cohort%agb = 0.0_wp
+      cohort%leaf_area = 0.0_wp
+      cohort%wood_area = 0.0_wp
+      cohort%sapwood_carbon = 0.0_wp
+      cohort%sapwood_area = 0.0_wp
+      cohort%overtopping_lai = 0.0_wp
       !----- 4. Water ---------------------------------------------------------------------------!
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap), cohort%leaf_surf_water(cap),          &
                cohort%wood_surf_water(cap), cohort%dmax_psi_leaf(cap))
-      cohort%leaf_water_mass = 0.0_wp ; cohort%wood_water_mass = 0.0_wp ; cohort%leaf_surf_water = 0.0_wp
-      cohort%wood_surf_water = 0.0_wp ; cohort%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
+      cohort%leaf_water_mass = 0.0_wp
+      cohort%wood_water_mass = 0.0_wp
+      cohort%leaf_surf_water = 0.0_wp
+      cohort%wood_surf_water = 0.0_wp
+      cohort%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
       !----- 5. Energy --------------------------------------------------------------------------!
       allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap))
-      cohort%leaf_temp = 0.0_wp ; cohort%wood_temp = 0.0_wp      ! a slot's tissue state is set at birth
+      cohort%leaf_temp = 0.0_wp
+      cohort%wood_temp = 0.0_wp      ! a slot's tissue state is set at birth
       !----- 6. Plastic leaf traits -------------------------------------------------------------!
       allocate(cohort%sla(cap), cohort%vcmax25(cap), cohort%rd25(cap), cohort%leaf_turnover_rate(cap))
-      cohort%sla = 0.0_wp ; cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp
+      cohort%sla = 0.0_wp
+      cohort%vcmax25 = 0.0_wp
+      cohort%rd25 = 0.0_wp
       cohort%leaf_turnover_rate = 0.0_wp
       !----- 7. Leaf phenology ------------------------------------------------------------------!
       allocate(cohort%leaf_flush_tendency(cap), cohort%leaf_shed_tendency(cap),                                &
                cohort%growing_degree_days(cap), cohort%cold_degree_days(cap), cohort%dry_psi_sum(cap),         &
                cohort%wet_psi_sum(cap), cohort%light_hours_mean(cap))
-      cohort%leaf_flush_tendency = PHENO_FLUSH_INIT ; cohort%leaf_shed_tendency = PHENO_SHED_INIT
-      cohort%growing_degree_days = 0.0_wp ; cohort%cold_degree_days = 0.0_wp ; cohort%dry_psi_sum = 0.0_wp
-      cohort%wet_psi_sum = 0.0_wp ; cohort%light_hours_mean = LIGHT_HOURS_MEAN_UNSET
+      cohort%leaf_flush_tendency = PHENO_FLUSH_INIT
+      cohort%leaf_shed_tendency = PHENO_SHED_INIT
+      cohort%growing_degree_days = 0.0_wp
+      cohort%cold_degree_days = 0.0_wp
+      cohort%dry_psi_sum = 0.0_wp
+      cohort%wet_psi_sum = 0.0_wp
+      cohort%light_hours_mean = LIGHT_HOURS_MEAN_UNSET
       !----- 8. Growth history ------------------------------------------------------------------!
       allocate(cohort%growth_avg(cap), cohort%growth_accum(cap), cohort%growth_count(cap),                     &
                cohort%growth_hist(nwin, cap))
-      cohort%growth_avg = GROWTH_AVG_UNSET ; cohort%growth_accum = 0.0_wp ; cohort%growth_count = 0_ik
+      cohort%growth_avg = GROWTH_AVG_UNSET
+      cohort%growth_accum = 0.0_wp
+      cohort%growth_count = 0_ik
       cohort%growth_hist = 0.0_wp
       !----- 9. Fast-to-slow accumulators -------------------------------------------------------!
       allocate(cohort%gpp_accum(cap), cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap),                &
                cohort%root_resp_accum(cap), cohort%light_hours_accum(cap), cohort%dmax_psi_leaf_accum(cap))
-      cohort%gpp_accum = 0.0_wp ; cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp
-      cohort%root_resp_accum = 0.0_wp ; cohort%light_hours_accum = 0.0_wp
+      cohort%gpp_accum = 0.0_wp
+      cohort%leaf_resp_accum = 0.0_wp
+      cohort%stem_resp_accum = 0.0_wp
+      cohort%root_resp_accum = 0.0_wp
+      cohort%light_hours_accum = 0.0_wp
       cohort%dmax_psi_leaf_accum = DMAX_PSI_LEAF_ACCUM_RESET
    end subroutine alloc_cohort_block
 
    !----- Free every per-cohort array. ------------------------------------------------------!
    subroutine free_cohort_block(cohort)
       type(cohort_block), intent(inout) :: cohort
-      cohort%n = 0_ik ; cohort%cap = 0_ik
+      cohort%n = 0_ik
+      cohort%cap = 0_ik
       if (allocated(cohort%nplant)) deallocate(cohort%pft, cohort%global_id, cohort%owner_patch,               &
                                                cohort%nplant, cohort%leaf_carbon, cohort%fineroot_carbon,      &
                                                cohort%wood_carbon, cohort%nonstructural_carbon, cohort%dbh,    &
@@ -308,7 +336,8 @@ contains
       !----- 10. Output accumulators ------------------------------------------------------------!
       !----- Carry the (already grown) diagnostic block over the fresh tmp, whose own diag is      !
       !      inactive -- move_cohort_block copies tmp INTO cohort, so it must be the one holding it. !
-      tmp%diag = cohort%diag ; tmp%sdiag = cohort%sdiag
+      tmp%diag = cohort%diag
+      tmp%sdiag = cohort%sdiag
       call move_cohort_block(tmp, cohort)
    end subroutine expand_cohort_block
 
@@ -316,7 +345,8 @@ contains
    subroutine move_cohort_block(src, dst)
       type(cohort_block), intent(inout) :: src
       type(cohort_block), intent(inout) :: dst
-      dst%n = src%n ; dst%cap = src%cap
+      dst%n = src%n
+      dst%cap = src%cap
       !----- 1. Identity and density ------------------------------------------------------------!
       call move_alloc(src%pft, dst%pft)
       call move_alloc(src%global_id, dst%global_id)
@@ -450,7 +480,8 @@ contains
       logical,            intent(in)    :: keep(:)
       integer(ik), allocatable :: perm(:)
       integer(ik)              :: i, m
-      allocate(perm(cohort%n)) ; m = 0_ik
+      allocate(perm(cohort%n))
+      m = 0_ik
       do i = 1_ik, cohort%n
          if (keep(i)) then
             m = m + 1_ik
