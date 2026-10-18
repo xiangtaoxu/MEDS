@@ -23,7 +23,7 @@ module meds_patch_state_vars
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, n_snow_layer_max
    use meds_therm_lib,        only : cas_molar_density
-   use meds_diag_vars,        only : patch_diag_block, patch_diag_grow
+   use meds_diag_vars,        only : patch_diag_block, patch_diag_grow, patch_diag_reorder
    use meds_config,           only : meds_config_t
    use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
    implicit none
@@ -39,7 +39,7 @@ module meds_patch_state_vars
    public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon, blend_xi_accum
    public :: blend_litter_input
                                                                     !< area-weighted mix (patch fusion / disturbance seed)
-   public :: patch_block, patch_alloc, patch_ensure_capacity, patch_free, patch_birth_state
+   public :: patch_block, patch_alloc, patch_ensure_capacity, patch_reorder, patch_free, patch_birth_state
 
    !----- Prognostic per-patch soil WATER column (the value the hydrology kernel updates). --!
    type :: soil_column_t
@@ -462,8 +462,7 @@ contains
    !  patch SoA can hold at least `need` patches, growing 1.5x if it must. Same n/cap      !
    !  reserve model, no-op fast path, geometric growth, and move_alloc as in the           !
    !  cohort routine. LOCKSTEP SITE: a new per-patch field must be copied here (1:n)       !
-   !  and move_alloc'd, then registered at sort_patches / patch_compact -- the patch       !
-   !  lockstep sites, since patches have no single reorder routine like cohorts do.        !
+   !  and move_alloc'd, and listed in patch_alloc, patch_reorder and patch_free.           !
    !=======================================================================================!
    subroutine patch_ensure_capacity(patch, need, n_pft)
       type(patch_block), intent(inout) :: patch
@@ -508,6 +507,36 @@ contains
       call move_alloc(tmp%slow_co2_rate,   patch%slow_co2_rate)
       call move_alloc(tmp%adapt_dt_last,   patch%adapt_dt_last)
    end subroutine patch_ensure_capacity
+
+   !=======================================================================================!
+   !  The patch twin of cohort_reorder: place old index perm(k) at new position k, for       !
+   !  k=1..m, in every per-patch array and the diagnostic block. Array assignment with a     !
+   !  vector subscript on the RHS is evaluated to a temporary first, so self-permutation is  !
+   !  safe. The CSR map is not permuted: rebuild_csr derives it from the cohorts afterwards. !
+   !=======================================================================================!
+   subroutine patch_reorder(patch, perm, m)
+      type(patch_block), intent(inout) :: patch
+      integer(ik),       intent(in)    :: perm(:)
+      integer(ik),       intent(in)    :: m
+      patch%area(1:m)            = patch%area(perm(1:m))
+      patch%age(1:m)             = patch%age(perm(1:m))
+      patch%dist_type(1:m)       = patch%dist_type(perm(1:m))
+      patch%recruit_pool(:,1:m)  = patch%recruit_pool(:,perm(1:m))
+      patch%global_id(1:m)       = patch%global_id(perm(1:m))
+      patch%cas(1:m)             = patch%cas(perm(1:m))
+      patch%soil_e(1:m)          = patch%soil_e(perm(1:m))
+      patch%soil_w(1:m)          = patch%soil_w(perm(1:m))
+      patch%snow(1:m)            = patch%snow(perm(1:m))
+      patch%soil_carbon(1:m)     = patch%soil_carbon(perm(1:m))
+      patch%xi_accum(1:m)        = patch%xi_accum(perm(1:m))
+      patch%litter_in(1:m)       = patch%litter_in(perm(1:m))
+      patch%shed_water_rate(1:m) = patch%shed_water_rate(perm(1:m))
+      patch%slow_co2_rate(1:m)   = patch%slow_co2_rate(perm(1:m))
+      patch%adapt_dt_last(1:m)   = patch%adapt_dt_last(perm(1:m))
+      !----- The per-patch diagnostic accumulators ride the same permutation. ---------------!
+      call patch_diag_reorder(patch%diag, perm, m)
+      patch%n = m
+   end subroutine patch_reorder
 
    !----- Free every per-patch array. -------------------------------------------------------!
    subroutine patch_free(patch)

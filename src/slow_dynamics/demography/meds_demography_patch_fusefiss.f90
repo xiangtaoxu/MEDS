@@ -22,11 +22,11 @@ module meds_demography_patch_fusefiss
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_cohort_state_vars, only : cohort_compact, cohort_ensure_capacity, copy_cohort_slot, scale_cohort_ground_fields, &
                                       cohort_tissue_water
-   use meds_patch_state_vars, only : patch_ensure_capacity
    use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
-   use meds_diag_vars,        only : patch_diag_reorder, patch_diag_blend, patch_diag_inherit, PD_DISTURB_AREA, PD_MORT_C_DISTURB
+   use meds_diag_vars,        only : patch_diag_blend, patch_diag_inherit, PD_DISTURB_AREA, PD_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
-   use meds_patch_state_vars,   only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
+   use meds_patch_state_vars,   only : patch_ensure_capacity, patch_reorder, blend_cas, blend_soil_w,      &
+                                       blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon,          &
                                        blend_litter_input, blend_xi_accum
    use meds_litter_partition, only : necromass_to_litter
    implicit none
@@ -62,24 +62,8 @@ contains
             end do
             pperm(j + 1_ik) = key
          end do
-         !----- Apply permutation to patch arrays (RHS vector subscript -> safe temp). -----!
-         patch%area(1:np)           = patch%area(pperm(1:np))
-         patch%age(1:np)            = patch%age(pperm(1:np))
-         patch%dist_type(1:np)      = patch%dist_type(pperm(1:np))
-         patch%recruit_pool(:,1:np) = patch%recruit_pool(:,pperm(1:np))
-         patch%global_id(1:np)      = patch%global_id(pperm(1:np))
-         patch%cas(1:np)            = patch%cas(pperm(1:np))
-         patch%soil_e(1:np)         = patch%soil_e(pperm(1:np))
-         patch%soil_w(1:np)         = patch%soil_w(pperm(1:np))
-         patch%snow(1:np)           = patch%snow(pperm(1:np))
-         patch%soil_carbon(1:np)    = patch%soil_carbon(pperm(1:np))
-         patch%xi_accum(1:np)       = patch%xi_accum(pperm(1:np))
-         patch%litter_in(1:np)      = patch%litter_in(pperm(1:np))
-         patch%shed_water_rate(1:np) = patch%shed_water_rate(pperm(1:np))
-         patch%slow_co2_rate(1:np)   = patch%slow_co2_rate(pperm(1:np))
-         patch%adapt_dt_last(1:np)   = patch%adapt_dt_last(pperm(1:np))
-         !----- The per-patch diagnostic accumulators ride the same permutation. -----------!
-         call patch_diag_reorder(patch%diag, pperm, np)
+         !----- Apply the permutation to every patch field, the diagnostics included. ---------!
+         call patch_reorder(patch, pperm, np)
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -339,17 +323,18 @@ contains
    subroutine patch_compact(site, pkeep)
       type(site_t), intent(inout) :: site
       logical,         intent(in)    :: pkeep(:)
-      integer(ik), allocatable :: newidx(:)
+      integer(ik), allocatable :: newidx(:), keep_idx(:)
       logical,     allocatable :: ckeep(:)
       integer(ik) :: np, ip, k, i, nc
 
       np = site%patch%n
-      allocate(newidx(np))
+      allocate(newidx(np), keep_idx(max(np, 1_ik)))
       k = 0_ik
       do ip = 1_ik, np
          if (pkeep(ip)) then
             k = k + 1_ik
             newidx(ip) = k
+            keep_idx(k) = ip
          else
             newidx(ip) = 0_ik
          end if
@@ -364,42 +349,9 @@ contains
       end do
       call cohort_compact(site%cohort, ckeep)
 
-      !----- Patches: compact every patch array by pkeep (RHS pack -> safe temp). ---------!
-      associate (patch => site%patch)
-         patch%area(1:k)           = pack(patch%area(1:np),           pkeep)
-         patch%age(1:k)            = pack(patch%age(1:np),            pkeep)
-         patch%dist_type(1:k)      = pack(patch%dist_type(1:np),      pkeep)
-         patch%global_id(1:k)      = pack(patch%global_id(1:np),      pkeep)
-         patch%cas(1:k)            = pack(patch%cas(1:np),            pkeep)
-         patch%soil_e(1:k)         = pack(patch%soil_e(1:np),         pkeep)
-         patch%soil_w(1:k)         = pack(patch%soil_w(1:np),         pkeep)
-         patch%snow(1:k)           = pack(patch%snow(1:np),           pkeep)
-         patch%soil_carbon(1:k)    = pack(patch%soil_carbon(1:np),    pkeep)
-         patch%xi_accum(1:k)       = pack(patch%xi_accum(1:np),       pkeep)
-         patch%litter_in(1:k)      = pack(patch%litter_in(1:np),      pkeep)
-         patch%shed_water_rate(1:k) = pack(patch%shed_water_rate(1:np), pkeep)
-         patch%slow_co2_rate(1:k)   = pack(patch%slow_co2_rate(1:np), pkeep)
-         patch%adapt_dt_last(1:k)   = pack(patch%adapt_dt_last(1:np),   pkeep)
-         !----- The diagnostic accumulators compact by the SAME mask. patch_diag_reorder takes a  !
-         !      permutation rather than a mask, so build the surviving-index list here (this is    !
-         !      exactly what cohort_compact does for the cohort axis).  --------------------------!
-         block
-            integer(ik), allocatable :: dperm(:)
-            integer(ik) :: q, jq
-            allocate(dperm(max(k,1_ik))) ; q = 0_ik
-            do jq = 1_ik, np
-               if (pkeep(jq)) then ; q = q + 1_ik ; dperm(q) = jq ; end if
-            end do
-            call patch_diag_reorder(patch%diag, dperm, k)
-         end block
-         block
-            integer(ik) :: jp
-            do jp = 1_ik, site%n_pft
-               patch%recruit_pool(jp, 1:k) = pack(patch%recruit_pool(jp, 1:np), pkeep)
-            end do
-         end block
-         patch%n = k
-      end associate
+      !----- Patches: keep the survivors, in order. The surviving-index list is the permutation   !
+      !      patch_reorder takes, exactly as cohort_compact builds it for the cohort axis. --------!
+      call patch_reorder(site%patch, keep_idx, k)
       call rebuild_csr(site)
    end subroutine patch_compact
 
