@@ -24,6 +24,8 @@ module meds_patch_state_vars
    use meds_constants,        only : n_soil_layer_max, n_snow_layer_max
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, patch_diag_grow
+   use meds_config,           only : meds_config_t
+   use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
    implicit none
    private
 
@@ -37,7 +39,7 @@ module meds_patch_state_vars
    public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon, blend_xi_accum
    public :: blend_litter_input
                                                                     !< area-weighted mix (patch fusion / disturbance seed)
-   public :: patch_block, patch_alloc, patch_ensure_capacity
+   public :: patch_block, patch_alloc, patch_ensure_capacity, patch_free, patch_birth_state
 
    !----- Prognostic per-patch soil WATER column (the value the hydrology kernel updates). --!
    type :: soil_column_t
@@ -506,5 +508,45 @@ contains
       call move_alloc(tmp%slow_co2_rate,   patch%slow_co2_rate)
       call move_alloc(tmp%adapt_dt_last,   patch%adapt_dt_last)
    end subroutine patch_ensure_capacity
+
+   !----- Free every per-patch array. -------------------------------------------------------!
+   subroutine patch_free(patch)
+      type(patch_block), intent(inout) :: patch
+      patch%n = 0_ik ; patch%cap = 0_ik
+      if (allocated(patch%area)) deallocate(patch%area, patch%age, patch%dist_type, &
+         patch%cohort_offset, patch%cohort_count, patch%recruit_pool, patch%global_id, &
+         patch%cas, patch%soil_e, patch%soil_w, patch%snow, patch%soil_carbon, &
+         patch%xi_accum, patch%litter_in, patch%shed_water_rate,                   &
+         patch%slow_co2_rate,                                                                &
+         patch%adapt_dt_last)
+   end subroutine patch_free
+
+   !---------------------------------------------------------------------------------------!
+   ! The state a new cohort is born in, from its patch's canopy air `cas` and soil water      !
+   ! `soil_w`: the canopy-air temperature [K] and the water potential of the top soil layer   !
+   ! [MPa] (top_soil_psi, the value the stomatal predawn potential is seeded with), so the    !
+   ! cohort starts in equilibrium with where it stands. A patch whose fast state has not been !
+   ! seeded yet -- at setup, or in a run without the fast loop -- has neither, and gives the  !
+   ! run's starting state from [init] instead: soil_temp, and the top layer's potential at    !
+   ! the starting soil water. init_fast_reservoirs re-seeds the setup cohorts from their      !
+   ! patch once it has seeded it. `soil` is the column's parameters (soil_column_params).     !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine patch_birth_state(cas, soil_w, cfg, soil, temp, psi)
+      type(cas_state_t),   intent(in)  :: cas      !< the patch's canopy air
+      type(soil_column_t), intent(in)  :: soil_w   !< the patch's soil water
+      type(meds_config_t), intent(in)  :: cfg
+      type(soil_params_t), intent(in)  :: soil
+      real(wp),            intent(out) :: temp, psi
+      real(wp) :: theta(n_soil_layer_max)
+      !----- A seeded canopy air has a temperature: the type's default is 0 K. ----------------!
+      if (cas%can_temp > 0.0_wp) then
+         temp = cas%can_temp
+         psi  = top_soil_psi(soil, soil_w%theta(1))
+      else
+         temp = cfg%init_soil_temp
+         call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta)
+         psi  = top_soil_psi(soil, theta(1))
+      end if
+   end subroutine patch_birth_state
 
 end module meds_patch_state_vars

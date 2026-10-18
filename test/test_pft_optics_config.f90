@@ -20,7 +20,8 @@ program test_pft_optics_config
    use meds_fast_types,     only : apply_hydraulics_config
    use meds_hydr_lib,       only : plc_retained, wood_kmax_from_density
    use meds_water_retention, only : pv_psi_tlp, water_content
-   use meds_site_state_vars,  only : site_t, patch_birth_state
+   use meds_site_state_vars,  only : site_t
+   use meds_patch_state_vars, only : patch_birth_state
    use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
    use meds_vegetation_dynamics, only : shed_excess_tissue_water
@@ -145,7 +146,7 @@ program test_pft_optics_config
       call finalize_init(site)
       i2 = merge(1_ik, 2_ik, site%cohort%pft(1) == 2_ik)        ! the PFT-2 cohort, after the sort
       call soil_column_params(cfg%soil_column, soil)
-      call patch_birth_state(site, 1_ik, cfg, soil, t_birth, psi_birth)
+      call patch_birth_state(site%patch%cas(1), site%patch%soil_w(1), cfg, soil, t_birth, psi_birth)
       w_expect = water_content(psi_birth, tab%pft(2)%leaf_curve, site%cohort%leaf_carbon(i2))
       call check_close(site%cohort%leaf_water_mass(i2), w_expect, 1.0e-12_wp,                      &
                        'PFT 2 leaf water at birth is on its own curve')

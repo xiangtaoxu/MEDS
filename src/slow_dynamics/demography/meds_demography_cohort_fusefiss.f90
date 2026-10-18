@@ -29,7 +29,8 @@ module meds_demography_cohort_fusefiss
    use meds_cohort_state_vars, only : cohort_reorder, cohort_compact, cohort_ensure_capacity, copy_cohort_slot, init_cohort, &
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity, cohort_tissue_water, &
                                       set_cohort_size_from_carbon, fuse_cohort_fast_state
-   use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, patch_birth_state
+   use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id
+   use meds_patch_state_vars, only : patch_birth_state
    use meds_litter_partition, only : necromass_to_litter
    implicit none
    private
@@ -476,7 +477,7 @@ contains
                m = m + 1_ik
                !----- Born in its patch's state: at the canopy-air temperature, holding the water     !
                !      its tissues hold at the top soil layer's potential (patch_birth_state). -------!
-               call patch_birth_state(site, ip, cfg, soil, t_birth, psi_birth)
+               call patch_birth_state(patch%cas(ip), patch%soil_w(ip), cfg, soil, t_birth, psi_birth)
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
                                 cfg%hydraulics, t_birth, psi_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !

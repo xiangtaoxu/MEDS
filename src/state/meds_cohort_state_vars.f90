@@ -31,7 +31,7 @@ module meds_cohort_state_vars
    implicit none
    private
 
-   public :: cohort_block, cohort_alloc, cohort_ensure_capacity, cohort_reorder, cohort_compact
+   public :: cohort_block, cohort_alloc, cohort_free, cohort_ensure_capacity, cohort_reorder, cohort_compact
    public :: copy_cohort_slot, gather_pft_params, set_cohort_size, set_cohort_size_from_carbon, init_cohort
    public :: scale_cohort_ground_fields, fuse_cohort_fast_state
    public :: cohort_deriv_block, cohort_deriv_alloc, carbon_flux_block
@@ -353,6 +353,37 @@ contains
       cohort%p_stem_resp_sapwood25 = 0.0_wp
       cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%leaf_turnover_rate = 0.0_wp
    end subroutine cohort_alloc
+
+   !----- Free every per-cohort array. ------------------------------------------------------!
+   subroutine cohort_free(cohort)
+      type(cohort_block), intent(inout) :: cohort
+      cohort%n = 0_ik ; cohort%cap = 0_ik
+      if (allocated(cohort%nplant)) deallocate(cohort%pft, cohort%nplant, cohort%dbh, &
+         cohort%height, cohort%basal_area, cohort%agb, cohort%leaf_area,                       &
+         cohort%growth_avg, cohort%growth_accum, cohort%growth_count,                     &
+         cohort%dmax_psi_leaf, cohort%dmax_psi_leaf_accum,                            &
+         cohort%growth_hist, cohort%p_dbh_critical, cohort%p_wood_density,                &
+         cohort%p_hgt_max, cohort%sla, cohort%vcmax25, cohort%rd25,               &
+         cohort%leaf_turnover_rate, cohort%p_aboveground_frac,                                &
+         cohort%p_root_to_leaf_ratio, cohort%p_storage_cushion,                                &
+         cohort%wood_area, cohort%sapwood_carbon, cohort%sapwood_area,                    &
+         cohort%p_wai_b1, cohort%p_wai_b2, cohort%p_sapwood_area_b1,                      &
+         cohort%p_sapwood_area_b2, cohort%p_leaf_width, cohort%p_branch_diameter,         &
+         cohort%p_is_woody,                                                                         &
+         cohort%p_stem_resp_factor25, cohort%p_root_resp_factor25,                             &
+         cohort%p_stem_resp_sapwood25,                                                              &
+         cohort%leaf_carbon, cohort%fineroot_carbon, cohort%wood_carbon,                  &
+         cohort%nonstructural_carbon, cohort%owner_patch, cohort%global_id,               &
+         cohort%overtopping_lai,                                                             &
+         cohort%leaf_temp, cohort%wood_temp, cohort%leaf_water_mass,               &
+         cohort%wood_water_mass, cohort%leaf_surf_water, cohort%wood_surf_water,   &
+         cohort%gpp_accum, cohort%light_hours_accum,                                            &
+         cohort%leaf_resp_accum, cohort%stem_resp_accum, cohort%root_resp_accum,  &
+         cohort%leaf_flush_tendency, cohort%leaf_shed_tendency,                            &
+         cohort%growing_degree_days, cohort%cold_degree_days,                                        &
+         cohort%dry_psi_sum,                                                       &
+         cohort%wet_psi_sum, cohort%light_hours_mean)
+   end subroutine cohort_free
 
    !=======================================================================================!
    !  cohort_ensure_capacity -- ensure the cohort SoA can hold at least `need` cohorts,    !

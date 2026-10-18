@@ -15,16 +15,13 @@ module meds_site_state_vars
    use meds_diag_vars,          only : polygon_diag_block, cohort_diag_reset, patch_diag_reset,          &
                                        polygon_diag_reset
    use meds_kinds,              only : wp, ik
-   use meds_constants,          only : n_soil_layer_max
    use meds_allometry,          only : allometry_t
-   use meds_config,             only : meds_config_t
-   use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
-   use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, cohort_alloc, cohort_reorder
-   use meds_patch_state_vars,   only : patch_block, patch_alloc
+   use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, cohort_alloc, cohort_free, cohort_reorder
+   use meds_patch_state_vars,   only : patch_block, patch_alloc, patch_free
    implicit none
    private
 
-   public :: site_t, site_alloc, site_free, rebuild_csr, patch_birth_state
+   public :: site_t, site_alloc, site_free, rebuild_csr
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
 
    type :: site_t
@@ -109,70 +106,12 @@ contains
       call patch_alloc(site%patch, max(pat_cap, 1_ik), n_pft)
    end subroutine site_alloc
 
+   !----- Each level frees its own fields: the cohort and patch files list them. -------------!
    subroutine site_free(site)
       type(site_t), intent(inout) :: site
-      site%cohort%n = 0_ik ; site%cohort%cap = 0_ik
-      site%patch%n = 0_ik ; site%patch%cap = 0_ik
-      if (allocated(site%cohort%nplant)) deallocate(site%cohort%pft, site%cohort%nplant, site%cohort%dbh, &
-         site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
-         site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,                     &
-         site%cohort%dmax_psi_leaf, site%cohort%dmax_psi_leaf_accum,                            &
-         site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
-         site%cohort%p_hgt_max, site%cohort%sla, site%cohort%vcmax25, site%cohort%rd25,               &
-         site%cohort%leaf_turnover_rate, site%cohort%p_aboveground_frac,                                &
-         site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
-         site%cohort%wood_area, site%cohort%sapwood_carbon, site%cohort%sapwood_area,                    &
-         site%cohort%p_wai_b1, site%cohort%p_wai_b2, site%cohort%p_sapwood_area_b1,                      &
-         site%cohort%p_sapwood_area_b2, site%cohort%p_leaf_width, site%cohort%p_branch_diameter,         &
-         site%cohort%p_is_woody,                                                                         &
-         site%cohort%p_stem_resp_factor25, site%cohort%p_root_resp_factor25,                             &
-         site%cohort%p_stem_resp_sapwood25,                                                              &
-         site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
-         site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
-         site%cohort%overtopping_lai,                                                             &
-         site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%leaf_water_mass,               &
-         site%cohort%wood_water_mass, site%cohort%leaf_surf_water, site%cohort%wood_surf_water,   &
-         site%cohort%gpp_accum, site%cohort%light_hours_accum,                                            &
-         site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
-         site%cohort%leaf_flush_tendency, site%cohort%leaf_shed_tendency,                            &
-         site%cohort%growing_degree_days, site%cohort%cold_degree_days,                                        &
-         site%cohort%dry_psi_sum,                                                       &
-         site%cohort%wet_psi_sum, site%cohort%light_hours_mean)
-      if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
-         site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
-         site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
-         site%patch%xi_accum, site%patch%litter_in, site%patch%shed_water_rate,                   &
-         site%patch%slow_co2_rate,                                                                &
-         site%patch%adapt_dt_last)
+      call cohort_free(site%cohort)
+      call patch_free(site%patch)
    end subroutine site_free
-
-   !---------------------------------------------------------------------------------------!
-   ! The state a new cohort in patch `ip` is born in: the patch's canopy-air temperature [K]  !
-   ! and the water potential of its top soil layer [MPa] (top_soil_psi, the value the        !
-   ! stomatal predawn potential is seeded with), so the cohort starts in equilibrium with   !
-   ! where it stands. A patch whose fast state has not been seeded yet -- at setup, or in a  !
-   ! run without the fast loop -- has neither, and gives the run's starting state from      !
-   ! [init] instead: soil_temp, and the top layer's potential at the starting soil water.   !
-   ! init_fast_reservoirs re-seeds the setup cohorts from their patch once it has seeded it.  !
-   ! `soil` is the column's parameters (soil_column_params).                                  !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine patch_birth_state(site, ip, cfg, soil, temp, psi)
-      type(site_t),        intent(in)  :: site
-      integer(ik),         intent(in)  :: ip
-      type(meds_config_t), intent(in)  :: cfg
-      type(soil_params_t), intent(in)  :: soil
-      real(wp),            intent(out) :: temp, psi
-      real(wp) :: theta(n_soil_layer_max)
-      !----- A seeded canopy air has a temperature: the type's default is 0 K. ----------------!
-      if (site%patch%cas(ip)%can_temp > 0.0_wp) then
-         temp = site%patch%cas(ip)%can_temp
-         psi  = top_soil_psi(soil, site%patch%soil_w(ip)%theta(1))
-      else
-         temp = cfg%init_soil_temp
-         call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta)
-         psi  = top_soil_psi(soil, theta(1))
-      end if
-   end subroutine patch_birth_state
 
    !=======================================================================================!
    !  Rebuild the CSR patch map by stably regrouping cohorts by owner_patch (counting sort).!
