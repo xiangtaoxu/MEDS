@@ -32,7 +32,7 @@ module meds_patch_state_vars
    public :: blend_cas, blend_snow, blend_soil_w, blend_soil_e, blend_soil_carbon, blend_xi_accum
    public :: blend_litter_input
                                                                     !< area-weighted mix (patch fusion / disturbance seed)
-   public :: patch_block, patch_alloc, patch_ensure_capacity, patch_reorder, patch_free, cohort_birth_state
+   public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block, cohort_birth_state
 
    !----- Prognostic per-patch canopy-air-space thermal state (three implicit twins). -------!
    type :: cas_state_t
@@ -479,7 +479,7 @@ contains
    !  THE PATCH LOCKSTEP: the routines that list every patch field, in section order       !
    !=======================================================================================!
 
-   subroutine patch_alloc(patch, cap, n_pft)
+   subroutine alloc_patch_block(patch, cap, n_pft)
       type(patch_block), intent(inout) :: patch
       integer(ik),       intent(in)    :: cap, n_pft
       patch%cap = cap ; patch%n = 0_ik
@@ -508,16 +508,16 @@ contains
       !----- 10. Solver memory ------------------------------------------------------------------!
       allocate(patch%adapt_dt_last(cap))
       patch%adapt_dt_last = 0.0_wp
-   end subroutine patch_alloc
+   end subroutine alloc_patch_block
 
    !=======================================================================================!
-   !  patch_ensure_capacity -- the patch-SoA twin of expand_cohort_block_size: ensure the  !
+   !  expand_patch_block -- the patch-SoA twin of expand_cohort_block: ensure the          !
    !  patch SoA can hold at least `need` patches, growing 1.5x if it must. Same n/cap      !
    !  reserve model, no-op fast path, geometric growth, and move_alloc as in the           !
    !  cohort routine. LOCKSTEP SITE: a new per-patch field must be copied here (1:n)       !
-   !  and move_alloc'd, and listed in patch_alloc, patch_reorder and patch_free.           !
+   !  and move_alloc'd, and listed in alloc_patch_block, reorder_patch_block and free_patch_block.           !
    !=======================================================================================!
-   subroutine patch_ensure_capacity(patch, need, n_pft)
+   subroutine expand_patch_block(patch, need, n_pft)
       type(patch_block), intent(inout) :: patch
       integer(ik),       intent(in)    :: need, n_pft
       type(patch_block)                :: tmp
@@ -526,7 +526,7 @@ contains
       newcap = max(need, (patch%cap * 3_ik) / 2_ik + 1_ik)
       !----- Grow the diagnostic block in place; the move_alloc list below leaves it alone.  -----!
       call patch_diag_grow(patch%diag, newcap)
-      call patch_alloc(tmp, newcap, n_pft)
+      call alloc_patch_block(tmp, newcap, n_pft)
       m = patch%n ; tmp%n = m
       !----- 1. Identity and area ---------------------------------------------------------------!
       tmp%global_id(1:m) = patch%global_id(1:m)
@@ -583,7 +583,7 @@ contains
       call move_alloc(tmp%litter_in, patch%litter_in)
       !----- 10. Solver memory ------------------------------------------------------------------!
       call move_alloc(tmp%adapt_dt_last, patch%adapt_dt_last)
-   end subroutine patch_ensure_capacity
+   end subroutine expand_patch_block
 
    !=======================================================================================!
    !  The patch twin of reorder_cohort_block: place old index perm(k) at new position k, for !
@@ -591,7 +591,7 @@ contains
    !  vector subscript on the RHS is evaluated to a temporary first, so self-permutation is  !
    !  safe. The CSR map is not permuted: rebuild_csr derives it from the cohorts afterwards. !
    !=======================================================================================!
-   subroutine patch_reorder(patch, perm, m)
+   subroutine reorder_patch_block(patch, perm, m)
       type(patch_block), intent(inout) :: patch
       integer(ik),       intent(in)    :: perm(:)
       integer(ik),       intent(in)    :: m
@@ -624,10 +624,10 @@ contains
       !----- 11. Output accumulators ------------------------------------------------------------!
       call patch_diag_reorder(patch%diag, perm, m)
       patch%n = m
-   end subroutine patch_reorder
+   end subroutine reorder_patch_block
 
    !----- Free every per-patch array. -------------------------------------------------------!
-   subroutine patch_free(patch)
+   subroutine free_patch_block(patch)
       type(patch_block), intent(inout) :: patch
       patch%n = 0_ik ; patch%cap = 0_ik
       if (allocated(patch%area)) deallocate(patch%global_id, patch%dist_type, patch%area, patch%age,           &
@@ -635,7 +635,7 @@ contains
                                             patch%cas, patch%snow, patch%soil_w, patch%soil_e,                 &
                                             patch%soil_carbon, patch%shed_water_rate, patch%slow_co2_rate,     &
                                             patch%xi_accum, patch%litter_in, patch%adapt_dt_last)
-   end subroutine patch_free
+   end subroutine free_patch_block
 
    !=======================================================================================!
    !  BIRTH: the state a new cohort starts in                                              !

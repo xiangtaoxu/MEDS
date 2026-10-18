@@ -183,7 +183,7 @@ These are the things that break quietly if you do not know them.
   `state/meds_cohort_state_vars.f90` — the one file that lists every cohort field, every list in
   the same section order. This is the structural fix for ED2's "forgot to reallocate one array"
   class of bug. Patch fields work the same way in `state/meds_patch_state_vars.f90`, whose
-  `patch_reorder` is what `sort_patches` and `patch_compact` call.
+  `reorder_patch_block` is what `sort_patches` and `patch_compact` call.
 - **Persistent identity.** Every cohort and patch is stamped with a monotonic `global_id` at
   creation and carries it, in lockstep, through every sort, fusion and compaction. Ids are never
   reused; fusion keeps the survivor's. That is what lets a reader track one cohort across output

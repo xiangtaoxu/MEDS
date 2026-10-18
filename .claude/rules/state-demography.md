@@ -23,7 +23,7 @@ set of 1-D arrays, with patch membership as a CSR map (offset plus count, and an
 dominant daily kernels are a single unit-stride sweep.
 
 **One file per level, each in sections.** `state/meds_cohort_state_vars.f90` holds `cohort_block`
-and every routine that lists its fields: allocate, free, grow (`expand_cohort_block_size`,
+and every routine that lists its fields: allocate, free, grow (`expand_cohort_block`,
 `move_cohort_block`), reorder, compact and slot copy, plus the size setter that fills one slot's
 cached geometry. The type is laid out in sections (identity and density, carbon pools, size,
 water, energy, plastic traits, phenology, growth history, accumulators, output), and **every
@@ -31,9 +31,9 @@ lockstep list follows the same section order. When you add a per-cohort field, a
 section in each of them** — the single place that touches every array. This is the structural fix
 for ED2's "forgot to reallocate one array" bug class.
 
-Patch fields work the same way in `state/meds_patch_state_vars.f90`: `patch_alloc`,
-`patch_ensure_capacity`, `patch_reorder` and `patch_free`, in the patch block's section order.
-`sort_patches` and `patch_compact` build a permutation and call `patch_reorder`; a new patch field
+Patch fields work the same way in `state/meds_patch_state_vars.f90`: `alloc_patch_block`,
+`expand_patch_block`, `reorder_patch_block` and `free_patch_block`, in the patch block's section order.
+`sort_patches` and `patch_compact` build a permutation and call `reorder_patch_block`; a new patch field
 also needs its blend in `fuse_2_patches` and its value in a new gap (`apply_patch_disturbance`).
 `site_t` (`state/meds_site_state_vars.f90`) holds the two blocks and the routines that need both
 (`rebuild_csr`, the id counters). PFT-level traits are not copied onto cohorts: the cohort block

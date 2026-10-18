@@ -12,8 +12,8 @@ module meds_site_state_vars
    use meds_kinds,              only : wp, ik
    use meds_allometry,          only : allometry_t
    use meds_pft_params,         only : pft_table_t
-   use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, cohort_alloc, cohort_free, reorder_cohort_block
-   use meds_patch_state_vars,   only : patch_block, patch_alloc, patch_free
+   use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, alloc_cohort_block, free_cohort_block, reorder_cohort_block
+   use meds_patch_state_vars,   only : patch_block, alloc_patch_block, free_patch_block
    implicit none
    private
 
@@ -126,15 +126,15 @@ contains
       site%n_pft = n_pft
       site%cohort%allom     = allom
       site%cohort%pft_table = pft
-      call cohort_alloc(site%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
-      call patch_alloc(site%patch, max(pat_cap, 1_ik), n_pft)
+      call alloc_cohort_block(site%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
+      call alloc_patch_block(site%patch, max(pat_cap, 1_ik), n_pft)
    end subroutine site_alloc
 
    !----- Each level frees its own fields: the cohort and patch files list them. -------------!
    subroutine site_free(site)
       type(site_t), intent(inout) :: site
-      call cohort_free(site%cohort)
-      call patch_free(site%patch)
+      call free_cohort_block(site%cohort)
+      call free_patch_block(site%patch)
    end subroutine site_free
 
    !=======================================================================================!

@@ -868,3 +868,9 @@ file, `meds_state_defaults`. The block routines are `expand_cohort_block_size`,
 `set_cohort_wood_geometry` is `set_cohort_wood_allometry`. A tissue's heat capacity is
 `tissue_heat_capacity` in `meds_therm_lib`; `cohort_tissue_heat_capacity` is its per-slot wrapper.
 Bit-identical.
+
+**Block-routine names, settled (2026-10-18).** One pattern, verb_level_block: `alloc_cohort_block`,
+`expand_cohort_block`, `move_cohort_block`, `reorder_cohort_block`, `compact_cohort_block`,
+`free_cohort_block`, and the patch twins `alloc_patch_block`, `expand_patch_block`,
+`reorder_patch_block`, `free_patch_block`. `copy_cohort` copies one cohort into another slot.
+`allometry_t` stays as it is; the owner will revisit the allometry separately. Bit-identical.

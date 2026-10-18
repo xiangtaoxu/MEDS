@@ -20,12 +20,12 @@ module meds_demography_patch_fusefiss
    use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL
    use meds_config,     only : meds_config_t, DIST_TREEFALL
-   use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block_size, copy_cohort_slot,  &
+   use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
                                       scale_cohort_ground_fields, cohort_tissue_water
    use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
    use meds_diag_vars,        only : patch_diag_blend, patch_diag_inherit, PD_DISTURB_AREA, PD_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
-   use meds_patch_state_vars,   only : patch_ensure_capacity, patch_reorder, blend_cas, blend_soil_w,      &
+   use meds_patch_state_vars,   only : expand_patch_block, reorder_patch_block, blend_cas, blend_soil_w,      &
                                        blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon,          &
                                        blend_litter_input, blend_xi_accum
    use meds_litter_partition, only : necromass_to_litter
@@ -63,7 +63,7 @@ contains
             pperm(j + 1_ik) = key
          end do
          !----- Apply the permutation to every patch field, the diagnostics included. ---------!
-         call patch_reorder(patch, pperm, np)
+         call reorder_patch_block(patch, pperm, np)
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -353,8 +353,8 @@ contains
       call compact_cohort_block(site%cohort, ckeep)
 
       !----- Patches: keep the survivors, in order. The surviving-index list is the permutation   !
-      !      patch_reorder takes, exactly as compact_cohort_block builds it for the cohort axis. --------!
-      call patch_reorder(site%patch, keep_idx, k)
+      !      reorder_patch_block takes, exactly as compact_cohort_block builds it for the cohort axis. --------!
+      call reorder_patch_block(site%patch, keep_idx, k)
       call rebuild_csr(site)
    end subroutine patch_compact
 
@@ -435,8 +435,8 @@ contains
          end if
       end do
 
-      call patch_ensure_capacity(site%patch, np0 + 1_ik, site%n_pft)
-      call expand_cohort_block_size(site%cohort, site%cohort%n + nsurv)
+      call expand_patch_block(site%patch, np0 + 1_ik, site%n_pft)
+      call expand_cohort_block(site%cohort, site%cohort%n + nsurv)
       newp = np0 + 1_ik
       m0   = site%cohort%n                       ! cohorts before the survivors are moved in
 
@@ -528,7 +528,7 @@ contains
                   cycle
                end if
                m = m + 1_ik
-               call copy_cohort_slot(cohort, m, i)
+               call copy_cohort(cohort, m, i)
                cohort%nplant(m)      = cohort%nplant(i) * (frac * patch%area(d) / new_area)
                call scale_cohort_ground_fields(cohort, m, frac * patch%area(d) / new_area)  ! films dilute like nplant
                cohort%owner_patch(m) = newp
@@ -552,7 +552,7 @@ contains
       !      At a calendar boundary the donors hold only that boundary's events (the step's sums were !
       !      read and reset), and the gap keeps its share of them; inside a step (the C API) they     !
       !      hold the step so far. Every donor lost the same fraction, so their current areas give    !
-      !      the same blend as their original ones. (patch_ensure_capacity above grew the block with   !
+      !      the same blend as their original ones. (expand_patch_block above grew the block with      !
       !      the patch arrays.)                                                                       !
       call patch_diag_inherit(site%patch%diag, newp, site%patch%area(1:np0))
       do i = m0 + 1_ik, site%cohort%n

@@ -33,8 +33,8 @@ module meds_cohort_state_vars
    implicit none
    private
 
-   public :: cohort_block, cohort_alloc, cohort_free, expand_cohort_block_size, reorder_cohort_block
-   public :: compact_cohort_block, copy_cohort_slot, set_cohort_size, set_cohort_size_from_carbon, init_cohort
+   public :: cohort_block, alloc_cohort_block, free_cohort_block, expand_cohort_block, reorder_cohort_block
+   public :: compact_cohort_block, copy_cohort, set_cohort_size, set_cohort_size_from_carbon, init_cohort
    public :: scale_cohort_ground_fields, fuse_cohort_fast_state
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
@@ -152,7 +152,7 @@ contains
 
    !----- Allocate a block for `cap` cohorts with a growth window of `nwin` samples, section by    !
    !      section, every slot at its unset value. ------------------------------------------------!
-   subroutine cohort_alloc(cohort, cap, nwin)
+   subroutine alloc_cohort_block(cohort, cap, nwin)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: cap, nwin
       cohort%cap = cap ; cohort%n = 0_ik
@@ -201,10 +201,10 @@ contains
       cohort%gpp_accum = 0.0_wp ; cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp
       cohort%root_resp_accum = 0.0_wp ; cohort%light_hours_accum = 0.0_wp
       cohort%dmax_psi_leaf_accum = DMAX_PSI_LEAF_ACCUM_RESET
-   end subroutine cohort_alloc
+   end subroutine alloc_cohort_block
 
    !----- Free every per-cohort array. ------------------------------------------------------!
-   subroutine cohort_free(cohort)
+   subroutine free_cohort_block(cohort)
       type(cohort_block), intent(inout) :: cohort
       cohort%n = 0_ik ; cohort%cap = 0_ik
       if (allocated(cohort%nplant)) deallocate(cohort%pft, cohort%global_id, cohort%owner_patch,               &
@@ -224,10 +224,10 @@ contains
                                                cohort%gpp_accum, cohort%leaf_resp_accum,                       &
                                                cohort%stem_resp_accum, cohort%root_resp_accum,                 &
                                                cohort%light_hours_accum, cohort%dmax_psi_leaf_accum)
-   end subroutine cohort_free
+   end subroutine free_cohort_block
 
    !=======================================================================================!
-   !  expand_cohort_block_size -- ensure the cohort SoA can hold at least `need` cohorts,  !
+   !  expand_cohort_block -- ensure the cohort SoA can hold at least `need` cohorts,       !
    !  growing it only if it must. This is the growable-array primitive (like C++           !
    !  vector::reserve) for the flat cohort block, where `n` is the LIVE count and          !
    !  `cap` the ALLOCATED count (slots n+1..cap are dead reserve). Callers about to        !
@@ -237,7 +237,7 @@ contains
    !  LOCKSTEP SITE: a new per-cohort field must be added to the 1:n copy list AND to      !
    !  move_cohort_block; a field in move_cohort_block alone would be reset by every grow.   !
    !=======================================================================================!
-   subroutine expand_cohort_block_size(cohort, need)
+   subroutine expand_cohort_block(cohort, need)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: need
       type(cohort_block)                :: tmp
@@ -248,7 +248,7 @@ contains
       !      (already correctly sized, prefix-preserving) arrays straight across.  ---------------!
       call cohort_diag_grow(cohort%diag,  newcap)
       call cohort_diag_grow(cohort%sdiag, newcap)
-      call cohort_alloc(tmp, newcap, int(size(cohort%growth_hist, 1), ik))  ! keep the window size
+      call alloc_cohort_block(tmp, newcap, int(size(cohort%growth_hist, 1), ik))  ! keep the window size
       m = cohort%n
       tmp%n = m
       !----- 1. Identity and density ------------------------------------------------------------!
@@ -310,7 +310,7 @@ contains
       !      inactive -- move_cohort_block copies tmp INTO cohort, so it must be the one holding it. !
       tmp%diag = cohort%diag ; tmp%sdiag = cohort%sdiag
       call move_cohort_block(tmp, cohort)
-   end subroutine expand_cohort_block_size
+   end subroutine expand_cohort_block
 
    !----- Move every allocatable from src into dst (src is reset). ------------------------!
    subroutine move_cohort_block(src, dst)
@@ -461,7 +461,7 @@ contains
    end subroutine compact_cohort_block
 
    !----- Copy every per-cohort field from slot src to slot dst (centralized). ------------!
-   subroutine copy_cohort_slot(cohort, dst, src)
+   subroutine copy_cohort(cohort, dst, src)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: dst, src
       !----- 1. Identity and density ------------------------------------------------------------!
@@ -521,7 +521,7 @@ contains
       !----- 10. Output accumulators ------------------------------------------------------------!
       call cohort_diag_copy_slot(cohort%diag,  dst, src)
       call cohort_diag_copy_slot(cohort%sdiag, dst, src)
-   end subroutine copy_cohort_slot
+   end subroutine copy_cohort
 
    !=======================================================================================!
    !  SIZE: the geometry derived from the carbon pools                                     !

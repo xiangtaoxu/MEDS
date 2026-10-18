@@ -32,8 +32,8 @@
 !     ONE 2-D array v(N_CDIAG, cap), so every lockstep operation is a single whole-array   !
 !     statement that cannot omit a field. Adding a diagnostic is a new index parameter     !
 !     plus a fill line -- ZERO edits to the reorder machinery. The alternative, one        !
-!     allocatable per field, would need a new line per field in each of cohort_alloc /     !
-!     expand_cohort_block_size / move_cohort_block / reorder_cohort_block / copy_cohort_slot --     !
+!     allocatable per field, would need a new line per field in each of alloc_cohort_block /     !
+!     expand_cohort_block / move_cohort_block / reorder_cohort_block / copy_cohort --               !
 !     precisely the "forgot to reallocate" class CLAUDE.md names as the reason the         !
 !     centralized reorder exists.                                                          !
 !                                                                                          !

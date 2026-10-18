@@ -67,7 +67,7 @@ program test_state_roundtrip
 
    !----- Stamp distinct, non-default FAST reservoir values on every patch -- a bare-ground site     !
    !      never calls init_fast_reservoirs (that is meds_main's own, fast_biophysics_on-gated step),  !
-   !      so these still sit at patch_alloc's raw defaults (theta=0, soil_energy=0 -> 0 K) unless     !
+   !      so these still sit at alloc_patch_block's raw defaults (theta=0, soil_energy=0 -> 0 K) unless     !
    !      stamped here, and a restart that dropped them would restart from those defaults. ----------!
    call check(site%patch%n >= 1_ik, 'have at least one patch to checkpoint')
    do i = 1_ik, site%patch%n

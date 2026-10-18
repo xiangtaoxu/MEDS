@@ -27,7 +27,7 @@ module meds_demography_cohort_fusefiss
    use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_diag_vars,        only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
    use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &
-                                      expand_cohort_block_size, copy_cohort_slot, init_cohort,           &
+                                      expand_cohort_block, copy_cohort, init_cohort,           &
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity,           &
                                       cohort_tissue_water, set_cohort_size_from_carbon,                  &
                                       fuse_cohort_fast_state
@@ -286,7 +286,7 @@ contains
          agb_before = sum(site%cohort%nplant(1:n0) * site%cohort%agb(1:n0))
          film_before = sum(site%cohort%leaf_surf_water(1:n0) + site%cohort%wood_surf_water(1:n0))
          film_magnitude = sum(abs(site%cohort%leaf_surf_water(1:n0)) + abs(site%cohort%wood_surf_water(1:n0)))
-         call expand_cohort_block_size(site%cohort, n0 + nsplit)
+         call expand_cohort_block(site%cohort, n0 + nsplit)
          m = n0
          associate (cohort => site%cohort)
             do i = 1_ik, n0
@@ -298,7 +298,7 @@ contains
                !      pools + AGB EXACTLY (0.5n*wc*(1+eps)+0.5n*wc*(1-eps)=n*wc) and is immune to the   !
                !      hgt_max cap (no dbh-renorm approximation).  ------------------------------------!
                wc0 = cohort%wood_carbon(i)
-               call copy_cohort_slot(cohort, m, i)           ! copies halved nplant + params + pools
+               call copy_cohort(cohort, m, i)           ! copies halved nplant + params + pools
                !----- the interception films are per m2 GROUND, not per plant: each daughter keeps  !
                !      half, or the split creates film water. ---------------------------------------!
                call scale_cohort_ground_fields(cohort, i, 0.5_wp)
@@ -468,7 +468,7 @@ contains
          return
       end if
 
-      call expand_cohort_block_size(site%cohort, site%cohort%n + nspawn)
+      call expand_cohort_block(site%cohort, site%cohort%n + nspawn)
       call soil_column_params(cfg%soil_column, soil)
       n_before = site%cohort%n
       m = site%cohort%n
