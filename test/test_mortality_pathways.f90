@@ -28,8 +28,8 @@ program test_mortality_pathways
    use meds_config,              only : meds_config_t
    use meds_cohort_state_vars,   only : set_cohort_size_from_carbon
    use meds_site_state_vars,     only : site_t
-   use meds_diag_vars,           only : alloc_patch_diag, patch_diag_value, PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, &
-                                        PD_MORT_C_DISTURB
+   use meds_diag_vars,           only : alloc_patch_diag, patch_diag_value, PA_MORT_C_BACKGROUND, PA_MORT_C_CULL, &
+                                        PA_MORT_C_DISTURB
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : apply_patch_disturbance
@@ -111,11 +111,11 @@ contains
 
       call terminate_cohorts(site, cfg)
       call check(site%cohort%n == 1_ik, 'cull fixture: exactly one cohort was culled')
-      call check_close(site_amount(site, cfg, PD_MORT_C_CULL), expect, 1.0e-12_wp,                 &
-                       'PD_MORT_C_CULL == the culled cohort''s every pool x its density')
-      call check_close(site_amount(site, cfg, PD_MORT_C_BACKGROUND), 0.0_wp, 1.0e-12_wp,           &
+      call check_close(site_amount(site, cfg, PA_MORT_C_CULL), expect, 1.0e-12_wp,                 &
+                       'PA_MORT_C_CULL == the culled cohort''s every pool x its density')
+      call check_close(site_amount(site, cfg, PA_MORT_C_BACKGROUND), 0.0_wp, 1.0e-12_wp,           &
                        'a cull is not also counted as background mortality')
-      call check_close(site_amount(site, cfg, PD_MORT_C_DISTURB), 0.0_wp, 1.0e-12_wp,              &
+      call check_close(site_amount(site, cfg, PA_MORT_C_DISTURB), 0.0_wp, 1.0e-12_wp,              &
                        'a cull is not also counted as disturbance mortality')
    end subroutine check_cull
 
@@ -149,11 +149,11 @@ contains
       !      donor's area shrink lands: the carbon died on the frac of the donor that became the   !
       !      gap, and only Sum(area * value) after the shrink can show whether it was valued on    !
       !      the right ground.  --------------------------------------------------------------!
-      call check_close(site_amount(site, cfg, PD_MORT_C_DISTURB), expect, 1.0e-12_wp,              &
-                       'PD_MORT_C_DISTURB site total == the canopy carbon the gap consumed')
-      call check_close(site_amount(site, cfg, PD_MORT_C_BACKGROUND), 0.0_wp, 1.0e-12_wp,           &
+      call check_close(site_amount(site, cfg, PA_MORT_C_DISTURB), expect, 1.0e-12_wp,              &
+                       'PA_MORT_C_DISTURB site total == the canopy carbon the gap consumed')
+      call check_close(site_amount(site, cfg, PA_MORT_C_BACKGROUND), 0.0_wp, 1.0e-12_wp,           &
                        'disturbance is not also counted as background mortality')
-      call check_close(site_amount(site, cfg, PD_MORT_C_CULL), 0.0_wp, 1.0e-12_wp,                 &
+      call check_close(site_amount(site, cfg, PA_MORT_C_CULL), 0.0_wp, 1.0e-12_wp,                 &
                        'disturbance is not also counted as a cull')
    end subroutine check_disturbance
 
@@ -187,11 +187,11 @@ contains
       !      accumulate_mortality_litter's header sets out. Reading the pools after the step is     !
       !      therefore not a convenience -- it is the definition.  ------------------------------!
       expect = (n0 - site%cohort%nplant(1)) * plant_carbon(site, 1_ik)
-      call check_close(site_amount(site, cfg, PD_MORT_C_BACKGROUND), expect, 1.0e-12_wp,           &
-                       'PD_MORT_C_BACKGROUND == the removed density x the pools it left')
-      call check_close(site_amount(site, cfg, PD_MORT_C_CULL), 0.0_wp, 1.0e-12_wp,                 &
+      call check_close(site_amount(site, cfg, PA_MORT_C_BACKGROUND), expect, 1.0e-12_wp,           &
+                       'PA_MORT_C_BACKGROUND == the removed density x the pools it left')
+      call check_close(site_amount(site, cfg, PA_MORT_C_CULL), 0.0_wp, 1.0e-12_wp,                 &
                        'background mortality is not also counted as a cull')
-      call check_close(site_amount(site, cfg, PD_MORT_C_DISTURB), 0.0_wp, 1.0e-12_wp,              &
+      call check_close(site_amount(site, cfg, PA_MORT_C_DISTURB), 0.0_wp, 1.0e-12_wp,              &
                        'background mortality is not also counted as disturbance')
    end subroutine check_background
 
@@ -219,7 +219,7 @@ contains
       call advance_slow_dynamics(site, cfg)
       call check(site%cohort%nplant(1) == cfg%negligible_nplant,                                   &
                  'no leaves, no storage: the density reaches the floor on the first step')
-      call check_close(site_amount(site, cfg, PD_MORT_C_BACKGROUND), expect, 1.0e-9_wp,            &
+      call check_close(site_amount(site, cfg, PA_MORT_C_BACKGROUND), expect, 1.0e-9_wp,            &
                        'no leaves, no storage: its carbon dies down the background pathway')
       do day = 2_ik, 30_ik
          call advance_slow_dynamics(site, cfg)

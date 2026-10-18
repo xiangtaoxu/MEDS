@@ -35,7 +35,7 @@ module meds_fast_rk45
                                      soil_energy_store, plant_water_store, canopy_film_store,       &
                                      deposit_condensate, clamp_canopy_film, unpack_column_state,     &
                                      diagnose_soil_temps, transp_per_leaf_area
-   use meds_diag_vars,        only : CD_TRANSP
+   use meds_diag_vars,        only : CO_TRANSP
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
@@ -488,7 +488,7 @@ contains
       !      the step -- the stiff-regime signal. biophys is then left UNTOUCHED at state^n and the      !
       !      caller redoes this dt_fast on ARK. ---------------------------------------------------------!
       logical,     optional,   intent(out)   :: stiff_bail
-      real(wp),    optional,   intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
+      real(wp),    optional,   intent(inout) :: cdiag(:,:)   !< (N_CO_FAST_ROWS, ncoh) per-cohort diagnostic capture
 
       type(column_frozen_t)  :: frozen
       type(column_state_t)   :: y, y_out
@@ -633,7 +633,7 @@ contains
          biophys%leaf_temp(1:n) = frozen%tissue%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%tissue%t_wood0(1:n)
       end if
       !----- The transpiration each cohort's leaves lost over the step, as on the ARK path. ---------!
-      if (present(cdiag)) cdiag(CD_TRANSP, 1:n) = transp_per_leaf_area(tr_int_acc(1:n), dt_fast,          &
+      if (present(cdiag)) cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(tr_int_acc(1:n), dt_fast,          &
                                                                        col_cohort%nplant(1:n), col_cohort%leaf_area(1:n))
       do i = 1_ik, n
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &

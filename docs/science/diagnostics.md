@@ -345,9 +345,9 @@ registry line each**, with no new extraction code.
 
 For a quantity the fast loop computes and drops, add a row to `cohort_diag_block` or
 `patch_diag_block` (`meds_diag_vars`): a new index parameter in its section (a patch row the fast
-loop fills goes before `N_PDIAG_FAST`, and the slow driver's rows follow), one fill line in the
+loop fills goes before `N_PA_FAST_ROWS`, and the slow driver's rows follow), one fill line in the
 capture, and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), so a
-patch row reaches the sub-daily tier with one more registry line (`SRC_F_PD0 + PD_*`), per patch
+patch row reaches the sub-daily tier with one more registry line (`SRC_F_PA0 + PA_*`), per patch
 or as a site mean. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
 array, so every permutation is a single whole-array statement that cannot omit a field.
 

@@ -23,7 +23,7 @@ module meds_demography_patch_fusefiss
    use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
                                       scale_cohort_ground_fields, cohort_tissue_water
    use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
-   use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PD_DISTURB_AREA, PD_MORT_C_DISTURB
+   use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_patch_state_vars,   only : expand_patch_block, reorder_patch_block, blend_cas, blend_soil_water,      &
                                        blend_soil_energy, blend_snow, snow_column_t, blend_soil_carbon,          &
@@ -403,7 +403,7 @@ contains
       !      would be a per-SECOND rate under the per-year label).                                   !
       if (site%patch%diag%active) then
          do i = 1_ik, np0
-            site%patch%diag%v(PD_DISTURB_AREA, i) = site%patch%diag%v(PD_DISTURB_AREA, i)          &
+            site%patch%diag%v(PA_DISTURB_AREA, i) = site%patch%diag%v(PA_DISTURB_AREA, i)          &
                                                   + frac * yr_sec
          end do
       end if
@@ -412,7 +412,7 @@ contains
       !                                                                                          !
       !      The same sweep records the DISTURBANCE pathway's mortality carbon off the other         !
       !      branch of the same test, so the split and the kill can never drift apart. Written on   !
-      !      the DONORS and written HERE, before patch%n grows -- the same rule PD_DISTURB_AREA     !
+      !      the DONORS and written HERE, before patch%n grows -- the same rule PA_DISTURB_AREA     !
       !      above follows.                                                                        !
       !                                                                                          !
       !      Valued on the donor's ORIGINAL ground. Every patch diagnostic is per m2 of its OWN      !
@@ -421,14 +421,14 @@ contains
       !      inherits the donors' slot, so together they weigh the value by the donors' original     !
       !      area and the site total is exact.                                                       !
       !      Rate [kgC/m2/yr] x weight in seconds is the block's contract; dt_yr cancels             !
-      !      against the weight dt_yr*yr_sec, as it does for PD_DISTURB_AREA.                        !
+      !      against the weight dt_yr*yr_sec, as it does for PA_DISTURB_AREA.                        !
       nsurv = 0_ik
       do i = 1_ik, site%cohort%n
          if (site%cohort%height(i) < cfg%disturbance_survive_height) then
             nsurv = nsurv + 1_ik
          else if (site%patch%diag%active) then
             d = site%cohort%owner_patch(i)
-            site%patch%diag%v(PD_MORT_C_DISTURB, d) = site%patch%diag%v(PD_MORT_C_DISTURB, d)      &
+            site%patch%diag%v(PA_MORT_C_DISTURB, d) = site%patch%diag%v(PA_MORT_C_DISTURB, d)      &
                + site%cohort%nplant(i) * frac * yr_sec                                             &
                  * (site%cohort%leaf_carbon(i)     + site%cohort%fineroot_carbon(i)                &
                   + site%cohort%wood_carbon(i)     + site%cohort%nonstructural_carbon(i))

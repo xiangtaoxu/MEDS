@@ -25,7 +25,7 @@ module meds_demography_cohort_fusefiss
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_config,     only : meds_config_t
    use meds_soil_column_config, only : soil_params_t, soil_column_params
-   use meds_diag_vars,        only : fuse_cohort_diag, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
+   use meds_diag_vars,        only : fuse_cohort_diag, PA_MORT_C_CULL
    use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &
                                       expand_cohort_block, copy_cohort, init_cohort,           &
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity,           &
@@ -219,9 +219,9 @@ contains
                                                      cohort%leaf_turnover_rate(donc), cd)
          !----- Fast-loop DIAGNOSTIC accumulators, handed leaf area (wr, wd), nplant (nr, nd) and the  !
          !      tissue heat capacities. Which weight applies is declared per field in                 !
-         !      meds_diag_vars (CDIAG_FUSE), not decided here. ------------------------------------------!
-         call fuse_cohort_diag(cohort%diag,  recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CDIAG_FUSE)
-         call fuse_cohort_diag(cohort%sdiag, recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd, CSDIAG_FUSE)
+         !      meds_diag_vars (CO_FUSION_KIND), not decided here. ------------------------------------------!
+         call fuse_cohort_diag(cohort%diag,  recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd)
+         call fuse_cohort_diag(cohort%sdiag, recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd)
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          !----- Same convention for the predawn water status. Fusion requires the two cohorts to  !
@@ -379,7 +379,7 @@ contains
             !      `dt_slow` is the weight one slow step accumulates; the cull fires on a             !
             !      month boundary and the output layer's temporal fold handles the rest.              !
             if (patch%diag%active)                                                                 &
-               patch%diag%v(PD_MORT_C_CULL, ip) = patch%diag%v(PD_MORT_C_CULL, ip)                 &
+               patch%diag%v(PA_MORT_C_CULL, ip) = patch%diag%v(PA_MORT_C_CULL, ip)                 &
                   + (cohort%nplant(i) * (cohort%leaf_carbon(i) + cohort%fineroot_carbon(i)         &
                                        + cohort%wood_carbon(i) + cohort%nonstructural_carbon(i))   &
                      / cfg%dt_years) * cfg%dt_slow

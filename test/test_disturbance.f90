@@ -5,7 +5,7 @@ program test_disturbance
    use meds_config,           only : meds_config_t, DIST_TREEFALL
    use meds_site_state_vars,  only : site_t
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance
-   use meds_diag_vars,                 only : PD_DISTURB_AREA, PD_LE, PD_MORT_C_CULL, alloc_patch_diag, patch_diag_value
+   use meds_diag_vars,                 only : PA_DISTURB_AREA, PA_LE, PA_MORT_C_CULL, alloc_patch_diag, patch_diag_value
    use meds_constants,                 only : yr_sec
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_diagnostic_reduce, only : total_area, total_nplant
@@ -67,9 +67,9 @@ program test_disturbance
    site%patch%diag%w(1:site%patch%n) = yr_sec
    frac_expect = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)
    call check(frac_expect > 1.0e-6_wp, 'the fixture must actually disturb something')
-   call patch_diag_value(site%patch%diag, PD_DISTURB_AREA, disturb_rate, n_slot)
+   call patch_diag_value(site%patch%diag, PA_DISTURB_AREA, disturb_rate, n_slot)
    call check_close(disturb_rate(1), frac_expect, 1.0e-12_wp,                                       &
-                    'PD_DISTURB_AREA must report the fraction the donor lost, in 1/yr')
+                    'PA_DISTURB_AREA must report the fraction the donor lost, in 1/yr')
 
    ig = 0_ik
    do ip = 1_ik, site%patch%n
@@ -130,10 +130,10 @@ program test_disturbance
    call alloc_patch_diag(site%patch%diag, site%patch%n + 1_ik, .true.)
    site%patch%diag%n = site%patch%n
    site%patch%diag%w(1:2) = cfg%dt_slow
-   site%patch%diag%v(PD_LE, 1) = 100.0_wp * cfg%dt_slow
-   site%patch%diag%v(PD_LE, 2) = 300.0_wp * cfg%dt_slow
+   site%patch%diag%v(PA_LE, 1) = 100.0_wp * cfg%dt_slow
+   site%patch%diag%v(PA_LE, 2) = 300.0_wp * cfg%dt_slow
    call apply_patch_disturbance(site, cfg, 0.5_wp)
-   call patch_diag_value(site%patch%diag, PD_LE, le, n_slot)
+   call patch_diag_value(site%patch%diag, PA_LE, le, n_slot)
    call check(n_slot == site%patch%n, 'the gap''s diagnostic slot is readable right after the disturbance')
    le_site = sum(site%patch%area(1:n_slot) * le(1:n_slot))
    call check_close(le_site, 180.0_wp, 1.0e-9_wp,                                                   &
@@ -160,11 +160,11 @@ program test_disturbance
    site%patch%diag%w(1:site%patch%n) = 0.0_wp
    site%patch%diag%v(:, 1:site%patch%n) = 0.0_wp
    do ip = 1_ik, site%patch%n
-      site%patch%diag%v(PD_MORT_C_CULL, ip) = 1.0e-3_wp * real(ip, wp)
+      site%patch%diag%v(PA_MORT_C_CULL, ip) = 1.0e-3_wp * real(ip, wp)
    end do
-   cull_before = sum(site%patch%area(1:site%patch%n) * site%patch%diag%v(PD_MORT_C_CULL, 1:site%patch%n))
+   cull_before = sum(site%patch%area(1:site%patch%n) * site%patch%diag%v(PA_MORT_C_CULL, 1:site%patch%n))
    call apply_patch_disturbance(site, cfg, 0.5_wp)
-   cull_after = sum(site%patch%area(1:site%patch%n) * site%patch%diag%v(PD_MORT_C_CULL, 1:site%patch%n))
+   cull_after = sum(site%patch%area(1:site%patch%n) * site%patch%diag%v(PA_MORT_C_CULL, 1:site%patch%n))
    call check_close(cull_after, cull_before, 1.0e-15_wp,                                            &
                     'a boundary disturbance keeps the stand total of the events it carves')
    call check(all(site%patch%diag%w(1:site%patch%n) == 0.0_wp), 'and leaves every weight at 0')

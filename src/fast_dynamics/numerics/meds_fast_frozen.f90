@@ -18,7 +18,7 @@ module meds_fast_frozen
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple, C2B_WOOD
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
-   use meds_diag_vars,       only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
+   use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
    use meds_water_retention, only : rwc_from_psi, wood_thermal_water
    use meds_hydr_lib, only : plc_retained, xylem_max_conductance, rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
@@ -73,7 +73,7 @@ contains
       type(column_frozen_t),   intent(out)   :: frozen
       type(column_state_t),    intent(out)   :: y
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
-      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
+      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CO_FAST_ROWS, ncoh) per-cohort diagnostic capture
 
       type(snow_stage_t)     :: snow_st   !< the shared pre-column snow stage's outcome
       type(chydro_forcing_t) :: hforc
@@ -453,11 +453,11 @@ contains
       !      root uptake per plant, and the wood's end-of-step potential and loss of conductance. -------!
       if (present(cdiag)) then
          do i = 1_ik, n
-            cdiag(CD_SAPFLOW,     i) = frozen%plant%sapflow_frozen(i)
-            cdiag(CD_ROOT_UPTAKE, i) = frozen%plant%uptake_frozen(i)
-            cdiag(CD_PSI_WOOD,    i) = spac%psi_coh(WOOD, i)
+            cdiag(CO_SAPFLOW,     i) = frozen%plant%sapflow_frozen(i)
+            cdiag(CO_ROOT_UPTAKE, i) = frozen%plant%uptake_frozen(i)
+            cdiag(CO_PSI_WOOD,    i) = spac%psi_coh(WOOD, i)
             associate (hp => col_config%hydraulics_table%pft(col_cohort%pft(i)))
-               cdiag(CD_PLC, i) = 1.0_wp - plc_retained(spac%psi_coh(WOOD, i), hp%wood_psi50, hp%wood_kexp)
+               cdiag(CO_PLC, i) = 1.0_wp - plc_retained(spac%psi_coh(WOOD, i), hp%wood_psi50, hp%wood_kexp)
             end associate
          end do
       end if

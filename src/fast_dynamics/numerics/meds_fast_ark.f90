@@ -43,7 +43,7 @@ module meds_fast_ark
                                      assemble_soil_energy_forcing, apply_process_mask, transp_per_leaf_area
    use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
    use meds_fast_frozen, only : build_column_frozen
-   use meds_diag_vars,       only : CD_TRANSP
+   use meds_diag_vars,       only : CO_TRANSP
    use meds_fast_types, only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t, alloc_column_cohort, &
                                column_state_t, column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, &
                                stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full, &
@@ -281,7 +281,7 @@ contains
       type(column_budget_t),   intent(inout) :: budget
       type(fast_workspace_t),  intent(inout) :: ws    !< this thread's reusable step storage
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
-      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
+      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CO_FAST_ROWS, ncoh) per-cohort diagnostic capture
       logical,     optional,   intent(out)   :: converged
       integer(ik), optional,   intent(out)   :: iters
 
@@ -457,7 +457,7 @@ contains
       !----- The transpiration each cohort's leaves lost over the step: the b-weighted amount over the  !
       !      accepted sub-steps, which the leaf water was debited and the canopy air credited. --------!
       if (present(cdiag) .and. allocated(acc%transp_coh))                                           &
-         cdiag(CD_TRANSP, 1:n) = transp_per_leaf_area(acc%transp_coh(1:n), dt_fast, col_cohort%nplant(1:n), &
+         cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(acc%transp_coh(1:n), dt_fast, col_cohort%nplant(1:n), &
                                                       col_cohort%leaf_area(1:n))
       do i = 1_ik, n
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &

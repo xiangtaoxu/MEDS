@@ -27,7 +27,7 @@ program test_column_rk45
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, build_soil_therm_params
-   use meds_diag_vars,       only : N_CDIAG, CD_PSI_PREDAWN
+   use meds_diag_vars,       only : N_CO_FAST_ROWS, CO_PSI_PREDAWN
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
@@ -649,7 +649,7 @@ contains
    subroutine test_campbell_predawn_seed()
       real(wp), parameter :: theta_sat = 0.43_wp, theta_res = 0.0_wp, psi_sat = -0.26_wp, b = 5.65_wp
       type(soil_params_t) :: vg_soil
-      real(wp) :: cdiag(N_CDIAG, n), seed
+      real(wp) :: cdiag(N_CO_FAST_ROWS, n), seed
       vg_soil = col_config%soil
       call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, test_bottoms, theta_sat, theta_res,     &
                                   2.89e-6_wp, psi_sat, b, -3.37_wp, col_config%soil)
@@ -666,7 +666,7 @@ contains
               col_cohort%dmax_psi_leaf(1) > 0.0_wp, col_cohort%dmax_psi_leaf(1))
       call check_true('Campbell seed: the top layer is unsaturated (a seed below zero)', seed < 0.0_wp, seed)
       call check_true('Campbell seed: the predawn seed is the Campbell curve''s top-layer potential',                 &
-              abs(cdiag(CD_PSI_PREDAWN, 1) - seed) <= 1.0e-12_wp * abs(seed), cdiag(CD_PSI_PREDAWN, 1))
+              abs(cdiag(CO_PSI_PREDAWN, 1) - seed) <= 1.0e-12_wp * abs(seed), cdiag(CO_PSI_PREDAWN, 1))
    end subroutine test_campbell_predawn_seed
 
    subroutine reset_state()

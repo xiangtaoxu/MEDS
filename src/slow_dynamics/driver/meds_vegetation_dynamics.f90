@@ -42,10 +42,10 @@ module meds_vegetation_dynamics
    use meds_sink_limitation,      only : growth_sink_limitation
    use meds_litter_partition, only : add_necromass
    use meds_biogeochem_types, only : litter_input_t
-   use meds_diag_vars,            only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF, CS_NPP_FINEROOT, CS_NPP_WOOD, &
-                                         CS_NPP_STORAGE, CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, &
-                                         expand_cohort_diag, PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_LITTER_WOOD, &
-                                         PD_LITTER_REPRO, PD_MORT_C_BACKGROUND, PD_RECRUIT_NPLANT, reset_cohort_diag
+   use meds_diag_vars,            only : CO_DDBH_DT, CO_DAGB_DT, CO_MORT_RATE, CO_NPP_LEAF, CO_NPP_FINEROOT, CO_NPP_WOOD, &
+                                         CO_NPP_STORAGE, CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP, CO_EXUDATE, &
+                                         expand_cohort_diag, PA_LITTER_LEAF, PA_LITTER_FINEROOT, PA_LITTER_STRUCT, PA_LITTER_WOOD, &
+                                         PA_LITTER_REPRO, PA_MORT_C_BACKGROUND, PA_RECRUIT_NPLANT, reset_cohort_diag
    implicit none
    private
 
@@ -58,7 +58,7 @@ module meds_vegetation_dynamics
    !----- Each cohort's NET change of its four carbon pools over one slow step [kgC/plant/step], as  !
    !      compute_carbon_allocation forms it: leaf and fine root are growth minus shed, wood is      !
    !      growth, and storage is allocation minus storage maintenance plus the carbon resorbed from  !
-   !      shed leaves and roots. It is NOT the NPP allocation the output reports (the CS_NPP_* rows  !
+   !      shed leaves and roots. It is NOT the NPP allocation the output reports (the CO_NPP_* rows  !
    !      of the slow diagnostic block, which are gross growth): a deciduous tree dropping its       !
    !      leaves has a negative leaf change and no leaf NPP, and shed_turnover_water reads that      !
    !      sign. One local of vegetation_dynamics, passed to the three routines that read it, so it   !
@@ -270,24 +270,24 @@ contains
          do ip = 1_ik, site%patch%n
             !----- Leaf and fine-root litter by the tissue they came from: what falls, not the        !
             !      share of it that reaches one destination pool. ----------------------------------!
-            site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
+            site%patch%diag%v(PA_LITTER_LEAF,     ip) = site%patch%diag%v(PA_LITTER_LEAF,     ip) &
                                                       + (site%patch%litter_in(ip)%leaf_c                &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_LITTER_FINEROOT, ip) = site%patch%diag%v(PD_LITTER_FINEROOT, ip) &
+            site%patch%diag%v(PA_LITTER_FINEROOT, ip) = site%patch%diag%v(PA_LITTER_FINEROOT, ip) &
                                                       + (site%patch%litter_in(ip)%fineroot_c            &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_LITTER_WOOD,     ip) = site%patch%diag%v(PD_LITTER_WOOD,     ip) &
+            site%patch%diag%v(PA_LITTER_WOOD,     ip) = site%patch%diag%v(PA_LITTER_WOOD,     ip) &
                                                       + ((site%patch%litter_in(ip)%wood_c               &
                                                         + site%patch%litter_in(ip)%storage_c)           &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_LITTER_REPRO,    ip) = site%patch%diag%v(PD_LITTER_REPRO,    ip) &
+            site%patch%diag%v(PA_LITTER_REPRO,    ip) = site%patch%diag%v(PA_LITTER_REPRO,    ip) &
                                                       + (site%patch%litter_in(ip)%repro_c               &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_LITTER_STRUCT,   ip) = site%patch%diag%v(PD_LITTER_STRUCT,   ip) &
+            site%patch%diag%v(PA_LITTER_STRUCT,   ip) = site%patch%diag%v(PA_LITTER_STRUCT,   ip) &
                                                       + ((site%patch%litter_in(ip)%struct_grnd          &
                                                         + site%patch%litter_in(ip)%struct_soil)         &
                                                          / cfg%dt_years) * cfg%dt_slow
-            site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) &
+            site%patch%diag%v(PA_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PA_RECRUIT_NPLANT,  ip) &
                                                       + sum(recruitment(:, ip)) * cfg%dt_slow
             !----- The block's weight: the fast loop adds dt_fast each sub-step; without one, the step  !
             !      adds its own dt_slow, or a slow-only run reads every patch row back as 0. ----------!
@@ -465,9 +465,9 @@ contains
             !      it at the output tick -- which runs AFTER the monthly fiss/fuse permutes the       !
             !      cohort axis -- would pair tendency i with a different plant i.  ------------------!
             if (cohort%sdiag%active) then
-               cohort%sdiag%v(CS_DDBH_DT,   i) = dbh_rate
-               cohort%sdiag%v(CS_DAGB_DT,   i) = (agb_new - cohort%agb(i)) / dt_yr
-               cohort%sdiag%v(CS_MORT_RATE, i) = mortality(i)
+               cohort%sdiag%v(CO_DDBH_DT,   i) = dbh_rate
+               cohort%sdiag%v(CO_DAGB_DT,   i) = (agb_new - cohort%agb(i)) / dt_yr
+               cohort%sdiag%v(CO_MORT_RATE, i) = mortality(i)
                cohort%sdiag%w(i)               = 1.0_wp
             end if
          end do
@@ -717,14 +717,14 @@ contains
             !      into a block that rides the cohort lockstep, NOT into a transient scratch (see     !
             !      meds_diag_vars). ------------------------------------------------------------      !
             if (cohort%sdiag%active) then
-               cohort%sdiag%v(CS_NPP_LEAF,     j) = g_leaf     / dt_yr
-               cohort%sdiag%v(CS_NPP_FINEROOT, j) = g_fineroot / dt_yr
-               cohort%sdiag%v(CS_NPP_WOOD,     j) = g_wood     / dt_yr
-               cohort%sdiag%v(CS_NPP_STORAGE,  j) = npp_store  / dt_yr
-               cohort%sdiag%v(CS_NPP_REPRO,    j) = g_repro    / dt_yr
-               cohort%sdiag%v(CS_GROWTH_RESP,  j) = growth_resp / dt_yr
-               cohort%sdiag%v(CS_STORAGE_RESP, j) = storage_maint / dt_yr
-               cohort%sdiag%v(CS_EXUDATE,      j) = exudate / dt_yr
+               cohort%sdiag%v(CO_NPP_LEAF,     j) = g_leaf     / dt_yr
+               cohort%sdiag%v(CO_NPP_FINEROOT, j) = g_fineroot / dt_yr
+               cohort%sdiag%v(CO_NPP_WOOD,     j) = g_wood     / dt_yr
+               cohort%sdiag%v(CO_NPP_STORAGE,  j) = npp_store  / dt_yr
+               cohort%sdiag%v(CO_NPP_REPRO,    j) = g_repro    / dt_yr
+               cohort%sdiag%v(CO_GROWTH_RESP,  j) = growth_resp / dt_yr
+               cohort%sdiag%v(CO_STORAGE_RESP, j) = storage_maint / dt_yr
+               cohort%sdiag%v(CO_EXUDATE,      j) = exudate / dt_yr
                cohort%sdiag%w(j)                  = 1.0_wp
             end if
             !----- EVERY ALLOCATOR OUTPUT HAS A DESTINATION (docs/science/plant_respiration.md §6).    !
@@ -1071,8 +1071,8 @@ contains
             !      biogeochemistry. As a rate [kgC/m2/yr] times the step's weight in seconds, which   !
             !      is the block's contract.                                                           !
             if (site%patch%diag%active)                                                            &
-               site%patch%diag%v(PD_MORT_C_BACKGROUND, ip) =                                       &
-                  site%patch%diag%v(PD_MORT_C_BACKGROUND, ip)                                      &
+               site%patch%diag%v(PA_MORT_C_BACKGROUND, ip) =                                       &
+                  site%patch%diag%v(PA_MORT_C_BACKGROUND, ip)                                      &
                   + (died_nplant * (cohort%leaf_carbon(j) + cohort%fineroot_carbon(j)              &
                                   + cohort%wood_carbon(j) + cohort%nonstructural_carbon(j))        &
                      / cfg%dt_years) * cfg%dt_slow

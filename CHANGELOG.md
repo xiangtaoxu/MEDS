@@ -87,7 +87,10 @@ reorganized by model hierarchy, with no change to any result (#448).
     reader takes them by name.
   - The diagnostic routines follow the block routines' pattern (`alloc_cohort_diag`,
     `expand_cohort_diag`, `reorder_cohort_diag`, `fuse_cohort_diag`, `blend_patch_diag`, ...), and
-    the fusion kinds are `FSK_*`.
+    the fusion kinds are `FSK_*`. The rows take one prefix per level: `CO_` (cohort), `PA_` (patch,
+    was `PD_`), `PY_` (polygon). The cohort's are numbered once (was `CD_` and `CS_`, each from 1): the
+    fast loop's rows, then the slow step's, each block holding only its own, so a row used on the
+    wrong block is out of bounds; one table, `CO_FUSION_KIND`, gives every row's fusion kind.
   - The kernels' rule never to see `site_t` is checked by a lint (ctest `kernels_no_site_state`),
     since the library boundary could not hold it.
 

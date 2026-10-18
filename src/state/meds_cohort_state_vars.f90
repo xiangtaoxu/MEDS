@@ -781,7 +781,7 @@ contains
    !                  over the same ground simply ADD; weighting would double-count the      !
    !                  normalization.                                                         !
    !                                                                                         !
-   !  The diagnostic twins are fused from their own declared table (CDIAG_FUSE,              !
+   !  The diagnostic twins are fused from their own declared table (CO_FUSION_KIND,          !
    !  meds_diag_vars) on weights the caller computes: the tissue heat capacities for         !
    !  the leaf and wood temperatures, as here, and leaf area for a per-LEAF-AREA diagnostic  !
    !  (transpiration per m2 of leaf, say), which is not a temperature. Adding a fast-loop    !
