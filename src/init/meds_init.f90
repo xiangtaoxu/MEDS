@@ -12,6 +12,7 @@ module meds_init
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_allometry,  only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
+   use meds_site_state_vars,       only : make_site_surface
    use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map,      &
                                           assign_cohort_id, assign_patch_id
    use meds_patch_state_vars,      only : patch_physical_state
@@ -45,6 +46,7 @@ contains
       integer(ik) :: ip
       call alloc_polygon(poly, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),       &
                       n_growth_window = growth_window_steps(cfg), allom = cfg%allom, pft = cfg%pft)
+      call make_site_surface(poly%site%surface(1), cfg)
       poly%patch%n = n_patch
       do ip = 1_ik, n_patch
          poly%patch%area(ip)      = 1.0_wp / real(n_patch, wp)

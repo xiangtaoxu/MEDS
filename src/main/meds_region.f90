@@ -271,6 +271,7 @@ contains
             poly%latitude_deg  = cells%lat(p)
             poly%longitude_deg = cells%lon(p)
             poly%elevation_m   = cells%elevation(p)
+            poly%site%surface(1:poly%site%n)%elevation_m = poly%elevation_m   ! its sites, where it is
 
             !----- Census cohorts sit in an established stand but carry NO trait history, so with     !
             !      plasticity on their leaf traits acclimate to their light INSTANTANEOUSLY (after the !
