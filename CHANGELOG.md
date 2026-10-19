@@ -116,6 +116,15 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   place of its own copy of Gaussian elimination, and stops if the block is singular. `meds_numerics`
   keeps the small helpers. The solvers' details are in `docs/science/numerical_scheme.md` §9. Outputs
   are unchanged bit for bit, a run that starts from the soil-carbon steady state included.
+- **`src/shared`'s comments say what each routine does and why, and the details are on the science
+  pages** (#458). Whole-line comments fall from 1,066 to 663. New or extended passages:
+  `numerical_scheme.md` §5b (how a ledger is judged) and §9 (the shared numerical tools, eq. (5));
+  `plant_carbon_allocation.md` §2 (the size allometry); `plant_hydraulics.md` §3 (the quadrature and
+  the flow's guards); `soil_biophysics.md` (the two retention curves); `vegetation_energy_dynamics.md`
+  (wood area and sapwood); `leaf_gas_exchange.md` §2 (temperature); `canopy_air_space_biophysics.md`
+  (the enthalpy datum); `forcing.md` §4; `soil_plant_water.md` §2. The ED2 provenance notes move from
+  the code to `docs/ed2_comparison.md` §4.7. Comments that were wrong are corrected (the reason for
+  64-bit day numbers, what `sp` and `lk` are for, `hydro_table_t%kexp`, the leaf-angle range).
 - **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
   restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
   temperature, holding the water their tissues hold at the potential of the patch's top soil layer
