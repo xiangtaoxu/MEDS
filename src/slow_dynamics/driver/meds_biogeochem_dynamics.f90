@@ -19,7 +19,7 @@
 module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_polygon_state_vars, only : polygon_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_seam_t, n_soil_pool,       &
                                      IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND,                     &
                                      IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
@@ -64,7 +64,7 @@ contains
       if (present(ledger)) then
          do ip = 1_ik, poly%patch%n
             associate (lit => poly%patch%litter_in(ip))
-               call slow_ledger_declare(ledger, carbon_in = poly%patch%area(ip)                    &
+               call slow_ledger_declare(ledger, carbon_in = patch_polygon_area(poly, ip)           &
                         * (lit%labile_grnd + lit%labile_soil + lit%struct_grnd + lit%struct_soil))
             end associate
          end do
@@ -104,7 +104,7 @@ contains
             !      what is left in the residual is then rh_seam_gap, which is the quantity the       !
             !      contract actually asserts on.  ------------------------------------------------!
             if (present(ledger)) call slow_ledger_declare(ledger,                                  &
-                                          carbon_out = poly%patch%area(ip) * rh_today)
+                                          carbon_out = patch_polygon_area(poly, ip) * rh_today)
          end associate
       end do
    end subroutine advance_biogeochem_dynamics

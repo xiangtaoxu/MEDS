@@ -30,7 +30,7 @@
 module meds_diagnostic_reduce
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, cm2_to_m2, n_soil_layer_max
-   use meds_polygon_state_vars, only : polygon_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area, patch_polygon_areas
    use meds_diagnostic_kernels, only : dbh_class_index
    use meds_output_types,       only : MISSING_VALUE
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan, ieee_is_finite
@@ -112,16 +112,17 @@ contains
       real(wp),           intent(out) :: val
       logical,            intent(out) :: valid
       real(wp), optional, intent(in)  :: scale
-      real(wp)    :: w(max(poly%cohort%n, 1_ik)), num, den, sc
+      real(wp)    :: w(max(poly%cohort%n, 1_ik)), share(max(poly%patch%n, 1_ik)), num, den, sc
       integer(ik) :: ip, i0, i1, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
       call cohort_weight(poly, wkind, x, w, nw)
+      call patch_polygon_areas(poly, share)
       num = 0.0_wp ; den = 0.0_wp
       do ip = 1_ik, poly%patch%n
          i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          if (i1 < i0) cycle
-         num = num + poly%patch%area(ip) * sum(w(i0:i1) * x(i0:i1)) * sc
-         if (mean) den = den + poly%patch%area(ip) * sum(w(i0:i1))
+         num = num + share(ip) * sum(w(i0:i1) * x(i0:i1)) * sc
+         if (mean) den = den + share(ip) * sum(w(i0:i1))
       end do
       if (mean) then
          valid = (abs(den) > tiny_num)
@@ -189,7 +190,7 @@ contains
       num = 0.0_wp ; den = 0.0_wp
       do ip = 1_ik, poly%patch%n
          i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
-         aw = poly%patch%area(ip)
+         aw = patch_polygon_area(poly, ip)
          do i = i0, i1
             k = poly%cohort%pft(i)
             if (k < 1_ik .or. k > n_pft) cycle
@@ -237,7 +238,7 @@ contains
       num = 0.0_wp ; den = 0.0_wp
       do ip = 1_ik, poly%patch%n
          i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
-         aw = poly%patch%area(ip)
+         aw = patch_polygon_area(poly, ip)
          do i = i0, i1
             k = dbh_class_index(poly%cohort%dbh(i), edges, n_class)
             num(k) = num(k) + aw * w(i) * x(i) * sc
@@ -271,12 +272,13 @@ contains
       logical,      intent(in)  :: mean
       real(wp),     intent(out) :: val
       logical,      intent(out) :: valid
-      real(wp)    :: num, den
+      real(wp)    :: share(max(poly%patch%n, 1_ik)), num, den
       integer(ik) :: ip
+      call patch_polygon_areas(poly, share)
       num = 0.0_wp ; den = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         num = num + poly%patch%area(ip) * x(ip)
-         den = den + poly%patch%area(ip)
+         num = num + share(ip) * x(ip)
+         den = den + share(ip)
       end do
       if (mean) then
          valid = (den > tiny_num)
@@ -293,13 +295,14 @@ contains
       integer(ik),  intent(in)  :: nlayer
       real(wp),     intent(out) :: out(:)
       integer(ik),  intent(out) :: n_out
-      real(wp)    :: wsum
+      real(wp)    :: share(max(poly%patch%n, 1_ik)), wsum
       integer(ik) :: ip
+      call patch_polygon_areas(poly, share)
       n_out = nlayer
       out(1:n_out) = 0.0_wp ; wsum = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         out(1:n_out) = out(1:n_out) + poly%patch%area(ip) * col(1:n_out, ip)
-         wsum = wsum + poly%patch%area(ip)
+         out(1:n_out) = out(1:n_out) + share(ip) * col(1:n_out, ip)
+         wsum = wsum + share(ip)
       end do
       if (wsum > tiny_num) out(1:n_out) = out(1:n_out) / wsum
    end subroutine reduce_patch_column_to_site
@@ -364,9 +367,12 @@ contains
       call reduce_cohort_to_site(poly, poly%cohort%leaf_area, W_NPLANT, .false., tot, ok)
    end function total_lai
 
+   !----- The patches' shares of the polygon, summed: 1 while no patch area is lost. -----------!
    pure real(wp) function total_area(poly) result(tot)
       type(polygon_t), intent(in) :: poly
-      tot = sum(poly%patch%area(1:poly%patch%n))
+      real(wp) :: share(max(poly%patch%n, 1_ik))
+      call patch_polygon_areas(poly, share)
+      tot = sum(share(1:poly%patch%n))
    end function total_area
 
    !----- Basal-area-weighted mean diameter [cm] (a simple structural index). --------------!

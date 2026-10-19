@@ -31,7 +31,7 @@ module meds_demography_cohort_fusefiss
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity,           &
                                       cohort_tissue_water, set_cohort_size_from_carbon,                  &
                                       fuse_cohort_fast_state
-   use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id
+   use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id, patch_polygon_area
    use meds_patch_state_vars, only : patch_physical_state
    use meds_litter_partition, only : necromass_to_litter
    implicit none
@@ -368,7 +368,7 @@ contains
             w_cohort = cohort_tissue_water(cohort, i)                                              &
                      + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
-            w_tot = w_tot + patch%area(ip) * w_cohort
+            w_tot = w_tot + patch_polygon_area(poly, ip) * w_cohort
             !----- The CULL pathway's carbon. BEFORE the soil_carbon_on cycle below, for the          !
             !      same reason the water above is: a cohort dropping off the tracked size floor is a  !
             !      demographic event, and it still happened when the soil pools are off. The cull     !
@@ -487,10 +487,10 @@ contains
                c_min = min_cohort_carbon(cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
                endow = cohort%leaf_carbon(m) + cohort%fineroot_carbon(m)                           &
                      + cohort%wood_carbon(m) + cohort%nonstructural_carbon(m)
-               c_tot = c_tot + patch%area(ip) * patch%recruit_pool(pf, ip) * (endow - c_min)
+               c_tot = c_tot + patch_polygon_area(poly, ip) * patch%recruit_pool(pf, ip) * (endow - c_min)
                call cohort_tissue_heat_capacity(cohort, m, cap_leaf, cap_wood)
-               e_tot = e_tot + patch%area(ip) * (cap_leaf + cap_wood) * t_birth
-               w_tot = w_tot + patch%area(ip) * cohort_tissue_water(cohort, m)
+               e_tot = e_tot + patch_polygon_area(poly, ip) * (cap_leaf + cap_wood) * t_birth
+               w_tot = w_tot + patch_polygon_area(poly, ip) * cohort_tissue_water(cohort, m)
                patch%recruit_pool(pf, ip) = 0.0_wp
             end do
          end do

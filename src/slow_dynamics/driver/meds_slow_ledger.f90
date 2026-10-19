@@ -33,7 +33,7 @@ module meds_slow_ledger
    use meds_constants,          only : rho_h2o
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_tissue_heat_capacity
-   use meds_polygon_state_vars, only : polygon_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
@@ -312,7 +312,7 @@ contains
       end do
 
       do ip = 1_ik, poly%patch%n
-         a = poly%patch%area(ip)
+         a = patch_polygon_area(poly, ip)
          if (a <= 0.0_wp) cycle
 
          !----- Soil column: theta is volumetric and soil_energy is per m3, so both integrate     !
@@ -393,7 +393,7 @@ contains
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          do i = i0, i1
             call cohort_tissue_heat_capacity(poly%cohort, i, cap_leaf, cap_wood)
-            e = e + poly%patch%area(ip) * (cap_leaf * poly%cohort%leaf_temp(i)                    &
+            e = e + patch_polygon_area(poly, ip) * (cap_leaf * poly%cohort%leaf_temp(i)           &
                                          + cap_wood * poly%cohort%wood_temp(i))
          end do
       end do
@@ -416,7 +416,7 @@ contains
       integer(ik) :: ip, i, i0, i1
       net_c = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         a  = poly%patch%area(ip)
+         a  = patch_polygon_area(poly, ip)
          i0 = poly%patch%cohort_offset(ip)
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          associate (ch => poly%cohort)

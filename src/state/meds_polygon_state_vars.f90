@@ -21,6 +21,7 @@ module meds_polygon_state_vars
    private
 
    public :: polygon_t, alloc_polygon, free_polygon, rebuild_patch_map, rebuild_cohort_map
+   public :: patch_polygon_area, patch_polygon_areas
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
 
    type :: polygon_t
@@ -223,6 +224,29 @@ contains
       end do
       call reorder_cohort_block(poly%cohort, perm, nc)
    end subroutine rebuild_cohort_map
+
+   !=======================================================================================!
+   !  AREA                                                                                 !
+   !=======================================================================================!
+
+   !----- A patch's share of the polygon: its area is a fraction of its site, and its site's   !
+   !      a fraction of the polygon. Every polygon total weights its patches by this; anything !
+   !      within one site (fusion, a disturbance gap, the patch thresholds) by the patch area. !
+   pure real(wp) function patch_polygon_area(poly, ip) result(a)
+      type(polygon_t), intent(in) :: poly
+      integer(ik),     intent(in) :: ip
+      a = poly%site%area(poly%patch%owner_site(ip)) * poly%patch%area(ip)
+   end function patch_polygon_area
+
+   !----- Every patch's share, in patch order: a contiguous weight for a loop over the patches. !
+   pure subroutine patch_polygon_areas(poly, share)
+      type(polygon_t), intent(in)  :: poly
+      real(wp),        intent(out) :: share(:)
+      integer(ik) :: ip
+      do ip = 1_ik, poly%patch%n
+         share(ip) = patch_polygon_area(poly, ip)
+      end do
+   end subroutine patch_polygon_areas
 
    !=======================================================================================!
    !  IDENTITY                                                                             !

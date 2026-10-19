@@ -31,6 +31,7 @@ module meds_c_api_run
                                       CO_EXUDATE
    use meds_region,            only : meds_region_t, region_open, region_step, region_finalize,  &
                                       region_free, region_done
+   use meds_polygon_state_vars, only : patch_polygon_area
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area,    &
                                       count_cohorts
    implicit none
@@ -218,7 +219,7 @@ contains
       tot = 0.0_wp
       associate (p => g_run(h)%poly(1)%patch)
          do ip = 1_ik, p%n
-            tot = tot + p%area(ip) * (p%soil_carbon(ip)%fast_grnd_carbon                        &
+            tot = tot + patch_polygon_area(g_run(h)%poly(1), ip) * (p%soil_carbon(ip)%fast_grnd_carbon &
                                     + p%soil_carbon(ip)%fast_soil_carbon                        &
                                     + p%soil_carbon(ip)%struct_grnd_carbon                      &
                                     + p%soil_carbon(ip)%struct_soil_carbon                      &

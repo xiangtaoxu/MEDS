@@ -22,7 +22,7 @@ module meds_vegetation_dynamics
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
    use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon
-   use meds_polygon_state_vars, only : polygon_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
@@ -395,7 +395,7 @@ contains
       integer(ik) :: ip
       c = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         c = c + poly%patch%area(ip) * poly%patch%slow_co2_rate(ip) * KGC_PER_UMOL_C * cfg%dt_slow
+         c = c + patch_polygon_area(poly, ip) * poly%patch%slow_co2_rate(ip) * KGC_PER_UMOL_C * cfg%dt_slow
       end do
    end function slow_co2_handoff
 
@@ -411,7 +411,7 @@ contains
       integer(ik) :: ip
       c = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         c = c + poly%patch%area(ip) * (lit(ip)%labile_grnd + lit(ip)%labile_soil                   &
+         c = c + patch_polygon_area(poly, ip) * (lit(ip)%labile_grnd + lit(ip)%labile_soil          &
                                       + lit(ip)%struct_grnd + lit(ip)%struct_soil)
       end do
    end function litter_carbon_total
@@ -842,7 +842,7 @@ contains
                !      puts the mass back into the ground valued as the ground inflow it joins: a     !
                !      re-valuation. Declaring the departure here is what makes that difference       !
                !      measurable rather than absorbed.                                               !
-               shed_enth = shed_enth + poly%patch%area(ip) * cohort%nplant(j) * shed_amount          &
+               shed_enth = shed_enth + patch_polygon_area(poly, ip) * cohort%nplant(j) * shed_amount &
                                      * cp_liq * cohort%leaf_temp(j)
             end if
             if (dpool%fineroot(j) < 0.0_wp) then
@@ -857,7 +857,7 @@ contains
                !      (wood_thermal_water), so draining the store lowers it by that share of the shed, !
                !      at the wood's temperature, as the leaf's shed does at the leaf's. The carbon     !
                !      commit's lower broot raises the share back, a thermal-mass change it declares.   !
-               shed_enth = shed_enth + poly%patch%area(ip) * cohort%nplant(j) * cp_liq * cohort%wood_temp(j) &
+               shed_enth = shed_enth + patch_polygon_area(poly, ip) * cohort%nplant(j) * cp_liq * cohort%wood_temp(j) &
                                      * wood_thermal_water(shed_amount, cohort%sapwood_carbon(j),        &
                                                           cohort%fineroot_carbon(j))
             end if
@@ -872,7 +872,7 @@ contains
       !      slow_site_store's header on why treating it as one double-counts at every open).       !
       if (present(ledger)) then
          do ip = 1_ik, poly%patch%n
-            call slow_ledger_declare(ledger, water_out = poly%patch%area(ip) * patch_total(ip))
+            call slow_ledger_declare(ledger, water_out = patch_polygon_area(poly, ip) * patch_total(ip))
          end do
          call slow_ledger_declare(ledger, energy_out = shed_enth)
       end if
@@ -946,7 +946,7 @@ contains
             ip = cohort%owner_patch(i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip)                                   &
                                       + cohort%nplant(i) * excess / max(cfg%dt_slow, tiny_num)
-            water_shed = water_shed + patch%area(ip) * cohort%nplant(i) * excess
+            water_shed = water_shed + patch_polygon_area(poly, ip) * cohort%nplant(i) * excess
          end do
       end associate
    end subroutine shed_excess_tissue_water
@@ -989,7 +989,7 @@ contains
             w_j = died_nplant * (max(cohort%leaf_water_mass(j), 0.0_wp)                            &
                                + max(cohort%wood_water_mass(j), 0.0_wp))
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
-            water_shed = water_shed + patch%area(ip) * w_j
+            water_shed = water_shed + patch_polygon_area(poly, ip) * w_j
          end do
       end associate
    end subroutine shed_mortality_water
@@ -1025,7 +1025,7 @@ contains
                if (pft%include_pft(pf) /= 1_ik) cycle
                c_min = min_cohort_carbon(poly%cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
                seed_rain_carbon = seed_rain_carbon                                                 &
-                                + patch%area(ip) * pft%seed_rain_recruits(pf) * dt_yr * c_min
+                                + patch_polygon_area(poly, ip) * pft%seed_rain_recruits(pf) * dt_yr * c_min
             end do
          end do
       end associate

@@ -514,7 +514,7 @@ contains
                                       + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
                   patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
                                               + w_kill / new_area / max(cfg%dt_slow, tiny_num)
-                  w_tot = w_tot + w_kill
+                  w_tot = w_tot + poly%site%area(patch%owner_site(d)) * w_kill   ! w_kill is per m2 of the site
                   if (cfg%soil_carbon_on) then
                      lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
                      pf = cohort%pft(i)

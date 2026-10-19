@@ -10,7 +10,7 @@ module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
    use meds_config,                only : meds_config_t
    use meds_time,                  only : meds_time_t, day_of_year
-   use meds_polygon_state_vars, only : polygon_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_demography_update, only : update_patch_states
    use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand, shed_excess_tissue_water
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
@@ -161,8 +161,8 @@ contains
             call cas_set_depth(poly%patch%cas(ip), depth_new, rho_air=rho,                         &
                                de_open=de, dw_open=dw, dc_open=dc)
             call slow_ledger_declare(ledger,                                                       &
-                     energy_in=poly%patch%area(ip) * de, water_in=poly%patch%area(ip) * dw,        &
-                     carbon_in=poly%patch%area(ip) * dc * KGC_PER_UMOL_C)
+                     energy_in=patch_polygon_area(poly, ip) * de, water_in=patch_polygon_area(poly, ip) * dw, &
+                     carbon_in=patch_polygon_area(poly, ip) * dc * KGC_PER_UMOL_C)
          else
             call cas_set_depth(poly%patch%cas(ip), depth_new)
          end if

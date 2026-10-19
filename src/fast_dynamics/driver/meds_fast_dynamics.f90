@@ -50,7 +50,7 @@ module meds_fast_dynamics
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
    use meds_cohort_state_vars, only : set_cohort_tissue_water
    use meds_state_defaults,    only : DMAX_PSI_LEAF_ACCUM_RESET
-   use meds_polygon_state_vars, only : polygon_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
@@ -592,8 +592,8 @@ contains
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
             red_site(RED_PHENO_TAIR, isub, ip) = met%tair_k
             call fill_forcing(forc, col_cohort, met_top, sw_ground, sum_lai)
-            red_site(RED_RAINF,    isub, ip) = poly%patch%area(ip) * forc%rainfall
-            red_site(RED_SNOWFALL, isub, ip) = poly%patch%area(ip) * forc%snowfall
+            red_site(RED_RAINF,    isub, ip) = patch_polygon_area(poly, ip) * forc%rainfall
+            red_site(RED_SNOWFALL, isub, ip) = patch_polygon_area(poly, ip) * forc%snowfall
             !----- RT join (docs/science/canopy_radiation_transfer.md §4): when forcing is on,        !
             !      REPLACE the LAI-share SW split with real per-cohort absorbed SW/PAR and net LW     !
             !      from the two-stream canopy radiation, which emits each cohort at its radiative     !
@@ -626,23 +626,23 @@ contains
                                      le_flux=le_flux, h_flux=h_flux)
             end if
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
-            red_site(RED_ET, isub, ip) = poly%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
+            red_site(RED_ET, isub, ip) = patch_polygon_area(poly, ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
             !----- And the water leaving its soil column: surface runoff and bottom drainage [kg/m2]. ----!
-            red_site(RED_RUNOFF_SURF, isub, ip) = poly%patch%area(ip) * budget%runoff_surf_export
-            red_site(RED_DRAINAGE,    isub, ip) = poly%patch%area(ip) * budget%drainage_export
+            red_site(RED_RUNOFF_SURF, isub, ip) = patch_polygon_area(poly, ip) * budget%runoff_surf_export
+            red_site(RED_DRAINAGE,    isub, ip) = patch_polygon_area(poly, ip) * budget%drainage_export
             !----- Integrator WORK counters: area-weight like every other site diagnostic, so a patch  !
             !      that needs more sub-steps is not double-counted by its area share. -----------------!
-            red_site(RED_INTEG_STEPS,  isub, ip) = poly%patch%area(ip) * real(budget%integ_nsteps,   wp)
-            red_site(RED_INTEG_REJ,    isub, ip) = poly%patch%area(ip) * real(budget%integ_nrej,     wp)
-            red_site(RED_WATER_NSUB,   isub, ip) = poly%patch%area(ip) * real(budget%water_nsub,   wp)
-            red_site(RED_WATER_NEWTON, isub, ip) = poly%patch%area(ip) * real(budget%water_newton, wp)
-            red_site(RED_WATER_REJECT, isub, ip) = poly%patch%area(ip) * real(budget%water_reject, wp)
-            red_site(RED_WATER_NFAIL,  isub, ip) = poly%patch%area(ip) * real(budget%water_nfail,  wp)
+            red_site(RED_INTEG_STEPS,  isub, ip) = patch_polygon_area(poly, ip) * real(budget%integ_nsteps,   wp)
+            red_site(RED_INTEG_REJ,    isub, ip) = patch_polygon_area(poly, ip) * real(budget%integ_nrej,     wp)
+            red_site(RED_WATER_NSUB,   isub, ip) = patch_polygon_area(poly, ip) * real(budget%water_nsub,   wp)
+            red_site(RED_WATER_NEWTON, isub, ip) = patch_polygon_area(poly, ip) * real(budget%water_newton, wp)
+            red_site(RED_WATER_REJECT, isub, ip) = patch_polygon_area(poly, ip) * real(budget%water_reject, wp)
+            red_site(RED_WATER_NFAIL,  isub, ip) = patch_polygon_area(poly, ip) * real(budget%water_nfail,  wp)
             !----- INTEGRATOR HEALTH, same area weighting. work_rk45_rescue is the one that decides     !
             !      whether an "RK45 run" was actually RK45: a nonzero total means some dt_fast steps    !
             !      were rescued by ARK instead, which changes what the run measures.                    !
-            red_site(RED_RK45_RESCUE,  isub, ip) = poly%patch%area(ip) * real(budget%rk45_rescue,    wp)
-            red_site(RED_CLAMP_STAGE,  isub, ip) = poly%patch%area(ip) * real(budget%clamp_stage_n,  wp)
+            red_site(RED_RK45_RESCUE,  isub, ip) = patch_polygon_area(poly, ip) * real(budget%rk45_rescue,    wp)
+            red_site(RED_CLAMP_STAGE,  isub, ip) = patch_polygon_area(poly, ip) * real(budget%clamp_stage_n,  wp)
             !----- Integrate this sub-step's per-pool env scalar + matrix Rh into the day's totals:   !
             !      dt_fast_days converts the instantaneous xi_step/rh_matrix_step (column_prepass     !
             !      leaves both at 0 when soil_carbon_on=.false.) into the day-integral xi_int the     !
@@ -818,11 +818,11 @@ contains
             do ip = 1_ik, npatch
                kb = (ip - 1_ik) * nl
                out_bufs%fast_site(:, isub) = out_bufs%fast_site(:, isub)                                  &
-                                             + poly%patch%area(ip) * out_bufs%fast_patch(:, ip, isub)
+                                             + patch_polygon_area(poly, ip) * out_bufs%fast_patch(:, ip, isub)
                out_bufs%fast_soil_temp(1:nl, isub)  = out_bufs%fast_soil_temp(1:nl, isub)                 &
-                                             + poly%patch%area(ip) * out_bufs%fast_soil_temp_patch(kb+1_ik:kb+nl, isub)
+                                             + patch_polygon_area(poly, ip) * out_bufs%fast_soil_temp_patch(kb+1_ik:kb+nl, isub)
                out_bufs%fast_soil_water(1:nl, isub) = out_bufs%fast_soil_water(1:nl, isub)                &
-                                             + poly%patch%area(ip) * out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub)
+                                             + patch_polygon_area(poly, ip) * out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub)
             end do
          end do
       end if
@@ -860,9 +860,9 @@ contains
       if (present(run_energy_budget) .or. present(run_water_budget) .or. present(run_face_budget)) then
          site_energy_budget = budget_t() ; site_water_budget = budget_t() ; site_face_budget = budget_t()
          do ip = 1_ik, npatch
-            call budget_merge(site_energy_budget, red_budget_energy(ip), poly%patch%area(ip))
-            call budget_merge(site_water_budget,  red_budget_water(ip),  poly%patch%area(ip))
-            call budget_merge(site_face_budget,   red_budget_face(ip),   poly%patch%area(ip))
+            call budget_merge(site_energy_budget, red_budget_energy(ip), patch_polygon_area(poly, ip))
+            call budget_merge(site_water_budget,  red_budget_water(ip),  patch_polygon_area(poly, ip))
+            call budget_merge(site_face_budget,   red_budget_face(ip),   patch_polygon_area(poly, ip))
          end do
          if (present(run_energy_budget)) call budget_merge(run_energy_budget, site_energy_budget, 1.0_wp)
          if (present(run_water_budget))  call budget_merge(run_water_budget,  site_water_budget,  1.0_wp)
