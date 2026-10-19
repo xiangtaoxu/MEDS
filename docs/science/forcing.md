@@ -229,7 +229,9 @@ other common form, White's (1997) $`-23.44^\circ\cos\frac{2\pi(\mathrm{doy}+9)}{
 function offset by 1.25 days — $`-\cos x = \sin(x-\pi/2)`$ puts White's ascending zero crossing at
 doy 82.25 against Cooper's 81 — and Cooper's is the closer to the true vernal equinox near doy 79–80.
 The two give Ithaca daylengths that differ by at most **3.7 minutes** (at the equinoxes; ~0 at the
-solstices).
+solstices). Cooper's form is a pure sinusoid in the day of year, with no correction for the
+eccentricity of the orbit. The daylength is $(24/\pi)\arccos(-\tan\phi\tan\delta)$ hours, 0 in the
+polar night and 24 in the polar day.
 
 ## 5. Shortwave disaggregation: conserving the interval mean
 

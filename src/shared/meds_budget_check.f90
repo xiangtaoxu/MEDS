@@ -1,23 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_budget_check -- shared CONSERVATION-checking facility for the coupled fast loop           !
-! (docs/science/numerical_scheme.md §5b). Coupling makes conservation a CROSS-module property:   !
-! once the column driver sums cohort + ground + atmosphere fluxes into the canopy-air-space      !
-! twins and threads soil<->plant water, the meaningful invariant is the COLUMN TOTAL, which no    !
-! single kernel can see -- only the driver. This module gives everyone ONE closure predicate, a   !
-! per-store accumulator, a merge (patch -> site -> run), and an end-of-run report.                !
-!                                                                                          !
-! Units are per-store, per unit ground area: energy [J/m2], water [kg/m2], CO2 [umol/m2] or        !
-! [mol/m2]. Compute is `pure`/GPU-safe; the hard error-stop wrapper and the report are the only    !
-! non-pure entries. It lives in `shared` (root of the DAG, deps meds_kinds only) so every process  !
-! module and the driver test conservation identically.                                             !
-!                                                                                          !
-! TOLERANCE POLICY. A residual is judged against the GROSS FLUX that crossed the store's boundary    !
-! over the window, never against the store itself: a soil column holds ~1e9 J/m2, so a               !
-! store-relative 1e-6 would let a sustained ~1 W/m2 leak through every step. Pass                    !
-! scale = |influx| + |outflux| and atol = <rate floor> * dt, with the floors below. The accumulator  !
-! also keeps the SIGNED cumulative residual, because a one-signed bias below the per-step tolerance  !
-! is invisible to a running maximum and only shows up as a drift over a season.                      !
+! meds_budget_check -- the conservation ledgers (docs/science/numerical_scheme.md §5b):    !
+! the closure test, a per-store accumulator, the merge of patches into a site and of steps !
+! into a run, and the end-of-run report. A residual is judged against the gross flux that  !
+! crossed the store's boundary, never against the store, and the signed sum of the         !
+! residuals is kept, so a small one-signed leak shows as a drift. Stores are per unit      !
+! ground area: energy [J/m2], water [kg/m2], CO2 [umol/m2]. It sits in shared so every     !
+! process module and the driver test conservation the same way.                            !
 !==========================================================================================!
 module meds_budget_check
    use meds_kinds, only : wp, ik
@@ -28,63 +17,49 @@ module meds_budget_check
    public :: budget_check, budget_merge, budget_report, last_check_closed
    public :: budget_rtol_flux, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
 
-   !----- Closure tolerances shared by every ledger (see the header). -------------------------!
+   !----- Closure tolerances of every ledger (docs/science/numerical_scheme.md §5b). ------!
    real(wp), parameter :: budget_rtol_flux         = 1.0e-6_wp  !< [-] relative to the gross boundary flux
-   !----- The energy floor, 1e-3 W/m2, is 0.9 J/m2 over a 900 s step. It sits far above the round-off  !
-   !      of the column's energy stores (each ~1e9 J/m2, so ~1e-7 J/m2 a step; every energy ledger,    !
-   !      the whole column's under a melting snow pack included, closes to ~1e-6 J/m2 a step) and far  !
-   !      below any flux the column resolves. It is the water floor's order: 1e-9 kg/m2/s of           !
-   !      evaporation carries 2.5e-3 W/m2 of latent heat. ---------------------------------------------!
-   real(wp), parameter :: budget_energy_rate_floor = 1.0e-3_wp  !< [W/m2]      absolute floor, as a rate
-   real(wp), parameter :: budget_water_rate_floor  = 1.0e-9_wp  !< [kg/m2/s]   (~1e-4 mm/day)
-   real(wp), parameter :: budget_co2_rate_floor    = 1.0e-6_wp  !< [umol/m2/s]
+   real(wp), parameter :: budget_energy_rate_floor = 1.0e-3_wp  !< [W/m2] absolute floor, as a rate
+   real(wp), parameter :: budget_water_rate_floor  = 1.0e-9_wp  !< [kg/m2/s] absolute floor (~1e-4 mm/day)
+   real(wp), parameter :: budget_co2_rate_floor    = 1.0e-6_wp  !< [umol/m2/s] absolute floor
 
-   !----- A budget accumulator for one store over an accumulation window (a fast step, a day, a run). !
+   !----- One store's ledger over a series of checks (fast steps, days, a run). -----------!
    type :: budget_t
-      real(wp)    :: store0  = 0.0_wp    !< store at window start   [store-unit/m2]   (last check)
-      real(wp)    :: store1  = 0.0_wp    !< store at window end     [store-unit/m2]   (last check)
-      real(wp)    :: influx  = 0.0_wp    !< boundary INFLOW  over the window (amount)  (last check)
-      real(wp)    :: outflux = 0.0_wp    !< boundary OUTFLOW over the window            (last check)
-      real(wp)    :: resid   = 0.0_wp    !< (store1-store0) - (influx-outflux)  imbalance (last check)
-      real(wp)    :: worst   = 0.0_wp    !< running max |resid| over all checks
-      real(wp)    :: resid_sum  = 0.0_wp !< SIGNED sum of resid over all checks (+ = appearing from nowhere)
-      real(wp)    :: abs_sum    = 0.0_wp !< sum of |resid| over all checks
-      real(wp)    :: flux_gross = 0.0_wp !< sum of |influx| + |outflux| over all checks
-      real(wp)    :: elapsed    = 0.0_wp !< [s] simulated time the checks span (only if callers report it)
-      integer(ik) :: n_check = 0_ik      !< number of closure tests performed
-      integer(ik) :: n_fail  = 0_ik      !< number that breached tolerance
+      real(wp)    :: store0  = 0.0_wp    !< [store-unit/m2] store at the start of the last check's window
+      real(wp)    :: store1  = 0.0_wp    !< [store-unit/m2] store at its end
+      real(wp)    :: influx  = 0.0_wp    !< inflow of the last check (an amount, from budget_check)
+      real(wp)    :: outflux = 0.0_wp    !< outflow of the last check
+      real(wp)    :: resid   = 0.0_wp    !< [store-unit/m2] residual of the last check
+      real(wp)    :: worst   = 0.0_wp    !< [store-unit/m2] largest |resid| of any check
+      real(wp)    :: resid_sum  = 0.0_wp !< [store-unit/m2] signed sum of resid (> 0: the store gains from nowhere)
+      real(wp)    :: abs_sum    = 0.0_wp !< [store-unit/m2] sum of |resid|
+      real(wp)    :: flux_gross = 0.0_wp !< [store-unit/m2] sum of |influx| + |outflux|
+      real(wp)    :: elapsed    = 0.0_wp !< [s] simulated time the checks span (when callers pass it)
+      integer(ik) :: n_check = 0_ik      !< checks made
+      integer(ik) :: n_fail  = 0_ik      !< checks that breached the tolerance
    end type budget_t
 
 contains
 
-   !---------------------------------------------------------------------------------------!
-   ! THE closure predicate: |resid| <= rtol*|scale| + atol. Mixed relative/absolute tolerance;   !
-   ! `scale` should be the gross boundary flux over the window (see the header). `elemental` so   !
-   ! it can test an array of stores in one call.                                                  !
-   !---------------------------------------------------------------------------------------!
+   !----- The closure test: |resid| <= rtol |scale| + atol, with scale the gross boundary  !
+   !      flux of the window. -------------------------------------------------------------!
    elemental pure function closure_ok(resid, scale, rtol, atol) result(ok)
       real(wp), intent(in) :: resid, scale, rtol, atol
       logical              :: ok
       ok = abs(resid) <= rtol * abs(scale) + atol
    end function closure_ok
 
-   !---------------------------------------------------------------------------------------!
-   ! Imbalance of one store over dt: (store1 - store0) - dt*(influx_rate - outflux_rate). Pass   !
-   ! dt = 1 if influx/outflux are already time-integrated AMOUNTS rather than rates.             !
-   !---------------------------------------------------------------------------------------!
+   !----- One store's residual: (store1 - store0) - dt (influx - outflux); dt = 1 when the !
+   !      fluxes are already amounts. -----------------------------------------------------!
    elemental pure function budget_imbalance(store0, store1, influx, outflux, dt) result(resid)
       real(wp), intent(in) :: store0, store1, influx, outflux, dt
       real(wp)             :: resid
       resid = (store1 - store0) - dt * (influx - outflux)
    end function budget_imbalance
 
-   !---------------------------------------------------------------------------------------!
-   ! Fold one store's residual into an accumulator: records store endpoints/fluxes, the         !
-   ! residual, the running worst |resid|, the signed and absolute sums, the gross flux, and the !
-   ! check / fail counters. `elapsed` [s] is the simulated time this check spans; report it so  !
-   ! budget_report can turn the cumulative residual into a mean leak rate. Pure (status carried !
-   ! in the accumulator; the hard stop is a separate Debug-only entry).                          !
-   !---------------------------------------------------------------------------------------!
+   !----- Fold one check into b: the window's stores, fluxes and residual, the worst and   !
+   !      summed residuals, the gross flux and the counters. elapsed [s] lets              !
+   !      budget_report turn the summed residual into a mean leak rate. -------------------!
    pure subroutine budget_accumulate(b, store0, store1, influx, outflux, dt, scale, rtol, atol, elapsed)
       type(budget_t), intent(inout) :: b
       real(wp),       intent(in)    :: store0, store1, influx, outflux, dt, scale, rtol, atol
@@ -100,21 +75,15 @@ contains
       if (.not. closure_ok(b%resid, scale, rtol, atol)) b%n_fail = b%n_fail + 1_ik
    end subroutine budget_accumulate
 
-   !---------------------------------------------------------------------------------------!
-   ! Status-code assert (pure, GPU-safe): ok = .false. if the residual breaches tolerance.      !
-   ! `elemental` so a whole set of stores can be checked at once.                                !
-   !---------------------------------------------------------------------------------------!
+   !----- ok is the closure test of one residual (elemental: a set of stores at once). ----!
    elemental pure subroutine budget_assert(resid, scale, rtol, atol, ok)
       real(wp), intent(in)  :: resid, scale, rtol, atol
       logical,  intent(out) :: ok
       ok = closure_ok(resid, scale, rtol, atol)
    end subroutine budget_assert
 
-   !---------------------------------------------------------------------------------------!
-   ! Debug-only HARD assert: report + `error stop` with a label if the budget does not close.   !
-   ! No-op when `debug` is .false. (production). Not pure -- the one place a numerical fault      !
-   ! halts, mirroring the biophysics kernels' `debug_error` discipline.                          !
-   !---------------------------------------------------------------------------------------!
+   !----- With debug set, print the residual and stop the run when it breaches the         !
+   !      tolerance; without, do nothing. -------------------------------------------------!
    subroutine budget_check_stop(resid, scale, rtol, atol, label, debug)
       real(wp),         intent(in) :: resid, scale, rtol, atol
       character(len=*), intent(in) :: label
@@ -126,11 +95,8 @@ contains
       end if
    end subroutine budget_check_stop
 
-   !---------------------------------------------------------------------------------------!
-   ! One-call ledger check: accumulate, then (Debug only) hard-stop. `influx`/`outflux` are       !
-   ! AMOUNTS over the window `dt_window` [s]; the tolerance is flux-scaled (rtol * gross flux)   !
-   ! plus a rate floor times the window. This is the form every fast-loop ledger should use.     !
-   !---------------------------------------------------------------------------------------!
+   !----- One ledger check, the form every fast-loop ledger uses: accumulate, then stop on !
+   !      a breach if halt is set. influx and outflux are amounts over dt_window. ---------!
    subroutine budget_check(b, store0, store1, influx, outflux, dt_window, rate_floor, label, halt, &
                            atol_extra)
       type(budget_t),   intent(inout) :: b
@@ -138,10 +104,8 @@ contains
       real(wp),         intent(in)    :: dt_window    !< [s] time the amounts span
       real(wp),         intent(in)    :: rate_floor   !< [store-unit/m2/s] absolute tolerance floor, as a rate
       character(len=*), intent(in)    :: label
-      logical,          intent(in)    :: halt         !< Debug hard stop on breach
-      !----- Extra ABSOLUTE slack for a KNOWN, documented non-closure the caller has not fixed yet.   !
-      !      Every use must name the defect it covers; it is a debt, not a tolerance. ---------------!
-      real(wp), optional, intent(in)  :: atol_extra
+      logical,          intent(in)    :: halt         !< stop the run on a breach (Debug)
+      real(wp), optional, intent(in)  :: atol_extra   !< [store-unit/m2] slack for a known non-closure; each use names it
       real(wp) :: scale, atol
       scale = abs(influx) + abs(outflux)
       atol  = rate_floor * dt_window
@@ -151,24 +115,19 @@ contains
       call budget_check_stop(b%resid, scale, budget_rtol_flux, atol, label, halt)
    end subroutine budget_check
 
-   !---------------------------------------------------------------------------------------!
-   ! Did the last budget_check on `b` close? The same tolerance budget_check applied, recomputed   !
-   ! from the amounts it recorded. It lets a caller check a ledger with halt = .false. and decide   !
-   ! later whether the breach counts: RK45 does, because a step it hands to the ARK rescue is        !
-   ! discarded, and a discarded step must not stop the run.                                          !
-   !---------------------------------------------------------------------------------------!
+   !----- Whether the last budget_check on b closed, by the tolerance it applied. A caller !
+   !      can check with halt = .false. and decide later: RK45 does, because a step it     !
+   !      hands to the ARK rescue is discarded and must not stop the run. -----------------!
    pure logical function last_check_closed(b, dt_window, rate_floor) result(ok)
       type(budget_t), intent(in) :: b
       real(wp),       intent(in) :: dt_window, rate_floor
       ok = closure_ok(b%resid, abs(b%influx) + abs(b%outflux), budget_rtol_flux, rate_floor * dt_window)
    end function last_check_closed
 
-   !---------------------------------------------------------------------------------------!
-   ! Fold accumulator `c` into `b` with weight `w` (an area fraction when reducing patches to a   !
-   ! site; 1 when reducing windows to a run). Sums scale with the weight so the result stays per  !
-   ! unit ground area; counts add; the worst per-check residual is the max; elapsed adds with    !
-   ! the weight too, so a set of patches whose weights sum to 1 reports its common window once.  !
-   !---------------------------------------------------------------------------------------!
+   !----- Fold c into b with weight w: a patch's area fraction when the patches are        !
+   !      summed, 1 when a step's sum joins the run. Sums and elapsed scale with w, so the !
+   !      result stays per unit ground area and the patches report their common window     !
+   !      once; counts add, and worst is the larger. --------------------------------------!
    pure subroutine budget_merge(b, c, w)
       type(budget_t), intent(inout) :: b
       type(budget_t), intent(in)    :: c
@@ -182,11 +141,8 @@ contains
       b%n_fail     = b%n_fail  + c%n_fail
    end subroutine budget_merge
 
-   !---------------------------------------------------------------------------------------!
-   ! End-of-window report, one line per store: the SIGNED cumulative residual, the mean leak     !
-   ! rate it implies over `elapsed`, the worst single check, and the fail count. A positive      !
-   ! cumulative residual is store appearing from nowhere; negative is store vanishing.           !
-   !---------------------------------------------------------------------------------------!
+   !----- One report line per store: the signed summed residual, the mean leak rate it     !
+   !      implies over elapsed, the worst single check and the failed checks. -------------!
    subroutine budget_report(b, label, unit_store, unit_rate)
       type(budget_t),   intent(in) :: b
       character(len=*), intent(in) :: label, unit_store, unit_rate

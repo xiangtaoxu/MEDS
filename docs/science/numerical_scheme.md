@@ -369,6 +369,19 @@ present and with condensation active. This holds with the tissue heat store acti
 tissue's energy gains is taken from a b-weighted time integral of its temperature, so it is exactly
 the complement of the flux the canopy air received.
 
+**How a ledger is judged.** A ledger's residual $r$ is the change in its store minus the net amount
+that crossed its boundary over the window, and the ledger closes when
+$`|r| \le 10^{-6}\,F + f\,\Delta t`$, with $F$ the gross boundary flux (inflow plus outflow) and $f$
+a rate floor: 10⁻³ W m⁻² for energy, 10⁻⁹ kg m⁻² s⁻¹ for water (about 10⁻⁴ mm a day) and
+10⁻⁶ µmol m⁻² s⁻¹ for CO₂ (`meds_budget_check`). The tolerance follows the flux, never the store: a
+soil column holds ~10⁹ J m⁻², and 10⁻⁶ of that would let a sustained leak of ~1 W m⁻² through every
+step. The energy floor, 0.9 J m⁻² over a 900 s step, sits far above the round-off of the column's
+energy stores and far below any flux the column resolves, and it matches the water floor: 10⁻⁹
+kg m⁻² s⁻¹ of evaporation carries 2.5×10⁻³ W m⁻² of latent heat. Each ledger also keeps the signed
+sum of its residuals, because a one-signed bias below the per-step tolerance never shows in the
+worst residual, only as a drift over a season. The end-of-run report gives that sum, the mean leak
+rate it implies, the worst single check and the number of failed checks.
+
 **Read 5a and 5b together.** They are the same run. A ledger that closes to 10⁻⁶ J tells you the
 bookkeeping is right; it tells you nothing about whether the trajectory is physical.
 
