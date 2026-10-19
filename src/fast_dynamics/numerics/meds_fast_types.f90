@@ -542,6 +542,7 @@ module meds_fast_types
       real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
       real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground (the pond's inflow)
+      real(wp) :: ground_inflow_enth = 0.0_wp     !< [W/m2]    the enthalpy it brings across the column's boundary
       real(wp) :: t_infil       = 0.0_wp          !< [K]       temperature of the infiltrating (pond) water
       real(wp) :: w_surface_energy1 = 0.0_wp        !< [J/m2]    end-of-step pond ENTHALPY
       real(wp) :: t_pond_inflow      = 0.0_wp          !< [K]       temperature of the water entering the pond
@@ -758,6 +759,7 @@ module meds_fast_types
       !      it to its ground-water input every sub-step (never mutated here; meds_vegetation_dynamics  !
       !      is the sole writer of the real site-level rate). ------------------------------------------!
       real(wp)                   :: shed_water_rate = 0.0_wp  !< [kg/m2 ground/s]
+      real(wp)                   :: shed_water_enth = 0.0_wp  !< [W/m2 ground] its enthalpy, from the tissues it left
       !----- The slow tier's CO2 owing (growth respiration and its corrections,                    !
       !      docs/science/plant_respiration.md §6), same lifetime and same read-only discipline as !
       !      the shed water above: seeded ONCE per patch at the top of the fast window, constant   !

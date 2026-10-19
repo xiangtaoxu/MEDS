@@ -551,8 +551,7 @@ contains
                         + tissue_store1,                                                                 &
                         acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%hydrology%t_film_valuation) &
                                           + frozen%snow%acc_enth                                       &
-                                          + (frozen%hydrology%precip_ground - frozen%snow%melt_rate)*dt_fast         &
-                                            * internal_energy_liquid(frozen%hydrology%t_pond_inflow),                      &
+                                          + frozen%hydrology%ground_inflow_enth*dt_fast,                              &
                         acc%whole_enth_out + (surf_overflow - surf_deficit)                                 &
                         * internal_energy_liquid(frozen%hydrology%t_film_valuation) &
                                            + frozen%hydrology%runoff_enth*dt_fast,                                    &

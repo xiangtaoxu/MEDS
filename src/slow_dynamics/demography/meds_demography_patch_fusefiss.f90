@@ -20,7 +20,7 @@ module meds_demography_patch_fusefiss
    use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
-                                      cohort_tissue_water, cohort_film_water
+                                      cohort_tissue_water, cohort_film_water, cohort_water_enthalpy
    use meds_polygon_state_vars, only : polygon_t, rebuild_patch_map, rebuild_cohort_map, assign_cohort_id,      &
                                        assign_patch_id
    use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB
@@ -228,6 +228,7 @@ contains
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
          !----- 8. shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -!
          patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
+         patch%shed_water_enth(recp) = rawgt*patch%shed_water_enth(recp) + dawgt*patch%shed_water_enth(donp)
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
          !----- 9. Today's litter is a per-area rate like the rest: area-weight it, or the fused patch !
          !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
@@ -472,6 +473,7 @@ contains
             !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
             !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
             patch%shed_water_rate(newp) = 0.0_wp
+            patch%shed_water_enth(newp) = 0.0_wp
             patch%slow_co2_rate(newp)   = 0.0_wp   ! fresh gap: no cohort of its own respired today
             patch%adapt_dt_last(newp)   = 0.0_wp   ! a fresh gap cold-starts the controller
             patch%n = newp
@@ -533,6 +535,9 @@ contains
                      w_kill = kill_frac * (cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i))
                      patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
                                                  + w_kill / new_area / max(cfg%dt_slow, tiny_num)
+                     patch%shed_water_enth(newp) = patch%shed_water_enth(newp)                         &
+                                                 + kill_frac * cohort%nplant(i) * cohort_water_enthalpy(cohort, i) &
+                                                   / new_area / max(cfg%dt_slow, tiny_num)
                      w_tot = w_tot + poly%site%area(is) * w_kill   ! w_kill is per m2 of the site
                      if (cfg%soil_carbon_on) then
                         lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)

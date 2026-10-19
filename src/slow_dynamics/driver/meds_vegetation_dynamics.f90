@@ -18,10 +18,11 @@ module meds_vegetation_dynamics
    use meds_constants,            only : day_sec, tiny_num, yr_day, grav_head
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp, pft_tissue_curves
    use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential
+   use meds_therm_lib,            only : internal_energy_liquid
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
    use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon, &
-                                         hold_cohort_tissue_temps
+                                         hold_cohort_tissue_temps, cohort_water_enthalpy
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
@@ -814,22 +815,20 @@ contains
    ! -- a frozen daily RATE the fast loop adds to its ground-water input exactly like throughfall      !
    ! (its own distinct variable, not merged into rainfall), so what leaves                             !
    ! leaf_water_mass/wood_water_mass here reappears in the soil in the next fast window instead        !
-   ! of vanishing. Its ENERGY needs NO separate wiring: mixed into the ground-water input              !
-   ! (precip_ground), it is valued like the precipitation it joins -- "similarly as                    !
-   ! precipitation," not a more precise mechanism than precipitation itself receives. -----------------!
+   ! of vanishing. Its enthalpy, at the temperature of the tissue it left, goes with it               !
+   ! (patch%shed_water_enth), so the ground receives the water as the plant shed it. -----------------!
    subroutine shed_turnover_water(poly, cfg, dpool, ledger)
       type(polygon_t),         intent(inout) :: poly
       type(meds_config_t),     intent(in)    :: cfg
       type(pool_change_block), intent(in)    :: dpool
       type(slow_ledger_t), intent(inout), optional :: ledger
-      real(wp), allocatable :: patch_total(:)
-      real(wp) :: shed_frac, shed_amount, heat0
+      real(wp), allocatable :: patch_total(:), patch_enth(:)
+      real(wp) :: shed_frac, shed_amount
       integer(ik) :: j, ip
 
-      allocate(patch_total(poly%patch%n))
+      allocate(patch_total(poly%patch%n), patch_enth(poly%patch%n))
       patch_total = 0.0_wp
-      heat0 = 0.0_wp
-      if (present(ledger)) heat0 = slow_tissue_energy(poly)
+      patch_enth  = 0.0_wp
 
       associate (cohort => poly%cohort)
          do j = 1_ik, cohort%n
@@ -839,6 +838,8 @@ contains
                shed_amount = cohort%leaf_water_mass(j) * shed_frac
                cohort%leaf_water_mass(j) = cohort%leaf_water_mass(j) - shed_amount
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+               patch_enth(ip)  = patch_enth(ip)  + cohort%nplant(j) * shed_amount                        &
+                                                 * internal_energy_liquid(cohort%leaf_temp(j))
             end if
             if (dpool%fineroot(j) < 0.0_wp) then
                shed_frac   = min(1.0_wp, -dpool%fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
@@ -848,6 +849,8 @@ contains
                                  tiny_num) * shed_frac
                cohort%wood_water_mass(j) = cohort%wood_water_mass(j) - shed_amount
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+               patch_enth(ip)  = patch_enth(ip)  + cohort%nplant(j) * shed_amount                        &
+                                                 * internal_energy_liquid(cohort%wood_temp(j))
             end if
             !----- The water leaves at its tissue's temperature, so the tissue keeps that temperature  !
             !      and its energy falls by the enthalpy the water took. ---------------------------------!
@@ -857,16 +860,17 @@ contains
 
       do ip = 1_ik, poly%patch%n
          poly%patch%shed_water_rate(ip) = patch_total(ip) / max(cfg%dt_slow, tiny_num)
+         poly%patch%shed_water_enth(ip) = patch_enth(ip)  / max(cfg%dt_slow, tiny_num)
       end do
 
       !----- LEDGER: the shed is a HANDOFF to the fast tier, not a store this ledger carries (see   !
-      !      slow_site_store's header on why treating it as one double-counts at every open). Its   !
-      !      energy is what the tissues lost with it. --------------------------------------------!
+      !      slow_site_store's header on why treating it as one double-counts at every open), and    !
+      !      its enthalpy is what the tissues lost with it. ---------------------------------------!
       if (present(ledger)) then
          do ip = 1_ik, poly%patch%n
-            call slow_ledger_declare(ledger, water_out = patch_polygon_area(poly, ip) * patch_total(ip))
+            call slow_ledger_declare(ledger, water_out  = patch_polygon_area(poly, ip) * patch_total(ip),     &
+                                             energy_out = patch_polygon_area(poly, ip) * patch_enth(ip))
          end do
-         call slow_ledger_declare(ledger, energy_out = heat0 - slow_tissue_energy(poly))
       end if
    end subroutine shed_turnover_water
 
@@ -922,7 +926,7 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(out)   :: water_shed     !< [kg/m2 site] the water shed
       type(water_curve_t) :: leaf_curve, wood_curve
-      real(wp)    :: leaf_kept, wood_kept, excess
+      real(wp)    :: leaf_kept, wood_kept, excess, excess_enth
       integer(ik) :: i, ip
 
       water_shed = 0.0_wp
@@ -934,12 +938,16 @@ contains
                            cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
             excess = (cohort%leaf_water_mass(i) - leaf_kept) + (cohort%wood_water_mass(i) - wood_kept)
             if (excess <= 0.0_wp) cycle
+            excess_enth = (cohort%leaf_water_mass(i) - leaf_kept) * internal_energy_liquid(cohort%leaf_temp(i)) &
+                        + (cohort%wood_water_mass(i) - wood_kept) * internal_energy_liquid(cohort%wood_temp(i))
             cohort%leaf_water_mass(i) = leaf_kept
             cohort%wood_water_mass(i) = wood_kept
             call hold_cohort_tissue_temps(cohort, i)          ! the excess leaves at the tissue's temperature
             ip = cohort%owner_patch(i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip)                                   &
                                       + cohort%nplant(i) * excess / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
+                                      + cohort%nplant(i) * excess_enth / max(cfg%dt_slow, tiny_num)
             water_shed = water_shed + patch_polygon_area(poly, ip) * cohort%nplant(i) * excess
          end do
       end associate
@@ -981,6 +989,8 @@ contains
                                + max(cohort%wood_water_mass(j), 0.0_wp)                            &
                                + cohort%leaf_surf_water(j) + cohort%wood_surf_water(j))
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
+                                      + died_nplant * cohort_water_enthalpy(cohort, j) / max(cfg%dt_slow, tiny_num)
             water_shed = water_shed + patch_polygon_area(poly, ip) * w_j
          end do
       end associate

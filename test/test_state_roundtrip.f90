@@ -94,9 +94,10 @@ program test_state_roundtrip
       poly%patch%snow(i)%snow_depth(1)    = 0.02_wp  ; poly%patch%snow(i)%snow_temp(1)   = 270.0_wp
       poly%patch%snow(i)%snow_fliq(1)     = 0.0_wp   ; poly%patch%snow(i)%nlayer         = 1_ik
       !----- A ponded store WITH enthalpy, and the daily shed-water seam rate: the writer must put   !
-      !      the pond's own enthalpy column, and the shed rate, in the file. ----------------------!
+      !      the pond's own enthalpy column, and the shed rate and its enthalpy, in the file. -------!
       poly%patch%soil_water(i)%w_surface      = 1.5_wp   ; poly%patch%soil_water(i)%w_surface_energy = 1.5_wp * 9.0e5_wp
       poly%patch%shed_water_rate(i)       = 3.0e-8_wp
+      poly%patch%shed_water_enth(i)       = 3.0e-8_wp * 1.1e5_wp
    end do
 
    now = meds_time_t(year=2000, month=1, day=1, hour=0, minute=0, second=0)
@@ -175,6 +176,8 @@ program test_state_roundtrip
                        'pond ENTHALPY recovered from state (the writer used to put an unassigned column)')
       call check_close(poly2%patch%shed_water_rate(i), poly%patch%shed_water_rate(i), 1.0e-18_wp,          &
                        'shed_water_rate recovered from state (was not persisted)')
+      call check_close(poly2%patch%shed_water_enth(i), poly%patch%shed_water_enth(i), 1.0e-15_wp,          &
+                       'shed_water_enth recovered from state')
    end do
 
    !----- Nothing owed: a checkpoint between boundaries, or one written before the flag existed.  !

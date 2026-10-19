@@ -531,7 +531,7 @@ contains
    subroutine check_shed_heat()
       type(pool_change_block) :: dpool
       type(slow_ledger_t)     :: lg
-      integer(ik) :: nc
+      integer(ik) :: nc, i
       nc = poly%cohort%n
       allocate(dpool%leaf(nc), dpool%fineroot(nc), dpool%wood(nc), dpool%nonstructural(nc))
       dpool%wood = 0.0_wp ; dpool%nonstructural = 0.0_wp
@@ -539,6 +539,9 @@ contains
       dpool%fineroot = -0.10_wp * poly%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
       poly%cohort%leaf_water_mass(1:nc) = 0.7_wp
       poly%cohort%wood_water_mass(1:nc) = 2.3_wp
+      do i = 1_ik, nc
+         call hold_cohort_tissue_temps(poly%cohort, i)
+      end do
       lg%active = .true.
       call slow_ledger_open(lg, poly, cfg, RHO)
       call shed_turnover_water(poly, cfg, dpool, lg)
@@ -546,7 +549,7 @@ contains
       call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy > 0.0_wp, 'shed heat: the shed declares energy')
       call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%energy)                                      &
                  <= 1.0e-12_wp * lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy,                            &
-                 'shed heat: the declared energy is the tissue heat store''s change')
+                 'shed heat: the enthalpy handed to the ground is what the tissue store lost')
       call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%water)                                       &
                  <= 1.0e-12_wp * lg%decl_gross(SLOW_PHASE_ALLOCATE)%water,                             &
                  'shed heat: the declared water is the tissue water store''s change')

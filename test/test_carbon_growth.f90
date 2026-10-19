@@ -3,6 +3,7 @@
 !----- step that grows wood_carbon -> dbh. (Leaf loss: leaf_turnover_step, test_plant_phenology.) --!
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
+   use meds_therm_lib,              only : internal_energy_liquid
    use meds_allometry, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_cohort_state_vars, only : cohort_deriv_alloc, cohort_bad_field, cohort_field_name
@@ -158,6 +159,11 @@ program test_carbon_growth
       call check_close(poly%patch%shed_water_rate(1),                                              &
                        nplant0 * (expect_leaf_shed + expect_wood_shed) / cfg%dt_slow, 1.0e-9_wp,    &
                        'shed_turnover_water: patch rate = nplant-weighted shed amount / dt_slow')
+      call check_close(poly%patch%shed_water_enth(1),                                              &
+                       nplant0 * (expect_leaf_shed * internal_energy_liquid(poly%cohort%leaf_temp(1))  &
+                                + expect_wood_shed * internal_energy_liquid(poly%cohort%wood_temp(1))) &
+                       / cfg%dt_slow, 1.0e-9_wp,                                                   &
+                       'shed_turnover_water: the water leaves with its enthalpy at its tissue''s temperature')
 
       !----- (b) Net GAIN: touches nothing (mass conserved; the larger capacity reads a lower rwc). !
       poly%cohort%leaf_water_mass(1) = leaf_water0    ! reset

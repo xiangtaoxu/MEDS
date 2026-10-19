@@ -243,6 +243,7 @@ contains
       !----- Daily leaf/root-turnover shed water handed to the ground: a slow->fast seam rate the    !
       !      fast loop reads all day, so a restart without it would lose that day's shed water. -----!
       call dv('shed_water_rate',  NC_DOUBLE, [d_patch], 'turnover shed water to the ground [kg/m2/s]')
+      call dv('shed_water_enth',  NC_DOUBLE, [d_patch], 'the enthalpy that water carries [W/m2]')
       !----- The fast integrators' warm start, per patch: the step the adaptive controller last        !
       !      accepted, where the next fast step starts. Without it a resumed run cold-starts the        !
       !      controller and takes different sub-steps from the continuous run. -------------------------!
@@ -429,7 +430,7 @@ contains
             end do
             block                                 ! FAST reservoirs: contiguous buffers, same
                real(wp) :: fc(npat, 4_ik)          ! discipline as the soil-carbon block below (never a
-               real(wp) :: fw(npat, 4_ik)          ! bare derived-type component-array-section straight
+               real(wp) :: fw(npat, 5_ik)          ! bare derived-type component-array-section straight
                real(wp) :: fsoil(npat, n_soil_layer_max, 4_ik)     ! into a C-bound call)
                real(wp) :: fsnow(npat, n_snow_layer_max, 5_ik)
                integer(ik) :: fnl(npat)
@@ -438,6 +439,7 @@ contains
                   fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
                   fw(ip,1) = p%soil_water(ip)%w_surface ; fw(ip,2) = p%soil_water(ip)%w_surface_energy
                   fw(ip,3) = p%shed_water_rate(ip) ; fw(ip,4) = p%adapt_dt_last(ip)
+                  fw(ip,5) = p%shed_water_enth(ip)
                   fsoil(ip,:,1) = p%soil_water(ip)%theta(1:n_soil_layer_max)
                   fsoil(ip,:,2) = p%soil_energy(ip)%soil_energy(1:n_soil_layer_max)
                   fsoil(ip,:,3) = p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max)
@@ -456,6 +458,7 @@ contains
                call put_dbl('soil_w_surface',   fw(:,1))
                call put_dbl('soil_w_surface_enth', fw(:,2))
                call put_dbl('shed_water_rate',  fw(:,3))
+               call put_dbl('shed_water_enth',  fw(:,5))
                call put_dbl('adapt_dt_last',    fw(:,4))
                call put_int('snow_nlayer',      fnl)
                do ip = 1_ik, npat
@@ -867,6 +870,15 @@ contains
                   if (shed_ok) call gv_dbl(ncid, 'shed_water_rate', npat, fsh)
                   if (shed_ok) then
                      do ip = 1_ik, npat ; p%shed_water_rate(ip) = fsh(ip) ; end do
+                  end if
+                  !----- Its enthalpy: OPTIONAL. A file without it values the rate at the patch's canopy   !
+                  !      air, the nearest the file has to the temperature of the tissues it left. -------!
+                  if (nc_inq_varid_f(ncid, 'shed_water_enth', vid) == NC_NOERR) then
+                     call gv_dbl(ncid, 'shed_water_enth', npat, p%shed_water_enth(1:npat))
+                  else
+                     do ip = 1_ik, npat
+                        p%shed_water_enth(ip) = p%shed_water_rate(ip) * internal_energy_liquid(p%cas(ip)%can_temp)
+                     end do
                   end if
                   !----- The controller's warm start: OPTIONAL, a file without it cold-starts it. -------!
                   call gv_dbl_opt(ncid, 'adapt_dt_last', npat, p%adapt_dt_last(1:npat))

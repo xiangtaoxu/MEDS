@@ -19,7 +19,8 @@ module meds_cohort_state_vars
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, cp_liq
-   use meds_therm_lib,       only : tissue_heat_capacity, tissue_dry_heat_capacity, tissue_energy, tissue_temp
+   use meds_therm_lib,       only : tissue_heat_capacity, tissue_dry_heat_capacity, tissue_energy, tissue_temp, &
+                                    internal_energy_liquid
    use meds_water_retention, only : water_curve_t, water_content
    use meds_numerics,        only : pair_mean
    use meds_allometry,       only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,        &
@@ -37,7 +38,8 @@ module meds_cohort_state_vars
    public :: compact_cohort_block, copy_cohort, set_cohort_size, set_cohort_size_from_carbon, init_cohort
    public :: fuse_cohort_fast_state
    public :: cohort_deriv_block, cohort_deriv_alloc
-   public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_film_water, cohort_wood_store_carbon
+   public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_film_water, cohort_water_enthalpy
+   public :: cohort_wood_store_carbon
    public :: set_cohort_tissue_water, cohort_tissue_temps, set_cohort_tissue_temps, hold_cohort_tissue_temps
    public :: cohort_bad_field, cohort_field_name
 
@@ -683,6 +685,19 @@ contains
       real(wp)                       :: w
       w = cohort%nplant(i) * (cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
    end function cohort_film_water
+
+   !----- The enthalpy of the water a cohort holds [J/plant]: its tissue water and its canopy films,  !
+   !      each at the temperature of the tissue it is in or on. What a shed hands the ground with  !
+   !      the water. ------------------------------------------------------------------------------!
+   pure function cohort_water_enthalpy(cohort, i) result(h)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i
+      real(wp)                       :: h
+      h = (max(cohort%leaf_water_mass(i), 0.0_wp) + cohort%leaf_surf_water(i))                    &
+          * internal_energy_liquid(cohort%leaf_temp(i))                                           &
+        + (max(cohort%wood_water_mass(i), 0.0_wp) + cohort%wood_surf_water(i))                    &
+          * internal_energy_liquid(cohort%wood_temp(i))
+   end function cohort_water_enthalpy
 
    !----- One cohort's leaf and wood heat capacity [J/m2 ground/K], from tissue_heat_capacity. The!
    !      wood holds the whole wood store's water, its fine roots' share included. The fusion     !

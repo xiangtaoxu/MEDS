@@ -87,8 +87,9 @@ Each store is solved in the unknown in which its curve is best behaved:
   (`shed_mortality_water`). An operator that shrinks a store without touching its water (a rising SLA
   resorbing leaf carbon, a fusion or split re-deriving the sapwood ring) can leave more than the store
   can hold; before the fast loop, the water above its saturated content is shed as well
-  (`shed_excess_tissue_water`). All of it reaches the ground as `shed_water_rate`, valued like the
-  precipitation it joins, and the slow ledger books every amount.
+  (`shed_excess_tissue_water`). All of it reaches the ground as `shed_water_rate`, with the enthalpy
+  it left its tissues with (`shed_water_enth`, at the temperature of each tissue it was in or on), and
+  the slow ledger books every amount.
 - The **pond** uses its head $h$, with a 1 mm depression store: $S(h) = 0$ for $h\le0$, $h^2/2\delta$
   for $0<h<\delta$, $h-\delta/2$ above. An empty pond holds nothing and its head follows the soil
   below.
@@ -211,7 +212,8 @@ becomes a temperature through `temp_of_liquid_enthalpy`, the exact inverse of
 which the pond and the soil melt with soil heat. Valuing the snow as liquid would create $L_f$ per
 kilogram at the boundary, and valuing the rain at the canopy air's temperature would hand the canopy
 and the soil heat the rain did not bring: at a cold front the canopy air is still warm (297.2 K under
-294.9 K air at BCI on 2017-04-17).
+294.9 K air at BCI on 2017-04-17). To either the shed water adds itself, with its own enthalpy, and
+the pond takes the mixture; the canopy film keeps the rain's valuation, since it holds rain.
 
 ## 6. Work counters
 

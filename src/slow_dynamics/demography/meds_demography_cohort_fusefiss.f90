@@ -27,7 +27,7 @@ module meds_demography_cohort_fusefiss
    use meds_diag_vars,        only : fuse_cohort_diag, PA_MORT_C_CULL
    use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &
                                       expand_cohort_block, copy_cohort, init_cohort,           &
-                                      cohort_tissue_heat_capacity, cohort_film_water,                    &
+                                      cohort_tissue_heat_capacity, cohort_film_water, cohort_water_enthalpy, &
                                       cohort_tissue_water, set_cohort_size_from_carbon,                  &
                                       fuse_cohort_fast_state, set_cohort_tissue_temps,                   &
                                       hold_cohort_tissue_temps
@@ -364,6 +364,8 @@ contains
             !      mechanism. ---------------------------------------------------------------------!
             w_cohort = cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
+                                      + cohort%nplant(i) * cohort_water_enthalpy(cohort, i) / max(cfg%dt_slow, tiny_num)
             w_tot = w_tot + patch_polygon_area(poly, ip) * w_cohort
             !----- The CULL pathway's carbon. BEFORE the soil_carbon_on cycle below, for the          !
             !      same reason the water above is: a cohort dropping off the tracked size floor is a  !

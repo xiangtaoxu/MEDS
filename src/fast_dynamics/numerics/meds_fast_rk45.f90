@@ -646,24 +646,22 @@ contains
 
       !----- e_in: the b-weighted stage inputs (e_in_acc: net radiation, ground radiation, the             !
       !      bottom face), the intercepted rain at the film's valuation, the rainfall enthalpy the         !
-      !      pack took (acc_enth), and the water reaching the pond other than meltwater, at the            !
-      !      temperature that values it (t_pond_inflow; the meltwater's enthalpy is already inside         !
-      !      the pack/pond pair). Infiltration is a pond -> soil transfer, not an input. w_out_acc,        !
+      !      pack took (acc_enth), and the enthalpy the water reaching the pond brings across the          !
+      !      boundary (ground_inflow_enth; the meltwater's enthalpy is already inside the pack/pond        !
+      !      pair). Infiltration is a pond -> soil transfer, not an input. w_out_acc,                      !
       !      e_*_acc and w_in are AMOUNTS over the whole dt_fast, so the rate intercept_total takes        !
       !      *dt_fast, while surf_overflow/surf_deficit are amounts already. surf_deficit SUBTRACTS        !
       !      (the mirror of surf_overflow's sign: flooring a negative store up to 0 makes it appear        !
       !      to gain, so the outflow shrinks by the same amount). -----------------------------------------!
       !----- w_in: rainfall, snowfall (into the pack, or below the new-snow threshold into the             !
       !      throughfall) and the shed water, all boundary water inputs. The shed water's enthalpy         !
-      !      rides the precip_ground term of e_in (build_column_frozen mixes it into                       !
-      !      hforc%precip_ground). ------------------------------------------------------------------------!
+      !      rides ground_inflow_enth (build_column_frozen mixes it into the pond's inflow). --------------!
       w_in  = (forc%rainfall + forc%snowfall + biophys%shed_water_rate) * dt_fast
       !----- The pond's overflow over the step, from the water network. ------------------------------!
       w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
       e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(frozen%hydrology%t_film_valuation)        &
               + frozen%snow%acc_enth                                                             &
-              + (frozen%hydrology%precip_ground - frozen%snow%melt_rate) * dt_fast                             &
-                * internal_energy_liquid(frozen%hydrology%t_pond_inflow)
+              + frozen%hydrology%ground_inflow_enth * dt_fast
       !----- What leaves is the pond OVERFLOW, at the pond's own temperature                            !
       !      (docs/science/numerical_scheme.md §5b, "The pond holds heat"). ----------------------------!
       e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(frozen%hydrology%t_film_valuation)     &

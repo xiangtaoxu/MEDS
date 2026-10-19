@@ -89,6 +89,9 @@ contains
       !----- Canopy interception scratch. -------------------------------------------------------------!
       real(wp) :: rain_above, combined_w, leaf_cap_i, wood_cap_i, throughfall_i, drip_i, throughfall_total
       real(wp) :: avail_leaf, avail_wood
+      !----- The water reaching the ground besides the shed water [kg/m2/s], its temperature [K], and   !
+      !      the enthalpy all of it brings [W/m2]. ---------------------------------------------------!
+      real(wp) :: water_base, t_water_base, inflow_enth
 
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n),                  &
          frozen%tissue%abs_lw(n), frozen%tissue%lai(n))
@@ -325,29 +328,38 @@ contains
       !      forc%snowfall AND forc%rainfall into the pack, so only meltwater reaches the ground; on        !
       !      bare ground it is what SURVIVES the canopy, throughfall_total -- feeding the soil the          !
       !      full rainfall while also crediting the intercepted share to the canopy film would              !
-      !      create water at the whole-column boundary. ----------------------------------------------------!
+      !      create water at the whole-column boundary. To either the shed water adds itself. ---------------!
       if (snow_st%exists) then
-         hforc%precip_ground   = snow_st%melt_rate + biophys%shed_water_rate
+         water_base = snow_st%melt_rate
       else
-         hforc%precip_ground   = throughfall_total + biophys%shed_water_rate
+         water_base = throughfall_total
       end if
+      hforc%precip_ground      = water_base + biophys%shed_water_rate
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- Phase of the evaporating surface, for the ice saturation branch                             !
       !      (docs/science/snow_biophysics.md eq. (1)). -------------------------------------------------!
       hforc%ground_fliq        = biophys%soil_energy%soil_fliq(1)
-      !----- Temperature that VALUES the ground inflow: under a pack, the meltwater's; on bare ground,     !
-      !      the effective liquid temperature of the rain + sub-threshold-snowfall mixture, both valued    !
-      !      at the air temperature above the canopy (forc%air_temp), not at the canopy air's              !
-      !      (docs/science/soil_plant_water.md §5). temp_of_liquid_enthalpy is the exact inverse of        !
-      !      internal_energy_liquid; below t_3ple it stands for water that must still melt. ---------------!
-      hforc%t_pond_inflow = tcas
+      !----- The temperature that values that water. Under a pack, the meltwater's; on bare ground, the!
+      !      effective liquid temperature of the rain + sub-threshold-snowfall mixture, both valued at !
+      !      the air temperature above the canopy (forc%air_temp), not at the canopy air's             !
+      !      (docs/science/soil_plant_water.md §5). The shed water brings the enthalpy it left its     !
+      !      tissues with, and the pond takes the mixture. temp_of_liquid_enthalpy is the exact inverse!
+      !      of internal_energy_liquid; below t_3ple it stands for water that must still melt. --------!
+      t_water_base = tcas
       if (snow_st%exists) then
-         hforc%t_pond_inflow = snow_st%t_melt
+         t_water_base = snow_st%t_melt
       else if (forc%rainfall + forc%snowfall > tiny_num) then
-         hforc%t_pond_inflow = temp_of_liquid_enthalpy(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
-                                                       / (forc%rainfall + forc%snowfall))
+         t_water_base = temp_of_liquid_enthalpy(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
+                                                / (forc%rainfall + forc%snowfall))
       end if
+      inflow_enth = water_base * internal_energy_liquid(t_water_base) + biophys%shed_water_enth
+      hforc%t_pond_inflow = t_water_base
+      if (biophys%shed_water_rate > 0.0_wp) hforc%t_pond_inflow = temp_of_liquid_enthalpy(inflow_enth / hforc%precip_ground)
+      !----- ...and the enthalpy it brings across the column's boundary: all of it on bare ground; under a  !
+      !      pack the meltwater's is the pack's, inside the column, so only the shed water's. -----------!
+      frozen%hydrology%ground_inflow_enth = inflow_enth
+      if (snow_st%exists) frozen%hydrology%ground_inflow_enth = biophys%shed_water_enth
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. -----!
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
 
@@ -387,10 +399,10 @@ contains
       if (spac%infil > tiny_num) frozen%hydrology%t_infil = temp_of_liquid_enthalpy(spac%infil_enth / spac%infil)
       !----- The canopy film's valuation temperature. It is a reference: the film store, its               !
       !      interception input and its evaporation (surface_derivs) all use this one value, so the        !
-      !      film ledger closes within a step at any choice. On bare ground it is the inflow's, the        !
-      !      rain that fills the film; under a pack nothing is intercepted, and it is                      !
+      !      film ledger closes within a step at any choice. On bare ground it is the rain's, the rain     !
+      !      that fills the film; under a pack nothing is intercepted, and it is                           !
       !      tsupercool_liq, where internal_energy_liquid is zero. ----------------------------------------!
-      frozen%hydrology%t_film_valuation = hforc%t_pond_inflow   ! one valuation for the boundary inflow AND the film
+      frozen%hydrology%t_film_valuation = t_water_base
       if (snow_st%exists) frozen%hydrology%t_film_valuation = tsupercool_liq
       frozen%film%film_liquid_enthalpy = internal_energy_liquid(frozen%hydrology%t_film_valuation)
       frozen%hydrology%t_bot           = biophys%soil_energy%soil_temp(nsl)

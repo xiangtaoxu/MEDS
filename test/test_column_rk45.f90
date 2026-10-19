@@ -18,7 +18,8 @@ program test_column_rk45
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
-                                        sat_specific_humidity, tissue_energy, tissue_dry_heat_capacity
+                                        sat_specific_humidity, tissue_energy, tissue_dry_heat_capacity,     &
+                                        internal_energy_liquid
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
@@ -387,12 +388,14 @@ contains
       call march_dry_day(theta_dry)                       ! the same day without the shed water
       call reset_state()
       biophys%shed_water_rate = 8.0e-5_wp                     ! frozen for the whole day (rainfall stays 0)
+      biophys%shed_water_enth = 8.0e-5_wp * internal_energy_liquid(t0)   ! shed by tissues at t0
       do istep = 1_ik, 24_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_water%theta(1:nsl))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
+      biophys%shed_water_enth = 0.0_wp
       call check_true('RK45 shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
               theta_col1 > theta_dry, theta_col1 - theta_dry)
       call check_true('RK45 shed water: whole-column WATER still closes with shed_water_rate active',                 &

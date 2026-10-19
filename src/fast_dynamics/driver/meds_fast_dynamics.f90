@@ -597,6 +597,7 @@ contains
          !      TODAY, held constant across the sub-step loop" convention as soil_carbon just       !
          !      above. -----------------------------------------------------------------------------!
          biophys%shed_water_rate = poly%patch%shed_water_rate(ip)
+         biophys%shed_water_enth = poly%patch%shed_water_enth(ip)
          biophys%slow_co2_rate   = poly%patch%slow_co2_rate(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
