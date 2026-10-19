@@ -718,6 +718,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_soil_biogeochem)
    add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
 
+   #----- A site's forcing within its polygon: the sun and the beam on a slope, the lapse to the site. #
+   add_executable(test_site_terrain test/test_site_terrain.f90)
+   target_link_libraries(test_site_terrain PRIVATE meds_forcing meds_testassert)
+   meds_fortran_flags(test_site_terrain)
+   add_test(NAME site_terrain COMMAND test_site_terrain)
+
    #----- Meteorological-forcing reader test links the forcing library (writes+reads a NetCDF). #
    add_executable(test_met_driver test/test_met_driver.f90)
    target_link_libraries(test_met_driver PRIVATE meds_forcing meds_testassert)

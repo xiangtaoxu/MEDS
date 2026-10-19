@@ -37,7 +37,7 @@ program test_region
    use meds_constants,             only : n_soil_layer_max
    use meds_netcdf_c
    use meds_output_types,          only : output_registry_t, DIM_SCALAR, DIM_COHORT, DIM_PATCH,   &
-                                          DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, XTYPE_INT,  &
+                                          DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, XTYPE_INT, &
                                           MISSING_INT
    use meds_region,                only : meds_region_t, region_open, region_step, region_step_month, &
                                           region_done, region_finalize, region_free, DRIVER_OK,   &
@@ -123,6 +123,16 @@ program test_region
       if (p == 1_ik) reg_site = site_run%out_files%reg
       call region_free(site_run)
    end do
+
+   !----- Two [[sites]] at the first cell (docs/science/forcing.md §8): the first flat at the cell, !
+   !      the second 500 m above it on a 20-degree slope facing south. The archive has no sun, so   !
+   !      the slope is test_site_terrain's; here the lapse. ----------------------------------------!
+   call derive(trim(work)//'/terrain.toml', '[output]'//nl()//'prefix = "terrain"'//nl()//            &
+               '[[sites]]'//nl()//'area_fraction = 0.5'//nl()//'[[sites]]'//nl()//                      &
+               'area_fraction = 0.5'//nl()//'elevation = '//fmt(ELEV(1) + 500.0_wp)//nl()//             &
+               'slope = 20.0'//nl()//'aspect = 180.0'//nl()//site_block(1_ik), region=.false.)
+   call run_region(trim(work)//'/terrain.toml')
+   call check_terrain(trim(work)//'/out/terrain-D-202101.nc')
 
    !----- The polygon axis. ----------------------------------------------------------------------!
    call list_files(trim(work)//'/out', files, nf)
@@ -617,6 +627,8 @@ contains
       case (DIM_PFT)        ; sh = [dim_len(ncid, 'pft')]
       case (DIM_SIZE)       ; sh = [dim_len(ncid, 'dbh_class')]
       case (DIM_SOIL_PATCH) ; sh = [dim_len(ncid, 'patch'), dim_len(ncid, 'soil')]
+      case (DIM_SITE)
+         sh = [dim_len(ncid, 'site')]
       end select
       if (with_polygon) sh = [dim_len(ncid, 'polygon'), sh]
       sh = [nt, sh]
@@ -923,6 +935,30 @@ contains
       call check_true('col is the column index', found .and. all(nint(x, ik) == mod(IDS, 18_ik)))
       call nc_check(nc_close(ncid), 'close')
    end subroutine check_polygon_axis
+
+   !----- The two sites' forcing: the flat one at the cell has the polygon's air exactly, the one !
+   !      500 m up is 500 m x 0.0065 K/m colder, at a lower pressure, under less longwave. -------!
+   subroutine check_terrain(path)
+      character(len=*), intent(in) :: path
+      integer(c_int) :: ncid
+      integer(ik)    :: nt
+      real(c_double), allocatable :: t(:), tp(:), p(:), lw(:)
+      logical :: ft, ftp, fp, flw
+      ncid = open_nc(path)
+      nt = dim_len(ncid, 'time')
+      call check_true('a run of two sites has a site axis of two', dim_len(ncid, 'site') == 2_ik)
+      call read_var(ncid, 'air_temp_by_site', [nt, 1_ik, 2_ik], t, ft)
+      call read_var(ncid, 'air_temp_site', [nt, 1_ik], tp, ftp)
+      call read_var(ncid, 'psurf_by_site', [nt, 1_ik, 2_ik], p, fp)
+      call read_var(ncid, 'lwdown_by_site', [nt, 1_ik, 2_ik], lw, flw)
+      call check_true('the flat site at the cell has the polygon''s air temperature exactly',        &
+                      ft .and. ftp .and. all(t(1::2) == tp))
+      call check_true('the site 500 m up is 3.25 K colder',                                          &
+                      ft .and. all(abs(t(2::2) - t(1::2) + 3.25_c_double) < 1.0e-6_c_double))
+      call check_true('at a lower pressure', fp .and. all(p(2::2) < p(1::2)))
+      call check_true('under less longwave', flw .and. all(lw(2::2) < lw(1::2)))
+      call nc_check(nc_close(ncid), 'close')
+   end subroutine check_terrain
 
    !----- Each polygon's own layers and map inputs, on its one site. Its row of soil_z is its site     !
    !      run's soil_z down to its own bottom layer, and the fill value below. Its soil_z_bnds run     !

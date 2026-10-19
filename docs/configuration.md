@@ -215,6 +215,10 @@ A polygon is one site unless `[[sites]]` divides it, in a site run. Each `[[site
   column. Each site's column is checked as `[soil]`'s is. The ground's surface (pond, dry surface
   layer, optics) and its thermal boundary are the run's. With the soil maps, every site takes the
   cell's soil, and the column keys are refused.
+- **The terrain.** Each sub-step the polygon's forcing is moved to each site: to its elevation, by the
+  run's lapse (`[site].apply_elevation_lapse`), and its direct beam onto its slope
+  ([forcing](science/forcing.md) §8, Each site of a polygon). Each site's daily-mean air temperature
+  drives its phenology and growth temperature, and its forcing is reported as `*_by_site`.
 - **What a site is.** Each site has its own patches, made at the start (`init_mode = 0`, the same
   number per site) or from its census rows; the patch operators work within a site
   ([order of processes](science/order_of_processes.md)), so no area moves between sites. The output

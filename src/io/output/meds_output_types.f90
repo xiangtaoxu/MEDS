@@ -22,7 +22,7 @@ module meds_output_types
    public :: pending_record_t, record_queue_t, stream_file_t
    public :: output_files_t, output_buffers_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_TMEAN, AGG_FLUXSUM
-   public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
+   public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE
    public :: XTYPE_DOUBLE, XTYPE_INT
    public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS, MAX_DBH_CLASS
    public :: agg_is_slabwise, ragged_dim
@@ -55,6 +55,9 @@ module meds_output_types
    !      normalize_slab / reset_buffer serve it with NO new code; only the serializer's dim mapping   !
    !      differs (it writes rank-3 (time, patch, soil)). docs/science/diagnostics.md §3. ------------!
    integer(ik), parameter :: DIM_SOIL_PATCH = 6_ik
+   !----- One value per site of the polygon (time, polygon, site): what differs between sites,     !
+   !      their forcing after their terrain and their growth temperature. -------------------------!
+   integer(ik), parameter :: DIM_SITE = 7_ik
 
    !----- On-disk numeric type. Kept LOCAL (not NC_*) so this module stays netCDF-free; the        !
    !      serializer maps XTYPE_DOUBLE->NC_DOUBLE, XTYPE_INT->NC_INT.                               !

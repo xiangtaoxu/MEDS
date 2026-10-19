@@ -389,6 +389,7 @@ f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qqu
 
 Every vertical correction lives in one module, `meds_lapse_rate`, and runs in two steps: the **terrain**
 lapse per record as it is read, then the move to **each patch's canopy-air top** per patch and sub-step.
+Between them, a polygon of several sites moves the forcing to **each site's** elevation and slope.
 
 **What the forcing's heights mean.** For ERA5-Land, which is what MEDS reads today:
 - heights are above the ground plus the roughness length; the ECMWF model has no displacement height
@@ -406,7 +407,7 @@ lapse per record as it is read, then the move to **each patch's canopy-air top**
   temperature, from the cell's own elevation. What is left is the site's elevation, and the canopy's
   height.
 
-### Step 1. Terrain: from the forcing cell's elevation to the site's
+### Step 1. Terrain: from the forcing cell's elevation to the polygon's
 
 `[site].apply_elevation_lapse`, per record at ingest. With $`\Delta z = z_{site}-z_{grid}`$ (the archive's
 static orography, or `[site].grid_elevation` for a single file) and the environmental lapse rate
@@ -434,6 +435,35 @@ dewpoint or a specific humidity gives its relative humidity at the cell first. $
 (`lw_clear_form`); a synthesized longwave is built afterwards from the lapsed $T$ and $q$ instead.
 Wind, shortwave and precipitation are unchanged; the rain/snow split (§7) is made later, at the canopy-air top.
 A region's polygons sit at their cells' own elevations, so there $\Delta z = 0$.
+
+### Each site of a polygon
+
+A polygon's sites ([configuration](../configuration.md), Several sites) can lie at their own elevations
+and on their own slopes. Each sub-step, each site takes the polygon's sample through two corrections
+(`met_at_site`), and each of its patches works from the result:
+
+- **Elevation.** With the lapse on, Step 1's eqs. (13)–(14) again, from the polygon's elevation to the
+  site's, $`\Delta z = z_{site} - z_{polygon}`$: temperature, pressure, humidity at constant relative
+  humidity, longwave, and the air density from the lapsed air.
+- **Slope.** The direct beam falls on a surface tilted $s$ from horizontal and facing azimuth $\alpha$
+  (`slope`, `aspect`, clockwise from north). With the sun at zenith angle $z$ and azimuth $A$, also
+  clockwise from north,
+
+  ```math
+  \cos i = \cos z\cos s + \sin z\sin s\cos(A-\alpha), \qquad
+  \sin A\sin z = -\cos\delta\sin h, \quad \cos A\sin z = \sin\delta\cos\phi - \cos\delta\sin\phi\cos h
+  ```
+
+  for declination $\delta$, hour angle $h$ (§4) and latitude $\phi$; $\cos i = 0$ with the sun behind
+  the slope. Both beam streams take the factor $`\min(\cos i/\cos z,\; S_0\cos i/I_b)`$, $I_b$ the beam on
+  level ground: the beam normal to the sun, $`I_b/\cos z`$, held at most the solar constant
+  $`S_0 = 1361`$ W m⁻², so a low sun's small $\cos z$ does not inflate the beam a slope facing it receives.
+
+The diffuse light, the wind and the precipitation are the polygon's, and the canopy's radiation keeps
+the sun's zenith angle: stems stand vertical on a slope. A flat site at the polygon's elevation takes
+the polygon's sample exactly, as does every site of a run without the lapse for the elevation step.
+Each site's daily-mean air temperature drives its own phenology and growth temperature
+(`docs/science/leaf_gas_exchange.md` §2), and the output reports each site's forcing (`*_by_site`).
 
 ### Step 2. To the top of each patch's canopy air space
 

@@ -354,6 +354,17 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   split and the Weiss–Norman form are uncertain by about ±10 %: against towers' PAR sensors the
   `clearidx` fractions give PPFD 3–11 % high, mostly from the diffuse 0.52, and WN85's visible band is
   the 320–700 nm share of the solar spectrum, near-UV included (`docs/science/forcing.md` §6).
+- **Several sites per polygon: what is not built.** *Planned.* A polygon's sites
+  (`docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`; `[[sites]]` in a site run) each take the polygon's forcing
+  to their elevation and their beam onto their slope (`docs/science/forcing.md` §8, Each site of a
+  polygon). Still to come:
+  - the diffuse light a slope receives (it sees less sky and some ground) and the light the terrain
+    around it reflects;
+  - a site map for a region, which gives each cell its sites, their shares, soils and terrain (the
+    product is the owner's choice: soil map units, height above the nearest drainage, wetness or
+    slope classes); a region runs one site per cell until then;
+  - lateral water from upslope to downslope sites, and seed dispersal between sites;
+  - the stand variables per site (an optional `site` axis for `agb`, `lai` and their kin).
 - **The neutral move to each patch's canopy-air top.** *Open question.* [#350](https://github.com/xiangtaoxu/MEDS/issues/350) The forcing is moved
   from its own heights to each patch's canopy-air top assuming a neutral surface layer
   (`docs/science/forcing.md` §8, Step 2): small at BCI, one-sided where the sensor is far above the

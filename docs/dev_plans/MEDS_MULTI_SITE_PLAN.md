@@ -1,6 +1,6 @@
 # Several sites per polygon — plan
 
-**Status:** revision 6, 2026-10-19. S0–S3 merged (#449–#452); S4 implemented in PR #453 (§10); S5 not started.
+**Status:** revision 6, 2026-10-19. S0–S4 merged (#449–#453); S5 implemented in PR #454 (§10). Next: lateral water and seed dispersal between sites, a site map for a region.
 **Base:** `beta` at `835458c` (the state hierarchy, PR #448).
 **Decided (owner, 2026-10-18):**
 - D1 — all patches of a polygon in one patch block; a site block records which patches are its own,
@@ -558,4 +558,24 @@ build (`0fb0ce8`) on the eight cases (none defines sites): every variable matche
   its output's site axis, its state file and a restart from it, a census by `census_site_id`, and
   four refusals by `meds_main`); `test_region` refuses `[[sites]]` in a region and a site's soil key
   beside the maps; `test_config.py` round-trips `[[sites]]`.
+
+**S5, PR #454 (2026-10-19).** One commit on `feat/site-terrain`, checked against the merged S4 build
+(`0a96c77`) on the eight cases: every variable of every output and state file matches bit for bit
+(`t_growth_avg` moves from the meta axis to the site axis, its one value unchanged), the new
+`*_by_site` variables aside.
+
+- **The forcing per site** (`docs/science/forcing.md` §8, Each site of a polygon): the fast loop makes
+  each site's forcing per sub-step from the polygon's sample (`met_at_site`): the terrain lapse from
+  the polygon's elevation to the site's, and the beam on the slope (`slope_incidence_cosz`,
+  `slope_beam_factor`; the beam normal to the sun held at the solar constant). A flat site at the
+  polygon's elevation copies the sample, so a run without sites is unchanged bit for bit. The
+  diffuse light, wind and precipitation are the polygon's, and the canopy keeps the sun's zenith.
+- **The site's climate**: `t_growth_avg`, `pheno_tair_sum` and `pheno_tair_n` move from `polygon_t`
+  to the site block; the phenology reads its cohort's site's daily mean; each site's leaf table is
+  acclimated to its own growth temperature (`fast_context_t%site_leaf_photo`, which
+  `site_column_configs` hands each site's column).
+- **SI_* rows**: a per-site diagnostic block (`site_diag_block`) holds each site's forcing; the
+  output's new `DIM_SITE` axis kind writes it and the growth temperature as `*_by_site` variables.
+- **Not done**: the diffuse light's sky view and the light reflected by the surrounding terrain (a
+  slope sees less sky and some ground); lateral water and seed dispersal between sites (§8, later).
 

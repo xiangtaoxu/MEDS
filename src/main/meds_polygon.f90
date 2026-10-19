@@ -405,7 +405,7 @@ contains
    end subroutine polygon_report
 
    !---------------------------------------------------------------------------------------!
-   ! Advance the polygon's growth-temperature running mean and push it into the leaf table         !
+   ! Advance each site's growth-temperature running mean and push it into the site's leaf table    !
    ! (docs/science/leaf_gas_exchange.md §2 Thermal acclimation). Exponential mean with weight      !
    ! dt/window; UNSEEDED (negative) adopts the first day's mean outright, so the acclimated        !
    ! optimum starts from the site's own climate rather than relaxing toward it from an arbitrary   !
@@ -416,16 +416,23 @@ contains
       integer(ik),          intent(in)    :: step_days
       type(polygon_t),      intent(inout) :: poly
       type(polygon_run_t),  intent(inout) :: run
-      real(wp) :: t_day, w
-      if (poly%pheno_tair_n < 1_ik) return               ! no fast sub-steps ran: nothing to average
-      t_day = poly%pheno_tair_sum / real(poly%pheno_tair_n, wp)
-      if (is_unset_positive(poly%t_growth_avg)) then
-         poly%t_growth_avg = t_day
-      else
-         w = min(1.0_wp, real(step_days, wp) / max(cfg%acclim_window_days, real(step_days, wp)))
-         poly%t_growth_avg = poly%t_growth_avg + w * (t_day - poly%t_growth_avg)
-      end if
-      call acclimate_leaf_photo_table(cfg, poly%t_growth_avg, run%fast_ctx%col_config%leaf_photo)
+      real(wp)    :: t_day, w
+      integer(ik) :: is
+      if (.not. allocated(run%fast_ctx%site_leaf_photo))                                             &
+         allocate(run%fast_ctx%site_leaf_photo(poly%site%n), source=run%fast_ctx%col_config%leaf_photo)
+      do is = 1_ik, poly%site%n
+         if (poly%site%pheno_tair_n(is) < 1_ik) cycle      ! no fast sub-steps ran: nothing to average
+         t_day = poly%site%pheno_tair_sum(is) / real(poly%site%pheno_tair_n(is), wp)
+         associate (t_growth => poly%site%t_growth_avg(is))
+            if (is_unset_positive(t_growth)) then
+               t_growth = t_day
+            else
+               w = min(1.0_wp, real(step_days, wp) / max(cfg%acclim_window_days, real(step_days, wp)))
+               t_growth = t_growth + w * (t_day - t_growth)
+            end if
+            call acclimate_leaf_photo_table(cfg, t_growth, run%fast_ctx%site_leaf_photo(is))
+         end associate
+      end do
    end subroutine advance_growth_temperature
 
    !----- Seed an initial snow pack (spin-up / test); [fast].snow_init_swe. ---------------------!

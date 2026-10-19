@@ -93,7 +93,7 @@ program test_phenology_driver
       sh_before  = poly%cohort%leaf_shed_tendency(1)
       gdd_before = poly%cohort%growing_degree_days(1)
       call set_daily_drivers(poly, 0.0_wp, 0.0_wp)
-      poly%pheno_tair_n = 0_ik                                    ! no fast sub-steps ran
+      poly%site%pheno_tair_n(1) = 0_ik                            ! no fast sub-steps ran
       call advance_leaf_phenology(poly, cfg, 1_ik)
       call check_true('no-temperature step leaves the flush tendency unchanged', &
                       abs(poly%cohort%leaf_flush_tendency(1) - fl_before) < tiny(1.0_wp))
@@ -247,7 +247,8 @@ contains
    subroutine set_daily_drivers(poly, tair, hours)
       type(polygon_t), intent(inout) :: poly
       real(wp),     intent(in)    :: tair, hours
-      poly%pheno_tair_sum = tair ; poly%pheno_tair_n = 1_ik
+      poly%site%pheno_tair_sum(1) = tair
+      poly%site%pheno_tair_n(1) = 1_ik
       poly%cohort%light_hours_accum(1:poly%cohort%n) = hours * cfg%dt_slow / day_sec
    end subroutine set_daily_drivers
 

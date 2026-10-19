@@ -198,13 +198,11 @@ contains
       call dv('growth_count',         NC_INT,    [d_cohort], 'samples in the growth window')
       call dv('growth_hist',          NC_DOUBLE, [d_cohort, d_gwin], 'growth-rate ring buffer [cm/yr]')
       call dv('growth_hist_pos',      NC_INT,    [d_mr], 'ring-buffer write slot (element 1)')
-      !----- THERMAL ACCLIMATION (docs/science/leaf_gas_exchange.md §2, Thermal acclimation). A SITE !
-      !      scalar, but written as its own variable rather than appended to meta_real, because      !
-      !      meta_real is read at a fixed length of 2 and growing it would stop older state files    !
-      !      loading. Optional on read, so a file without it restarts on the unseeded sentinel --    !
-      !      which re-adopts the first day's mean rather than relaxing from an arbitrary origin over !
-      !      a month.  ------------------------------------------------------------------------------!
-      call dv('t_growth_avg', NC_DOUBLE, [d_mr], 'running-mean growth temperature [K]')
+      !----- THERMAL ACCLIMATION (docs/science/leaf_gas_exchange.md §2, Thermal acclimation), one     !
+      !      per site. Optional on read, so a file without it restarts on the unseeded sentinel --    !
+      !      which re-adopts the first day's mean rather than relaxing from an arbitrary origin over  !
+      !      a month. A file written before the sites holds the one site's at the same place. --------!
+      call dv('t_growth_avg', NC_DOUBLE, [d_site], 'the site''s running-mean growth temperature [K]')
       call dv('patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction of its site')
       call dv('owner_site',       NC_INT,    [d_patch],  'owning site index (1-based)')
       call dv('patch_age',        NC_DOUBLE, [d_patch],  'time since last disturbance [yr]')
@@ -361,7 +359,7 @@ contains
          call put_dbl('site_slope',      slope)
          call put_dbl('site_aspect',     aspect)
       end block
-      call put_dbl('t_growth_avg', [poly%t_growth_avg])
+      call put_dbl('t_growth_avg', poly%site%t_growth_avg(1:ns))
       if (ncoh > 0_ik) then
          associate (c => poly%cohort)
             call put_int('pft',         c%pft(1:ncoh))
@@ -673,12 +671,7 @@ contains
       poly%restructure_new_year = trim(pending) == 'year'
       !----- Growth temperature: OPTIONAL, so a state file without it keeps the unseeded          !
       !      sentinel alloc_polygon set and the first slow step adopts that day's mean.  ------------!
-      block
-         real(wp) :: tg(1)
-         tg(1) = poly%t_growth_avg
-         call gv_dbl_opt(ncid, 't_growth_avg', 1_ik, tg)
-         poly%t_growth_avg = tg(1)
-      end block
+      call gv_dbl_opt(ncid, 't_growth_avg', ns, poly%site%t_growth_avg(1:ns))
       poly%next_cohort_id = meta_i(4) ; poly%next_patch_id = meta_i(5)
       if (nc_inq_varid_f(ncid, 'site_area', vid) == NC_NOERR) then
          call gv_dbl(ncid, 'site_area', ns, poly%site%area(1:ns))
