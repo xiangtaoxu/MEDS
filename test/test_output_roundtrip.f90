@@ -97,8 +97,11 @@ program test_output_roundtrip
    call geometric_layer_bottoms(2.0_wp, N_ACTIVE, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
                                2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
-   !----- The file set's copy gives the files their layer depths; the buffer's, the extraction. --!
-   call manager_set_soil_params(files%diag, soilp)
+   !----- The polygon's row of the file set gives the files their layer depths, as attach_output   !
+   !      does in a run; the buffer's copy of the curve gives the extraction. ----------------------!
+   files%polygon_n_soil(1)       = soilp%n_active
+   files%polygon_soil_z(:, 1)    = soilp%z_node
+   files%polygon_soil_face(:, 1) = soilp%soil_layer_z
    call manager_set_soil_params(bufs(1)%diag, soilp)
    call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 
@@ -139,7 +142,8 @@ contains
       c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false., .false.]
    end function build_cfg
 
-   !----- Daily file: 3 records, agb_site = [10,20,30], n_cohort=1, agb_cohort slab = [10,20,30]. !
+   !----- Daily file: 3 records, agb_site = [10,20,30], n_cohort=1, agb_cohort slab = [10,20,30], !
+   !      each behind the file's one polygon. ---------------------------------------------------!
    subroutine check_daily(path)
       character(len=*), intent(in) :: path
       integer(c_int)    :: ncid, vid
@@ -150,7 +154,8 @@ contains
       call nc_check(nc_inq_dimlen_f(ncid, 'time', nt), 'daily time len')
       call check(int(nt, ik) == 3_ik, 'daily has 3 records')
       call nc_check(nc_inq_varid_f(ncid, 'agb_site', vid), 'daily agb_site id')
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t], [3_c_size_t], agbs), 'get agb_site')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], agbs), &
+                    'get agb_site')
       call check_close(real(agbs(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_site day1')
       call check_close(real(agbs(2), wp), 20.0_wp, 1.0e-9_wp, 'daily agb_site day2')
       call check_close(real(agbs(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_site day3')
@@ -160,34 +165,39 @@ contains
       call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t], [3_c_size_t], days), 'get day')
       call check(all(days == [1_c_int, 2_c_int, 3_c_int]), 'daily records are stamped 1, 2, 3 January')
       call nc_check(nc_inq_varid_f(ncid, 'n_cohort', vid), 'daily n_cohort id')
-      call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t], [3_c_size_t], ncoh), 'get n_cohort')
+      call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], ncoh), &
+                    'get n_cohort')
       call check(all(ncoh == 1_c_int), 'daily n_cohort == 1')
       call nc_check(nc_inq_varid_f(ncid, 'agb_cohort', vid), 'daily agb_cohort id')
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], agbc), 'get agb_cohort')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t],               &
+                    [3_c_size_t, 1_c_size_t, 1_c_size_t], agbc), 'get agb_cohort')
       call check_close(real(agbc(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_cohort day1 slot1')
       call check_close(real(agbc(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_cohort day3 slot1')
       !----- Carbon: gpp_site AGG_SUM over 1 step/day = 2.0 each day. -----!
       call nc_check(nc_inq_varid_f(ncid, 'gpp_site', vid), 'daily gpp_site id')
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t], [3_c_size_t], gpp), 'get gpp_site')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], gpp), &
+                    'get gpp_site')
       call check_close(real(gpp(2), wp), 2.0_wp, 1.0e-9_wp, 'daily gpp_site (AGG_SUM) = 2')
-      !----- Soil (DIM_SOIL): soil_temp_site(time, soil) AGG_TMEAN = 290 K per layer. -----!
+      !----- Soil (DIM_SOIL): soil_temp_site(time, polygon, soil) AGG_TMEAN = 290 K per layer. -----!
       call nc_check(nc_inq_varid_f(ncid, 'soil_temp_site', vid), 'daily soil_temp_site id')
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], soilt), 'get soil_temp')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t],               &
+                    [3_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_temp')
       call check_close(real(soilt(1), wp), 290.0_wp, 1.0e-9_wp, 'daily soil_temp_site layer1 = 290')
 
       !----- ...and the INACTIVE tail is fill, not data. The source array is 290 K in every       !
       !      slot including the padding, so if the writer emitted the full ceiling this would read  !
       !      290 and pass for the wrong reason. It has to read _FillValue, as the cohort and patch  !
       !      axes do with their own unused capacity. -----------------------------------------------!
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, int(N_ACTIVE, c_size_t)],          &
-                    [1_c_size_t, 1_c_size_t], soilt), 'get soil_temp padding')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, int(N_ACTIVE, c_size_t)], &
+                    [1_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_temp padding')
       call check_close(real(soilt(1), wp), MISSING_VALUE, 1.0e-9_wp,                              &
                        'soil_temp_site padding slot is _FillValue, not data')
 
       !----- The coordinate must describe the same number of layers. A soil_z running on past the  !
       !      active column with 0.0 m node depths reads as extra layers at the surface.  -----------!
       call nc_check(nc_inq_varid_f(ncid, 'soil_z', vid), 'daily soil_z id')
-      call nc_check(nc_get_vara_double(ncid, vid, [int(N_ACTIVE, c_size_t)], [1_c_size_t], soilt), 'get soil_z padding')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, int(N_ACTIVE, c_size_t)],          &
+                    [1_c_size_t, 1_c_size_t], soilt), 'get soil_z padding')
       call check_close(real(soilt(1), wp), MISSING_VALUE, 1.0e-9_wp,                              &
                        'soil_z padding slot is _FillValue, not 0 m')
       call nc_check(nc_close(ncid), 'close daily')
@@ -203,7 +213,8 @@ contains
       call nc_check(nc_inq_dimlen_f(ncid, 'time', nt), 'annual time len')
       call check(int(nt, ik) == 1_ik, 'annual has 1 record')
       call nc_check(nc_inq_varid_f(ncid, 'agb_site', vid), 'annual agb_site id')
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t], [1_c_size_t], agbs), 'get annual agb_site')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [1_c_size_t, 1_c_size_t], agbs), &
+                    'get annual agb_site')
       call check_close(real(agbs(1), wp), 20.0_wp, 1.0e-9_wp, 'annual agb_site = mean(10,20,30)')
       !----- annual is site-level only: agb_cohort must NOT exist. -----!
       st = nc_inq_varid_f(ncid, 'agb_cohort', vid)

@@ -78,7 +78,7 @@ def count(site, work):
     rows = []
     for f in sorted(glob.glob(os.path.join(work, "out", f"{site}*.nc"))):
         d = nc.Dataset(f)
-        par = (d["par_beam_fast"][:].filled(0.0) + d["par_diffuse_fast"][:].filled(0.0)) * PAR_W_2_UMOL
+        par = (d["par_beam_fast"][:, 0].filled(0.0) + d["par_diffuse_fast"][:, 0].filled(0.0)) * PAR_W_2_UMOL
         stamps = pd.to_datetime(dict(year=d["year"][:], month=d["month"][:], day=d["day"][:])) \
             if "hour" not in d.variables else None
         if stamps is None:

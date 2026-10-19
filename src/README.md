@@ -78,9 +78,9 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 ├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
 │                  demography, and the full coupled run                        938
 └── main/          meds_stepper (one coupled slow step, and the boundary
-                   restructuring), meds_polygon (one polygon's state and
-                   step), meds_driver (a site run: open / step / finalize),
-                   meds_region (a region run, month by month), meds_main
+                   restructuring), meds_polygon (one polygon's run
+                   machinery and step), meds_region (a run of one polygon
+                   or many: open / step / finalize), meds_main
                    (the PROGRAM)                                             1 392
 ```
 

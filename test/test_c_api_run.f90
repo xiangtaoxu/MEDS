@@ -5,7 +5,7 @@
 ! Two things here are load-bearing and neither is an assertion:                                !
 !                                                                                          !
 !   * `src/c_api/meds_c_api_run.f90` is COMPILED by a MANDATORY target, so a change to     !
-!     `meds_driver`'s open/step/finalize seam is a build break rather than a silent rot in !
+!     `meds_region`'s open/step/finalize seam is a build break rather than a silent rot in !
 !     an optional library. Every C-API shim is compiled into a ctest target for this       !
 !     reason (docs/building.md §Running the tests).                                        !
 !                                                                                          !
@@ -98,8 +98,9 @@ program test_c_api_run
 
    !=== 3b. A REUSED registry slot must not inherit the previous run's counters. =============!
    !      The registry is module-`save`, so a freed handle is handed out again -- and the run       !
-   !      object in that slot still holds whatever the last run left in it. `meds_run_t`'s default  !
-   !      initialisers do NOT help: they apply to a fresh variable, not to a slot being reopened.   !
+   !      object in that slot still holds whatever the last run left in it. `meds_region_t`'s       !
+   !      default initialisers do NOT help: they apply to a fresh variable, not to a slot being      !
+   !      reopened.                                                                                !
    !                                                                                          !
    !      A Python process that runs one config after another (a calibration's trials) reuses   !
    !      slots this way, so the step counters, both whole-column budgets, the slow ledger and the !

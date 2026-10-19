@@ -34,6 +34,12 @@ AIR, CAS, LEAF, SOIL, TOWER = "#52514e", "#2a78d6", "#1baf7a", "#a35d1c", "#0b0b
 LAYERS = ["#a35d1c", "#d4661c", "#eda100", "#c9b98f"]   # shallow to deep
 
 
+def one_polygon(var):
+    """A variable of a site run's file, on its one polygon."""
+    x = var[:].astype(float)
+    return x.take(0, axis=var.dimensions.index("polygon")) if "polygon" in var.dimensions else x
+
+
 def read(pattern):
     """The variables of every file matching `pattern`, concatenated along time, with the times."""
     data, stamps = {}, []
@@ -43,8 +49,8 @@ def read(pattern):
             stamps.append(pd.to_datetime(clock))                # a daily file has no hour or minute
             for name, var in ds.variables.items():
                 if var.dimensions and var.dimensions[0] == "time":
-                    data.setdefault(name, []).append(np.ma.filled(var[:].astype(float), np.nan))
-            soil_z = np.ma.filled(ds["soil_z"][:].astype(float), np.nan) if "soil_z" in ds.variables else None
+                    data.setdefault(name, []).append(np.ma.filled(one_polygon(var), np.nan))
+            soil_z = np.ma.filled(one_polygon(ds["soil_z"]), np.nan) if "soil_z" in ds.variables else None
     if not stamps:
         raise SystemExit(f"ERROR: no output matches {pattern}; run the window first (run_example.py)")
     data = {k: np.concatenate(v) for k, v in data.items()}

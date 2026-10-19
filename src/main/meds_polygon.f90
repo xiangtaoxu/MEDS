@@ -3,13 +3,16 @@
 ! meds_polygon -- one polygon of a run: everything that evolves at one forcing cell, and the one  !
 ! step that advances it (docs/science/order_of_processes.md §2).                                  !
 !                                                                                          !
-! A polygon owns its config (a copy of the run's, which a region fills with each cell's own        !
-! inputs), its site, fast context, forcing cursor, conservation ledgers and status. What every     !
-! polygon of a run shares -- the forcing source, the output files -- is passed in read-only. Its    !
-! output buffers are passed in too: the run holds them, one per polygon in a                       !
-! contiguous array, so the I/O phase takes that array whole rather than a component section.      !
-! A site run (meds_driver) is one polygon; a region (meds_region) is many, stepped by the same     !
-! polygon_step, so a polygon of a region computes exactly what a site run at its cell computes.    !
+! A polygon is two records side by side in the run: its state (the stand, `site_t`) and its run   !
+! machinery (`polygon_run_t`: its config, a copy of the run's that a region fills with each cell's !
+! own inputs, its fast context, forcing cursor, conservation ledgers and status). The machinery   !
+! is not part of the state because its parts are defined in the fast and slow libraries, which use !
+! the state library. Every routine here takes both. What every polygon of a run shares -- the      !
+! forcing source, the output files -- is passed in read-only. Its output buffers are passed in     !
+! too: the run holds them, one per polygon in a contiguous array, so the I/O phase takes that      !
+! array whole rather than a component section. A run (meds_region) is one polygon or many, each   !
+! stepped by polygon_step, so a polygon of a region computes exactly what a one-polygon run at its !
+! cell computes.                                                                                   !
 !                                                                                          !
 ! polygon_step does no file work: the caller loads the step's forcing before it (met_prefetch)     !
 ! and writes the queued output records after a month closes.                                       !
@@ -41,12 +44,11 @@ module meds_polygon
    use meds_output_types,           only : output_files_t, output_buffers_t, MISSING_VALUE
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
    use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
-                                           manager_set_soil_params,                               &
+                                           manager_set_soil_params, manager_set_polygons,         &
                                            activate_site_diag, apply_variable_override,          &
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
    use meds_constants,              only : n_soil_layer_max
-   use meds_soil_column_config,     only : soil_params_t
    use meds_allometry,              only : HEIGHT_CHAVE
    use meds_biophysics_opts,        only : SOIL_BC_AQUIFER
    use meds_forcing_types,          only : met_cells_t
@@ -54,7 +56,7 @@ module meds_polygon
    implicit none
    private
 
-   public :: meds_polygon_t, polygon_prepare, polygon_step, polygon_report
+   public :: polygon_run_t, polygon_prepare, polygon_step, polygon_report
    public :: open_output_files, attach_output, ensure_output_dir
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
    public :: N_PATCH_INIT
@@ -69,7 +71,8 @@ module meds_polygon
 
    integer(ik), parameter :: N_PATCH_INIT = 6_ik     !< bare-ground patches when no census/restart
 
-   type :: meds_polygon_t
+   !----- What the run needs to step and check one polygon; its state is the site_t beside it. -----!
+   type :: polygon_run_t
       integer(ik)            :: id = 0_ik         !< global id: the cell's row-major index (0 for a site run)
       integer(ik)            :: cell = 1_ik       !< the cell in the forcing source's cell list
       character(len=40)      :: label = ''        !< how messages name it ('' for a site run)
@@ -80,7 +83,6 @@ module meds_polygon
       !      region's polygons can each carry their own inputs (docs/configuration.md §Regional       !
       !      runs). ----------------------------------------------------------------------------------!
       type(meds_config_t)    :: cfg
-      type(site_t)           :: site
       type(fast_context_t)   :: fast_ctx          !< built only if fast_biophysics_on
       type(met_cursor_t)     :: met_cur           !< set only if forcing_on
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
@@ -114,7 +116,7 @@ module meds_polygon
       !      does. ----------------------------------------------------------------------------------!
       logical                :: restructure_pending  = .false.
       logical                :: restructure_new_year = .false.
-   end type meds_polygon_t
+   end type polygon_run_t
 
 contains
 
@@ -125,56 +127,57 @@ contains
    ! pack, and the soil-carbon spin-up. `keep_fast_state` / `keep_soil_carbon` are set when a       !
    ! restart already restored those states, which re-seeding would silently discard.                !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_prepare(run_cfg, met_src, poly, latitude_deg, longitude_deg, elevation_m,   &
+   subroutine polygon_prepare(run_cfg, met_src, site, run, latitude_deg, longitude_deg, elevation_m, &
                               keep_fast_state, keep_soil_carbon, patch_threads, verbose)
       type(meds_config_t),  intent(in)    :: run_cfg
       type(met_source_t),   intent(in)    :: met_src
-      type(meds_polygon_t), intent(inout) :: poly
+      type(site_t),         intent(inout) :: site
+      type(polygon_run_t),  intent(inout) :: run
       real(wp),             intent(in)    :: latitude_deg, longitude_deg, elevation_m
       logical,              intent(in)    :: keep_fast_state, keep_soil_carbon, verbose
       !----- Threads for the polygon's patch loop: a site run gives it [run].n_threads, a region, whose  !
       !      threads go to the polygons, gives each polygon one. ----------------------------------!
       integer(ik),          intent(in)    :: patch_threads
 
-      poly%cfg = run_cfg
-      associate (cfg => poly%cfg)
-      poly%energy_budget = budget_t() ; poly%water_budget = budget_t() ; poly%face_budget = budget_t()
-      poly%slow_ledger   = slow_ledger_t()
-      poly%seam          = soilc_seam_t()
-      poly%worst_rh_seam_when = '' ; poly%worst_rh_seam_npatch = 0_ik
-      poly%most_patches = 0_ik ; poly%most_cohorts = 0_ik
-      poly%most_patches_when = '' ; poly%most_cohorts_when = ''
-      poly%fast_step_total = 0_ik ; poly%status = DRIVER_OK
-      poly%area_start = total_area(poly%site)
-      poly%latitude_deg = latitude_deg ; poly%longitude_deg = longitude_deg ; poly%elevation_m = elevation_m
+      run%cfg = run_cfg
+      associate (cfg => run%cfg)
+      run%energy_budget = budget_t() ; run%water_budget = budget_t() ; run%face_budget = budget_t()
+      run%slow_ledger   = slow_ledger_t()
+      run%seam          = soilc_seam_t()
+      run%worst_rh_seam_when = '' ; run%worst_rh_seam_npatch = 0_ik
+      run%most_patches = 0_ik ; run%most_cohorts = 0_ik
+      run%most_patches_when = '' ; run%most_cohorts_when = ''
+      run%fast_step_total = 0_ik ; run%status = DRIVER_OK
+      run%area_start = total_area(site)
+      run%latitude_deg = latitude_deg ; run%longitude_deg = longitude_deg ; run%elevation_m = elevation_m
 
       if (cfg%fast_biophysics_on) then
-         call build_fast_context(cfg, poly%fast_ctx)
-         poly%fast_ctx%patch_threads = patch_threads
+         call build_fast_context(cfg, run%fast_ctx)
+         run%fast_ctx%patch_threads = patch_threads
          if (cfg%forcing%forcing_on) then
-            call met_cursor_init(met_src, poly%met_cur, poly%cell, poly%latitude_deg,               &
-                                 poly%longitude_deg, poly%elevation_m)
+            call met_cursor_init(met_src, run%met_cur, run%cell, run%latitude_deg,                  &
+                                 run%longitude_deg, run%elevation_m)
          end if
          !----- Skip the generic re-seed when a restart already restored the true evolved            !
          !      CAS/soil/snow state (docs/science/order_of_processes.md §1): overwriting it here     !
          !      would silently discard exactly what io_read_state just read back, and the run would  !
          !      jump at the restart.                                                                 !
-         if (.not. keep_fast_state) call init_fast_reservoirs(poly%site, poly%fast_ctx)
-         if (cfg%snow_init_swe > 0.0_wp) call seed_snow(poly, verbose)
+         if (.not. keep_fast_state) call init_fast_reservoirs(site, run%fast_ctx)
+         if (cfg%snow_init_swe > 0.0_wp) call seed_snow(site, cfg, verbose)
          if (verbose) write(*,'(a)') ' fast  : sub-daily biophysics ON'
       end if
       !----- The canopy-air depth follows the stand from the first step, whatever the stand came     !
       !      from (bare ground, census, restart); the slow step keeps it current after that. No      !
       !      ledger: a plain geometry update that keeps the canopy air's intensive state. -----------!
-      call refresh_canopy_depth(poly%site, cfg)
+      call refresh_canopy_depth(site, cfg)
 
       !----- Slow soil-carbon spin-up (opt-in): a successful STATE restart already carries the real !
       !      persisted pools; otherwise the pools start at the allocation-time zero unless          !
       !      spinup_steady requests the SASU steady-state solve.  ---------------------------------!
       if (cfg%soil_carbon_on .and. cfg%soil_carbon_spinup_steady .and. .not. keep_soil_carbon)    &
-         call soil_carbon_steady(poly, verbose)
+         call soil_carbon_steady(site, cfg, verbose)
 
-      poly%slow_ledger%active = cfg%slow_on .and. cfg%slow_ledger_on
+      run%slow_ledger%active = cfg%slow_on .and. cfg%slow_ledger_on
       end associate
    end subroutine polygon_prepare
 
@@ -185,12 +188,13 @@ contains
    ! the NaN and bounds guards. The step's forcing must already be loaded into `met_src`;           !
    ! closed output records are queued in the polygon's buffers, `out_bufs`.                         !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_step(met_src, out_files, out_bufs, poly, prev, now, step_days,                &
+   subroutine polygon_step(met_src, out_files, out_bufs, site, run, prev, now, step_days,           &
                            is_new_month, is_new_year, status)
       type(met_source_t),     intent(in)    :: met_src
       type(output_files_t),   intent(in)    :: out_files
       type(output_buffers_t), intent(inout) :: out_bufs   !< this polygon's share of out_files
-      type(meds_polygon_t),   intent(inout) :: poly
+      type(site_t),           intent(inout) :: site
+      type(polygon_run_t),    intent(inout) :: run
       type(meds_time_t),     intent(in)    :: prev, now
       integer(ik),           intent(in)    :: step_days
       logical,               intent(in)    :: is_new_month, is_new_year
@@ -199,22 +203,22 @@ contains
       real(wp) :: seam_prev
       integer(ik) :: n_cohort_max
 
-      associate (cfg => poly%cfg)
+      associate (cfg => run%cfg)
       status = DRIVER_OK
-      seam_prev = poly%seam%worst_rh_gap      ! so the date below records the step the max MOVED on
+      seam_prev = run%seam%worst_rh_gap       ! so the date below records the step the max MOVED on
 
       !----- The boundary the last step ended on (restructure_pending): the stand's monthly and       !
       !      yearly restructuring, before this step's fast loop sees the stand. ----------------------!
-      if (poly%restructure_pending) then
-         call advance_boundary(poly%site, cfg, .true., poly%restructure_new_year,                  &
-                               slow_ledger=poly%slow_ledger)
-         poly%restructure_pending = .false. ; poly%restructure_new_year = .false.
-         if (poly%site%patch%n > poly%most_patches) then
-            poly%most_patches = poly%site%patch%n ; poly%most_patches_when = time_to_string(prev)
+      if (run%restructure_pending) then
+         call advance_boundary(site, cfg, .true., run%restructure_new_year,                        &
+                               slow_ledger=run%slow_ledger)
+         run%restructure_pending = .false. ; run%restructure_new_year = .false.
+         if (site%patch%n > run%most_patches) then
+            run%most_patches = site%patch%n ; run%most_patches_when = time_to_string(prev)
          end if
-         n_cohort_max = max_cohort_count(poly%site)
-         if (n_cohort_max > poly%most_cohorts) then
-            poly%most_cohorts = n_cohort_max ; poly%most_cohorts_when = time_to_string(prev)
+         n_cohort_max = max_cohort_count(site)
+         if (n_cohort_max > run%most_cohorts) then
+            run%most_cohorts = n_cohort_max ; run%most_cohorts_when = time_to_string(prev)
          end if
       end if
 
@@ -224,7 +228,7 @@ contains
       !      not a lag to apologise for: the quantity being tracked IS the preceding weeks'         !
       !      temperature, and one slow step is a thirtieth of the window. A no-op when the flag is  !
       !      off. -----------------------------------------------------------------------------------!
-      if (cfg%leaf_thermal_acclimation) call advance_growth_temperature(step_days, poly)
+      if (cfg%leaf_thermal_acclimation) call advance_growth_temperature(step_days, site, run)
 
       !----- The fast loop stages sub-daily samples into the polygon's share of the run's files. --!
       call stepper(out_bufs)
@@ -233,9 +237,9 @@ contains
       !      drifts every day, and the date is what distinguishes them. The accumulation itself is   !
       !      done inside the biogeochem driver, which sees every patch; this only records the date   !
       !      on the step where the running maximum moved.  ------------------------------------------!
-      if (poly%seam%worst_rh_gap > seam_prev) then
-         poly%worst_rh_seam_when   = time_to_string(now)
-         poly%worst_rh_seam_npatch = poly%site%patch%n
+      if (run%seam%worst_rh_gap > seam_prev) then
+         run%worst_rh_seam_when   = time_to_string(now)
+         run%worst_rh_seam_npatch = site%patch%n
       end if
 
       !----- Output: replay the staged FAST samples, then fold this step -- its fluxes from `prev`  !
@@ -249,19 +253,19 @@ contains
       !      step, after the output has read this one, so the ending period's records describe one   !
       !      stand, and what the restructuring does -- its events, and the stand it leaves --        !
       !      belongs to the period that begins (docs/science/diagnostics.md §4). --------------------!
-      call reset_step_diagnostics(poly%site)
-      poly%restructure_pending  = is_new_month
-      poly%restructure_new_year = is_new_year
+      call reset_step_diagnostics(site)
+      run%restructure_pending  = is_new_month
+      run%restructure_new_year = is_new_year
 
       !----- NAN GUARD, every step: the stand, the tissue temperatures and the canopy air         !
       !      (has_nan), and the run's energy and water ledgers, whose running residual turns NaN    !
       !      the step any flux or store in them does. A NaN is a STATUS here, not an `error stop`:   !
       !      a library caller survives it.  ---------------------------------------------------------!
-      if (has_nan(poly%site) .or. ledger_not_finite()) then
+      if (has_nan(site) .or. ledger_not_finite()) then
          write(*,'(a)') ' ERROR: a NaN reached the state or the energy/water ledger.'
-         if (len_trim(poly%label) > 0) write(*,'(2a)') '        ', trim(poly%label)
+         if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
          write(*,'(2a)') '        in the step ending ', time_to_string(now)
-         status = DRIVER_ERR_NAN ; poly%status = status ; return
+         status = DRIVER_ERR_NAN ; run%status = status ; return
       end if
 
       !----- BOUNDS GUARD, checked every step and NOT gated on the ledger: each cohort's state     !
@@ -277,40 +281,40 @@ contains
       !      Once per slow step over a few hundred cohorts x 10 fields; the cost does not register. !
       block
          integer(ik) :: ii, kk
-         do ii = 1_ik, poly%site%cohort%n
-            kk = cohort_bad_field(poly%site%cohort, ii)
+         do ii = 1_ik, site%cohort%n
+            kk = cohort_bad_field(site%cohort, ii)
             if (kk /= 0_ik) then
                write(*,'(a)') ' ERROR: a cohort''s state is outside its physical bounds.'
-               if (len_trim(poly%label) > 0) write(*,'(2a)') '        ', trim(poly%label)
+               if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
                write(*,'(3a,i0,a,i0,a,i0)') '        field ', trim(cohort_field_name(kk)),          &
-                     ', cohort id ', poly%site%cohort%global_id(ii), ' (pft ',                    &
-                     poly%site%cohort%pft(ii), ') in patch ', poly%site%cohort%owner_patch(ii)
+                     ', cohort id ', site%cohort%global_id(ii), ' (pft ',                         &
+                     site%cohort%pft(ii), ') in patch ', site%cohort%owner_patch(ii)
                write(*,'(2a)')  '        date ', time_to_string(now)
                write(*,'(a)') '        Density, carbon and water are amounts: never negative, never'
                write(*,'(a)') '        infinite. Every operator keeps them so by construction.'
-               status = DRIVER_ERR_BOUNDS ; poly%status = status
+               status = DRIVER_ERR_BOUNDS ; run%status = status
                return
             end if
          end do
          if (cfg%soil_carbon_on) then
-            do ii = 1_ik, poly%site%patch%n
-               kk = soil_carbon_bad_pool(poly%site%patch%soil_carbon(ii))
+            do ii = 1_ik, site%patch%n
+               kk = soil_carbon_bad_pool(site%patch%soil_carbon(ii))
                if (kk /= 0_ik) then
                   write(*,'(a)') ' ERROR: a CENTURY soil-carbon pool is physically impossible.'
-                  if (len_trim(poly%label) > 0) write(*,'(2a)') '        ', trim(poly%label)
+                  if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
                   write(*,'(3a,i0,a,i0)') '        pool ', trim(soil_carbon_pool_name(kk)),        &
-                        ', patch ', ii, ' of ', poly%site%patch%n
+                        ', patch ', ii, ' of ', site%patch%n
                   write(*,'(2a)')  '        date ', time_to_string(now)
                   write(*,'(a)') '        A carbon pool is a mass: it cannot be negative, and the'
                   write(*,'(a)') '        ceiling is ~500x the richest real soil. Conservation can'
                   write(*,'(a)') '        hold perfectly while this is true -- see the slow ledger.'
-                  status = DRIVER_ERR_BOUNDS ; poly%status = status
+                  status = DRIVER_ERR_BOUNDS ; run%status = status
                   return
                end if
             end do
          end if
       end block
-      poly%status = status
+      run%status = status
       end associate
 
    contains
@@ -318,22 +322,22 @@ contains
       !----- The run's whole-column ledgers: one NaN flux or store poisons the running residual  !
       !      for good, so a non-finite residual means a NaN entered the energy or water budget. ---!
       logical function ledger_not_finite()
-         ledger_not_finite = poly%cfg%fast_biophysics_on .and.                                         &
-                             .not. (ieee_is_finite(poly%energy_budget%resid_sum) .and.            &
-                                    ieee_is_finite(poly%water_budget%resid_sum))
+         ledger_not_finite = run%cfg%fast_biophysics_on .and.                                          &
+                             .not. (ieee_is_finite(run%energy_budget%resid_sum) .and.             &
+                                    ieee_is_finite(run%water_budget%resid_sum))
       end function ledger_not_finite
 
       !----- Everything is handed on; the fast loop uses the forcing only when forcing_on, and     !
       !      stages the fast output tier only then. -------------------------------------------------!
       subroutine stepper(fast_bufs)
          type(output_buffers_t), intent(inout) :: fast_bufs
-         call advance_one_step(poly%site, poly%cfg, poly%fast_ctx, met_src=met_src, met_cur=poly%met_cur, &
+         call advance_one_step(site, run%cfg, run%fast_ctx, met_src=met_src, met_cur=run%met_cur,         &
                                step_start=prev, out_bufs=fast_bufs,                                 &
-                               run_energy_budget=poly%energy_budget,                                &
-                               run_water_budget=poly%water_budget,                                  &
-                               run_face_budget=poly%face_budget,                                    &
-                               slow_ledger=poly%slow_ledger, seam=poly%seam,                        &
-                               latitude_deg=poly%latitude_deg)
+                               run_energy_budget=run%energy_budget,                                 &
+                               run_water_budget=run%water_budget,                                   &
+                               run_face_budget=run%face_budget,                                     &
+                               slow_ledger=run%slow_ledger, seam=run%seam,                          &
+                               latitude_deg=run%latitude_deg)
       end subroutine stepper
 
       !----- FAST tier: replay the sub-step samples the fast loop staged in bufs%fast(:), closing   !
@@ -345,14 +349,14 @@ contains
          integer(ik) :: isub
          if (bufs%fast_ready) then
             do isub = 1_ik, bufs%n_fast_sub
-               call output_integrate_fast(files, bufs, isub, poly%cfg%dt_fast)
-               poly%fast_step_total = poly%fast_step_total + 1_ik
-               if (mod(poly%fast_step_total, max(files%fast_interval_steps, 1_ik)) == 0_ik)         &
+               call output_integrate_fast(files, bufs, isub, run%cfg%dt_fast)
+               run%fast_step_total = run%fast_step_total + 1_ik
+               if (mod(run%fast_step_total, max(files%fast_interval_steps, 1_ik)) == 0_ik)          &
                   call close_tier(files, bufs, 1_ik)
             end do
             bufs%fast_ready = .false.
          end if
-         call output_integrate(files, bufs, poly%site, prev, poly%cfg%dt_slow, is_new_day, is_new_month, &
+         call output_integrate(files, bufs, site, prev, run%cfg%dt_slow, is_new_day, is_new_month,       &
                                is_new_year)
       end subroutine tick_output
 
@@ -362,64 +366,64 @@ contains
    ! polygon_report -- the end-of-run conservation reports of one polygon: the two whole-column    !
    ! budgets and the face closure, the soil-carbon seam and freeze, and the slow ledger.           !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_report(poly)
-      type(meds_polygon_t), intent(in) :: poly
-      associate (cfg => poly%cfg)
+   subroutine polygon_report(run)
+      type(polygon_run_t), intent(in) :: run
+      associate (cfg => run%cfg)
       !----- Whole-column conservation over the RUN: the signed cumulative residual is the number a !
       !      per-step tolerance cannot see, so it is reported whether or not any single step        !
       !      breached.  -----------------------------------------------------------------------------!
       if (cfg%fast_biophysics_on) then
-         call budget_report(poly%energy_budget, 'whole_energy', 'J/m2',  'W/m2')
-         call budget_report(poly%water_budget,  'whole_water',  'kg/m2', 'kg/m2/s')
+         call budget_report(run%energy_budget, 'whole_energy', 'J/m2',  'W/m2')
+         call budget_report(run%water_budget,  'whole_water',  'kg/m2', 'kg/m2/s')
          !----- The VERTICAL check, reported in the same place and spirit as the soil-carbon          !
          !      seam below: a number that should be machine-zero, printed whether or not it breached. !
          !      A nonzero value means soil enthalpy was advected on a mass flux the committed water    !
          !      never moved -- a misplacement between LAYERS, which both ledgers above sum away.       !
          write(*,'(a,es12.3,a,es12.3,a,i0)') ' faces[soil_layer_mass]  worst = ',                  &
-               poly%face_budget%worst, ' kg/m2   mean |resid| = ',                                  &
-               poly%face_budget%abs_sum / max(real(poly%face_budget%n_check, wp), 1.0_wp),          &
-               ' kg/m2   checks = ', poly%face_budget%n_check
-         if (poly%face_budget%n_fail > 0_ik)                                                       &
-            write(*,'(a,i0,a)') ' WARNING: ', poly%face_budget%n_fail,                               &
+               run%face_budget%worst, ' kg/m2   mean |resid| = ',                                   &
+               run%face_budget%abs_sum / max(real(run%face_budget%n_check, wp), 1.0_wp),            &
+               ' kg/m2   checks = ', run%face_budget%n_check
+         if (run%face_budget%n_fail > 0_ik)                                                        &
+            write(*,'(a,i0,a)') ' WARNING: ', run%face_budget%n_fail,                                &
                ' soil-water solves did not converge (see [fast].debug_error to make this fatal)'
-         if (poly%energy_budget%n_fail + poly%water_budget%n_fail > 0_ik)                        &
-            write(*,'(a,i0,a)') ' WARNING: ', poly%energy_budget%n_fail + poly%water_budget%n_fail, &
+         if (run%energy_budget%n_fail + run%water_budget%n_fail > 0_ik)                          &
+            write(*,'(a,i0,a)') ' WARNING: ', run%energy_budget%n_fail + run%water_budget%n_fail,   &
                ' whole-column budget checks breached tolerance (see [fast].debug_error to make this fatal)'
       end if
       !----- The soil-carbon seam, in the same place and spirit as the two budgets above: a number  !
       !      that should be machine-zero, reported whether or not it ever breached.  ----------------!
       if (cfg%soil_carbon_on) then
          write(*,'(a,es12.3,a)') ' seam[soil_carbon_rh]  worst |pool debit - fast Rh| = ',        &
-               poly%seam%worst_rh_gap, ' kgC/m2'
-         if (poly%seam%worst_rh_gap > 0.0_wp)                                                     &
-            write(*,'(3a,i0,a)') '                       worst at ', poly%worst_rh_seam_when,     &
-                  ' with ', poly%worst_rh_seam_npatch, ' patches'
+               run%seam%worst_rh_gap, ' kgC/m2'
+         if (run%seam%worst_rh_gap > 0.0_wp)                                                      &
+            write(*,'(3a,i0,a)') '                       worst at ', run%worst_rh_seam_when,      &
+                  ' with ', run%worst_rh_seam_npatch, ' patches'
          write(*,'(a,es12.3,a)') ' seam[soil_carbon_lignin]  worst passive-tracer resid = ',      &
-               poly%seam%worst_lignin, ' kgC/m2/day'
+               run%seam%worst_lignin, ' kgC/m2/day'
          !----- LAMBDA: the fraction of a pool one slow step withdraws -- the number that says      !
          !      whether freezing the pool across the step is sound. Not a residual: it is expected   !
          !      to be small-but-nonzero (3.6e-3/day measured on the mature Ithaca stand), and it is a  !
          !      WARNING as it approaches 1, long before a pool could go negative.  ------------------!
          write(*,'(a,es12.3,2a)') ' freeze[soil_carbon]   worst lambda = dt.K.xi / pool  = ',     &
-               poly%seam%worst_lambda, ' [-]  pool ',                                             &
-               trim(soil_carbon_pool_name(poly%seam%lambda_pool))
-         if (poly%seam%worst_lambda > 0.1_wp)                                                     &
+               run%seam%worst_lambda, ' [-]  pool ',                                              &
+               trim(soil_carbon_pool_name(run%seam%lambda_pool))
+         if (run%seam%worst_lambda > 0.1_wp)                                                      &
             write(*,'(a)') '   WARNING: a slow step withdraws >10% of a soil-carbon pool --'      &
                         // ' the frozen-pool approximation is degrading; shorten dt_slow.'
       end if
       !----- Fusion targets the tolerance ceilings overrode. Silent when every restructuring      !
       !      reached them, which is the usual case.  -------------------------------------------------!
-      if (cfg%do_patch_fissfuse .and. cfg%max_patch > 0_ik .and. poly%most_patches > cfg%max_patch)    &
-         write(*,'(a,i0,3a,i0,a)') ' NOTE: patch fusion left ', poly%most_patches, ' patches on ',        &
-               trim(poly%most_patches_when), ' (max_patch = ', cfg%max_patch,                           &
+      if (cfg%do_patch_fissfuse .and. cfg%max_patch > 0_ik .and. run%most_patches > cfg%max_patch)     &
+         write(*,'(a,i0,3a,i0,a)') ' NOTE: patch fusion left ', run%most_patches, ' patches on ',         &
+               trim(run%most_patches_when), ' (max_patch = ', cfg%max_patch,                            &
                '): patch_light_tol_max kept dissimilar patches apart'
-      if (cfg%do_cohort_fissfuse .and. cfg%max_cohort > 0_ik .and. poly%most_cohorts > cfg%max_cohort) &
-         write(*,'(a,i0,3a,i0,a)') ' NOTE: cohort fusion left ', poly%most_cohorts, ' cohorts in one patch on ', &
-               trim(poly%most_cohorts_when), ' (max_cohort = ', cfg%max_cohort,                         &
+      if (cfg%do_cohort_fissfuse .and. cfg%max_cohort > 0_ik .and. run%most_cohorts > cfg%max_cohort)  &
+         write(*,'(a,i0,3a,i0,a)') ' NOTE: cohort fusion left ', run%most_cohorts, ' cohorts in one patch on ',  &
+               trim(run%most_cohorts_when), ' (max_cohort = ', cfg%max_cohort,                          &
                '): cohort_size_tol_max kept dissimilar cohorts apart'
       !----- The SLOW tier's ledger, over the window the two above cannot see                      !
       !      (docs/science/order_of_processes.md §4). ---------------------------------------------!
-      call slow_ledger_report(poly%slow_ledger)
+      call slow_ledger_report(run%slow_ledger)
       end associate
    end subroutine polygon_report
 
@@ -430,53 +434,53 @@ contains
    ! optimum starts from the site's own climate rather than relaxing toward it from an arbitrary   !
    ! origin over the first month.                                                                  !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_growth_temperature(step_days, poly)
+   subroutine advance_growth_temperature(step_days, site, run)
       integer(ik),          intent(in)    :: step_days
-      type(meds_polygon_t), intent(inout) :: poly
+      type(site_t),         intent(inout) :: site
+      type(polygon_run_t),  intent(inout) :: run
       real(wp) :: t_day, w
-      if (poly%site%pheno_tair_n < 1_ik) return          ! no fast sub-steps ran: nothing to average
-      t_day = poly%site%pheno_tair_sum / real(poly%site%pheno_tair_n, wp)
-      if (is_unset_positive(poly%site%t_growth_avg)) then
-         poly%site%t_growth_avg = t_day
+      if (site%pheno_tair_n < 1_ik) return               ! no fast sub-steps ran: nothing to average
+      t_day = site%pheno_tair_sum / real(site%pheno_tair_n, wp)
+      if (is_unset_positive(site%t_growth_avg)) then
+         site%t_growth_avg = t_day
       else
-         w = min(1.0_wp, real(step_days, wp) / max(poly%cfg%acclim_window_days, real(step_days, wp)))
-         poly%site%t_growth_avg = poly%site%t_growth_avg + w * (t_day - poly%site%t_growth_avg)
+         w = min(1.0_wp, real(step_days, wp) / max(run%cfg%acclim_window_days, real(step_days, wp)))
+         site%t_growth_avg = site%t_growth_avg + w * (t_day - site%t_growth_avg)
       end if
-      call acclimate_leaf_photo_table(poly%cfg, poly%site%t_growth_avg, poly%fast_ctx%col_config%leaf_photo)
+      call acclimate_leaf_photo_table(run%cfg, site%t_growth_avg, run%fast_ctx%col_config%leaf_photo)
    end subroutine advance_growth_temperature
 
    !----- Seed an initial snow pack (spin-up / test); [fast].snow_init_swe. ---------------------!
-   subroutine seed_snow(poly, verbose)
-      type(meds_polygon_t), intent(inout) :: poly
+   subroutine seed_snow(site, cfg, verbose)
+      type(site_t),         intent(inout) :: site
+      type(meds_config_t),  intent(in)    :: cfg
       logical,              intent(in)    :: verbose
       integer(ik) :: ipp
-      associate (cfg => poly%cfg)
-      do ipp = 1_ik, poly%site%patch%n
-         poly%site%patch%snow(ipp)%swe(1)         = cfg%snow_init_swe
-         poly%site%patch%snow(ipp)%snow_energy(1) =                                              &
+      do ipp = 1_ik, site%patch%n
+         site%patch%snow(ipp)%swe(1)         = cfg%snow_init_swe
+         site%patch%snow(ipp)%snow_energy(1) =                                                   &
             temp_to_internal_energy(0.0_wp, cfg%snow_init_swe, cfg%snow_init_temp, 0.0_wp)
-         poly%site%patch%snow(ipp)%snow_depth(1)  = cfg%snow_init_swe / 250.0_wp
-         poly%site%patch%snow(ipp)%nlayer         = 1_ik
-         call internal_energy_to_temp(poly%site%patch%snow(ipp)%snow_energy(1),                  &
+         site%patch%snow(ipp)%snow_depth(1)  = cfg%snow_init_swe / 250.0_wp
+         site%patch%snow(ipp)%nlayer         = 1_ik
+         call internal_energy_to_temp(site%patch%snow(ipp)%snow_energy(1),                       &
                                       cfg%snow_init_swe, 0.0_wp,                                 &
-                                      poly%site%patch%snow(ipp)%snow_temp(1),                    &
-                                      poly%site%patch%snow(ipp)%snow_fliq(1))
+                                      site%patch%snow(ipp)%snow_temp(1),                         &
+                                      site%patch%snow(ipp)%snow_fliq(1))
       end do
       if (verbose) write(*,'(a,f6.1,a)') ' snow  : seeded initial pack SWE = ', cfg%snow_init_swe, ' kg/m2'
-      end associate
    end subroutine seed_snow
 
    !----- SASU steady-state soil-carbon spin-up from the configured climatological xi + litter    !
    !      (docs/science/soil_carbon.md §8, eq. (7)). ---------------------------------------------!
-   subroutine soil_carbon_steady(poly, verbose)
-      type(meds_polygon_t), intent(inout) :: poly
+   subroutine soil_carbon_steady(site, cfg, verbose)
+      type(site_t),         intent(inout) :: site
+      type(meds_config_t),  intent(in)    :: cfg
       logical,              intent(in)    :: verbose
       type(soil_carbon_t)  :: pools0, pools_ss
       type(litter_input_t) :: lit
       real(wp)    :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
       real(wp)    :: xi_bar(n_soil_pool), u_bar(n_soil_pool), lignin_bar(2)
       integer(ik) :: ipp
-      associate (cfg => poly%cfg)
       pools0 = soil_carbon_t()                          ! zero-carbon reference (f_lignin=0)
       call assemble_transfer_matrix(pools0, cfg%soil_carbon, a_mat, k_diag, er)
       xi_bar = cfg%soil_carbon_spinup_xi
@@ -486,69 +490,51 @@ contains
       lit%struct_soil = cfg%soil_carbon_spinup_struct_soil
       call build_litter_input(lit, u_bar, lignin_bar)
       call solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, cfg%soil_carbon, pools_ss)
-      do ipp = 1_ik, poly%site%patch%n
-         poly%site%patch%soil_carbon(ipp) = pools_ss
+      do ipp = 1_ik, site%patch%n
+         site%patch%soil_carbon(ipp) = pools_ss
       end do
       if (verbose) write(*,'(a,f8.3,a)') ' soilc : steady-state spin-up, total = ',               &
          pools_ss%fast_grnd_carbon + pools_ss%fast_soil_carbon + pools_ss%struct_grnd_carbon +   &
          pools_ss%struct_soil_carbon + pools_ss%microbial_carbon + pools_ss%slow_carbon +        &
          pools_ss%passive_carbon, ' kgC/m2'
-      end associate
    end subroutine soil_carbon_steady
 
    !---------------------------------------------------------------------------------------!
-   ! open_output_files -- lay out one output file set: the registry from the config, a site's soil   !
-   ! curve (the one the fast loop integrates on, whose layers its files carry), the per-variable     !
-   ! overrides of [output].io_config and, for a region's files, the polygon axis. A site run's files !
-   ! and a region's come through here; each polygon that writes into the set then calls             !
-   ! attach_output, which gives a region's files that polygon's own layers and map inputs.          !
+   ! open_output_files -- lay out one output file set: the registry from the config, the         !
+   ! per-variable overrides of [output].io_config, and the polygon axis with each polygon's cell. !
+   ! Each polygon that writes into the set then calls attach_output, which gives the files that   !
+   ! polygon's own layers and map inputs.                                                         !
    !---------------------------------------------------------------------------------------!
-   subroutine open_output_files(cfg, files, verbose, soil, cells, polygon_id)
+   subroutine open_output_files(cfg, files, verbose, cells, polygon_id)
       type(meds_config_t),  intent(in)    :: cfg
       type(output_files_t), intent(inout) :: files
       logical,              intent(in)    :: verbose
-      type(soil_params_t), optional, intent(in) :: soil          !< a site's soil column (its fast context)
-      type(met_cells_t),   optional, intent(in) :: cells         !< a region's cells ...
-      integer(ik),         optional, intent(in) :: polygon_id(:) !< ... and their polygon ids
-      integer(ik) :: n
+      type(met_cells_t),    intent(in)    :: cells          !< the run's cells, one per polygon ...
+      integer(ik),          intent(in)    :: polygon_id(:)  !< ... and their polygon ids
       call manager_setup(files, cfg)
-      if (cfg%fast_biophysics_on .and. present(soil)) call manager_set_soil_params(files%diag, soil)
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
-      if (present(cells)) then
-         n = cells%ncell
-         files%n_polygon   = n
-         files%polygon_id  = polygon_id
-         files%polygon_row = cells%row ; files%polygon_col = cells%col
-         files%polygon_lat = cells%lat ; files%polygon_lon = cells%lon
-         allocate(files%polygon_n_soil(n), source=0_ik)
-         allocate(files%polygon_soil_z(n_soil_layer_max, n), source=0.0_wp)
-         allocate(files%polygon_soil_face(n_soil_layer_max + 1_ik, n), source=0.0_wp)
-         allocate(files%polygon_soil_depth(n), files%polygon_deep_temp(n), source=0.0_wp)
-         allocate(files%polygon_bottom_bc(n), source=0_ik)
-         allocate(files%polygon_drain_factor(n), source=0.0_wp)
-         if (cfg%allom%height_form == HEIGHT_CHAVE) allocate(files%polygon_chave_e(n), source=0.0_wp)
-      end if
+      call manager_set_polygons(files, polygon_id, cells%lat, cells%lon, cells%row, cells%col,      &
+                                cfg%allom%height_form == HEIGHT_CHAVE)
       call manager_finalize(files)
    end subroutine open_output_files
 
    !----- A polygon's share of an output file set: its buffers, which take the polygon's own soil !
-   !      curve for the derived soil diagnostics, and the diagnostic blocks its site must         !
-   !      accumulate for the set's variables. In a region's set, also its row of the per-polygon  !
-   !      variables: its layers and the inputs its cell's maps gave it, as it runs them. A region !
-   !      always runs the fast loop, so its column is built. --------------------------------------!
-   subroutine attach_output(files, bufs, poly)
+   !      curve for the derived soil diagnostics, the diagnostic blocks its site must accumulate   !
+   !      for the set's variables, and its row of the per-polygon variables: its layers and the    !
+   !      inputs its cell's maps gave it, as it runs them. ------------------------------------------!
+   subroutine attach_output(files, bufs, site, run)
       type(output_files_t),   intent(inout) :: files
       type(output_buffers_t), intent(inout) :: bufs
-      type(meds_polygon_t),   intent(inout) :: poly
+      type(site_t),           intent(inout) :: site
+      type(polygon_run_t),    intent(in)    :: run
       integer(ik) :: p
       call manager_alloc_buffers(files, bufs)
-      if (poly%cfg%fast_biophysics_on)                                                          &
-         call manager_set_soil_params(bufs%diag, poly%fast_ctx%col_config%soil)
-      call activate_site_diag(files, poly%site)
-      if (files%n_polygon == 0_ik) return
-      p = poly%cell
-      associate (soil => poly%fast_ctx%col_config%soil, cfg => poly%cfg)
+      if (run%cfg%fast_biophysics_on)                                                           &
+         call manager_set_soil_params(bufs%diag, run%fast_ctx%col_config%soil)
+      call activate_site_diag(files, site)
+      p = run%cell
+      associate (soil => run%fast_ctx%col_config%soil, cfg => run%cfg)
          files%polygon_n_soil(p)       = soil%n_active
          files%polygon_soil_z(:, p)    = soil%z_node
          files%polygon_soil_face(:, p) = soil%soil_layer_z

@@ -215,10 +215,14 @@ def load_series(tdir: Path) -> pd.DataFrame:
 
 def stand_unchanged(state_a, state_b) -> list:
     """The stand variables that differ between two state files (none: the trial left the stand as
-    it found it)."""
+    it found it). Each is read on the site's one polygon, so a chain state written before state files
+    had the polygon axis compares with a trial's."""
+    def site(var):
+        x = np.asarray(var[:])
+        return x[0] if var.dimensions[:1] == ("polygon",) else x
     with Dataset(state_a) as a, Dataset(state_b) as b:
         return [v for v in STAND_VARIABLES if v in a.variables
-                and not np.array_equal(np.asarray(a[v][:]), np.asarray(b[v][:]))]
+                and not np.array_equal(site(a[v]), site(b[v]))]
 
 
 # ----- the runner -------------------------------------------------------------------------------

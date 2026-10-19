@@ -10,44 +10,42 @@ give each process's equations; this one gives their sequence. Three clocks nest:
 - the **calendar boundaries** between two slow steps restructure the stand: monthly for cohorts,
   yearly for patches. At each month boundary, the **I/O phase** writes the files.
 
-Everything below is per polygon. A site run is one polygon; a region run is many, each stepped the
-same way ([§1](#1-a-run)).
+Everything below is per polygon. A run is one polygon or many, each stepped the same way
+([§1](#1-a-run)).
 
 ---
 
 ## 1. A run
 
-**Setup** (`driver_open`):
+A run is one polygon at the `[site]` location (`[run].mode = "site"`) or every selected cell of a
+region (`"region"`). Both go through the same stages.
 
-1. Read the configuration.
-2. Build the initial community from `[init].init_mode`: bare ground, a census, or a restart. A census
-   or state file that cannot start the run stops it. A restart also restores the calendar date and any
-   restructuring the checkpoint still owes ([§5](#5-the-calendar-boundary)).
-3. Open the forcing source. Prepare the polygon: the fast context, the forcing cursor, and the fast
+**Setup** (`region_open`):
+
+1. Read the configuration and choose the polygons.
+2. Build each polygon's initial community from `[init].init_mode`: bare ground, a census, or a
+   restart from the polygon's row of a state file. A census or state file that cannot start the run
+   stops it. A restart also restores the calendar date and any restructuring the checkpoint still owes
+   ([§5](#5-the-calendar-boundary)).
+3. Open the forcing source. Prepare each polygon: the fast context, the forcing cursor, and the fast
    reservoirs (unless the restart restored them); the initial snow; the canopy-air depth, from the
    stand; the steady-state soil carbon (unless restored); and the slow ledger.
-4. Open the state (restart) stream and the output manager.
+4. Open the state (restart) stream and the output files.
 
-**The loop.** Until `end_time`, each `driver_step`:
+**The loop.** Until `end_time`, the executable steps a month at a time (`region_step_month`) and
+Python one slow step at a time (`region_step`). Either way:
 
-1. Prefetches the forcing the step needs; the archive backend loads a month at a time.
-2. Runs one slow step of the polygon ([§2](#2-one-slow-step)).
-3. At a month boundary, runs the I/O phase ([§6](#6-output-and-io)).
+1. Prefetch the forcing the steps need; the archive backend loads a month at a time.
+2. The compute phase: take each polygon through the steps ([§2](#2-one-slow-step)), touching no file.
+   Several polygons run side by side on `[run].n_threads` threads; one polygon gives the threads to
+   its patch loop instead ([§3](#3-the-fast-loop)).
+3. After a month's last step, the I/O phase ([§6](#6-output-and-io)).
 
-**Finish** (`driver_finalize`): the terminal checkpoint, the summary, the conservation reports (the
+**Finish** (`region_finalize`): the terminal checkpoint, the summary, the conservation reports (the
 whole-column energy and water budgets, the face closure, the soil-carbon seam, the slow ledger), and
 the output's final partial windows.
 
-**A region run** steps a month at a time (`region_step_month`):
-
-1. Prefetch the month's forcing once.
-2. The compute phase: take each polygon through all of the month's steps. It uses the same
-   `polygon_step` as a site run, and touches no file. The polygons run side by side on
-   `[run].n_threads` threads.
-3. The I/O phase: the region's files and, at the years `[state].interval_years` asks for, its state
-   file ([§6](#6-output-and-io)).
-
-Each polygon's pending restructuring ([§5](#5-the-calendar-boundary)) carries from one month to the
+Each polygon's pending restructuring ([§5](#5-the-calendar-boundary)) carries from one step to the
 next.
 
 ---
@@ -99,7 +97,7 @@ next.
 
 **Then, for each patch:**
 
-The patches are independent here, so in a site run this loop is threaded
+The patches are independent here, so in a one-polygon run this loop is threaded
 ([numerical_scheme](numerical_scheme.md) §6a); a region threads its polygons instead, and each
 polygon's patches run on one thread. Each patch first gathers its cohorts into the column buffer
 with their canopy geometry, and takes its canopy-air top, roughness and displacement for the day.
@@ -218,8 +216,8 @@ Three consequences:
   period in a queue. No netCDF call is made inside a step.
 - **The I/O phase** runs at each month boundary, after the step and before the next one:
   - it writes the queued records;
-  - every `[state].interval_years`, at the year boundary, it writes the checkpoint: a site's state
-    file, or the region's one state file holding every polygon.
+  - every `[state].interval_years`, at the year boundary, it writes the checkpoint: one state file,
+    a row per polygon.
 
   The terminal checkpoint is written at the end of the run.
 
@@ -229,8 +227,7 @@ Three consequences:
 
 | Stage | Routine | Module |
 |---|---|---|
-| run setup, loop, finish | `driver_open`, `driver_step`, `driver_io_phase`, `driver_finalize` | `meds_driver` |
-| region month | `region_step_month`, `io_phase` | `meds_region` |
+| run setup, loop, finish | `region_open`, `region_step_month` / `region_step` → `step_polygons`, `region_finalize` | `meds_region` |
 | one slow step | `polygon_step` | `meds_polygon` |
 | fast loop + slow dynamics | `advance_one_step` | `meds_stepper` |
 | the fast loop | `fast_dynamics` | `meds_fast_dynamics` |
@@ -242,5 +239,5 @@ Three consequences:
 | the calendar boundary | `advance_boundary` → `advance_boundary_dynamics` → `restructure_stand` | `meds_stepper`, `meds_slow_dynamics`, `meds_vegetation_dynamics` |
 | the output tick | `output_integrate`, `output_integrate_fast`, `close_tier` | `meds_output_integrate` |
 | zeroing the step diagnostics | `reset_step_diagnostics` | `meds_site_state_vars` |
-| writing records | `output_serialize` (a site's file set and a region's) | `meds_output_manager` |
-| checkpoints | `state_write_state`, `io_read_state`; a region's `region_write_state` | `meds_io`, `meds_region` |
+| writing records | `output_serialize` | `meds_output_manager` |
+| checkpoints | `region_write_state` → `state_file_open` / `state_file_put`; `io_read_state` | `meds_region`, `meds_io` |

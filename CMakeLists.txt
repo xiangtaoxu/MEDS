@@ -76,7 +76,7 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  Corollary: more goes on the stack, so the OMP_STACKSIZE note above applies with more force.
 #-----------------------------------------------------------------------------------------#
 option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note above)" OFF)
-option(MEDS_OPENMP "Compile the patch (site run) and polygon (region run) parallelism; serial if the compiler has none" ON)
+option(MEDS_OPENMP "Compile the patch (one polygon) and polygon (several) parallelism; serial if the compiler has none" ON)
 #      ON BY DEFAULT. The thread count is a RUNTIME setting ([run].n_threads, default 1), so an OpenMP
 #      build still runs serially until a config asks for threads, and its output is byte-identical at
 #      any thread count. Only an OpenMP build lets test_fast_loop's 4-thread check test anything: in a
@@ -380,13 +380,12 @@ set(MEDS_IO_LIB meds_io_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")
 
 #----- The coupled model as OPEN / STEP / FINALIZE objects: one polygon's state and step           #
-#      (meds_polygon), the site run (meds_driver) and the region run (meds_region). A LIBRARY       #
-#      rather than part of the program because it has two callers: the executable below, and the  #
-#      C-API shim src/c_api/meds_c_api_run.f90 that drives the full coupled model from Python. It  #
-#      sits above meds_model + the IO layer -- the one place that owns configuration, the          #
-#      calendar, the output files and the closing conservation reports together.                   #
+#      (meds_polygon) and the run of one polygon or many (meds_region). A LIBRARY rather than part  #
+#      of the program because it has two callers: the executable below, and the C-API shim         #
+#      src/c_api/meds_c_api_run.f90 that drives the full coupled model from Python. It sits above   #
+#      meds_model + the IO layer -- the one place that owns configuration, the calendar, the output #
+#      files and the closing conservation reports together.                                         #
 add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
-                        ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_region.f90)
 target_link_libraries(meds_driver PUBLIC meds_model meds_maps ${MEDS_IO_LIB})
 meds_fortran_flags(meds_driver)
@@ -626,8 +625,8 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME c_api_demography COMMAND test_c_api_demography
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
-   #      The FULL-MODEL shim: it holds a meds_driver run, so it links the driver (which is
-   #      meds_model + IO plus the open/step/finalize seam) rather than the model directly.
+   #      The FULL-MODEL shim: it holds a run (meds_region), so it links the driver library (which
+   #      is meds_model + IO plus the open/step/finalize seam) rather than the model directly.
    add_executable(test_c_api_run test/test_c_api_run.f90
                   ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_run.f90)
    target_link_libraries(test_c_api_run PRIVATE meds_testsupport meds_driver)

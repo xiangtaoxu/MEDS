@@ -112,8 +112,12 @@ class _ConcatVar:
 
 
 def get(ds, name):
-    """Variable by name, or None when the run's config did not enable it."""
-    return ds.variables[name][:] if name in ds.variables else None
+    """Variable by name, on the run's one polygon, or None when the run's config did not enable it."""
+    if name not in ds.variables:
+        return None
+    var = ds.variables[name]
+    x = var[:]
+    return x.take(0, axis=var.dimensions.index("polygon")) if "polygon" in var.dimensions else x
 
 
 def class_labels(lower, upper):

@@ -1,12 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_output_manager -- the serializer-side glue: drain queued records into the file set's       !
-! streams (output_serialize, called only from a driver's I/O phase, for a site's file set and a     !
-! region's alike), and close them at run end (flushing any final partial period). netCDF via        !
-! meds_output_stream. The netCDF-free half of the manager -- allocation (manager_setup /            !
-! manager_finalize / manager_alloc_buffers in meds_output_registry) and the per-step tick           !
-! (output_integrate in meds_output_integrate) -- is deliberately in meds_io_prep, so the stepper    !
-! stays off netCDF (docs/science/diagnostics.md §1).                                                !
+! streams (output_serialize, called only from the run's I/O phase), and close them at run end      !
+! (flushing any final partial period). netCDF via meds_output_stream. The netCDF-free half of the  !
+! manager -- allocation (manager_setup / manager_finalize / manager_alloc_buffers in               !
+! meds_output_registry) and the per-step tick (output_integrate in meds_output_integrate) -- is    !
+! deliberately in meds_io_prep, so the stepper stays off netCDF (docs/science/diagnostics.md §1).   !
 !==========================================================================================!
 module meds_output_manager
    use meds_kinds,            only : ik
@@ -23,11 +22,10 @@ contains
 
    !----- Drain every queued record to its per-tier file, in closing order (the flush wall;       !
    !      main-only), then empty the queues. Called from the I/O phase at month boundaries and at    !
-   !      the end of the run. `bufs` is one polygon's buffers for a site's file set and every        !
-   !      polygon's for a region's. In a region, record i of tier t is one period across the         !
-   !      polygons; a polygon that failed earlier in the month closed fewer, so the phase writes as  !
-   !      many records as the longest queue holds, with the fill value where a polygon has none,     !
-   !      and a failure loses no polygon's month. ---------------------------------------------------!
+   !      the end of the run. `bufs` holds every polygon's buffers. Record i of tier t is one period !
+   !      across the polygons; a polygon that failed earlier in the month closed fewer, so the phase !
+   !      writes as many records as the longest queue holds, with the fill value where a polygon   !
+   !      has none, and a failure loses no polygon's month. ------------------------------------------!
    subroutine output_serialize(files, bufs)
       type(output_files_t),   intent(inout) :: files
       type(output_buffers_t), intent(inout) :: bufs(:)

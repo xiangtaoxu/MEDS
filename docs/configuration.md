@@ -243,8 +243,8 @@ A census is how you start from a field inventory; see
 and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90).
 
 **A census or state file that cannot start the run stops it**, naming the mode and the file: one
-that cannot be opened, a census with no row for the site, or a region's state file given to a site
-run. Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
+that cannot be opened, a census with no row for the site, or a state file without a row for each of
+the run's polygons (a region's, given to a site run). Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
 from bare ground instead. `meds_main` stops, and `meds.model.Run` raises `RuntimeError`.
 
 **The initial soil state** is `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³], both optional:
@@ -272,6 +272,9 @@ Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:
   instantaneous prognostic state only, no diagnostics, written every `[state].interval_years` and at
   run end. **The timestamp is the simulated date**, so pointing `[init].restart_file` at one
   resumes from exactly that date.
+
+Every file of both streams has a `polygon` dimension, one row per polygon; a site run's files have one
+row ([Regional runs](#regional-runs) gives the layout).
 
 A checkpoint is raw prognostic state at an instant and a diagnostic record is a time average; the
 two streams are deliberately separate because conflating them is how a restart silently starts from
@@ -353,8 +356,8 @@ the shipped series are in [`science/forcing.md`](science/forcing.md) §12.
 
 `[run].mode = "region"` simulates every selected cell of a box of the ED_ERA5land archive as its own
 polygon, in one process. Each polygon is an independent stand at its cell's centre, at the cell's
-orography, in UTC, and it computes exactly what a site run at that point would: the region steps
-every polygon with the site run's own step. Scattered sites are not a region; run them as separate
+orography, in UTC, and it computes exactly what a site run at that point would: a site run is a
+region of one polygon, stepped the same way. Scattered sites are not a region; run them as separate
 site runs (a job array, or one allocation filled with GNU parallel).
 
 ```toml
@@ -384,23 +387,22 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   must be on the forcing grid: the file's `lat` and `lon` must be the ED_ERA5land static file's, or the
   run stops. MEDS never regrids a map; the run log says how many cells the mask kept.
 - **Output.** One file per tier per time chunk for the whole region, with a `polygon` dimension and
-  the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`. Region files hold every variable and
-  tier a site run writes, the sub-daily one included; `[output].io_config` chooses them, and with
+  the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`, as every run's files have (a site
+  run's polygon is id 0). Region files hold every variable and tier a site run writes, the sub-daily one included; `[output].io_config` chooses them, and with
   them the volume. A cohort or patch variable is `(time, polygon, cohort)` or `(time, polygon,
   patch)`, its axis as long as the largest live count among the polygons when the file opens;
   `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own count, and the entries past it
   are the fill value. `[region].detail_polygons` is retired. Once a polygon has failed, the end of
   the run writes nothing more, so a closed file is never rewritten.
-- **Each polygon's soil and map inputs in its files.** Polygons have their own layers, so a region
-  file's soil coordinate is per polygon: `soil_z (polygon, soil)` holds each polygon's layer node
+- **Each polygon's soil and map inputs in its files.** Polygons have their own layers, so the
+  files' soil coordinate is per polygon: `soil_z (polygon, soil)` holds each polygon's layer node
   depths, and its CF bounds `soil_z_bnds (polygon, soil, nv)` each layer's top and bottom, so the
   bottom layer ends at that polygon's own soil depth. Both are negative downward, and the fill value
   below the polygon's bottom layer, as its soil variables are. Each file also carries the inputs the
   cell's maps gave the polygon, as it runs them: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2
   for drain, aquifer), `drain_factor` (the drainage factor $f$ of the bottom flux $`q = f\,K`$: 1 on a
   free-draining base, the cell's `f_leak` on a leaky one, 0 on a sealed one; the fill value on an
-  aquifer), `deep_temp` [K] and, with `height_allometry = "chave2014"`, `chave_e`. A site file keeps
-  its one-dimensional `soil_z`.
+  aquifer), `deep_temp` [K] and, with `height_allometry = "chave2014"`, `chave_e`.
 - **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its
@@ -425,9 +427,11 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   it (`init_mode = 2`, `restart_file`) finds each polygon's row by its id, the cell's index on the
   forcing grid. The file must hold every polygon of the region and may hold more, so a region whose
   cell failed resumes from its last state file with that cell masked out (`[region].cell_mask`); the
-  other polygons run on as they would have. A restart file that cannot be opened, or a site's, stops
-  the region, naming the file. A restart continues exactly: a region run in two halves, across a
-  recycle wrap, writes the second half as the whole run does. Site state files are unchanged.
+  other polygons run on as they would have. A restart file that cannot be opened, or one without a
+  row for each polygon (a site's), stops the region, naming the file. A restart continues exactly: a
+  region run in two halves, across a recycle wrap, writes the second half as the whole run does. A
+  site run writes the same layout with one row, and still reads a state file written before runs
+  had the axis.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
   (a NaN, a cohort or soil-carbon state out of bounds) stops at the failing step, and the others
