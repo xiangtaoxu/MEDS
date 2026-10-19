@@ -237,7 +237,7 @@ column: its top layers hold the surface's organic, high-CEC soil and its deep la
 ## The soil thermal column
 
 `soil_energy_step_implicit` (`meds_soil_energy`) advances the prognostic volumetric internal energy
-$`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve, a Thomas sweep (`meds_numerics`: `thomas_solve`)
+$`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve, a Thomas sweep (`meds_linear_algebra`: `thomas_solve`)
 on **the same negative-$z$ geometry** as the water column. At each state it inverts
 $`E_k\to(T_k,\text{fliq}_k)`$, forms the ice-aware thermal conductivity $`\kappa(\theta,\text{fliq})`$
 and effective volumetric heat capacity $`C_{eff}(\theta,\text{fliq})`$, solves for $`T^{n+1}`$ with a

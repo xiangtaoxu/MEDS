@@ -17,8 +17,9 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_shared
 ├── shared/        uses nothing outside itself; every layer may use it: kinds,
-│   │              constants, numerics (Thomas sweep, arrowhead solve, matrix
-│   │              exponential, clamps), calendar time, budget checks        1 290
+│   │              constants, numerics (clamps, means, the conservation test),
+│   │              linear algebra (Thomas sweep, dense LU, arrowhead solve,
+│   │              matrix exponential), calendar time, budget checks         1 290
 │   └── functions/ stateless constitutive laws: allometry, thermodynamics,
 │                  retention and pressure-volume curves, soil pedotransfer,
 │                  canopy optics, temperature response                       2 155

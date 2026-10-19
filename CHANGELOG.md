@@ -25,7 +25,8 @@ A site run divides its polygon into sites with `[[sites]]` tables (#453). Each s
 its elevation and slope, and its phenology and leaf acclimation its own air (#454). A cohort's
 tissue state is its leaf and wood energy, with its temperatures derived from them, and the water it
 sheds takes its enthalpy to the ground (#457). `meds_constants` is grouped by kind, and every name in it
-is lower case; `src/shared` keeps one subfolder, `functions/` (#458).
+is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear solvers are one module,
+`meds_linear_algebra` (#458).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -96,6 +97,9 @@ is lower case; `src/shared` keeps one subfolder, `functions/` (#458).
   `stefan` is `stefan_boltzmann` and `vonkarman` is `von_karman`. `C2B_WOOD`, `TISSUE_C_LEAF`,
   `TISSUE_C_WOOD_DRY`, `umol_2_kgC` and `kgCday_2_umols` are spelled in lower case; Fortran ignores
   case, so the old spellings still compile.
+- **Fortran code that uses `meds_arrowhead_solve`, or `thomas_solve` or `matrix_exp` from
+  `meds_numerics`, uses `meds_linear_algebra`** (#458). `matrix_exp_fixed` and `matmul_sq` are
+  private to it.
 
 ### Changed
 
@@ -106,6 +110,12 @@ is lower case; `src/shared` keeps one subfolder, `functions/` (#458).
 - **`src/shared/base/` and `src/shared/util/` are folded into `src/shared/`** (#458). The kinds,
   constants, numerics, calendar and budget checks sit at the top of the folder, and the constitutive
   laws stay in `src/shared/functions/`. No module is renamed, so no `use` line changes.
+- **The linear solvers are one module, `meds_linear_algebra`** (#458): the Thomas sweep and the
+  matrix exponential from `meds_numerics`, the block arrowhead solve (`meds_arrowhead_solve` is gone),
+  and its dense LU, now public. The soil-carbon steady state solves its active block with that LU in
+  place of its own copy of Gaussian elimination, and stops if the block is singular. `meds_numerics`
+  keeps the small helpers. The solvers' details are in `docs/science/numerical_scheme.md` §9. Outputs
+  are unchanged bit for bit, a run that starts from the soil-carbon steady state included.
 - **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
   restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
   temperature, holding the water their tissues hold at the potential of the patch's top soil layer
