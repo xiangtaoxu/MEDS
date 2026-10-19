@@ -4,13 +4,13 @@
 ! Python (ctypes). It goes into the optional shared library libmeds.so (MEDS_BUILD_PYLIB) and   !
 ! into a mandatory ctest target, so a signature change is a build failure in a default build.   !
 !                                                                                          !
-! `site_t` (allocatable-component derived type -- not f2py-able) crosses as an OPAQUE HANDLE: a !
+! `polygon_t` (allocatable components, so not f2py-able) crosses as an OPAQUE HANDLE: a         !
 ! module-`save` registry of live sites indexed by a small integer the caller holds. Config is   !
 ! likewise an opaque handle loaded from the same TOML `meds_main` uses. Only flat arrays        !
 ! (copied into caller buffers) and scalars cross the boundary; getters always COPY.             !
 !                                                                                          !
 ! WHY THIS IS ONE FILE, not the `site` / `demography` pair of MEDS_CODE_STRUCTURE_DESIGN.md     !
-! §7.6: that registry (g_site / g_cfg / site_used / cfg_used / g_generation) is module state    !
+! §7.6: that registry (g_poly / g_cfg / site_used / cfg_used / g_generation) is module state    !
 ! EVERY entry point indexes. Splitting lifecycle from verbs would have to hoist it into a third !
 ! module both `use`, which buys nothing at this size and gives the registry two places to be    !
 ! got wrong.                                                                                    !
@@ -28,7 +28,7 @@ module meds_c_api_demography
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
    use meds_cohort_state_vars,       only : cohort_deriv_alloc
-   use meds_site_state_vars,         only : site_t, site_free
+   use meds_polygon_state_vars,      only : polygon_t, free_polygon
    use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
@@ -52,7 +52,7 @@ module meds_c_api_demography
    public :: meds_site_get_patch_real, meds_site_get_patch_int
 
    integer, parameter :: MAXH = 8
-   type(site_t),        target, save :: g_site(MAXH)
+   type(polygon_t),     target, save :: g_poly(MAXH)
    type(meds_config_t), target, save :: g_cfg(MAXH)
    logical,             save :: site_used(MAXH) = .false.
    logical,             save :: cfg_used(MAXH)  = .false.
@@ -100,7 +100,7 @@ contains
 
    subroutine meds_site_init_bare(sh, ch, n_patch) bind(c, name="meds_site_init_bare")
       integer(c_int), value, intent(in) :: sh, ch, n_patch
-      call init_bare_ground(g_site(sh), g_cfg(ch), int(n_patch, ik))
+      call init_bare_ground(g_poly(sh), g_cfg(ch), int(n_patch, ik))
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_site_init_bare
 
@@ -113,10 +113,10 @@ contains
       integer(c_int), value, intent(in) :: sh, ch
       integer(c_int) :: ok
       logical :: found
-      call init_from_census(g_site(sh), g_cfg(ch), trim(g_cfg(ch)%init_census_file), found)
+      call init_from_census(g_poly(sh), g_cfg(ch), trim(g_cfg(ch)%init_census_file), found)
       if (found) then
-         call restructure_census_stand(g_site(sh), g_cfg(ch))
-         call update_overtopping_lai(g_site(sh))
+         call restructure_census_stand(g_poly(sh), g_cfg(ch))
+         call update_overtopping_lai(g_poly(sh))
       end if
       ok = merge(1_c_int, 0_c_int, found)
       g_generation(sh) = g_generation(sh) + 1_c_long
@@ -130,12 +130,12 @@ contains
    !       and no output on this path, both orders leave the same stand.                           !
    subroutine meds_advance_slow(sh, ch, is_new_month, is_new_year) bind(c, name="meds_advance_slow")
       integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
-      !----- The litter this step accumulates lands in site%patch%litter_in and is left there: no
+      !----- The litter this step accumulates lands in poly%patch%litter_in and is left there: no
       !      fast loop runs on this path, so soil_carbon_step (which needs a real xi_int) is not
       !      wired here either.
-      call vegetation_dynamics(g_site(sh), g_cfg(ch))
-      call update_patch_states(g_site(sh)%patch, g_cfg(ch)%dt_years)
-      call restructure_stand(g_site(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
+      call vegetation_dynamics(g_poly(sh), g_cfg(ch))
+      call update_patch_states(g_poly(sh)%patch, g_cfg(ch)%dt_years)
+      call restructure_stand(g_poly(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_advance_slow
 
@@ -157,8 +157,8 @@ contains
       real(wp) :: dbh_new, height_new
       real(wp) :: lc_new, fc_new, wc_new, nc_new
 
-      associate (site => g_site(sh), cfg => g_cfg(ch))
-         n = site%cohort%n ; np = site%patch%n ; npft = cfg%pft%n
+      associate (poly => g_poly(sh), cfg => g_cfg(ch))
+         n = poly%cohort%n ; np = poly%patch%n ; npft = cfg%pft%n
          allocate(g(max(n,1)), m(max(n,1)), rec(npft, max(np,1)))
          if (n > 0_ik) then
             g(1:n) = real(growth(1:n),    wp)
@@ -171,7 +171,7 @@ contains
          end do
 
          n_window = growth_window_steps(cfg)
-         site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
+         poly%growth_hist_pos = mod(poly%growth_hist_pos, n_window) + 1_ik
          !----- Empirical growth + mortality via the TENDENCY seam: per cohort, forward-derive the   !
          !      on-allometry pools of the new size from the SUPPLIED growth rate [cm/yr] (capped at   !
          !      dbh_critical; mirrors set_cohort_size), back out each pool's time-                     !
@@ -180,8 +180,8 @@ contains
          !      core engine's pure applier advance the state. There is deliberately NO empirical        !
          !      twin of the driver's carbon update_cohort_derivatives -- this is thin C-API glue, not  !
          !      a named peer computer. ---------------------------------------------------------------!
-         call cohort_deriv_alloc(site%deriv, site%cohort%n)
-         associate (cohort => site%cohort, pft => cfg%pft)
+         call cohort_deriv_alloc(poly%deriv, poly%cohort%n)
+         associate (cohort => poly%cohort, pft => cfg%pft)
             do i = 1_ik, cohort%n
                pf = cohort%pft(i)
                !----- Forward allometry from the supplied dbh growth. It CALLS meds_allometry rather   !
@@ -195,8 +195,8 @@ contains
                nc_new     = storage_carbon_target(pft%storage_cushion(pf), lc_new, fc_new)
                !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth     !
                !      rate (empirical behaviour -- records the request even when dbh is capped). ----!
-               call fill_cohort_deriv(cohort, i, site%deriv, cfg%dt_years, m(i), g(i),                &
-                                      lc_new, fc_new, wc_new, nc_new, n_window, site%growth_hist_pos)
+               call fill_cohort_deriv(cohort, i, poly%deriv, cfg%dt_years, m(i), g(i),                &
+                                      lc_new, fc_new, wc_new, nc_new, n_window, poly%growth_hist_pos)
             end do
          end associate
          !----- Credit the recruit pool with THIS step's supplied rate, then let the monthly        !
@@ -204,15 +204,15 @@ contains
          !      every step, which keeps it an exact carbon quantity; this path drives the same      !
          !      operators, so it does the same. `seed_c` is the ledger's external-import report and !
          !      has no consumer here.                                                               !
-         call accumulate_recruit_pool(site, cfg, rec, cfg%dt_years, seed_c)
-         call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
+         call accumulate_recruit_pool(poly, cfg, rec, cfg%dt_years, seed_c)
+         call update_cohort_states(poly%cohort, poly%deriv, cfg%dt_years, cfg%negligible_nplant)
          !----- From here on the step is the carbon path's: sort every step (as vegetation_dynamics  !
          !      does), age the patches, and restructure on the calendar's boundaries with the same   !
          !      restructure_stand that meds_advance_slow calls, which ends by refreshing the         !
          !      overtopping LAI the caller's next rates read.  ---------------------------------------!
-         call sort_cohorts(site)
-         call update_patch_states(site%patch, cfg%dt_years)
-         call restructure_stand(site, cfg, is_new_month /= 0_c_int, is_new_year /= 0_c_int)
+         call sort_cohorts(poly)
+         call update_patch_states(poly%patch, cfg%dt_years)
+         call restructure_stand(poly, cfg, is_new_month /= 0_c_int, is_new_year /= 0_c_int)
       end associate
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_apply_rates
@@ -220,7 +220,7 @@ contains
    function meds_site_n_patch(sh) result(np) bind(c, name="meds_site_n_patch")
       integer(c_int), value, intent(in) :: sh
       integer(c_int)                    :: np
-      np = int(g_site(sh)%patch%n, c_int)
+      np = int(g_poly(sh)%patch%n, c_int)
    end function meds_site_n_patch
 
    function meds_config_n_pft(ch) result(npft) bind(c, name="meds_config_n_pft")
@@ -247,31 +247,31 @@ contains
    function meds_site_n_cohort(sh) result(n) bind(c, name="meds_site_n_cohort")
       integer(c_int), value, intent(in) :: sh
       integer(c_int)                    :: n
-      n = int(count_cohorts(g_site(sh)), c_int)
+      n = int(count_cohorts(g_poly(sh)), c_int)
    end function meds_site_n_cohort
 
    function meds_site_total_agb(sh) result(v) bind(c, name="meds_site_total_agb")
       integer(c_int), value, intent(in) :: sh
       real(c_double)                    :: v
-      v = real(total_agb(g_site(sh)), c_double)
+      v = real(total_agb(g_poly(sh)), c_double)
    end function meds_site_total_agb
 
    function meds_site_total_lai(sh) result(v) bind(c, name="meds_site_total_lai")
       integer(c_int), value, intent(in) :: sh
       real(c_double)                    :: v
-      v = real(total_lai(g_site(sh)), c_double)
+      v = real(total_lai(g_poly(sh)), c_double)
    end function meds_site_total_lai
 
    function meds_site_total_nplant(sh) result(v) bind(c, name="meds_site_total_nplant")
       integer(c_int), value, intent(in) :: sh
       real(c_double)                    :: v
-      v = real(total_nplant(g_site(sh)), c_double)
+      v = real(total_nplant(g_poly(sh)), c_double)
    end function meds_site_total_nplant
 
    function meds_site_total_basal_area(sh) result(v) bind(c, name="meds_site_total_basal_area")
       integer(c_int), value, intent(in) :: sh
       real(c_double)                    :: v
-      v = real(total_basal_area(g_site(sh)), c_double)
+      v = real(total_basal_area(g_poly(sh)), c_double)
    end function meds_site_total_basal_area
 
    !=======================================================================================!
@@ -281,7 +281,7 @@ contains
       integer(c_int), value, intent(in)  :: sh, field_id
       real(c_double),        intent(out) :: buf(*)
       integer(ik) :: n
-      associate (c => g_site(sh)%cohort)
+      associate (c => g_poly(sh)%cohort)
          n = c%n
          if (n < 1_ik) return
          select case (field_id)
@@ -301,7 +301,7 @@ contains
       integer(c_int), value, intent(in)  :: sh, field_id
       integer(c_int),        intent(out) :: buf(*)
       integer(ik) :: n
-      associate (c => g_site(sh)%cohort)
+      associate (c => g_poly(sh)%cohort)
          n = c%n
          if (n < 1_ik) return
          select case (field_id)
@@ -321,7 +321,7 @@ contains
       integer(c_int), value, intent(in)  :: sh, field_id
       real(c_double),        intent(out) :: buf(*)
       integer(ik) :: n
-      associate (p => g_site(sh)%patch)
+      associate (p => g_poly(sh)%patch)
          n = p%n
          if (n < 1_ik) return
          select case (field_id)
@@ -335,7 +335,7 @@ contains
       integer(c_int), value, intent(in)  :: sh, field_id
       integer(c_int),        intent(out) :: buf(*)
       integer(ik) :: n
-      associate (p => g_site(sh)%patch)
+      associate (p => g_poly(sh)%patch)
          n = p%n
          if (n < 1_ik) return
          select case (field_id)
@@ -349,7 +349,7 @@ contains
 
    subroutine meds_site_free(sh) bind(c, name="meds_site_free")
       integer(c_int), value, intent(in) :: sh
-      call site_free(g_site(sh))
+      call free_polygon(g_poly(sh))
       site_used(sh) = .false.
    end subroutine meds_site_free
 

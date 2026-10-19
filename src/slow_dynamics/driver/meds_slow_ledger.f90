@@ -33,7 +33,7 @@ module meds_slow_ledger
    use meds_constants,          only : rho_h2o
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_tissue_heat_capacity
-   use meds_site_state_vars,    only : site_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
@@ -140,15 +140,15 @@ contains
    ! terms. `rho_air` values the canopy-air store (see the type's comment on why holding it       !
    ! constant across the step is exact rather than an approximation).                             !
    !---------------------------------------------------------------------------------------!
-   subroutine slow_ledger_open(ledger, site, cfg, rho_air)
+   subroutine slow_ledger_open(ledger, poly, cfg, rho_air)
       type(slow_ledger_t), intent(inout) :: ledger
-      type(site_t),        intent(in)    :: site
+      type(polygon_t),     intent(in)    :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp), optional,  intent(in)    :: rho_air
       if (.not. ledger%active) return
       if (present(rho_air)) ledger%rho_air = rho_air
       call ensure_soil_geometry(ledger, cfg)
-      ledger%at_mark  = slow_site_store(site, cfg, ledger%soil, ledger%rho_air)
+      ledger%at_mark  = slow_site_store(poly, cfg, ledger%soil, ledger%rho_air)
       ledger%decl_in  = slow_store_t()
       ledger%decl_out = slow_store_t()
       ledger%n_step   = ledger%n_step + 1_ik
@@ -162,13 +162,13 @@ contains
    !      operators that run between two slow steps before any step has opened the ledger -- the     !
    !      restructuring a resumed run owes its checkpoint's boundary. It declares nothing and        !
    !      counts no step; the canopy air keeps whatever density the ledger already holds. -----------!
-   subroutine slow_ledger_rebase(ledger, site, cfg)
+   subroutine slow_ledger_rebase(ledger, poly, cfg)
       type(slow_ledger_t), intent(inout) :: ledger
-      type(site_t),        intent(in)    :: site
+      type(polygon_t),     intent(in)    :: poly
       type(meds_config_t), intent(in)    :: cfg
       if (.not. ledger%active) return
       call ensure_soil_geometry(ledger, cfg)
-      ledger%at_mark  = slow_site_store(site, cfg, ledger%soil, ledger%rho_air)
+      ledger%at_mark  = slow_site_store(poly, cfg, ledger%soil, ledger%rho_air)
       ledger%decl_in  = slow_store_t()
       ledger%decl_out = slow_store_t()
       if (.not. ledger%has_first) then
@@ -207,15 +207,15 @@ contains
    ! what this one actually left behind. Marking with no intervening operator is harmless (a zero !
    ! residual), which is what lets a caller mark defensively around a conditional block.          !
    !---------------------------------------------------------------------------------------!
-   subroutine slow_ledger_mark(ledger, site, cfg, phase)
+   subroutine slow_ledger_mark(ledger, poly, cfg, phase)
       type(slow_ledger_t), intent(inout) :: ledger
-      type(site_t),        intent(in)    :: site
+      type(polygon_t),     intent(in)    :: poly
       type(meds_config_t), intent(in)    :: cfg
       integer(ik),         intent(in)    :: phase
       type(slow_store_t) :: now, r
       if (.not. ledger%active) return
       if (phase < 1_ik .or. phase > N_SLOW_PHASE) return
-      now = slow_site_store(site, cfg, ledger%soil, ledger%rho_air)
+      now = slow_site_store(poly, cfg, ledger%soil, ledger%rho_air)
       r%carbon = (now%carbon - ledger%at_mark%carbon) - (ledger%decl_in%carbon - ledger%decl_out%carbon)
       r%water  = (now%water  - ledger%at_mark%water ) - (ledger%decl_in%water  - ledger%decl_out%water )
       r%energy = (now%energy - ledger%at_mark%energy) - (ledger%decl_in%energy - ledger%decl_out%energy)
@@ -241,7 +241,7 @@ contains
       ledger%decl_out   = slow_store_t()
 
       !----- ...and ask the OTHER question: is what this phase left behind possible at all? ------!
-      call check_plausible(ledger, site, phase)
+      call check_plausible(ledger, poly, phase)
    end subroutine slow_ledger_mark
 
    !---------------------------------------------------------------------------------------!
@@ -253,21 +253,21 @@ contains
    ! patch's soil carbon is 7e7 kgC/m2" into "the phase that did it was X" -- the same reason the   !
    ! residuals are attributed per phase rather than summed over the step.                            !
    !---------------------------------------------------------------------------------------!
-   subroutine check_plausible(ledger, site, phase)
+   subroutine check_plausible(ledger, poly, phase)
       type(slow_ledger_t), intent(inout) :: ledger
-      type(site_t),        intent(in)    :: site
+      type(polygon_t),     intent(in)    :: poly
       integer(ik),         intent(in)    :: phase
       real(wp)    :: x(n_soil_pool)
       integer(ik) :: ip, k
-      do ip = 1_ik, site%patch%n
-         k = soil_carbon_bad_pool(site%patch%soil_carbon(ip))
+      do ip = 1_ik, poly%patch%n
+         k = soil_carbon_bad_pool(poly%patch%soil_carbon(ip))
          if (k == 0_ik) cycle
          ledger%n_bad = ledger%n_bad + 1_ik
          if (ledger%bad_phase == 0_ik) then
             ledger%bad_phase = phase
             ledger%bad_patch = ip
             ledger%bad_pool  = k
-            call pack_pool_vector(site%patch%soil_carbon(ip), x)
+            call pack_pool_vector(poly%patch%soil_carbon(ip), x)
             ledger%bad_value = x(k)
          end if
          return
@@ -296,8 +296,8 @@ contains
    !  one-signed water leak in the allocate phase. It is DECLARED instead, the exact mirror of    !
    !  the fast->slow carbon handover.                                                             !
    !=======================================================================================!
-   pure function slow_site_store(site, cfg, soil, rho_air) result(store)
-      type(site_t),        intent(in) :: site
+   pure function slow_site_store(poly, cfg, soil, rho_air) result(store)
+      type(polygon_t),     intent(in) :: poly
       type(meds_config_t), intent(in) :: cfg
       type(soil_params_t), intent(in) :: soil
       real(wp),            intent(in) :: rho_air
@@ -308,33 +308,33 @@ contains
 
       !----- Recruit-pool valuation, one per PFT (the same conversion compute_vital_rates used). -!
       do pf = 1_ik, cfg%pft%n
-         c_min(pf) = min_cohort_carbon(site%cohort%allom, cfg%pft%min_cohort_height, cfg%pft%wood_density(pf))
+         c_min(pf) = min_cohort_carbon(poly%cohort%allom, cfg%pft%min_cohort_height, cfg%pft%wood_density(pf))
       end do
 
-      do ip = 1_ik, site%patch%n
-         a = site%patch%area(ip)
+      do ip = 1_ik, poly%patch%n
+         a = patch_polygon_area(poly, ip)
          if (a <= 0.0_wp) cycle
 
          !----- Soil column: theta is volumetric and soil_energy is per m3, so both integrate     !
          !      over the layer thicknesses (identical to soil_water_store / soil_energy_store).   !
          w_soil = 0.0_wp ; e_soil = 0.0_wp
          do k = 1_ik, soil%n_active
-            w_soil = w_soil + site%patch%soil_water(ip)%theta(k)       * soil%dz(k) * rho_h2o
-            e_soil = e_soil + site%patch%soil_energy(ip)%soil_energy(k) * soil%dz(k)
+            w_soil = w_soil + poly%patch%soil_water(ip)%theta(k)       * soil%dz(k) * rho_h2o
+            e_soil = e_soil + poly%patch%soil_energy(ip)%soil_energy(k) * soil%dz(k)
          end do
          store%water  = store%water  + a * w_soil
          store%energy = store%energy + a * e_soil
 
          !----- Pond and snow: both already extensive per m2 of patch ground. --------------------!
-         store%water  = store%water  + a * site%patch%soil_water(ip)%w_surface
-         store%energy = store%energy + a * site%patch%soil_water(ip)%w_surface_energy
-         store%water  = store%water  + a * sum(site%patch%snow(ip)%swe)
-         store%energy = store%energy + a * sum(site%patch%snow(ip)%snow_energy)
+         store%water  = store%water  + a * poly%patch%soil_water(ip)%w_surface
+         store%energy = store%energy + a * poly%patch%soil_water(ip)%w_surface_energy
+         store%water  = store%water  + a * sum(poly%patch%snow(ip)%swe)
+         store%energy = store%energy + a * sum(poly%patch%snow(ip)%snow_energy)
 
          !----- Canopy air. The capacities are rho*depth and dmol*depth, exactly as the fast       !
          !      prepass forms them, so a depth change moves the store by the amount the open        !
          !      control volume entrained or detrained (refresh_canopy_depth declares it). ---------!
-         associate (cas => site%patch%cas(ip))
+         associate (cas => poly%patch%cas(ip))
             dmol     = cas_molar_density(rho_air, cas%can_shv)
             cap_mass = rho_air * cas%can_depth
             cap_mol  = dmol    * cas%can_depth
@@ -345,7 +345,7 @@ contains
 
          !----- Necromass: the seven CENTURY pools (lignin is a sub-state of the structural pools, !
          !      not carbon of its own, so it is deliberately NOT summed here). -------------------!
-         associate (sc => site%patch%soil_carbon(ip))
+         associate (sc => poly%patch%soil_carbon(ip))
             store%carbon = store%carbon + a * (sc%fast_grnd_carbon + sc%fast_soil_carbon           &
                                              + sc%struct_grnd_carbon + sc%struct_soil_carbon       &
                                              + sc%microbial_carbon + sc%slow_carbon                &
@@ -354,15 +354,15 @@ contains
 
          !----- Carbon in transit: the recruit carry-forward pool. -------------------------------!
          do pf = 1_ik, cfg%pft%n
-            store%carbon = store%carbon + a * site%patch%recruit_pool(pf, ip) * c_min(pf)
+            store%carbon = store%carbon + a * poly%patch%recruit_pool(pf, ip) * c_min(pf)
          end do
 
          !----- Cohorts of this patch. nplant is per m2 of PATCH ground, so the patch area weight  !
          !      converts to site; the interception films are ALREADY ground-referenced and must    !
          !      not take the nplant factor.                                                        !
-         i0 = site%patch%cohort_offset(ip)
-         i1 = i0 + site%patch%cohort_count(ip) - 1_ik
-         associate (c => site%cohort)
+         i0 = poly%patch%cohort_offset(ip)
+         i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
+         associate (c => poly%cohort)
             do i = i0, i1
                store%carbon = store%carbon + a * c%nplant(i) * (c%leaf_carbon(i)                   &
                             + c%fineroot_carbon(i) + c%wood_carbon(i) + c%nonstructural_carbon(i))
@@ -383,18 +383,18 @@ contains
    ! The site's TISSUE HEAT alone [J/m2 site] -- the same slice slow_site_store folds into the   !
    ! energy total, exposed so the driver can measure how much of it moved when biomass changed.   !
    !---------------------------------------------------------------------------------------!
-   pure function slow_tissue_heat(site) result(e)
-      type(site_t), intent(in) :: site
+   pure function slow_tissue_heat(poly) result(e)
+      type(polygon_t), intent(in) :: poly
       real(wp)    :: e, cap_leaf, cap_wood
       integer(ik) :: ip, i, i0, i1
       e = 0.0_wp
-      do ip = 1_ik, site%patch%n
-         i0 = site%patch%cohort_offset(ip)
-         i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+      do ip = 1_ik, poly%patch%n
+         i0 = poly%patch%cohort_offset(ip)
+         i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          do i = i0, i1
-            call cohort_tissue_heat_capacity(site%cohort, i, cap_leaf, cap_wood)
-            e = e + site%patch%area(ip) * (cap_leaf * site%cohort%leaf_temp(i)                    &
-                                         + cap_wood * site%cohort%wood_temp(i))
+            call cohort_tissue_heat_capacity(poly%cohort, i, cap_leaf, cap_wood)
+            e = e + patch_polygon_area(poly, ip) * (cap_leaf * poly%cohort%leaf_temp(i)           &
+                                         + cap_wood * poly%cohort%wood_temp(i))
          end do
       end do
    end function slow_tissue_heat
@@ -409,17 +409,17 @@ contains
    ! stub, because the ledger has to declare what the allocator actually consumed rather than     !
    ! what the model would consume if the fast loop were running.                                  !
    !---------------------------------------------------------------------------------------!
-   pure function slow_fast_carbon_handover(site, cfg) result(net_c)
-      type(site_t),        intent(in) :: site
+   pure function slow_fast_carbon_handover(poly, cfg) result(net_c)
+      type(polygon_t),     intent(in) :: poly
       type(meds_config_t), intent(in) :: cfg
       real(wp)    :: net_c, per_plant, a
       integer(ik) :: ip, i, i0, i1
       net_c = 0.0_wp
-      do ip = 1_ik, site%patch%n
-         a  = site%patch%area(ip)
-         i0 = site%patch%cohort_offset(ip)
-         i1 = i0 + site%patch%cohort_count(ip) - 1_ik
-         associate (ch => site%cohort)
+      do ip = 1_ik, poly%patch%n
+         a  = patch_polygon_area(poly, ip)
+         i0 = poly%patch%cohort_offset(ip)
+         i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
+         associate (ch => poly%cohort)
             do i = i0, i1
                if (cfg%fast_biophysics_on) then
                   per_plant = ch%gpp_accum(i) - (ch%leaf_resp_accum(i) + ch%stem_resp_accum(i)     &

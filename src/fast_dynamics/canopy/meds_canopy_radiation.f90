@@ -14,7 +14,7 @@
 !   * canopy_radiation    -- the seam: loop bands, blend, solve, return per-cohort         !
 !                            absorbed radiation, eqs. (13)-(14).                           !
 !                                                                                          !
-! State-free and device-eligible: plain arrays + value types, never a site_t. Cohorts are  !
+! State-free and device-eligible: plain arrays + value types, no polygon_t. Cohorts are    !
 ! ordered BOTTOM (index 1) to TOP (index ncoh). Everything is absolute W m-2 -- no         !
 ! normalize-to-one.                                                                        !
 !==========================================================================================!

@@ -110,7 +110,7 @@ contains
       integer(ik)        :: j, n
       n = int(size(ipft), ik)
       call alloc_cohort_block(block, n, 1_ik)   ! growth ring buffer irrelevant to a fixture
-      block%pft_table = pft               ! as site_alloc sets it
+      block%pft_table = pft               ! as alloc_polygon sets it
       block%n = n
       do j = 1_ik, n
          !----- The view carries no tissue water or temperature (the column's stores are the         !

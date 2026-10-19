@@ -29,10 +29,10 @@ module meds_io
    use meds_config,   only : meds_config_t, growth_window_steps, pft_tissue_curves
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
    use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water
-   use meds_site_state_vars,        only : site_alloc, rebuild_csr
+   use meds_polygon_state_vars,     only : alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_soil_column_config,     only : soil_params_t, soil_column_params
    use meds_demography_update,      only : update_overtopping_lai
    use meds_constants,     only : n_soil_layer_max, n_snow_layer_max
@@ -308,29 +308,29 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Write one polygon's state into its row (1-based) of an open file.                         !
    !---------------------------------------------------------------------------------------!
-   subroutine state_file_put(sf, site, now, polygon)
+   subroutine state_file_put(sf, poly, now, polygon)
       type(state_file_t),    intent(in) :: sf
-      type(site_t),          intent(in) :: site
+      type(polygon_t),       intent(in) :: poly
       type(meds_time_t),     intent(in) :: now
       integer(ik),           intent(in) :: polygon
       integer(ik) :: ncoh, npat, npft, ip, ic, nwin, slot, meta_i(N_META_INT)
       real(wp)    :: meta_r(N_META_REAL)
 
-      ncoh = site%cohort%n ; npat = site%patch%n ; npft = site%n_pft
-      nwin = int(size(site%cohort%growth_hist, 1), ik)
+      ncoh = poly%cohort%n ; npat = poly%patch%n ; npft = poly%n_pft
+      nwin = int(size(poly%cohort%growth_hist, 1), ik)
       slot = polygon - 1_ik
 
-      meta_i = [ncoh, npat, npft, site%next_cohort_id, site%next_patch_id,                     &
+      meta_i = [ncoh, npat, npft, poly%next_cohort_id, poly%next_patch_id,                     &
                 now%year, now%month, now%day, now%hour, now%minute, now%second]
       call put_count('n_cohort', ncoh)
       call put_count('n_patch', npat)
       call put_count('n_window', nwin)
-      meta_r = [site%site_area, time_to_decimal_year(now)]
+      meta_r = [poly%site%area(1), time_to_decimal_year(now)]
       call put_int('meta_int', meta_i)
       call put_dbl('meta_real', meta_r)
-      call put_dbl('t_growth_avg', [site%t_growth_avg])
+      call put_dbl('t_growth_avg', [poly%t_growth_avg])
       if (ncoh > 0_ik) then
-         associate (c => site%cohort)
+         associate (c => poly%cohort)
             call put_int('pft',         c%pft(1:ncoh))
             call put_dbl('nplant',      c%nplant(1:ncoh))
             call put_dbl('dbh',         c%dbh(1:ncoh))
@@ -374,9 +374,9 @@ contains
             end if
          end associate
       end if
-      call put_int('growth_hist_pos', [site%growth_hist_pos])
+      call put_int('growth_hist_pos', [poly%growth_hist_pos])
       if (npat > 0_ik) then
-         associate (p => site%patch)
+         associate (p => poly%patch)
             call put_dbl('patch_area',      p%area(1:npat))
             call put_dbl('patch_age',       p%age(1:npat))
             call put_int('dist_type',       p%dist_type(1:npat))
@@ -560,16 +560,18 @@ contains
    end function has_polygon_axis
 
    !---------------------------------------------------------------------------------------!
-   ! Reconstruct a site from a state file written by state_file_put: a site's file, or with   !
-   ! `polygon` (1-based) that row of a region's. The geometry is re-derived from the carbon    !
-   ! pools (set_cohort_size_from_carbon); the CSR map and within-patch sort order are rebuilt. !
-   ! found=.false. (no error stop) if the file cannot be opened or holds the other kind's      !
-   ! state, a region's read as a site's or a site's as a polygon's (state_file_refusal says    !
-   ! which). Errors out only on a genuine inconsistency (PFT-count mismatch).                  !
+   ! Reconstruct a polygon from a state file written by state_file_put: with `polygon`        !
+   ! (1-based) that row of a file with the polygon axis, or the whole of an older file without !
+   ! it. The geometry is re-derived from the carbon pools (set_cohort_size_from_carbon); the   !
+   ! maps and within-patch sort order are rebuilt, and the restructuring the stand owes at      !
+   ! restart_time is set on the polygon (state_file_open; a file without the attribute is an    !
+   ! older format, written AFTER its boundary's restructuring, so it owes nothing).             !
+   ! found=.false. (no error stop) if the file cannot be opened or its layout is not the one    !
+   ! `polygon` asks for (state_file_refusal says which). Errors out only on a genuine           !
+   ! inconsistency (PFT-count mismatch).                                                        !
    !---------------------------------------------------------------------------------------!
-   subroutine io_read_state(site, cfg, path, restart_time, found, fast_found, restructure_pending, &
-                            restructure_new_year, polygon)
-      type(site_t),        intent(out) :: site
+   subroutine io_read_state(poly, cfg, path, restart_time, found, fast_found, polygon)
+      type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
       type(meds_time_t),   intent(out) :: restart_time
@@ -579,10 +581,6 @@ contains
       !      means a file without them -- the caller then re-seeds them generically                    !
       !      (init_fast_reservoirs, from meds_polygon). ----------------------------------------------!
       logical, optional,   intent(out) :: fast_found
-      !----- The restructuring the stand owes at restart_time (state_file_open). A file without     !
-      !      the attribute is an older format, written AFTER its boundary's restructuring, so it    !
-      !      owes nothing. -------------------------------------------------------------------------!
-      logical, optional,   intent(out) :: restructure_pending, restructure_new_year
       integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
       character(len=16) :: pending
       integer(c_int) :: ncid, vid, st
@@ -594,8 +592,6 @@ contains
       found = .false. ; restart_time = meds_time_t()
       tissue_water_ok = .true. ; tissue_temp_ok = .true.
       if (present(fast_found)) fast_found = .false.
-      if (present(restructure_pending))  restructure_pending  = .false.
-      if (present(restructure_new_year)) restructure_new_year = .false.
       region = present(polygon)
       slot = 0_ik
       if (region) slot = polygon - 1_ik
@@ -609,32 +605,32 @@ contains
       end if
       pending = 'none'
       if (nc_get_att_text_f(ncid, NC_GLOBAL, 'restructure_pending', pending) /= NC_NOERR) pending = 'none'
-      if (present(restructure_pending))  restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
-      if (present(restructure_new_year)) restructure_new_year = trim(pending) == 'year'
 
       call gv_int(ncid, 'meta_int',  int(N_META_INT, ik),  meta_i)
       call gv_dbl(ncid, 'meta_real', int(N_META_REAL, ik), meta_r)
       ncoh = meta_i(1) ; npat = meta_i(2) ; npft = meta_i(3)
       if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
 
-      call site_alloc(site, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg), &
+      call alloc_polygon(poly, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg), &
                       cfg%allom, cfg%pft)
-      site%cohort%n = ncoh ; site%patch%n = npat
+      poly%cohort%n = ncoh ; poly%patch%n = npat
+      poly%restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
+      poly%restructure_new_year = trim(pending) == 'year'
       !----- Growth temperature: OPTIONAL, so a state file without it keeps the unseeded          !
-      !      sentinel site_alloc set and the first slow step adopts that day's mean.  ---------------!
+      !      sentinel alloc_polygon set and the first slow step adopts that day's mean.  ------------!
       block
          real(wp) :: tg(1)
-         tg(1) = site%t_growth_avg
+         tg(1) = poly%t_growth_avg
          call gv_dbl_opt(ncid, 't_growth_avg', 1_ik, tg)
-         site%t_growth_avg = tg(1)
+         poly%t_growth_avg = tg(1)
       end block
-      site%next_cohort_id = meta_i(4) ; site%next_patch_id = meta_i(5)
-      site%site_area = meta_r(1)
+      poly%next_cohort_id = meta_i(4) ; poly%next_patch_id = meta_i(5)
+      poly%site%area(1) = meta_r(1)                 ! a file holds one site, every patch in it
       restart_time = meds_time_t(year=meta_i(6), month=meta_i(7), day=meta_i(8),               &
                                  hour=meta_i(9), minute=meta_i(10), second=meta_i(11))
 
       if (ncoh > 0_ik) then
-         associate (c => site%cohort)
+         associate (c => poly%cohort)
             call gv_int (ncid, 'pft',              ncoh, c%pft(1:ncoh))
             call gv_dbl (ncid, 'nplant',           ncoh, c%nplant(1:ncoh))
             call gv_dbl (ncid, 'dbh',              ncoh, c%dbh(1:ncoh))
@@ -668,13 +664,13 @@ contains
             call gv_dbl_opt(ncid, 'wood_water_mass', ncoh, c%wood_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_temp',       ncoh, c%wood_temp(1:ncoh))
-            !----- Stomatal feedback (OPTIONAL): site_alloc has already set UNSET_NEGATIVE /           !
+            !----- Stomatal feedback (OPTIONAL): alloc_polygon has already set UNSET_NEGATIVE /        !
             !      DMAX_PSI_LEAF_ACCUM_RESET, so a state file without them seeds from the soil; one with  !
             !      them restores the true feedback state. ------------------------------------------------!
             call gv_dbl_opt(ncid, 'dmax_psi_leaf',   ncoh, c%dmax_psi_leaf(1:ncoh))
             call gv_dbl_opt(ncid, 'dmax_psi_leaf_accum', ncoh, c%dmax_psi_leaf_accum(1:ncoh))
             !----- Phenology memory (OPTIONAL): a file without it restarts on the birth values      !
-            !      site_alloc has already set; a file with it restores the season. -----------------!
+            !      alloc_polygon has already set; a file with it restores the season. --------------!
             call gv_dbl_opt(ncid, 'leaf_flush_tendency', ncoh, c%leaf_flush_tendency(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_shed_tendency',  ncoh, c%leaf_shed_tendency(1:ncoh))
             call gv_dbl_opt(ncid, 'growing_degree_days', ncoh, c%growing_degree_days(1:ncoh))
@@ -690,22 +686,22 @@ contains
          !      A file without pools places each cohort on the allometry from its dbh. -----------!
          pools_ok = nc_inq_varid_f(ncid, 'leaf_carbon', vid) == NC_NOERR
          if (pools_ok) then
-            associate (c => site%cohort)
+            associate (c => poly%cohort)
                call gv_dbl(ncid, 'leaf_carbon',          ncoh, c%leaf_carbon(1:ncoh))
                call gv_dbl(ncid, 'fineroot_carbon',      ncoh, c%fineroot_carbon(1:ncoh))
                call gv_dbl(ncid, 'wood_carbon',          ncoh, c%wood_carbon(1:ncoh))
                call gv_dbl(ncid, 'nonstructural_carbon', ncoh, c%nonstructural_carbon(1:ncoh))
             end associate
             do i = 1_ik, ncoh
-               call set_cohort_size_from_carbon(site%cohort, i)
+               call set_cohort_size_from_carbon(poly%cohort, i)
             end do
          else
             do i = 1_ik, ncoh
-               call set_cohort_size(site%cohort, i)          ! pools from dbh, then the geometry
+               call set_cohort_size(poly%cohort, i)          ! pools from dbh, then the geometry
             end do
          end if
          olai_ok = nc_inq_varid_f(ncid, 'overtopping_lai', vid) == NC_NOERR
-         if (olai_ok) call gv_dbl(ncid, 'overtopping_lai', ncoh, site%cohort%overtopping_lai(1:ncoh))
+         if (olai_ok) call gv_dbl(ncid, 'overtopping_lai', ncoh, poly%cohort%overtopping_lai(1:ncoh))
          !----- The growth-rate ring buffer, when the file has one of this run's window length.  !
          !      Otherwise seed it as if it were full of the saved growth_avg; it is overwritten     !
          !      within a window. -----------------------------------------------------------------!
@@ -713,31 +709,31 @@ contains
          ghist_ok = nc_inq_varid_f(ncid, 'growth_hist', vid) == NC_NOERR
          if (ghist_ok) then
             call nc_check(nc_inq_dimlen_f(ncid, 'growth_window', nwin_file), 'inq growth_window')
-            ghist_ok = int(nwin_file, ik) == nwin .and. int(size(site%cohort%growth_hist, 1), ik) == nwin
+            ghist_ok = int(nwin_file, ik) == nwin .and. int(size(poly%cohort%growth_hist, 1), ik) == nwin
          end if
          if (ghist_ok) then
-            call gv_dbl(ncid, 'growth_accum', ncoh, site%cohort%growth_accum(1:ncoh))
-            call gv_int(ncid, 'growth_count', ncoh, site%cohort%growth_count(1:ncoh))
+            call gv_dbl(ncid, 'growth_accum', ncoh, poly%cohort%growth_accum(1:ncoh))
+            call gv_int(ncid, 'growth_count', ncoh, poly%cohort%growth_count(1:ncoh))
             do i = 1_ik, ncoh
-               call gv_dbl2_row(ncid, 'growth_hist', i, nwin, site%cohort%growth_hist(1:nwin, i))
+               call gv_dbl2_row(ncid, 'growth_hist', i, nwin, poly%cohort%growth_hist(1:nwin, i))
             end do
             block
                integer(ik) :: gpos(1)
                call gv_int(ncid, 'growth_hist_pos', 1_ik, gpos)
-               site%growth_hist_pos = gpos(1)
+               poly%growth_hist_pos = gpos(1)
             end block
          else
             do i = 1_ik, ncoh
-               if (.not. is_unset_positive(site%cohort%growth_avg(i))) then
-                  site%cohort%growth_count(i)   = nwin
-                  site%cohort%growth_accum(i)   = site%cohort%growth_avg(i) * real(nwin, wp)
-                  site%cohort%growth_hist(:, i) = site%cohort%growth_avg(i)
+               if (.not. is_unset_positive(poly%cohort%growth_avg(i))) then
+                  poly%cohort%growth_count(i)   = nwin
+                  poly%cohort%growth_accum(i)   = poly%cohort%growth_avg(i) * real(nwin, wp)
+                  poly%cohort%growth_hist(:, i) = poly%cohort%growth_avg(i)
                end if
             end do
          end if
       end if
       if (npat > 0_ik) then
-         associate (p => site%patch)
+         associate (p => poly%patch)
             call gv_dbl (ncid, 'patch_area',      npat, p%area(1:npat))
             call gv_dbl (ncid, 'patch_age',       npat, p%age(1:npat))
             call gv_int (ncid, 'dist_type',       npat, p%dist_type(1:npat))
@@ -748,7 +744,7 @@ contains
             end do
             !----- FAST reservoirs: OPTIONAL as a WHOLE (existence of the first variable stands for     !
             !      all of them, always written together) -- a file without them leaves p%cas/soil_energy/      !
-            !      soil_water/snow at site_alloc's defaults, and the caller re-seeds them via                 !
+            !      soil_water/snow at alloc_polygon's defaults, and the caller re-seeds them via              !
             !      init_fast_reservoirs. -----------------------------------------------------------------!
             fast_ok = nc_inq_varid_f(ncid, 'cas_can_enthalpy', vid) == NC_NOERR
             if (fast_ok) then
@@ -856,25 +852,26 @@ contains
             integer(ik) :: ip
             call soil_column_params(cfg%soil_column, soil)
             do i = 1_ik, ncoh
-               ip = site%cohort%owner_patch(i)
-               call patch_physical_state(site%patch%cas(ip), site%patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
+               ip = poly%cohort%owner_patch(i)
+               call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
                if (.not. tissue_temp_ok) then
-                  site%cohort%leaf_temp(i) = t_birth ; site%cohort%wood_temp(i) = t_birth
+                  poly%cohort%leaf_temp(i) = t_birth ; poly%cohort%wood_temp(i) = t_birth
                end if
                if (.not. tissue_water_ok) then
-                  call pft_tissue_curves(cfg%hydraulics, cfg%pft, site%cohort%pft(i), leaf_curve, wood_curve)
-                  call set_cohort_tissue_water(site%cohort, i, psi_birth, leaf_curve, wood_curve)
+                  call pft_tissue_curves(cfg%hydraulics, cfg%pft, poly%cohort%pft(i), leaf_curve, wood_curve)
+                  call set_cohort_tissue_water(poly%cohort, i, psi_birth, leaf_curve, wood_curve)
                end if
             end do
          end block
       end if
       call nc_check(nc_close(ncid), 'state nc_close (read)')
 
-      call rebuild_csr(site)
-      call sort_cohorts(site)
+      call rebuild_patch_map(poly)
+      call rebuild_cohort_map(poly)
+      call sort_cohorts(poly)
       !----- A file without overtopping_lai: compute it from the stand as read, so the traits'     !
       !      light environment is the stand's from the first step rather than an open sky. --------!
-      if (ncoh > 0_ik .and. .not. olai_ok) call update_overtopping_lai(site)
+      if (ncoh > 0_ik .and. .not. olai_ok) call update_overtopping_lai(poly)
       found = .true.
 
    contains

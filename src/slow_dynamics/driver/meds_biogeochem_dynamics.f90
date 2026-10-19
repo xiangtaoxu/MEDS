@@ -3,15 +3,15 @@
 ! meds_biogeochem_dynamics -- the slow-loop BIOGEOCHEMISTRY driver, the peer of                     !
 ! meds_vegetation_dynamics under meds_slow_dynamics (docs/science/order_of_processes.md §4).        !
 ! Per patch, it advances the CENTURY soil-carbon matrix ONE daily step: the litter accumulated      !
-! by the vegetation driver this step (`site%patch%litter_in`, routed through build_litter_input)    !
-! plus the fast loop's day-integrated environmental scalar (`site%patch%xi_accum`, accumulated      !
+! by the vegetation driver this step (`poly%patch%litter_in`, routed through build_litter_input)    !
+! plus the fast loop's day-integrated environmental scalar (`poly%patch%xi_accum`, accumulated      !
 ! once per (patch, sub-step) by the fast loop over the SAME frozen pool the fast loop's             !
 ! heterotrophic_respiration_matrix respired against) drive soil_carbon_step, which commits the      !
 ! pool change once, at day-end (docs/science/soil_carbon.md §6).                                    !
 !                                                                                          !
 ! THE DOUBLE-COUNTING CONTRACT (docs/science/soil_carbon.md §7): the fast loop respires the FROZEN  !
 ! daily pool (biophys%soil_carbon, seeded once per patch per day in meds_fast_dynamics, never       !
-! mutated there); this module is the SOLE writer of the real site%patch%soil_carbon. So the day's   !
+! mutated there); this module is the SOLE writer of the real poly%patch%soil_carbon. So the day's   !
 ! total fast Rh equals the pool debit BY CONSTRUCTION: rh_seam_gap, soil_carbon_step's rh_today     !
 ! minus the fast loop's accumulated rh_fast_accum, is an ASSERTION GUARD (should be ~0), not a      !
 ! live correction.                                                                                  !
@@ -19,7 +19,7 @@
 module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_seam_t, n_soil_pool,       &
                                      IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND,                     &
                                      IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
@@ -35,7 +35,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Advance the slow soil-carbon matrix one daily step, per patch. `lit` is vegetation_       !
    ! dynamics's per-patch litter accumulator (turnover + continuous-mortality carbon; cull-     !
-   ! termination and disturbance-kill litter were already added directly onto site%patch%        !
+   ! termination and disturbance-kill litter were already added directly onto poly%patch%        !
    ! soil_carbon by the demography operators -- see meds_demography_cohort_fusefiss and           !
    ! meds_demography_patch_fusefiss).                                                              !
    ! `seam` (optional) accumulates the per-RUN worst of the three soil-carbon seam diagnostics --   !
@@ -43,10 +43,10 @@ contains
    ! largest fraction of any pool a single slow step withdraws (mirrors fast_dynamics's              !
    ! worst_energy/worst_water pattern).                                                              !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_biogeochem_dynamics(site, cfg, seam, ledger)
-      type(site_t),          intent(inout) :: site
+   subroutine advance_biogeochem_dynamics(poly, cfg, seam, ledger)
+      type(polygon_t),       intent(inout) :: poly
       type(meds_config_t),   intent(in)    :: cfg
-      !----- The litter arriving today is site%patch%litter_in -- patch state, in lockstep with the
+      !----- The litter arriving today is poly%patch%litter_in -- patch state, in lockstep with the
       !      patch array, so it always has the post-disturbance patch count the loops below run over.
       !----- The seam diagnostics, accumulated as per-RUN worsts (intent(inout), reset by the driver !
       !      at open): one record rather than an optional real per number. --------------------------!
@@ -62,16 +62,16 @@ contains
       integer(ik)          :: ip
 
       if (present(ledger)) then
-         do ip = 1_ik, site%patch%n
-            associate (lit => site%patch%litter_in(ip))
-               call slow_ledger_declare(ledger, carbon_in = site%patch%area(ip)                    &
+         do ip = 1_ik, poly%patch%n
+            associate (lit => poly%patch%litter_in(ip))
+               call slow_ledger_declare(ledger, carbon_in = patch_polygon_area(poly, ip)           &
                         * (lit%labile_grnd + lit%labile_soil + lit%struct_grnd + lit%struct_soil))
             end associate
          end do
       end if
-      do ip = 1_ik, site%patch%n
-         call build_litter_input(site%patch%litter_in(ip), u, lignin_in)
-         associate (xa => site%patch%xi_accum(ip))
+      do ip = 1_ik, poly%patch%n
+         call build_litter_input(poly%patch%litter_in(ip), u, lignin_in)
+         associate (xa => poly%patch%xi_accum(ip))
             xi_int(IP_FAST_GRND)   = xa%fast_grnd
             xi_int(IP_FAST_SOIL)   = xa%fast_soil
             xi_int(IP_STRUCT_GRND) = xa%struct_grnd
@@ -79,7 +79,7 @@ contains
             xi_int(IP_MICR)        = xa%microbial
             xi_int(IP_SLOW)        = xa%slow
             xi_int(IP_PASSIVE)     = xa%passive
-            call soil_carbon_step(site%patch%soil_carbon(ip), u, lignin_in, xi_int, cfg%soil_carbon, &
+            call soil_carbon_step(poly%patch%soil_carbon(ip), u, lignin_in, xi_int, cfg%soil_carbon, &
                                   rh_today, audit)
             !----- The assertion guard (docs/science/soil_carbon.md §7): with the frozen-pool          !
             !      identity, rh_today (the matrix's own pool debit) should equal the fast loop's       !
@@ -104,7 +104,7 @@ contains
             !      what is left in the residual is then rh_seam_gap, which is the quantity the       !
             !      contract actually asserts on.  ------------------------------------------------!
             if (present(ledger)) call slow_ledger_declare(ledger,                                  &
-                                          carbon_out = site%patch%area(ip) * rh_today)
+                                          carbon_out = patch_polygon_area(poly, ip) * rh_today)
          end associate
       end do
    end subroutine advance_biogeochem_dynamics

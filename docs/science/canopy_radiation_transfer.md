@@ -6,7 +6,7 @@ ground. It is a faithful reimplementation of ED2's **two-stream** multi-layer ca
 generalized to run **one solver over every band** — the default set is VIS, NIR, and thermal LW. The
 returned per-cohort **absorbed leaf VIS** is the field the leaf-photosynthesis kernel consumes as PAR,
 and the absorbed leaf+wood SW/LW drive the leaf/wood energy balance. The library is state-free and
-device-eligible: it takes plain arrays and value types, never a `site_t`.
+device-eligible: it takes plain arrays and value types, never a `polygon_t`.
 
 Symbols: $\mu = \cos\theta_{sun}$ (solar-zenith cosine, floored $>0$); $\rho, \tau$ = leaf/wood
 reflectance and transmittance per band; $\omega = \rho+\tau$ = single-scatter albedo; $g$ = leaf-angle

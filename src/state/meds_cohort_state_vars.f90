@@ -8,7 +8,7 @@
 ! block groups them with a CSR (compressed sparse row) map, the layout of a sparse         !
 ! matrix's rows: the cohorts are sorted by patch, cohort_offset(ip) is the slot of patch   !
 ! ip's first cohort and cohort_count(ip) how many it has, so a patch's cohorts are one     !
-! slice, offset .. offset+count-1 (rebuild_csr builds the map).                            !
+! slice, offset .. offset+count-1 (rebuild_cohort_map builds the map).                     !
 !                                                                                          !
 ! The type is laid out in sections, and every routine that lists all its fields uses the   !
 ! same order. Every structural change -- a sort, a fusion, a compaction, a grow -- goes    !
@@ -48,7 +48,7 @@ module meds_cohort_state_vars
       !==========================================================================================!
       integer(ik) :: n   = 0_ik            !< cohorts in use
       integer(ik) :: cap = 0_ik            !< allocated slots
-      type(allometry_t) :: allom           !< the site's allometry (cfg%allom), set by site_alloc
+      type(allometry_t) :: allom           !< the site's allometry (cfg%allom), set by alloc_polygon
       type(pft_table_t) :: pft_table       !< the site's PFT traits (cfg%pft), read as pft_table%x(pft(i))
       !==========================================================================================!
       ! 1. IDENTITY AND DENSITY                                                                  !

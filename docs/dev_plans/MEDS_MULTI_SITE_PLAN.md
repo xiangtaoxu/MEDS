@@ -1,6 +1,6 @@
 # Several sites per polygon — plan
 
-**Status:** revision 6, 2026-10-18. S0 implemented in PR #449 (§10); S1–S5 not started.
+**Status:** revision 6, 2026-10-18. S0 merged (PR #449); S1 implemented in PR #450 (§10); S2–S5 not started.
 **Base:** `beta` at `835458c` (the state hierarchy, PR #448).
 **Decided (owner, 2026-10-18):**
 - D1 — all patches of a polygon in one patch block; a site block records which patches are its own,
@@ -91,8 +91,8 @@ From a survey of `beta` on 2026-10-18:
 | `cohort_block` | cohort | — | `owner_patch` |
 
 The patches are sorted by site, then by age within a site, so a site's patches are one contiguous
-slice, `patch_offset(is) .. patch_offset(is) + patch_count(is) - 1`. `rebuild_site_map` derives the map
-from `owner_site`, as `rebuild_csr` derives the cohort map from `owner_patch` (§7.2).
+slice, `patch_offset(is) .. patch_offset(is) + patch_count(is) - 1`. `rebuild_patch_map` derives the map
+from `owner_site`, as `rebuild_cohort_map` derives the cohort map from `owner_patch` (§7.2).
 
 ### 3.2 Why this shape
 
@@ -319,11 +319,11 @@ Consequences:
 
 | Operation | Today | After |
 |---|---|---|
-| `sort_patches` | by age, whole block | by (site, age); then `rebuild_site_map` and `rebuild_csr` |
+| `sort_patches` | by age, whole block | by (site, age); then `rebuild_patch_map` and `rebuild_cohort_map` |
 | `patch_fuse_pass` / `fuse_2_patches` | every pair in the block | every pair within one site's slice |
 | `terminate_patches` | merges into the largest survivor; areas renormalized to sum to 1 | per site: into the site's largest survivor; areas renormalized to the site's area |
 | `apply_patch_disturbance` | one gap from every patch | one gap per site, from that site's patches |
-| `patch_compact` | one keep mask | the same, then `rebuild_site_map` |
+| `patch_compact` | one keep mask | the same, then `rebuild_patch_map` |
 | `apply_recruitment` | one soil | each patch's site's soil |
 | cohort operations, canopy depth, soil carbon | one patch's slice | unchanged |
 
@@ -363,7 +363,7 @@ soil columns.
 | Step | What | Results |
 |---|---|---|
 | **S0** | One run path (§3.6): `meds_region_t` runs one polygon or many; `meds_driver` and `meds_run_t` go; `meds_polygon_t` becomes `polygon_run_t` beside the state; a one-step entry for the C API; the `polygon` dimension in every output and restart file. | Values bit-identical; one-polygon files gain the `polygon` dimension |
-| **S1** | `polygon_t` holds the three blocks and the polygon-level numbers; `site_block` with one site of area 1 covering every patch; `owner_site` = 1; `sort_patches` sorts by (site, age); `rebuild_site_map`. The 120 routines take `polygon_t` (`site%` → `poly%`). Every polygon total weights by `patch_polygon_area` (§3.4). | Bit-identical |
+| **S1** | `polygon_t` holds the three blocks and the polygon-level numbers; `site_block` with one site of area 1 covering every patch; `owner_site` = 1; `sort_patches` sorts by (site, age); `rebuild_patch_map`. The 120 routines take `polygon_t` (`site%` → `poly%`). Every polygon total weights by `patch_polygon_area` (§3.4). | Bit-identical |
 | **S2** | Each site owns its surface (§5), its own layer grid included: the soil column moves from `cfg` to the site block, the fast context and the slow ledger hold one soil column per site, the 7 call sites read the patch's site's. | Bit-identical |
 | **S3** | Several sites run: the structural operations by site slice (§7.2), initialization per site (bare ground or census by `site_id`), the restart's `site` axis, `patch_site`, per-site soil-layer output (D11) and optional per-site stand output. Tests: two identical sites with areas 0.3 and 0.7 reproduce one site's polygon output, to round-off; two soils give two different stands; thread-count invariance. | Bit-identical with one site |
 | **S4** | Users define sites: `[[site]]` in a site run, a site map in a region (one site per cell until a real map exists). | Bit-identical with one site |
@@ -420,3 +420,46 @@ Departures from the plan:
 - **`id`, the location and the restructure flags stay in `polygon_run_t`** until S1 creates
   `polygon_t` (§3.3).
 - **The `meds_driver` CMake library keeps its name**; it now builds `meds_polygon` and `meds_region`.
+
+**S1, PR #450 (2026-10-19).** Five commits on `refactor/polygon-state`, each checked against the merged
+S0 build (`5e40909`) on S0's seven cases and a site restarted from its own one-polygon state file:
+every variable of every output and state file matches bit for bit.
+
+1. `polygon_t`, renamed from `site_t`, in `meds_polygon_state_vars`; its argument is `poly`;
+   `alloc_polygon`, `free_polygon` and `rebuild_cohort_map` (was `rebuild_csr`). The kernel lint
+   forbids the new names. Every changed code line is the rename, string literals byte-identical.
+2. The site block (`meds_site_state_vars`): one site of area 1, its patch map; `owner_site` on the
+   patch block; `sort_patches` by (site, age); `rebuild_patch_map` wherever the patch list changes.
+   The unused `site_area` scalar is the site's area.
+3. The polygon's id, location and owed restructuring on `polygon_t`; `io_read_state` sets the
+   restructuring owed on the polygon it reads.
+4. `patch_polygon_area` in every polygon total: 48 lines in the output reductions, the fast loop's
+   staging and fold, the budgets' merge, the slow ledger and its declarations, the recruitment and
+   termination totals, the disturbance's shed water and the C API's soil carbon. The output
+   reductions take the shares as one contiguous array (`patch_polygon_areas`): with the function
+   inside their loops, the compiler summed some patch reductions in a different order, changing up to
+   38 daily `*_site` variables by up to 2e-13 relative; with the array the loops are what they were.
+5. The documents.
+
+Notes:
+
+- **Names.** The map builders are §3.5's: `rebuild_patch_map` and `rebuild_cohort_map` (§3.1 and §7.2
+  said `rebuild_site_map`; corrected). The site block has `alloc_` and `free_site_block`; `expand_` and
+  `reorder_site_block` come with their first caller (S3, S4).
+- **`owner_site` defaults to 1** when the patch block is allocated, so a patch built by hand (tests)
+  is in the one site; the disturbance gap sets it explicitly, because a reused slot can hold a moved
+  patch's value. A state file has no site axis until S3: every patch reads into site 1, and
+  `meta_real(1)` carries that site's area.
+- **The forcing cursor keeps its own copy of the location** (it lives in the forcing library); it is
+  set from `polygon_t` when the cursor is made.
+- **Found for S3 while switching the totals.** These act on the whole polygon today and must act
+  within a site:
+  - `patch_fuse_pass` pairs patches by disturbance type alone; it must also match `owner_site`.
+  - `terminate_patches` merges a sliver into the polygon's largest survivor and renormalizes the
+    areas over the polygon; per site, both.
+  - `apply_patch_disturbance` cuts one gap from every patch; one gap per site.
+  - The slow ledger takes one soil column for every patch; per site (S2).
+  - The output `area_patch` and the C API's patch-area export give a patch's own area, a fraction of
+    its site; Python's `Run` uses it as a polygon weight, so it needs `owner_site` and the site areas
+    beside it (S3, with `patch_site`).
+

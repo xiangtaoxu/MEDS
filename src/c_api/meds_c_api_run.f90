@@ -15,7 +15,7 @@
 ! `region_step` takes one slow step of what the executable steps a month at a time, so a          !
 ! Python-driven run and a `meds_main` run of the same config produce byte-identical output.        !
 !                                                                                          !
-! Conventions match the other shims: `site_t` and friends never cross the boundary. A run is an     !
+! Conventions match the other shims: `polygon_t` and friends never cross the boundary. A run is an  !
 ! opaque integer handle into a module-`save` registry; scalars return by value; arrays COPY into a  !
 ! caller-allocated buffer. The bind(c) entry points are also PUBLIC Fortran so `test_c_api_run`     !
 ! can call them -- a shim no test calls can stop compiling without anyone noticing.                 !
@@ -31,6 +31,7 @@ module meds_c_api_run
                                       CO_EXUDATE
    use meds_region,            only : meds_region_t, region_open, region_step, region_finalize,  &
                                       region_free, region_done
+   use meds_polygon_state_vars, only : patch_polygon_area
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area,    &
                                       count_cohorts
    implicit none
@@ -218,7 +219,7 @@ contains
       tot = 0.0_wp
       associate (p => g_run(h)%poly(1)%patch)
          do ip = 1_ik, p%n
-            tot = tot + p%area(ip) * (p%soil_carbon(ip)%fast_grnd_carbon                        &
+            tot = tot + patch_polygon_area(g_run(h)%poly(1), ip) * (p%soil_carbon(ip)%fast_grnd_carbon &
                                     + p%soil_carbon(ip)%fast_soil_carbon                        &
                                     + p%soil_carbon(ip)%struct_grnd_carbon                      &
                                     + p%soil_carbon(ip)%struct_soil_carbon                      &

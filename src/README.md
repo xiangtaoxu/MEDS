@@ -35,7 +35,8 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  and its lockstep; meds_patch_state_vars: one patch's stores
 │                  (canopy air, snow, soil water and heat, soil carbon), their
 │                  blends, and the patch block with its CSR map;
-│                  meds_site_state_vars: site_t; meds_diag_vars: the
+│                  meds_site_state_vars: the site block;
+│                  meds_polygon_state_vars: polygon_t; meds_diag_vars: the
 │                  diagnostic accumulators; meds_state_defaults: the values
 │                  a field holds before it has a real one                    2 612
 │
@@ -94,7 +95,7 @@ from becoming the place a file goes when no other place fits.
 
 ## Four rules, in the order you apply them
 
-**1. Kernel folders never see `site_t`.** `fast_dynamics/{canopy,plant,soil}` and
+**1. Kernel folders never see `polygon_t`.** `fast_dynamics/{canopy,plant,soil}` and
 `slow_dynamics/{plant,soil}` take from the state layer only the per-patch store types and their
 blends, through `use meds_patch_state_vars, only : ...`, and link only `state` and `config`. That is
 what keeps each kernel library building standalone, keeps the kernels eligible for OpenMP `target`
@@ -103,7 +104,7 @@ offload (a portability property worth holding, though offload is not currently a
 test link one kernel library alone. It is checked on every ctest run, by `kernels_no_site_state`
 (`scripts/lint/check_kernel_state.py`), because the library boundary cannot hold it: every module
 file goes to one shared directory, so any file can use any built module. **If a new routine needs
-`site_t`, it is driver code**, and it belongs in a `driver/` folder.
+`polygon_t`, it is driver code**, and it belongs in a `driver/` folder.
 
 **2. A kernel goes where its caller's timescale is**, and within that, in its domain folder. A
 kernel called from *both* tiers is a documented seam, never a folder of its own. There is exactly

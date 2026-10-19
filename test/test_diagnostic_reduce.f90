@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
-   use meds_site_state_vars,    only : site_t, site_alloc, site_free
+   use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon
    use meds_allometry,         only : allometry_t
    use meds_constants,     only : n_soil_layer_max
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
@@ -46,23 +46,23 @@ contains
 
    !----- Two patches, three cohorts, deliberately unequal nplant / basal_area so that a SUM, a  !
    !      stem-weighted MEAN and a basal-area-weighted MEAN are three different numbers.  -------!
-   subroutine build_fixture(site)
-      type(site_t), intent(out) :: site
-      call site_alloc(site, 3_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
-      site%n_pft = 3_ik
+   subroutine build_fixture(poly)
+      type(polygon_t), intent(out) :: poly
+      call alloc_polygon(poly, 3_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
+      poly%n_pft = 3_ik
       !----- patch 1 (area 0.75): cohorts 1,2 ; patch 2 (area 0.25): cohort 3. -----!
-      site%patch%n = 2_ik
-      site%patch%area(1) = 0.75_wp ; site%patch%area(2) = 0.25_wp
-      site%patch%cohort_offset(1) = 1_ik ; site%patch%cohort_count(1) = 2_ik
-      site%patch%cohort_offset(2) = 3_ik ; site%patch%cohort_count(2) = 1_ik
-      site%cohort%n = 3_ik
-      site%cohort%owner_patch(1:3) = [1_ik, 1_ik, 2_ik]
-      site%cohort%pft(1:3)         = [1_ik, 2_ik, 3_ik]
-      site%cohort%nplant(1:3)      = [2.0_wp,  1.0_wp,  4.0_wp]
-      site%cohort%agb(1:3)         = [10.0_wp, 20.0_wp, 30.0_wp]
-      site%cohort%leaf_area(1:3)   = [ 1.0_wp,  3.0_wp,  5.0_wp]
-      site%cohort%basal_area(1:3)  = [ 5.0_wp,  1.0_wp,  2.0_wp]
-      site%cohort%dbh(1:3)         = [ 5.0_wp, 15.0_wp, 45.0_wp]   ! -> classes 1, 2, 4
+      poly%patch%n = 2_ik
+      poly%patch%area(1) = 0.75_wp ; poly%patch%area(2) = 0.25_wp
+      poly%patch%cohort_offset(1) = 1_ik ; poly%patch%cohort_count(1) = 2_ik
+      poly%patch%cohort_offset(2) = 3_ik ; poly%patch%cohort_count(2) = 1_ik
+      poly%cohort%n = 3_ik
+      poly%cohort%owner_patch(1:3) = [1_ik, 1_ik, 2_ik]
+      poly%cohort%pft(1:3)         = [1_ik, 2_ik, 3_ik]
+      poly%cohort%nplant(1:3)      = [2.0_wp,  1.0_wp,  4.0_wp]
+      poly%cohort%agb(1:3)         = [10.0_wp, 20.0_wp, 30.0_wp]
+      poly%cohort%leaf_area(1:3)   = [ 1.0_wp,  3.0_wp,  5.0_wp]
+      poly%cohort%basal_area(1:3)  = [ 5.0_wp,  1.0_wp,  2.0_wp]
+      poly%cohort%dbh(1:3)         = [ 5.0_wp, 15.0_wp, 45.0_wp]   ! -> classes 1, 2, 4
    end subroutine build_fixture
 
    !=======================================================================================!
@@ -71,22 +71,22 @@ contains
    !  which is what makes the assertion able to fail.                                           !
    !=======================================================================================!
    subroutine test_extensive_vs_intensive()
-      type(site_t) :: site
+      type(polygon_t) :: poly
       real(wp) :: v, v2, out(8)
       logical  :: ok, vld(8)
       integer(ik) :: n
-      call build_fixture(site)
+      call build_fixture(poly)
 
       !----- EXTENSIVE: agb_site = SUM area*nplant*agb                                        !
       !      = 0.75*(2*10 + 1*20) + 0.25*(4*30) = 0.75*40 + 0.25*120 = 30 + 30 = 60.  --------!
-      call reduce_cohort_to_site(site, site%cohort%agb, W_NPLANT, .false., v, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .false., v, ok)
       call check_close(v, 60.0_wp, 1.0e-12_wp, 'agb_site = weighted SUM over nplant')
       call check(ok, 'extensive reduction is always valid')
-      call check_close(total_agb(site), 60.0_wp, 1.0e-12_wp, 'total_agb wrapper agrees')
+      call check_close(total_agb(poly), 60.0_wp, 1.0e-12_wp, 'total_agb wrapper agrees')
 
       !----- The same call with mean=.true. is a DIFFERENT number (mean per-plant agb):        !
       !      60 / (0.75*3 + 0.25*4) = 60/3.25.  ---------------------------------------------!
-      call reduce_cohort_to_site(site, site%cohort%agb, W_NPLANT, .true., v2, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .true., v2, ok)
       call check_close(v2, 60.0_wp/3.25_wp, 1.0e-12_wp, 'mean=.true. gives the per-plant mean')
       call check(abs(v - v2) > 1.0_wp, 'sum and mean are genuinely different (a wrong flag cannot pass)')
 
@@ -94,30 +94,30 @@ contains
       !      w = nplant*basal_area = [10, 1, 8]; area-weighted:                                 !
       !      num = 0.75*(10*5 + 1*15) + 0.25*(8*45) = 0.75*65 + 0.25*360 = 48.75 + 90 = 138.75  !
       !      den = 0.75*(10 + 1)      + 0.25*8      = 8.25 + 2 = 10.25                          !
-      call reduce_cohort_to_site(site, site%cohort%dbh, W_BASAL_AREA, .true., v, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_BASAL_AREA, .true., v, ok)
       call check_close(v, 138.75_wp/10.25_wp, 1.0e-12_wp, 'BA-weighted mean dbh')
       !----- The STEM-weighted mean of the same field is a different number, so the weight kind  !
       !      is doing real work rather than being decorative.  -------------------------------!
-      call reduce_cohort_to_site(site, site%cohort%dbh, W_NPLANT, .true., v2, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_NPLANT, .true., v2, ok)
       call check(abs(v - v2) > 1.0_wp, 'BA-weighted /= stem-weighted mean dbh')
 
       !----- LEAF-AREA weighting, the contract canopy temperatures and conductances use. -----!
-      call reduce_cohort_to_site(site, site%cohort%dbh, W_LEAF_AREA, .true., v, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_LEAF_AREA, .true., v, ok)
       call check(abs(v - v2) > 0.1_wp, 'leaf-area-weighted /= stem-weighted mean dbh')
 
       !----- W_NONE + SUM is the stem-density contract: 0.75*(2+1) + 0.25*4 = 2.25 + 1 = 3.25. !
-      call reduce_cohort_to_site(site, site%cohort%nplant, W_NONE, .false., v, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%nplant, W_NONE, .false., v, ok)
       call check_close(v, 3.25_wp, 1.0e-12_wp, 'nplant_site = plain area-weighted sum')
-      call check_close(total_nplant(site), 3.25_wp, 1.0e-12_wp, 'total_nplant wrapper agrees')
+      call check_close(total_nplant(poly), 3.25_wp, 1.0e-12_wp, 'total_nplant wrapper agrees')
 
       !----- PATCH axis carries NO area factor (a patch value is per m2 of its OWN ground):    !
       !      patch 1 agb = 2*10 + 1*20 = 40 ; patch 2 = 4*30 = 120.  -------------------------!
-      call reduce_cohort_to_patch(site, site%cohort%agb, W_NPLANT, .false., out, vld, n)
+      call reduce_cohort_to_patch(poly, poly%cohort%agb, W_NPLANT, .false., out, vld, n)
       call check(n == 2_ik, 'patch reduction length')
       call check_close(out(1),  40.0_wp, 1.0e-12_wp, 'agb_patch(1) has no area factor')
       call check_close(out(2), 120.0_wp, 1.0e-12_wp, 'agb_patch(2) has no area factor')
 
-      call site_free(site)
+      call free_polygon(poly)
    end subroutine test_extensive_vs_intensive
 
    !=======================================================================================!
@@ -126,38 +126,38 @@ contains
    !  one property a reader will assume without checking.                                      !
    !=======================================================================================!
    subroutine test_pft_and_size_closure()
-      type(site_t) :: site
+      type(polygon_t) :: poly
       real(wp) :: site_val, pft_out(8), size_out(8), edges(8)
       logical  :: ok, vld(8)
       integer(ik) :: n
-      call build_fixture(site)
+      call build_fixture(poly)
       edges(1:5) = [0.0_wp, 10.0_wp, 20.0_wp, 30.0_wp, 100.0_wp]     ! 4 classes
 
-      call reduce_cohort_to_site(site, site%cohort%agb, W_NPLANT, .false., site_val, ok)
-      call reduce_cohort_to_pft (site, site%cohort%agb, W_NPLANT, .false., 3_ik, pft_out, vld, n)
+      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .false., site_val, ok)
+      call reduce_cohort_to_pft (poly, poly%cohort%agb, W_NPLANT, .false., 3_ik, pft_out, vld, n)
       call check(n == 3_ik, 'pft axis length = n_pft')
       call check_close(sum(pft_out(1:3)), site_val, 1.0e-12_wp, 'sum over PFTs == agb_site')
 
-      call reduce_cohort_to_size(site, site%cohort%agb, W_NPLANT, .false., edges, 4_ik,          &
+      call reduce_cohort_to_size(poly, poly%cohort%agb, W_NPLANT, .false., edges, 4_ik,          &
                                  size_out, vld, n)
       call check(n == 4_ik, 'size axis length = n_class')
       call check_close(sum(size_out(1:4)), site_val, 1.0e-12_wp, 'sum over DBH classes == agb_site')
 
       !----- The stem count must be conserved by the binning too: no cohort split, none dropped. !
-      call reduce_cohort_to_site(site, site%cohort%nplant, W_NONE, .false., site_val, ok)
-      call reduce_cohort_to_size(site, site%cohort%nplant, W_NONE, .false., edges, 4_ik,         &
+      call reduce_cohort_to_site(poly, poly%cohort%nplant, W_NONE, .false., site_val, ok)
+      call reduce_cohort_to_size(poly, poly%cohort%nplant, W_NONE, .false., edges, 4_ik,         &
                                  size_out, vld, n)
       call check_close(sum(size_out(1:4)), site_val, 1.0e-12_wp, 'sum over classes == nplant_site')
       !----- Each cohort landed in exactly ONE bin (dbh 5, 15, 45 -> classes 1, 2, 4).  -------!
       call check(size_out(3) == 0.0_wp, 'the empty class-3 bin holds nothing')
 
       !----- LAI closes on both axes as well (a second field, so the test is not agb-specific). !
-      call reduce_cohort_to_site(site, site%cohort%leaf_area, W_NPLANT, .false., site_val, ok)
-      call reduce_cohort_to_pft (site, site%cohort%leaf_area, W_NPLANT, .false., 3_ik, pft_out, vld, n)
+      call reduce_cohort_to_site(poly, poly%cohort%leaf_area, W_NPLANT, .false., site_val, ok)
+      call reduce_cohort_to_pft (poly, poly%cohort%leaf_area, W_NPLANT, .false., 3_ik, pft_out, vld, n)
       call check_close(sum(pft_out(1:3)), site_val, 1.0e-12_wp, 'sum over PFTs == lai_site')
-      call check_close(total_lai(site), site_val, 1.0e-12_wp, 'total_lai wrapper agrees')
+      call check_close(total_lai(poly), site_val, 1.0e-12_wp, 'total_lai wrapper agrees')
 
-      call site_free(site)
+      call free_polygon(poly)
    end subroutine test_pft_and_size_closure
 
    !=======================================================================================!
@@ -168,38 +168,38 @@ contains
    !  on purpose and both are pinned here.                                                       !
    !=======================================================================================!
    subroutine test_empty_sets()
-      type(site_t) :: site
+      type(polygon_t) :: poly
       real(wp) :: out(8), v
       logical  :: vld(8), ok
       integer(ik) :: n
-      call build_fixture(site)
+      call build_fixture(poly)
       !----- Make patch 2 empty (its cohort moves to patch 1). -----!
-      site%patch%cohort_count(1) = 3_ik
-      site%patch%cohort_count(2) = 0_ik
-      site%patch%cohort_offset(2) = 4_ik
-      site%cohort%owner_patch(3) = 1_ik
+      poly%patch%cohort_count(1) = 3_ik
+      poly%patch%cohort_count(2) = 0_ik
+      poly%patch%cohort_offset(2) = 4_ik
+      poly%cohort%owner_patch(3) = 1_ik
 
-      call reduce_cohort_to_patch(site, site%cohort%agb, W_NPLANT, .false., out, vld, n)
+      call reduce_cohort_to_patch(poly, poly%cohort%agb, W_NPLANT, .false., out, vld, n)
       call check(n == 2_ik,      'empty patch still occupies a slot')
       call check(vld(1),         'occupied patch is valid')
       call check(.not. vld(2),   'EMPTY patch is invalid -> _FillValue, not 0')
 
       !----- A MEAN over a PFT with no members is invalid; a SUM over it is a true 0. ---------!
-      site%n_pft = 4_ik                                   ! PFT 4 exists but has no cohorts
-      call reduce_cohort_to_pft(site, site%cohort%dbh, W_NPLANT, .true., 4_ik, out, vld, n)
+      poly%n_pft = 4_ik                                   ! PFT 4 exists but has no cohorts
+      call reduce_cohort_to_pft(poly, poly%cohort%dbh, W_NPLANT, .true., 4_ik, out, vld, n)
       call check(.not. vld(4), 'MEAN over an empty PFT is invalid')
-      call reduce_cohort_to_pft(site, site%cohort%agb, W_NPLANT, .false., 4_ik, out, vld, n)
+      call reduce_cohort_to_pft(poly, poly%cohort%agb, W_NPLANT, .false., 4_ik, out, vld, n)
       call check(vld(4),            'SUM over an empty PFT is VALID (closure would break otherwise)')
       call check(out(4) == 0.0_wp,  'SUM over an empty PFT is exactly 0')
 
       !----- A site with no cohorts at all: the extensive sum is 0, the mean is invalid. ------!
-      site%cohort%n = 0_ik ; site%patch%cohort_count(1:2) = 0_ik
-      call reduce_cohort_to_site(site, site%cohort%agb, W_NPLANT, .false., v, ok)
+      poly%cohort%n = 0_ik ; poly%patch%cohort_count(1:2) = 0_ik
+      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .false., v, ok)
       call check(v == 0.0_wp, 'bare ground: extensive site total is 0')
-      call reduce_cohort_to_site(site, site%cohort%dbh, W_BASAL_AREA, .true., v, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_BASAL_AREA, .true., v, ok)
       call check(.not. ok,    'bare ground: weighted MEAN is invalid, not 0/0')
 
-      call site_free(site)
+      call free_polygon(poly)
    end subroutine test_empty_sets
 
    !=======================================================================================!
@@ -210,25 +210,25 @@ contains
    !  (docs/science/diagnostics.md §2).                                                         !
    !=======================================================================================!
    subroutine test_unsampled_cohorts()
-      type(site_t) :: site
+      type(polygon_t) :: poly
       real(wp) :: x(3), out(8), v
       logical  :: vld(8), ok
       integer(ik) :: n
-      call build_fixture(site)
+      call build_fixture(poly)
       x = [300.0_wp, 310.0_wp, MISSING_VALUE]          ! cohort 3, alone in patch 2, has no samples
       !----- Leaf-area weights nplant*leaf_area = 2, 3 (patch 1, area 0.75): (600 + 930) / 5. ---!
-      call reduce_cohort_to_site(site, x, W_LEAF_AREA, .true., v, ok)
+      call reduce_cohort_to_site(poly, x, W_LEAF_AREA, .true., v, ok)
       call check(ok, 'mean over the sampled cohorts is valid')
       call check_close(v, 306.0_wp, 1.0e-12_wp, 'an unsampled cohort is out of the mean, not a 0')
-      call reduce_cohort_to_patch(site, x, W_LEAF_AREA, .true., out, vld, n)
+      call reduce_cohort_to_patch(poly, x, W_LEAF_AREA, .true., out, vld, n)
       call check(vld(1) .and. .not. vld(2), 'a patch of only unsampled cohorts reads fill')
       x = [1.0_wp, 2.0_wp, MISSING_VALUE]
-      call reduce_cohort_to_site(site, x, W_NONE, .false., v, ok)
+      call reduce_cohort_to_site(poly, x, W_NONE, .false., v, ok)
       call check_close(v, 2.25_wp, 1.0e-12_wp, 'an unsampled cohort adds nothing to a sum')
       x = MISSING_VALUE
-      call reduce_cohort_to_site(site, x, W_LEAF_AREA, .true., v, ok)
+      call reduce_cohort_to_site(poly, x, W_LEAF_AREA, .true., v, ok)
       call check(.not. ok, 'a mean over only unsampled cohorts is invalid')
-      call site_free(site)
+      call free_polygon(poly)
    end subroutine test_unsampled_cohorts
 
    !=======================================================================================!
@@ -256,26 +256,26 @@ contains
    !  stride stays fixed is the specific mis-mapping it has to rule out.                         !
    !=======================================================================================!
    subroutine test_soil_columns()
-      type(site_t) :: site
+      type(polygon_t) :: poly
       real(wp) :: col(n_soil_layer_max, 2), sitecol(n_soil_layer_max)
       real(wp) :: flat(2*n_soil_layer_max), wmean
       logical  :: vld(2*n_soil_layer_max)
       integer(ik) :: n, k, nlayer
-      call build_fixture(site)
+      call build_fixture(poly)
       nlayer = 5_ik                                     ! ACTIVE layers < the ceiling, on purpose
       do k = 1_ik, nlayer
          col(k, 1) = 0.10_wp * real(k, wp)              ! patch 1 profile
          col(k, 2) = 0.50_wp * real(k, wp)              ! patch 2 profile (deliberately different)
       end do
 
-      call reduce_patch_column_to_site(site, col, nlayer, sitecol, n)
+      call reduce_patch_column_to_site(poly, col, nlayer, sitecol, n)
       call check(n == nlayer, 'site column length = active layers')
       !----- area-weighted: 0.75*0.1k + 0.25*0.5k = 0.2k  ------------------------------------!
       do k = 1_ik, nlayer
          call check_close(sitecol(k), 0.2_wp*real(k,wp), 1.0e-12_wp, 'area-weighted site soil column')
       end do
 
-      call gather_patch_columns(site, col, nlayer, flat, vld, n)
+      call gather_patch_columns(poly, col, nlayer, flat, vld, n)
       call check(n == 2_ik*n_soil_layer_max, 'flat slab length = n_patch * n_soil_layer_max')
       !----- The STRIDE is the compile-time ceiling, NOT nlayer: patch 2 layer 1 sits at         !
       !      n_soil_layer_max + 1, not nlayer + 1. Striding by the live count is the mis-mapping  !
@@ -288,12 +288,12 @@ contains
 
       !----- The acceptance identity, computed the way a reader would.  -----------------------!
       do k = 1_ik, nlayer
-         wmean = site%patch%area(1) * flat(k)                                                    &
-               + site%patch%area(2) * flat(n_soil_layer_max + k)
+         wmean = poly%patch%area(1) * flat(k)                                                    &
+               + poly%patch%area(2) * flat(n_soil_layer_max + k)
          call check_close(wmean, sitecol(k), 1.0e-12_wp, 'area-weighted 2-D slab == site column')
       end do
 
-      call site_free(site)
+      call free_polygon(poly)
    end subroutine test_soil_columns
 
    !=======================================================================================!

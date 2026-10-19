@@ -33,7 +33,7 @@ module meds_region
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
-   use meds_site_state_vars,        only : site_t, site_free
+   use meds_polygon_state_vars,     only : polygon_t, free_polygon
    use meds_io,                     only : state_file_t, state_file_open, state_file_put, state_file_close, &
                                            state_file_polygons, io_read_state, state_file_refusal
    use meds_demography_update,      only : update_overtopping_lai
@@ -71,7 +71,7 @@ module meds_region
       type(output_files_t)  :: out_files           !< the run's files (built only if output.enabled)
       !----- Each polygon as two records side by side: its state (the stand) and what the run needs  !
       !      to step and check it (meds_polygon). -------------------------------------------------!
-      type(site_t),        allocatable :: poly(:)
+      type(polygon_t),     allocatable :: poly(:)
       type(polygon_run_t), allocatable :: run(:)
       !----- Each polygon's share of the files, one per polygon. A contiguous array of its own, so  !
       !      the I/O phase passes it whole: a section run(:)%bufs of a type with allocatable         !
@@ -219,12 +219,9 @@ contains
       do p = 1_ik, n
          associate (poly => reg%poly(p), run => reg%run(p))
             run%cell = p
-            run%id   = ids(p)
-            run%restructure_pending = .false.
-            run%restructure_new_year = .false.
             pcfg = cfg
             if (region) then
-               write(run%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', run%id, ' (', cells%lat(p), ', ',   &
+               write(run%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', ids(p), ' (', cells%lat(p), ', ',   &
                                                        cells%lon(p), ')'
                call apply_map_inputs(inputs, p, pcfg)
                call validate_config(pcfg)
@@ -234,12 +231,10 @@ contains
             case (INIT_RESTART)
                if (slot(p) > 0_ik) then
                   call io_read_state(poly, pcfg, trim(cfg%init_restart_file), restart_time, found,      &
-                                     fast_found=fast_found, restructure_pending=run%restructure_pending,  &
-                                     restructure_new_year=run%restructure_new_year, polygon=slot(p))
+                                     fast_found=fast_found, polygon=slot(p))
                else
                   call io_read_state(poly, pcfg, trim(cfg%init_restart_file), restart_time, found,      &
-                                     fast_found=fast_found, restructure_pending=run%restructure_pending,  &
-                                     restructure_new_year=run%restructure_new_year)
+                                     fast_found=fast_found)
                end if
                if (.not. found) then
                   write(*,'(5a)') ' init  : restart (mode 2): cannot read ', trim(polygon_name(run)),      &
@@ -247,7 +242,7 @@ contains
                   return
                end if
                reg%now = restart_time
-               if (reg%verbose .and. n == 1_ik) call report_restart(cfg, reg%now, fast_found, run%restructure_pending)
+               if (reg%verbose .and. n == 1_ik) call report_restart(cfg, reg%now, fast_found, poly%restructure_pending)
             case (INIT_CENSUS)
                call init_from_census(poly, pcfg, trim(cfg%init_census_file), found, why=msg)
                if (.not. found) then
@@ -271,6 +266,11 @@ contains
                call seed_bare_ground(poly, pcfg)
                if (reg%verbose .and. n == 1_ik) write(*,'(a)') ' init  : bare ground (mode 0)'
             end select
+            !----- The polygon's id and place, on the stand the initial community built. -------------!
+            poly%id            = ids(p)
+            poly%latitude_deg  = cells%lat(p)
+            poly%longitude_deg = cells%lon(p)
+            poly%elevation_m   = cells%elevation(p)
 
             !----- Census cohorts sit in an established stand but carry NO trait history, so with     !
             !      plasticity on their leaf traits acclimate to their light INSTANTANEOUSLY (after the !
@@ -290,8 +290,7 @@ contains
 
             !----- The fast context and reservoirs, the forcing cursor, snow, soil-carbon spin-up. One  !
             !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
-            call polygon_prepare(pcfg, reg%met_src, poly, run, cells%lat(p), cells%lon(p),            &
-                                 cells%elevation(p), keep_fast_state=fast_found,                     &
+            call polygon_prepare(pcfg, reg%met_src, poly, run, keep_fast_state=fast_found,             &
                                  keep_soil_carbon=cfg%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)
@@ -596,17 +595,17 @@ contains
       n_patch = 0_ik
       allocate(ids(size(reg%poly)), lat(size(reg%poly)), lon(size(reg%poly)))
       do p = 1_ik, size(reg%poly, kind=ik)
-         ids(p)   = reg%run(p)%id
-         lat(p)   = reg%run(p)%latitude_deg
-         lon(p)   = reg%run(p)%longitude_deg
+         ids(p)   = reg%poly(p)%id
+         lat(p)   = reg%poly(p)%latitude_deg
+         lon(p)   = reg%poly(p)%longitude_deg
          n_cohort = max(n_cohort, reg%poly(p)%cohort%n)
          n_patch  = max(n_patch, reg%poly(p)%patch%n)
       end do
       call state_file_open(sf, trim(reg%cfg%state_output_dir), trim(reg%cfg%state_output_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
                            n_patch, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,                      &
-                           restructure_pending=reg%run(1)%restructure_pending,                             &
-                           restructure_new_year=reg%run(1)%restructure_new_year)
+                           restructure_pending=reg%poly(1)%restructure_pending,                            &
+                           restructure_new_year=reg%poly(1)%restructure_new_year)
       do p = 1_ik, size(reg%poly, kind=ik)
          call state_file_put(sf, reg%poly(p), reg%now, p)
       end do
@@ -679,8 +678,8 @@ contains
                   n_bad = n_bad + 1_ik
                end if
                if (reg%verbose)                                                                    &
-                  write(*,'(i9,2f9.2,f12.4,f7.3,i9,es12.2,2(1x,i0))') run%id,                       &
-                        run%latitude_deg, run%longitude_deg, total_agb(poly),                       &
+                  write(*,'(i9,2f9.2,f12.4,f7.3,i9,es12.2,2(1x,i0))') poly%id,                      &
+                        poly%latitude_deg, poly%longitude_deg, total_agb(poly),                     &
                         total_lai(poly), count_cohorts(poly), a1 - 1.0_wp,                          &
                         run%energy_budget%n_fail, run%water_budget%n_fail
             end associate
@@ -711,7 +710,7 @@ contains
       call met_close(reg%met_src)
       if (allocated(reg%poly)) then
          do p = 1_ik, size(reg%poly, kind=ik)
-            call site_free(reg%poly(p))
+            call free_polygon(reg%poly(p))
          end do
       end if
       reg = never_opened

@@ -22,7 +22,8 @@ module meds_demography_patch_fusefiss
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
                                       scale_cohort_ground_fields, cohort_tissue_water
-   use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id, assign_patch_id
+   use meds_polygon_state_vars, only : polygon_t, rebuild_patch_map, rebuild_cohort_map, assign_cohort_id,      &
+                                       assign_patch_id
    use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_patch_state_vars,   only : expand_patch_block, reorder_patch_block, blend_cas, blend_soil_water,      &
@@ -38,25 +39,28 @@ module meds_demography_patch_fusefiss
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Sort patches by age descending; remap cohort ownership and rebuild the CSR map.        !
+   ! Sort patches by site, then by age descending; remap cohort ownership and rebuild both !
+   ! maps.                                                                                  !
    !---------------------------------------------------------------------------------------!
-   subroutine sort_patches(site)
-      type(site_t), intent(inout) :: site
+   subroutine sort_patches(poly)
+      type(polygon_t), intent(inout) :: poly
       integer(ik), allocatable :: pperm(:), inv(:)
       integer(ik) :: np, i, j, key, k
-      np = site%patch%n
+      np = poly%patch%n
       if (np < 2_ik) return
       allocate(pperm(np), inv(np))
       do i = 1_ik, np
          pperm(i) = i
       end do
-      associate (patch => site%patch, cohort => site%cohort)
-         !----- Insertion sort patch index by age descending. -----------------------------!
+      associate (patch => poly%patch, cohort => poly%cohort)
+         !----- Insertion sort patch index by site, then by age descending. ----------------!
          do i = 2_ik, np
             key = pperm(i)
             j   = i - 1_ik
             do while (j >= 1_ik)
-               if (patch%age(pperm(j)) >= patch%age(key)) exit
+               if (patch%owner_site(pperm(j)) < patch%owner_site(key)) exit
+               if (patch%owner_site(pperm(j)) == patch%owner_site(key) .and.                        &
+                   patch%age(pperm(j)) >= patch%age(key)) exit
                pperm(j + 1_ik) = pperm(j)
                j = j - 1_ik
             end do
@@ -72,7 +76,8 @@ contains
             cohort%owner_patch(i) = inv(cohort%owner_patch(i))
          end do
       end associate
-      call rebuild_csr(site)
+      call rebuild_patch_map(poly)
+      call rebuild_cohort_map(poly)
    end subroutine sort_patches
 
    !---------------------------------------------------------------------------------------!
@@ -82,8 +87,8 @@ contains
    ! n_height_layers is the canopy top. Two patches with a similar light profile (and the     !
    ! same disturbance type) are fused. Mirrors ED2 patch_pft_size_profile + new_fuse_patches. !
    !---------------------------------------------------------------------------------------!
-   subroutine patch_light_profile(site, cfg, ip, light)
-      type(site_t),          intent(in)  :: site
+   subroutine patch_light_profile(poly, cfg, ip, light)
+      type(polygon_t),       intent(in)  :: poly
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: ip
       real(wp),            intent(out) :: light(:)         ! size cfg%n_height_layers
@@ -91,18 +96,18 @@ contains
       integer(ik) :: i, i0, i1, ihgt, nl
       nl = cfg%n_height_layers
       cum_lai = 0.0_wp
-      i0 = site%patch%cohort_offset(ip)
-      i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+      i0 = poly%patch%cohort_offset(ip)
+      i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
       do i = i0, i1
-         ihgt = min(nl, max(1_ik, count(cfg%height_edges < site%cohort%height(i)) + 1_ik))
-         cum_lai(ihgt) = cum_lai(ihgt) + site%cohort%nplant(i) * site%cohort%leaf_area(i)
+         ihgt = min(nl, max(1_ik, count(cfg%height_edges < poly%cohort%height(i)) + 1_ik))
+         cum_lai(ihgt) = cum_lai(ihgt) + poly%cohort%nplant(i) * poly%cohort%leaf_area(i)
       end do
       !----- Integrate top-down: cum_lai(ihgt) = LAI in this layer and every layer above. --!
       do ihgt = nl - 1_ik, 1_ik, -1_ik
          cum_lai(ihgt) = cum_lai(ihgt) + cum_lai(ihgt + 1_ik)
       end do
       do ihgt = 1_ik, nl
-         light(ihgt) = exp(-site%cohort%allom%light_ext * cum_lai(ihgt))
+         light(ihgt) = exp(-poly%cohort%allom%light_ext * cum_lai(ihgt))
       end do
    end subroutine patch_light_profile
 
@@ -112,8 +117,8 @@ contains
    ! brings the count to max_patch. The ceiling is hard: patches more different than it      !
    ! stay apart even when the count is still above max_patch (forced fusion aside).          !
    !---------------------------------------------------------------------------------------!
-   subroutine new_fuse_patches(site, cfg)
-      type(site_t),     intent(inout) :: site
+   subroutine new_fuse_patches(poly, cfg)
+      type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: tol
       integer(ik) :: it, maxp
@@ -125,15 +130,15 @@ contains
       tol   = cfg%patch_light_tol
 
       do it = 1_ik, cfg%n_patch_fusion_iter
-         call patch_fuse_pass(site, cfg, tol, force)
-         if (.not. force .and. site%patch%n <= maxp) exit
+         call patch_fuse_pass(poly, cfg, tol, force)
+         if (.not. force .and. poly%patch%n <= maxp) exit
          tol = tol * cfg%patch_light_tol_mult
       end do
    end subroutine new_fuse_patches
 
    !----- One patch-fusion sweep at a fixed tolerance, comparing light profiles. ----------!
-   subroutine patch_fuse_pass(site, cfg, tol, force)
-      type(site_t),     intent(inout) :: site
+   subroutine patch_fuse_pass(poly, cfg, tol, force)
+      type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: tol
       logical,             intent(in)    :: force
@@ -143,21 +148,21 @@ contains
       integer(ik) :: np, recp, donp, ihgt, npop, nl
       logical     :: similar, both_empty
 
-      np = site%patch%n
+      np = poly%patch%n
       if (np < 2_ik) return
       nl = cfg%n_height_layers
       allocate(alive(np), prof(nl, np), lr(nl), ld(nl))
       alive = .true.
       do recp = 1_ik, np
-         call patch_light_profile(site, cfg, recp, prof(:, recp))
+         call patch_light_profile(poly, cfg, recp, prof(:, recp))
       end do
 
       do recp = 1_ik, np - 1_ik
          if (.not. alive(recp)) cycle
          do donp = recp + 1_ik, np
             if (.not. alive(donp)) cycle
-            if (site%patch%dist_type(donp) /= site%patch%dist_type(recp)) cycle
-            both_empty = (site%patch%cohort_count(recp) == 0_ik .and. site%patch%cohort_count(donp) == 0_ik)
+            if (poly%patch%dist_type(donp) /= poly%patch%dist_type(recp)) cycle
+            both_empty = (poly%patch%cohort_count(recp) == 0_ik .and. poly%patch%cohort_count(donp) == 0_ik)
             if (both_empty) then
                similar = .true.
             else
@@ -175,28 +180,28 @@ contains
                similar = (davg <= tol) .and. (dmax <= tol * cfg%patch_light_maxdev_factor)
             end if
             if (force .or. similar) then
-               call fuse_2_patches(site, recp, donp)
-               call rebuild_csr(site)                 ! recp slice now holds merged cohorts
-               call patch_light_profile(site, cfg, recp, prof(:, recp))
+               call fuse_2_patches(poly, recp, donp)
+               call rebuild_cohort_map(poly)          ! recp slice now holds merged cohorts
+               call patch_light_profile(poly, cfg, recp, prof(:, recp))
                alive(donp) = .false.
             end if
          end do
       end do
 
-      call patch_compact(site, alive)
-      call sort_cohorts(site)
+      call patch_compact(poly, alive)
+      call sort_cohorts(poly)
    end subroutine patch_fuse_pass
 
    !---------------------------------------------------------------------------------------!
-   ! Merge donor patch into receptor, conserving site_t-level plant number via area weights.   !
+   ! Merge donor patch into receptor, conserving the polygon's plant number via area weights.  !
    !---------------------------------------------------------------------------------------!
-   subroutine fuse_2_patches(site, recp, donp)
-      type(site_t), intent(inout) :: site
+   subroutine fuse_2_patches(poly, recp, donp)
+      type(polygon_t), intent(inout) :: poly
       integer(ik),     intent(in)    :: recp, donp
       real(wp)    :: ar, ad, anew, rawgt, dawgt, film_before, film_after, film_magnitude
       integer(ik) :: i, i0, i1
 
-      associate (patch => site%patch, cohort => site%cohort)
+      associate (patch => poly%patch, cohort => poly%cohort)
          ar = patch%area(recp) ; ad = patch%area(donp) ; anew = ar + ad
          !----- site-total canopy film water [kg per m2 of SITE], for the conservation assert below. -!
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
@@ -271,19 +276,19 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Remove patches with area below the floor; renormalize remaining areas to sum to 1.     !
    !---------------------------------------------------------------------------------------!
-   subroutine terminate_patches(site, cfg)
-      type(site_t),     intent(inout) :: site
+   subroutine terminate_patches(poly, cfg)
+      type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       logical, allocatable :: pkeep(:)
       integer(ik)          :: np, ip, imax
       real(wp)             :: s
 
-      np = site%patch%n
+      np = poly%patch%n
       if (np < 1_ik) return
       allocate(pkeep(np))
-      pkeep = site%patch%area(1:np) >= cfg%min_patch_area
+      pkeep = poly%patch%area(1:np) >= cfg%min_patch_area
       if (.not. any(pkeep)) then
-         imax = maxloc(site%patch%area(1:np), dim=1)
+         imax = maxloc(poly%patch%area(1:np), dim=1)
          pkeep(imax) = .true.
       end if
 
@@ -300,37 +305,37 @@ contains
          !      relies on, and says something defensible: a sliver of ground joins its biggest  !
          !      neighbour rather than evaporating. fuse_2_patches zeroes the donor's area, so   !
          !      the renormalisation below becomes a round-off no-op instead of a redistribution.!
-         imax = maxloc(site%patch%area(1:np), dim=1)
-         if (.not. pkeep(imax)) imax = maxloc(site%patch%area(1:np), dim=1, mask=pkeep)
+         imax = maxloc(poly%patch%area(1:np), dim=1)
+         if (.not. pkeep(imax)) imax = maxloc(poly%patch%area(1:np), dim=1, mask=pkeep)
          do ip = 1_ik, np
             if (pkeep(ip) .or. ip == imax) cycle
-            call fuse_2_patches(site, imax, ip)
-            call rebuild_csr(site)     ! the survivor's CSR slice now holds the merged cohorts,
+            call fuse_2_patches(poly, imax, ip)
+            call rebuild_cohort_map(poly) ! the survivor's CSR slice now holds the merged cohorts,
          end do                        ! and the NEXT fusion reads that slice -- as patch_fuse_pass does
-         call patch_compact(site, pkeep)
+         call patch_compact(poly, pkeep)
       end if
 
       !----- Renormalize areas to sum to 1. After the merge above this corrects round-off only. -!
-      s = sum(site%patch%area(1:site%patch%n))
+      s = sum(poly%patch%area(1:poly%patch%n))
       if (s > tiny_num) then
-         do ip = 1_ik, site%patch%n
-            site%patch%area(ip) = site%patch%area(ip) / s
+         do ip = 1_ik, poly%patch%n
+            poly%patch%area(ip) = poly%patch%area(ip) / s
          end do
       end if
    end subroutine terminate_patches
 
    !---------------------------------------------------------------------------------------!
    ! Compact the patch list by keep-mask: drop dropped patches AND their cohorts, remap      !
-   ! owner_patch to the new patch indices, and rebuild the CSR map.                          !
+   ! owner_patch to the new patch indices, and rebuild both maps.                            !
    !---------------------------------------------------------------------------------------!
-   subroutine patch_compact(site, pkeep)
-      type(site_t), intent(inout) :: site
+   subroutine patch_compact(poly, pkeep)
+      type(polygon_t), intent(inout) :: poly
       logical,         intent(in)    :: pkeep(:)
       integer(ik), allocatable :: newidx(:), keep_idx(:)
       logical,     allocatable :: ckeep(:)
       integer(ik) :: np, ip, k, i, nc
 
-      np = site%patch%n
+      np = poly%patch%n
       allocate(newidx(np), keep_idx(max(np, 1_ik)))
       k = 0_ik
       do ip = 1_ik, np
@@ -344,18 +349,19 @@ contains
       end do
 
       !----- Cohorts: keep only those whose patch survives; remap owner. ------------------!
-      nc = site%cohort%n
+      nc = poly%cohort%n
       allocate(ckeep(nc))
       do i = 1_ik, nc
-         ckeep(i) = pkeep(site%cohort%owner_patch(i))
-         if (ckeep(i)) site%cohort%owner_patch(i) = newidx(site%cohort%owner_patch(i))
+         ckeep(i) = pkeep(poly%cohort%owner_patch(i))
+         if (ckeep(i)) poly%cohort%owner_patch(i) = newidx(poly%cohort%owner_patch(i))
       end do
-      call compact_cohort_block(site%cohort, ckeep)
+      call compact_cohort_block(poly%cohort, ckeep)
 
       !----- Patches: keep the survivors, in order. The surviving-index list is the permutation   !
       !      reorder_patch_block takes, exactly as compact_cohort_block builds it for the cohort axis. --------!
-      call reorder_patch_block(site%patch, keep_idx, k)
-      call rebuild_csr(site)
+      call reorder_patch_block(poly%patch, keep_idx, k)
+      call rebuild_patch_map(poly)
+      call rebuild_cohort_map(poly)
    end subroutine patch_compact
 
    !---------------------------------------------------------------------------------------!
@@ -367,8 +373,8 @@ contains
    ! conserved for survivors and reduced by f for the killed canopy -- that loss IS the        !
    ! disturbance. The gap is later consolidated by patch and cohort fusion.                   !
    !---------------------------------------------------------------------------------------!
-   subroutine apply_patch_disturbance(site, cfg, dt_yr, water_shed)
-      type(site_t),          intent(inout) :: site
+   subroutine apply_patch_disturbance(poly, cfg, dt_yr, water_shed)
+      type(polygon_t),       intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
       !----- What the KILLED CANOPY handed on, for the caller to declare to the slow ledger. The   !
@@ -382,13 +388,13 @@ contains
       w_tot = 0.0_wp
       if (present(water_shed)) water_shed = 0.0_wp
 
-      np0 = site%patch%n
+      np0 = poly%patch%n
       if (np0 < 1_ik .or. cfg%patch_disturbance_rate <= 0.0_wp) return
 
       !----- Disturbed area fraction this step, and the aggregate new-patch area. ----------!
       frac = 1.0_wp - exp(-cfg%patch_disturbance_rate * dt_yr)
       if (frac <= tiny_num) return
-      new_area = frac * sum(site%patch%area(1:np0))
+      new_area = frac * sum(poly%patch%area(1:np0))
       if (new_area <= tiny_num) return
 
       !----- Report the disturbed-area flux, WRITTEN ON THE DONORS and written HERE, before          !
@@ -401,9 +407,9 @@ contains
       !      disturbed over dt_yr, so the rate is frac/dt_yr and this step's weight is               !
       !      dt_yr*yr_sec -- their product is frac*yr_sec, with dt_yr cancelling (the bare `frac`    !
       !      would be a per-SECOND rate under the per-year label).                                   !
-      if (site%patch%diag%active) then
+      if (poly%patch%diag%active) then
          do i = 1_ik, np0
-            site%patch%diag%v(PA_DISTURB_AREA, i) = site%patch%diag%v(PA_DISTURB_AREA, i)          &
+            poly%patch%diag%v(PA_DISTURB_AREA, i) = poly%patch%diag%v(PA_DISTURB_AREA, i)          &
                                                   + frac * yr_sec
          end do
       end if
@@ -423,28 +429,29 @@ contains
       !      Rate [kgC/m2/yr] x weight in seconds is the block's contract; dt_yr cancels             !
       !      against the weight dt_yr*yr_sec, as it does for PA_DISTURB_AREA.                        !
       nsurv = 0_ik
-      do i = 1_ik, site%cohort%n
-         if (site%cohort%height(i) < cfg%disturbance_survive_height) then
+      do i = 1_ik, poly%cohort%n
+         if (poly%cohort%height(i) < cfg%disturbance_survive_height) then
             nsurv = nsurv + 1_ik
-         else if (site%patch%diag%active) then
-            d = site%cohort%owner_patch(i)
-            site%patch%diag%v(PA_MORT_C_DISTURB, d) = site%patch%diag%v(PA_MORT_C_DISTURB, d)      &
-               + site%cohort%nplant(i) * frac * yr_sec                                             &
-                 * (site%cohort%leaf_carbon(i)     + site%cohort%fineroot_carbon(i)                &
-                  + site%cohort%wood_carbon(i)     + site%cohort%nonstructural_carbon(i))
+         else if (poly%patch%diag%active) then
+            d = poly%cohort%owner_patch(i)
+            poly%patch%diag%v(PA_MORT_C_DISTURB, d) = poly%patch%diag%v(PA_MORT_C_DISTURB, d)      &
+               + poly%cohort%nplant(i) * frac * yr_sec                                             &
+                 * (poly%cohort%leaf_carbon(i)     + poly%cohort%fineroot_carbon(i)                &
+                  + poly%cohort%wood_carbon(i)     + poly%cohort%nonstructural_carbon(i))
          end if
       end do
 
-      call expand_patch_block(site%patch, np0 + 1_ik, site%n_pft)
-      call expand_cohort_block(site%cohort, site%cohort%n + nsurv)
+      call expand_patch_block(poly%patch, np0 + 1_ik, poly%n_pft)
+      call expand_cohort_block(poly%cohort, poly%cohort%n + nsurv)
       newp = np0 + 1_ik
-      m0   = site%cohort%n                       ! cohorts before the survivors are moved in
+      m0   = poly%cohort%n                       ! cohorts before the survivors are moved in
 
-      associate (cohort => site%cohort, patch => site%patch)
+      associate (cohort => poly%cohort, patch => poly%patch)
          !----- New age-0 gap patch (treefall). --------------------------------------------!
          patch%area(newp)           = new_area
          patch%age(newp)            = 0.0_wp
          patch%dist_type(newp)      = DIST_TREEFALL
+         patch%owner_site(newp)     = 1_ik      ! the gap is cut from every patch, all in the one site
          !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
          !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
          patch%shed_water_rate(newp) = 0.0_wp
@@ -507,7 +514,7 @@ contains
                                       + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
                   patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
                                               + w_kill / new_area / max(cfg%dt_slow, tiny_num)
-                  w_tot = w_tot + w_kill
+                  w_tot = w_tot + poly%site%area(patch%owner_site(d)) * w_kill   ! w_kill is per m2 of the site
                   if (cfg%soil_carbon_on) then
                      lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
                      pf = cohort%pft(i)
@@ -546,7 +553,7 @@ contains
 
       !----- Stamp the new gap patch and the moved-in survivor cohorts with fresh global ids !
       !      (the gap fragments are new entities; their donor cohorts keep their own ids).    !
-      call assign_patch_id(site, newp)
+      call assign_patch_id(poly, newp)
       !----- The gap's diagnostics: it inherits the donors' slots blended by area, as its reservoirs !
       !      above inherit their state, so the stand total Sum(area * v) is unchanged by the carving.  !
       !      At a calendar boundary the donors hold only that boundary's events (the step's sums were !
@@ -554,13 +561,14 @@ contains
       !      hold the step so far. Every donor lost the same fraction, so their current areas give    !
       !      the same blend as their original ones. (expand_patch_block above grew the block with      !
       !      the patch arrays.)                                                                       !
-      call inherit_patch_diag(site%patch%diag, newp, site%patch%area(1:np0))
-      do i = m0 + 1_ik, site%cohort%n
-         call assign_cohort_id(site, i)
+      call inherit_patch_diag(poly%patch%diag, newp, poly%patch%area(1:np0))
+      do i = m0 + 1_ik, poly%cohort%n
+         call assign_cohort_id(poly, i)
       end do
 
-      call rebuild_csr(site)
-      call sort_cohorts(site)
+      call rebuild_patch_map(poly)
+      call rebuild_cohort_map(poly)
+      call sort_cohorts(poly)
    end subroutine apply_patch_disturbance
 
 end module meds_demography_patch_fusefiss

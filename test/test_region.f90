@@ -87,7 +87,7 @@ program test_region
    call check_true('three polygons: a no-data cell and a mostly-water column are not simulated',     &
                    size(reg%poly) == NP)
    call check_true('polygon ids are the cells'' row-major indices, in row-major order',              &
-                   all(reg%run(:)%id == IDS))
+                   all(reg%poly(:)%id == IDS))
    do p = 1_ik, NP
       associate (c => reg%run(p)%cfg)
          call check_true('each polygon takes its soil column, bottom boundary and deep temperature '//    &
@@ -207,10 +207,10 @@ program test_region
       call region_step(site_run, st)
    end do
    call check_true('a run ending on the 1st leaves its boundary''s restructuring owed',              &
-                   site_run%run(1)%restructure_pending)
+                   site_run%poly(1)%restructure_pending)
    call region_finalize(site_run, st) ; call region_free(site_run)
    call region_open(trim(work)//'/reuse.toml', site_run, ok, verbose=.false.)
-   call check_true('a reused run opens owing no restructuring', ok .and. .not. site_run%run(1)%restructure_pending)
+   call check_true('a reused run opens owing no restructuring', ok .and. .not. site_run%poly(1)%restructure_pending)
    !----- ...and its canopy air starts at the bare-ground floor, not the type's default depth. ------!
    call check_true('a bare-ground stand opens at the canopy-air floor',                               &
                    all(site_run%poly(1)%patch%cas(1:site_run%poly(1)%patch%n)%can_depth               &
@@ -261,7 +261,7 @@ program test_region
    call region_open(trim(work)//'/masked.toml', reg, ok, verbose=.false.)
    call check_true('a region with a cell mask opens', ok)
    if (ok) call check_true('the mask drops polygon 35 and keeps 18 and 53, in order',                    &
-                           size(reg%poly) == 2 .and. all(reg%run(:)%id == [18_ik, 53_ik]))
+                           size(reg%poly) == 2 .and. all(reg%poly(:)%id == [18_ik, 53_ik]))
    if (ok) call region_free(reg)
    !----- Freed without finalizing, the region closed its forcing source and files, so the same   !
    !      variable opens again and steps. ---------------------------------------------------------!
@@ -282,7 +282,7 @@ program test_region
    call check_true('a region resumes from a state file that holds its polygons and more', ok)
    if (.not. ok) error stop 'test_region: the masked region did not resume'
    call check_true('the resumed region holds polygons 18 and 53',                                     &
-                   size(reg%poly) == 2 .and. all(reg%run(:)%id == [18_ik, 53_ik]))
+                   size(reg%poly) == 2 .and. all(reg%poly(:)%id == [18_ik, 53_ik]))
    call check_true('each resumed polygon''s stand is its row of the state file',                     &
                    rows_resumed(trim(work)//'/state/half-S-20230101000000.nc', reg))
    do while (.not. region_done(reg))
@@ -848,7 +848,7 @@ contains
       same = all(found)
       if (.not. same) return
       do q = 1_ik, size(r%poly, kind=ik)
-         row = findloc(IDS, r%run(q)%id, dim=1) - 1_ik
+         row = findloc(IDS, r%poly(q)%id, dim=1) - 1_ik
          ncoh = nint(meta(row*11_ik + 1_ik), ik) ; npat = nint(meta(row*11_ik + 2_ik), ik)
          associate (c => r%poly(q)%cohort, pt => r%poly(q)%patch)
             same = same .and. c%n == ncoh .and. pt%n == npat

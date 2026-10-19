@@ -35,9 +35,13 @@ Patch fields work the same way in `state/meds_patch_state_vars.f90`: `alloc_patc
 `expand_patch_block`, `reorder_patch_block` and `free_patch_block`, in the patch block's section order.
 `sort_patches` and `patch_compact` build a permutation and call `reorder_patch_block`; a new patch field
 also needs its blend in `fuse_2_patches` and its value in a new gap (`apply_patch_disturbance`).
-`site_t` (`state/meds_site_state_vars.f90`) holds the two blocks and the routines that need both
-(`rebuild_csr`, the id counters). PFT-level traits are not copied onto cohorts: the cohort block
-carries the site's PFT table, `cohort%pft_table%x(cohort%pft(i))`.
+`polygon_t` (`state/meds_polygon_state_vars.f90`) holds the site, patch and cohort blocks and the
+routines that need more than one (`rebuild_patch_map`, `rebuild_cohort_map`, the id counters,
+`patch_polygon_area`). A patch's area is a fraction of its site and a site's a fraction of the
+polygon: every polygon total weights a patch by `patch_polygon_area`, anything within one site
+(fusion, a gap, the thresholds) by the patch area. The patches are sorted by site, then by age, and
+`owner_site` is a patch field like the others. PFT-level traits are not copied onto cohorts: the
+cohort block carries the polygon's PFT table, `cohort%pft_table%x(cohort%pft(i))`.
 
 **Persistent identity.** Every cohort and patch gets a monotonic `global_id` at creation and carries
 it in lockstep through every sort, fusion and compaction. Ids are never reused; fusion keeps the

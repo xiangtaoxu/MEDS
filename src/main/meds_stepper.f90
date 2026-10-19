@@ -13,7 +13,7 @@
 module meds_stepper
    use meds_kinds,                only : wp
    use meds_config,               only : meds_config_t
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics, settle_tissue_water
    use meds_biogeochem_types,     only : soilc_seam_t
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
@@ -34,10 +34,10 @@ contains
    ! sub-daily fast loop runs over the per-patch reservoirs BEFORE the slow loop, so         !
    ! vegetation dynamics allocates the GPP the fast loop accumulated over the step.          !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_one_step(site, cfg, fast_ctx, met_src, met_cur, step_start, out_bufs,         &
+   subroutine advance_one_step(poly, cfg, fast_ctx, met_src, met_cur, step_start, out_bufs,         &
                                run_energy_budget, run_water_budget, run_face_budget, slow_ledger, &
                                seam, latitude_deg)
-      type(site_t),         intent(inout) :: site
+      type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
       type(fast_context_t), intent(in),    optional :: fast_ctx
       type(met_source_t),   intent(in),    optional :: met_src     !< the run's forcing source (when forcing_on)
@@ -70,8 +70,8 @@ contains
          !----- The fast loop reads each cohort's tissue water against the capacity its biomass     !
          !      allows: first shed what the slow step or the boundary left above it, booked by the  !
          !      slow ledger (docs/science/order_of_processes.md §2). ------------------------------!
-         call settle_tissue_water(site, cfg, slow_ledger)
-         call fast_dynamics(site, fast_ctx, cfg, met_src=met_src, met_cur=met_cur,                  &
+         call settle_tissue_water(poly, cfg, slow_ledger)
+         call fast_dynamics(poly, fast_ctx, cfg, met_src=met_src, met_cur=met_cur,                  &
                             step_start=step_start, out_bufs=out_bufs,                             &
                             run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
                             run_face_budget=run_face_budget)
@@ -86,10 +86,10 @@ contains
       !      canopy air worth valuing and the term stays at zero. -----------------------------------!
       if (cfg%slow_on) then
          if (present(fast_ctx)) then
-            call advance_slow_dynamics(site, cfg, step_start, seam, slow_ledger, fast_ctx%rho_air,     &
+            call advance_slow_dynamics(poly, cfg, step_start, seam, slow_ledger, fast_ctx%rho_air,     &
                                        latitude_deg)
          else
-            call advance_slow_dynamics(site, cfg, step_start, seam, slow_ledger, latitude_deg=latitude_deg)
+            call advance_slow_dynamics(poly, cfg, step_start, seam, slow_ledger, latitude_deg=latitude_deg)
          end if
       end if
    end subroutine advance_one_step
@@ -101,13 +101,13 @@ contains
    ! stand, and what the restructuring does belongs to the period that begins. Gated on the     !
    ! master slow_on freeze, like the slow step.                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_boundary(site, cfg, is_new_month, is_new_year, slow_ledger)
-      type(site_t),        intent(inout) :: site
+   subroutine advance_boundary(poly, cfg, is_new_month, is_new_year, slow_ledger)
+      type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       type(slow_ledger_t), intent(inout), optional :: slow_ledger
       if (.not. cfg%slow_on) return
-      call advance_boundary_dynamics(site, cfg, is_new_month, is_new_year, slow_ledger)
+      call advance_boundary_dynamics(poly, cfg, is_new_month, is_new_year, slow_ledger)
    end subroutine advance_boundary
 
 end module meds_stepper

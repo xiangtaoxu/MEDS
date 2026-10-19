@@ -17,7 +17,8 @@ before and after.
 The soil column's parameters become configuration, the ground becomes one block of the main config,
 and a new cohort starts in its patch's state instead of at two constants (#447). The state layer is
 reorganized by model hierarchy, with no change to any result (#448). A run is a region of one polygon
-or many, and every output and state file has a `polygon` dimension (#449).
+or many, and every output and state file has a `polygon` dimension (#449). The polygon's state is
+`polygon_t`, with a site block beside its patch and cohort blocks, ready for several sites (#450).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -41,6 +42,11 @@ or many, and every output and state file has a `polygon` dimension (#449).
 - **Fortran callers of `meds_driver` use `meds_region`** (#449): `region_open`, `region_step` (one
   slow step), `region_step_month`, `region_finalize` and `region_free` run every run. The Python API
   is unchanged.
+- **Fortran code that names `site_t` names `polygon_t`** (#450), from `meds_polygon_state_vars`;
+  `site_alloc`, `site_free` and `rebuild_csr` are `alloc_polygon`, `free_polygon` and
+  `rebuild_cohort_map`. `io_read_state` sets the restructuring a checkpoint owes on the polygon it
+  reads (`poly%restructure_pending`, `poly%restructure_new_year`) and no longer returns it through
+  two arguments. Output and state files do not change.
 
 ### Changed
 
@@ -128,6 +134,23 @@ or many, and every output and state file has a `polygon` dimension (#449).
   four-cell region, and a site and a region restart match the previous version bit for bit, apart
   from the new coordinate variables. A site restarted from its new state file runs as one restarted
   from the old format.
+- **The polygon's state is `polygon_t`, with a site block** (#450; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`,
+  step S1). `site_t` held the polygon's cohort and patch blocks; with several sites per polygon to
+  come, it is `polygon_t` (`meds_polygon_state_vars`), argument `poly`, holding three blocks:
+  - the site block (`meds_site_state_vars`): each site's area, a fraction of the polygon, and its
+    slice of the patch block, mapped with an offset and a count as the patch block maps its cohorts.
+    One site of area 1 for now;
+  - the patch block, whose patches record their site in `owner_site` and are sorted by site, then by
+    age; a patch's area is a fraction of its site;
+  - the cohort block.
+
+  Every polygon total weights a patch by its share of the polygon, `patch_polygon_area` (its site's
+  area times its own): the output reductions, the fast loop's sums and budget merge, the slow ledger,
+  and the recruitment, termination and disturbance totals. The polygon's id, location and the
+  restructuring it owes move from the run machinery (`polygon_run_t`) to `polygon_t`.
+
+  Results are unchanged: the same eight cases match the previous version bit for bit, in every
+  variable of every output and state file.
 
 ### Removed
 

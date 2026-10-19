@@ -123,7 +123,8 @@ module meds_patch_state_vars
       real(wp) :: exudate_c  = 0.0_wp      !< root exudate (carbon the growth sink could not use)
    end type litter_input_t
 
-   !----- All patches of a site: an array per number, and an array of each store.          !
+   !----- All patches of a polygon, sorted by site: an array per number, and an array of     !
+   !      each store.                                                                       !
    type :: patch_block
       !==========================================================================================!
       ! 0. BLOCK RECORD                                                                          !
@@ -135,10 +136,11 @@ module meds_patch_state_vars
       !==========================================================================================!
       integer(ik), allocatable :: global_id(:)      !< persistent id, never reused
       integer(ik), allocatable :: dist_type(:)      !< disturbance/land-use class
-      real(wp),    allocatable :: area(:)           !< fraction, sum = 1 (kept real64)
+      integer(ik), allocatable :: owner_site(:)     !< its site in the polygon's site block
+      real(wp),    allocatable :: area(:)           !< fraction of its site, sum = 1 (kept real64)
       real(wp),    allocatable :: age(:)            !< [yr]
       !==========================================================================================!
-      ! 2. COHORT MAP: a CSR map into the cohort block (rebuild_csr derives it)                  !
+      ! 2. COHORT MAP: a CSR map into the cohort block (rebuild_cohort_map derives it)           !
       !==========================================================================================!
       integer(ik), allocatable :: cohort_offset(:)  !< first cohort of the patch (1-based)
       integer(ik), allocatable :: cohort_count(:)   !< cohorts in the patch
@@ -337,9 +339,11 @@ contains
       patch%cap = cap
       patch%n = 0_ik
       !----- 1. Identity and area ---------------------------------------------------------------!
-      allocate(patch%global_id(cap), patch%dist_type(cap), patch%area(cap), patch%age(cap))
+      allocate(patch%global_id(cap), patch%dist_type(cap), patch%owner_site(cap), patch%area(cap),         &
+               patch%age(cap))
       patch%global_id = 0_ik
       patch%dist_type = DIST_PRIMARY
+      patch%owner_site = 1_ik                                    ! the first site, until placed in another
       patch%area = 0.0_wp
       patch%age = 0.0_wp
       !----- 2. Cohort map ----------------------------------------------------------------------!
@@ -385,8 +389,9 @@ contains
       tmp%n = m
       !----- 1. Identity and area ---------------------------------------------------------------!
       tmp%global_id(1:m) = patch%global_id(1:m)
-      tmp%dist_type(1:m) = patch%dist_type(1:m)
-      tmp%area(1:m)      = patch%area(1:m)
+      tmp%dist_type(1:m)  = patch%dist_type(1:m)
+      tmp%owner_site(1:m) = patch%owner_site(1:m)
+      tmp%area(1:m)       = patch%area(1:m)
       tmp%age(1:m)       = patch%age(1:m)
       !----- 2. Cohort map ----------------------------------------------------------------------!
       tmp%cohort_offset(1:m) = patch%cohort_offset(1:m)
@@ -415,6 +420,7 @@ contains
       !----- 1. Identity and area ---------------------------------------------------------------!
       call move_alloc(tmp%global_id, patch%global_id)
       call move_alloc(tmp%dist_type, patch%dist_type)
+      call move_alloc(tmp%owner_site, patch%owner_site)
       call move_alloc(tmp%area, patch%area)
       call move_alloc(tmp%age, patch%age)
       !----- 2. Cohort map ----------------------------------------------------------------------!
@@ -450,11 +456,12 @@ contains
       integer(ik),       intent(in)    :: m
       !----- 1. Identity and area ---------------------------------------------------------------!
       patch%global_id(1:m) = patch%global_id(perm(1:m))
-      patch%dist_type(1:m) = patch%dist_type(perm(1:m))
-      patch%area(1:m)      = patch%area(perm(1:m))
+      patch%dist_type(1:m)  = patch%dist_type(perm(1:m))
+      patch%owner_site(1:m) = patch%owner_site(perm(1:m))
+      patch%area(1:m)       = patch%area(perm(1:m))
       patch%age(1:m)       = patch%age(perm(1:m))
       !----- 2. Cohort map ----------------------------------------------------------------------!
-      !      (not permuted: rebuild_csr derives the map from the cohorts afterwards)
+      !      (not permuted: rebuild_cohort_map derives the map from the cohorts afterwards)
       !----- 3. Recruit bank --------------------------------------------------------------------!
       patch%recruit_pool(:,1:m) = patch%recruit_pool(:,perm(1:m))
       !----- 4. Canopy air ----------------------------------------------------------------------!
@@ -484,7 +491,8 @@ contains
       type(patch_block), intent(inout) :: patch
       patch%n = 0_ik
       patch%cap = 0_ik
-      if (allocated(patch%area)) deallocate(patch%global_id, patch%dist_type, patch%area, patch%age,           &
+      if (allocated(patch%area)) deallocate(patch%global_id, patch%dist_type, patch%owner_site, patch%area,    &
+                                            patch%age,                                                         &
                                             patch%cohort_offset, patch%cohort_count, patch%recruit_pool,       &
                                             patch%cas, patch%snow, patch%soil_water, patch%soil_energy,        &
                                             patch%soil_carbon, patch%shed_water_rate, patch%slow_co2_rate,     &

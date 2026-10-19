@@ -25,12 +25,12 @@
 ! order. Do not "tidy" a sum() into an explicit loop here: the compiler is free to associate the two   !
 ! differently, which moves every reported total in its last bit.                                      !
 !                                                                                          !
-! netCDF-FREE: part of the meds_io_prep target, which links meds_demography (and through it site_t). !
+! netCDF-FREE: part of the meds_io_prep target, which links meds_demography (and the state).         !
 !==========================================================================================!
 module meds_diagnostic_reduce
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, cm2_to_m2, n_soil_layer_max
-   use meds_site_state_vars,    only : site_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area, patch_polygon_areas
    use meds_diagnostic_kernels, only : dbh_class_index
    use meds_output_types,       only : MISSING_VALUE
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan, ieee_is_finite
@@ -77,19 +77,19 @@ contains
    !----- Fill w(1:n) with the per-cohort weight of `wkind` over the WHOLE site SoA. A cohort   !
    !      whose x is missing -- one recruited after the fast loop has no fast-loop samples yet --  !
    !      carries no weight, so it is left out of a sum and out of both halves of a mean. ------!
-   pure subroutine cohort_weight(site, wkind, x, w, n)
-      type(site_t), intent(in)  :: site
+   pure subroutine cohort_weight(poly, wkind, x, w, n)
+      type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in)  :: wkind
       real(wp),     intent(in)  :: x(:)
       real(wp),     intent(out) :: w(:)
       integer(ik),  intent(out) :: n
-      n = site%cohort%n
+      n = poly%cohort%n
       if (n <= 0_ik) return
       select case (wkind)
-      case (W_NPLANT)     ; w(1:n) = site%cohort%nplant(1:n)
-      case (W_LEAF_AREA)  ; w(1:n) = site%cohort%nplant(1:n) * site%cohort%leaf_area(1:n)
-      case (W_BASAL_AREA) ; w(1:n) = site%cohort%nplant(1:n) * site%cohort%basal_area(1:n)
-      case (W_AGB)        ; w(1:n) = site%cohort%nplant(1:n) * site%cohort%agb(1:n)
+      case (W_NPLANT)     ; w(1:n) = poly%cohort%nplant(1:n)
+      case (W_LEAF_AREA)  ; w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%leaf_area(1:n)
+      case (W_BASAL_AREA) ; w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%basal_area(1:n)
+      case (W_AGB)        ; w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%agb(1:n)
       case default        ; w(1:n) = 1.0_wp                       ! W_NONE
       end select
       where (x(1:n) == MISSING_VALUE) w(1:n) = 0.0_wp
@@ -104,24 +104,25 @@ contains
    !      `scale` multiplies the per-patch contribution BEFORE it is accumulated               !
    !      (`area * sum(...) * scale`); applying it once at the end instead would change the     !
    !      rounding of every scaled total.                                                       !
-   pure subroutine reduce_cohort_to_site(site, x, wkind, mean, val, valid, scale)
-      type(site_t),       intent(in)  :: site
+   pure subroutine reduce_cohort_to_site(poly, x, wkind, mean, val, valid, scale)
+      type(polygon_t),    intent(in)  :: poly
       real(wp),           intent(in)  :: x(:)
       integer(ik),        intent(in)  :: wkind
       logical,            intent(in)  :: mean
       real(wp),           intent(out) :: val
       logical,            intent(out) :: valid
       real(wp), optional, intent(in)  :: scale
-      real(wp)    :: w(max(site%cohort%n, 1_ik)), num, den, sc
+      real(wp)    :: w(max(poly%cohort%n, 1_ik)), share(max(poly%patch%n, 1_ik)), num, den, sc
       integer(ik) :: ip, i0, i1, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
-      call cohort_weight(site, wkind, x, w, nw)
+      call cohort_weight(poly, wkind, x, w, nw)
+      call patch_polygon_areas(poly, share)
       num = 0.0_wp ; den = 0.0_wp
-      do ip = 1_ik, site%patch%n
-         i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+      do ip = 1_ik, poly%patch%n
+         i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          if (i1 < i0) cycle
-         num = num + site%patch%area(ip) * sum(w(i0:i1) * x(i0:i1)) * sc
-         if (mean) den = den + site%patch%area(ip) * sum(w(i0:i1))
+         num = num + share(ip) * sum(w(i0:i1) * x(i0:i1)) * sc
+         if (mean) den = den + share(ip) * sum(w(i0:i1))
       end do
       if (mean) then
          valid = (abs(den) > tiny_num)
@@ -137,8 +138,8 @@ contains
 
    !----- Reduce a per-cohort field to one value per patch. NO area factor (a patch value is  !
    !      already per unit of ITS OWN ground). An empty patch is valid=.false. -> _FillValue.   !
-   pure subroutine reduce_cohort_to_patch(site, x, wkind, mean, out, valid, n_out, scale)
-      type(site_t),       intent(in)  :: site
+   pure subroutine reduce_cohort_to_patch(poly, x, wkind, mean, out, valid, n_out, scale)
+      type(polygon_t),    intent(in)  :: poly
       real(wp),           intent(in)  :: x(:)
       integer(ik),        intent(in)  :: wkind
       logical,            intent(in)  :: mean
@@ -146,14 +147,14 @@ contains
       logical,            intent(out) :: valid(:)
       integer(ik),        intent(out) :: n_out
       real(wp), optional, intent(in)  :: scale
-      real(wp)    :: w(max(site%cohort%n, 1_ik)), num, den, sc
+      real(wp)    :: w(max(poly%cohort%n, 1_ik)), num, den, sc
       integer(ik) :: ip, i0, i1, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
-      call cohort_weight(site, wkind, x, w, nw)
-      n_out = site%patch%n
+      call cohort_weight(poly, wkind, x, w, nw)
+      n_out = poly%patch%n
       out(1:max(n_out,1_ik)) = 0.0_wp ; valid(1:max(n_out,1_ik)) = .false.
       do ip = 1_ik, n_out
-         i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+         i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          if (i1 < i0) cycle                                   ! empty patch -> _FillValue
          num = sum(w(i0:i1) * x(i0:i1)) * sc
          if (mean) then
@@ -171,8 +172,8 @@ contains
 
    !----- Reduce a per-cohort field onto the PFT axis, area-weighted across patches so the    !
    !      result is per m2 of SITE ground (hence sum_pft == the site total, exactly).           !
-   pure subroutine reduce_cohort_to_pft(site, x, wkind, mean, n_pft, out, valid, n_out, scale)
-      type(site_t),       intent(in)  :: site
+   pure subroutine reduce_cohort_to_pft(poly, x, wkind, mean, n_pft, out, valid, n_out, scale)
+      type(polygon_t),    intent(in)  :: poly
       real(wp),           intent(in)  :: x(:)
       integer(ik),        intent(in)  :: wkind, n_pft
       logical,            intent(in)  :: mean
@@ -180,18 +181,18 @@ contains
       logical,            intent(out) :: valid(:)
       integer(ik),        intent(out) :: n_out
       real(wp), optional, intent(in)  :: scale
-      real(wp)    :: w(max(site%cohort%n, 1_ik)), sc, aw
+      real(wp)    :: w(max(poly%cohort%n, 1_ik)), sc, aw
       real(wp)    :: num(max(n_pft,1_ik)), den(max(n_pft,1_ik))
       integer(ik) :: ip, i0, i1, i, k, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
-      call cohort_weight(site, wkind, x, w, nw)
+      call cohort_weight(poly, wkind, x, w, nw)
       n_out = n_pft
       num = 0.0_wp ; den = 0.0_wp
-      do ip = 1_ik, site%patch%n
-         i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
-         aw = site%patch%area(ip)
+      do ip = 1_ik, poly%patch%n
+         i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
+         aw = patch_polygon_area(poly, ip)
          do i = i0, i1
-            k = site%cohort%pft(i)
+            k = poly%cohort%pft(i)
             if (k < 1_ik .or. k > n_pft) cycle
             num(k) = num(k) + aw * w(i) * x(i) * sc
             den(k) = den(k) + aw * w(i)
@@ -217,9 +218,9 @@ contains
    !----- Reduce a per-cohort field onto the DBH-class axis, ED2-style: bin by the cohort's   !
    !      MEAN dbh (never split a cohort across bins), area-weight across patches. Same          !
    !      empty-bin convention as the PFT axis above, for the same closure reason.               !
-   pure subroutine reduce_cohort_to_size(site, x, wkind, mean, edges, n_class, out, valid,     &
+   pure subroutine reduce_cohort_to_size(poly, x, wkind, mean, edges, n_class, out, valid,     &
                                          n_out, scale)
-      type(site_t),       intent(in)  :: site
+      type(polygon_t),    intent(in)  :: poly
       real(wp),           intent(in)  :: x(:)
       integer(ik),        intent(in)  :: wkind, n_class
       logical,            intent(in)  :: mean
@@ -228,18 +229,18 @@ contains
       logical,            intent(out) :: valid(:)
       integer(ik),        intent(out) :: n_out
       real(wp), optional, intent(in)  :: scale
-      real(wp)    :: w(max(site%cohort%n, 1_ik)), sc, aw
+      real(wp)    :: w(max(poly%cohort%n, 1_ik)), sc, aw
       real(wp)    :: num(max(n_class,1_ik)), den(max(n_class,1_ik))
       integer(ik) :: ip, i0, i1, i, k, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
-      call cohort_weight(site, wkind, x, w, nw)
+      call cohort_weight(poly, wkind, x, w, nw)
       n_out = n_class
       num = 0.0_wp ; den = 0.0_wp
-      do ip = 1_ik, site%patch%n
-         i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
-         aw = site%patch%area(ip)
+      do ip = 1_ik, poly%patch%n
+         i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
+         aw = patch_polygon_area(poly, ip)
          do i = i0, i1
-            k = dbh_class_index(site%cohort%dbh(i), edges, n_class)
+            k = dbh_class_index(poly%cohort%dbh(i), edges, n_class)
             num(k) = num(k) + aw * w(i) * x(i) * sc
             den(k) = den(k) + aw * w(i)
          end do
@@ -265,41 +266,43 @@ contains
    !      restructuring (the driver checks |sum-1| < 1e-5 at the end of a run). `mean = .true.`  !
    !      divides by SUM area anyway, which differs only in the last bit but is robust to a      !
    !      caller that has not renormalized.                                                      !
-   pure subroutine reduce_patch_to_site(site, x, mean, val, valid)
-      type(site_t), intent(in)  :: site
+   pure subroutine reduce_patch_to_site(poly, x, mean, val, valid)
+      type(polygon_t), intent(in) :: poly
       real(wp),     intent(in)  :: x(:)
       logical,      intent(in)  :: mean
       real(wp),     intent(out) :: val
       logical,      intent(out) :: valid
-      real(wp)    :: num, den
+      real(wp)    :: share(max(poly%patch%n, 1_ik)), num, den
       integer(ik) :: ip
+      call patch_polygon_areas(poly, share)
       num = 0.0_wp ; den = 0.0_wp
-      do ip = 1_ik, site%patch%n
-         num = num + site%patch%area(ip) * x(ip)
-         den = den + site%patch%area(ip)
+      do ip = 1_ik, poly%patch%n
+         num = num + share(ip) * x(ip)
+         den = den + share(ip)
       end do
       if (mean) then
          valid = (den > tiny_num)
          val   = 0.0_wp ; if (valid) val = num / den
       else
-         valid = (site%patch%n > 0_ik) ; val = num
+         valid = (poly%patch%n > 0_ik) ; val = num
       end if
    end subroutine reduce_patch_to_site
 
    !----- Area-weight a per-patch COLUMN (soil / snow layers) into one site column. ---------!
-   pure subroutine reduce_patch_column_to_site(site, col, nlayer, out, n_out)
-      type(site_t), intent(in)  :: site
+   pure subroutine reduce_patch_column_to_site(poly, col, nlayer, out, n_out)
+      type(polygon_t), intent(in) :: poly
       real(wp),     intent(in)  :: col(:,:)   !< (layer, patch)
       integer(ik),  intent(in)  :: nlayer
       real(wp),     intent(out) :: out(:)
       integer(ik),  intent(out) :: n_out
-      real(wp)    :: wsum
+      real(wp)    :: share(max(poly%patch%n, 1_ik)), wsum
       integer(ik) :: ip
+      call patch_polygon_areas(poly, share)
       n_out = nlayer
       out(1:n_out) = 0.0_wp ; wsum = 0.0_wp
-      do ip = 1_ik, site%patch%n
-         out(1:n_out) = out(1:n_out) + site%patch%area(ip) * col(1:n_out, ip)
-         wsum = wsum + site%patch%area(ip)
+      do ip = 1_ik, poly%patch%n
+         out(1:n_out) = out(1:n_out) + share(ip) * col(1:n_out, ip)
+         wsum = wsum + share(ip)
       end do
       if (wsum > tiny_num) out(1:n_out) = out(1:n_out) / wsum
    end subroutine reduce_patch_column_to_site
@@ -311,18 +314,18 @@ contains
    !      the load-bearing detail: striding by a live count would silently re-map every profile   !
    !      the moment the active layer count differed from the one the reader assumed, producing   !
    !      plausible shifted columns rather than an error.                                         !
-   pure subroutine gather_patch_columns(site, col, nlayer, out, valid, n_out)
-      type(site_t), intent(in)  :: site
+   pure subroutine gather_patch_columns(poly, col, nlayer, out, valid, n_out)
+      type(polygon_t), intent(in) :: poly
       real(wp),     intent(in)  :: col(:,:)   !< (layer, patch)
       integer(ik),  intent(in)  :: nlayer
       real(wp),     intent(out) :: out(:)
       logical,      intent(out) :: valid(:)
       integer(ik),  intent(out) :: n_out
       integer(ik) :: ip, k, base
-      n_out = site%patch%n * n_soil_layer_max
+      n_out = poly%patch%n * n_soil_layer_max
       out(1:max(n_out,1_ik))   = 0.0_wp
       valid(1:max(n_out,1_ik)) = .false.
-      do ip = 1_ik, site%patch%n
+      do ip = 1_ik, poly%patch%n
          base = (ip - 1_ik) * n_soil_layer_max
          do k = 1_ik, nlayer
             out(base + k)   = col(k, ip)
@@ -336,241 +339,244 @@ contains
    !=======================================================================================!
 
    !----- Site plant number [plant m-2 ground]. -------------------------------------------!
-   pure real(wp) function total_nplant(site) result(tot)
-      type(site_t), intent(in) :: site
+   pure real(wp) function total_nplant(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(site, site%cohort%nplant, W_NONE, .false., tot, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%nplant, W_NONE, .false., tot, ok)
    end function total_nplant
 
    !----- Site basal area [m2 m-2]: per-plant cm2 -> per-ground m2. ------------------------!
-   pure real(wp) function total_basal_area(site) result(tot)
-      type(site_t), intent(in) :: site
+   pure real(wp) function total_basal_area(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(site, site%cohort%basal_area, W_NPLANT, .false., tot, ok,    &
+      call reduce_cohort_to_site(poly, poly%cohort%basal_area, W_NPLANT, .false., tot, ok,    &
                                  scale=cm2_to_m2)
    end function total_basal_area
 
    !----- Site aboveground biomass [kgC m-2 ground]. --------------------------------------!
-   pure real(wp) function total_agb(site) result(tot)
-      type(site_t), intent(in) :: site
+   pure real(wp) function total_agb(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(site, site%cohort%agb, W_NPLANT, .false., tot, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .false., tot, ok)
    end function total_agb
 
    !----- Site leaf area index [m2 m-2 ground]. -------------------------------------------!
-   pure real(wp) function total_lai(site) result(tot)
-      type(site_t), intent(in) :: site
+   pure real(wp) function total_lai(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(site, site%cohort%leaf_area, W_NPLANT, .false., tot, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%leaf_area, W_NPLANT, .false., tot, ok)
    end function total_lai
 
-   pure real(wp) function total_area(site) result(tot)
-      type(site_t), intent(in) :: site
-      tot = sum(site%patch%area(1:site%patch%n))
+   !----- The patches' shares of the polygon, summed: 1 while no patch area is lost. -----------!
+   pure real(wp) function total_area(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: share(max(poly%patch%n, 1_ik))
+      call patch_polygon_areas(poly, share)
+      tot = sum(share(1:poly%patch%n))
    end function total_area
 
    !----- Basal-area-weighted mean diameter [cm] (a simple structural index). --------------!
-   pure real(wp) function mean_dbh(site) result(dm)
-      type(site_t), intent(in) :: site
+   pure real(wp) function mean_dbh(poly) result(dm)
+      type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(site, site%cohort%dbh, W_BASAL_AREA, .true., dm, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_BASAL_AREA, .true., dm, ok)
    end function mean_dbh
 
    !----- Site GROSS GPP accumulated over the slow step [kgC m-2 ground]. The per-cohort     !
    !      gpp_accum is populated by the fast biophysics loop (0 when it is off).              !
-   pure real(wp) function total_gpp(site) result(tot)
-      type(site_t), intent(in) :: site
+   pure real(wp) function total_gpp(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(site, site%cohort%gpp_accum, W_NPLANT, .false., tot, ok)
+      call reduce_cohort_to_site(poly, poly%cohort%gpp_accum, W_NPLANT, .false., tot, ok)
    end function total_gpp
 
    !----- Site NPP over the slow step [kgC m-2 ground] = GPP - autotrophic MAINTENANCE resp   !
    !      (leaf + stem + fine-root), all per-slow-step accumulators from the fast loop.        !
-   pure real(wp) function total_npp(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp)    :: x(max(site%cohort%n, 1_ik))
+   pure real(wp) function total_npp(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp)    :: x(max(poly%cohort%n, 1_ik))
       integer(ik) :: n
       logical     :: ok
-      n = site%cohort%n
-      if (n > 0_ik) x(1:n) = site%cohort%gpp_accum(1:n) - site%cohort%leaf_resp_accum(1:n)    &
-                             - site%cohort%stem_resp_accum(1:n) - site%cohort%root_resp_accum(1:n)
-      call reduce_cohort_to_site(site, x, W_NPLANT, .false., tot, ok)
+      n = poly%cohort%n
+      if (n > 0_ik) x(1:n) = poly%cohort%gpp_accum(1:n) - poly%cohort%leaf_resp_accum(1:n)    &
+                             - poly%cohort%stem_resp_accum(1:n) - poly%cohort%root_resp_accum(1:n)
+      call reduce_cohort_to_site(poly, x, W_NPLANT, .false., tot, ok)
    end function total_npp
 
    !----- Site canopy-air-space temperature [K], area-weighted mean over patches. -----------!
-   pure real(wp) function mean_can_temp(site) result(tbar)
-      type(site_t), intent(in) :: site
-      real(wp)    :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function mean_can_temp(poly) result(tbar)
+      type(polygon_t), intent(in) :: poly
+      real(wp)    :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical     :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%cas(ip)%can_temp ; end do
-      call reduce_patch_to_site(site, x, .false., tbar, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%cas(ip)%can_temp ; end do
+      call reduce_patch_to_site(poly, x, .false., tbar, ok)
    end function mean_can_temp
 
    !----- Site soil-top (layer 1) temperature [K], area-weighted mean over patches. ---------!
-   pure real(wp) function mean_soil_temp_top(site) result(tbar)
-      type(site_t), intent(in) :: site
-      real(wp)    :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function mean_soil_temp_top(poly) result(tbar)
+      type(polygon_t), intent(in) :: poly
+      real(wp)    :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical     :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_energy(ip)%soil_temp(1) ; end do
-      call reduce_patch_to_site(site, x, .false., tbar, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_energy(ip)%soil_temp(1) ; end do
+      call reduce_patch_to_site(poly, x, .false., tbar, ok)
    end function mean_soil_temp_top
 
    !----- Site evapotranspiration over the slow step [kg/m2 = mm] (fast-loop accumulator). --!
-   pure real(wp) function total_et(site) result(tot)
-      type(site_t), intent(in) :: site
-      tot = site%et_accum
+   pure real(wp) function total_et(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      tot = poly%et_accum
    end function total_et
 
    !----- Site slow soil-carbon pools [kgC m-2 ground]: area-weighted patch sums. All 0 when  !
    !      soil_carbon_on is off (the pools stay at their allocation-time default).             !
-   pure real(wp) function total_soilc_fast_grnd(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp) :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function total_soilc_fast_grnd(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_carbon(ip)%fast_grnd_carbon ; end do
-      call reduce_patch_to_site(site, x, .false., tot, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon ; end do
+      call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_soilc_fast_grnd
 
-   pure real(wp) function total_soilc_fast_soil(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp) :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function total_soilc_fast_soil(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_carbon(ip)%fast_soil_carbon ; end do
-      call reduce_patch_to_site(site, x, .false., tot, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%fast_soil_carbon ; end do
+      call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_soilc_fast_soil
 
-   pure real(wp) function total_soilc_struct_grnd(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp) :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function total_soilc_struct_grnd(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_carbon(ip)%struct_grnd_carbon ; end do
-      call reduce_patch_to_site(site, x, .false., tot, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%struct_grnd_carbon ; end do
+      call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_soilc_struct_grnd
 
-   pure real(wp) function total_soilc_struct_soil(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp) :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function total_soilc_struct_soil(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_carbon(ip)%struct_soil_carbon ; end do
-      call reduce_patch_to_site(site, x, .false., tot, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%struct_soil_carbon ; end do
+      call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_soilc_struct_soil
 
-   pure real(wp) function total_soilc_microbial(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp) :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function total_soilc_microbial(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_carbon(ip)%microbial_carbon ; end do
-      call reduce_patch_to_site(site, x, .false., tot, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%microbial_carbon ; end do
+      call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_soilc_microbial
 
-   pure real(wp) function total_soilc_slow(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp) :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function total_soilc_slow(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_carbon(ip)%slow_carbon ; end do
-      call reduce_patch_to_site(site, x, .false., tot, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%slow_carbon ; end do
+      call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_soilc_slow
 
-   pure real(wp) function total_soilc_passive(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp) :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function total_soilc_passive(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%soil_carbon(ip)%passive_carbon ; end do
-      call reduce_patch_to_site(site, x, .false., tot, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%passive_carbon ; end do
+      call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_soilc_passive
 
    !----- Site heterotrophic respiration over the slow step [kgC m-2 ground]: the fast loop's  !
    !      independently-accumulated matrix Rh. Equals the daily soil_carbon_step's rh_today by  !
    !      construction (docs/science/soil_carbon.md §7), so this is exact, not an approximation. !
-   pure real(wp) function total_rh(site) result(tot)
-      type(site_t), intent(in) :: site
-      real(wp) :: x(max(site%patch%n, 1_ik))
+   pure real(wp) function total_rh(poly) result(tot)
+      type(polygon_t), intent(in) :: poly
+      real(wp) :: x(max(poly%patch%n, 1_ik))
       integer(ik) :: ip
       logical :: ok
-      do ip = 1_ik, site%patch%n ; x(ip) = site%patch%xi_accum(ip)%rh_fast_accum ; end do
-      call reduce_patch_to_site(site, x, .false., tot, ok)
+      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%xi_accum(ip)%rh_fast_accum ; end do
+      call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_rh
 
    !----- Area-weighted SITE soil temperature column [K]. ----------------------------------!
-   pure subroutine site_soil_temp_column(site, out, n)
-      type(site_t), intent(in)  :: site
+   pure subroutine site_soil_temp_column(poly, out, n)
+      type(polygon_t), intent(in) :: poly
       real(wp),     intent(out) :: out(:)
       integer(ik),  intent(out) :: n
-      real(wp)    :: col(n_soil_layer_max, max(site%patch%n, 1_ik))
+      real(wp)    :: col(n_soil_layer_max, max(poly%patch%n, 1_ik))
       integer(ik) :: ip
-      do ip = 1_ik, site%patch%n
-         col(1:n_soil_layer_max, ip) = site%patch%soil_energy(ip)%soil_temp(1:n_soil_layer_max)
+      do ip = 1_ik, poly%patch%n
+         col(1:n_soil_layer_max, ip) = poly%patch%soil_energy(ip)%soil_temp(1:n_soil_layer_max)
       end do
-      call reduce_patch_column_to_site(site, col, n_soil_layer_max, out, n)
+      call reduce_patch_column_to_site(poly, col, n_soil_layer_max, out, n)
    end subroutine site_soil_temp_column
 
    !----- Area-weighted SITE volumetric soil-moisture column [m3/m3]. ----------------------!
-   pure subroutine site_soil_water_column(site, out, n)
-      type(site_t), intent(in)  :: site
+   pure subroutine site_soil_water_column(poly, out, n)
+      type(polygon_t), intent(in) :: poly
       real(wp),     intent(out) :: out(:)
       integer(ik),  intent(out) :: n
-      real(wp)    :: col(n_soil_layer_max, max(site%patch%n, 1_ik))
+      real(wp)    :: col(n_soil_layer_max, max(poly%patch%n, 1_ik))
       integer(ik) :: ip
-      do ip = 1_ik, site%patch%n
-         col(1:n_soil_layer_max, ip) = site%patch%soil_water(ip)%theta(1:n_soil_layer_max)
+      do ip = 1_ik, poly%patch%n
+         col(1:n_soil_layer_max, ip) = poly%patch%soil_water(ip)%theta(1:n_soil_layer_max)
       end do
-      call reduce_patch_column_to_site(site, col, n_soil_layer_max, out, n)
+      call reduce_patch_column_to_site(poly, col, n_soil_layer_max, out, n)
    end subroutine site_soil_water_column
 
    !=======================================================================================!
    !  Health checks / reporting                                                              !
    !=======================================================================================!
 
-   pure integer(ik) function count_cohorts(site) result(nc)
-      type(site_t), intent(in) :: site
-      nc = site%cohort%n
+   pure integer(ik) function count_cohorts(poly) result(nc)
+      type(polygon_t), intent(in) :: poly
+      nc = poly%cohort%n
    end function count_cohorts
 
    !----- True if any diameter, density, AGB or wood carbon is NaN, or any cohort's leaf or wood !
    !      temperature, or any patch's canopy air, is not finite. The fast loop's integrators      !
    !      commit a non-finite state rather than hang when even their smallest step fails, and the !
    !      canopy air and the tissue temperatures are where such a failure lands. ------------------!
-   pure logical function has_nan(site) result(bad)
-      type(site_t), intent(in) :: site
+   pure logical function has_nan(poly) result(bad)
+      type(polygon_t), intent(in) :: poly
       integer(ik) :: i
       bad = .false.
-      do i = 1_ik, site%cohort%n
-         if (ieee_is_nan(site%cohort%dbh(i))    .or. ieee_is_nan(site%cohort%nplant(i)) .or.   &
-             ieee_is_nan(site%cohort%agb(i))    .or. ieee_is_nan(site%cohort%wood_carbon(i)))  &
+      do i = 1_ik, poly%cohort%n
+         if (ieee_is_nan(poly%cohort%dbh(i))    .or. ieee_is_nan(poly%cohort%nplant(i)) .or.   &
+             ieee_is_nan(poly%cohort%agb(i))    .or. ieee_is_nan(poly%cohort%wood_carbon(i)))  &
             bad = .true.
-         if (allocated(site%cohort%leaf_temp)) then
-            if (.not. ieee_is_finite(site%cohort%leaf_temp(i))) bad = .true.
+         if (allocated(poly%cohort%leaf_temp)) then
+            if (.not. ieee_is_finite(poly%cohort%leaf_temp(i))) bad = .true.
          end if
-         if (allocated(site%cohort%wood_temp)) then
-            if (.not. ieee_is_finite(site%cohort%wood_temp(i))) bad = .true.
+         if (allocated(poly%cohort%wood_temp)) then
+            if (.not. ieee_is_finite(poly%cohort%wood_temp(i))) bad = .true.
          end if
       end do
-      if (allocated(site%patch%cas)) then
-         do i = 1_ik, site%patch%n
-            if (.not. (ieee_is_finite(site%patch%cas(i)%can_enthalpy) .and.                      &
-                       ieee_is_finite(site%patch%cas(i)%can_shv)      .and.                      &
-                       ieee_is_finite(site%patch%cas(i)%can_co2))) bad = .true.
+      if (allocated(poly%patch%cas)) then
+         do i = 1_ik, poly%patch%n
+            if (.not. (ieee_is_finite(poly%patch%cas(i)%can_enthalpy) .and.                      &
+                       ieee_is_finite(poly%patch%cas(i)%can_shv)      .and.                      &
+                       ieee_is_finite(poly%patch%cas(i)%can_co2))) bad = .true.
          end do
       end if
    end function has_nan
 
    !----- Human-readable one-line summary. ------------------------------------------------!
-   subroutine print_summary(site, label)
-      type(site_t),  intent(in) :: site
+   subroutine print_summary(poly, label)
+      type(polygon_t), intent(in) :: poly
       character(len=*), intent(in) :: label
       write(*,'(a,t18,a,i6,a,i4,a,f9.4,a,f8.4,a,f8.3,a,f7.2)')                             &
-         trim(label), 'cohorts=', site%cohort%n, '  patches=', site%patch%n,                    &
-         '  N=', total_nplant(site), '  LAI=', total_lai(site),                            &
-         '  AGB=', total_agb(site), '  Dmean=', mean_dbh(site)
+         trim(label), 'cohorts=', poly%cohort%n, '  patches=', poly%patch%n,                    &
+         '  N=', total_nplant(poly), '  LAI=', total_lai(poly),                            &
+         '  AGB=', total_agb(poly), '  Dmean=', mean_dbh(poly)
    end subroutine print_summary
 
 end module meds_diagnostic_reduce

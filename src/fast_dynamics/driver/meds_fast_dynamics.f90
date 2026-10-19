@@ -50,7 +50,7 @@ module meds_fast_dynamics
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
    use meds_cohort_state_vars, only : set_cohort_tissue_water
    use meds_state_defaults,    only : DMAX_PSI_LEAF_ACCUM_RESET
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
@@ -79,7 +79,7 @@ module meds_fast_dynamics
    !      top.                                                                                    !
 
    !----- DETERMINISTIC REDUCTIONS (docs/science/numerical_scheme.md §6a). The site-level fast-loop !
-   !      accumulators are written once per (patch, sub-step) and folded into site%... afterwards.  !
+   !      accumulators are written once per (patch, sub-step) and folded into poly%... afterwards.  !
    !      Staging them in ONE array, indexed by the slots below, lets the patch loop write DISJOINT !
    !      cells (no reduction clause, no atomics) and lets the fold run in the (patch, sub-step)    !
    !      order a serial loop uses. That order is the whole point: OpenMP `reduction(+:)` sums      !
@@ -208,14 +208,14 @@ contains
    !      canopy-air temperature, holding the water their tissues hold at the top soil layer's     !
    !      potential. Called once after the community is built (production) or before a fast-loop  !
    !      test. ----------------------------------------------------------------------------------!
-   subroutine init_fast_reservoirs(site, ctx)
-      type(site_t),         intent(inout) :: site
+   subroutine init_fast_reservoirs(poly, ctx)
+      type(polygon_t),      intent(inout) :: poly
       type(fast_context_t), intent(in)    :: ctx
       integer(ik) :: ip, k, nsl, i
       real(wp)    :: psi
       nsl = ctx%col_config%soil%n_active
-      do ip = 1_ik, site%patch%n
-         associate (cas => site%patch%cas(ip), se => site%patch%soil_energy(ip), sw => site%patch%soil_water(ip))
+      do ip = 1_ik, poly%patch%n
+         associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip))
             sw%theta(1:nsl)  = ctx%theta_init(1:nsl) ; sw%w_surface = 0.0_wp
             sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
             do k = 1_ik, nsl
@@ -227,10 +227,10 @@ contains
             cas%can_enthalpy = cas_enthalpy_of_temp(ctx%air_temp, ctx%shv_atm)
             cas%can_temp     = ctx%air_temp
             psi = top_soil_psi(ctx%col_config%soil, sw%theta(1))
-            do i = site%patch%cohort_offset(ip), site%patch%cohort_offset(ip) + site%patch%cohort_count(ip) - 1_ik
-               site%cohort%leaf_temp(i) = cas%can_temp ; site%cohort%wood_temp(i) = cas%can_temp
-               associate (hyd => ctx%col_config%hydraulics_table%pft(site%cohort%pft(i)))
-                  call set_cohort_tissue_water(site%cohort, i, psi, hyd%leaf_curve, hyd%wood_curve)
+            do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
+               poly%cohort%leaf_temp(i) = cas%can_temp ; poly%cohort%wood_temp(i) = cas%can_temp
+               associate (hyd => ctx%col_config%hydraulics_table%pft(poly%cohort%pft(i)))
+                  call set_cohort_tissue_water(poly%cohort, i, psi, hyd%leaf_curve, hyd%wood_curve)
                end associate
             end do
          end associate
@@ -244,10 +244,10 @@ contains
    !  Optional out-args report the worst whole-column budget residuals + the fail count so !
    !  a caller/test can assert conservation.                                               !
    !=======================================================================================!
-   subroutine fast_dynamics(site, ctx, cfg, met_src, met_cur, step_start, worst_energy, worst_water, &
+   subroutine fast_dynamics(poly, ctx, cfg, met_src, met_cur, step_start, worst_energy, worst_water, &
                             n_budget_fail, out_bufs, run_energy_budget, run_water_budget,             &
                             run_face_budget)
-      type(site_t),         intent(inout) :: site
+      type(polygon_t),      intent(inout) :: poly
       type(fast_context_t), intent(in)    :: ctx
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t), optional, intent(in)    :: met_src       !< the run's forcing source (read-only here)
@@ -273,7 +273,7 @@ contains
       type(met_forcing_t), allocatable :: met_sample(:)
       type(meds_time_t),   allocatable :: t_sample(:)
       !----- Reduction staging: one cell per (accumulator, sub-step, patch), written exactly once  !
-      !      inside the patch loop and folded into site%... in patch order afterwards. Sized per   !
+      !      inside the patch loop and folded into poly%... in patch order afterwards. Sized per   !
       !      call (O(1) allocations per slow step); never zeroed, because every cell is ASSIGNED,  !
       !      not accumulated into. ----------------------------------------------------------------!
       real(wp),    allocatable :: red_site(:,:,:)                  !< (N_RED, sub-step, patch)
@@ -287,7 +287,7 @@ contains
       integer(ik) :: ip, isub, npatch, ncoh_max, nsub, nl, n_thread
       logical     :: do_forcing, do_fast, do_cdiag, do_pdiag
       !----- Per-(cohort, sub-step) diagnostic scratch: filled by the pre-pass through cdiag, then   !
-      !      folded (dt-weighted) into site%cohort%diag. PER THREAD, because the patch loop is         !
+      !      folded (dt-weighted) into poly%cohort%diag. PER THREAD, because the patch loop is         !
       !      parallel -- it rides the same per-thread pool discipline as the rest of the scratch.  ---!
       real(wp),    allocatable :: cdiag_pool(:,:,:)                !< (N_CO_FAST_ROWS, cohort, thread)
       !=========================================================================================!
@@ -344,18 +344,18 @@ contains
                    .and. present(step_start)
       f_ground = ctx%rad_sw_ground / max(ctx%rad_sw_top, tiny_num)   ! ground/canopy-top SW transmittance
       met_ref  = reference_met(ctx)
-      npatch   = site%patch%n
+      npatch   = poly%patch%n
       nsub     = cfg%n_fast_per_slow
       n_thread = max(1_ik, ctx%patch_threads)
 
       !----- Reset the fast->slow carbon accumulators (gross GPP + maintenance-resp losses) BEFORE !
       !      the fast window (compute_carbon_allocation reads them after; it has site intent(in),   !
       !      cannot reset).                                                                          !
-      site%cohort%gpp_accum(1:site%cohort%n)       = 0.0_wp
-      site%cohort%leaf_resp_accum(1:site%cohort%n) = 0.0_wp
-      site%cohort%stem_resp_accum(1:site%cohort%n) = 0.0_wp
-      site%cohort%root_resp_accum(1:site%cohort%n) = 0.0_wp
-      site%cohort%light_hours_accum(1:site%cohort%n) = 0.0_wp
+      poly%cohort%gpp_accum(1:poly%cohort%n)       = 0.0_wp
+      poly%cohort%leaf_resp_accum(1:poly%cohort%n) = 0.0_wp
+      poly%cohort%stem_resp_accum(1:poly%cohort%n) = 0.0_wp
+      poly%cohort%root_resp_accum(1:poly%cohort%n) = 0.0_wp
+      poly%cohort%light_hours_accum(1:poly%cohort%n) = 0.0_wp
       !----- ROLL OVER the predawn water status: today's accumulated maximum becomes the value the !
       !      leaf kernel's slow stomatal control uses tomorrow (docs/science/leaf_gas_exchange.md  !
       !      §4.2), then the accumulator restarts. A cohort whose max is still the UNSET sentinel  !
@@ -364,13 +364,13 @@ contains
       !----- Roll over only where the day actually produced a sample (a cohort born mid-day, or one  !
       !      culled before its first step, has none). The guard is against the RESET value, not 0:    !
       !      psi_leaf is <= 0, so '<= 0' would also accept an untouched accumulator. -----------------!
-      where (site%cohort%dmax_psi_leaf_accum(1:site%cohort%n) > 0.5_wp * DMAX_PSI_LEAF_ACCUM_RESET)          &
-         site%cohort%dmax_psi_leaf(1:site%cohort%n) = site%cohort%dmax_psi_leaf_accum(1:site%cohort%n)
-      site%cohort%dmax_psi_leaf_accum(1:site%cohort%n) = DMAX_PSI_LEAF_ACCUM_RESET
+      where (poly%cohort%dmax_psi_leaf_accum(1:poly%cohort%n) > 0.5_wp * DMAX_PSI_LEAF_ACCUM_RESET)          &
+         poly%cohort%dmax_psi_leaf(1:poly%cohort%n) = poly%cohort%dmax_psi_leaf_accum(1:poly%cohort%n)
+      poly%cohort%dmax_psi_leaf_accum(1:poly%cohort%n) = DMAX_PSI_LEAF_ACCUM_RESET
       !----- Reset the daily fast->slow soil-carbon accumulator (opt-in                             !
       !      [soil_carbon].soil_carbon_on -- a harmless no-op accumulation when off, since          !
       !      column_prepass leaves budget%xi_step/rh_matrix_step at 0 in that case). ---------------!
-      if (cfg%soil_carbon_on) site%patch%xi_accum(1:site%patch%n) = xi_accum_t()
+      if (cfg%soil_carbon_on) poly%patch%xi_accum(1:poly%patch%n) = xi_accum_t()
       !----- The site daily-mean air-temperature accumulator (which the slow-loop phenology driver !
       !      reads AFTER this fast window), site ET, and the integrator WORK counters are all      !
       !      reset and refilled by the patch-order fold AFTER the patch loop -- see the bottom of  !
@@ -385,29 +385,29 @@ contains
       !      asked for it (main sets `active` from the live variable list). Everything downstream !
       !      is gated on these two flags, so a run that reports no ecophysiology pays nothing for !
       !      it. ---------------------------------------------------------------------------------!
-      do_cdiag = site%cohort%diag%active
-      do_pdiag = site%patch%diag%active
+      do_cdiag = poly%cohort%diag%active
+      do_pdiag = poly%patch%diag%active
       !----- Size the diagnostic accumulators to this step's stand before the patch loop folds into    !
       !      them. They are NOT zeroed here: they run from one output tick to the next, and the tick's !
       !      caller zeroes them after reading (reset_step_diagnostics), so a calendar boundary's       !
       !      events, written between the two steps, reach the next record. ----------------------------!
       if (do_cdiag) then
-         call expand_cohort_diag(site%cohort%diag, max(site%cohort%n, 1_ik))
-         site%cohort%diag%n = site%cohort%n
+         call expand_cohort_diag(poly%cohort%diag, max(poly%cohort%n, 1_ik))
+         poly%cohort%diag%n = poly%cohort%n
       end if
       if (do_pdiag) then
-         call expand_patch_diag(site%patch%diag, max(npatch, 1_ik))
-         site%patch%diag%n = npatch
+         call expand_patch_diag(poly%patch%diag, max(npatch, 1_ik))
+         poly%patch%diag%n = npatch
       end if
       nl = n_soil_layer_max
       if (do_fast) then
-         call size_fast_staging(out_bufs, nsub, npatch, site%cohort%n, do_cdiag)
+         call size_fast_staging(out_bufs, nsub, npatch, poly%cohort%n, do_cdiag)
          out_bufs%n_fast_sub    = nsub
          !----- The slabs are sized to the ceiling, but only the ACTIVE layers are data: the layers !
          !      past n_active stay unwritten and read back as the fill value, as on the coarse      !
          !      tiers. -----------------------------------------------------------------------------!
          out_bufs%fast_n_soil   = min(ctx%col_config%soil%n_active, nl)
-         out_bufs%fast_n_cohort = site%cohort%n
+         out_bufs%fast_n_cohort = poly%cohort%n
          out_bufs%fast_n_patch  = npatch
          out_bufs%fast_site = 0.0_wp
          out_bufs%fast_soil_temp = 0.0_wp ; out_bufs%fast_soil_water = 0.0_wp
@@ -417,7 +417,7 @@ contains
 
       ncoh_max = 0_ik
       do ip = 1_ik, npatch
-         ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
+         ncoh_max = max(ncoh_max, poly%patch%cohort_count(ip))
       end do
 
       !----- Per-thread scratch for the per-cohort diagnostic capture. Sized from ncoh_max, so it   !
@@ -498,13 +498,13 @@ contains
                     leaf_resp_coh => leaf_resp_pool(:,ith), stem_resp_coh => stem_resp_pool(:,ith), &
                     root_resp_coh => root_resp_pool(:,ith), psi_leaf_coh => psi_leaf_pool(:,ith), &
                     cdiag_buf     => cdiag_pool(:,:,ith))
-         ncoh = site%patch%cohort_count(ip)
-         i0   = site%patch%cohort_offset(ip)
+         ncoh = poly%patch%cohort_count(ip)
+         i0   = poly%patch%cohort_offset(ip)
 
          !----- Gather the patch's cohort slice into the column buffer (+ the per-ground indices it !
          !      forms). Capacity was ensured above (ncoh <= ncoh_max always); this just updates the !
          !      ACTIVE count -- no allocation. -----------------------------------------------------!
-         call copy_column_cohort(col_cohort, site%cohort, i0, ncoh)
+         call copy_column_cohort(col_cohort, poly%cohort, i0, ncoh)
          sum_lai = 0.0_wp ; sum_wai = 0.0_wp
          do j = 1_ik, ncoh
             sum_lai = sum_lai + col_cohort%lai(j)
@@ -528,37 +528,37 @@ contains
          !      PERSISTED per-cohort leaf_temp/leaf_water_mass carried on the cohort block (no     !
          !      reseeding). Capacity was ensured above; every field below is unconditionally        !
          !      (re)assigned from the site, so no alloc_patch_biophys seed call is needed here. -----!
-         biophys%cas    = site%patch%cas(ip)
-         biophys%soil_energy = site%patch%soil_energy(ip)
-         biophys%soil_water = site%patch%soil_water(ip)
-         biophys%snow   = site%patch%snow(ip)
-         biophys%adapt_dt_last = site%patch%adapt_dt_last(ip)   ! per-patch, not loop-carried
+         biophys%cas    = poly%patch%cas(ip)
+         biophys%soil_energy = poly%patch%soil_energy(ip)
+         biophys%soil_water = poly%patch%soil_water(ip)
+         biophys%snow   = poly%patch%snow(ip)
+         biophys%adapt_dt_last = poly%patch%adapt_dt_last(ip)   ! per-patch, not loop-carried
          !----- FROZEN slow soil-carbon pool: a read-only snapshot for TODAY, held constant across  !
          !      the sub-step loop below (never written back -- the daily soil_carbon_step is the    !
          !      sole writer of the real site-level pool). The pool is ALWAYS allocated (0 per patch !
          !      at creation), so this copy is safe unconditionally: with soil_carbon_on = .false.   !
          !      nothing ever writes it, and it stays 0.                                             !
-         biophys%soil_carbon = site%patch%soil_carbon(ip)
+         biophys%soil_carbon = poly%patch%soil_carbon(ip)
          !----- FROZEN daily leaf/root-turnover shed-water rate: the same "read-only snapshot for   !
          !      TODAY, held constant across the sub-step loop" convention as soil_carbon just       !
          !      above. -----------------------------------------------------------------------------!
-         biophys%shed_water_rate = site%patch%shed_water_rate(ip)
-         biophys%slow_co2_rate   = site%patch%slow_co2_rate(ip)
+         biophys%shed_water_rate = poly%patch%shed_water_rate(ip)
+         biophys%slow_co2_rate   = poly%patch%slow_co2_rate(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
-            biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
-            biophys%wood_temp(j) = site%cohort%wood_temp(i)
+            biophys%leaf_temp(j) = poly%cohort%leaf_temp(i)
+            biophys%wood_temp(j) = poly%cohort%wood_temp(i)
             !----- Tissue water is READ here, never written. Fitting it to the capacity the biomass  !
             !      allows is the slow tier's: a cohort is born with its water, new leaves take theirs   !
             !      from the wood, and water above the capacity is shed before the fast loop runs       !
             !      (docs/science/soil_plant_water.md §2), all booked by the slow ledger. ---------------!
-            biophys%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
-            biophys%wood_water_mass(j) = site%cohort%wood_water_mass(i)
+            biophys%leaf_water_mass(j) = poly%cohort%leaf_water_mass(i)
+            biophys%wood_water_mass(j) = poly%cohort%wood_water_mass(i)
             !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !
             !      initial condition here, not a placeholder -- a freshly-created cohort simply hasn't  !
             !      been rained on yet. -----------------------------------------------------------------!
-            biophys%leaf_surf_water(j) = site%cohort%leaf_surf_water(i)
-            biophys%wood_surf_water(j) = site%cohort%wood_surf_water(i)
+            biophys%leaf_surf_water(j) = poly%cohort%leaf_surf_water(i)
+            biophys%wood_surf_water(j) = poly%cohort%wood_surf_water(i)
          end do
 
          call ensure_aero_out_capacity(aero, ncoh)
@@ -592,8 +592,8 @@ contains
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
             red_site(RED_PHENO_TAIR, isub, ip) = met%tair_k
             call fill_forcing(forc, col_cohort, met_top, sw_ground, sum_lai)
-            red_site(RED_RAINF,    isub, ip) = site%patch%area(ip) * forc%rainfall
-            red_site(RED_SNOWFALL, isub, ip) = site%patch%area(ip) * forc%snowfall
+            red_site(RED_RAINF,    isub, ip) = patch_polygon_area(poly, ip) * forc%rainfall
+            red_site(RED_SNOWFALL, isub, ip) = patch_polygon_area(poly, ip) * forc%snowfall
             !----- RT join (docs/science/canopy_radiation_transfer.md §4): when forcing is on,        !
             !      REPLACE the LAI-share SW split with real per-cohort absorbed SW/PAR and net LW     !
             !      from the two-stream canopy radiation, which emits each cohort at its radiative     !
@@ -626,23 +626,23 @@ contains
                                      le_flux=le_flux, h_flux=h_flux)
             end if
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
-            red_site(RED_ET, isub, ip) = site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
+            red_site(RED_ET, isub, ip) = patch_polygon_area(poly, ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
             !----- And the water leaving its soil column: surface runoff and bottom drainage [kg/m2]. ----!
-            red_site(RED_RUNOFF_SURF, isub, ip) = site%patch%area(ip) * budget%runoff_surf_export
-            red_site(RED_DRAINAGE,    isub, ip) = site%patch%area(ip) * budget%drainage_export
+            red_site(RED_RUNOFF_SURF, isub, ip) = patch_polygon_area(poly, ip) * budget%runoff_surf_export
+            red_site(RED_DRAINAGE,    isub, ip) = patch_polygon_area(poly, ip) * budget%drainage_export
             !----- Integrator WORK counters: area-weight like every other site diagnostic, so a patch  !
             !      that needs more sub-steps is not double-counted by its area share. -----------------!
-            red_site(RED_INTEG_STEPS,  isub, ip) = site%patch%area(ip) * real(budget%integ_nsteps,   wp)
-            red_site(RED_INTEG_REJ,    isub, ip) = site%patch%area(ip) * real(budget%integ_nrej,     wp)
-            red_site(RED_WATER_NSUB,   isub, ip) = site%patch%area(ip) * real(budget%water_nsub,   wp)
-            red_site(RED_WATER_NEWTON, isub, ip) = site%patch%area(ip) * real(budget%water_newton, wp)
-            red_site(RED_WATER_REJECT, isub, ip) = site%patch%area(ip) * real(budget%water_reject, wp)
-            red_site(RED_WATER_NFAIL,  isub, ip) = site%patch%area(ip) * real(budget%water_nfail,  wp)
+            red_site(RED_INTEG_STEPS,  isub, ip) = patch_polygon_area(poly, ip) * real(budget%integ_nsteps,   wp)
+            red_site(RED_INTEG_REJ,    isub, ip) = patch_polygon_area(poly, ip) * real(budget%integ_nrej,     wp)
+            red_site(RED_WATER_NSUB,   isub, ip) = patch_polygon_area(poly, ip) * real(budget%water_nsub,   wp)
+            red_site(RED_WATER_NEWTON, isub, ip) = patch_polygon_area(poly, ip) * real(budget%water_newton, wp)
+            red_site(RED_WATER_REJECT, isub, ip) = patch_polygon_area(poly, ip) * real(budget%water_reject, wp)
+            red_site(RED_WATER_NFAIL,  isub, ip) = patch_polygon_area(poly, ip) * real(budget%water_nfail,  wp)
             !----- INTEGRATOR HEALTH, same area weighting. work_rk45_rescue is the one that decides     !
             !      whether an "RK45 run" was actually RK45: a nonzero total means some dt_fast steps    !
             !      were rescued by ARK instead, which changes what the run measures.                    !
-            red_site(RED_RK45_RESCUE,  isub, ip) = site%patch%area(ip) * real(budget%rk45_rescue,    wp)
-            red_site(RED_CLAMP_STAGE,  isub, ip) = site%patch%area(ip) * real(budget%clamp_stage_n,  wp)
+            red_site(RED_RK45_RESCUE,  isub, ip) = patch_polygon_area(poly, ip) * real(budget%rk45_rescue,    wp)
+            red_site(RED_CLAMP_STAGE,  isub, ip) = patch_polygon_area(poly, ip) * real(budget%clamp_stage_n,  wp)
             !----- Integrate this sub-step's per-pool env scalar + matrix Rh into the day's totals:   !
             !      dt_fast_days converts the instantaneous xi_step/rh_matrix_step (column_prepass     !
             !      leaves both at 0 when soil_carbon_on=.false.) into the day-integral xi_int the     !
@@ -654,21 +654,21 @@ contains
             !      ("Unimplemented feature"), and MEDS must build on all three back ends. ------------!
             if (cfg%soil_carbon_on) then
                dt_fast_days = cfg%dt_fast / day_sec
-               site%patch%xi_accum(ip)%fast_grnd   = site%patch%xi_accum(ip)%fast_grnd               &
+               poly%patch%xi_accum(ip)%fast_grnd   = poly%patch%xi_accum(ip)%fast_grnd               &
                                                      + budget%xi_step(IP_FAST_GRND)   * dt_fast_days
-               site%patch%xi_accum(ip)%fast_soil   = site%patch%xi_accum(ip)%fast_soil               &
+               poly%patch%xi_accum(ip)%fast_soil   = poly%patch%xi_accum(ip)%fast_soil               &
                                                      + budget%xi_step(IP_FAST_SOIL)   * dt_fast_days
-               site%patch%xi_accum(ip)%struct_grnd = site%patch%xi_accum(ip)%struct_grnd             &
+               poly%patch%xi_accum(ip)%struct_grnd = poly%patch%xi_accum(ip)%struct_grnd             &
                                                      + budget%xi_step(IP_STRUCT_GRND) * dt_fast_days
-               site%patch%xi_accum(ip)%struct_soil = site%patch%xi_accum(ip)%struct_soil             &
+               poly%patch%xi_accum(ip)%struct_soil = poly%patch%xi_accum(ip)%struct_soil             &
                                                      + budget%xi_step(IP_STRUCT_SOIL) * dt_fast_days
-               site%patch%xi_accum(ip)%microbial   = site%patch%xi_accum(ip)%microbial               &
+               poly%patch%xi_accum(ip)%microbial   = poly%patch%xi_accum(ip)%microbial               &
                                                      + budget%xi_step(IP_MICR)        * dt_fast_days
-               site%patch%xi_accum(ip)%slow        = site%patch%xi_accum(ip)%slow                    &
+               poly%patch%xi_accum(ip)%slow        = poly%patch%xi_accum(ip)%slow                    &
                                                      + budget%xi_step(IP_SLOW)        * dt_fast_days
-               site%patch%xi_accum(ip)%passive     = site%patch%xi_accum(ip)%passive                 &
+               poly%patch%xi_accum(ip)%passive     = poly%patch%xi_accum(ip)%passive                 &
                                                      + budget%xi_step(IP_PASSIVE)     * dt_fast_days
-               site%patch%xi_accum(ip)%rh_fast_accum = site%patch%xi_accum(ip)%rh_fast_accum         &
+               poly%patch%xi_accum(ip)%rh_fast_accum = poly%patch%xi_accum(ip)%rh_fast_accum         &
                                                      + budget%rh_matrix_step * dt_fast_days
             end if
             !----- Sub-daily diagnostic PROBE (opt-in): per-(patch,sub-step) CAS temp / GPP / ET / soil. --!
@@ -730,45 +730,45 @@ contains
             if (do_cdiag) then
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
-                  site%cohort%diag%v(:, i) = site%cohort%diag%v(:, i) + cdiag_buf(:, j) * cfg%dt_fast
-                  site%cohort%diag%w(i)    = site%cohort%diag%w(i)    + cfg%dt_fast
+                  poly%cohort%diag%v(:, i) = poly%cohort%diag%v(:, i) + cdiag_buf(:, j) * cfg%dt_fast
+                  poly%cohort%diag%w(i)    = poly%cohort%diag%w(i)    + cfg%dt_fast
                end do
             end if
-            if (do_pdiag) call accumulate_patch_diag(site%patch%diag, ip, cfg%dt_fast, prow)
+            if (do_pdiag) call accumulate_patch_diag(poly%patch%diag, ip, cfg%dt_fast, prow)
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
             do j = 1_ik, ncoh
                i = i0 + j - 1_ik
-               site%cohort%gpp_accum(i)       = site%cohort%gpp_accum(i)       + gpp_coh(j)       * cfg%dt_fast * umol_2_kgC
-               site%cohort%leaf_resp_accum(i) = site%cohort%leaf_resp_accum(i) + leaf_resp_coh(j) * cfg%dt_fast * umol_2_kgC
-               site%cohort%stem_resp_accum(i) = site%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgC
-               site%cohort%root_resp_accum(i) = site%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
+               poly%cohort%gpp_accum(i)       = poly%cohort%gpp_accum(i)       + gpp_coh(j)       * cfg%dt_fast * umol_2_kgC
+               poly%cohort%leaf_resp_accum(i) = poly%cohort%leaf_resp_accum(i) + leaf_resp_coh(j) * cfg%dt_fast * umol_2_kgC
+               poly%cohort%stem_resp_accum(i) = poly%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgC
+               poly%cohort%root_resp_accum(i) = poly%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                !----- The hours of light at the cohort's top over the slow step, the phenology light   !
                !      cue's driver: this step counts when its PAR exceeds the PFT's par_min, so each      !
                !      cohort sees its own clouds and its own place in the canopy. ----------------------!
-               if (forc%par_top(j) * par_w_2_umol > cfg%pft%pheno_par_min(site%cohort%pft(i)))           &
-                  site%cohort%light_hours_accum(i) = site%cohort%light_hours_accum(i) + cfg%dt_fast / 3600.0_wp
+               if (forc%par_top(j) * par_w_2_umol > cfg%pft%pheno_par_min(poly%cohort%pft(i)))           &
+                  poly%cohort%light_hours_accum(i) = poly%cohort%light_hours_accum(i) + cfg%dt_fast / 3600.0_wp
                !----- Running daily MAX of psi_leaf. max(), not a sum: the daily maximum occurs near !
                !      dawn and IS the quantity that drives tomorrow's beta_stomata                   !
                !      (docs/science/leaf_gas_exchange.md §4.2). -------------------------------------!
-               site%cohort%dmax_psi_leaf_accum(i) = max(site%cohort%dmax_psi_leaf_accum(i), psi_leaf_coh(j))
+               poly%cohort%dmax_psi_leaf_accum(i) = max(poly%cohort%dmax_psi_leaf_accum(i), psi_leaf_coh(j))
             end do
          end do
 
          !----- Write the evolved state back to the site: per-patch reservoirs + per-cohort water. !
-         site%patch%cas(ip)    = biophys%cas
-         site%patch%soil_energy(ip) = biophys%soil_energy
-         site%patch%soil_water(ip) = biophys%soil_water
-         site%patch%snow(ip)   = biophys%snow
-         site%patch%adapt_dt_last(ip) = biophys%adapt_dt_last
+         poly%patch%cas(ip)    = biophys%cas
+         poly%patch%soil_energy(ip) = biophys%soil_energy
+         poly%patch%soil_water(ip) = biophys%soil_water
+         poly%patch%snow(ip)   = biophys%snow
+         poly%patch%adapt_dt_last(ip) = biophys%adapt_dt_last
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
-            site%cohort%leaf_temp(i) = biophys%leaf_temp(j)
-            site%cohort%wood_temp(i) = biophys%wood_temp(j)
-            site%cohort%leaf_water_mass(i) = biophys%leaf_water_mass(j)
-            site%cohort%wood_water_mass(i) = biophys%wood_water_mass(j)
-            site%cohort%leaf_surf_water(i) = biophys%leaf_surf_water(j)
-            site%cohort%wood_surf_water(i) = biophys%wood_surf_water(j)
+            poly%cohort%leaf_temp(i) = biophys%leaf_temp(j)
+            poly%cohort%wood_temp(i) = biophys%wood_temp(j)
+            poly%cohort%leaf_water_mass(i) = biophys%leaf_water_mass(j)
+            poly%cohort%wood_water_mass(i) = biophys%wood_water_mass(j)
+            poly%cohort%leaf_surf_water(i) = biophys%leaf_surf_water(j)
+            poly%cohort%wood_surf_water(i) = biophys%wood_surf_water(j)
          end do
 
          red_worst_energy(ip) = budget%whole_energy%worst
@@ -788,27 +788,27 @@ contains
       !  diagnostic independent of the thread count, and equal bit-for-bit to the serial fold   !
       !  (docs/science/numerical_scheme.md §6a).                                                !
       !=========================================================================================!
-      site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
-      site%et_accum       = 0.0_wp ; site%runoff_surf_accum = 0.0_wp ; site%drainage_accum = 0.0_wp
-      site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
-      site%work_water_nsub  = 0.0_wp ; site%work_water_newton = 0.0_wp
-      site%work_water_nfail = 0.0_wp ; site%work_water_reject = 0.0_wp
-      site%work_rk45_rescue = 0.0_wp ; site%work_clamp_stage  = 0.0_wp
+      poly%pheno_tair_sum = 0.0_wp ; poly%pheno_tair_n = 0_ik
+      poly%et_accum       = 0.0_wp ; poly%runoff_surf_accum = 0.0_wp ; poly%drainage_accum = 0.0_wp
+      poly%work_integ_steps = 0.0_wp ; poly%work_integ_rej  = 0.0_wp
+      poly%work_water_nsub  = 0.0_wp ; poly%work_water_newton = 0.0_wp
+      poly%work_water_nfail = 0.0_wp ; poly%work_water_reject = 0.0_wp
+      poly%work_rk45_rescue = 0.0_wp ; poly%work_clamp_stage  = 0.0_wp
       do ip = 1_ik, npatch
          do isub = 1_ik, nsub
-            site%et_accum          = site%et_accum          + red_site(RED_ET,            isub, ip)
-            site%runoff_surf_accum = site%runoff_surf_accum + red_site(RED_RUNOFF_SURF,   isub, ip)
-            site%drainage_accum    = site%drainage_accum    + red_site(RED_DRAINAGE,      isub, ip)
-            site%pheno_tair_sum    = site%pheno_tair_sum    + red_site(RED_PHENO_TAIR,    isub, ip)
-            site%pheno_tair_n      = site%pheno_tair_n      + 1_ik
-            site%work_integ_steps  = site%work_integ_steps  + red_site(RED_INTEG_STEPS,   isub, ip)
-            site%work_integ_rej    = site%work_integ_rej    + red_site(RED_INTEG_REJ,     isub, ip)
-            site%work_water_nsub   = site%work_water_nsub   + red_site(RED_WATER_NSUB,   isub, ip)
-            site%work_water_newton = site%work_water_newton + red_site(RED_WATER_NEWTON, isub, ip)
-            site%work_water_reject = site%work_water_reject + red_site(RED_WATER_REJECT, isub, ip)
-            site%work_water_nfail  = site%work_water_nfail  + red_site(RED_WATER_NFAIL,  isub, ip)
-            site%work_rk45_rescue  = site%work_rk45_rescue  + red_site(RED_RK45_RESCUE,   isub, ip)
-            site%work_clamp_stage  = site%work_clamp_stage  + red_site(RED_CLAMP_STAGE,   isub, ip)
+            poly%et_accum          = poly%et_accum          + red_site(RED_ET,            isub, ip)
+            poly%runoff_surf_accum = poly%runoff_surf_accum + red_site(RED_RUNOFF_SURF,   isub, ip)
+            poly%drainage_accum    = poly%drainage_accum    + red_site(RED_DRAINAGE,      isub, ip)
+            poly%pheno_tair_sum    = poly%pheno_tair_sum    + red_site(RED_PHENO_TAIR,    isub, ip)
+            poly%pheno_tair_n      = poly%pheno_tair_n      + 1_ik
+            poly%work_integ_steps  = poly%work_integ_steps  + red_site(RED_INTEG_STEPS,   isub, ip)
+            poly%work_integ_rej    = poly%work_integ_rej    + red_site(RED_INTEG_REJ,     isub, ip)
+            poly%work_water_nsub   = poly%work_water_nsub   + red_site(RED_WATER_NSUB,   isub, ip)
+            poly%work_water_newton = poly%work_water_newton + red_site(RED_WATER_NEWTON, isub, ip)
+            poly%work_water_reject = poly%work_water_reject + red_site(RED_WATER_REJECT, isub, ip)
+            poly%work_water_nfail  = poly%work_water_nfail  + red_site(RED_WATER_NFAIL,  isub, ip)
+            poly%work_rk45_rescue  = poly%work_rk45_rescue  + red_site(RED_RK45_RESCUE,   isub, ip)
+            poly%work_clamp_stage  = poly%work_clamp_stage  + red_site(RED_CLAMP_STAGE,   isub, ip)
          end do
       end do
       !----- FAST-tier site means: each patch's staged row and soil column, area-weighted, folded over  !
@@ -818,11 +818,11 @@ contains
             do ip = 1_ik, npatch
                kb = (ip - 1_ik) * nl
                out_bufs%fast_site(:, isub) = out_bufs%fast_site(:, isub)                                  &
-                                             + site%patch%area(ip) * out_bufs%fast_patch(:, ip, isub)
+                                             + patch_polygon_area(poly, ip) * out_bufs%fast_patch(:, ip, isub)
                out_bufs%fast_soil_temp(1:nl, isub)  = out_bufs%fast_soil_temp(1:nl, isub)                 &
-                                             + site%patch%area(ip) * out_bufs%fast_soil_temp_patch(kb+1_ik:kb+nl, isub)
+                                             + patch_polygon_area(poly, ip) * out_bufs%fast_soil_temp_patch(kb+1_ik:kb+nl, isub)
                out_bufs%fast_soil_water(1:nl, isub) = out_bufs%fast_soil_water(1:nl, isub)                &
-                                             + site%patch%area(ip) * out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub)
+                                             + patch_polygon_area(poly, ip) * out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub)
             end do
          end do
       end if
@@ -831,7 +831,7 @@ contains
       !      split as the patches received it, at their canopy-air tops, area-summed in patch      !
       !      order. The FAST tier stages it as is and the polygon block accumulates it for the     !
       !      daily, monthly and yearly tiers. -----------------------------------------------------!
-      if (do_fast .or. site%diag%active) then
+      if (do_fast .or. poly%diag%active) then
          do isub = 1_ik, nsub
             rain_s = 0.0_wp ; snow_s = 0.0_wp
             do ip = 1_ik, npatch
@@ -844,7 +844,7 @@ contains
                call forcing_echo(met_ref, rain_s, snow_s, echo)
             end if
             if (do_fast) out_bufs%fast_forcing(:, isub) = echo
-            if (site%diag%active) call accumulate_polygon_diag(site%diag, cfg%dt_fast, echo)
+            if (poly%diag%active) call accumulate_polygon_diag(poly%diag, cfg%dt_fast, echo)
          end do
       end if
 
@@ -860,9 +860,9 @@ contains
       if (present(run_energy_budget) .or. present(run_water_budget) .or. present(run_face_budget)) then
          site_energy_budget = budget_t() ; site_water_budget = budget_t() ; site_face_budget = budget_t()
          do ip = 1_ik, npatch
-            call budget_merge(site_energy_budget, red_budget_energy(ip), site%patch%area(ip))
-            call budget_merge(site_water_budget,  red_budget_water(ip),  site%patch%area(ip))
-            call budget_merge(site_face_budget,   red_budget_face(ip),   site%patch%area(ip))
+            call budget_merge(site_energy_budget, red_budget_energy(ip), patch_polygon_area(poly, ip))
+            call budget_merge(site_water_budget,  red_budget_water(ip),  patch_polygon_area(poly, ip))
+            call budget_merge(site_face_budget,   red_budget_face(ip),   patch_polygon_area(poly, ip))
          end do
          if (present(run_energy_budget)) call budget_merge(run_energy_budget, site_energy_budget, 1.0_wp)
          if (present(run_water_budget))  call budget_merge(run_water_budget,  site_water_budget,  1.0_wp)

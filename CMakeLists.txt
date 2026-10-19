@@ -168,16 +168,17 @@ target_include_directories(meds_config PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gener
 target_link_libraries(meds_config PUBLIC meds_shared)
 meds_fortran_flags(meds_config)
 
-#----- STATE, one LAYER in four files by model hierarchy (src/README.md, rule 3). -------------#
+#----- STATE, one LAYER in five files by model hierarchy (src/README.md, rule 3). -------------#
 #                                                                                            #
-#  meds_cohort_state_vars -- the flat cohort SoA and the cohort lockstep.                     #
-#  meds_patch_state_vars  -- ONE patch's stores (canopy air, snow, soil water and heat, soil  #
-#                            carbon) and their blends, and the patch SoA with its CSR map.    #
-#  meds_site_state_vars   -- site_t: one cohort block and one patch block.                    #
-#  meds_diag_vars         -- the diagnostic accumulators, per cohort, per patch, per polygon. #
+#  meds_cohort_state_vars  -- the flat cohort SoA and the cohort lockstep.                    #
+#  meds_patch_state_vars   -- ONE patch's stores (canopy air, snow, soil water and heat,      #
+#                             soil carbon), their blends, and the patch SoA with its CSR map. #
+#  meds_polygon_state_vars -- polygon_t: its site, patch and cohort blocks, and its numbers.  #
+#  meds_site_state_vars    -- the site block: each site's area and its slice of the patches.  #
+#  meds_diag_vars          -- the diagnostic accumulators, per cohort, patch and polygon.     #
 #                                                                                            #
 #  The kernels take only the per-patch store types (from meds_patch_state_vars), never        #
-#  site_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_no_site_state       #
+#  polygon_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_no_site_state    #
 #  checks it, because the shared module directory cannot. The parameters that describe the    #
 #  stores are config (meds_soil_column_config): a parameter is not state.                     #
 file(GLOB STATE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/*.f90)
@@ -234,7 +235,7 @@ meds_fortran_flags(meds_demography)
 
 #----- Output PREP (src/io/output): the netCDF-FREE half of the output subsystem -- the site-level        #
 #      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
-#      the extract switchboard. Links meds_demography (site_t + the reductions) ONLY -- NO netCDF --  #
+#      the extract switchboard. Links meds_demography (polygon_t + reductions) ONLY -- NO netCDF --  #
 #      the stepper edge that ticks the integrators pulls no C dependency (src/README.md, "The       #
 #      library graph"). The netCDF serializer half lives in meds_io_stream (below). The stages:     #
 #      docs/science/diagnostics.md §1.                                                              #
@@ -512,7 +513,7 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME no_issue_refs
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_issue_refs.py
                        ${CMAKE_CURRENT_SOURCE_DIR})
-      #----- The kernels take only the per-patch store types from the state layer, never site_t:    #
+      #----- The kernels take only the per-patch store types from the state layer, never polygon_t: #
       #      the shared module directory cannot enforce it, so this does, on every run.             #
       add_test(NAME kernels_no_site_state
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_kernel_state.py

@@ -12,7 +12,7 @@
 ! The slow driver is the only place a rate meets its application. Python `apply_rates`, which    !
 ! feeds externally computed rates through those same operators, is the standing test of it.      !
 !                                                                                          !
-! `elemental pure`, scalars + PFT traits only (NO site_t, NO cohort SoA), over the shared        !
+! `elemental pure`, scalars + PFT traits only (NO polygon_t, NO cohort SoA), over the shared     !
 ! allometry -- so this folder needs nothing from the plant kernels. The EMPIRICAL growth and     !
 ! recruitment laws are not here; they live in the Python example. Camac mortality stays here.    !
 !==========================================================================================!
