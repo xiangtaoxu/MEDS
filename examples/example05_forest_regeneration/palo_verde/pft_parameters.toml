@@ -20,7 +20,6 @@
 [pft]
 #----- Wood, size and recruitment (example 03). ----------------------------------------------------
 wood_density       = [0.35, 0.52, 0.74, 0.87]   # [g/cm3] Ds, D, BD, E: Xu et al. (2016) Fig. 2b; Ds at the ED2 floor 0.35
-dbh_critical       = [300.0, 300.0, 300.0, 300.0] # [cm] unused by the carbon path: only height is capped
 min_cohort_height  = 1.5                   # [m] recruits are born here: dbh 0.61 cm on Chave's curve at E = 0.134
 recruit_carbon_efficiency = [1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3]  # [--] reproduction carbon -> recruits
 seed_rain_recruits = [0.1, 0.1, 0.1, 0.1]   # [plant/m2/yr] from outside, every patch, as in example 06's regional run

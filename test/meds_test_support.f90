@@ -77,7 +77,6 @@ contains
       call alloc_pft_table(cfg%pft, 3_ik)
       associate (p => cfg%pft)
          p%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
-         p%dbh_critical = [ 100.0_wp, 100.0_wp, 100.0_wp ]
          p%reproduction_investment_fraction = [ 0.3_wp, 0.3_wp, 0.3_wp ]
          p%recruit_carbon_efficiency = [ 1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
          p%seed_rain_recruits = [ 0.01_wp, 0.01_wp, 0.01_wp ]

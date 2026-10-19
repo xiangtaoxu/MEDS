@@ -148,8 +148,9 @@ within about 6 cm, so a cohort that has pulled ahead keeps its light and its sup
 thin, while in a 30 m forest it merges within about 0.6 m.
 
 A patch's light profile is the fraction of full sunlight left under each of `n_height_layers` equal
-layers up to the tallest `hgt_max`, `exp(−light_ext × LAI at and above the layer)`. Layers fully lit
-in both patches are not compared.
+layers up to the tallest `hgt_max`, `exp(−k × LAI at and above the layer)` with k =
+`light_ext_coeff_fusefiss` (default 0.5), which nothing else uses. Layers fully lit in both patches
+are not compared.
 
 **The ceiling is hard and the target is not.** Two cohorts or patches more different than the
 ceiling stay apart even if the count is then above its target, because merging them would lose
@@ -164,8 +165,9 @@ passes, to reproduce the schedule before the ceiling existed.
 ### The PFT file
 
 Everything PFT-specific: the `[pft]` trait table, the `[camac]` mortality-hazard derivation
-coefficients, and the `[allometry]` coefficients. **The number of PFTs is the length of
-`[pft].wood_density`** — every other trait array must match it.
+coefficients, and each PFT's size allometry, `[allometry]`. **The number of PFTs is the length of
+`[pft].wood_density`** — every other trait array must match it. Every `[allometry]` key takes one value,
+for every PFT, or an array with one value per PFT.
 
 Wood density is the primary PFT axis. The Camac-2018 mortality coefficients are derived from it as
 power laws, so low-density PFTs get a higher growth-independent hazard and a steeper low-growth
@@ -173,16 +175,20 @@ penalty. The one exception to the growth-driven hazard is a cohort with no leave
 dies in the step it is found (`science/plant_carbon_allocation.md` §2). Growth, competition and
 reproduction parameters are per-PFT but ship uniform.
 
-Height follows the pan-tropical power law `exp(b1Ht + b2Ht ln dbh)` by default. With
-`[allometry].height_allometry = "gmm"` it follows the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`
-instead, whose coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s fit for Barro Colorado
-Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, ln H = 0.893 − E +
-0.760 ln dbh − 0.0340 (ln dbh)², taken at its mean as BIOMASS's `retrieveH` does, where E
-(`[allometry].chave_e`) is the site's stress index from its climate (Chave's eq. 6b): the drier, more
-seasonal or hotter the site, the larger E and the shorter its trees. With `[maps].chave_e_map`, each
-polygon takes E from its own cell instead, and `chave_e` is refused ([Input maps](#input-maps)).
-Every curve is capped at
-`[allometry].hgt_max`, and biomass and leaf area take the height it gives. A cohort reproduces once
+Each PFT's height follows the curve `[allometry].height_allometry` names for it (one name for every
+PFT, or one per PFT, `["gmm", "power", "power"]`). `"power"`, the default, is the pan-tropical power law
+`exp(b1Ht + b2Ht ln dbh)`. `"gmm"` is the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`, whose
+coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s fit for Barro Colorado Island; they
+are required when a PFT uses the curve. `"chave2014"` is the log-quadratic ln H = `chave_a` − E +
+`chave_b` ln dbh + `chave_c` (ln dbh)² + `chave_rse`²/2, taken at its mean as BIOMASS's `retrieveH` does;
+its coefficients default to Chave et al. (2014)'s pantropical fit (0.893, 0.760, −0.0340, 0.243). E
+(`[allometry].chave_e`, one value) is the site's stress index from its climate (Chave's eq. 6b), the same
+for every PFT: the drier, more seasonal or hotter the site, the larger E and the shorter its trees. With
+`[maps].chave_e_map`, each polygon takes E from its own cell instead, and `chave_e` is refused
+([Input maps](#input-maps)). Every curve is capped at the PFT's `[allometry].hgt_max`, and biomass
+(`agb_c1`, `agb_c2`) and leaf area (`lai_b1`, `lai_b2`) take the height it gives; the wood area
+(`wai_b1`, `wai_b2`), the sapwood (`sapwood_area_b1`, `sapwood_area_b2`) and the share of the wood above
+ground (`aboveground_frac`) are per PFT too. A cohort reproduces once
 its height reaches its PFT's `[pft].min_repro_height` [m], a height set outside MEDS.
 
 Leaves are parameterized by their turnover: `[pft].leaf_turnover_rate_toc` [yr⁻¹, > 0] is the share
@@ -536,7 +542,7 @@ while they are set:
 - `[init].soil_theta`.
 
 `[soil].psi_fc` still defines field capacity, where each layer starts. With `chave_e_map`,
-`[allometry].chave_e` is refused in the PFT file, and the map needs `height_allometry = "chave2014"`.
+`[allometry].chave_e` is refused in the PFT file, and the map needs a PFT on `height_allometry = "chave2014"`.
 
 **MEDS fills no gaps.** A run cell a map leaves empty stops the run, naming the map, the variable and
 the cell. A product is completed in its own pipeline, not in the model.

@@ -99,16 +99,18 @@ the height it reaches on its own curve. The height is the same at every site: wh
 
 ### The size allometry
 
-The targets and every cohort's geometry come from one size allometry (`meds_allometry`), whose
-coefficients (`[allometry]` in the PFT file; `docs/configuration.md`, "The PFT file") are the same for
-every PFT. With $D$ the diameter [cm], $H$ the height [m] and $\rho$ the wood density [g cm⁻³]:
+The targets and every cohort's geometry come from its PFT's size allometry (`meds_allometry`, one
+record per PFT), whose coefficients are the PFT file's `[allometry]` block (`docs/configuration.md`, "The
+PFT file"): each key one value for every PFT or one per PFT, so an understorey specialist and a canopy
+emergent can each have their own curve, cap and leaf display. With $D$ the diameter [cm], $H$ the height [m] and $\rho$ the wood density [g cm⁻³]:
 
 - **Height** follows one of three curves, each capped at the PFT's `hgt_max`: the pan-tropical power
   law $`\ln H = b_1 + b_2 \ln D`$; the saturating generalized Michaelis–Menten curve
   $`H = a D^{b}/(k + D^{b})`$, fitted by Cano et al. (2019) in the Barro Colorado Nature Monument; or
-  Chave et al. (2014) eq. 6a, $`\ln H = 0.893 - E + 0.760 \ln D - 0.0340 (\ln D)^2 + s^2/2`$, with $E$
-  the site's stress index and $`s = 0.243`$ the fit's residual standard error. The $`s^2/2`$ turns the
-  fit's log-scale median into its mean, as BIOMASS's `retrieveH` does. Height to diameter inverts the
+  a log-quadratic, $`\ln H = a - E + b \ln D + c (\ln D)^2 + s^2/2`$, with $E$ the site's stress index
+  (the same for every PFT) and the PFT's coefficients defaulting to Chave et al. (2014) eq. 6a: $a$ =
+  0.893, $b$ = 0.760, $c$ = −0.0340 and the fit's residual standard error $s$ = 0.243. The $`s^2/2`$
+  turns the fit's log-scale median into its mean, as BIOMASS's `retrieveH` does. Height to diameter inverts the
   uncapped curve; on Chave's curve that is the smaller root of the quadratic in $`\ln D`$, the rising
   branch, which holds up to a diameter of about 7×10⁴ cm.
 - **Biomass** is Chave et al. (2014) eq. 4 in carbon, $`\mathrm{AGB} = c_1\,\rho^{c_2}\,(D^2 H)^{c_2}`$

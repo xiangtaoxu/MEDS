@@ -40,9 +40,8 @@ module meds_pft_params
    !---------------------------------------------------------------------------------------!
    type :: pft_table_t
       integer(ik) :: n = 0_ik
-      !----- The size allometry, a size limit and the wood-density axis. ----------------------!
+      !----- The size allometry and the wood-density axis. -------------------------------------!
       type(allometry_t), allocatable :: allom(:) !< each PFT's allometry ([allometry])
-      real(wp), allocatable :: dbh_critical(:)   !< [cm]    maximum diameter (growth clamp)
       real(wp), allocatable :: wood_density(:)   !< [g/cm3] rho: AGB + mortality anchor
       !----- Reproductive allocation and recruitment (carbon path). An empirical growth law is     !
       !      not a trait here; it lives in the Python example. ------------------------------------!
@@ -250,7 +249,7 @@ contains
       type(pft_table_t), intent(inout) :: pft
       integer(ik),       intent(in)    :: n
       pft%n = n
-      allocate(pft%allom(n), pft%dbh_critical(n), pft%wood_density(n))
+      allocate(pft%allom(n), pft%wood_density(n))
       allocate(pft%reproduction_investment_fraction(n), pft%min_repro_height(n), pft%recruit_carbon_efficiency(n))
       allocate(pft%recruit_shade_decay(n))
       pft%recruit_shade_decay = 0.0_wp      ! optional key; 0 = the same share under any canopy

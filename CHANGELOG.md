@@ -26,9 +26,28 @@ its elevation and slope, and its phenology and leaf acclimation its own air (#45
 tissue state is its leaf and wood energy, with its temperatures derived from them, and the water it
 sheds takes its enthalpy to the ground (#457). `meds_constants` is grouped by kind, and every name in it
 is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear solvers are one module,
-`meds_linear_algebra` (#458).
+`meds_linear_algebra` (#458). Each PFT has its own size allometry, and reproduces from its own height
+(#NNN).
 
 **Upgrading from v0.3.5:**
+- **The PFT file's size allometry is per PFT** (#NNN). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
+  `sapwood_area_b1`, `sapwood_area_b2` and `aboveground_frac` move to `[allometry]`, and every
+  `[allometry]` key takes one value, for every PFT, or an array with one per PFT; `height_allometry`
+  may name a curve per PFT. A key left in `[pft]` stops the run, naming its new place.
+- **`[pft].reproduction_height_fraction` is `[pft].min_repro_height` [m], one per PFT** (#NNN): the
+  height a cohort reproduces from, worked out outside MEDS. The old rule was the fraction times the
+  height of a 100 cm tree on the curve, capped at `hgt_max`: 0.33 of the power law's 42.16 m is
+  13.912064431085485 m. The shipped configs carry the height their old rule gave.
+- **`[pft].dbh_critical` is gone** (#NNN): a cohort's size is limited by its height cap and the growth
+  sink limits. Delete the key.
+- **`[allometry].light_ext` is `[demography].light_ext_coeff_fusefiss`** in the main config (#NNN),
+  optional, default 0.5: patch fusion's light profiles were all it set.
+- **Fortran code that uses the allometry takes its PFT's record** (#NNN): `pft%allom(pf)` (the polygon's
+  `cohort%pft_table%allom(pf)`, which carries its cell's `chave_e`) in place of `cfg%allom` and
+  `cohort%allom`. `dbh_to_height`, `agb_to_dbh`, `wood_to_dbh`, `carbon_to_structure`,
+  `npp_to_growth` and `growth_sink_limitation` drop their `hgt_max` argument and `size2wood_carbon`,
+  `wood_to_dbh` and the rest their `aboveground_frac`; `dbh_to_wai` and `sapwood_fraction` take the
+  record in place of their coefficients; `alloc_polygon` drops its `allom` argument; `local_hmax` is gone.
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
   key stops the run, naming its new one:
   - the `[soil_column]` keys (`depth`, `layer_bottoms`, `retention`, the hydraulic texture, `psi_fc`
@@ -106,6 +125,19 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   are private to their modules.
 
 ### Changed
+
+- **Each PFT has its own size allometry** (#NNN). A PFT's record, `pft%allom(pf)` (`meds_allometry`),
+  holds its height curve and cap, its gMM and log-quadratic coefficients (the latter default to Chave
+  et al. 2014 eq. 6a, shifted by the site's E), its biomass, leaf-area, wood-area and sapwood
+  allometries and the share of its wood above ground, so an understorey specialist and a canopy
+  emergent can differ in stature and leaf display. Recruits and bare-ground seedlings start at
+  `min_cohort_height` on their own PFT's curve. The PFT CSV lists every PFT's allometry. With every
+  PFT on one set of values, as shipped, outputs are unchanged bit for bit.
+- **A cohort reproduces once it reaches its PFT's `min_repro_height`** (#NNN), a height in metres
+  instead of a share of the height of a 100 cm tree on the curve. The shipped configs carry the heights
+  their old rule gave (20 m in examples 03 and 04, 5.27 m in example 05, 11.69 m at Palo Verde) and run
+  unchanged bit for bit. Under a Chave E map the height is the same in every cell, where it used to
+  follow each cell's E, so example 06's results will move; it has not been rerun.
 
 - **`meds_constants` is grouped by kind** (#458): mathematical constants, physical constants
   (universal; dry air and water vapour; liquid water and ice; leaf diffusion; plant tissue heat),
@@ -323,6 +355,10 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   water ledgers close as before.
 
 ### Removed
+
+- **`pft.dbh_critical`** (#NNN), which only the C API's empirical growth read, as a cap on the diameter.
+- **`local_hmax` and `HMAX_DBH`** (#NNN), the height of a 100 cm tree, which only the reproduction
+  threshold used.
 
 - **`TISSUE_HCAP_MIN`** (#447), the floor of 20 J K⁻¹ per m² of tissue under a tissue's dry heat
   capacity. Per unit of tissue area it never binds: for leaves only above an SLA of 320 m² kgC⁻¹, and

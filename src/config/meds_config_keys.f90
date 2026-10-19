@@ -241,7 +241,9 @@ module meds_config_keys
                     'compares, which is all it ever set'),                                       &
       retired_key_t('pft.reproduction_height_fraction', 'replaced by pft.min_repro_height [m], one '// &
                     'per PFT: the height a cohort reproduces from, worked out outside MEDS (the old '// &
-                    'rule was the fraction times the height of a 100 cm tree, capped at hgt_max)') ]
+                    'rule was the fraction times the height of a 100 cm tree, capped at hgt_max)'), &
+      retired_key_t('pft.dbh_critical', 'a cohort''s size is limited by its height cap, '//        &
+                    '[allometry].hgt_max, and the growth sink limits pft.max_*_growth_*; delete the key') ]
 
    !----- The [soil] keys a [[sites]] table may set, under the same names: the site's soil column !
    !      and its bottom. The ground's surface and its thermal boundary are the run's. -----------!

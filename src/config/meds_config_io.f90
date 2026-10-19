@@ -1330,7 +1330,6 @@ contains
       call alloc_pft_table(cfg%pft, npft)
       cfg%pft%wood_density = buf(1:npft)
 
-      call req_pa(tp, 'pft.dbh_critical',                     cfg%pft%dbh_critical,                     npft, miss)
       call req_pa(tp, 'pft.reproduction_investment_fraction', cfg%pft%reproduction_investment_fraction, npft, miss)
       call req_pa(tp, 'pft.recruit_carbon_efficiency',        cfg%pft%recruit_carbon_efficiency,        npft, miss)
       call opt_pa(tp, 'pft.recruit_shade_decay',              cfg%pft%recruit_shade_decay,              npft, miss)
@@ -1516,7 +1515,7 @@ contains
          write(*,'(3a)') ' warning: could not write PFT parameters CSV "', trim(path), '"'
          return
       end if
-      write(u,'(a)') 'pft,wood_density,dbh_critical,hgt_max,'                                       &
+      write(u,'(a)') 'pft,wood_density,hgt_max,'                                                    &
            //'reproduction_investment_fraction,recruit_carbon_efficiency,'                            &
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
            //'min_cohort_height,min_repro_height,'                                         &
@@ -1536,12 +1535,12 @@ contains
            //'agb_c1,agb_c2,lai_b1,lai_b2,wai_b1,wai_b2,sapwood_area_b1,sapwood_area_b2'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 81 ITEMS: i0 + 9 + i0 + 2 + i0 + 48 + i0 + 18. A format SHORTER than the value    !
+            !----- 80 ITEMS: i0 + 8 + i0 + 2 + i0 + 48 + i0 + 18. A format SHORTER than the value    !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8),",",i0,18(",",es15.8))') &
-                 pf, p%wood_density(pf), p%dbh_critical(pf), p%allom(pf)%hgt_max,                       &
+            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8),",",i0,18(",",es15.8))') &
+                 pf, p%wood_density(pf), p%allom(pf)%hgt_max,                                           &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
                  p%include_pft(pf), p%min_cohort_height, p%min_repro_height(pf),                        &

@@ -173,8 +173,8 @@ contains
          n_window = growth_window_steps(cfg)
          poly%growth_hist_pos = mod(poly%growth_hist_pos, n_window) + 1_ik
          !----- Empirical growth + mortality via the TENDENCY seam: per cohort, forward-derive the   !
-         !      on-allometry pools of the new size from the SUPPLIED growth rate [cm/yr] (capped at   !
-         !      dbh_critical; mirrors set_cohort_size), back out each pool's time-                     !
+         !      on-allometry pools of the new size from the SUPPLIED growth rate [cm/yr] (mirrors     !
+         !      set_cohort_size), back out each pool's time-                                           !
          !      derivative, and advance the moving-average ring buffer with the supplied rate (the     !
          !      empirical convention -- records the request even when dbh is capped); then let the     !
          !      core engine's pure applier advance the state. There is deliberately NO empirical        !
@@ -186,7 +186,7 @@ contains
                pf = cohort%pft(i)
                !----- Forward allometry from the supplied dbh growth. It CALLS meds_allometry rather   !
                !      than inlining it, so a coefficient change reaches the model and this shim alike. !
-               dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, pft%dbh_critical(pf))
+               dbh_new    = cohort%dbh(i) + g(i) * cfg%dt_years
                height_new = dbh_to_height(cohort%pft_table%allom(pf), dbh_new)
                lc_new     = size2leaf_carbon(cohort%pft_table%allom(pf), dbh_new, height_new, cohort%sla(i))
                wc_new     = size2wood_carbon(cohort%pft_table%allom(pf), dbh_new, height_new, pft%wood_density(pf))
