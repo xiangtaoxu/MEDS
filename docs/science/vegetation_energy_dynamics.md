@@ -162,8 +162,8 @@ Per unit ground area, with $B$ the dry biomass (carbon × 2 × $`n_{plant}`$):
 \mathrm{cap}_{leaf} = c_{leaf}\,B_{leaf} + c_{liq}\,W_{leaf} \qquad(8)
 ```
 
-with $`c_{wood}`$ = 1217 J kg⁻¹ K⁻¹, ED2's specific heat of **dry** wood at 15 °C (`c_wood_dry`;
-103.1 + 3.867 T), $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ for dry leaf (`c_leaf`), $`W_{wood}`$ the wood
+with $`c_{wood}`$ = 1217 J kg⁻¹ K⁻¹, ED2's specific heat of **dry** wood at 15 °C (`TISSUE_C_WOOD_DRY`;
+103.1 + 3.867 T), $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ for dry leaf (`TISSUE_C_LEAF`; both in `meds_constants`), $`W_{wood}`$ the wood
 store's water per plant and $`W_{leaf}`$ the leaf's internal water,
 both from the water network. Fresh wood's specific heat (about 2700 J kg⁻¹ K⁻¹ at 100 % moisture) is
 not used: the water is counted on its own, so a fresh-wood value would count it twice. The function

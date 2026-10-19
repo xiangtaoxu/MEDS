@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_column_ark
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max
+   use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, TISSUE_C_WOOD_DRY
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -284,7 +284,7 @@ contains
       call set_noon_forcing()
       w_store = biophys%wood_water_mass(1)
       w_sap   = w_store * col_cohort%bsap(1) / (col_cohort%bsap(1) + col_cohort%broot(1))
-      cap_dry = col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * col_config%veg_thermal%c_wood_dry
+      cap_dry = col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * TISSUE_C_WOOD_DRY
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, n, nsl, fz, ys)
       cap_full = fz%tissue%wood_hcap_per_dt(1) * dt_fast

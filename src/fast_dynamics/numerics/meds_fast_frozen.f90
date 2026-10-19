@@ -16,7 +16,8 @@
 !==========================================================================================!
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
-   use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple, C2B_WOOD
+   use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple,        &
+                              TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
    use meds_water_retention, only : rwc_from_psi, wood_thermal_water
@@ -36,7 +37,7 @@ module meds_fast_frozen
                                column_bflux_t, error_control_t, column_tend_t, mask_is_full
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
-   use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy
+   use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy, tissue_dry_heat_capacity
    use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_opts, only : snow_params_t
    use meds_patch_state_vars,   only : snow_column_t
@@ -213,8 +214,8 @@ contains
          !      share of the store the water network carries on sapwood and fine roots                    !
          !      (biophys%wood_water_mass), so a drought-emptied store holds less heat; heartwood holds    !
          !      none. ------------------------------------------------------------------------------------!
-         frozen%tissue%wood_dry_hcap(i) = col_cohort%bwood(i) * col_cohort%nplant(i) * C2B_WOOD               &
-                                          * col_config%veg_thermal%c_wood_dry
+         frozen%tissue%wood_dry_hcap(i) = tissue_dry_heat_capacity(col_cohort%nplant(i), col_cohort%bwood(i),     &
+                                                                   TISSUE_C_WOOD_DRY)
          frozen%tissue%wood_wmass(i)    = col_cohort%nplant(i) * wood_thermal_water(biophys%wood_water_mass(i),    &
                                                                                     col_cohort%bsap(i), col_cohort%broot(i))
          !----- LEAF capacity, same two-part construction: dry leaf tissue + the INTERNAL (symplast)     !
@@ -224,8 +225,8 @@ contains
          !      advective-enthalpy zeroing above. The intercepted FILM is deliberately NOT here: it      !
          !      is a separate store with its own phase, and folding it into a temperature-based          !
          !      capacity would commit to a film that can never freeze. ----------------------------------!
-         frozen%tissue%leaf_dry_hcap(i) = col_cohort%bleaf(i) * col_cohort%nplant(i) * C2B_WOOD               &
-                                          * col_config%veg_thermal%c_leaf
+         frozen%tissue%leaf_dry_hcap(i) = tissue_dry_heat_capacity(col_cohort%nplant(i), col_cohort%bleaf(i),     &
+                                                                   TISSUE_C_LEAF)
          frozen%tissue%leaf_wmass(i)    = max(biophys%leaf_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
          !----- The wood's radiation and sensible coefficient are always filled: there is ONE wood       !
          !      energy balance (surface_derivs), relaxed by the wood's own heat capacity, so these       !

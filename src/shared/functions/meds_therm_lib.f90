@@ -16,7 +16,7 @@ module meds_therm_lib
    implicit none
    private
 
-   public :: tissue_heat_capacity
+   public :: tissue_heat_capacity, tissue_dry_heat_capacity
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
    public :: air_vpd, specific_humidity_to_vpd
 
@@ -41,8 +41,17 @@ contains
       real(wp), intent(in) :: carbon   !< [kgC/plant] the tissue's carbon
       real(wp), intent(in) :: c_dry    !< [J/kg/K]    specific heat of its dry matter
       real(wp), intent(in) :: water    !< [kg/plant]  the water it holds
-      cap = carbon * nplant * C2B_WOOD * c_dry + water * nplant * cp_liq
+      cap = tissue_dry_heat_capacity(nplant, carbon, c_dry) + water * nplant * cp_liq
    end function tissue_heat_capacity
+
+   !----- The dry half of a tissue's heat capacity per m2 of ground [J/m2/K]: its carbon as dry      !
+   !      mass, at its dry specific heat (TISSUE_C_LEAF or TISSUE_C_WOOD_DRY). ----------------------!
+   elemental pure real(wp) function tissue_dry_heat_capacity(nplant, carbon, c_dry) result(cap)
+      real(wp), intent(in) :: nplant   !< [plant/m2]
+      real(wp), intent(in) :: carbon   !< [kgC/plant] the tissue's carbon
+      real(wp), intent(in) :: c_dry    !< [J/kg/K]    specific heat of its dry matter
+      cap = carbon * nplant * C2B_WOOD * c_dry
+   end function tissue_dry_heat_capacity
 
    !---------------------------------------------------------------------------------------!
    ! SATURATION VAPOUR PRESSURE, over liquid water OR over ice                                 !
