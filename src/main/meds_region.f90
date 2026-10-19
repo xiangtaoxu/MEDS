@@ -26,7 +26,7 @@
 !==========================================================================================!
 module meds_region
    use meds_kinds,                  only : wp, ik
-   use meds_constants,              only : day_sec, yr_day, area_tol
+   use meds_constants,              only : day_sec, yr_day
    use meds_numerics,               only : ascending_order
    use meds_config,                 only : meds_config_t, validate_config, INIT_CENSUS, INIT_RESTART,  &
                                            RUN_MODE_REGION, soil_maps_on, site_config
@@ -62,6 +62,10 @@ module meds_region
    public :: region_free
    !----- The status codes live with the step (meds_polygon); re-exported for the run's callers. ---!
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
+
+   !----- How far the patch areas of a polygon may sum from one at the end of a run before the run  !
+   !      reports DRIVER_ERR_AREA. ------------------------------------------------------------------!
+   real(wp), parameter :: AREA_TOL = 1.0e-5_wp
 
    !----- Everything a run needs between steps. No state hides in module scope, so two runs can be  !
    !      open at once (which is what the C-API's handle registry does). --------------------------!
@@ -712,7 +716,7 @@ contains
                write(*,'(a)') '-----------------------------------------------------------------------------'
                write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%area_start, '  end=', a1
             end if
-            if (abs(a1 - 1.0_wp) > area_tol) st = DRIVER_ERR_AREA
+            if (abs(a1 - 1.0_wp) > AREA_TOL) st = DRIVER_ERR_AREA
             if (reg%verbose) call polygon_report(reg%cfg, run)
          end associate
       else
@@ -723,7 +727,7 @@ contains
          do p = 1_ik, size(reg%poly, kind=ik)
             associate (poly => reg%poly(p), run => reg%run(p))
                a1 = total_area(poly)
-               if (abs(a1 - 1.0_wp) > area_tol) then
+               if (abs(a1 - 1.0_wp) > AREA_TOL) then
                   st = DRIVER_ERR_AREA
                   n_bad = n_bad + 1_ik
                end if

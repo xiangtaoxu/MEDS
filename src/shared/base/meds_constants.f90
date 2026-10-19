@@ -3,7 +3,7 @@
 ! meds_constants -- compile-time constants and a few pure scalar helpers.                  !
 !                                                                                          !
 ! No mutable state lives here. Calendar constants follow ED2 (proleptic Gregorian mean     !
-! year). area_tol is the tolerance of the end-of-run check that the patch areas sum to one.  !
+! year).                                                                                   !
 !==========================================================================================!
 module meds_constants
    use meds_kinds, only : wp, ik
@@ -28,8 +28,6 @@ module meds_constants
    real(wp), parameter :: yr_day      = 365.2425_wp           !< days per year
    real(wp), parameter :: day_sec     = 86400.0_wp            !< seconds per day
    real(wp), parameter :: yr_sec      = yr_day * day_sec      !< seconds per year
-   real(wp), parameter :: mon_per_yr  = 12.0_wp
-   real(wp), parameter :: day_per_mon = yr_day / mon_per_yr   !< ~30.4 days per month
 
    !----- Physical constants (leaf biophysics: photosynthesis / stomatal conductance). ----!
    real(wp), parameter :: r_gas       = 8.314462618_wp       !< [J/mol/K] universal gas constant
@@ -50,7 +48,6 @@ module meds_constants
    real(wp), parameter :: umol_2_kgc     = 1.20107e-8_wp       !< [kgC/umol] carbon mass per umol CO2 (12.0107 g/mol)
    real(wp), parameter :: kgc_2_umol     = 1.0_wp / umol_2_kgc !< [umol/kgC]  (~8.3259e7)
    real(wp), parameter :: kgcday_2_umols = kgc_2_umol / day_sec  !< [(umol/m2/s) per (kgC/m2/day)]  (~963.6)
-   real(wp), parameter :: umols_per_kgcyr = kgc_2_umol / yr_sec  !< [(umol/m2/s) per (kgC/m2/yr)]   (~2.638)
 
    !----- Soil hydrology (vertical water column). -----------------------------------------!
    real(wp), parameter :: rho_h2o     = 1000.0_wp            !< [kg/m3] liquid-water density (kg/m2 <-> m <-> m3/m3)
@@ -80,7 +77,6 @@ module meds_constants
    !----- Thermal conductivities [W/m/K] and the triple point. -----------------------------------!
    real(wp), parameter :: k_water = 0.57_wp                  !< liquid-water thermal conductivity
    real(wp), parameter :: k_ice   = 2.29_wp                  !< ice thermal conductivity
-   real(wp), parameter :: k_air   = 0.025_wp                 !< air thermal conductivity
    real(wp), parameter :: t_3ple  = 273.16_wp                !< [K] triple point (distinct from t_kelvin = 273.15)
    !----- Internal-energy zero references (ED2 cmtl2uext-consistent; see meds_therm_lib and       !
    !      MEDS_ENERGY_BALANCE_DESIGN.md §3.1). ---------------------------------------------------!
@@ -93,9 +89,6 @@ module meds_constants
    real(wp), parameter :: almost_one = 1.0_wp - 1.0e-7_wp
    real(wp), parameter :: lnexp_min  = -38.0_wp               !< clamp for exp() arguments
    real(wp), parameter :: lnexp_max  =  38.0_wp
-
-   !----- Conservation tolerance. --------------------------------------------------------!
-   real(wp), parameter :: area_tol = 1.0e-5_wp                !< patch-area sum tolerance
 
 contains
 
