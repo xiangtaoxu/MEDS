@@ -20,7 +20,7 @@ module meds_fast_frozen
                               TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
-   use meds_water_retention, only : rwc_from_psi, wood_thermal_water
+   use meds_water_retention, only : rwc_from_psi
    use meds_hydr_lib, only : plc_retained, xylem_max_conductance, rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
    use meds_config, only : meds_config_t, pft_wstress_psi_close
@@ -210,14 +210,13 @@ contains
          !      (docs/science/vegetation_energy_dynamics.md eq. (8)). DRY tissue is ALL the wood          !
          !      (col_cohort%bwood), at the dry specific heat -- heartwood is dead structure but it still  !
          !      stores sensible heat, and a sapwood fraction defined on the bole under-counts branch      !
-         !      wood, which is thin enough to be thermally active throughout. Its WATER is the sapwood    !
-         !      share of the store the water network carries on sapwood and fine roots                    !
-         !      (biophys%wood_water_mass), so a drought-emptied store holds less heat; heartwood holds    !
-         !      none. ------------------------------------------------------------------------------------!
+         !      wood, which is thin enough to be thermally active throughout. Its WATER is the store the  !
+         !      water network carries on the sapwood and fine roots (biophys%wood_water_mass), which      !
+         !      the network moves at the wood's temperature, so a drought-emptied store holds less heat;  !
+         !      heartwood holds none. --------------------------------------------------------------------!
          frozen%tissue%wood_dry_hcap(i) = tissue_dry_heat_capacity(col_cohort%nplant(i), col_cohort%bwood(i),     &
                                                                    TISSUE_C_WOOD_DRY)
-         frozen%tissue%wood_wmass(i)    = col_cohort%nplant(i) * wood_thermal_water(biophys%wood_water_mass(i),    &
-                                                                                    col_cohort%bsap(i), col_cohort%broot(i))
+         frozen%tissue%wood_wmass(i)    = max(biophys%wood_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
          !----- LEAF capacity, same two-part construction: dry leaf tissue + the INTERNAL (symplast)     !
          !      water the hydraulics carries, biophys%leaf_water_mass [kg/plant] -> per m2 ground.       !
          !      Read from biophys, NOT from y: y%leaf_water_mass is not filled until the end of this     !

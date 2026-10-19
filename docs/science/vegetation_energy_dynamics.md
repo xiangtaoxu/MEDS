@@ -147,30 +147,29 @@ halves across **different** masses, which is a physical distinction and not a de
 - **dry tissue → ALL the wood**, at the dry specific heat. Heartwood is dead structure but still
   stores sensible heat, and a sapwood fraction defined on the bole under-counts branch wood, which is
   thin enough to be thermally active throughout.
-- **water → the sapwood share of the water network's store.** The network's wood store is the
-  sapwood **plus the fine roots**, with one prognostic water mass $`W_{wood}`$
-  ([plant_hydraulics](plant_hydraulics.md) §1) and a capacity in proportion to their carbon; the
-  heat capacity counts the sapwood's share of it. The fine roots sit in the soil, so their share is
-  not the wood's, and heartwood holds none, which is what makes it heartwood. A store that drains
-  through a dry season holds less heat.
+- **water → the water network's whole wood store.** The network's wood store is the sapwood **plus
+  the fine roots**, with one prognostic water mass $`W_{wood}`$ ([plant_hydraulics](plant_hydraulics.md)
+  §1). The network moves all of that water at the wood's temperature
+  ([soil_plant_water](soil_plant_water.md) eqs. (4)–(5)), so the heat capacity counts all of it, the
+  fine roots' share included; heartwood holds none, which is what makes it heartwood. A store that
+  drains through a dry season holds less heat.
 
 Per unit ground area, with $B$ the dry biomass (carbon × 2 × $`n_{plant}`$):
 
 ```math
-\mathrm{cap}_{wood} = c_{wood}\,B_{wood}
-  + c_{liq}\,n_{plant}\,W_{wood}\,\frac{B_{sap}}{B_{sap}+B_{root}}, \qquad
+\mathrm{cap}_{wood} = c_{wood}\,B_{wood} + c_{liq}\,n_{plant}\,W_{wood}, \qquad
 \mathrm{cap}_{leaf} = c_{leaf}\,B_{leaf} + c_{liq}\,W_{leaf} \qquad(8)
 ```
 
-with $`c_{wood}`$ = 1217 J kg⁻¹ K⁻¹, ED2's specific heat of **dry** wood at 15 °C (`TISSUE_C_WOOD_DRY`;
-103.1 + 3.867 T), $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ for dry leaf (`TISSUE_C_LEAF`; both in `meds_constants`), $`W_{wood}`$ the wood
-store's water per plant and $`W_{leaf}`$ the leaf's internal water,
-both from the water network. Fresh wood's specific heat (about 2700 J kg⁻¹ K⁻¹ at 100 % moisture) is
-not used: the water is counted on its own, so a fresh-wood value would count it twice. The function
-`wood_thermal_water` gives the water term to both the fast loop and the state layer's
-`cohort_tissue_heat_capacity`, so the fusion weights and the slow ledger use the same capacity. The
-intercepted film is a separate store and is not in $`\mathrm{cap}_{leaf}`$. The wood masses come from
-the ED2 allometry (`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`, `sapwood_area_b1/b2`).
+with $`c_{wood}`$ = 1217 J kg⁻¹ K⁻¹, ED2's specific heat of **dry** wood at 15 °C
+(`TISSUE_C_WOOD_DRY`; 103.1 + 3.867 T), $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ for dry leaf (`TISSUE_C_LEAF`;
+both in `meds_constants`), $`W_{wood}`$ the wood store's water per plant and $`W_{leaf}`$ the leaf's
+internal water, both from the water network. Fresh wood's specific heat (about 2700 J kg⁻¹ K⁻¹ at
+100 % moisture) is not used: the water is counted on its own, so a fresh-wood value would count it
+twice. The fast loop and the state layer's `cohort_tissue_heat_capacity` build the capacity the same
+way, so the fusion weights and the slow ledger use the same capacity. The intercepted film is a
+separate store and is not in $`\mathrm{cap}_{leaf}`$. The wood masses come from the ED2 allometry
+(`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`, `sapwood_area_b1/b2`).
 Sized this way, with a saturated store (`wood_water_sat` = 1 kg per kg of carbon),
 `τ_wood ≈ 600–760 s` and `w_end ≈ 0.22–0.31` at `dt_fast = 900 s` — wood carries **genuine memory**.
 

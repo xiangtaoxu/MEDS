@@ -178,8 +178,8 @@ program test_slow_ledger
    call check_recruit_pool()
 
    !=== 11. The turnover shed takes its water's HEAT with it, and declares it. =================!
-   !        The leaf's heat capacity counts its water and the wood's counts the sapwood share of   !
-   !        its store, so shedding either moves the tissue heat store; the declared energy must    !
+   !        The leaf's heat capacity counts its water and the wood's its whole store, so          !
+   !        shedding either moves the tissue heat store; the declared energy must                  !
    !        explain that move exactly.                                                              !
    call check_shed_heat()
    !=== 12. Tissue water is booked when it is made, shed or moved: a recruit's birth water, a    !

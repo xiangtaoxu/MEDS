@@ -440,7 +440,7 @@ module meds_fast_types
       !----- The heat-capacity inputs behind leaf_hcap_per_dt/wood_hcap_per_dt = (dry hcap + water !
       !      mass*cp_liq)/dt (docs/science/vegetation_energy_dynamics.md eq. (8)). ----------------!
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry wood heat capacity
-      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   the sapwood share of the wood store's water
+      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   the wood store's water (sapwood and fine roots)
       real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity
       real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water mass
    end type tissue_coefficients_t

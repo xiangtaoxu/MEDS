@@ -28,7 +28,6 @@ module meds_water_retention
    public :: water_curve_t
    public :: pv_psi_tlp, pv_rwc_tlp, rwc_from_psi, psi_from_rwc
    public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity, shared_potential
-   public :: wood_thermal_water
    !----- Soil retention family: the soil-water analogue of the tissue curve -- theta(psi) and    !
    !      psi(theta) read-offs.                                                                    !
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
@@ -249,19 +248,6 @@ contains
       type(water_curve_t), intent(in) :: curve
       w_capped = min(w, curve%water_sat*biomass)
    end function clamp_water_to_capacity
-
-   !----- The wood's THERMAL water [kg/plant]: the sapwood share of the store the water network        !
-   !      carries on the sapwood and the fine roots together (wood_water_mass), split in proportion   !
-   !      to their carbon, as the store's capacity is (docs/science/vegetation_energy_dynamics.md     !
-   !      eq. (8)). The fine roots sit in the soil, so their share is not in the wood's heat          !
-   !      capacity; heartwood holds none, which is what makes it heartwood. One function for the     !
-   !      fast loop's frozen capacity and the state layer's shared capacity. ------------------------!
-   elemental real(wp) function wood_thermal_water(w_wood, bsap, broot) result(w)
-      real(wp), intent(in) :: w_wood   !< [kg/plant]  water in the network's wood store
-      real(wp), intent(in) :: bsap     !< [kgC/plant] sapwood carbon
-      real(wp), intent(in) :: broot    !< [kgC/plant] fine-root carbon
-      w = max(w_wood, 0.0_wp) * bsap / max(bsap + broot, tiny_num)
-   end function wood_thermal_water
 
    !=======================================================================================!
    !  SOIL retention curves: van Genuchten-Mualem (default) or Campbell / Clapp-Hornberger     !

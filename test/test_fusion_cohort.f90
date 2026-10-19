@@ -105,16 +105,14 @@ program test_fusion_cohort
                     'diagnostic wood temperature fuses as the prognostic one (wood heat capacity)')
    !----- The formulae above are the MEANS to this end: the merged tissue must hold the energy the  !
    !      two cohorts held. Asserted separately so a future change of weighting is judged on what   !
-   !      it conserves, not on whether it matches today's expression. The LEAF capacity is additive !
-   !      through the merge (leaf_carbon and leaf_water_mass are both nplant-weighted), so its      !
-   !      energy closes exactly; the WOOD's does not, because set_cohort_size_from_carbon re-derives!
-   !      the sapwood ring from the merged diameter -- that residual is a thermal-mass change, of   !
-   !      the same kind growth makes, and it is bounded here rather than asserted to zero. ---------!
+   !      it conserves, not on whether it matches today's expression. Both capacities are additive  !
+   !      through the merge (the carbon pools and the tissue waters are all nplant-weighted), so    !
+   !      both energies close exactly. -----------------------------------------------------------!
    call cohort_tissue_heat_capacity(poly%cohort, 1_ik, clf, cwf)
    call check_close(clf*poly%cohort%leaf_temp(1), e_leaf0, 1.0e-12_wp,                              &
                     'cohort fusion must conserve LEAF tissue energy exactly')
-   call check(abs(cwf*poly%cohort%wood_temp(1) - e_wood0) <= 1.0e-3_wp * abs(e_wood0),              &
-              'cohort fusion must conserve WOOD tissue energy to the sapwood re-derivation')
+   call check_close(cwf*poly%cohort%wood_temp(1), e_wood0, 1.0e-12_wp,                              &
+                    'cohort fusion must conserve WOOD tissue energy exactly')
    block
       real(wp) :: nt
       nt = np1 + np2

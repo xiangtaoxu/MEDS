@@ -20,7 +20,7 @@ module meds_cohort_state_vars
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
    use meds_therm_lib,       only : tissue_heat_capacity
-   use meds_water_retention, only : wood_thermal_water, water_curve_t, water_content
+   use meds_water_retention, only : water_curve_t, water_content
    use meds_numerics,        only : pair_mean
    use meds_allometry,       only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,        &
                                     carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
@@ -653,9 +653,8 @@ contains
                                      cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
    end subroutine set_cohort_tissue_water
 
-   !----- One cohort's INTERNAL (hydraulic) tissue water [kg/m2 ground]: the stores the plant     !
-   !       hydraulics carries, of which the heat capacity above counts the leaf's and the wood     !
-   !       store's sapwood share. -----------------------------------------------------------------!
+   !----- One cohort's INTERNAL (hydraulic) tissue water [kg/m2 ground]: the stores the plant    !
+   !       hydraulics carries, both of which its heat capacity counts. --------------------------!
    pure function cohort_tissue_water(cohort, i) result(w)
       type(cohort_block), intent(in) :: cohort
       integer(ik),        intent(in) :: i
@@ -672,10 +671,10 @@ contains
       w = cohort%nplant(i) * (cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
    end function cohort_film_water
 
-   !----- One cohort's leaf and wood heat capacity [J/m2 ground/K], from tissue_heat_capacity. The  !
-   !      wood holds the sapwood's share of the wood store's water (wood_thermal_water); the fine   !
-   !      roots' share sits in the soil. The fusion weights, the demography operators and the slow  !
-   !      ledger all take it from here, so they agree on a cohort's thermal mass. -------------------!
+   !----- One cohort's leaf and wood heat capacity [J/m2 ground/K], from tissue_heat_capacity. The!
+   !      wood holds the whole wood store's water, its fine roots' share included. The fusion     !
+   !      weights, the demography operators and the slow ledger all take it from here, so they    !
+   !      agree on a cohort's thermal mass. ------------------------------------------------------!
    pure subroutine cohort_tissue_heat_capacity(cohort, i, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
@@ -683,8 +682,7 @@ contains
       cap_leaf = tissue_heat_capacity(cohort%nplant(i), cohort%leaf_carbon(i), TISSUE_C_LEAF,           &
                                       max(cohort%leaf_water_mass(i), 0.0_wp))
       cap_wood = tissue_heat_capacity(cohort%nplant(i), cohort%wood_carbon(i), TISSUE_C_WOOD_DRY,       &
-                                      wood_thermal_water(cohort%wood_water_mass(i), cohort%sapwood_carbon(i), &
-                                                         cohort%fineroot_carbon(i)))
+                                      max(cohort%wood_water_mass(i), 0.0_wp))
    end subroutine cohort_tissue_heat_capacity
 
    !=======================================================================================!
@@ -796,12 +794,9 @@ contains
       !      which have no reason to scale with leaf area -- so fusing two cohorts of different      !
       !      wood:leaf ratio on leaf area would move the tissue energy by ~1e4 J an event.           !
       !                                                                                          !
-      !      Capacity weighting conserves `cap x T` EXACTLY for the additive part, because the    !
-      !      merged capacity IS the sum: leaf_carbon, wood_carbon and the tissue waters are all   !
-      !      nplant-weighted below, so nplant x pool adds across the merge. What does not add is  !
-      !      the sapwood ring, which set_cohort_size_from_carbon re-derives from the merged dbh;  !
-      !      that leaves a small thermal-mass change, of the same kind growth makes and declared   !
-      !      the same way by the caller.  --------------------------------------------------!
+      !      Capacity weighting conserves `cap x T` EXACTLY, because the merged capacity IS the  !
+      !      sum: leaf_carbon, wood_carbon and the tissue waters are all nplant-weighted below,  !
+      !      so nplant x pool adds across the merge. --------------------------------------------!
       call cohort_tissue_heat_capacity(cohort, recc, clr, cwr)
       call cohort_tissue_heat_capacity(cohort, donc, cld, cwd)
       call blend(cohort%leaf_temp,        clr, cld)

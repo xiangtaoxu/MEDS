@@ -17,8 +17,7 @@ module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day, grav_head
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp, pft_tissue_curves
-   use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential, &
-                                         wood_thermal_water
+   use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
    use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon
@@ -847,19 +846,16 @@ contains
             end if
             if (dpool%fineroot(j) < 0.0_wp) then
                shed_frac   = min(1.0_wp, -dpool%fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
-               !----- The fine roots' own share of the store: what wood_thermal_water leaves of it. --!
-               shed_amount = (cohort%wood_water_mass(j)                                               &
-                              - wood_thermal_water(cohort%wood_water_mass(j), cohort%sapwood_carbon(j),  &
-                                                   cohort%fineroot_carbon(j))) * shed_frac
+               !----- The fine roots' own share of the store, in proportion to their carbon. ------!
+               shed_amount = max(cohort%wood_water_mass(j), 0.0_wp) * cohort%fineroot_carbon(j)   &
+                           / max(cohort_wood_store_carbon(cohort%sapwood_carbon(j), cohort%fineroot_carbon(j)), &
+                                 tiny_num) * shed_frac
                cohort%wood_water_mass(j) = cohort%wood_water_mass(j) - shed_amount
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
-               !----- LEDGER: the wood's thermal water is the sapwood share of the store              !
-               !      (wood_thermal_water), so draining the store lowers it by that share of the shed, !
-               !      at the wood's temperature, as the leaf's shed does at the leaf's. The carbon     !
-               !      commit's lower broot raises the share back, a thermal-mass change it declares.   !
-               shed_enth = shed_enth + patch_polygon_area(poly, ip) * cohort%nplant(j) * cp_liq * cohort%wood_temp(j) &
-                                     * wood_thermal_water(shed_amount, cohort%sapwood_carbon(j),        &
-                                                          cohort%fineroot_carbon(j))
+               !----- LEDGER: the wood's heat capacity counts its whole store, so the shed takes its  !
+               !      sensible heat with it at the wood's temperature, as the leaf's does at the leaf's. !
+               shed_enth = shed_enth + patch_polygon_area(poly, ip) * cohort%nplant(j) * shed_amount  &
+                                     * cp_liq * cohort%wood_temp(j)
             end if
          end do
       end associate

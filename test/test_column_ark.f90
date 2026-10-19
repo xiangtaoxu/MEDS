@@ -272,30 +272,28 @@ contains
       call reset_state()
    end subroutine test_refilling_wood_isothermal
 
-   !----- The wood's heat capacity is its dry wood at the dry specific heat plus the sapwood share of   !
-   !      the water network's store (docs/science/vegetation_energy_dynamics.md eq. (8)), so a store     !
-   !      drained by a fifth holds a fifth less of that water's heat, and the fine roots' share is not  !
-   !      counted at all. ------------------------------------------------------------------------------!
+   !----- The wood's heat capacity is its dry wood at the dry specific heat plus the water network's   !
+   !      wood store, its fine roots' share included (docs/science/vegetation_energy_dynamics.md       !
+   !      eq. (8)), so a store drained by a fifth holds a fifth less of that water's heat. ------------!
    subroutine test_wood_capacity_follows_store()
       type(column_frozen_t) :: fz
       type(column_state_t)  :: ys
-      real(wp) :: w_store, w_sap, cap_dry, cap_full, cap_drained
+      real(wp) :: w_store, cap_dry, cap_full, cap_drained
       call reset_state()
       call set_noon_forcing()
       w_store = biophys%wood_water_mass(1)
-      w_sap   = w_store * col_cohort%bsap(1) / (col_cohort%bsap(1) + col_cohort%broot(1))
       cap_dry = col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * TISSUE_C_WOOD_DRY
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, n, nsl, fz, ys)
       cap_full = fz%tissue%wood_hcap_per_dt(1) * dt_fast
-      call check_close(cap_full, cap_dry + col_cohort%nplant(1) * w_sap * cp_liq, 1.0e-12_wp * cap_full,       &
-                       'wood heat capacity = dry wood + the sapwood share of the store''s water')
+      call check_close(cap_full, cap_dry + col_cohort%nplant(1) * w_store * cp_liq, 1.0e-12_wp * cap_full,     &
+                       'wood heat capacity = dry wood + the wood store''s water')
       call check_true('the fine roots hold part of the store', col_cohort%broot(1) > 0.0_wp, col_cohort%broot(1))
       biophys%wood_water_mass(1) = 0.8_wp * w_store
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, n, nsl, fz, ys)
       cap_drained = fz%tissue%wood_hcap_per_dt(1) * dt_fast
-      call check_close(cap_full - cap_drained, 0.2_wp * col_cohort%nplant(1) * w_sap * cp_liq,                  &
+      call check_close(cap_full - cap_drained, 0.2_wp * col_cohort%nplant(1) * w_store * cp_liq,                &
                        1.0e-9_wp * cap_full, 'a store drained by a fifth holds a fifth less water heat')
       call reset_state()
    end subroutine test_wood_capacity_follows_store

@@ -17,7 +17,6 @@ program test_surface_energy
    use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi, cp_liq, TISSUE_C_WOOD_DRY
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_plant_types, only : veg_thermal_params_t
-   use meds_water_retention,  only : wood_thermal_water
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy
    use meds_plant_biophysics, only : veg_energy_balance
@@ -82,15 +81,15 @@ contains
          !        DRY tissue   -> ALL the wood. Heartwood is dead structure but still stores      !
          !                        sensible heat, and a bole-defined sapwood fraction under-counts !
          !                        branch wood, which is thermally active throughout.              !
-         !        INTERNAL WATER -> the sapwood share of the water network's store, here a        !
-         !                        saturated one (wood_thermal_water). Heartwood holds none, which !
-         !                        is what makes it heartwood.                                     !
+         !        INTERNAL WATER -> the water network's wood store, here a saturated sapwood ring !
+         !                        with no fine roots. Heartwood holds none, which is what makes   !
+         !                        it heartwood.                                                   !
          !      ONE enthalpy pool at ONE temperature either way -- a bole/branch partition would  !
          !      mean two wood temperatures and is deliberately not taken. --------------------!
          dbio_w   = wc(i) * npl(i) * C2B                                ! [kg dry/m2] all wood
          dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
          cap    = dbio_w * TISSUE_C_WOOD_DRY                                                    &
-                + wood_thermal_water(WOOD_WATER_SAT * dbio_sap / C2B, dbio_sap / C2B, 0.0_wp) * cp_liq
+                + WOOD_WATER_SAT * dbio_sap / C2B * cp_liq
          drdt   = 8.0_wp * WOOD_EMISS * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
          tau    = cap / drdt
          !----- the EXACT endpoint memory the kernel uses (eq. (4)), not backward Euler's 1/(1+x) !
