@@ -23,7 +23,7 @@
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
-   use meds_polygon_state_vars, only : polygon_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
    use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
@@ -531,7 +531,8 @@ contains
    subroutine check_shed_heat()
       type(pool_change_block) :: dpool
       type(slow_ledger_t)     :: lg
-      integer(ik) :: nc, i
+      integer(ik) :: nc, i, ip
+      real(wp)    :: fast_in
       nc = poly%cohort%n
       allocate(dpool%leaf(nc), dpool%fineroot(nc), dpool%wood(nc), dpool%nonstructural(nc))
       dpool%wood = 0.0_wp ; dpool%nonstructural = 0.0_wp
@@ -553,6 +554,13 @@ contains
       call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%water)                                       &
                  <= 1.0e-12_wp * lg%decl_gross(SLOW_PHASE_ALLOCATE)%water,                             &
                  'shed heat: the declared water is the tissue water store''s change')
+      !----- What the fast tier takes in over the day it reads the rate, summed over the patches. --!
+      fast_in = 0.0_wp
+      do ip = 1_ik, poly%patch%n
+         fast_in = fast_in + patch_polygon_area(poly, ip) * poly%patch%shed_water_enth(ip) * cfg%dt_slow
+      end do
+      call check_close(fast_in, lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy, 1.0e-12_wp,                  &
+                       'shed heat: the fast tier takes in the enthalpy the shed handed off')
    end subroutine check_shed_heat
 
    pure function tissue_water_total(st) result(w)

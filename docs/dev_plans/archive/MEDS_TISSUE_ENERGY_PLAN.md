@@ -1,6 +1,19 @@
 # MEDS tissue energy plan: `leaf_energy` and `wood_energy`
 
-**Revision 3, 2026-10-19.** Approved by the owner; implemented on `feat/tissue-energy` (log in §8).
+> # 🗃️ ARCHIVED — 2026-10-19. Complete: every step shipped in PR #457.
+>
+> **What shipped**, one commit per step, with the departures recorded in §8:
+> - one definition of the tissues' dry heat capacity (E1);
+> - the canopy films per plant (E2);
+> - the whole wood store in the wood's heat capacity (E3);
+> - `leaf_energy` and `wood_energy` [J/plant] as each cohort's tissue state, with the temperatures derived from them (E4);
+> - the shed water's enthalpy, `shed_water_enth` (E5).
+>
+> **The live description** is `docs/science/vegetation_energy_dynamics.md` (eq. (8) and "The tissue's energy is its state") and `docs/science/soil_plant_water.md` §2 and §5.
+>
+> **Deferred** to `docs/ROADMAP.md` §5: tissue freezing and cold-driven mortality (#456), and the films inside the tissue energy (#165).
+
+**Revision 3, 2026-10-19.** Approved by the owner; implemented in PR #457 (log in §8).
 
 - **Base:** `origin/beta` at f6dfa9e (after S5 of the multi-site plan).
 - **Origin:** the last open item of the `src/state` review. Each cohort should carry its tissue energy, with the temperature diagnosed from it.
@@ -405,4 +418,43 @@ Each step is one verified commit on `feat/tissue-energy`, in a new worktree, del
 
 ## 8. Implementation log
 
-(empty)
+**On `feat/tissue-energy`, 2026-10-19,** from `beta` at f6dfa9e.
+
+- **Every step** was built with ifx Release and run on an 8-case harness against a reference built from f6dfa9e: a two-year census run, a one-year run with every output group on, example 04's evaluation month, a Palo Verde inventory site, a four-cell region, a site and a region restarted from state files written by f6dfa9e, and a site restarted from its own new state file.
+- **The full matrix** (ifx Debug, gfortran, the standalone libraries, the Python library and pytest) ran on the final commit.
+- **There are 80 tests, not 79:** E4 adds `test_tissue_energy`.
+
+| Step | Commit | Content | Site means |
+|---|---|---|---|
+| E0 | 1d64c9d | This plan | — |
+| E1 | 1d7e501 | `tissue_dry_heat_capacity`, used by the fast tier; `veg_thermal%c_leaf` and `c_wood_dry` gone | bit-identical on all 8 cases |
+| E2 | ff17e13 | Films per plant: `scale_cohort_ground_fields` and the film error-stops gone, `cohort_film_water`, the dead's films shed with them, `units = "kg/plant"` in the state file | census cases bit-identical; elsewhere at most ~0.1 %, the BCI month 10⁻⁴ %; Palo Verde's shed water +2.8 % (the dead's films) |
+| E3 | 6e5ec90 | The whole wood store in the wood's heat capacity; `wood_thermal_water` gone | from f6dfa9e at most 0.05 % (Palo Verde LE +0.04 %, H −0.04 %) |
+| E4 | 518fb2c | `leaf_energy`, `wood_energy` as the state; `commit_tissue_energy` shared by ARK and RK45; the seam guard; fusion sums energy | at most 0.007 %; the cohort fuse/fiss phase's declared energy 1.1×10⁻² J → 0 |
+| E5 | da3ff31 | `shed_water_enth`; the pond takes the mixture; the budget's `ground_inflow_enth` | below |
+| E6 | — | ed2_comparison.md, ROADMAP (#165, #419, #456), CHANGELOG, this log; the plan archived | — |
+
+**Departures from the plan:**
+
+- **The temperatures are held inside each operator** that changes a tissue's mass, not at the ledger brackets (§2.5). This covers `advance_plant_traits`, `reacclimate_plant_traits`, `update_cohort_states`, `fill_new_leaf_water`, the shed paths, split, fusion and `init_cohort`. The seam guard showed why on the first restart: re-acclimating the traits after a restart changes leaf carbon outside any bracket.
+- **Reading an old file through its temperatures** (E4 (d)) is tested by the harness, not a unit test. Removing `leaf_energy` from a written file failed in netCDF. The site and region restarts from f6dfa9e's state files take that path, and the guard never fired.
+- **Tests that set masses or temperatures by hand** (`test_fast_loop`, `test_slow_ledger`, `test_fusion_cohort`) now hold the temperatures afterwards, as the operators do; without it the seam guard stops them.
+- **The E5 test** is in `test_slow_ledger`: the enthalpy the turnover shed declares equals what the fast tier takes in over the day, `shed_water_enth`·dt_slow summed over the patches. `test_carbon_growth` checks the patch rate.
+
+**From f6dfa9e to E5,** site means over each run:
+
+| Case | GPP | LE | H | NEE | AGB | Mortality | Runoff |
+|---|---|---|---|---|---|---|---|
+| Census, 2 yr | 0.0000 % | −0.0000 % | 0.0000 % | −0.0005 % | −0.0000 % | +0.006 % | 0.0000 % |
+| Palo Verde, 1 yr | −0.001 % | +0.038 % | −0.036 % | −0.001 % | 0.0000 % | −0.005 % | −0.017 % |
+| Region, 4 cells | −0.0000 % | +0.0004 % | −0.0002 % | +0.002 % | +0.0005 % | −0.007 % | −0.0003 % |
+| Region restart | +0.002 % | −0.0007 % | −0.0001 % | −0.004 % | +0.0001 % | −0.0003 % | 0.0000 % |
+
+- **Example 04's month:** half-hourly H moves by −0.02 % on average (1.3 % at most), LE by +0.01 % and GPP by −0.003 %.
+- **The tissue temperatures:**
+  - Palo Verde's daily site means move by 0.9 mK (leaf) and 1.7 mK (wood) on average, and a cohort's by 0.16 K at most.
+  - The census run's move by 10⁻⁶ K.
+- **Closure is as before.**
+  - Over a site run, the whole-column energy residual sums to at most 3.3×10⁻⁵ J m⁻² (3.7×10⁻⁵ before) and the water residual to at most 3.4×10⁻¹² kg m⁻² (4.0×10⁻¹² before).
+  - The worst single check is about 1.5×10⁻⁶ J m⁻², as before, and no check fails.
+  - Every slow-ledger phase closes at round-off.
