@@ -601,8 +601,9 @@ contains
       end do
       call state_file_open(sf, trim(reg%cfg%state_output_dir), trim(reg%cfg%state_output_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%site%cohort%growth_hist, 1), ik), n_cohort,  &
-                           n_patch, reg%poly(1)%restructure_pending, reg%poly(1)%restructure_new_year,     &
-                           polygon_id=ids, polygon_lat=lat, polygon_lon=lon)
+                           n_patch, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,                      &
+                           restructure_pending=reg%poly(1)%restructure_pending,                            &
+                           restructure_new_year=reg%poly(1)%restructure_new_year)
       do p = 1_ik, size(reg%poly, kind=ik)
          call state_file_put(sf, reg%poly(p)%site, reg%now, p)
       end do

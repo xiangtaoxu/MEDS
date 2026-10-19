@@ -7,7 +7,8 @@ program test_state_roundtrip
    use meds_config,           only : meds_config_t
    use meds_site_state_vars,  only : site_t
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
-   use meds_io,               only : state_write_state, io_read_state
+   use meds_io,               only : state_file_t, state_file_open, state_file_put, state_file_close, &
+                                     io_read_state
    use meds_time,             only : meds_time_t
    use meds_netcdf_c,     only : NC_NOERR, nc_open_f, nc_inq_varid_f, nc_put_vara_double, nc_close, cstr
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -89,8 +90,8 @@ program test_state_roundtrip
    now = meds_time_t(year=2000, month=1, day=1, hour=0, minute=0, second=0)
    !----- The file is written on a year boundary with its restructuring still owed, as the driver's   !
    !      yearly checkpoint is (meds_polygon_t%restructure_pending); the reader must say so. ---------!
-   call state_write_state(site, cfg, '.', 'test_sr', now, .true., .true.)
-   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found, fast_found=fast_ok,  &
+   call write_state(site, now, .true., .true.)
+   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, fast_found=fast_ok,  &
                       restructure_pending=owed, restructure_new_year=owed_year)
    call check(owed .and. owed_year, 'a checkpoint records the year''s restructuring as still owed')
 
@@ -156,8 +157,8 @@ program test_state_roundtrip
    end do
 
    !----- Nothing owed: a checkpoint between boundaries, or one written before the flag existed.  !
-   call state_write_state(site, cfg, '.', 'test_sr', now)
-   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found,                     &
+   call write_state(site, now, .false., .false.)
+   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik,                     &
                       restructure_pending=owed, restructure_new_year=owed_year)
    call check(found .and. .not. owed .and. .not. owed_year, 'a checkpoint with nothing owed reads so')
 
@@ -166,7 +167,7 @@ program test_state_roundtrip
    !      made into one by renaming the variable and writing a 4-yr lifespan into it. --------------!
    block
       integer(c_int)              :: ncid, vid
-      integer(c_size_t)           :: start(1), count(1)
+      integer(c_size_t)           :: start(2), count(2)
       real(c_double), allocatable :: lifespan(:)
       character(kind=c_char)      :: new_name(7)
       call check(nc_open_f('./test_sr-S-20000101000000.nc', NC_WRITE, ncid) == NC_NOERR,             &
@@ -176,12 +177,13 @@ program test_state_roundtrip
       new_name = cstr('llspan')
       call check(nc_rename_var(ncid, vid, new_name) == NC_NOERR, 'the variable is renamed llspan')
       allocate(lifespan(site%cohort%n)) ; lifespan = 4.0_c_double
-      start = 0_c_size_t ; count = int(site%cohort%n, c_size_t)
+      start = 0_c_size_t
+      count = [1_c_size_t, int(site%cohort%n, c_size_t)]                 ! the polygon's row
       call check(nc_put_vara_double(ncid, vid, start, count, lifespan) == NC_NOERR,                  &
                  'a 4-yr lifespan is written into it')
       call check(nc_close(ncid) == NC_NOERR, 'the state file closes')
    end block
-   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found)
+   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
    call check(found, 'a state file with llspan reads')
    do i = 1_ik, site2%cohort%n
       call check_close(site2%cohort%leaf_turnover_rate(i), 0.25_wp, 1.0e-15_wp,                     &
@@ -190,4 +192,20 @@ program test_state_roundtrip
    end do
 
    write(*,'(a)') '   PASS'
+
+contains
+
+   !----- The site's state, as the one polygon of a state file (id 0, at 0 N 0 E). --------------!
+   subroutine write_state(s, t, pending, new_year)
+      type(site_t),      intent(in) :: s
+      type(meds_time_t), intent(in) :: t
+      logical,           intent(in) :: pending, new_year
+      type(state_file_t) :: sf
+      call state_file_open(sf, '.', 'test_sr', t, s%n_pft, int(size(s%cohort%growth_hist, 1), ik),      &
+                           s%cohort%n, s%patch%n, polygon_id=[0_ik], polygon_lat=[0.0_wp],             &
+                           polygon_lon=[0.0_wp], restructure_pending=pending, restructure_new_year=new_year)
+      call state_file_put(sf, s, t, 1_ik)
+      call state_file_close(sf)
+   end subroutine write_state
+
 end program test_state_roundtrip

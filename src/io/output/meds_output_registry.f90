@@ -75,6 +75,7 @@ module meds_output_registry
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_buffers, manager_set_soil_params
+   public :: manager_set_polygons
    public :: activate_site_diag, dump_io_config
 
    !----- Named default stream masks (readable `ior` combinations). DAY_MON_YR deliberately     !
@@ -1309,9 +1310,35 @@ contains
       type(output_buffers_t), intent(out) :: bufs
       type(meds_config_t),   intent(in)  :: cfg
       call manager_setup(files, cfg)
+      call manager_set_polygons(files, [0_ik], [0.0_wp], [0.0_wp], [0_ik], [0_ik], .false.)
       call manager_finalize(files)
       call manager_alloc_buffers(files, bufs)
    end subroutine manager_alloc
+
+   !----- The file set's polygon axis: one row per polygon, its id, location and grid indices. The !
+   !      rest of a row -- the polygon's layers and the inputs its cell's maps gave it -- is filled  !
+   !      when the polygon attaches to the set (attach_output). ----------------------------------!
+   subroutine manager_set_polygons(files, polygon_id, lat, lon, row, col, with_chave_e)
+      type(output_files_t), intent(inout) :: files
+      integer(ik),          intent(in)    :: polygon_id(:), row(:), col(:)
+      real(wp),             intent(in)    :: lat(:), lon(:)
+      logical,              intent(in)    :: with_chave_e   !< the Chave height allometry's site index
+      integer(ik) :: n
+      n = size(polygon_id, kind=ik)
+      files%n_polygon   = n
+      files%polygon_id  = polygon_id
+      files%polygon_row = row
+      files%polygon_col = col
+      files%polygon_lat = lat
+      files%polygon_lon = lon
+      allocate(files%polygon_n_soil(n), source=0_ik)
+      allocate(files%polygon_soil_z(n_soil_layer_max, n), source=0.0_wp)
+      allocate(files%polygon_soil_face(n_soil_layer_max + 1_ik, n), source=0.0_wp)
+      allocate(files%polygon_soil_depth(n), files%polygon_deep_temp(n), source=0.0_wp)
+      allocate(files%polygon_bottom_bc(n), source=0_ik)
+      allocate(files%polygon_drain_factor(n), source=0.0_wp)
+      if (with_chave_e) allocate(files%polygon_chave_e(n), source=0.0_wp)
+   end subroutine manager_set_polygons
 
    !----- Last: precompute, per tier, the list of live (enabled + in-tier) variable indices. -!
    subroutine build_freq_index(reg)

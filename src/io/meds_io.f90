@@ -14,12 +14,13 @@
 ! allometry, so re-deriving them would move the leaf area and reset the fine-root carbon. The     !
 ! geometry is a function of the pools, and the reader re-derives it from them.                    !
 !                                                                                          !
-! A site's file holds one site. A REGION's file holds every polygon                                !
-! (docs/science/order_of_processes.md §6): each variable gains a leading `polygon` axis, and the   !
-! cohort and patch axes are the largest any polygon has. n_cohort, n_patch and n_window mark each  !
-! polygon's live part (also its row of meta_int); the rest holds the fill value. polygon_id, lat   !
-! and lon name the rows. Both are written by the same calls (state_file_open / state_file_put /    !
-! state_file_close) and read by io_read_state, which takes a polygon's row of a region's file.     !
+! A file holds every polygon of the run (docs/science/order_of_processes.md §6): each variable     !
+! has a leading `polygon` axis, and the cohort and patch axes are the largest any polygon has.     !
+! n_cohort, n_patch and n_window mark each polygon's live part (also its row of meta_int); the     !
+! rest holds the fill value. polygon_id, lat and lon name the rows. It is written by               !
+! state_file_open / state_file_put / state_file_close and read by io_read_state, a polygon's row   !
+! at a time; io_read_state also reads a file without the axis, one site's, as every one-polygon   !
+! run wrote one before runs became regions.                                                        !
 !==========================================================================================!
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
@@ -41,17 +42,16 @@ module meds_io
    implicit none
    private
 
-   public :: state_write_state, io_read_state
+   public :: io_read_state
    public :: state_file_t, state_file_open, state_file_put, state_file_close, state_file_polygons
    public :: state_file_refusal
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
 
-   !----- An open state file: a site's, or a region's with a polygon axis ahead of every other. ---!
+   !----- An open state file, its polygon axis ahead of every other. --------------------------------!
    type :: state_file_t
       integer(c_int)     :: ncid   = -1_c_int
-      logical            :: region = .false.
       character(len=512) :: path   = ''
    end type state_file_t
 
@@ -62,56 +62,31 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Write the full INSTANTANEOUS prognostic state of one site to a self-contained,          !
-   ! timestamped file <dir>/<prefix>-S-YYYYMMDDHHMMSS.nc -- everything needed to restart       !
-   ! exactly, and NO diagnostics. Scalars travel in a small meta_int/meta_real vector.         !
-   !---------------------------------------------------------------------------------------!
-   subroutine state_write_state(site, cfg, dir, prefix, now, restructure_pending, restructure_new_year)
-      type(site_t),        intent(in) :: site
-      type(meds_config_t), intent(in) :: cfg
-      character(len=*),    intent(in) :: dir, prefix
-      type(meds_time_t),   intent(in) :: now
-      !----- The calendar restructuring the stand still owes at `now` (meds_polygon_t): a state   !
-      !      written on a boundary holds the stand BEFORE it, and the run resumed from it runs it !
-      !      first. Recorded as the global attribute `restructure_pending` = none | month | year. !
-      logical, optional,   intent(in) :: restructure_pending, restructure_new_year
-      type(state_file_t) :: sf
-      call state_file_open(sf, dir, prefix, now, site%n_pft, int(size(site%cohort%growth_hist, 1), ik), &
-                           site%cohort%n, site%patch%n, restructure_pending, restructure_new_year)
-      call state_file_put(sf, site, now)
-      call state_file_close(sf)
-   end subroutine state_write_state
-
-   !---------------------------------------------------------------------------------------!
    ! Create <dir>/<prefix>-S-YYYYMMDDHHMMSS.nc and define every dimension and variable. The    !
-   ! cohort and patch axes are n_cohort and n_patch long (at least 1): one site's counts, or the !
-   ! largest of a region's polygons. With polygon_id, the file is a region's: a `polygon` axis   !
-   ! leads every variable, `polygon_id` names its rows, and the variables are compressed, since  !
-   ! most polygons fill only part of the padded axes.                                           !
+   ! cohort and patch axes are n_cohort and n_patch long (at least 1), the largest of the       !
+   ! polygons'. A `polygon` axis leads every variable, `polygon_id` names its rows, and the       !
+   ! variables are compressed, since most polygons fill only part of the padded axes.            !
    !---------------------------------------------------------------------------------------!
    subroutine state_file_open(sf, dir, prefix, now, n_pft, n_window, n_cohort, n_patch,             &
-                              restructure_pending, restructure_new_year, polygon_id, polygon_lat, polygon_lon)
+                              polygon_id, polygon_lat, polygon_lon, restructure_pending, restructure_new_year)
       type(state_file_t),    intent(out) :: sf
       character(len=*),      intent(in)  :: dir, prefix
       type(meds_time_t),     intent(in)  :: now
       integer(ik),           intent(in)  :: n_pft, n_window, n_cohort, n_patch
+      integer(ik),           intent(in)  :: polygon_id(:)                  !< the polygons' ids ...
+      real(wp),              intent(in)  :: polygon_lat(:), polygon_lon(:)  !< ... and locations [deg]
       logical,     optional, intent(in)  :: restructure_pending, restructure_new_year
-      integer(ik), optional, intent(in)  :: polygon_id(:)                  !< a region's: its polygons' ids ...
-      real(wp),    optional, intent(in)  :: polygon_lat(:), polygon_lon(:)  !< ... and cell centres [deg]
       character(len=5) :: pending
       integer(c_int) :: ncid, d_poly, d_cohort, d_patch, d_pft, d_mi, d_mr, d_soill, d_snowl, d_gwin
       integer(c_int) :: v_id, v_lat, v_lon
       integer(c_size_t) :: start1(1), count1(1)
       real(c_double), allocatable :: coord(:)
 
-      sf%region = present(polygon_id)
       !----- The timestamp IS the simulated calendar date -> <prefix>-S-YYYYMMDDHHMMSS.nc. --!
       sf%path = trim(dir)//'/'//trim(prefix)//'-S-'//time_to_stamp(now)//'.nc'
       call nc_check(nc_create_f(trim(sf%path), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'state nc_create')
       sf%ncid = ncid
-      d_poly = -1_c_int
-      if (sf%region) call nc_check(nc_def_dim_f(ncid, 'polygon', int(size(polygon_id), c_size_t), d_poly),  &
-                                   'state dim polygon')
+      call nc_check(nc_def_dim_f(ncid, 'polygon', int(size(polygon_id), c_size_t), d_poly), 'state dim polygon')
       call nc_check(nc_def_dim_f(ncid, 'cohort', int(max(n_cohort,1_ik), c_size_t), d_cohort), 'state dim cohort')
       call nc_check(nc_def_dim_f(ncid, 'patch',  int(max(n_patch,1_ik), c_size_t), d_patch),   'state dim patch')
       call nc_check(nc_def_dim_f(ncid, 'pft',    int(n_pft, c_size_t),             d_pft),     'state dim pft')
@@ -120,15 +95,13 @@ contains
       call nc_check(nc_def_dim_f(ncid, 'soil_layer', int(n_soil_layer_max, c_size_t), d_soill), 'state dim soill')
       call nc_check(nc_def_dim_f(ncid, 'snow_layer', int(n_snow_layer_max, c_size_t), d_snowl), 'state dim snowl')
       call nc_check(nc_def_dim_f(ncid, 'growth_window', int(max(n_window,1_ik), c_size_t), d_gwin), 'state dim gwin')
-      if (sf%region) then
-         call coord_var('polygon_id', NC_INT,    'forcing cell row-major index: row * n_lon + col', v_id)
-         call coord_var('lat',        NC_DOUBLE, 'cell centre latitude [degrees_north]',             v_lat)
-         call coord_var('lon',        NC_DOUBLE, 'cell centre longitude [degrees_east]',             v_lon)
-         call coord_var('n_cohort',   NC_INT,    'the polygon''s live cohorts (the rest is fill)',    v_id)
-         call coord_var('n_patch',    NC_INT,    'the polygon''s live patches (the rest is fill)',    v_id)
-         call coord_var('n_window',   NC_INT,    'the polygon''s growth-window length',              v_id)
-         call nc_check(nc_inq_varid_f(ncid, 'polygon_id', v_id), 'state inq polygon_id')
-      end if
+      call coord_var('polygon_id', NC_INT,    'forcing cell row-major index: row * n_lon + col', v_id)
+      call coord_var('lat',        NC_DOUBLE, 'the polygon''s latitude [degrees_north]',          v_lat)
+      call coord_var('lon',        NC_DOUBLE, 'the polygon''s longitude [degrees_east]',          v_lon)
+      call coord_var('n_cohort',   NC_INT,    'the polygon''s live cohorts (the rest is fill)',    v_id)
+      call coord_var('n_patch',    NC_INT,    'the polygon''s live patches (the rest is fill)',    v_id)
+      call coord_var('n_window',   NC_INT,    'the polygon''s growth-window length',              v_id)
+      call nc_check(nc_inq_varid_f(ncid, 'polygon_id', v_id), 'state inq polygon_id')
 
       call dv('meta_int',         NC_INT,    [d_mi],                                   &
               '[n_cohort,n_patch,n_pft,next_cohort_id,next_patch_id,year,month,day,hour,minute,second]')
@@ -281,17 +254,16 @@ contains
       call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'restructure_pending',              &
                     int(len_trim(pending), c_size_t), trim(pending)), 'state restructure_pending')
       call nc_check(nc_enddef(ncid), 'state enddef')
-      if (sf%region) then
-         start1 = 0_c_size_t ; count1 = int(size(polygon_id), c_size_t)
-         call nc_check(nc_put_vara_int(ncid, v_id, start1, count1, polygon_id), 'put polygon_id')
-         coord = real(polygon_lat, c_double)
-         call nc_check(nc_put_vara_double(ncid, v_lat, start1, count1, coord), 'put lat')
-         coord = real(polygon_lon, c_double)
-         call nc_check(nc_put_vara_double(ncid, v_lon, start1, count1, coord), 'put lon')
-      end if
+      start1 = 0_c_size_t
+      count1 = int(size(polygon_id), c_size_t)
+      call nc_check(nc_put_vara_int(ncid, v_id, start1, count1, polygon_id), 'put polygon_id')
+      coord = real(polygon_lat, c_double)
+      call nc_check(nc_put_vara_double(ncid, v_lat, start1, count1, coord), 'put lat')
+      coord = real(polygon_lon, c_double)
+      call nc_check(nc_put_vara_double(ncid, v_lon, start1, count1, coord), 'put lon')
 
    contains
-      !----- A per-polygon variable of a region's file: one value per row, with its long_name. ----!
+      !----- A per-polygon variable: one value per row, with its long_name. ------------------------!
       subroutine coord_var(name, xtype, lname, v)
          character(len=*), intent(in)  :: name, lname
          integer(c_int),   intent(in)  :: xtype
@@ -302,21 +274,20 @@ contains
          call nc_check(nc_put_att_text_f(ncid, v, 'long_name', int(len_trim(lname), c_size_t), lname), &
                        'state long_name '//name)
       end subroutine coord_var
-      !----- Define a state variable on its site dimensions, behind the polygon axis in a region's !
-      !      file, with its long_name. -----------------------------------------------------------!
+      !----- Define a state variable on its site dimensions, behind the polygon axis, with its     !
+      !      long_name. ----------------------------------------------------------------------------!
       subroutine dv(name, xtype, dimids, lname)
          character(len=*), intent(in) :: name, lname
          integer(c_int),   intent(in) :: xtype, dimids(:)
          integer(c_int)    :: v, dims(size(dimids) + 1)
          integer(c_size_t) :: chunk(size(dimids) + 1)
          integer           :: nd, k
-         nd = 0
-         if (sf%region) then ; nd = 1 ; dims(1) = d_poly ; end if
-         dims(nd + 1:nd + size(dimids)) = dimids ; nd = nd + size(dimids)
+         dims(1) = d_poly
+         dims(2:) = dimids
+         nd = size(dimids) + 1
          call nc_check(nc_def_var_f(ncid, name, xtype, int(nd, c_int), dims(1:nd), v), 'state def '//name)
          call nc_check(nc_put_att_text_f(ncid, v, 'long_name',                              &
                        int(len_trim(lname), c_size_t), lname), 'state long_name '//name)
-         if (.not. sf%region) return
          !----- One polygon's row per chunk. Each polygon writes its own rows (state_file_put), so a   !
          !      chunk shared by many polygons is decompressed and recompressed at each of their writes   !
          !      once the chunks of a row outgrow HDF5's chunk cache: a 606-polygon region (example 06)   !
@@ -335,28 +306,25 @@ contains
    end subroutine state_file_open
 
    !---------------------------------------------------------------------------------------!
-   ! Write one site's state into an open file: the whole file for a site, or the polygon's row  !
-   ! (1-based) of a region's.                                                                  !
+   ! Write one polygon's state into its row (1-based) of an open file.                         !
    !---------------------------------------------------------------------------------------!
    subroutine state_file_put(sf, site, now, polygon)
       type(state_file_t),    intent(in) :: sf
       type(site_t),          intent(in) :: site
       type(meds_time_t),     intent(in) :: now
-      integer(ik), optional, intent(in) :: polygon
+      integer(ik),           intent(in) :: polygon
       integer(ik) :: ncoh, npat, npft, ip, ic, nwin, slot, meta_i(N_META_INT)
       real(wp)    :: meta_r(N_META_REAL)
 
       ncoh = site%cohort%n ; npat = site%patch%n ; npft = site%n_pft
       nwin = int(size(site%cohort%growth_hist, 1), ik)
-      slot = 0_ik
-      if (present(polygon)) slot = polygon - 1_ik
-      if (sf%region .neqv. present(polygon)) error stop 'state_file_put: a region file needs the polygon, a site file none'
+      slot = polygon - 1_ik
 
       meta_i = [ncoh, npat, npft, site%next_cohort_id, site%next_patch_id,                     &
                 now%year, now%month, now%day, now%hour, now%minute, now%second]
-      if (sf%region) then
-         call put_count('n_cohort', ncoh) ; call put_count('n_patch', npat) ; call put_count('n_window', nwin)
-      end if
+      call put_count('n_cohort', ncoh)
+      call put_count('n_patch', npat)
+      call put_count('n_window', nwin)
       meta_r = [site%site_area, time_to_decimal_year(now)]
       call put_int('meta_int', meta_i)
       call put_dbl('meta_real', meta_r)
@@ -487,7 +455,7 @@ contains
       end if
 
    contains
-      !----- A region polygon's count, at its row. ---------------------------------------------------!
+      !----- A polygon's count, at its row. ----------------------------------------------------------!
       subroutine put_count(name, n)
          character(len=*), intent(in) :: name
          integer(ik),      intent(in) :: n
@@ -498,7 +466,7 @@ contains
       end subroutine put_count
       !----- One double vector into the variable `name`: its first entries (a per-cohort, per-patch !
       !      or meta vector), or with `row`, row `row` (0-based) of a 2-D (cohort or patch, layer)     !
-      !      variable; behind the polygon's slot in a region's file. ---------------------------------!
+      !      variable; behind the polygon's slot. ---------------------------------------------------!
       subroutine put_dbl(name, x, row)
          character(len=*),      intent(in) :: name
          real(wp),              intent(in) :: x(:)
@@ -522,8 +490,9 @@ contains
          integer(ik), optional, intent(in)  :: row
          integer(c_size_t),     intent(out) :: st(3), ct(3)
          integer,               intent(out) :: n
-         n = 0
-         if (sf%region) then ; n = 1 ; st(1) = int(slot, c_size_t) ; ct(1) = 1_c_size_t ; end if
+         n = 1
+         st(1) = int(slot, c_size_t)
+         ct(1) = 1_c_size_t
          if (present(row)) then ; n = n + 1 ; st(n) = int(row, c_size_t) ; ct(n) = 1_c_size_t ; end if
          n = n + 1 ; st(n) = 0_c_size_t ; ct(n) = int(nx, c_size_t)
       end subroutine where_to
@@ -610,11 +579,11 @@ contains
       !      means a file without them -- the caller then re-seeds them generically                    !
       !      (init_fast_reservoirs, from meds_polygon). ----------------------------------------------!
       logical, optional,   intent(out) :: fast_found
-      !----- The restructuring the stand owes at restart_time (state_write_state). A file without   !
+      !----- The restructuring the stand owes at restart_time (state_file_open). A file without     !
       !      the attribute is an older format, written AFTER its boundary's restructuring, so it    !
       !      owes nothing. -------------------------------------------------------------------------!
       logical, optional,   intent(out) :: restructure_pending, restructure_new_year
-      integer(ik), optional, intent(in) :: polygon    !< the row of a region's file (1-based)
+      integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
       character(len=16) :: pending
       integer(c_int) :: ncid, vid, st
       integer(ik)    :: ncoh, npat, npft, ip, i, nwin, slot, meta_i(N_META_INT)

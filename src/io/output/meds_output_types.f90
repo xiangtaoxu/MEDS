@@ -233,13 +233,14 @@ module meds_output_types
    !==========================================================================================!
    ! The output manager comes in two types. Both are netCDF-FREE plain data; only output_serialize   !
    ! touches C.                                                                                      !
-   !   output_files_t   -- one set of output files (a site's or a region's) and                      !
+   !   output_files_t   -- the run's set of output files, one row per polygon, and                  !
    !                       what writing them needs: registry, diagnostic parameters, file settings,  !
    !                       stream handles. Read-only while a step runs.                              !
    !   output_buffers_t -- one polygon's buffers for one set of files: its running reductions, open  !
    !                       windows, closed records and fast-tier staging. The only output state a    !
    !                       step writes. Not a cache: the reductions exist nowhere else.              !
-   ! A site run has one of each. main owns them; the stepper ticks the buffers.                      !
+   ! A run has one file set and one buffer set per polygon. The run owns them; the stepper ticks the   !
+   ! buffers.                                                                                        !
    !==========================================================================================!
    type :: output_files_t
       logical                 :: enabled = .false.
@@ -259,9 +260,9 @@ module meds_output_types
       integer(ik)           :: file_chunk(N_FREQ) = 0_ik
       integer(ik)           :: sync_every = 1_ik
       integer(ik)           :: fast_interval_steps = 4_ik   !< fast tier closes every N*dt_fast sub-steps
-      !----- A REGION's polygon axis (docs/configuration.md, Regional runs): its files carry a      !
-      !      `polygon` dimension, one entry per polygon's buffers, with these coordinates (0 for     !
-      !      site files). ----------------------------------------------------------------------------!
+      !----- The polygon axis every file carries: one entry per polygon's buffers, with these        !
+      !      coordinates (a site run is one polygon, id 0, at row 0 col 0 unless its forcing file   !
+      !      places it). ---------------------------------------------------------------------------!
       integer(ik)              :: n_polygon = 0_ik
       integer(ik), allocatable :: polygon_id(:)             !< the cell's row-major index on the forcing grid
       integer(ik), allocatable :: polygon_row(:), polygon_col(:)   !< 0-based grid indices

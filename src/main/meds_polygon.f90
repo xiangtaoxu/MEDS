@@ -41,7 +41,7 @@ module meds_polygon
    use meds_output_types,           only : output_files_t, output_buffers_t, MISSING_VALUE
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
    use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
-                                           manager_set_soil_params,                               &
+                                           manager_set_soil_params, manager_set_polygons,         &
                                            activate_site_diag, apply_variable_override,          &
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
@@ -507,22 +507,11 @@ contains
       logical,              intent(in)    :: verbose
       type(met_cells_t),    intent(in)    :: cells          !< the run's cells, one per polygon ...
       integer(ik),          intent(in)    :: polygon_id(:)  !< ... and their polygon ids
-      integer(ik) :: n
       call manager_setup(files, cfg)
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
-      n = cells%ncell
-      files%n_polygon   = n
-      files%polygon_id  = polygon_id
-      files%polygon_row = cells%row ; files%polygon_col = cells%col
-      files%polygon_lat = cells%lat ; files%polygon_lon = cells%lon
-      allocate(files%polygon_n_soil(n), source=0_ik)
-      allocate(files%polygon_soil_z(n_soil_layer_max, n), source=0.0_wp)
-      allocate(files%polygon_soil_face(n_soil_layer_max + 1_ik, n), source=0.0_wp)
-      allocate(files%polygon_soil_depth(n), files%polygon_deep_temp(n), source=0.0_wp)
-      allocate(files%polygon_bottom_bc(n), source=0_ik)
-      allocate(files%polygon_drain_factor(n), source=0.0_wp)
-      if (cfg%allom%height_form == HEIGHT_CHAVE) allocate(files%polygon_chave_e(n), source=0.0_wp)
+      call manager_set_polygons(files, polygon_id, cells%lat, cells%lon, cells%row, cells%col,      &
+                                cfg%allom%height_form == HEIGHT_CHAVE)
       call manager_finalize(files)
    end subroutine open_output_files
 
