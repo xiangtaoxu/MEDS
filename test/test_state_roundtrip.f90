@@ -202,7 +202,7 @@ contains
       logical,           intent(in) :: pending, new_year
       type(state_file_t) :: sf
       call state_file_open(sf, '.', 'test_sr', t, s%n_pft, int(size(s%cohort%growth_hist, 1), ik),      &
-                           s%cohort%n, s%patch%n, polygon_id=[0_ik], polygon_lat=[0.0_wp],             &
+                           s%cohort%n, s%patch%n, s%site%n, polygon_id=[0_ik], polygon_lat=[0.0_wp],   &
                            polygon_lon=[0.0_wp], restructure_pending=pending, restructure_new_year=new_year)
       call state_file_put(sf, s, t, 1_ik)
       call state_file_close(sf)

@@ -9,6 +9,7 @@
 ! 2. Two sites on different soils each evolve as a one-site polygon on its own soil, and   !
 !    their soil columns differ.                                                             !
 ! 3. The patch loop gives the same polygon on one thread and on four.                       !
+! 4. A state file keeps the sites: their areas and soils, and each patch's site.           !
 !==========================================================================================!
 program test_several_sites
    use meds_kinds,                only : wp, ik
@@ -19,6 +20,9 @@ program test_several_sites
    use meds_fast_dynamics,        only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_stepper,              only : advance_one_step, advance_boundary
    use meds_diagnostic_reduce,    only : total_agb, total_nplant, total_area
+   use meds_io,                   only : state_file_t, state_file_open, state_file_put, state_file_close, &
+                                         io_read_state
+   use meds_time,                 only : meds_time_t
    use meds_test_support,         only : banner, build_test_config, check, check_close, test_report
    implicit none
 
@@ -26,7 +30,9 @@ program test_several_sites
    real(wp),    parameter :: RTOL  = 1.0e-12_wp
    type(meds_config_t)  :: cfg, cfg_shallow
    type(fast_context_t) :: ctx, ctx4
-   type(polygon_t)      :: one, two, two_mt, one_shallow, mixed
+   type(polygon_t)      :: one, two, two_mt, one_shallow, mixed, back
+   type(meds_time_t)    :: now, t_read
+   logical              :: found
    integer(ik)          :: is
 
    call banner('several sites per polygon')
@@ -92,6 +98,24 @@ program test_several_sites
    call check_close(site_water(mixed, 2_ik), site_water(one_shallow, 1_ik),                        &
                     RTOL * site_water(one_shallow, 1_ik), 'the shallow site keeps the one-site water on its soil')
 
+   !=== 4. The mixed polygon through a state file. ==========================================!
+   now = meds_time_t(year=2000, month=3, day=1)
+   call write_state(mixed, now)
+   call io_read_state(back, cfg, './test_several_sites-S-20000301000000.nc', t_read, found,       &
+                      polygon=1_ik, site_cfg=[cfg, cfg_shallow])
+   call check(found .and. back%site%n == 2_ik, 'the state file holds the two sites')
+   call check(all(back%site%area(1:2) == mixed%site%area(1:2)), 'each site keeps its area')
+   call check(back%site%surface(2)%soil%n_active == mixed%site%surface(2)%soil%n_active,        &
+              'the shallow site keeps its soil column')
+   call check(all(back%patch%owner_site(1:back%patch%n) == mixed%patch%owner_site(1:mixed%patch%n)), &
+              'each patch keeps its site')
+   do is = 1_ik, 2_ik
+      call check(back%site%patch_count(is) == mixed%site%patch_count(is), 'each site keeps its patches')
+      call check_close(site_carbon(back, is), site_carbon(mixed, is), RTOL * site_carbon(mixed, is),  &
+                       'each site keeps its plant carbon')
+      call check(site_water(back, is) == site_water(mixed, is), 'each site keeps its soil water')
+   end do
+
    call test_report('test_several_sites')
 
 contains
@@ -124,6 +148,18 @@ contains
          if (mod(day, 15_ik) == 0_ik) call advance_boundary(poly, cfg, .true., mod(day, 30_ik) == 0_ik)
       end do
    end subroutine run
+
+   !----- The polygon as the one polygon of a state file (id 0, at 0 N 0 E). ------------------!
+   subroutine write_state(poly, t)
+      type(polygon_t),   intent(in) :: poly
+      type(meds_time_t), intent(in) :: t
+      type(state_file_t) :: sf
+      call state_file_open(sf, '.', 'test_several_sites', t, poly%n_pft,                          &
+                           int(size(poly%cohort%growth_hist, 1), ik), poly%cohort%n, poly%patch%n,    &
+                           poly%site%n, polygon_id=[0_ik], polygon_lat=[0.0_wp], polygon_lon=[0.0_wp])
+      call state_file_put(sf, poly, t, 1_ik)
+      call state_file_close(sf)
+   end subroutine write_state
 
    !----- Plant carbon [kgC/m2 of the site]: its patches' cohorts, weighted by patch area. ----!
    real(wp) function site_carbon(poly, is) result(c)
