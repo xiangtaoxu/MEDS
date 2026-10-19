@@ -198,9 +198,10 @@ These are the things that break quietly if you do not know them.
   hid behind ledgers that balanced, because the ledger declared the same quantity it consumed.
 - **Declare a field's fusion kind once.** In the cohort diagnostic block, intensive fields blend
   leaf-area-weighted, extensive ones by plant number, ground-referenced ones sum; in the prognostic
-  state an intensive field blends on the weight that conserves its extensive product (tissue
-  temperature on heat capacity, SLA on leaf carbon). Getting this wrong at a call site is invisible: the
-  biomass assertion passes and both ledgers close.
+  state every fast field is a per-plant amount (the tissue energies among them) and blends by plant
+  number, and an intensive trait blends on the weight that conserves its extensive product (SLA on
+  leaf carbon). Getting this wrong at a call site is invisible: the biomass assertion passes and both
+  ledgers close.
 - **Do not read `site%deriv` from the output layer.** The tendency bundle is transient and
   deliberately not lockstep-reordered, which is correct for its own consumer but wrong for the
   output tick: the step re-sorts the cohorts after filling it. Use the diagnostic block.

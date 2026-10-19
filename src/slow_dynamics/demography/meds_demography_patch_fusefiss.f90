@@ -18,10 +18,9 @@
 module meds_demography_patch_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one, yr_sec
-   use meds_numerics,   only : conserved, ROUNDOFF_RTOL
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
-                                      scale_cohort_ground_fields, cohort_tissue_water
+                                      cohort_tissue_water, cohort_film_water, cohort_water_enthalpy
    use meds_polygon_state_vars, only : polygon_t, rebuild_patch_map, rebuild_cohort_map, assign_cohort_id,      &
                                        assign_patch_id
    use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB
@@ -200,19 +199,11 @@ contains
    subroutine fuse_2_patches(poly, recp, donp)
       type(polygon_t), intent(inout) :: poly
       integer(ik),     intent(in)    :: recp, donp
-      real(wp)    :: ar, ad, anew, rawgt, dawgt, film_before, film_after, film_magnitude
+      real(wp)    :: ar, ad, anew, rawgt, dawgt
       integer(ik) :: i, i0, i1
 
       associate (patch => poly%patch, cohort => poly%cohort)
          ar = patch%area(recp) ; ad = patch%area(donp) ; anew = ar + ad
-         !----- site-total canopy film water [kg per m2 of SITE], for the conservation assert below. -!
-         i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
-         film_before    = ar * sum(cohort%leaf_surf_water(i0:i1) + cohort%wood_surf_water(i0:i1))
-         film_magnitude = ar * sum(abs(cohort%leaf_surf_water(i0:i1)) + abs(cohort%wood_surf_water(i0:i1)))
-         i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
-         film_before    = film_before + ad * sum(cohort%leaf_surf_water(i0:i1) + cohort%wood_surf_water(i0:i1))
-         film_magnitude = film_magnitude                                                         &
-                        + ad * sum(abs(cohort%leaf_surf_water(i0:i1)) + abs(cohort%wood_surf_water(i0:i1)))
          if (anew <= tiny_num) then                     ! degenerate: still hand donor cohorts to recp
             i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
             do i = i0, i1
@@ -237,6 +228,7 @@ contains
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
          !----- 8. shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -!
          patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
+         patch%shed_water_enth(recp) = rawgt*patch%shed_water_enth(recp) + dawgt*patch%shed_water_enth(donp)
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
          !----- 9. Today's litter is a per-area rate like the rest: area-weight it, or the fused patch !
          !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
@@ -249,27 +241,18 @@ contains
          !----- 11. Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so!
          !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
          call blend_patch_diag(patch%diag, recp, donp, ar, ad)
-         !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). The    !
-         !      ground-referenced films [kg/m2 of THEIR patch] take the same factor: per m2 of the   !
-         !      merged patch they are diluted exactly as the density is. -------------------------!
+         !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). Their !
+         !      per-plant amounts need nothing. --------------------------------------------------!
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
-         film_after = 0.0_wp
          do i = i0, i1
             cohort%nplant(i) = cohort%nplant(i) * rawgt
-            call scale_cohort_ground_fields(cohort, i, rawgt)
-            film_after = film_after + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
          end do
          !----- Rescale and reassign donor cohorts to the receptor. -----------------------!
          i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
          do i = i0, i1
             cohort%nplant(i)      = cohort%nplant(i) * dawgt
-            call scale_cohort_ground_fields(cohort, i, dawgt)
             cohort%owner_patch(i) = recp
-            film_after = film_after + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
          end do
-         film_after = anew * film_after
-         if (.not. conserved(film_before, film_after, film_magnitude, ROUNDOFF_RTOL))              &
-            error stop 'fuse_2_patches: canopy film water not conserved'
          patch%area(recp) = anew
          patch%area(donp) = 0.0_wp
       end associate
@@ -490,6 +473,7 @@ contains
             !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
             !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
             patch%shed_water_rate(newp) = 0.0_wp
+            patch%shed_water_enth(newp) = 0.0_wp
             patch%slow_co2_rate(newp)   = 0.0_wp   ! fresh gap: no cohort of its own respired today
             patch%adapt_dt_last(newp)   = 0.0_wp   ! a fresh gap cold-starts the controller
             patch%n = newp
@@ -548,10 +532,12 @@ contains
                      !      cohort's area-density the gap takes -- the SAME factor the survivor branch !
                      !      uses. ---------------------------------------------------------------------!
                      kill_frac = frac * patch%area(d)
-                     w_kill = kill_frac * (cohort_tissue_water(cohort, i)                              &
-                                         + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
+                     w_kill = kill_frac * (cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i))
                      patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
                                                  + w_kill / new_area / max(cfg%dt_slow, tiny_num)
+                     patch%shed_water_enth(newp) = patch%shed_water_enth(newp)                         &
+                                                 + kill_frac * cohort%nplant(i) * cohort_water_enthalpy(cohort, i) &
+                                                   / new_area / max(cfg%dt_slow, tiny_num)
                      w_tot = w_tot + poly%site%area(is) * w_kill   ! w_kill is per m2 of the site
                      if (cfg%soil_carbon_on) then
                         lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
@@ -575,7 +561,6 @@ contains
                   m = m + 1_ik
                   call copy_cohort(cohort, m, i)
                   cohort%nplant(m)      = cohort%nplant(i) * (frac * patch%area(d) / new_area)
-                  call scale_cohort_ground_fields(cohort, m, frac * patch%area(d) / new_area)  ! films dilute like nplant
                   cohort%owner_patch(m) = newp
                end do
             end do

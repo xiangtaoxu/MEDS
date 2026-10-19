@@ -7,7 +7,7 @@ program test_fusion_cohort
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_cohort_state_vars,          only : set_cohort_size, cohort_tissue_heat_capacity, set_cohort_size_from_carbon, &
                                                cohort_bad_field, cohort_field_name, cohort_deriv_block, cohort_deriv_alloc, &
-                                               init_cohort
+                                               init_cohort, hold_cohort_tissue_temps
    use meds_polygon_state_vars,         only : polygon_t
    use meds_demography_update, only : fill_cohort_deriv
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
@@ -24,7 +24,7 @@ program test_fusion_cohort
    real(wp)            :: agb_tot, n0, agb0, dbh_avg
    real(wp)            :: wr, wd, leafmass_exp, woodmass_exp, ltemp_exp, wtemp_exp
    real(wp)            :: cl1, cw1, cl2, cw2, clf, cwf, e_leaf0, e_wood0
-   real(wp) :: np1, np2, xdiag(4)
+   real(wp) :: np1, np2, xdiag(4), film0, e_sum0
    integer(ik) :: ndiag
    integer(ik)         :: j, pf
 
@@ -49,12 +49,22 @@ program test_fusion_cohort
    poly%cohort%wood_water_mass(1) = 3.0_wp ; poly%cohort%wood_water_mass(2) = 7.0_wp
    poly%cohort%leaf_temp(1) = 300.0_wp ; poly%cohort%leaf_temp(2) = 305.0_wp
    poly%cohort%wood_temp(1) = 298.0_wp ; poly%cohort%wood_temp(2) = 306.0_wp
+   !----- ...through their energies, the state: each tissue holds what it does at those temperatures. !
+   call hold_cohort_tissue_temps(poly%cohort, 1_ik)
+   call hold_cohort_tissue_temps(poly%cohort, 2_ik)
+   e_sum0 = poly%cohort%nplant(1) * (poly%cohort%leaf_energy(1) + poly%cohort%wood_energy(1))         &
+          + poly%cohort%nplant(2) * (poly%cohort%leaf_energy(2) + poly%cohort%wood_energy(2))
    !----- The four per-plant flux accumulators are EXTENSIVE too. Assert them, so the declared     !
    !      policy in fuse_cohort_fast_state has a witness for every kind it names.                  !
    poly%cohort%gpp_accum(1)       = 1.0_wp ; poly%cohort%gpp_accum(2)       = 4.0_wp
    poly%cohort%leaf_resp_accum(1) = 0.2_wp ; poly%cohort%leaf_resp_accum(2) = 0.9_wp
    poly%cohort%stem_resp_accum(1) = 0.1_wp ; poly%cohort%stem_resp_accum(2) = 0.6_wp
    poly%cohort%root_resp_accum(1) = 0.3_wp ; poly%cohort%root_resp_accum(2) = 0.8_wp
+   !----- And the canopy films [kg/plant]: nplant-weighted like the tissue water. ------------------!
+   poly%cohort%leaf_surf_water(1) = 0.02_wp
+   poly%cohort%leaf_surf_water(2) = 0.06_wp
+   poly%cohort%wood_surf_water(1) = 0.01_wp
+   poly%cohort%wood_surf_water(2) = 0.00_wp
    wr = poly%cohort%nplant(1) * poly%cohort%leaf_area(1)
    wd = poly%cohort%nplant(2) * poly%cohort%leaf_area(2)
    np1 = poly%cohort%nplant(1) ; np2 = poly%cohort%nplant(2)   ! captured BEFORE the fuse
@@ -86,6 +96,10 @@ program test_fusion_cohort
                     'leaf_water_mass not nplant-weighted (extensive) on cohort fusion')
    call check_close(poly%cohort%wood_water_mass(1), woodmass_exp, 1.0e-12_wp,                       &
                     'wood_water_mass not nplant-weighted (extensive) on cohort fusion')
+   call check_close(poly%cohort%leaf_surf_water(1), (np1*0.02_wp + np2*0.06_wp) / (np1 + np2), 1.0e-12_wp, &
+                    'leaf_surf_water not nplant-weighted (extensive) on cohort fusion')
+   call check_close(poly%cohort%wood_surf_water(1), np1*0.01_wp / (np1 + np2), 1.0e-12_wp,          &
+                    'wood_surf_water not nplant-weighted (extensive) on cohort fusion')
    call check_close(poly%cohort%leaf_temp(1), ltemp_exp, 1.0e-9_wp,                                 &
                     'leaf_temp not heat-capacity-weighted on cohort fusion')
    call check_close(poly%cohort%wood_temp(1), wtemp_exp, 1.0e-9_wp,                                 &
@@ -98,16 +112,16 @@ program test_fusion_cohort
                     'diagnostic wood temperature fuses as the prognostic one (wood heat capacity)')
    !----- The formulae above are the MEANS to this end: the merged tissue must hold the energy the  !
    !      two cohorts held. Asserted separately so a future change of weighting is judged on what   !
-   !      it conserves, not on whether it matches today's expression. The LEAF capacity is additive !
-   !      through the merge (leaf_carbon and leaf_water_mass are both nplant-weighted), so its      !
-   !      energy closes exactly; the WOOD's does not, because set_cohort_size_from_carbon re-derives!
-   !      the sapwood ring from the merged diameter -- that residual is a thermal-mass change, of   !
-   !      the same kind growth makes, and it is bounded here rather than asserted to zero. ---------!
+   !      it conserves, not on whether it matches today's expression. Both capacities are additive  !
+   !      through the merge (the carbon pools and the tissue waters are all nplant-weighted), so    !
+   !      both energies close exactly. -----------------------------------------------------------!
    call cohort_tissue_heat_capacity(poly%cohort, 1_ik, clf, cwf)
    call check_close(clf*poly%cohort%leaf_temp(1), e_leaf0, 1.0e-12_wp,                              &
                     'cohort fusion must conserve LEAF tissue energy exactly')
-   call check(abs(cwf*poly%cohort%wood_temp(1) - e_wood0) <= 1.0e-3_wp * abs(e_wood0),              &
-              'cohort fusion must conserve WOOD tissue energy to the sapwood re-derivation')
+   call check_close(cwf*poly%cohort%wood_temp(1), e_wood0, 1.0e-12_wp,                              &
+                    'cohort fusion must conserve WOOD tissue energy exactly')
+   call check_close(poly%cohort%nplant(1) * (poly%cohort%leaf_energy(1) + poly%cohort%wood_energy(1)),   &
+                    e_sum0, 1.0e-12_wp, 'cohort fusion sums the tissue energies, the state')
    block
       real(wp) :: nt
       nt = np1 + np2
@@ -158,15 +172,17 @@ program test_fusion_cohort
    call finalize_init(poly)
    n0   = total_nplant(poly)
    agb0 = total_agb(poly)
-   !----- The interception films are per m2 GROUND. A split that copies them verbatim into both     !
-   !      daughters doubles the patch's film water. ------------------------------------------------!
+   !----- The interception films are per plant: each daughter keeps its parent's, so the patch's     !
+   !      film water is what it was. -------------------------------------------------------------!
    poly%cohort%leaf_surf_water(1) = 0.30_wp ; poly%cohort%wood_surf_water(1) = 0.05_wp
+   film0 = poly%cohort%nplant(1) * 0.35_wp
    call split_cohorts(poly, cfg)
    call check(poly%cohort%n >= 2_ik, 'split did not create a second cohort')
    call check_close(total_nplant(poly), n0,   1.0e-12_wp, 'split broke nplant conservation')
    call check_close(total_agb(poly),    agb0, cfg%conservation_tol, 'split broke AGB conservation')
-   call check_close(sum(poly%cohort%leaf_surf_water(1:poly%cohort%n) + poly%cohort%wood_surf_water(1:poly%cohort%n)), &
-                    0.35_wp, 1.0e-12_wp, 'split broke canopy film water conservation (ground-referenced field)')
+   call check_close(sum(poly%cohort%nplant(1:poly%cohort%n) * (poly%cohort%leaf_surf_water(1:poly%cohort%n)        &
+                                                             + poly%cohort%wood_surf_water(1:poly%cohort%n))),   &
+                    film0, 1.0e-12_wp, 'split broke canopy film water conservation')
 
    !=== 4. Carbon pools/traits thread correctly through the lockstep sort reorder. ==========!
    !     3 PFTs (sla 16/13/10) are inserted then height-sorted (reordered); re-deriving with   !

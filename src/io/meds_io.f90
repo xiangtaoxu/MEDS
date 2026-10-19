@@ -33,7 +33,8 @@ module meds_io
    use meds_netcdf_c
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
-   use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water
+   use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water, &
+                                           set_cohort_tissue_temps, hold_cohort_tissue_temps
    use meds_site_state_vars,        only : make_site_surface
    use meds_polygon_state_vars,     only : alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_demography_update,      only : update_overtopping_lai
@@ -50,6 +51,7 @@ module meds_io
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
+   character(len=*), parameter :: FILM_UNITS  = 'kg/plant'   !< the canopy films' units attribute
 
    !----- An open state file, its polygon axis ahead of every other. --------------------------------!
    type :: state_file_t
@@ -137,8 +139,10 @@ contains
       !      leaf-surface (interception) film is stored below with the pools. ---------------------------!
       call dv('leaf_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal leaf water [kg/plant]')
       call dv('wood_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal wood water [kg/plant]')
-      call dv('leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K]')
-      call dv('wood_temp',        NC_DOUBLE, [d_cohort], 'per-cohort wood temperature [K]')
+      call dv('leaf_energy',      NC_DOUBLE, [d_cohort], 'per-cohort leaf internal energy [J/plant] (prognostic)')
+      call dv('wood_energy',      NC_DOUBLE, [d_cohort], 'per-cohort wood internal energy [J/plant] (prognostic)')
+      call dv('leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K] (diagnosed twin)')
+      call dv('wood_temp',        NC_DOUBLE, [d_cohort], 'per-cohort wood temperature [K] (diagnosed twin)')
       !----- Per-cohort stomatal water-stress feedback (docs/science/leaf_gas_exchange.md §4.2).      !
       !      `dmax_psi_leaf` is YESTERDAY's completed daily-max leaf water potential and drives TODAY's !
       !      beta_stomata; `dmax_psi_leaf_accum` is the running accumulator the fast loop fills,        !
@@ -188,9 +192,10 @@ contains
       call dv('overtopping_lai',      NC_DOUBLE, [d_cohort], 'LAI of the taller cohorts in the patch [m2/m2]')
       !----- The canopy interception film ([fast].canopy_water_on). A dry canopy is a valid start,   !
       !      but not the state the writing run was in. OPTIONAL on read (a file without it starts   !
-      !      dry). ---------------------------------------------------------------------------------!
-      call dv('leaf_surf_water',      NC_DOUBLE, [d_cohort], 'leaf interception film [kg/m2 ground]')
-      call dv('wood_surf_water',      NC_DOUBLE, [d_cohort], 'wood interception film [kg/m2 ground]')
+      !      dry). Per plant, and marked so: a file whose films have no `units` holds them per m2   !
+      !      of ground, as files written before did. -----------------------------------------------!
+      call dv('leaf_surf_water',      NC_DOUBLE, [d_cohort], 'leaf interception film [kg/plant]', units=FILM_UNITS)
+      call dv('wood_surf_water',      NC_DOUBLE, [d_cohort], 'wood interception film [kg/plant]', units=FILM_UNITS)
       !----- The growth-rate ring buffer behind growth_avg (the mortality predictor) and its site-wide !
       !      write slot. OPTIONAL on read: a file without it, or one written with another window       !
       !      length, reseeds the buffer from growth_avg. ---------------------------------------------!
@@ -238,6 +243,7 @@ contains
       !----- Daily leaf/root-turnover shed water handed to the ground: a slow->fast seam rate the    !
       !      fast loop reads all day, so a restart without it would lose that day's shed water. -----!
       call dv('shed_water_rate',  NC_DOUBLE, [d_patch], 'turnover shed water to the ground [kg/m2/s]')
+      call dv('shed_water_enth',  NC_DOUBLE, [d_patch], 'the enthalpy that water carries [W/m2]')
       !----- The fast integrators' warm start, per patch: the step the adaptive controller last        !
       !      accepted, where the next fast step starts. Without it a resumed run cold-starts the        !
       !      controller and takes different sub-steps from the continuous run. -------------------------!
@@ -287,10 +293,11 @@ contains
                        'state long_name '//name)
       end subroutine coord_var
       !----- Define a state variable on its site dimensions, behind the polygon axis, with its     !
-      !      long_name. ----------------------------------------------------------------------------!
-      subroutine dv(name, xtype, dimids, lname)
+      !      long_name and, where the reader needs it, its units. ----------------------------------!
+      subroutine dv(name, xtype, dimids, lname, units)
          character(len=*), intent(in) :: name, lname
          integer(c_int),   intent(in) :: xtype, dimids(:)
+         character(len=*), intent(in), optional :: units
          integer(c_int)    :: v, dims(size(dimids) + 1)
          integer(c_size_t) :: chunk(size(dimids) + 1)
          integer           :: nd, k
@@ -300,6 +307,8 @@ contains
          call nc_check(nc_def_var_f(ncid, name, xtype, int(nd, c_int), dims(1:nd), v), 'state def '//name)
          call nc_check(nc_put_att_text_f(ncid, v, 'long_name',                              &
                        int(len_trim(lname), c_size_t), lname), 'state long_name '//name)
+         if (present(units)) call nc_check(nc_put_att_text_f(ncid, v, 'units',              &
+                                           int(len_trim(units), c_size_t), units), 'state units '//name)
          !----- One polygon's row per chunk. Each polygon writes its own rows (state_file_put), so a   !
          !      chunk shared by many polygons is decompressed and recompressed at each of their writes   !
          !      once the chunks of a row outgrow HDF5's chunk cache: a 606-polygon region (example 06)   !
@@ -374,6 +383,8 @@ contains
             call put_dbl('leaf_turnover_rate', c%leaf_turnover_rate(1:ncoh))
             call put_dbl('leaf_water_mass', c%leaf_water_mass(1:ncoh))
             call put_dbl('wood_water_mass', c%wood_water_mass(1:ncoh))
+            call put_dbl('leaf_energy', c%leaf_energy(1:ncoh))
+            call put_dbl('wood_energy', c%wood_energy(1:ncoh))
             call put_dbl('leaf_temp',   c%leaf_temp(1:ncoh))
             call put_dbl('wood_temp',   c%wood_temp(1:ncoh))
             call put_dbl('dmax_psi_leaf',       c%dmax_psi_leaf(1:ncoh))
@@ -419,7 +430,7 @@ contains
             end do
             block                                 ! FAST reservoirs: contiguous buffers, same
                real(wp) :: fc(npat, 4_ik)          ! discipline as the soil-carbon block below (never a
-               real(wp) :: fw(npat, 4_ik)          ! bare derived-type component-array-section straight
+               real(wp) :: fw(npat, 5_ik)          ! bare derived-type component-array-section straight
                real(wp) :: fsoil(npat, n_soil_layer_max, 4_ik)     ! into a C-bound call)
                real(wp) :: fsnow(npat, n_snow_layer_max, 5_ik)
                integer(ik) :: fnl(npat)
@@ -428,6 +439,7 @@ contains
                   fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
                   fw(ip,1) = p%soil_water(ip)%w_surface ; fw(ip,2) = p%soil_water(ip)%w_surface_energy
                   fw(ip,3) = p%shed_water_rate(ip) ; fw(ip,4) = p%adapt_dt_last(ip)
+                  fw(ip,5) = p%shed_water_enth(ip)
                   fsoil(ip,:,1) = p%soil_water(ip)%theta(1:n_soil_layer_max)
                   fsoil(ip,:,2) = p%soil_energy(ip)%soil_energy(1:n_soil_layer_max)
                   fsoil(ip,:,3) = p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max)
@@ -446,6 +458,7 @@ contains
                call put_dbl('soil_w_surface',   fw(:,1))
                call put_dbl('soil_w_surface_enth', fw(:,2))
                call put_dbl('shed_water_rate',  fw(:,3))
+               call put_dbl('shed_water_enth',  fw(:,5))
                call put_dbl('adapt_dt_last',    fw(:,4))
                call put_int('snow_nlayer',      fnl)
                do ip = 1_ik, npat
@@ -617,16 +630,18 @@ contains
       logical, optional,   intent(out) :: fast_found
       integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
       type(meds_config_t), optional, intent(in) :: site_cfg(:)   !< each site's configuration
-      character(len=16) :: pending
+      character(len=16) :: pending, units_attr
       character(len=160) :: msg
       integer(c_int) :: ncid, vid, st
       integer(ik)    :: ncoh, npat, npft, ip, i, nwin, slot, ns, is, meta_i(N_META_INT)
       real(wp)       :: meta_r(N_META_REAL)
       logical        :: fast_ok, pools_ok, olai_ok, ghist_ok, region, tissue_water_ok, tissue_temp_ok
+      logical        :: tissue_energy_ok
       integer(c_size_t) :: nwin_file
 
       found = .false. ; restart_time = meds_time_t()
       tissue_water_ok = .true. ; tissue_temp_ok = .true.
+      tissue_energy_ok = .true.
       if (present(fast_found)) fast_found = .false.
       region = present(polygon)
       slot = 0_ik
@@ -725,10 +740,13 @@ contains
             !      and the pools are read (below).                                                       !
             tissue_water_ok = nc_inq_varid_f(ncid, 'leaf_water_mass', vid) == NC_NOERR
             tissue_temp_ok  = nc_inq_varid_f(ncid, 'leaf_temp', vid) == NC_NOERR
+            tissue_energy_ok = nc_inq_varid_f(ncid, 'leaf_energy', vid) == NC_NOERR
             call gv_dbl_opt(ncid, 'leaf_water_mass', ncoh, c%leaf_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_water_mass', ncoh, c%wood_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_temp',       ncoh, c%wood_temp(1:ncoh))
+            call gv_dbl_opt(ncid, 'leaf_energy',     ncoh, c%leaf_energy(1:ncoh))
+            call gv_dbl_opt(ncid, 'wood_energy',     ncoh, c%wood_energy(1:ncoh))
             !----- Stomatal feedback (OPTIONAL): alloc_polygon has already set UNSET_NEGATIVE /        !
             !      DMAX_PSI_LEAF_ACCUM_RESET, so a state file without them seeds from the soil; one with  !
             !      them restores the true feedback state. ------------------------------------------------!
@@ -745,6 +763,14 @@ contains
             call gv_dbl_opt(ncid, 'light_hours_mean', ncoh, c%light_hours_mean(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_surf_water',    ncoh, c%leaf_surf_water(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
+            !----- A file whose films carry no units held them per m2 of ground. --------------------!
+            if (nc_inq_varid_f(ncid, 'leaf_surf_water', vid) == NC_NOERR) then
+               if (nc_get_att_text_f(ncid, vid, 'units', units_attr) /= NC_NOERR) units_attr = ''
+               if (trim(units_attr) /= FILM_UNITS) then
+                  c%leaf_surf_water(1:ncoh) = c%leaf_surf_water(1:ncoh) / c%nplant(1:ncoh)
+                  c%wood_surf_water(1:ncoh) = c%wood_surf_water(1:ncoh) / c%nplant(1:ncoh)
+               end if
+            end if
          end associate
          !----- The carbon pools the writing run held, and the geometry derived from them as the  !
          !      run derives it (the file's height/agb/leaf_area are for its readers, not read back). !
@@ -845,6 +871,15 @@ contains
                   if (shed_ok) then
                      do ip = 1_ik, npat ; p%shed_water_rate(ip) = fsh(ip) ; end do
                   end if
+                  !----- Its enthalpy: OPTIONAL. A file without it values the rate at the patch's canopy   !
+                  !      air, the nearest the file has to the temperature of the tissues it left. -------!
+                  if (nc_inq_varid_f(ncid, 'shed_water_enth', vid) == NC_NOERR) then
+                     call gv_dbl(ncid, 'shed_water_enth', npat, p%shed_water_enth(1:npat))
+                  else
+                     do ip = 1_ik, npat
+                        p%shed_water_enth(ip) = p%shed_water_rate(ip) * internal_energy_liquid(p%cas(ip)%can_temp)
+                     end do
+                  end if
                   !----- The controller's warm start: OPTIONAL, a file without it cold-starts it. -------!
                   call gv_dbl_opt(ncid, 'adapt_dt_last', npat, p%adapt_dt_last(1:npat))
                   call gv_int(ncid, 'snow_nlayer', npat, fnl)
@@ -930,6 +965,18 @@ contains
                end if
             end do
          end block
+      end if
+      !----- The tissue energies are the state, and their temperatures are read beside them as twins. !
+      !      A file written before the energies were the state, or one whose tissue water was         !
+      !      re-seeded above, derives them from the temperatures at the masses just read. ------------!
+      if (ncoh > 0_ik .and. .not. (tissue_energy_ok .and. tissue_water_ok .and. tissue_temp_ok)) then
+         do i = 1_ik, ncoh
+            if (tissue_energy_ok .and. tissue_water_ok) then
+               call set_cohort_tissue_temps(poly%cohort, i)
+            else
+               call hold_cohort_tissue_temps(poly%cohort, i)
+            end if
+         end do
       end if
       call nc_check(nc_close(ncid), 'state nc_close (read)')
 

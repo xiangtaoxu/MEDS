@@ -17,7 +17,6 @@ module meds_plant_types
    use meds_pft_params, only : PATH_C3, PATH_C4
    use meds_hydr_lib, only : hydro_table_t
    use meds_water_retention, only : water_curve_t
-   use meds_constants,     only : TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
    implicit none
    private
 
@@ -211,14 +210,13 @@ module meds_plant_types
    !     meds_phenology::leaf_turnover_step.                                               !
    !=======================================================================================!
 
-   !----- Per-PFT vegetation thermal parameters (docs/science/vegetation_energy_dynamics.md eqs.  !
-   !      (1) and (8)). --------------------------------------------------------------------------!
+   !----- Per-PFT vegetation thermal parameters (docs/science/vegetation_energy_dynamics.md eq.   !
+   !      (1)). The tissues' specific heats are constants (TISSUE_C_LEAF, TISSUE_C_WOOD_DRY in     !
+   !      meds_constants). -----------------------------------------------------------------------!
    type :: veg_thermal_params_t
       real(wp) :: effarea_heat   = 2.0_wp                   !< [-] sensible sidedness (both leaf sides)
       real(wp) :: effarea_evap   = 1.0_wp                   !< [-] film-evaporation sidedness
       real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness (per PFT)
-      real(wp) :: c_leaf     = TISSUE_C_LEAF                !< [J/kg/K] dry leaf specific heat
-      real(wp) :: c_wood_dry = TISSUE_C_WOOD_DRY            !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
    end type veg_thermal_params_t
 
 end module meds_plant_types

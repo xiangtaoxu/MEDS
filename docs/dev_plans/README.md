@@ -70,7 +70,7 @@ needs it.
 
 ## `archive/`
 
-Forty documents whose work is done. Each opens with a tombstone: what shipped, in which pull
+Forty-one documents whose work is done. Each opens with a tombstone: what shipped, in which pull
 request, what changed name on the way in, and where the live description is. Three grades appear:
 
 - **🗃️ ARCHIVED** — complete or superseded. Safe to read as history.

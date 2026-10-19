@@ -164,8 +164,11 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
 Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science page:
 [`science/vegetation_energy_dynamics.md`](science/vegetation_energy_dynamics.md).
 
-- **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water currently
-  has no independent thermal state and cannot freeze.
+- **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water
+  has no thermal state of its own: it is valued at one reference temperature per step
+  (`t_film_valuation`) and cannot freeze. Now that a tissue's energy is its state, a film could join
+  its tissue's energy, at the tissue's temperature, so that rain warms or cools the leaves it wets; a
+  wet leaf's heat capacity would rise by about 10–20 %.
 - **Intercepted-water evaporation under ERA5-Land forcing.** *Open question.* [#433](https://github.com/xiangtaoxu/MEDS/issues/433) At BCI the
   canopy films evaporate about 34 % of the rain and 75 % of ET on ERA5-Land, against about 11 % and 20 %
   on the tower's forcing; the drizzle of the reanalysis, the film capacities and the wet fraction's form
@@ -196,8 +199,13 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
   tissue with no area takes the temperature of what it grows from (a leafless leaf its wood's)
   (`docs/science/vegetation_energy_dynamics.md`, "A thin tissue is a small tissue").
 - **The wood's heat capacity uses a fixed sapwood moisture.** *Done in beta.* [#419](https://github.com/xiangtaoxu/MEDS/issues/419) The
-  wood's water term is the sapwood share of the network's store, and the dry wood is at a dry specific
-  heat (`docs/science/vegetation_energy_dynamics.md` eq. (8)).
+  wood's water term is the whole wood store's water, the fine roots' share included, and the dry wood
+  is at a dry specific heat (`docs/science/vegetation_energy_dynamics.md` eq. (8)).
+- **Tissue water never freezes.** *Candidate.* [#456](https://github.com/xiangtaoxu/MEDS/issues/456) Below 0 °C the leaf and wood water
+  stays supercooled liquid, since live plants keep their sap from freezing, and nothing yet defoliates
+  or kills a plant for cold. Cold-driven mortality (a PFT cold tolerance, frost leaf loss or death,
+  possibly freeze–thaw embolism) would build on the tissue energy state
+  (`docs/science/vegetation_energy_dynamics.md`, "The tissue's energy is its state").
 - **The sub-canopy ground conductance.** *Deferred.* [#265](https://github.com/xiangtaoxu/MEDS/issues/265) MEDS ports ED2's non-default
   `icanturb = 4`, CLM4's dense-canopy form, whose ground resistance is 8–16× that of the Sellers et al.
   (1986) form ED2 ships; it matters most in gaps. It is a faithful port of a published scheme, a
@@ -400,8 +408,8 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   hard-coded constants are PFT parameters, the derived geometry is on the cohort block, and
   `reconcile_tissue_water_capacity` took the seed and clamp out of the gather. The fifth, a fusion
   policy that cannot omit a field, a table would not deliver either: the compiler cannot check that
-  a table lists every field. The policy stays in `fuse_cohort_fast_state` and
-  `scale_cohort_ground_fields`, with a witness per kind in `test_fusion_cohort`.
+  a table lists every field. The policy stays in `fuse_cohort_fast_state`, with a witness per kind
+  in `test_fusion_cohort`.
 - **One field list for the fast-loop state** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)).
   *Done* (2026-09-30, option B of `MEDS_EFFICIENCY_SWEEP_PLAN.md` Appendix B): `state_to_array`,
   `array_to_state` and `tend_to_array` list the fields once, `state_entry_rules` says how each

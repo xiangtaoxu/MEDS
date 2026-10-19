@@ -40,7 +40,8 @@ module meds_fast_ark
                                      bflux_bweight, clamp_cas, soil_water_store,                    &
                                      soil_energy_store, plant_water_store, canopy_film_store, deposit_condensate, &
                                      clamp_canopy_film, unpack_column_state, diagnose_soil_temps, &
-                                     assemble_soil_energy_forcing, apply_process_mask, transp_per_leaf_area
+                                     assemble_soil_energy_forcing, apply_process_mask, transp_per_leaf_area, &
+                                     commit_tissue_energy
    use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
    use meds_fast_frozen, only : build_column_frozen
    use meds_diag_vars,       only : CO_TRANSP
@@ -303,7 +304,7 @@ contains
       !      term below is the IDENTICAL number the state update applied ("one flux, both sides"). ------!
       real(wp)    :: cond_dep_mass, cond_dep_enth
       real(wp)    :: tissue_store0, tissue_store1
-      real(wp)    :: cap_leaf_a(col_cohort%n), cap_wood_a(col_cohort%n)
+      real(wp)    :: t_leaf_avg(col_cohort%n), t_wood_avg(col_cohort%n)
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, i, isub, nsub, nsteps, nrej
       logical     :: halt_budgets     !< hard-stop on a non-closing budget (debug_error, full column only)
@@ -426,47 +427,27 @@ contains
       !      kicks per step, wood diverging to 247 K against a 331 K balance). The veg_energy mask         !
       !      holds the tissue at its entry temperature while the fluxes it drives into the CAS are         !
       !      kept. ----------------------------------------------------------------------------------------!
-      tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
-      do i = 1_ik, n
-         !----- Derive the capacity from the SAME *_hcap_per_dt the kernel relaxed against, not by         !
-         !      recomputing it from dry_hcap + wmass. The two agree by construction, but only this         !
-         !      form guarantees that zeroing leaf_hcap_per_dt/wood_hcap_per_dt zeroes the ledger's         !
-         !      store term too, so "no capacity" is a clean no-op end to end rather than a state           !
-         !      change the fluxes never paid for. ---------------------------------------------------------!
-         cap_leaf_a(i) = frozen%tissue%leaf_hcap_per_dt(i) * dt_fast
-         cap_wood_a(i) = frozen%tissue%wood_hcap_per_dt(i) * dt_fast
-         tissue_store0 = tissue_store0 + cap_leaf_a(i) * frozen%tissue%t_leaf0(i)                          &
-                                       + cap_wood_a(i) * frozen%tissue%t_wood0(i)
-      end do
-      !----- Commit the TIME-AVERAGE of the tissue temperature over the march, not the final stage's  !
-      !      value. That is the temperature whose store energy equals the b-weighted complement of    !
-      !      the flux the canopy air actually received, so state and ledger are the same number and   !
-      !      the whole-column energy closes to machine precision. Taking surf_tend%leaf_temp (the last       !
-      !      stage) instead leaves ~3.9e4 J unaccounted per step -- 4e-4 relative, against a 1e-6     !
-      !      tolerance -- because the CAS moves across the stages. -----------------------------------!
-      if (col_config%mask%veg_energy) then
-         if (allocated(acc%tissue_leaf_int)) then
-            biophys%leaf_temp(1:n) = acc%tissue_leaf_int(1:n) / dt_fast
-            biophys%wood_temp(1:n) = acc%tissue_wood_int(1:n) / dt_fast
-         else
-            biophys%leaf_temp(1:n) = surf_tend%leaf_temp(1:n) ; biophys%wood_temp(1:n) = surf_tend%wood_temp(1:n)
-         end if
+      !----- Commit the TIME-AVERAGE of where each tissue relaxed to over the march, not the final    !
+      !      stage's value. That is the temperature whose heat equals the b-weighted complement of the!
+      !      flux the canopy air actually received, so the tissue's energy (commit_tissue_energy) and !
+      !      the ledger are the same number and the whole-column energy closes to machine precision.  !
+      !      Taking the last stage instead leaves ~3.9e4 J unaccounted per step -- 4e-4 relative,     !
+      !      against a 1e-6 tolerance -- because the CAS moves across the stages. --------------------!
+      if (allocated(acc%tissue_leaf_int)) then
+         t_leaf_avg(1:n) = acc%tissue_leaf_int(1:n) / dt_fast
+         t_wood_avg(1:n) = acc%tissue_wood_int(1:n) / dt_fast
       else
-         biophys%leaf_temp(1:n) = frozen%tissue%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%tissue%t_wood0(1:n)
+         t_leaf_avg(1:n) = surf_tend%leaf_temp(1:n)
+         t_wood_avg(1:n) = surf_tend%wood_temp(1:n)
       end if
+      call commit_tissue_energy(frozen%tissue, col_cohort%nplant, col_config%mask%veg_energy,                  &
+                                col_config%mask%hydraulics, dt_fast, t_leaf_avg, t_wood_avg, n, biophys,      &
+                                tissue_store0, tissue_store1)
       !----- The transpiration each cohort's leaves lost over the step: the b-weighted amount over the  !
       !      accepted sub-steps, which the leaf water was debited and the canopy air credited. --------!
       if (present(cdiag) .and. allocated(acc%transp_coh))                                           &
          cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(acc%transp_coh(1:n), dt_fast, col_cohort%nplant(1:n), &
                                                       col_cohort%leaf_area(1:n))
-      do i = 1_ik, n
-         tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
-                                       + cap_wood_a(i) * biophys%wood_temp(i)
-      end do
-      !----- ...plus what the tissue WATER stores gained as their water mass changed, valued at each    !
-      !      tissue's start-of-step temperature (build_column_frozen). The tissue temperatures never saw  !
-      !      that part, so cap*T alone would leave it unbooked. -------------------------------------------!
-      tissue_store1 = tissue_store1 + frozen%tissue%water_store_enth * dt_fast
 
       !----- WHOLE-COLUMN CONSERVATION LEDGER: the column's seven budgets, from the b-weighted           !
       !      boundary-flux AMOUNTS accumulated over the sub-steps (acc). The flux-form CAS commits and   !
@@ -570,8 +551,7 @@ contains
                         + tissue_store1,                                                                 &
                         acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%hydrology%t_film_valuation) &
                                           + frozen%snow%acc_enth                                       &
-                                          + (frozen%hydrology%precip_ground - frozen%snow%melt_rate)*dt_fast         &
-                                            * internal_energy_liquid(frozen%hydrology%t_pond_inflow),                      &
+                                          + frozen%hydrology%ground_inflow_enth*dt_fast,                              &
                         acc%whole_enth_out + (surf_overflow - surf_deficit)                                 &
                         * internal_energy_liquid(frozen%hydrology%t_film_valuation) &
                                            + frozen%hydrology%runoff_enth*dt_fast,                                    &

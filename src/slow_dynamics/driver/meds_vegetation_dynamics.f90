@@ -15,19 +15,20 @@
 !==========================================================================================!
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
-   use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day, grav_head
+   use meds_constants,            only : day_sec, tiny_num, yr_day, grav_head
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp, pft_tissue_curves
-   use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential, &
-                                         wood_thermal_water
+   use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential
+   use meds_therm_lib,            only : internal_energy_liquid
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
-   use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon
+   use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon, &
+                                         hold_cohort_tissue_temps, cohort_water_enthalpy
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
                                          SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, KGC_PER_UMOL_C,   &
-                                         slow_tissue_heat
+                                         slow_tissue_energy
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, advance_pool,           &
                                       update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
@@ -109,12 +110,12 @@ contains
       !          their shaded targets from last step's overtopping LAI, BEFORE compute_carbon_allocation reads  !
       !          cohort%sla / cohort%leaf_turnover_rate. OFF => traits stay at top-of-canopy. -------!
       !          A rising SLA resorbs leaf carbon into storage, which has no heat capacity, so the  !
-      !          tissue's heat content changes at unchanged temperature: declared to the ledger,  !
-      !          as the cohort and patch phases declare theirs. ----------------------------------!
+      !          tissue's energy changes at unchanged temperature: declared to the ledger, as the !
+      !          cohort and patch phases declare theirs. ----------------------------------------!
       if (cfg%trait_plasticity_on) then
-         if (present(ledger)) plastic_heat0 = slow_tissue_heat(poly)
+         if (present(ledger)) plastic_heat0 = slow_tissue_energy(poly)
          call advance_plant_traits(poly, cfg, cfg%dt_years)
-         if (present(ledger)) call slow_ledger_declare(ledger, energy_in = slow_tissue_heat(poly) - plastic_heat0)
+         if (present(ledger)) call slow_ledger_declare(ledger, energy_in = slow_tissue_energy(poly) - plastic_heat0)
       end if
 
       !----- 1. Carbon NPP from the plant seam. Also accumulates this step's leaf/fine-root         !
@@ -178,7 +179,7 @@ contains
       call cohort_deriv_alloc(poly%deriv, poly%cohort%n)
       call update_cohort_derivatives(poly, dpool, mortality, cfg%dt_years, n_window, poly%growth_hist_pos)
       !----- TISSUE THERMAL MASS across the commit. A cohort's heat capacity is a function of its  !
-      !      biomass and density, so growing or dying changes `cap * T` with no flux at all: the   !
+      !      biomass and density, so growing or dying changes its energy with no flux at all: the  !
       !      model makes thermal mass out of carbon, and unmakes it, with no counterparty in       !
       !      either direction.                                                                     !
       !                                                                                            !
@@ -186,7 +187,8 @@ contains
       !      splitting it into a growth part and a mortality part needs a cross-term convention    !
       !      the physics does not supply. `update_cohort_states`, the water new leaves take from    !
       !      the wood (fill_new_leaf_water) and the mortality water shed below ALL leave the        !
-      !      temperatures alone, so this is purely the thermal-mass term.                          !
+      !      temperatures alone (hold_cohort_tissue_temps re-derives the energies at them), so this  !
+      !      is purely the thermal-mass term.                                                      !
       !                                                                                            !
       !      WHY IT IS AN EXCHANGE AND NOT A LEAK: new tissue is assembled from CO2 and water at    !
       !      the plant's own temperature, and it arrives carrying the sensible heat of that mass.  !
@@ -195,7 +197,7 @@ contains
       !      A fuller treatment would give CO2 a heat capacity in the CAS and carry enthalpy on    !
       !      root water uptake; both are far larger than this, and the approximation is named here !
       !      rather than buried.  ------------------------------------------------------------!
-      tissue_heat0 = slow_tissue_heat(poly)
+      tissue_heat0 = slow_tissue_energy(poly)
       !----- The fast tier's handover is valued at the density that FIXED it: gpp_accum is per     !
       !      plant and was accumulated over the day at the pre-commit density, and the store's     !
       !      growth term is n0.(p1-p0) by the decomposition in accumulate_mortality_litter. Taken  !
@@ -208,7 +210,7 @@ contains
       leaf_carbon_before = poly%cohort%leaf_carbon(1:poly%cohort%n)
       call update_cohort_states(poly%cohort, poly%deriv, cfg%dt_years, cfg%negligible_nplant)
       call fill_new_leaf_water(poly, cfg, leaf_carbon_before)
-      tissue_heat1 = slow_tissue_heat(poly)
+      tissue_heat1 = slow_tissue_energy(poly)
 
       !----- Mortality's litter and water, on the density the applier actually removed and the     !
       !      pools it left behind (the decomposition is in accumulate_mortality_litter's header).  !
@@ -336,7 +338,7 @@ contains
          !                                                                                          !
          !      Cohort fusion mixes the temperatures on heat capacity, so what is declared here is !
          !      the thermal-mass term alone, not a wrong average. ---------------------------------!
-         if (present(ledger)) th0 = slow_tissue_heat(poly)
+         if (present(ledger)) th0 = slow_tissue_energy(poly)
          !----- Marked ON ITS OWN: recruitment is the one structural operator that CREATES matter   !
          !      rather than rearranging it, and the carbon and heat it draws from outside the model !
          !      (apply_recruitment's carbon_drawn, heat_drawn) are only checkable if nothing else   !
@@ -348,7 +350,7 @@ contains
          call split_cohorts(poly, cfg)
          call sort_cohorts(poly)
          if (present(ledger)) then
-            th1 = slow_tissue_heat(poly)
+            th1 = slow_tissue_energy(poly)
             call slow_ledger_declare(ledger, water_out = cull_water, energy_in = th1 - th0)
             call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_COHORT)
          end if
@@ -356,16 +358,16 @@ contains
 
       !----- Patch disturbance (annual) then patch restructuring (annual, independent). ----!
       if (do_patch_disturbance) then
-         if (present(ledger)) th0 = slow_tissue_heat(poly)
+         if (present(ledger)) th0 = slow_tissue_energy(poly)
          call apply_patch_disturbance(poly, cfg, PATCH_DYNAMICS_INTERVAL, dist_water)
          if (present(ledger)) then
-            th1 = slow_tissue_heat(poly)
+            th1 = slow_tissue_energy(poly)
             call slow_ledger_declare(ledger, water_out = dist_water, energy_in = th1 - th0)
             call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_DISTURB)
          end if
       end if
       if (do_patch_fissfuse) then
-         if (present(ledger)) th0 = slow_tissue_heat(poly)
+         if (present(ledger)) th0 = slow_tissue_energy(poly)
          call sort_patches(poly)
          call new_fuse_patches(poly, cfg)
          call terminate_patches(poly, cfg)
@@ -373,7 +375,7 @@ contains
          call terminate_cohorts(poly, cfg, cull_water)
          call sort_cohorts(poly)
          if (present(ledger)) then
-            th1 = slow_tissue_heat(poly)
+            th1 = slow_tissue_energy(poly)
             call slow_ledger_declare(ledger, water_out = cull_water, energy_in = th1 - th0)
             call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_PATCH)
          end if
@@ -813,21 +815,20 @@ contains
    ! -- a frozen daily RATE the fast loop adds to its ground-water input exactly like throughfall      !
    ! (its own distinct variable, not merged into rainfall), so what leaves                             !
    ! leaf_water_mass/wood_water_mass here reappears in the soil in the next fast window instead        !
-   ! of vanishing. Its ENERGY needs NO separate wiring: mixed into the ground-water input              !
-   ! (precip_ground), it is valued like the precipitation it joins -- "similarly as                    !
-   ! precipitation," not a more precise mechanism than precipitation itself receives. -----------------!
+   ! of vanishing. Its enthalpy, at the temperature of the tissue it left, goes with it               !
+   ! (patch%shed_water_enth), so the ground receives the water as the plant shed it. -----------------!
    subroutine shed_turnover_water(poly, cfg, dpool, ledger)
       type(polygon_t),         intent(inout) :: poly
       type(meds_config_t),     intent(in)    :: cfg
       type(pool_change_block), intent(in)    :: dpool
       type(slow_ledger_t), intent(inout), optional :: ledger
-      real(wp), allocatable :: patch_total(:)
-      real(wp) :: shed_frac, shed_amount, shed_enth
+      real(wp), allocatable :: patch_total(:), patch_enth(:)
+      real(wp) :: shed_frac, shed_amount
       integer(ik) :: j, ip
 
-      allocate(patch_total(poly%patch%n))
+      allocate(patch_total(poly%patch%n), patch_enth(poly%patch%n))
       patch_total = 0.0_wp
-      shed_enth   = 0.0_wp
+      patch_enth  = 0.0_wp
 
       associate (cohort => poly%cohort)
          do j = 1_ik, cohort%n
@@ -837,44 +838,39 @@ contains
                shed_amount = cohort%leaf_water_mass(j) * shed_frac
                cohort%leaf_water_mass(j) = cohort%leaf_water_mass(j) - shed_amount
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
-               !----- LEDGER: the leaf's heat capacity carries its internal water, so shedding that  !
-               !      water takes sensible heat with it, AT THE TISSUE'S TEMPERATURE. The fast loop  !
-               !      puts the mass back into the ground valued as the ground inflow it joins: a     !
-               !      re-valuation. Declaring the departure here is what makes that difference       !
-               !      measurable rather than absorbed.                                               !
-               shed_enth = shed_enth + patch_polygon_area(poly, ip) * cohort%nplant(j) * shed_amount &
-                                     * cp_liq * cohort%leaf_temp(j)
+               patch_enth(ip)  = patch_enth(ip)  + cohort%nplant(j) * shed_amount                        &
+                                                 * internal_energy_liquid(cohort%leaf_temp(j))
             end if
             if (dpool%fineroot(j) < 0.0_wp) then
                shed_frac   = min(1.0_wp, -dpool%fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
-               !----- The fine roots' own share of the store: what wood_thermal_water leaves of it. --!
-               shed_amount = (cohort%wood_water_mass(j)                                               &
-                              - wood_thermal_water(cohort%wood_water_mass(j), cohort%sapwood_carbon(j),  &
-                                                   cohort%fineroot_carbon(j))) * shed_frac
+               !----- The fine roots' own share of the store, in proportion to their carbon. ------!
+               shed_amount = max(cohort%wood_water_mass(j), 0.0_wp) * cohort%fineroot_carbon(j)   &
+                           / max(cohort_wood_store_carbon(cohort%sapwood_carbon(j), cohort%fineroot_carbon(j)), &
+                                 tiny_num) * shed_frac
                cohort%wood_water_mass(j) = cohort%wood_water_mass(j) - shed_amount
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
-               !----- LEDGER: the wood's thermal water is the sapwood share of the store              !
-               !      (wood_thermal_water), so draining the store lowers it by that share of the shed, !
-               !      at the wood's temperature, as the leaf's shed does at the leaf's. The carbon     !
-               !      commit's lower broot raises the share back, a thermal-mass change it declares.   !
-               shed_enth = shed_enth + patch_polygon_area(poly, ip) * cohort%nplant(j) * cp_liq * cohort%wood_temp(j) &
-                                     * wood_thermal_water(shed_amount, cohort%sapwood_carbon(j),        &
-                                                          cohort%fineroot_carbon(j))
+               patch_enth(ip)  = patch_enth(ip)  + cohort%nplant(j) * shed_amount                        &
+                                                 * internal_energy_liquid(cohort%wood_temp(j))
             end if
+            !----- The water leaves at its tissue's temperature, so the tissue keeps that temperature  !
+            !      and its energy falls by the enthalpy the water took. ---------------------------------!
+            call hold_cohort_tissue_temps(cohort, j)
          end do
       end associate
 
       do ip = 1_ik, poly%patch%n
          poly%patch%shed_water_rate(ip) = patch_total(ip) / max(cfg%dt_slow, tiny_num)
+         poly%patch%shed_water_enth(ip) = patch_enth(ip)  / max(cfg%dt_slow, tiny_num)
       end do
 
       !----- LEDGER: the shed is a HANDOFF to the fast tier, not a store this ledger carries (see   !
-      !      slow_site_store's header on why treating it as one double-counts at every open).       !
+      !      slow_site_store's header on why treating it as one double-counts at every open), and    !
+      !      its enthalpy is what the tissues lost with it. ---------------------------------------!
       if (present(ledger)) then
          do ip = 1_ik, poly%patch%n
-            call slow_ledger_declare(ledger, water_out = patch_polygon_area(poly, ip) * patch_total(ip))
+            call slow_ledger_declare(ledger, water_out  = patch_polygon_area(poly, ip) * patch_total(ip),     &
+                                             energy_out = patch_polygon_area(poly, ip) * patch_enth(ip))
          end do
-         call slow_ledger_declare(ledger, energy_out = shed_enth)
       end if
    end subroutine shed_turnover_water
 
@@ -910,6 +906,7 @@ contains
             moved    = min(water_content(psi_wood - head, leaf_curve, grown), cohort%wood_water_mass(i))
             cohort%leaf_water_mass(i) = cohort%leaf_water_mass(i) + moved
             cohort%wood_water_mass(i) = cohort%wood_water_mass(i) - moved
+            call hold_cohort_tissue_temps(cohort, i)
          end do
       end associate
    end subroutine fill_new_leaf_water
@@ -929,7 +926,7 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(out)   :: water_shed     !< [kg/m2 site] the water shed
       type(water_curve_t) :: leaf_curve, wood_curve
-      real(wp)    :: leaf_kept, wood_kept, excess
+      real(wp)    :: leaf_kept, wood_kept, excess, excess_enth
       integer(ik) :: i, ip
 
       water_shed = 0.0_wp
@@ -941,29 +938,31 @@ contains
                            cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
             excess = (cohort%leaf_water_mass(i) - leaf_kept) + (cohort%wood_water_mass(i) - wood_kept)
             if (excess <= 0.0_wp) cycle
+            excess_enth = (cohort%leaf_water_mass(i) - leaf_kept) * internal_energy_liquid(cohort%leaf_temp(i)) &
+                        + (cohort%wood_water_mass(i) - wood_kept) * internal_energy_liquid(cohort%wood_temp(i))
             cohort%leaf_water_mass(i) = leaf_kept
             cohort%wood_water_mass(i) = wood_kept
+            call hold_cohort_tissue_temps(cohort, i)          ! the excess leaves at the tissue's temperature
             ip = cohort%owner_patch(i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip)                                   &
                                       + cohort%nplant(i) * excess / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
+                                      + cohort%nplant(i) * excess_enth / max(cfg%dt_slow, tiny_num)
             water_shed = water_shed + patch_polygon_area(poly, ip) * cohort%nplant(i) * excess
          end do
       end associate
    end subroutine shed_excess_tissue_water
 
    !---------------------------------------------------------------------------------------!
-   ! Continuous background-mortality WATER. The individuals that die this step take their          !
-   ! tissue water with them; without this routine it would vanish when `update_cohort_states`      !
-   ! lowers nplant -- a silent sink on every cohort on every step. (Their tissue HEAT is a change  !
-   ! in thermal MASS, declared with the growth commit's, since the two are one mechanism.)         !
+   ! Continuous background-mortality WATER. The individuals that die this step take their         !
+   ! tissue water and their canopy films with them; without this routine it would vanish when     !
+   ! `update_cohort_states` lowers nplant -- a silent sink on every cohort on every step. (Their  !
+   ! tissue HEAT is a change in thermal MASS, declared with the growth commit's, since the two    !
+   ! are one mechanism.)                                                                          !
    !                                                                                          !
    ! The water goes to the ground down the SAME channel turnover shedding already uses, so there  !
    ! is one verified path for "tissue water that stopped being tissue water" rather than a second  !
    ! mechanism to keep in step with the first.                                                      !
-   !                                                                                          !
-   ! Only the TISSUE water moves. The interception film is per m2 of ground and `update_cohort_     !
-   ! states` does not scale it when nplant falls, so no film leaves the store here -- routing it     !
-   ! would invent a flux the state never made.                                                       !
    !                                                                                          !
    ! Runs AFTER update_cohort_states commits the new nplant, with the density from BEFORE the       !
    ! commit (nplant_before): the dying number is n0 - n1, exactly as accumulate_mortality_litter    !
@@ -987,8 +986,11 @@ contains
             !      not a fraction of what the survivors still hold. cohort_tissue_water carries    !
             !      the post-commit nplant, so using it here would scale the loss by n1/n0. --------!
             w_j = died_nplant * (max(cohort%leaf_water_mass(j), 0.0_wp)                            &
-                               + max(cohort%wood_water_mass(j), 0.0_wp))
+                               + max(cohort%wood_water_mass(j), 0.0_wp)                            &
+                               + cohort%leaf_surf_water(j) + cohort%wood_surf_water(j))
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
+                                      + died_nplant * cohort_water_enthalpy(cohort, j) / max(cfg%dt_slow, tiny_num)
             water_shed = water_shed + patch_polygon_area(poly, ip) * w_j
          end do
       end associate
@@ -1263,6 +1265,7 @@ contains
                cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + excess
             end if
             call set_cohort_size_from_carbon(cohort, j)   ! leaf_area = sla*leaf_carbon, either way
+            call hold_cohort_tissue_temps(cohort, j)      ! the resorbed leaf carbon left at the leaf's temperature
          end do
       end associate
    end subroutine advance_plant_traits
@@ -1309,6 +1312,7 @@ contains
                                              - leaf_carbon_new
             cohort%leaf_carbon(j) = leaf_carbon_new
             call set_cohort_size_from_carbon(cohort, j)
+            call hold_cohort_tissue_temps(cohort, j)
          end do
       end associate
    end subroutine reacclimate_plant_traits

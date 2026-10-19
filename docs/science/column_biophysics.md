@@ -109,9 +109,9 @@ machine precision — the invariant that makes the coupled surface model trustwo
 | Soil water | `soil_water_column_t` | `theta(:)`, `w_surface`, `w_surface_energy` [J m⁻²] | `psi_soil` |
 | Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 | Snow / surface water | `snow_column_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
-| Leaf / wood tissue | `patch_biophys_t` | `leaf_temp`, `wood_temp` (heat store, exact exponential relaxation) | — |
+| Leaf / wood tissue | `patch_biophys_t` | `leaf_energy`, `wood_energy` [J m⁻²; on the cohort block, J plant⁻¹] (exact exponential relaxation) | `leaf_temp`, `wood_temp` |
 | Plant water | `patch_biophys_t` | `leaf_water_mass`, `wood_water_mass` [kg plant⁻¹] | leaf and wood ψ |
-| Canopy surface water | `patch_biophys_t` | `leaf_surf_water`, `wood_surf_water` [kg m⁻²] | — |
+| Canopy surface water | `patch_biophys_t` | `leaf_surf_water`, `wood_surf_water` [kg m⁻²; on the cohort block, kg plant⁻¹] | — |
 
 ### Mixing two patches
 
@@ -133,6 +133,9 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
   where $\rho$, uniform over the site, cancels. Weighting on area alone would drop the covariance
   term $`w_1 w_2 (d_1-d_2)(v_1-v_2)`$: fusing a tall patch with a gap would shift the canopy air's
   energy, humidity and CO₂ by the same relative error, of order 10⁴ J per fusion.
+- **The cohorts: only their density.** A cohort's amounts are per plant (its carbon, tissue water and
+  energy, and canopy films), so the cohorts of the merged patch keep them, and their densities take
+  the area weights.
 - **Diagnosed fields** (temperatures, liquid fractions) are mixed on the same weights only so that a
   read before the caller re-diagnoses them from the blended energy is not far off.
 

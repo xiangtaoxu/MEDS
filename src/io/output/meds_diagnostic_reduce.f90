@@ -543,6 +543,10 @@ contains
          if (allocated(poly%cohort%wood_temp)) then
             if (.not. ieee_is_finite(poly%cohort%wood_temp(i))) bad = .true.
          end if
+         if (allocated(poly%cohort%leaf_energy)) then
+            if (.not. (ieee_is_finite(poly%cohort%leaf_energy(i)) .and. ieee_is_finite(poly%cohort%wood_energy(i)))) &
+               bad = .true.
+         end if
       end do
       if (allocated(poly%patch%cas)) then
          do i = 1_ik, poly%patch%n

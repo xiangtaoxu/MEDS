@@ -22,7 +22,9 @@ or many, and every output and state file has a `polygon` dimension (#449). The p
 Each site owns its soil column and the column's bottom, and the run keeps one configuration (#451).
 A polygon can hold several sites, each on its own soil, and its files report each site's soil (#452).
 A site run divides its polygon into sites with `[[sites]]` tables (#453). Each site's forcing follows
-its elevation and slope, and its phenology and leaf acclimation its own air (#454).
+its elevation and slope, and its phenology and leaf acclimation its own air (#454). A cohort's
+tissue state is its leaf and wood energy, with its temperatures derived from them, and the water it
+sheds takes its enthalpy to the ground (#457).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -74,6 +76,21 @@ its elevation and slope, and its phenology and leaf acclimation its own air (#45
   validity mask), and `gather_patch_columns` reads each patch's layer count from its site.
   `manager_set_soil_params` goes: a soil potential reads its site's retention curve, and
   `diag_params_t%soil_ready` says the fast loop runs.
+- **State files carry each cohort's tissue energy** (#457). `leaf_energy` and `wood_energy` [J per
+  plant] are the prognostic tissue state; `leaf_temp` and `wood_temp` are written beside them as
+  diagnosed twins. The canopy films `leaf_surf_water` and `wood_surf_water` are per plant, marked
+  `units = "kg/plant"`, and `shed_water_enth` holds the shed water's enthalpy. A state file written
+  before is read as before: the energies come from its temperatures, its films (per m² of ground)
+  are divided by the cohort's density, and its shed water is valued at the canopy air's temperature.
+- **Fortran code that changes a cohort's tissue mass or temperature keeps the energy in step**
+  (#457). After setting a tissue's carbon or water, `leaf_temp` or `wood_temp` by hand, call
+  `hold_cohort_tissue_temps`, which keeps the temperatures and re-derives the energies; after
+  setting the energies, call `set_cohort_tissue_temps`. The fast loop stops a run whose stored
+  temperature is more than 10⁻⁶ K from the one its energy gives. `leaf_surf_water` and
+  `wood_surf_water` are per plant (`cohort_film_water` gives a cohort's per m² of ground).
+  `slow_tissue_heat` is `slow_tissue_energy`; `tissue_coefficients_t%water_store_enth` is the
+  per-cohort `leaf_water_enth` and `wood_water_enth`; `veg_thermal_params_t` loses `c_leaf` and
+  `c_wood_dry`, and `tissue_dry_heat_capacity` (`meds_therm_lib`) gives the dry capacities.
 
 ### Changed
 
@@ -238,6 +255,37 @@ its elevation and slope, and its phenology and leaf acclimation its own air (#45
   without `[[sites]]` is unchanged: the eight comparison cases match bit for bit, the restarts from
   state files of either format included. `test_site_terrain` checks the sun and the beam on a slope
   and the lapse to a site; `test_region` runs two sites 500 m apart on the synthetic archive.
+- **A cohort's tissue state is its energy** (#457;
+  `docs/dev_plans/archive/MEDS_TISSUE_ENERGY_PLAN.md`; `docs/science/vegetation_energy_dynamics.md`,
+  "The tissue's energy is its state"). Each cohort carries its leaf and wood energy [J per plant] in
+  the soil's energy datum (the dry heat capacity times T, plus the water's liquid internal energy),
+  and its temperatures are derived from them.
+  - The fast step's commit adds the heat the tissue relaxed through and the enthalpy its water
+    brought, then derives the temperature, so the next step starts from the energy this one ended
+    with. Before, the tissue's heat (heat capacity × T) and its water's enthalpy were valued at two
+    datums, and the tissue was re-valued between steps.
+  - A slow operator that changes a tissue's mass keeps its temperature. Fusion sums the energy, and
+    a split keeps the parent's temperatures.
+  - Tissue water stays liquid below 0 °C.
+  - Site means move by at most 0.007 %; the declared energy of the cohort fusion and split phase
+    falls from 1.1×10⁻² J to 0.
+- **Canopy films are per plant** (#457), like the tissue water. A split, a patch fusion and a
+  disturbance no longer rescale them, and the films of the plants that die go to the ground with
+  their tissue water; before, they stayed on the survivors. Palo Verde's shed water rises 2.8 %;
+  site means elsewhere move by at most about 0.1 %.
+- **The wood's heat capacity counts the whole wood store's water** (#457), the fine roots' share
+  included, which the water flows already move at the wood's temperature. Before, only the sapwood
+  share counted. Site means move by at most 0.05 % (Palo Verde LE +0.04 %, H −0.04 %).
+- **Shed water carries its enthalpy to the ground** (#457). The water a plant sheds (turnover, the
+  excess over a shrunk store, mortality, the cull, a disturbance kill) brings the ground the
+  enthalpy it left its tissues with, at each tissue's temperature (`shed_water_enth`), and the pond
+  takes the mixture. Before, it was valued like the precipitation it joined, or at the canopy air's
+  temperature on a dry day.
+
+  Over the whole change, site means over a two-year census run, a Palo Verde year, a four-cell
+  region and its restart move by at most 0.04 % (Palo Verde LE +0.038 %, H −0.036 %, runoff
+  −0.017 %), and the half-hourly fluxes of example 04's month by 0.02 % on average. The energy and
+  water ledgers close as before.
 
 ### Removed
 
@@ -251,6 +299,9 @@ its elevation and slope, and its phenology and leaf acclimation its own air (#45
   state writer: every run goes through `meds_region` and every state file through `state_file_open`,
   `state_file_put` and `state_file_close`.
 - **`site_soil_temp_column` and `site_soil_water_column`** (#452), which nothing called.
+- **`scale_cohort_ground_fields`** (#457) and the film-conservation stops in a split and a patch
+  fusion: the films are per plant.
+- **`wood_thermal_water`** (#457), the sapwood share of the wood store's water (see Changed).
 
 ## [0.3.5] — 2026-10-17
 

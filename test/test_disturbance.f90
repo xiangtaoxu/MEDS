@@ -32,10 +32,10 @@ program test_disturbance
    call check(h_tall  >= cfg%disturbance_survive_height, 'tall cohort should exceed threshold')
    call check(h_short <  cfg%disturbance_survive_height, 'short cohort should be below threshold')
    n_before = total_nplant(poly)
-   !----- The survivor's film [kg/m2 of ITS patch] must dilute into the gap like its density; the  !
-   !      site total of the SURVIVOR's film is conserved across the split. ------------------------!
+   !----- The survivor's film [kg/plant] goes into the gap with it; the site total of the        !
+   !      SURVIVOR's film is conserved across the split. -----------------------------------------!
    poly%cohort%leaf_surf_water(poly%cohort%n) = 0.25_wp
-   film_before = poly%patch%area(1) * 0.25_wp
+   film_before = poly%patch%area(1) * poly%cohort%nplant(poly%cohort%n) * 0.25_wp
 
    !----- Turn the per-patch diagnostic block ON. It defaults OFF (a run with no diagnostics    !
    !      allocates nothing and every entry point no-ops), so a test that wants to read a slot     !
@@ -91,7 +91,7 @@ program test_disturbance
       i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
       do i = i0, i1
          if (poly%cohort%height(i) < cfg%disturbance_survive_height)                                &
-            film_after = film_after + poly%patch%area(ip) * poly%cohort%leaf_surf_water(i)
+            film_after = film_after + poly%patch%area(ip) * poly%cohort%nplant(i) * poly%cohort%leaf_surf_water(i)
       end do
    end do
    call check_close(film_after, film_before, 1.0e-12_wp, 'disturbance broke the survivor film-water conservation')
@@ -104,9 +104,9 @@ program test_disturbance
    !----- Net plant number drops (the disturbed canopy fraction is killed). ----------------!
    call check(total_nplant(poly) < n_before, 'canopy mortality should reduce plant number')
 
-   !----- TWO donors of unequal area and unequal film: the gap's survivor copies must DILUTE their   !
-   !      films by frac*area(d)/new_area exactly as their densities are (with one donor that factor  !
-   !      is 1 and a verbatim copy passes by accident). Site total before = 0.6*0.25 = 0.15. --------!
+   !----- TWO donors of unequal area and unequal film: the gap's survivor copies take their donors'  !
+   !      densities diluted by frac*area(d)/new_area and keep their per-plant films, so the site's   !
+   !      survivor film water is what it was. -------------------------------------------------------!
    call init_bare_ground(poly, cfg, 2_ik)
    poly%patch%area(1) = 0.6_wp ; poly%patch%area(2) = 0.4_wp
    call add_cohort(poly, cfg, 1_ik, 2_ik, 0.20_wp, 40.0_wp)   ! tall, dies
@@ -120,7 +120,7 @@ program test_disturbance
       do i = i0, i1
          if (poly%cohort%height(i) < cfg%disturbance_survive_height .and. ip == 1_ik) then
             poly%cohort%leaf_surf_water(i) = 0.25_wp
-            film_before = film_before + poly%patch%area(ip) * 0.25_wp
+            film_before = film_before + poly%patch%area(ip) * poly%cohort%nplant(i) * 0.25_wp
          end if
       end do
    end do
@@ -149,12 +149,12 @@ program test_disturbance
    do ip = 1_ik, poly%patch%n
       i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
       do i = i0, i1
-         film_after = film_after + poly%patch%area(ip) * poly%cohort%leaf_surf_water(i)
+         film_after = film_after + poly%patch%area(ip) * poly%cohort%nplant(i) * poly%cohort%leaf_surf_water(i)
       end do
    end do
    call check_close(total_area(poly), 1.0_wp, 1.0e-9_wp, 'two-donor disturbance broke area conservation')
    call check_close(film_after, film_before, 1.0e-12_wp,                                            &
-                    'two-donor disturbance: survivor films dilute into the gap like their densities')
+                    'two-donor disturbance: survivor films go into the gap with their plants')
 
    !----- At a calendar boundary, as a run does it: the step's diagnostics were read and reset, so  !
    !      every weight is 0 and the slots hold only this boundary's events, here a cull. The gap     !

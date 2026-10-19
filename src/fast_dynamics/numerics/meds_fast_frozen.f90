@@ -16,10 +16,11 @@
 !==========================================================================================!
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
-   use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple, C2B_WOOD
+   use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple,        &
+                              TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
-   use meds_water_retention, only : rwc_from_psi, wood_thermal_water
+   use meds_water_retention, only : rwc_from_psi
    use meds_hydr_lib, only : plc_retained, xylem_max_conductance, rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
    use meds_config, only : meds_config_t, pft_wstress_psi_close
@@ -36,7 +37,7 @@ module meds_fast_frozen
                                column_bflux_t, error_control_t, column_tend_t, mask_is_full
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
-   use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy
+   use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy, tissue_dry_heat_capacity
    use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_opts, only : snow_params_t
    use meds_patch_state_vars,   only : snow_column_t
@@ -88,6 +89,9 @@ contains
       !----- Canopy interception scratch. -------------------------------------------------------------!
       real(wp) :: rain_above, combined_w, leaf_cap_i, wood_cap_i, throughfall_i, drip_i, throughfall_total
       real(wp) :: avail_leaf, avail_wood
+      !----- The water reaching the ground besides the shed water [kg/m2/s], its temperature [K], and   !
+      !      the enthalpy all of it brings [W/m2]. ---------------------------------------------------!
+      real(wp) :: water_base, t_water_base, inflow_enth
 
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n),                  &
          frozen%tissue%abs_lw(n), frozen%tissue%lai(n))
@@ -97,6 +101,7 @@ contains
       allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
                frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
+      allocate(frozen%tissue%leaf_water_enth(n), frozen%tissue%wood_water_enth(n))
       allocate(frozen%tissue%leaf_emiss(n), frozen%tissue%wood_emiss(n))
       !----- ZERO the advective-enthalpy terms AT ALLOCATION. They get their real values further           !
       !      down, after the water network supplies sapflow and uptake, but the sf0 surface_derivs         !
@@ -209,14 +214,13 @@ contains
          !      (docs/science/vegetation_energy_dynamics.md eq. (8)). DRY tissue is ALL the wood          !
          !      (col_cohort%bwood), at the dry specific heat -- heartwood is dead structure but it still  !
          !      stores sensible heat, and a sapwood fraction defined on the bole under-counts branch      !
-         !      wood, which is thin enough to be thermally active throughout. Its WATER is the sapwood    !
-         !      share of the store the water network carries on sapwood and fine roots                    !
-         !      (biophys%wood_water_mass), so a drought-emptied store holds less heat; heartwood holds    !
-         !      none. ------------------------------------------------------------------------------------!
-         frozen%tissue%wood_dry_hcap(i) = col_cohort%bwood(i) * col_cohort%nplant(i) * C2B_WOOD               &
-                                          * col_config%veg_thermal%c_wood_dry
-         frozen%tissue%wood_wmass(i)    = col_cohort%nplant(i) * wood_thermal_water(biophys%wood_water_mass(i),    &
-                                                                                    col_cohort%bsap(i), col_cohort%broot(i))
+         !      wood, which is thin enough to be thermally active throughout. Its WATER is the store the  !
+         !      water network carries on the sapwood and fine roots (biophys%wood_water_mass), which      !
+         !      the network moves at the wood's temperature, so a drought-emptied store holds less heat;  !
+         !      heartwood holds none. --------------------------------------------------------------------!
+         frozen%tissue%wood_dry_hcap(i) = tissue_dry_heat_capacity(col_cohort%nplant(i), col_cohort%bwood(i),     &
+                                                                   TISSUE_C_WOOD_DRY)
+         frozen%tissue%wood_wmass(i)    = max(biophys%wood_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
          !----- LEAF capacity, same two-part construction: dry leaf tissue + the INTERNAL (symplast)     !
          !      water the hydraulics carries, biophys%leaf_water_mass [kg/plant] -> per m2 ground.       !
          !      Read from biophys, NOT from y: y%leaf_water_mass is not filled until the end of this     !
@@ -224,8 +228,8 @@ contains
          !      advective-enthalpy zeroing above. The intercepted FILM is deliberately NOT here: it      !
          !      is a separate store with its own phase, and folding it into a temperature-based          !
          !      capacity would commit to a film that can never freeze. ----------------------------------!
-         frozen%tissue%leaf_dry_hcap(i) = col_cohort%bleaf(i) * col_cohort%nplant(i) * C2B_WOOD               &
-                                          * col_config%veg_thermal%c_leaf
+         frozen%tissue%leaf_dry_hcap(i) = tissue_dry_heat_capacity(col_cohort%nplant(i), col_cohort%bleaf(i),     &
+                                                                   TISSUE_C_LEAF)
          frozen%tissue%leaf_wmass(i)    = max(biophys%leaf_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
          !----- The wood's radiation and sensible coefficient are always filled: there is ONE wood       !
          !      energy balance (surface_derivs), relaxed by the wood's own heat capacity, so these       !
@@ -324,29 +328,38 @@ contains
       !      forc%snowfall AND forc%rainfall into the pack, so only meltwater reaches the ground; on        !
       !      bare ground it is what SURVIVES the canopy, throughfall_total -- feeding the soil the          !
       !      full rainfall while also crediting the intercepted share to the canopy film would              !
-      !      create water at the whole-column boundary. ----------------------------------------------------!
+      !      create water at the whole-column boundary. To either the shed water adds itself. ---------------!
       if (snow_st%exists) then
-         hforc%precip_ground   = snow_st%melt_rate + biophys%shed_water_rate
+         water_base = snow_st%melt_rate
       else
-         hforc%precip_ground   = throughfall_total + biophys%shed_water_rate
+         water_base = throughfall_total
       end if
+      hforc%precip_ground      = water_base + biophys%shed_water_rate
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- Phase of the evaporating surface, for the ice saturation branch                             !
       !      (docs/science/snow_biophysics.md eq. (1)). -------------------------------------------------!
       hforc%ground_fliq        = biophys%soil_energy%soil_fliq(1)
-      !----- Temperature that VALUES the ground inflow: under a pack, the meltwater's; on bare ground,     !
-      !      the effective liquid temperature of the rain + sub-threshold-snowfall mixture, both valued    !
-      !      at the air temperature above the canopy (forc%air_temp), not at the canopy air's              !
-      !      (docs/science/soil_plant_water.md §5). temp_of_liquid_enthalpy is the exact inverse of        !
-      !      internal_energy_liquid; below t_3ple it stands for water that must still melt. ---------------!
-      hforc%t_pond_inflow = tcas
+      !----- The temperature that values that water. Under a pack, the meltwater's; on bare ground, the!
+      !      effective liquid temperature of the rain + sub-threshold-snowfall mixture, both valued at !
+      !      the air temperature above the canopy (forc%air_temp), not at the canopy air's             !
+      !      (docs/science/soil_plant_water.md §5). The shed water brings the enthalpy it left its     !
+      !      tissues with, and the pond takes the mixture. temp_of_liquid_enthalpy is the exact inverse!
+      !      of internal_energy_liquid; below t_3ple it stands for water that must still melt. --------!
+      t_water_base = tcas
       if (snow_st%exists) then
-         hforc%t_pond_inflow = snow_st%t_melt
+         t_water_base = snow_st%t_melt
       else if (forc%rainfall + forc%snowfall > tiny_num) then
-         hforc%t_pond_inflow = temp_of_liquid_enthalpy(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
-                                                       / (forc%rainfall + forc%snowfall))
+         t_water_base = temp_of_liquid_enthalpy(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
+                                                / (forc%rainfall + forc%snowfall))
       end if
+      inflow_enth = water_base * internal_energy_liquid(t_water_base) + biophys%shed_water_enth
+      hforc%t_pond_inflow = t_water_base
+      if (biophys%shed_water_rate > 0.0_wp) hforc%t_pond_inflow = temp_of_liquid_enthalpy(inflow_enth / hforc%precip_ground)
+      !----- ...and the enthalpy it brings across the column's boundary: all of it on bare ground; under a  !
+      !      pack the meltwater's is the pack's, inside the column, so only the shed water's. -----------!
+      frozen%hydrology%ground_inflow_enth = inflow_enth
+      if (snow_st%exists) frozen%hydrology%ground_inflow_enth = biophys%shed_water_enth
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. -----!
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
 
@@ -386,10 +399,10 @@ contains
       if (spac%infil > tiny_num) frozen%hydrology%t_infil = temp_of_liquid_enthalpy(spac%infil_enth / spac%infil)
       !----- The canopy film's valuation temperature. It is a reference: the film store, its               !
       !      interception input and its evaporation (surface_derivs) all use this one value, so the        !
-      !      film ledger closes within a step at any choice. On bare ground it is the inflow's, the        !
-      !      rain that fills the film; under a pack nothing is intercepted, and it is                      !
+      !      film ledger closes within a step at any choice. On bare ground it is the rain's, the rain     !
+      !      that fills the film; under a pack nothing is intercepted, and it is                           !
       !      tsupercool_liq, where internal_energy_liquid is zero. ----------------------------------------!
-      frozen%hydrology%t_film_valuation = hforc%t_pond_inflow   ! one valuation for the boundary inflow AND the film
+      frozen%hydrology%t_film_valuation = t_water_base
       if (snow_st%exists) frozen%hydrology%t_film_valuation = tsupercool_liq
       frozen%film%film_liquid_enthalpy = internal_energy_liquid(frozen%hydrology%t_film_valuation)
       frozen%hydrology%t_bot           = biophys%soil_energy%soil_temp(nsl)
@@ -469,11 +482,11 @@ contains
       !      number, both sides). The root water arrives at each layer's own temperature                     !
       !      (qloss_frozen, above).                                                                          !
       !                                                                                                      !
-      !      Each tissue's own WATER is valued at its start-of-step temperature, and arriving water          !
-      !      heats it only by its temperature difference: the heat store cap*T has no term for water         !
-      !      mass coming or going (docs/science/soil_plant_water.md eqs. (4)-(5)). The leaf still pays the   !
-      !      full vapour enthalpy of what it transpires (surface_derivs). -----------------------------------!
-      frozen%tissue%water_store_enth = 0.0_wp
+      !      Each tissue's own WATER carries its liquid enthalpy, at the tissue's start-of-step            !
+      !      temperature, into the tissue's energy as its mass changes (leaf_water_enth, wood_water_enth), !
+      !      and arriving water heats the tissue only by its temperature difference                        !
+      !      (docs/science/soil_plant_water.md eqs. (4)-(5)). The leaf still pays the full vapour enthalpy !
+      !      of what it transpires (surface_derivs). ------------------------------------------------------!
       do i = 1_ik, n
          t_up_wl    = merge(biophys%wood_temp(i), biophys%leaf_temp(i), spac%sapflow(i) >= 0.0_wp)
          u_liq_up   = internal_energy_liquid(t_up_wl)
@@ -485,9 +498,8 @@ contains
          frozen%tissue%qwflux_wl(i)  = sapflow_gnd * u_liq_up - (sapflow_gnd - transp_gnd) * u_liq_leaf
          frozen%tissue%q_wood_net(i) = frozen%roots%qloss_frozen(i) - uptake_gnd * u_liq_wood                &
                                        - sapflow_gnd * (u_liq_up - u_liq_wood)
-         frozen%tissue%water_store_enth = frozen%tissue%water_store_enth                                     &
-                                        + (uptake_gnd - sapflow_gnd) * u_liq_wood                             &
-                                        + (sapflow_gnd - transp_gnd) * u_liq_leaf
+         frozen%tissue%wood_water_enth(i) = (uptake_gnd - sapflow_gnd) * u_liq_wood
+         frozen%tissue%leaf_water_enth(i) = (sapflow_gnd - transp_gnd) * u_liq_leaf
       end do
 
       !----- Pack the prognostic state; plant water MASS is itself prognostic, so it is copied           !

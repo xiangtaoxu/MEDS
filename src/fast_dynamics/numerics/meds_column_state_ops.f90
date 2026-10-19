@@ -15,7 +15,7 @@
 !                           plant_water_store / canopy_film_store  (one loop order, so the two       !
 !                           schemes' ledgers are the same arithmetic)                                !
 !   * post-march commits shared by both schemes -- clamp_canopy_film / deposit_condensate /          !
-!                           unpack_column_state / diagnose_soil_temps                                !
+!                           unpack_column_state / diagnose_soil_temps / commit_tissue_energy         !
 !                                                                                          !
 ! ADDING A STATE FIELD: list it in state_to_array, array_to_state, tend_to_array and                !
 ! state_entry_rules (and in the type, the frozen-record pack, unpack_column_state and                !
@@ -23,20 +23,21 @@
 !==========================================================================================!
 module meds_column_state_ops
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, tiny_num, mmh2o
-   use meds_therm_lib,        only : internal_energy_to_temp, cas_temp_of_enthalpy, cas_enthalpy_of_temp
+   use meds_constants,        only : rho_h2o, tiny_num, mmh2o, cp_liq
+   use meds_therm_lib,        only : internal_energy_to_temp, cas_temp_of_enthalpy, cas_enthalpy_of_temp, &
+                                     tissue_temp
    use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t, column_frozen_t,   &
                                      stage_bflux_t, column_bflux_t, process_mask_t,                    &
                                      GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W
    use meds_soil_types, only : energy_forcing_t
-   use meds_fast_types, only : patch_biophys_t
+   use meds_fast_types, only : patch_biophys_t, tissue_coefficients_t
    implicit none
    private
 
    public :: state_size, state_to_array, array_to_state, tend_to_array, state_entry_rules
    public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight, transp_per_leaf_area
-   public :: assemble_soil_energy_forcing, apply_process_mask
+   public :: assemble_soil_energy_forcing, apply_process_mask, commit_tissue_energy
    public :: clamp_cas
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
    public :: clamp_canopy_film, deposit_condensate, unpack_column_state, diagnose_soil_temps
@@ -497,6 +498,59 @@ contains
          call internal_energy_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o, dry_hcap(k), soil_temp(k), soil_fliq(k))
       end do
    end subroutine diagnose_soil_temps
+
+   !------------------------------------------------------------------------------------------------!
+   ! commit_tissue_energy -- each tissue's end-of-step energy and temperature, and the tissue store !
+   ! the whole-column ledger counts (docs/science/vegetation_energy_dynamics.md eqs. (9)-(10)).     !
+   ! Each tissue relaxed from its start-of-step temperature at the heat capacity held over the      !
+   ! step, and t_leaf_avg/t_wood_avg are the march's time-average of where it relaxed to: the       !
+   ! temperature whose heat matches what the canopy air received. Its energy gains that heat,       !
+   ! cap*(t_avg - t0), and the enthalpy its own water gained (docs/science/soil_plant_water.md      !
+   ! eq. (5)). Its temperature is then what that energy gives with the water it holds at the end    !
+   ! of the step. With the vegetation-energy mask off there is no heat, so water that arrived at    !
+   ! the tissue's temperature leaves the temperature where it was; with the hydraulics mask off     !
+   ! no water moved. A leaf with no heat capacity takes its wood's temperature.                     !
+   !------------------------------------------------------------------------------------------------!
+   pure subroutine commit_tissue_energy(tissue, nplant, veg_energy_on, water_on, dt, t_leaf_avg, t_wood_avg, n, &
+                                        biophys, store0, store1)
+      type(tissue_coefficients_t), intent(in)    :: tissue
+      real(wp),                    intent(in)    :: nplant(:)                     !< [plant/m2]
+      logical,                     intent(in)    :: veg_energy_on, water_on       !< the process mask
+      real(wp),                    intent(in)    :: dt                            !< [s] dt_fast
+      real(wp),                    intent(in)    :: t_leaf_avg(:), t_wood_avg(:)  !< [K]
+      integer(ik),                 intent(in)    :: n
+      type(patch_biophys_t),       intent(inout) :: biophys
+      real(wp),                    intent(out)   :: store0, store1                !< [J/m2] the tissue store
+      real(wp)    :: heat_leaf, heat_wood, enth_leaf, enth_wood, w_leaf, w_wood
+      integer(ik) :: i
+      store0 = 0.0_wp
+      store1 = 0.0_wp
+      do i = 1_ik, n
+         heat_leaf = 0.0_wp
+         heat_wood = 0.0_wp
+         if (veg_energy_on) then
+            heat_leaf = tissue%leaf_hcap_per_dt(i) * dt * (t_leaf_avg(i) - tissue%t_leaf0(i))
+            heat_wood = tissue%wood_hcap_per_dt(i) * dt * (t_wood_avg(i) - tissue%t_wood0(i))
+         end if
+         enth_leaf = 0.0_wp
+         enth_wood = 0.0_wp
+         if (water_on) then
+            enth_leaf = tissue%leaf_water_enth(i) * dt
+            enth_wood = tissue%wood_water_enth(i) * dt
+         end if
+         store0 = store0 + biophys%leaf_energy(i) + biophys%wood_energy(i)
+         biophys%leaf_energy(i) = biophys%leaf_energy(i) + heat_leaf + enth_leaf
+         biophys%wood_energy(i) = biophys%wood_energy(i) + heat_wood + enth_wood
+         store1 = store1 + biophys%leaf_energy(i) + biophys%wood_energy(i)
+         w_leaf = max(biophys%leaf_water_mass(i), 0.0_wp) * nplant(i)
+         w_wood = max(biophys%wood_water_mass(i), 0.0_wp) * nplant(i)
+         if (tissue%wood_dry_hcap(i) + w_wood * cp_liq > 0.0_wp)                                        &
+            biophys%wood_temp(i) = tissue_temp(biophys%wood_energy(i), w_wood, tissue%wood_dry_hcap(i))
+         biophys%leaf_temp(i) = biophys%wood_temp(i)
+         if (tissue%leaf_dry_hcap(i) + w_leaf * cp_liq > 0.0_wp)                                        &
+            biophys%leaf_temp(i) = tissue_temp(biophys%leaf_energy(i), w_leaf, tissue%leaf_dry_hcap(i))
+      end do
+   end subroutine commit_tissue_energy
 
    !---------------------------------------------------------------------------------------!
    ! assemble_soil_energy_forcing -- the soil-heat column's boundary and volumetric forcing from       !

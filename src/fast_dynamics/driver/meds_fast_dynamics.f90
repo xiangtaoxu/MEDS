@@ -8,10 +8,11 @@
 ! (cas/soil_energy/soil_water), runs n_fast_per_slow sub-steps of the per-patch kernel              !
 ! column_fast_step, and writes the evolved reservoirs back to the site. The static         !
 ! column_config_t + base met arrive via fast_context_t (the caller builds them -- no model !
-! parameters are hard-coded here); per-cohort                                              !
-! leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/leaf_surf_water/wood_surf_water are  !
-! PERSISTED on the cohort block and adopted here each slow step (no reseeding) -- same as  !
-! the soil + CAS reservoirs, this is genuine cross-slow-step memory.                       !
+! parameters are hard-coded here); per-cohort leaf_energy/wood_energy (with the            !
+! temperatures they give), leaf_water_mass/wood_water_mass and leaf_surf_water/            !
+! wood_surf_water are PERSISTED on the cohort block and adopted here each slow step (no    !
+! reseeding) -- same as the soil + CAS reservoirs, this is genuine cross-slow-step         !
+! memory.                                                                                  !
 !                                                                                          !
 ! The stepper calls fast_dynamics before the slow loop when cfg%fast_biophysics_on. This   !
 ! is the fast->slow seam's fast half: the slow loop's carbon allocation reads the GPP and  !
@@ -51,7 +52,8 @@ module meds_fast_dynamics
    use meds_met_driver,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top, met_at_site
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
-   use meds_cohort_state_vars, only : set_cohort_tissue_water
+   use meds_cohort_state_vars, only : set_cohort_tissue_water, hold_cohort_tissue_temps, cohort_tissue_temps, &
+                                      set_cohort_tissue_temps
    use meds_state_defaults,    only : DMAX_PSI_LEAF_ACCUM_RESET
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
@@ -107,6 +109,9 @@ module meds_fast_dynamics
    integer(ik), parameter :: RED_RUNOFF_SURF   = 13_ik   !< surface runoff [kg/m2], area-weighted
    integer(ik), parameter :: RED_DRAINAGE      = 14_ik   !< drainage at the column's bottom [kg/m2]
    integer(ik), parameter :: N_RED             = 14_ik
+   !----- How far a cohort's stored tissue temperatures may sit from the ones its energy gives [K]: the  !
+   !      two are one number, and only round-off separates them. -------------------------------------!
+   real(wp),    parameter :: TISSUE_TEMP_TOL   = 1.0e-6_wp
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus  !
    !      the reference met + initial soil state. The CALLER builds this (build_fast_context,    !
@@ -239,6 +244,7 @@ contains
                associate (hyd => ctx%col_config%hydraulics_table%pft(poly%cohort%pft(i)))
                   call set_cohort_tissue_water(poly%cohort, i, psi, hyd%leaf_curve, hyd%wood_curve)
                end associate
+               call hold_cohort_tissue_temps(poly%cohort, i)
             end do
          end associate
       end do
@@ -347,6 +353,7 @@ contains
       real(wp)    :: z_top, rough_p, displace_p   !< [m] this patch's canopy-air top, roughness, displacement
       integer(ik) :: j, i, i0, ncoh, ith, kb
       real(wp)    :: rain_s, snow_s, echo(N_PY_ROWS)   !< the forcing echo's precipitation split, per sub-step
+      real(wp)    :: t_leaf_e, t_wood_e            !< [K] the tissue temperatures a cohort's energy gives
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are   !
       !      supplied; otherwise every sub-step reads the context's constant reference climate   !
@@ -530,7 +537,7 @@ contains
       !$omp    private(ip, ith, isub, j, i, i0, ncoh,                                              &
       !$omp            sum_lai, sum_wai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days,   &
       !$omp            prow, kb,                                                                    &
-      !$omp            sw_ground, z_top, rough_p, displace_p)
+      !$omp            sw_ground, z_top, rough_p, displace_p, t_leaf_e, t_wood_e)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
          !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!
@@ -590,9 +597,23 @@ contains
          !      TODAY, held constant across the sub-step loop" convention as soil_carbon just       !
          !      above. -----------------------------------------------------------------------------!
          biophys%shed_water_rate = poly%patch%shed_water_rate(ip)
+         biophys%shed_water_enth = poly%patch%shed_water_enth(ip)
          biophys%slow_co2_rate   = poly%patch%slow_co2_rate(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
+            !----- The tissues' energy is the state the fast loop advances, per m2 of ground here.   !
+            !      Their stored temperatures must be the ones that energy gives: a slow operator that!
+            !      changed a tissue's mass without holding its temperature (hold_cohort_tissue_temps)!
+            !      would break that, and is stopped here rather than read as a jump in temperature. -!
+            call cohort_tissue_temps(poly%cohort, i, t_leaf_e, t_wood_e)
+            if (abs(t_leaf_e - poly%cohort%leaf_temp(i)) > TISSUE_TEMP_TOL .or.                          &
+                abs(t_wood_e - poly%cohort%wood_temp(i)) > TISSUE_TEMP_TOL) then
+               write(*, '(a,i0,4(a,es12.5))') ' fast_dynamics: cohort ', i, ' leaf ', poly%cohort%leaf_temp(i),    &
+                     ' K stored vs ', t_leaf_e, ' K from its energy; wood ', poly%cohort%wood_temp(i), ' vs ', t_wood_e
+               error stop 'fast_dynamics: a cohort''s tissue temperatures are not the ones its energy gives'
+            end if
+            biophys%leaf_energy(j) = poly%cohort%leaf_energy(i) * poly%cohort%nplant(i)
+            biophys%wood_energy(j) = poly%cohort%wood_energy(i) * poly%cohort%nplant(i)
             biophys%leaf_temp(j) = poly%cohort%leaf_temp(i)
             biophys%wood_temp(j) = poly%cohort%wood_temp(i)
             !----- Tissue water is READ here, never written. Fitting it to the capacity the biomass  !
@@ -603,9 +624,10 @@ contains
             biophys%wood_water_mass(j) = poly%cohort%wood_water_mass(i)
             !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !
             !      initial condition here, not a placeholder -- a freshly-created cohort simply hasn't  !
-            !      been rained on yet. -----------------------------------------------------------------!
-            biophys%leaf_surf_water(j) = poly%cohort%leaf_surf_water(i)
-            biophys%wood_surf_water(j) = poly%cohort%wood_surf_water(i)
+            !      been rained on yet. The cohort holds it per plant, the fast loop per m2 of        !
+            !      ground. --------------------------------------------------------------------------!
+            biophys%leaf_surf_water(j) = poly%cohort%leaf_surf_water(i) * poly%cohort%nplant(i)
+            biophys%wood_surf_water(j) = poly%cohort%wood_surf_water(i) * poly%cohort%nplant(i)
          end do
 
          call ensure_aero_out_capacity(aero, ncoh)
@@ -812,12 +834,13 @@ contains
          poly%patch%adapt_dt_last(ip) = biophys%adapt_dt_last
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
-            poly%cohort%leaf_temp(i) = biophys%leaf_temp(j)
-            poly%cohort%wood_temp(i) = biophys%wood_temp(j)
+            poly%cohort%leaf_energy(i) = biophys%leaf_energy(j) / poly%cohort%nplant(i)
+            poly%cohort%wood_energy(i) = biophys%wood_energy(j) / poly%cohort%nplant(i)
             poly%cohort%leaf_water_mass(i) = biophys%leaf_water_mass(j)
             poly%cohort%wood_water_mass(i) = biophys%wood_water_mass(j)
-            poly%cohort%leaf_surf_water(i) = biophys%leaf_surf_water(j)
-            poly%cohort%wood_surf_water(i) = biophys%wood_surf_water(j)
+            poly%cohort%leaf_surf_water(i) = biophys%leaf_surf_water(j) / poly%cohort%nplant(i)
+            poly%cohort%wood_surf_water(i) = biophys%wood_surf_water(j) / poly%cohort%nplant(i)
+            call set_cohort_tissue_temps(poly%cohort, i)
          end do
 
          red_worst_energy(ip) = budget%whole_energy%worst

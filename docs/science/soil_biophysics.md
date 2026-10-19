@@ -360,7 +360,10 @@ temperature (`root_heat`, per layer), and between the pond and the top layer (`w
 Per-cohort **canopy interception** is a separate top→bottom cascade (`intercept_canopy_layer`, in
 `meds_plant_biophysics`): a capacity-limited bucket with a Beer interception fraction, each
 cohort's throughfall feeding the next, so the net throughfall reaching the soil top is what the
-infiltration boundary sees.
+infiltration boundary sees. A cohort holds its films per plant, as it holds its tissue water, and the
+fast loop works with them per m² of ground. So a split, a patch fusion or a disturbance changes a
+cohort's density and leaves its films alone, and the plants that die take their films to the ground
+with their tissue water.
 
 ## Soil heterotrophic respiration
 

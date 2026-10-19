@@ -170,6 +170,7 @@ module meds_patch_state_vars
       ! 8. DAILY SLOW-TO-FAST RATES (set once per slow step, held fixed all day)                 !
       !==========================================================================================!
       real(wp),    allocatable :: shed_water_rate(:)   !< [kg/m2/s] water of shed tissue, to the ground (soil_plant_water.md)
+      real(wp),    allocatable :: shed_water_enth(:)   !< [W/m2] its enthalpy, at the temperatures of the tissues it left
       real(wp),    allocatable :: slow_co2_rate(:)     !< [umol/m2/s] growth respiration less starvation deficit, to the canopy air
       !==========================================================================================!
       ! 9. WITHIN-STEP ACCUMULATORS (reset each step, never restarted)                           !
@@ -363,8 +364,9 @@ contains
       !----- 7. Soil carbon ---------------------------------------------------------------------!
       allocate(patch%soil_carbon(cap))                           ! default-initialised by its type
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
-      allocate(patch%shed_water_rate(cap), patch%slow_co2_rate(cap))
+      allocate(patch%shed_water_rate(cap), patch%shed_water_enth(cap), patch%slow_co2_rate(cap))
       patch%shed_water_rate = 0.0_wp
+      patch%shed_water_enth = 0.0_wp
       patch%slow_co2_rate = 0.0_wp
       !----- 9. Within-step accumulators --------------------------------------------------------!
       allocate(patch%xi_accum(cap), patch%litter_in(cap))        ! default-initialised by its type
@@ -410,6 +412,7 @@ contains
       tmp%soil_carbon(1:m) = patch%soil_carbon(1:m)
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
       tmp%shed_water_rate(1:m) = patch%shed_water_rate(1:m)
+      tmp%shed_water_enth(1:m) = patch%shed_water_enth(1:m)
       tmp%slow_co2_rate(1:m)   = patch%slow_co2_rate(1:m)
       !----- 9. Within-step accumulators --------------------------------------------------------!
       tmp%xi_accum(1:m)  = patch%xi_accum(1:m)
@@ -440,6 +443,7 @@ contains
       call move_alloc(tmp%soil_carbon, patch%soil_carbon)
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
       call move_alloc(tmp%shed_water_rate, patch%shed_water_rate)
+      call move_alloc(tmp%shed_water_enth, patch%shed_water_enth)
       call move_alloc(tmp%slow_co2_rate, patch%slow_co2_rate)
       !----- 9. Within-step accumulators --------------------------------------------------------!
       call move_alloc(tmp%xi_accum, patch%xi_accum)
@@ -476,6 +480,7 @@ contains
       patch%soil_carbon(1:m) = patch%soil_carbon(perm(1:m))
       !----- 8. Daily slow-to-fast rates --------------------------------------------------------!
       patch%shed_water_rate(1:m) = patch%shed_water_rate(perm(1:m))
+      patch%shed_water_enth(1:m) = patch%shed_water_enth(perm(1:m))
       patch%slow_co2_rate(1:m)   = patch%slow_co2_rate(perm(1:m))
       !----- 9. Within-step accumulators --------------------------------------------------------!
       patch%xi_accum(1:m)  = patch%xi_accum(perm(1:m))
@@ -496,7 +501,8 @@ contains
                                             patch%age,                                                         &
                                             patch%cohort_offset, patch%cohort_count, patch%recruit_pool,       &
                                             patch%cas, patch%snow, patch%soil_water, patch%soil_energy,        &
-                                            patch%soil_carbon, patch%shed_water_rate, patch%slow_co2_rate,     &
+                                            patch%soil_carbon, patch%shed_water_rate, patch%shed_water_enth,   &
+                                            patch%slow_co2_rate,                                               &
                                             patch%xi_accum, patch%litter_in, patch%adapt_dt_last)
    end subroutine free_patch_block
 

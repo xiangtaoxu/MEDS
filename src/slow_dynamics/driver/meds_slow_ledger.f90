@@ -32,7 +32,7 @@ module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : rho_h2o
    use meds_config,             only : meds_config_t
-   use meds_cohort_state_vars,  only : cohort_tissue_heat_capacity
+   use meds_cohort_state_vars,  only : cohort_film_water
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
@@ -44,7 +44,7 @@ module meds_slow_ledger
    private
 
    public :: slow_store_t, slow_ledger_t, slow_site_store, slow_fast_carbon_handover
-   public :: slow_tissue_heat
+   public :: slow_tissue_energy
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
    public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
@@ -296,7 +296,7 @@ contains
       real(wp),            intent(in) :: rho_air
       type(slow_store_t)              :: store
       real(wp)    :: a, dmol, cap_mass, cap_mol, e_soil, w_soil
-      real(wp)    :: cap_leaf, cap_wood, c_min(cfg%pft%n)
+      real(wp)    :: c_min(cfg%pft%n)
       integer(ik) :: ip, i, i0, i1, k, pf
 
       !----- Recruit-pool valuation, one per PFT (the same conversion compute_vital_rates used). -!
@@ -354,8 +354,7 @@ contains
          end do
 
          !----- Cohorts of this patch. nplant is per m2 of PATCH ground, so the patch area weight  !
-         !      converts to site; the interception films are ALREADY ground-referenced and must    !
-         !      not take the nplant factor.                                                        !
+         !      converts to site.                                                                 !
          i0 = poly%patch%cohort_offset(ip)
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          associate (c => poly%cohort)
@@ -363,12 +362,9 @@ contains
                store%carbon = store%carbon + a * c%nplant(i) * (c%leaf_carbon(i)                   &
                             + c%fineroot_carbon(i) + c%wood_carbon(i) + c%nonstructural_carbon(i))
                store%water  = store%water  + a * c%nplant(i) * (c%leaf_water_mass(i) + c%wood_water_mass(i))
-               store%water  = store%water  + a * (c%leaf_surf_water(i) + c%wood_surf_water(i))
-               !----- Tissue heat, through the SHARED capacity (cohort state), so the ledger, the  !
-               !      demography operators and the slow driver cannot drift apart on what a        !
-               !      cohort's thermal mass is. ---------------------------------------------------!
-               call cohort_tissue_heat_capacity(c, i, cap_leaf, cap_wood)
-               store%energy = store%energy + a * (cap_leaf * c%leaf_temp(i) + cap_wood * c%wood_temp(i))
+               store%water  = store%water  + a * cohort_film_water(c, i)
+               !----- Tissue energy [J/plant], the cohort's state. --------------------------------!
+               store%energy = store%energy + a * c%nplant(i) * (c%leaf_energy(i) + c%wood_energy(i))
             end do
          end associate
       end do
@@ -376,24 +372,23 @@ contains
    end function slow_site_store
 
    !---------------------------------------------------------------------------------------!
-   ! The site's TISSUE HEAT alone [J/m2 site] -- the same slice slow_site_store folds into the   !
+   ! The site's TISSUE ENERGY alone [J/m2 site] -- the same slice slow_site_store folds into the !
    ! energy total, exposed so the driver can measure how much of it moved when biomass changed.   !
    !---------------------------------------------------------------------------------------!
-   pure function slow_tissue_heat(poly) result(e)
+   pure function slow_tissue_energy(poly) result(e)
       type(polygon_t), intent(in) :: poly
-      real(wp)    :: e, cap_leaf, cap_wood
+      real(wp)    :: e
       integer(ik) :: ip, i, i0, i1
       e = 0.0_wp
       do ip = 1_ik, poly%patch%n
          i0 = poly%patch%cohort_offset(ip)
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          do i = i0, i1
-            call cohort_tissue_heat_capacity(poly%cohort, i, cap_leaf, cap_wood)
-            e = e + patch_polygon_area(poly, ip) * (cap_leaf * poly%cohort%leaf_temp(i)           &
-                                         + cap_wood * poly%cohort%wood_temp(i))
+            e = e + patch_polygon_area(poly, ip) * poly%cohort%nplant(i)                         &
+                  * (poly%cohort%leaf_energy(i) + poly%cohort%wood_energy(i))
          end do
       end do
-   end function slow_tissue_heat
+   end function slow_tissue_energy
 
    !---------------------------------------------------------------------------------------!
    ! The carbon the FAST tier handed to the slow tier this step [kgC/m2 site]: gross GPP minus   !

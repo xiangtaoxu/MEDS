@@ -26,7 +26,8 @@
 module meds_demography_update
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, lnexp_min, lnexp_max
-   use meds_cohort_state_vars, only : cohort_block, cohort_deriv_block, set_cohort_size_from_carbon
+   use meds_cohort_state_vars, only : cohort_block, cohort_deriv_block, set_cohort_size_from_carbon, &
+                                      hold_cohort_tissue_temps
    use meds_patch_state_vars, only : patch_block
    use meds_polygon_state_vars, only : polygon_t
    implicit none
@@ -98,9 +99,11 @@ contains
       !----- The geometry follows the committed carbon: dbh from wood carbon, leaf area from leaf  !
       !      carbon x SLA, and the wood caches from that dbh -- the single flip fusion and fission  !
       !      already use. Host-side and outside the offload region: it is branchy allometry, and    !
-      !      the kernel above is arithmetic-only by design.                                         !
+      !      the kernel above is arithmetic-only by design. The tissue made or lost came or went at !
+      !      the tissue's temperature, which its energy is held to.                                 !
       do i = 1_ik, cohort%n
          call set_cohort_size_from_carbon(cohort, i)
+         call hold_cohort_tissue_temps(cohort, i)
       end do
    end subroutine update_cohort_states
 

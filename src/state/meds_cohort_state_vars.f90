@@ -18,9 +18,10 @@
 module meds_cohort_state_vars
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,           only : wp, ik
-   use meds_constants,       only : TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
-   use meds_therm_lib,       only : tissue_heat_capacity
-   use meds_water_retention, only : wood_thermal_water, water_curve_t, water_content
+   use meds_constants,       only : TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, cp_liq
+   use meds_therm_lib,       only : tissue_heat_capacity, tissue_dry_heat_capacity, tissue_energy, tissue_temp, &
+                                    internal_energy_liquid
+   use meds_water_retention, only : water_curve_t, water_content
    use meds_numerics,        only : pair_mean
    use meds_allometry,       only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,        &
                                     carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
@@ -35,9 +36,11 @@ module meds_cohort_state_vars
 
    public :: cohort_block, alloc_cohort_block, free_cohort_block, expand_cohort_block, reorder_cohort_block
    public :: compact_cohort_block, copy_cohort, set_cohort_size, set_cohort_size_from_carbon, init_cohort
-   public :: scale_cohort_ground_fields, fuse_cohort_fast_state
+   public :: fuse_cohort_fast_state
    public :: cohort_deriv_block, cohort_deriv_alloc
-   public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
+   public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_film_water, cohort_water_enthalpy
+   public :: cohort_wood_store_carbon
+   public :: set_cohort_tissue_water, cohort_tissue_temps, set_cohort_tissue_temps, hold_cohort_tissue_temps
    public :: cohort_bad_field, cohort_field_name
 
    !----- All cohorts of a site. The model integrates nplant and the four carbon pools; the  !
@@ -81,14 +84,16 @@ module meds_cohort_state_vars
       !==========================================================================================!
       real(wp),    allocatable :: leaf_water_mass(:)  !< [kg/plant] water inside the leaves
       real(wp),    allocatable :: wood_water_mass(:)  !< [kg/plant] water inside the sapwood and fine roots
-      real(wp),    allocatable :: leaf_surf_water(:)  !< [kg/m2 ground] intercepted water on the leaves
-      real(wp),    allocatable :: wood_surf_water(:)  !< [kg/m2 ground] intercepted water on the wood
+      real(wp),    allocatable :: leaf_surf_water(:)  !< [kg/plant] intercepted water on the leaves
+      real(wp),    allocatable :: wood_surf_water(:)  !< [kg/plant] intercepted water on the wood
       real(wp),    allocatable :: dmax_psi_leaf(:)    !< [MPa] yesterday's daily-max (predawn) leaf potential
       !==========================================================================================!
       ! 5. ENERGY                                                                                !
       !==========================================================================================!
-      real(wp),    allocatable :: leaf_temp(:)        !< [K]
-      real(wp),    allocatable :: wood_temp(:)        !< [K]
+      real(wp),    allocatable :: leaf_energy(:)      !< [J/plant] the leaves' internal energy
+      real(wp),    allocatable :: wood_energy(:)      !< [J/plant] the wood's internal energy
+      real(wp),    allocatable :: leaf_temp(:)        !< [K] derived from leaf_energy
+      real(wp),    allocatable :: wood_temp(:)        !< [K] derived from wood_energy
       !==========================================================================================!
       ! 6. PLASTIC LEAF TRAITS (acclimate to light)                                              !
       !==========================================================================================!
@@ -192,7 +197,9 @@ contains
       cohort%wood_surf_water = 0.0_wp
       cohort%dmax_psi_leaf = UNSET_NEGATIVE
       !----- 5. Energy --------------------------------------------------------------------------!
-      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap))
+      allocate(cohort%leaf_energy(cap), cohort%wood_energy(cap), cohort%leaf_temp(cap), cohort%wood_temp(cap))
+      cohort%leaf_energy = 0.0_wp
+      cohort%wood_energy = 0.0_wp
       cohort%leaf_temp = 0.0_wp
       cohort%wood_temp = 0.0_wp      ! a slot's tissue state is set at birth
       !----- 6. Plastic leaf traits -------------------------------------------------------------!
@@ -242,7 +249,8 @@ contains
                                                cohort%wood_area, cohort%sapwood_carbon, cohort%sapwood_area,   &
                                                cohort%overtopping_lai, cohort%leaf_water_mass,                 &
                                                cohort%wood_water_mass, cohort%leaf_surf_water,                 &
-                                               cohort%wood_surf_water, cohort%dmax_psi_leaf, cohort%leaf_temp, &
+                                               cohort%wood_surf_water, cohort%dmax_psi_leaf,                   &
+                                               cohort%leaf_energy, cohort%wood_energy, cohort%leaf_temp,       &
                                                cohort%wood_temp, cohort%sla, cohort%vcmax25, cohort%rd25,      &
                                                cohort%leaf_turnover_rate, cohort%leaf_flush_tendency,          &
                                                cohort%leaf_shed_tendency, cohort%growing_degree_days,          &
@@ -306,8 +314,10 @@ contains
       tmp%wood_surf_water(1:m) = cohort%wood_surf_water(1:m)
       tmp%dmax_psi_leaf(1:m)   = cohort%dmax_psi_leaf(1:m)
       !----- 5. Energy --------------------------------------------------------------------------!
-      tmp%leaf_temp(1:m) = cohort%leaf_temp(1:m)
-      tmp%wood_temp(1:m) = cohort%wood_temp(1:m)
+      tmp%leaf_energy(1:m) = cohort%leaf_energy(1:m)
+      tmp%wood_energy(1:m) = cohort%wood_energy(1:m)
+      tmp%leaf_temp(1:m)   = cohort%leaf_temp(1:m)
+      tmp%wood_temp(1:m)   = cohort%wood_temp(1:m)
       !----- 6. Plastic leaf traits -------------------------------------------------------------!
       tmp%sla(1:m)                = cohort%sla(1:m)
       tmp%vcmax25(1:m)            = cohort%vcmax25(1:m)
@@ -374,6 +384,8 @@ contains
       call move_alloc(src%wood_surf_water, dst%wood_surf_water)
       call move_alloc(src%dmax_psi_leaf, dst%dmax_psi_leaf)
       !----- 5. Energy --------------------------------------------------------------------------!
+      call move_alloc(src%leaf_energy, dst%leaf_energy)
+      call move_alloc(src%wood_energy, dst%wood_energy)
       call move_alloc(src%leaf_temp, dst%leaf_temp)
       call move_alloc(src%wood_temp, dst%wood_temp)
       !----- 6. Plastic leaf traits -------------------------------------------------------------!
@@ -439,8 +451,10 @@ contains
       cohort%wood_surf_water(1:m) = cohort%wood_surf_water(perm(1:m))
       cohort%dmax_psi_leaf(1:m)   = cohort%dmax_psi_leaf(perm(1:m))
       !----- 5. Energy --------------------------------------------------------------------------!
-      cohort%leaf_temp(1:m) = cohort%leaf_temp(perm(1:m))
-      cohort%wood_temp(1:m) = cohort%wood_temp(perm(1:m))
+      cohort%leaf_energy(1:m) = cohort%leaf_energy(perm(1:m))
+      cohort%wood_energy(1:m) = cohort%wood_energy(perm(1:m))
+      cohort%leaf_temp(1:m)   = cohort%leaf_temp(perm(1:m))
+      cohort%wood_temp(1:m)   = cohort%wood_temp(perm(1:m))
       !----- 6. Plastic leaf traits -------------------------------------------------------------!
       cohort%sla(1:m)                = cohort%sla(perm(1:m))
       cohort%vcmax25(1:m)            = cohort%vcmax25(perm(1:m))
@@ -522,8 +536,10 @@ contains
       cohort%wood_surf_water(dst) = cohort%wood_surf_water(src)
       cohort%dmax_psi_leaf(dst)   = cohort%dmax_psi_leaf(src)
       !----- 5. Energy --------------------------------------------------------------------------!
-      cohort%leaf_temp(dst) = cohort%leaf_temp(src)
-      cohort%wood_temp(dst) = cohort%wood_temp(src)
+      cohort%leaf_energy(dst) = cohort%leaf_energy(src)
+      cohort%wood_energy(dst) = cohort%wood_energy(src)
+      cohort%leaf_temp(dst)   = cohort%leaf_temp(src)
+      cohort%wood_temp(dst)   = cohort%wood_temp(src)
       !----- 6. Plastic leaf traits -------------------------------------------------------------!
       cohort%sla(dst)                = cohort%sla(src)
       cohort%vcmax25(dst)            = cohort%vcmax25(src)
@@ -652,9 +668,8 @@ contains
                                      cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
    end subroutine set_cohort_tissue_water
 
-   !----- One cohort's INTERNAL (hydraulic) tissue water [kg/m2 ground]: the stores the plant     !
-   !       hydraulics carries, of which the heat capacity above counts the leaf's and the wood     !
-   !       store's sapwood share. -----------------------------------------------------------------!
+   !----- One cohort's INTERNAL (hydraulic) tissue water [kg/m2 ground]: the stores the plant    !
+   !       hydraulics carries, both of which its heat capacity counts. --------------------------!
    pure function cohort_tissue_water(cohort, i) result(w)
       type(cohort_block), intent(in) :: cohort
       integer(ik),        intent(in) :: i
@@ -663,10 +678,31 @@ contains
                             + max(cohort%wood_water_mass(i), 0.0_wp))
    end function cohort_tissue_water
 
-   !----- One cohort's leaf and wood heat capacity [J/m2 ground/K], from tissue_heat_capacity. The  !
-   !      wood holds the sapwood's share of the wood store's water (wood_thermal_water); the fine   !
-   !      roots' share sits in the soil. The fusion weights, the demography operators and the slow  !
-   !      ledger all take it from here, so they agree on a cohort's thermal mass. -------------------!
+   !----- One cohort's canopy films [kg/m2 ground]: the water intercepted on its leaves and wood. --!
+   pure function cohort_film_water(cohort, i) result(w)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i
+      real(wp)                       :: w
+      w = cohort%nplant(i) * (cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
+   end function cohort_film_water
+
+   !----- The enthalpy of the water a cohort holds [J/plant]: its tissue water and its canopy films,  !
+   !      each at the temperature of the tissue it is in or on. What a shed hands the ground with  !
+   !      the water. ------------------------------------------------------------------------------!
+   pure function cohort_water_enthalpy(cohort, i) result(h)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i
+      real(wp)                       :: h
+      h = (max(cohort%leaf_water_mass(i), 0.0_wp) + cohort%leaf_surf_water(i))                    &
+          * internal_energy_liquid(cohort%leaf_temp(i))                                           &
+        + (max(cohort%wood_water_mass(i), 0.0_wp) + cohort%wood_surf_water(i))                    &
+          * internal_energy_liquid(cohort%wood_temp(i))
+   end function cohort_water_enthalpy
+
+   !----- One cohort's leaf and wood heat capacity [J/m2 ground/K], from tissue_heat_capacity. The!
+   !      wood holds the whole wood store's water, its fine roots' share included. The fusion     !
+   !      weights, the demography operators and the slow ledger all take it from here, so they    !
+   !      agree on a cohort's thermal mass. ------------------------------------------------------!
    pure subroutine cohort_tissue_heat_capacity(cohort, i, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
@@ -674,9 +710,61 @@ contains
       cap_leaf = tissue_heat_capacity(cohort%nplant(i), cohort%leaf_carbon(i), TISSUE_C_LEAF,           &
                                       max(cohort%leaf_water_mass(i), 0.0_wp))
       cap_wood = tissue_heat_capacity(cohort%nplant(i), cohort%wood_carbon(i), TISSUE_C_WOOD_DRY,       &
-                                      wood_thermal_water(cohort%wood_water_mass(i), cohort%sapwood_carbon(i), &
-                                                         cohort%fineroot_carbon(i)))
+                                      max(cohort%wood_water_mass(i), 0.0_wp))
    end subroutine cohort_tissue_heat_capacity
+
+   !----- A cohort's per-plant tissue masses, on which its energies are counted: each tissue's dry   !
+   !      heat capacity [J/K/plant] and its water [kg/plant] (docs/science/vegetation_energy_dynamics.md !
+   !      eq. (8)). --------------------------------------------------------------------------------!
+   pure subroutine cohort_tissue_masses(cohort, i, dry_leaf, w_leaf, dry_wood, w_wood)
+      type(cohort_block), intent(in)  :: cohort
+      integer(ik),        intent(in)  :: i
+      real(wp),           intent(out) :: dry_leaf, w_leaf, dry_wood, w_wood
+      dry_leaf = tissue_dry_heat_capacity(1.0_wp, cohort%leaf_carbon(i), TISSUE_C_LEAF)
+      dry_wood = tissue_dry_heat_capacity(1.0_wp, cohort%wood_carbon(i), TISSUE_C_WOOD_DRY)
+      w_leaf   = max(cohort%leaf_water_mass(i), 0.0_wp)
+      w_wood   = max(cohort%wood_water_mass(i), 0.0_wp)
+   end subroutine cohort_tissue_masses
+
+   !----- The tissue temperatures a cohort's energies give with the masses it holds (eq. (10)). A    !
+   !      leaf with neither dry matter nor water -- a leafless crown -- takes its wood's temperature,  !
+   !      as a bud takes its twig's; wood with no heat capacity keeps the temperature it has. -------!
+   pure subroutine cohort_tissue_temps(cohort, i, t_leaf, t_wood)
+      type(cohort_block), intent(in)  :: cohort
+      integer(ik),        intent(in)  :: i
+      real(wp),           intent(out) :: t_leaf, t_wood   !< [K]
+      real(wp) :: dry_leaf, w_leaf, dry_wood, w_wood
+      call cohort_tissue_masses(cohort, i, dry_leaf, w_leaf, dry_wood, w_wood)
+      t_wood = cohort%wood_temp(i)
+      if (dry_wood + w_wood * cp_liq > 0.0_wp) t_wood = tissue_temp(cohort%wood_energy(i), w_wood, dry_wood)
+      t_leaf = t_wood
+      if (dry_leaf + w_leaf * cp_liq > 0.0_wp) t_leaf = tissue_temp(cohort%leaf_energy(i), w_leaf, dry_leaf)
+   end subroutine cohort_tissue_temps
+
+   !----- Set a cohort's tissue temperatures from its energies. The temperatures are derived state:   !
+   !      after birth only this and hold_cohort_tissue_temps write them. ---------------------------!
+   pure subroutine set_cohort_tissue_temps(cohort, i)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: i
+      real(wp) :: t_leaf, t_wood
+      call cohort_tissue_temps(cohort, i, t_leaf, t_wood)
+      cohort%leaf_temp(i) = t_leaf
+      cohort%wood_temp(i) = t_wood
+   end subroutine set_cohort_tissue_temps
+
+   !----- Hold a cohort's tissue temperatures through a change of its masses, for matter that came or !
+   !      went at the tissue's own temperature: each energy becomes what its tissue holds at its       !
+   !      temperature with the masses it now has, and the temperatures are then taken back from the   !
+   !      energies, so they stay exactly what the energies give. -------------------------------------!
+   pure subroutine hold_cohort_tissue_temps(cohort, i)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: i
+      real(wp) :: dry_leaf, w_leaf, dry_wood, w_wood
+      call cohort_tissue_masses(cohort, i, dry_leaf, w_leaf, dry_wood, w_wood)
+      cohort%leaf_energy(i) = tissue_energy(dry_leaf, w_leaf, cohort%leaf_temp(i))
+      cohort%wood_energy(i) = tissue_energy(dry_wood, w_wood, cohort%wood_temp(i))
+      call set_cohort_tissue_temps(cohort, i)
+   end subroutine hold_cohort_tissue_temps
 
    !=======================================================================================!
    !  BIRTH                                                                                !
@@ -699,7 +787,8 @@ contains
       !----- The shared [hydraulics] traits, which with the PFT's own give its tissue curves. -------!
       type(hydraulics_config_t), intent(in) :: hydraulics
       !----- The state the cohort is born in, its patch's (patch_physical_state): its leaves and wood !
-      !      start at birth_temp, holding the water their tissues hold at birth_psi. ---------------!
+      !      start at birth_temp, holding the water their tissues hold at birth_psi, and with the    !
+      !      energy those tissues then hold. ------------------------------------------------------!
       real(wp),           intent(in)    :: birth_temp   !< [K]
       real(wp),           intent(in)    :: birth_psi    !< [MPa]
       type(water_curve_t) :: leaf_curve, wood_curve
@@ -737,98 +826,59 @@ contains
       call set_cohort_size(cohort, m)                 ! carbon pools from dbh, then the geometry from them
       call pft_tissue_curves(hydraulics, pft, ipft, leaf_curve, wood_curve)
       call set_cohort_tissue_water(cohort, m, birth_psi, leaf_curve, wood_curve)
+      call hold_cohort_tissue_temps(cohort, m)
    end subroutine init_cohort
 
    !=======================================================================================!
    !  FUSION AND FISSION: the per-field policy for the fast-loop-owned state               !
    !=======================================================================================!
 
-   !---------------------------------------------------------------------------------------!
-   ! Rescale the per-cohort fields that are referenced to the PATCH GROUND AREA [kg/m2     !
-   ! ground] rather than to the plant -- the canopy interception films. Every operation    !
-   ! that changes the ground area a cohort's density refers to must apply the same factor  !
-   ! to these fields as it applies to nplant -- cohort fission (0.5 each daughter), patch  !
-   ! fusion (area weights), and the survivor copy into a disturbance gap. Copying them     !
-   ! verbatim after halving nplant would double the site's film water on every split.      !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine scale_cohort_ground_fields(cohort, i, factor)
-      type(cohort_block), intent(inout) :: cohort
-      integer(ik),        intent(in)    :: i
-      real(wp),           intent(in)    :: factor
-      !----- GROUND-referenced fields only -- see fuse_cohort_fast_state for the one place the      !
-      !      per-field policy is declared. A field that is per PLANT must NOT appear here: it       !
-      !      carries no area normalization to rescale.  ------------------------------------------!
-      cohort%leaf_surf_water(i) = cohort%leaf_surf_water(i) * factor
-      cohort%wood_surf_water(i) = cohort%wood_surf_water(i) * factor
-   end subroutine scale_cohort_ground_fields
-
    !=========================================================================================!
    !  THE PER-FIELD FUSION POLICY OF THE FAST-LOOP-OWNED COHORT STATE -- declared once,      !
    !  here.                                                                                  !
    !                                                                                         !
    !  These fields are written by the fast loop and read back by it; the slow loop only has  !
-   !  to carry them correctly through a fusion. Each is one of three kinds, and getting the  !
-   !  kind wrong is invisible: the AGB assert still passes, the conservation ledgers still   !
-   !  close, and the answer is quietly wrong.                                                !
-   !                                                                                         !
-   !    FSK_INTENSIVE  a per-mass property (a temperature). Weighted by the HEAT CAPACITY     !
-   !                  that carries it, which is what conserves the tissue's energy through   !
-   !                  the merge.                                                             !
-   !    FSK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux).      !
-   !                  nplant-weighted mean, so the site total (nplant * value, summed) is    !
-   !                  conserved.                                                             !
-   !    FSK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts    !
-   !                  over the same ground simply ADD; weighting would double-count the      !
-   !                  normalization.                                                         !
+   !  to carry them correctly through a fusion. Each is a per-PLANT amount (FSK_EXTENSIVE):  !
+   !  the tissue energies and waters, the canopy films and the per-plant fluxes, blended by  !
+   !  nplant, so the site total (nplant * value, summed) is conserved. The tissue            !
+   !  temperatures are not fused: they are derived from the fused energies, by the caller,   !
+   !  once the carbon pools are merged. Getting a field's kind wrong is invisible: the AGB   !
+   !  assert still passes, the conservation ledgers still close, and the answer is quietly   !
+   !  wrong.                                                                                 !
    !                                                                                         !
    !  The diagnostic twins are fused from their own declared table (CO_FUSION_KIND,          !
    !  meds_diag_vars) on weights the caller computes: the tissue heat capacities for         !
-   !  the leaf and wood temperatures, as here, and leaf area for a per-LEAF-AREA diagnostic  !
+   !  the leaf and wood temperatures, and leaf area for a per-LEAF-AREA diagnostic           !
    !  (transpiration per m2 of leaf, say), which is not a temperature. Adding a fast-loop    !
    !  field is one line here; the compiler will not remind you, so the line is the reminder. !
    !=========================================================================================!
-   !----- THE per-field policy for the fast-loop cohort state, declared once. Three kinds, and    !
-   !      the headings below are the declaration: INTENSIVE (weighted by the capacity that carries  !
-   !      the quantity), EXTENSIVE (nplant-weighted), GROUND (added, never weighted).                !
-   !                                                                                          !
-   !      It is centralised but not enforced: a per-cohort fast field left out of this routine       !
-   !      compiles clean and is silently wrong at the next fusion. A new field needs a line here, a   !
-   !      line in scale_cohort_ground_fields if it is per m2 of ground, and a witness in             !
-   !      test_fusion_cohort. A table the blend iterated would be no safer (the compiler cannot      !
-   !      check that a table lists every field either) and would be longer than these lines. -------!
+   !----- THE per-field policy for the fast-loop cohort state, declared once: every field below is!
+   !      a per-plant amount, blended by nplant.                                                  !
+   !                                                                                              !
+   !      It is centralised but not enforced: a per-cohort fast field left out of this routine    !
+   !      compiles clean and is silently wrong at the next fusion. A new field needs a line here  !
+   !      and a witness in test_fusion_cohort. A table the blend iterated would be no safer (the  !
+   !      compiler cannot check that a table lists every field either) and would be longer than   !
+   !      these lines. ---------------------------------------------------------------------------!
    pure subroutine fuse_cohort_fast_state(cohort, recc, donc, np_r, np_d)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: recc, donc   !< survivor, donor
       real(wp),           intent(in)    :: np_r, np_d   !< nplant weights
-      real(wp) :: clr, cwr, cld, cwd
-      !----- INTENSIVE: tissue temperatures, weighted by the HEAT CAPACITY that carries them.    !
-      !                                                                                          !
-      !      Leaf-area weighting would be roughly right for leaves, since leaf heat capacity         !
-      !      tracks leaf carbon and leaf area tracks it through sla. For WOOD it is not even         !
-      !      approximately right: wood heat capacity follows wood carbon and the sapwood ring,       !
-      !      which have no reason to scale with leaf area -- so fusing two cohorts of different      !
-      !      wood:leaf ratio on leaf area would move the tissue energy by ~1e4 J an event.           !
-      !                                                                                          !
-      !      Capacity weighting conserves `cap x T` EXACTLY for the additive part, because the    !
-      !      merged capacity IS the sum: leaf_carbon, wood_carbon and the tissue waters are all   !
-      !      nplant-weighted below, so nplant x pool adds across the merge. What does not add is  !
-      !      the sapwood ring, which set_cohort_size_from_carbon re-derives from the merged dbh;  !
-      !      that leaves a small thermal-mass change, of the same kind growth makes and declared   !
-      !      the same way by the caller.  --------------------------------------------------!
-      call cohort_tissue_heat_capacity(cohort, recc, clr, cwr)
-      call cohort_tissue_heat_capacity(cohort, donc, cld, cwd)
-      call blend(cohort%leaf_temp,        clr, cld)
-      call blend(cohort%wood_temp,        cwr, cwd)
-      !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
+      !----- The tissue energies [J/plant]: nplant-weighted, so the merged tissue holds the      !
+      !      energy the two cohorts held, exactly. Its temperatures follow from it once its      !
+      !      carbon pools are merged (fuse_2_cohorts). ------------------------------------------!
+      call blend(cohort%leaf_energy,      np_r, np_d)
+      call blend(cohort%wood_energy,      np_r, np_d)
+      !----- EXTENSIVE: tissue water and the canopy films [kg/plant], and the per-plant flux     !
+      !      accumulators. ----------------------------------------------------------------------!
       call blend(cohort%leaf_water_mass,  np_r, np_d)
       call blend(cohort%wood_water_mass,  np_r, np_d)
       call blend(cohort%gpp_accum,        np_r, np_d)
       call blend(cohort%leaf_resp_accum,  np_r, np_d)
       call blend(cohort%stem_resp_accum,  np_r, np_d)
       call blend(cohort%root_resp_accum,  np_r, np_d)
-      !----- GROUND: the interception film [kg/m2 ground] -- add, never weight. ----------------!
-      cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
-      cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
+      call blend(cohort%leaf_surf_water,  np_r, np_d)
+      call blend(cohort%wood_surf_water,  np_r, np_d)
       !----- SURVIVOR-KEEPS, declared rather than left implicit: the phenology memories            !
       !      (the two tendencies, the degree-day and psi sums, the light mean), light_hours_accum    !
       !      (already consumed this step) and dmax_psi_leaf are absent from this routine ON PURPOSE,  !

@@ -87,8 +87,9 @@ Each store is solved in the unknown in which its curve is best behaved:
   (`shed_mortality_water`). An operator that shrinks a store without touching its water (a rising SLA
   resorbing leaf carbon, a fusion or split re-deriving the sapwood ring) can leave more than the store
   can hold; before the fast loop, the water above its saturated content is shed as well
-  (`shed_excess_tissue_water`). All of it reaches the ground as `shed_water_rate`, valued like the
-  precipitation it joins, and the slow ledger books every amount.
+  (`shed_excess_tissue_water`). All of it reaches the ground as `shed_water_rate`, with the enthalpy
+  it left its tissues with (`shed_water_enth`, at the temperature of each tissue it was in or on), and
+  the slow ledger books every amount.
 - The **pond** uses its head $h$, with a 1 mm depression store: $S(h) = 0$ for $h\le0$, $h^2/2\delta$
   for $0<h<\delta$, $h-\delta/2$ above. An empty pond holds nothing and its head follows the soil
   below.
@@ -167,12 +168,11 @@ The network moves water; the soil-energy solve and the tissue stores carry its e
 - Water crossing a soil face, the pond face or the base carries the liquid enthalpy of the node it
   leaves.
 - Root uptake leaves each layer at that layer's own temperature (`root_heat`, per layer).
-- A tissue's heat is its frozen capacity times its temperature; the change in its water is booked at
-  its start-of-step temperature (`water_store_enth`), and arriving water heats it only by its
-  temperature difference. The wood's capacity counts the sapwood share of the wood store's water
-  ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq. (8)); the booking covers the whole
-  store, fine roots included, at the wood's temperature, which is the temperature eq. (4) moves all of
-  the store's water at.
+- A tissue's energy is its state ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq.
+  (9)): the water it gains or loses carries its liquid enthalpy at the tissue's start-of-step
+  temperature (eq. (5) below), and arriving water heats it only by its temperature difference. The wood's capacity counts the whole wood store's water, fine roots
+  included ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq. (8)), at the wood's
+  temperature, which is the temperature eq. (4) moves all of the store's water at.
 - The pond carries its own enthalpy through each sub-step: rain joins it first, what infiltrates
   leaves at the mixture's temperature, water the top layer pushes up arrives at that layer's
   temperature, and the spill leaves at the pond's.
@@ -187,17 +187,19 @@ q_{wl} = s\,u(T_{up}) - (s-E)\,u(T_L), \qquad
 q_{w} = Q_{loss} - U\,u(T_W) - s\,\big[u(T_{up}) - u(T_W)\big] \qquad(4)
 ```
 
-and the change in their water is booked, in the ledgers, at the start-of-step temperatures:
+and the change in their water carries, into their energies, its enthalpy at the start-of-step
+temperatures:
 
 ```math
 H_{store} = (U-s)\,u(T_W) + (s-E)\,u(T_L) \qquad(5)
 ```
 
-($`q_{wl}`$, $`q_{w}`$ and $`H_{store}`$ are `qwflux_wl`, `q_wood_net` and `water_store_enth` in
-`build_column_frozen`; the upwind temperatures are frozen at the start of the step, which keeps the
-energy ledger exact.) The heat store, capacity × temperature, has no term for water mass coming or
-going, so counting the arriving water's whole enthalpy (about 4.4×10⁵ J kg⁻¹ from the liquid datum)
-as heat would warm the wood whenever it refills: about 10 W m⁻² every night at BCI, and at a storm
+($`q_{wl}`$ and $`q_{w}`$ are `qwflux_wl` and `q_wood_net`, and $`H_{store}`$ the per-cohort
+`leaf_water_enth` and `wood_water_enth`, in `build_column_frozen`; the upwind temperatures are
+frozen at the start of the step, which keeps the energy ledger exact.) Water that arrives at a
+tissue's own temperature changes its energy and not its temperature. Counting the arriving water's
+whole enthalpy (about 4.4×10⁵ J kg⁻¹ from the liquid datum) as heat, into the temperature at the
+held capacity, would warm the wood whenever it refills: about 10 W m⁻² every night at BCI, and at a storm
 front, where wet soil refills dry-season wood with about 7 kg m⁻² in a quarter hour, 13 K above the
 canopy air and +600 W m⁻² of sensible heat at zero net radiation.
 
@@ -210,7 +212,8 @@ becomes a temperature through `temp_of_liquid_enthalpy`, the exact inverse of
 which the pond and the soil melt with soil heat. Valuing the snow as liquid would create $L_f$ per
 kilogram at the boundary, and valuing the rain at the canopy air's temperature would hand the canopy
 and the soil heat the rain did not bring: at a cold front the canopy air is still warm (297.2 K under
-294.9 K air at BCI on 2017-04-17).
+294.9 K air at BCI on 2017-04-17). To either the shed water adds itself, with its own enthalpy, and
+the pond takes the mixture; the canopy film keeps the rain's valuation, since it holds rain.
 
 ## 6. Work counters
 
