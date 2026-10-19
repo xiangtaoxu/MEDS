@@ -48,16 +48,14 @@ contains
    ! cap. A rate of zero or less turns its limit off; with both off there is no limit (huge),    !
    ! which is the default.                                                                     !
    !---------------------------------------------------------------------------------------!
-   elemental pure function growth_sink_limitation(allom, wood_carbon, dbh, wood_density, hgt_max,      &
-                                                  aboveground_frac, max_relative_growth_rate,        &
+   elemental pure function growth_sink_limitation(allom, wood_carbon, dbh, wood_density,                &
+                                                  max_relative_growth_rate,                          &
                                                   max_absolute_growth_rate, max_absolute_growth_exponent, &
                                                   dt_yr, window_yr, grown_in_window) result(growth_max)
-      type(allometry_t), intent(in) :: allom            !< the site's allometry coefficients
+      type(allometry_t), intent(in) :: allom            !< the cohort's PFT's allometry
       real(wp), intent(in) :: wood_carbon               !< [kgC/plant] wood carbon at the step's start
       real(wp), intent(in) :: dbh                       !< [cm] stem diameter at the step's start
       real(wp), intent(in) :: wood_density              !< [g/cm3] the cohort's wood density
-      real(wp), intent(in) :: hgt_max                   !< [m] the PFT's height asymptote
-      real(wp), intent(in) :: aboveground_frac          !< [--] aboveground share of wood carbon
       real(wp), intent(in) :: max_relative_growth_rate  !< [1/yr] the PFT's maximum relative growth rate of wood
       real(wp), intent(in) :: max_absolute_growth_rate  !< [cm/yr] the PFT's maximum diameter growth of a 1 cm stem
       real(wp), intent(in) :: max_absolute_growth_exponent !< [--] how that maximum scales with dbh [cm]
@@ -75,10 +73,8 @@ contains
          dbh_room   = max_absolute_growth_rate * max(dbh, DBH_FLOOR) ** max_absolute_growth_exponent       &
                     * max(window_yr, dt) - max(grown_in_window, 0.0_wp)
          dbh_max    = dbh + max(dbh_room, 0.0_wp)
-         wood_now   = size2wood_carbon(allom, dbh,     dbh_to_height(allom, dbh,     hgt_max), wood_density,      &
-                                       aboveground_frac)
-         wood_max   = size2wood_carbon(allom, dbh_max, dbh_to_height(allom, dbh_max, hgt_max), wood_density,      &
-                                       aboveground_frac)
+         wood_now   = size2wood_carbon(allom, dbh,     dbh_to_height(allom, dbh),     wood_density)
+         wood_max   = size2wood_carbon(allom, dbh_max, dbh_to_height(allom, dbh_max), wood_density)
          growth_max = min(growth_max, max(wood_max - wood_now, 0.0_wp))
       end if
    end function growth_sink_limitation

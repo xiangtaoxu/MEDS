@@ -399,7 +399,7 @@ program test_region
                 'sand has no value at the cell (35.00, -180.00)')
    call refused('a chave_e map needs the Chave height allometry', '[maps]'//nl()//'chave_e_map = "'//    &
                 trim(work)//'/archive/chave_e.nc"'//nl()//site_block(1_ik), .false., .false.,               &
-                'maps.chave_e_map needs allometry.height_allometry = "chave2014"')
+                'maps.chave_e_map needs a PFT with allometry.height_allometry = "chave2014"')
    !----- [[sites]] (docs/configuration.md §Several sites): a region takes one site per cell, and  !
    !      with the soil maps a site takes the cell's soil. ----------------------------------------!
    call refused('a region refuses [[sites]]', '[[sites]]'//nl()//'area_fraction = 1.0'//nl()//         &

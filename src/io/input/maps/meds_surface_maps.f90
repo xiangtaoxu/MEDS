@@ -305,7 +305,7 @@ contains
          cfg%energy%deep_temp  = inp%deep_temp(k)
          cfg%energy%deep_depth = abs(soil%z_node(soil%n_active)) + annual_damping_depth / sqrt(2.0_wp)
       end if
-      if (inp%chave) cfg%allom%chave_e = inp%chave_e(k)
+      if (inp%chave) cfg%pft%allom(:)%chave_e = inp%chave_e(k)
    end subroutine apply_map_inputs
 
    !----- The soil of the column's layer [top, bottom]: the map layers it overlaps, each weighted  !

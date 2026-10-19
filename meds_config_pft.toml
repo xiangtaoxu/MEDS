@@ -1,5 +1,5 @@
-# MEDS PFT configuration -- all PFT-specific parameters, plus the allometry and mortality-hazard
-# (Camac) coefficients (one set for all PFTs). Named by [init].pft_config in the main config. A key
+# MEDS PFT configuration -- all PFT-specific parameters, each PFT's size allometry, and the
+# mortality-hazard (Camac) coefficients (one set for all PFTs). Named by [init].pft_config in the main config. A key
 # that is set is REQUIRED, and a missing one is a hard error; a commented-out key is OPTIONAL and
 # shows its default.
 #
@@ -8,7 +8,6 @@
 [pft]
 wood_density       = [0.40, 0.60, 0.85]    # [g/cm3] the growth-mortality trade-off axis (pioneer/mid/climax)
 dbh_critical       = [100.0, 100.0, 100.0] # [cm] maximum diameter
-hgt_max            = [46.0, 46.0, 46.0]     # [m] per-PFT asymptotic max height (allometry cap)
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] share of reproduction carbon that becomes
                                     #      recruits: seed set, germination and seedling survival together
@@ -60,21 +59,8 @@ wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-str
                                                     #   CLM5's dewmx. Used with [fast].canopy_water_on; a cohort holds
                                                     #   leaf_surf_water_max*LAI + wood_surf_water_max*WAI before it drips.
 # Carbon traits (docs/science/plant_carbon_allocation.md). All state is CARBON; conversions are folded in
-# here. size2leaf_carbon/size2wood_carbon (meds_allometry) use sla/aboveground_frac.
+# here. The leaf carbon target is the allometric leaf area over sla.
 sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf area (pioneer high -> climax low)
-
-#----- WOOD AREA INDEX allometry: wai = nplant * wai_b1 * dbh**wai_b2  (ED2 b1WAI/b2WAI, broadleaf).
-#      Wood AREA follows stem size, not leaf area. WAI feeds the wood boundary layer, the wood
-#      longwave emission area, the wood sensible-heat coefficient and -- through cap/area -- the
-#      wood thermal timescale.
-wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
-wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
-
-#----- SAPWOOD-AREA allometry: sapwood_area = sapwood_area_b1 * dbh**sapwood_area_b2 [cm2], and the
-#      sapwood FRACTION of basal area (capped at 1) sets bsap. Also used as the proxy for
-#      thermally-active wood -- see meds_allometry%sapwood_fraction.
-sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
-sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
 
 #----- Canopy-element geometry for the aerodynamic boundary layers
 #      (docs/science/canopy_aerodynamics.md §4).
@@ -82,7 +68,6 @@ leaf_width         = [0.04, 0.04, 0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02, 0.02, 0.02]     # [m]  characteristic branch diameter
 root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
-aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
 
 #----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above):
 #      docs/science/plant_respiration.md eqs. (3)-(4).
@@ -168,27 +153,40 @@ mort_beta_0    = 18.72      # growth-sensitivity scale [yr/cm]
 mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 
 [allometry]
-# Pan-tropical (ED2 iallom==3) size allometry. height = exp(b1Ht + b2Ht*ln dbh) capped at the
-# per-PFT [pft].hgt_max; agb = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2; leaf_area = lai_b1 * (dbh^2*h)^lai_b2;
-# the light a cohort gets is exp(-light_ext * overtopping_LAI).
+# Each PFT's size allometry (meds_allometry; docs/science/plant_carbon_allocation.md §2). Every key takes
+# one value, for every PFT, or an array with one value per PFT.
+height_allometry = "power"  # "power", "gmm" or "chave2014", or one per PFT (["gmm", "power", "power"])
+hgt_max    = [46.0, 46.0, 46.0]   # [m] the largest height: the cap on every curve
+# The power law, height = exp(b1Ht + b2Ht ln dbh): pan-tropical (ED2 iallom 3).
 b1Ht       = 1.139963
 b2Ht       = 0.564899
-agb_c1     = 0.03365        # [kgC] AGB scale: Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
-agb_c2     = 0.976          # AGB exponent on rho and on dbh^2*h: Chave et al. (2014) eq. 4
-lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
-lai_b2     = 0.6410495      # per-stem leaf-area exponent
-light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
-height_allometry = "power"  # "power" (b1Ht, b2Ht above), "gmm" or "chave2014" (below); all capped at hgt_max
-# The gMM curve, read only with height_allometry = "gmm": height = gmm_a*dbh^gmm_b / (gmm_k + dbh^gmm_b).
-# These are Cano et al. (2019, Biogeosciences 16:847) eq. 7, fitted to the Barro Colorado Nature Monument.
+# The gMM curve, needed by the PFTs on "gmm": height = gmm_a*dbh^gmm_b / (gmm_k + dbh^gmm_b). These are
+# Cano et al. (2019, Biogeosciences 16:847) eq. 7, fitted to the Barro Colorado Nature Monument.
 # gmm_a = 58.0     # [m] asymptotic height
 # gmm_b = 0.73     # [--] exponent on dbh
 # gmm_k = 21.8     # [cm^gmm_b] half-saturation
-# Chave et al. (2014) eq. 6a, read only with height_allometry = "chave2014":
-# ln height = 0.893 - chave_e + 0.760 ln dbh - 0.0340 (ln dbh)^2 + 0.243^2/2 (the mean, as BIOMASS's retrieveH).
-# chave_e is the site's stress index, E = 1e-3 (0.178 TS - 0.938 CWD - 6.61 PS) (Chave eq. 6b): below 0 at
-# wet, aseasonal sites (taller trees), above 0 where it is dry, seasonal or hot (shorter trees).
+# The log-quadratic curve, for the PFTs on "chave2014": ln height = chave_a - chave_e + chave_b ln dbh
+# + chave_c (ln dbh)^2 + chave_rse^2/2 (the mean, as BIOMASS's retrieveH). The coefficients default to
+# Chave et al. (2014) eq. 6a.
+# chave_a   = 0.893     # [--] intercept
+# chave_b   = 0.760     # [--] slope on ln dbh
+# chave_c   = -0.0340   # [--] coefficient of (ln dbh)^2
+# chave_rse = 0.243     # [--] the fit's residual standard error
+# chave_e is the site's stress index, the same for every PFT: E = 1e-3 (0.178 TS - 0.938 CWD - 6.61 PS)
+# (Chave eq. 6b), below 0 at wet, aseasonal sites (taller trees), above 0 where it is dry, seasonal or
+# hot (shorter trees). With [maps].chave_e_map each polygon takes its cell's.
 # chave_e = 0.0   # [--] Chave's environmental stress index
+# Biomass, leaf area, wood area and sapwood of one stem:
+agb_c1     = 0.03365        # [kgC] agb = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2: Chave et al. (2014) eq. 4, 0.0673 / C2B
+agb_c2     = 0.976          # [--] AGB exponent on rho and on dbh^2*h
+lai_b1     = 0.23384770     # [--] leaf area = lai_b1 * (dbh^2*h)^lai_b2 [m2]: ED2 c14f15_bl_xx / C2B
+lai_b2     = 0.6410495      # [--] leaf-area exponent
+wai_b1     = [0.0096, 0.0096, 0.0096]   # [--] wood area = wai_b1 * dbh^wai_b2 [m2]: ED2 b1WAI = 0.0192*0.5, broadleaf
+wai_b2     = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
+sapwood_area_b1  = [1.582, 1.582, 1.582]  # [cm2/cm^b2] sapwood area = sapwood_area_b1 * dbh^sapwood_area_b2:
+                                          #   ED2 b1SA, tropical broadleaf; its share of basal area is capped at 1
+sapwood_area_b2  = [1.764, 1.764, 1.764]  # [--] ED2 b2SA, tropical broadleaf
+aboveground_frac = [0.7, 0.7, 0.7]        # [--] share of the wood carbon above ground (ED2 agf_bs)
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
 # mortality-hazard parameters instead of deriving them from wood density, and the light-plasticity

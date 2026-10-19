@@ -301,7 +301,8 @@ contains
 
       !----- Recruit-pool valuation, one per PFT (the same conversion compute_vital_rates used). -!
       do pf = 1_ik, cfg%pft%n
-         c_min(pf) = min_cohort_carbon(poly%cohort%allom, cfg%pft%min_cohort_height, cfg%pft%wood_density(pf))
+         c_min(pf) = min_cohort_carbon(poly%cohort%pft_table%allom(pf), cfg%pft%min_cohort_height,          &
+                                       cfg%pft%wood_density(pf))
       end do
 
       do ip = 1_ik, poly%patch%n

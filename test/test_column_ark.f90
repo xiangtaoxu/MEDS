@@ -77,7 +77,7 @@ program test_column_ark
    !----- The gathered per-PFT aboveground fraction must reach the view the fast loop reads.   !
    !      The kernel takes the trait, and this pins the chain that delivers it (PFT table ->   !
    !      init_cohort -> cohort block -> the view).                                            !
-   call check_close(col_cohort%aboveground_frac(1), cfg%pft%aboveground_frac(1), 1.0e-14_wp,   &
+   call check_close(col_cohort%aboveground_frac(1), cfg%pft%allom(1)%aboveground_frac, 1.0e-14_wp,   &
                     'aboveground_frac did not reach the column view from the PFT table')
    call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &

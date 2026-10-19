@@ -465,7 +465,7 @@ contains
                                                 poly%cohort%root_resp_accum(1:n))
       case (FLD_C_BGB)             ; x(1:n) = poly%cohort%fineroot_carbon(1:n)                  &
                                     + poly%cohort%wood_carbon(1:n)                             &
-                                      * (1.0_wp - poly%cohort%pft_table%aboveground_frac(poly%cohort%pft(1:n)))
+                                      * (1.0_wp - poly%cohort%pft_table%allom(poly%cohort%pft(1:n))%aboveground_frac)
       case (FLD_C_VEG_CARBON)      ; x(1:n) = poly%cohort%leaf_carbon(1:n)                      &
                                     + poly%cohort%fineroot_carbon(1:n)                         &
                                     + poly%cohort%wood_carbon(1:n)                             &

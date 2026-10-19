@@ -30,12 +30,11 @@ contains
    !----- Prospective carbon diameter-growth rate [cm/yr]: the dbh the cohort WOULD reach if    !
    !       this step's wood NPP were added to its size-anchor wood_carbon (floored >= 0), minus   !
    !       its current dbh, over the step. Feeds both the applied growth and the mortality hazard.!
-   elemental pure function npp_to_growth(allom, wood_carbon, npp_wood, dbh, dt_yr,              &
-                                         rho, hgt_max, aboveground_frac) result(dbh_rate)
-      type(allometry_t), intent(in) :: allom
-      real(wp), intent(in) :: wood_carbon, npp_wood, dbh, dt_yr, rho, hgt_max, aboveground_frac
+   elemental pure function npp_to_growth(allom, wood_carbon, npp_wood, dbh, dt_yr, rho) result(dbh_rate)
+      type(allometry_t), intent(in) :: allom   !< the cohort's PFT's allometry
+      real(wp), intent(in) :: wood_carbon, npp_wood, dbh, dt_yr, rho
       real(wp)             :: dbh_rate, dbh_new
-      dbh_new  = wood_to_dbh(allom, max(wood_carbon + npp_wood, 0.0_wp), rho, hgt_max, aboveground_frac)
+      dbh_new  = wood_to_dbh(allom, max(wood_carbon + npp_wood, 0.0_wp), rho)
       dbh_rate = (dbh_new - dbh) / dt_yr
    end function npp_to_growth
 

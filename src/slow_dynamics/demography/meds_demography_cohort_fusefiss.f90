@@ -388,7 +388,7 @@ contains
                      cohort%nplant(i) * cohort%wood_carbon(i),                                     &
                      cohort%nplant(i) * cohort%nonstructural_carbon(i),                             &
                      pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                                  &
-                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                          &
+                     cohort%pft_table%allom(pf)%aboveground_frac, pft%struct_lignin_frac(pf),       &
                      lab_g, lab_s, str_g, str_s, lig_g, lig_s)
             patch%soil_carbon(ip)%fast_grnd_carbon   = patch%soil_carbon(ip)%fast_grnd_carbon   + lab_g
             patch%soil_carbon(ip)%fast_soil_carbon   = patch%soil_carbon(ip)%fast_soil_carbon   + lab_s
@@ -448,9 +448,6 @@ contains
       np = poly%patch%n
       if (np < 1_ik) return
 
-      !----- All PFTs recruit at the smallest tracked size -> the same diameter. ----------!
-      recruit_dbh = height_to_dbh(poly%cohort%allom, cfg%pft%min_cohort_height)
-
       !----- Count pools that have reached the spawn threshold. ---------------------------!
       nspawn = 0_ik
       do ip = 1_ik, np
@@ -473,6 +470,8 @@ contains
             do pf = 1_ik, poly%n_pft
                if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
                m = m + 1_ik
+               !----- Every PFT recruits at the smallest tracked height, on its own curve. -------!
+               recruit_dbh = height_to_dbh(cohort%pft_table%allom(pf), pft%min_cohort_height)
                !----- Born in its patch's state: at the canopy-air temperature, holding the water     !
                !      its tissues hold at the top soil layer's potential (patch_physical_state). -------!
                call patch_physical_state(patch%cas(ip), patch%soil_water(ip), cfg,                     &
@@ -481,7 +480,7 @@ contains
                                 cfg%hydraulics, t_birth, psi_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !
                !      carbon the pool actually paid for at `carbon_min` per plant. ---------------!
-               c_min = min_cohort_carbon(cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
+               c_min = min_cohort_carbon(cohort%pft_table%allom(pf), pft%min_cohort_height, pft%wood_density(pf))
                endow = cohort%leaf_carbon(m) + cohort%fineroot_carbon(m)                           &
                      + cohort%wood_carbon(m) + cohort%nonstructural_carbon(m)
                c_tot = c_tot + patch_polygon_area(poly, ip) * patch%recruit_pool(pf, ip) * (endow - c_min)

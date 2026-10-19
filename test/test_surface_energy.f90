@@ -15,7 +15,7 @@ program test_surface_energy
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cp_air, latent_heat_vap, stefan_boltzmann, pi, cp_liq, tissue_c_wood_dry
-   use meds_allometry,        only : dbh_to_wai, sapwood_fraction
+   use meds_allometry,        only : allometry_t, dbh_to_wai, sapwood_fraction
    use meds_plant_types, only : veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy
@@ -62,8 +62,8 @@ contains
       real(wp), parameter :: WOOD_EMISS = 0.90_wp       !< the default PFT wood_emissivity
       !----- ED2 ed_params.f90: b1WAI = 0.0192*0.5 (note the *0.5), b2WAI = 2.0947 for tropical  !
       !      broadleaf; b1SA = 1.582, b2SA = 1.764 (iallom default). ----------------------------!
-      real(wp), parameter :: WAI_B1 = 0.0096_wp, WAI_B2 = 2.0947_wp
-      real(wp), parameter :: SA_B1  = 1.582_wp,  SA_B2  = 1.764_wp
+      type(allometry_t), parameter :: ALLOM = allometry_t(wai_b1 = 0.0096_wp, wai_b2 = 2.0947_wp,     &
+                                                          sapwood_area_b1 = 1.582_wp, sapwood_area_b2 = 1.764_wp)
       !----- (dbh [cm], wood_carbon [kgC/plant], nplant [pl/m2]) : sapling -> pole -> mature ---!
       real(wp), parameter :: dbh(4) = [  2.0_wp,   12.0_wp,  35.0_wp,  70.0_wp]
       real(wp), parameter :: wc(4)  = [  0.5_wp,   20.0_wp, 200.0_wp,1200.0_wp]
@@ -75,8 +75,8 @@ contains
       tau_min = huge(1.0_wp) ; tau_max = 0.0_wp
       f_sap_small = 0.0_wp ; f_sap_big = 0.0_wp ; sap_big = 0.0_wp
       do i = 1_ik, 4_ik
-         wai    = dbh_to_wai(dbh(i), npl(i), WAI_B1, WAI_B2)
-         f_sap  = sapwood_fraction(dbh(i), SA_B1, SA_B2)
+         wai    = dbh_to_wai(ALLOM, dbh(i), npl(i))
+         f_sap  = sapwood_fraction(ALLOM, dbh(i))
          !----- The two halves of the capacity take DIFFERENT masses (design decision):          !
          !        DRY tissue   -> ALL the wood. Heartwood is dead structure but still stores      !
          !                        sensible heat, and a bole-defined sapwood fraction under-counts !

@@ -7,7 +7,6 @@
 [pft]
 wood_density       = [0.36, 0.50, 0.68]    # [g/cm3] basal-area means of the BCI wood-density classes
 dbh_critical       = [300.0, 300.0, 300.0] # [cm] maximum diameter: above BCI's largest tree, so no cap
-hgt_max            = [46.0, 46.0, 46.0]     # [m] the shipped cap; the BCI height curve stays below it (43 m at 300 cm)
 # The four reproduction keys are required by the loader and unused here: recruitment is a census law.
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
@@ -38,7 +37,6 @@ wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-st
 wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity
                                                     #      (beta_stomata=exp(sref*(psi-psi_onset)), psi=predawn leaf psi)
 
-
 #----- Required by the loader; most belong to processes this example does not run: per-PFT
 #      respiration and canopy optics, the wood geometry, the carbon-allocation and litter traits.
 #      Values follow the root meds_config_pft.toml, which has the same three PFTs, except where a
@@ -61,15 +59,10 @@ wood_clumping      = [0.50, 0.50, 0.50]    # [--] wood clumping factor in (0,1]
 leaf_angle_mean    = [45.0, 45.0, 45.0]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0, 20.0, 20.0]   # [deg] its standard deviation
 sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf area (pioneer high -> climax low)
-wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
-wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
-sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
-sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
 leaf_width         = [0.04, 0.04, 0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02, 0.02, 0.02]     # [m]  characteristic branch diameter
 root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
-aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
 storage_cushion        = [0.5, 0.5, 0.5]  # [--] storage target, x (leaf + fine-root target):
                                           #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
@@ -95,15 +88,19 @@ mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 
 [allometry]
 # Pan-tropical (ED2 iallom==3) size allometry. height = exp(b1Ht + b2Ht*ln dbh) capped at the
-# per-PFT [pft].hgt_max; agb = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2; leaf_area = lai_b1 * (dbh^2*h)^lai_b2;
-# the light a cohort gets is exp(-light_ext * overtopping_LAI).
+# PFT's hgt_max; agb = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2; leaf_area = lai_b1 * (dbh^2*h)^lai_b2;
 b1Ht       = 1.139963
 b2Ht       = 0.564899
 agb_c1     = 0.03365        # [kgC] AGB scale: Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
 agb_c2     = 0.976          # AGB exponent on rho and on dbh^2*h: Chave et al. (2014) eq. 4
 lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
-light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
+hgt_max            = [46.0, 46.0, 46.0]     # [m] the shipped cap; the BCI height curve stays below it (43 m at 300 cm)
+wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
+wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
+sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
+sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
+aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
 # The Barro Colorado height curve: Cano et al. (2019, Biogeosciences 16:847) eq. 7, the community-level
 # generalized Michaelis-Menten fit to 9884 trees of the Barro Colorado Nature Monument.
 height_allometry = "gmm"

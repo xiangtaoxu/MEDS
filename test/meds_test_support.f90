@@ -10,6 +10,7 @@ module meds_test_support
    use meds_constants,  only : day_sec
    use meds_time,       only : meds_time_t
    use meds_pft_params, only : pft_table_t, alloc_pft_table, PATH_C3, PATH_C4
+   use meds_allometry,  only : allometry_t
    use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE, INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_PEAKED
@@ -77,7 +78,6 @@ contains
       associate (p => cfg%pft)
          p%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
          p%dbh_critical = [ 100.0_wp, 100.0_wp, 100.0_wp ]
-         p%hgt_max      = [ 46.0_wp, 46.0_wp, 46.0_wp ]
          p%reproduction_investment_fraction = [ 0.3_wp, 0.3_wp, 0.3_wp ]
          p%recruit_carbon_efficiency = [ 1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
          p%seed_rain_recruits = [ 0.01_wp, 0.01_wp, 0.01_wp ]
@@ -108,17 +108,11 @@ contains
          p%wstress_sref_stomata = [ 2.0_wp, 2.0_wp, 2.0_wp ]
          !----- Carbon-dynamics traits (mirrors meds_config_pft.toml). -----------------------!
          p%sla                    = [ 16.0_wp, 13.0_wp, 10.0_wp ]
-         !----- Wood allometry (ED2 b1WAI/b2WAI, b1SA/b2SA; mirrors meds_config_pft.toml). ----!
-         p%wai_b1                 = [ 0.0096_wp, 0.0096_wp, 0.0096_wp ]
-         p%wai_b2                 = [ 2.0947_wp, 2.0947_wp, 2.0947_wp ]
-         p%sapwood_area_b1        = [ 1.582_wp, 1.582_wp, 1.582_wp ]
-         p%sapwood_area_b2        = [ 1.764_wp, 1.764_wp, 1.764_wp ]
          !----- Canopy-element geometry. --------------------------------------------------!
          p%leaf_width             = [ 0.04_wp, 0.04_wp, 0.04_wp ]
          p%branch_diameter        = [ 0.02_wp, 0.02_wp, 0.02_wp ]
          p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%huber_value            = [ 1.0e-4_wp, 1.5e-4_wp, 2.0e-4_wp ]
-         p%aboveground_frac       = [ 0.7_wp, 0.7_wp, 0.7_wp ]
          !----- Non-leaf maintenance respiration. -----------------------------------------!
          p%is_woody               = [ .true., .true., .true. ]
          p%stem_resp_factor25     = [ 0.06_wp, 0.06_wp, 0.06_wp ]
@@ -148,10 +142,13 @@ contains
          p%struct_lignin_frac     = [ 0.20_wp, 0.25_wp, 0.30_wp ]
       end associate
 
-      cfg%allom%b1Ht   = 1.139963_wp   ; cfg%allom%b2Ht   = 0.564899_wp
-      cfg%allom%agb_c1 = 0.03365_wp ; cfg%allom%agb_c2 = 0.976_wp
-      cfg%allom%lai_b1 = 0.23384770_wp ; cfg%allom%lai_b2 = 0.6410495_wp
-      cfg%allom%light_ext = 0.5_wp
+      !----- Every PFT on the shipped allometry (mirrors meds_config_pft.toml). ---------------!
+      cfg%pft%allom = allometry_t(hgt_max = 46.0_wp, b1Ht = 1.139963_wp, b2Ht = 0.564899_wp,          &
+                                  agb_c1 = 0.03365_wp, agb_c2 = 0.976_wp, lai_b1 = 0.23384770_wp,     &
+                                  lai_b2 = 0.6410495_wp, wai_b1 = 0.0096_wp, wai_b2 = 2.0947_wp,       &
+                                  sapwood_area_b1 = 1.582_wp, sapwood_area_b2 = 1.764_wp,             &
+                                  aboveground_frac = 0.7_wp)
+      cfg%light_ext_coeff_fusefiss = 0.5_wp
       call derive_parameters(cfg)
    end function build_test_config
 

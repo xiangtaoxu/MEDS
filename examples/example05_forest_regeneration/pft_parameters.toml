@@ -13,7 +13,6 @@
 #----- Wood, size and recruitment (example 03). ----------------------------------------------------
 wood_density       = [0.36, 0.50, 0.68]    # [g/cm3] early, mid, late: the BCI wood-density classes
 dbh_critical       = [300.0, 300.0, 300.0] # [cm] unused by the carbon path: only height is capped
-hgt_max            = [46.0, 46.0, 46.0]    # [m] the BCI height curve stays below it (43 m at 300 cm)
 min_cohort_height  = 1.5                   # [m] recruits are born here: dbh 0.47 cm on the BCI height curve
 recruit_carbon_efficiency = [1.0e-3, 1.0e-3, 1.0e-3]  # [--] reproduction carbon -> recruits
 seed_rain_recruits = [0.3333, 0.3333, 0.3333]   # [plant/m2/yr] from outside, every patch: one sapling per m2
@@ -59,11 +58,6 @@ reproduction_height_fraction = 0.1595434651742923   # [--] ... from this share o
 max_absolute_growth_rate     = [0.422, 0.306, 0.118]   # [cm/yr] at dbh 1 cm
 max_absolute_growth_exponent = [0.5, 0.5, 0.5]
 
-#----- Wood area and sapwood allometry (ED2 ed_params.f90, tropical broadleaf). ---------------------
-wai_b1             = [0.0096, 0.0096, 0.0096]
-wai_b2             = [2.0947, 2.0947, 2.0947]
-sapwood_area_b1    = [1.582, 1.582, 1.582]
-sapwood_area_b2    = [1.764, 1.764, 1.764]
 leaf_width         = [0.04, 0.04, 0.04]
 branch_diameter    = [0.02, 0.02, 0.02]
 
@@ -88,7 +82,6 @@ wstress_sref_stomata = [2.02774, 2.02774, 2.02774]
 
 #----- Other carbon traits (example 04). -----------------------------------------------------------
 huber_value            = [1.5e-4, 1.5e-4, 1.5e-4]
-aboveground_frac       = [0.7, 0.7, 0.7]
 storage_cushion        = [0.5, 0.5, 0.5]  # [--] storage target, x (leaf + fine-root target):
                                           #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3, 0.3, 0.3]
@@ -164,7 +157,12 @@ agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry
 agb_c2     = 0.976          # Chave et al. (2014) eq. 4
 lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
-light_ext  = 0.5
+hgt_max            = [46.0, 46.0, 46.0]    # [m] the BCI height curve stays below it (43 m at 300 cm)
+wai_b1             = [0.0096, 0.0096, 0.0096]
+wai_b2             = [2.0947, 2.0947, 2.0947]
+sapwood_area_b1    = [1.582, 1.582, 1.582]
+sapwood_area_b2    = [1.764, 1.764, 1.764]
+aboveground_frac       = [0.7, 0.7, 0.7]
 height_allometry = "gmm"
 gmm_a      = 58.0           # [m] asymptotic height
 gmm_b      = 0.73           # [--] exponent on dbh

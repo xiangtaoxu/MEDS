@@ -54,7 +54,8 @@ module meds_config_io
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
                               toml_int, toml_real, toml_table_count,                        &
-                               toml_logical, toml_string, toml_real_array, toml_record_reset
+                               toml_logical, toml_string, toml_real_array, toml_record_reset,  &
+                               toml_is_array, toml_string_array
    use meds_config_keys, only : key_report_t, check_config_keys, MAIN_KEYS, PFT_KEYS, SITE_GROUND_KEYS
    implicit none
    private
@@ -450,32 +451,55 @@ contains
       end select
    end subroutine req_sw_partition
 
-   !----- [allometry].height_allometry: "power" (the default), "gmm", which then needs its        !
-   !      three coefficients, or "chave2014", which needs the site's stress index chave_e. -------!
-   subroutine opt_height_allometry(t, cfg, m)
+   !----- [allometry].height_allometry, one for every PFT or one per PFT: "power" (the        !
+   !      default), "gmm", whose PFTs need its three coefficients, or "chave2014", whose PFTs     !
+   !      take Chave's coefficients unless given others, and the site's stress index chave_e. ----!
+   subroutine opt_height_allometry(t, cfg, npft, m)
       type(toml_table_t), intent(in) :: t ; type(meds_config_t), intent(inout) :: cfg
-      type(keymiss_t), intent(inout) :: m
-      character(len=64) :: s
-      s = toml_string(t, 'allometry.height_allometry', 'power')
-      select case (trim(s))
-      case ('power') ; cfg%allom%height_form = HEIGHT_POWER
-      case ('gmm')
-         cfg%allom%height_form = HEIGHT_GMM
-         call req_r(t, 'allometry.gmm_a', cfg%allom%gmm_a, m)
-         call req_r(t, 'allometry.gmm_b', cfg%allom%gmm_b, m)
-         call req_r(t, 'allometry.gmm_k', cfg%allom%gmm_k, m)
-      case ('chave2014')
-         cfg%allom%height_form = HEIGHT_CHAVE
-         !----- E is the site's: from [maps].chave_e_map at each polygon's cell, or set here. ---!
-         if (len_trim(cfg%maps%chave_e_map) > 0) then
-            if (toml_has(t, 'allometry.chave_e'))                                                  &
-               error stop 'load_meds_config: allometry.chave_e comes from maps.chave_e_map; '//  &
-                          'remove it from the PFT file'
-         else
-            call req_r(t, 'allometry.chave_e', cfg%allom%chave_e, m)
+      integer(ik), intent(in) :: npft ; type(keymiss_t), intent(inout) :: m
+      character(len=16) :: forms(MAXPFT)
+      integer(ik) :: nform, pf
+      real(wp)    :: chave_e
+      forms = 'power'
+      if (toml_has(t, 'allometry.height_allometry')) then
+         call toml_string_array(t, 'allometry.height_allometry', forms, nform)
+         if (nform == 1_ik) forms(1:npft) = forms(1)
+         if (nform /= 1_ik .and. nform /= npft) then
+            call note_missing(m, 'allometry.height_allometry')
+            return
          end if
-      case default   ; call note_missing(m, 'allometry.height_allometry')
-      end select
+      end if
+      associate (allom => cfg%pft%allom)
+         do pf = 1_ik, npft
+            select case (trim(forms(pf)))
+            case ('power')     ; allom(pf)%height_form = HEIGHT_POWER
+            case ('gmm')       ; allom(pf)%height_form = HEIGHT_GMM
+            case ('chave2014') ; allom(pf)%height_form = HEIGHT_CHAVE
+            case default       ; call note_missing(m, 'allometry.height_allometry')
+            end select
+         end do
+         if (any(allom(1:npft)%height_form == HEIGHT_GMM)) then
+            call req_pa_bcast(t, 'allometry.gmm_a', allom%gmm_a, npft, m)
+            call req_pa_bcast(t, 'allometry.gmm_b', allom%gmm_b, npft, m)
+            call req_pa_bcast(t, 'allometry.gmm_k', allom%gmm_k, npft, m)
+         end if
+         if (any(allom(1:npft)%height_form == HEIGHT_CHAVE)) then
+            call opt_pa_bcast(t, 'allometry.chave_a',   allom%chave_a,   npft, m)
+            call opt_pa_bcast(t, 'allometry.chave_b',   allom%chave_b,   npft, m)
+            call opt_pa_bcast(t, 'allometry.chave_c',   allom%chave_c,   npft, m)
+            call opt_pa_bcast(t, 'allometry.chave_rse', allom%chave_rse, npft, m)
+            !----- E is the site's, the same for every PFT: from [maps].chave_e_map at each       !
+            !      polygon's cell, or set here. ------------------------------------------------!
+            if (len_trim(cfg%maps%chave_e_map) > 0) then
+               if (toml_has(t, 'allometry.chave_e'))                                               &
+                  error stop 'load_meds_config: allometry.chave_e comes from maps.chave_e_map; '// &
+                             'remove it from the PFT file'
+            else
+               call req_r(t, 'allometry.chave_e', chave_e, m)
+               allom(1:npft)%chave_e = chave_e
+            end if
+         end if
+      end associate
    end subroutine opt_height_allometry
 
    subroutine req_lwdown_source(t, key, mode, m)    ! "file" | "synthesize"
@@ -955,6 +979,51 @@ contains
       if (nout == npft) then ; out(1:npft) = buf(1:npft) ; else ; call note_missing(m, key) ; end if
    end subroutine opt_pa
 
+   !----- A required per-PFT real given as one value, for every PFT, or as an array of npft. --!
+   subroutine req_pa_bcast(t, key, out, npft, m)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      real(wp),           intent(inout) :: out(:)
+      integer(ik),        intent(in)    :: npft
+      type(keymiss_t),    intent(inout) :: m
+      if (.not. toml_has(t, key)) then
+         call note_missing(m, key)
+         return
+      end if
+      call read_pa_bcast(t, key, out, npft, m)
+   end subroutine req_pa_bcast
+
+   !----- An optional req_pa_bcast: absent, `out` keeps what it holds. ---------------------!
+   subroutine opt_pa_bcast(t, key, out, npft, m)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      real(wp),           intent(inout) :: out(:)
+      integer(ik),        intent(in)    :: npft
+      type(keymiss_t),    intent(inout) :: m
+      if (.not. toml_has(t, key)) return
+      call read_pa_bcast(t, key, out, npft, m)
+   end subroutine opt_pa_bcast
+
+   subroutine read_pa_bcast(t, key, out, npft, m)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      real(wp),           intent(inout) :: out(:)
+      integer(ik),        intent(in)    :: npft
+      type(keymiss_t),    intent(inout) :: m
+      real(wp)    :: buf(MAXPFT)
+      integer(ik) :: nout
+      if (toml_is_array(t, key)) then
+         call toml_real_array(t, key, buf, nout)
+         if (nout == npft) then
+            out(1:npft) = buf(1:npft)
+         else
+            call note_missing(m, key)
+         end if
+      else
+         out(1:npft) = toml_real(t, key, 0.0_wp)
+      end if
+   end subroutine read_pa_bcast
+
    subroutine req_pa_int(t, key, out, npft, m)
       type(toml_table_t), intent(in)    :: t
       character(len=*),   intent(in)    :: key
@@ -1155,6 +1224,7 @@ contains
       if (toml_has(tm, 'demography.patch_light_tol'))                                               &
          cfg%patch_light_tol_max = max(0.15_wp, cfg%patch_light_tol)   ! clamp-ok: the setting's default
       cfg%patch_light_tol_max = toml_real(tm, 'demography.patch_light_tol_max', cfg%patch_light_tol_max)
+      cfg%light_ext_coeff_fusefiss = toml_real(tm, 'demography.light_ext_coeff_fusefiss', 0.5_wp)
       call req_r(tm, 'demography.patch_diff_age_tol',     cfg%patch_diff_age_tol,     miss)
       call req_r(tm, 'demography.min_patch_area',         cfg%min_patch_area,         miss)
       call req_r(tm, 'demography.patch_min_area_remain',  cfg%patch_min_area_remain,  miss)
@@ -1261,7 +1331,6 @@ contains
       cfg%pft%wood_density = buf(1:npft)
 
       call req_pa(tp, 'pft.dbh_critical',                     cfg%pft%dbh_critical,                     npft, miss)
-      call req_pa(tp, 'pft.hgt_max',                          cfg%pft%hgt_max,                          npft, miss)
       call req_pa(tp, 'pft.reproduction_investment_fraction', cfg%pft%reproduction_investment_fraction, npft, miss)
       call req_pa(tp, 'pft.recruit_carbon_efficiency',        cfg%pft%recruit_carbon_efficiency,        npft, miss)
       call opt_pa(tp, 'pft.recruit_shade_decay',              cfg%pft%recruit_shade_decay,              npft, miss)
@@ -1321,15 +1390,10 @@ contains
 
       !----- Carbon-allocation per-PFT traits (meds_plant_carbon_allocation). --------------!
       call req_pa(tp, 'pft.sla',                    cfg%pft%sla,                    npft, miss)
-      call req_pa(tp, 'pft.wai_b1',                 cfg%pft%wai_b1,                 npft, miss)
-      call req_pa(tp, 'pft.wai_b2',                 cfg%pft%wai_b2,                 npft, miss)
-      call req_pa(tp, 'pft.sapwood_area_b1',        cfg%pft%sapwood_area_b1,        npft, miss)
-      call req_pa(tp, 'pft.sapwood_area_b2',        cfg%pft%sapwood_area_b2,        npft, miss)
       call req_pa(tp, 'pft.leaf_width',              cfg%pft%leaf_width,              npft, miss)
       call req_pa(tp, 'pft.branch_diameter',         cfg%pft%branch_diameter,         npft, miss)
       call req_pa(tp, 'pft.root_to_leaf_ratio',     cfg%pft%root_to_leaf_ratio,     npft, miss)
       call req_pa(tp, 'pft.huber_value',            cfg%pft%huber_value,            npft, miss)
-      call req_pa(tp, 'pft.aboveground_frac',       cfg%pft%aboveground_frac,       npft, miss)
       call req_pa(tp, 'pft.storage_cushion',        cfg%pft%storage_cushion,        npft, miss)
       call req_pa(tp, 'pft.growth_resp_factor',     cfg%pft%growth_resp_factor,     npft, miss)
       !----- Storage maintenance: OPTIONAL, default 0 (off). -----------------------------!
@@ -1376,14 +1440,22 @@ contains
       call req_r(tp, 'camac.mort_beta_0',    cfg%pft%mort_beta_0,    miss)
       call req_r(tp, 'camac.mort_beta_exp',  cfg%pft%mort_beta_exp,  miss)
 
-      call req_r(tp, 'allometry.b1Ht',       cfg%allom%b1Ht,      miss)
-      call req_r(tp, 'allometry.b2Ht',       cfg%allom%b2Ht,      miss)
-      call req_r(tp, 'allometry.agb_c1',     cfg%allom%agb_c1,    miss)
-      call req_r(tp, 'allometry.agb_c2',     cfg%allom%agb_c2,    miss)
-      call req_r(tp, 'allometry.lai_b1',     cfg%allom%lai_b1,    miss)
-      call req_r(tp, 'allometry.lai_b2',     cfg%allom%lai_b2,    miss)
-      call req_r(tp, 'allometry.light_ext',  cfg%allom%light_ext, miss)
-      call opt_height_allometry(tp, cfg, miss)
+      !----- Each PFT's allometry: every key one value for all PFTs, or one per PFT. ---------!
+      associate (allom => cfg%pft%allom)
+         call req_pa_bcast(tp, 'allometry.hgt_max',          allom%hgt_max,          npft, miss)
+         call req_pa_bcast(tp, 'allometry.b1Ht',             allom%b1Ht,             npft, miss)
+         call req_pa_bcast(tp, 'allometry.b2Ht',             allom%b2Ht,             npft, miss)
+         call req_pa_bcast(tp, 'allometry.agb_c1',           allom%agb_c1,           npft, miss)
+         call req_pa_bcast(tp, 'allometry.agb_c2',           allom%agb_c2,           npft, miss)
+         call req_pa_bcast(tp, 'allometry.lai_b1',           allom%lai_b1,           npft, miss)
+         call req_pa_bcast(tp, 'allometry.lai_b2',           allom%lai_b2,           npft, miss)
+         call req_pa_bcast(tp, 'allometry.wai_b1',           allom%wai_b1,           npft, miss)
+         call req_pa_bcast(tp, 'allometry.wai_b2',           allom%wai_b2,           npft, miss)
+         call req_pa_bcast(tp, 'allometry.sapwood_area_b1',  allom%sapwood_area_b1,  npft, miss)
+         call req_pa_bcast(tp, 'allometry.sapwood_area_b2',  allom%sapwood_area_b2,  npft, miss)
+         call req_pa_bcast(tp, 'allometry.aboveground_frac', allom%aboveground_frac, npft, miss)
+      end associate
+      call opt_height_allometry(tp, cfg, npft, miss)
 
       !----- Key check: abort with the full list of the missing required keys and of the keys    !
       !      MEDS does not read (unknown or retired), from both files at once. -----------------!
@@ -1460,15 +1532,17 @@ contains
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
            //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_leaf_turnover,'                        &
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
-           //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density'
+           //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density,'                &
+           //'height_form,b1Ht,b2Ht,gmm_a,gmm_b,gmm_k,chave_a,chave_b,chave_c,chave_rse,chave_e,'        &
+           //'agb_c1,agb_c2,lai_b1,lai_b2,wai_b1,wai_b2,sapwood_area_b1,sapwood_area_b2'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 62 ITEMS: i0 + 9 + i0 + 2 + i0 + 48. A format SHORTER than the value              !
+            !----- 81 ITEMS: i0 + 9 + i0 + 2 + i0 + 48 + i0 + 18. A format SHORTER than the value    !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8))') &
-                 pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8),",",i0,18(",",es15.8))') &
+                 pf, p%wood_density(pf), p%dbh_critical(pf), p%allom(pf)%hgt_max,                       &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
                  p%include_pft(pf), p%min_cohort_height, p%reproduction_height_fraction,                &
@@ -1479,7 +1553,7 @@ contains
                  p%katul_lambda25(pf), pft_wstress_psi_open(cfg, pf), pft_wstress_psi_close(cfg, pf),   &
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf), pft_stomata_psi_onset(cfg, pf),   &
                  p%leaf_surf_water_max(pf), p%wood_surf_water_max(pf),                                &
-                 p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
+                 p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%allom(pf)%aboveground_frac,  &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &
                  p%retained_carbon_fraction(pf),                                                     &
                  p%leaf_turnover_rate_toc(pf),                                                       &
@@ -1489,7 +1563,14 @@ contains
                  p%kplastic_sla(pf), p%kplastic_leaf_turnover(pf),                                   &
                  p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
                  p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
-                 p%max_absolute_growth_exponent(pf), p%nbg_init_density(pf)
+                 p%max_absolute_growth_exponent(pf), p%nbg_init_density(pf),                        &
+                 p%allom(pf)%height_form, p%allom(pf)%b1Ht, p%allom(pf)%b2Ht,                         &
+                 p%allom(pf)%gmm_a, p%allom(pf)%gmm_b, p%allom(pf)%gmm_k,                             &
+                 p%allom(pf)%chave_a, p%allom(pf)%chave_b, p%allom(pf)%chave_c,                       &
+                 p%allom(pf)%chave_rse, p%allom(pf)%chave_e,                                          &
+                 p%allom(pf)%agb_c1, p%allom(pf)%agb_c2, p%allom(pf)%lai_b1, p%allom(pf)%lai_b2,      &
+                 p%allom(pf)%wai_b1, p%allom(pf)%wai_b2,                                              &
+                 p%allom(pf)%sapwood_area_b1, p%allom(pf)%sapwood_area_b2
          end do
       end associate
       close(u)

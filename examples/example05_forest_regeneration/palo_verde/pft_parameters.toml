@@ -21,7 +21,6 @@
 #----- Wood, size and recruitment (example 03). ----------------------------------------------------
 wood_density       = [0.35, 0.52, 0.74, 0.87]   # [g/cm3] Ds, D, BD, E: Xu et al. (2016) Fig. 2b; Ds at the ED2 floor 0.35
 dbh_critical       = [300.0, 300.0, 300.0, 300.0] # [cm] unused by the carbon path: only height is capped
-hgt_max            = [46.0, 46.0, 46.0, 46.0]    # [m] Chave's curve at E = 0.134 reaches it near 185 cm
 min_cohort_height  = 1.5                   # [m] recruits are born here: dbh 0.61 cm on Chave's curve at E = 0.134
 recruit_carbon_efficiency = [1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3]  # [--] reproduction carbon -> recruits
 seed_rain_recruits = [0.1, 0.1, 0.1, 0.1]   # [plant/m2/yr] from outside, every patch, as in example 06's regional run
@@ -68,11 +67,6 @@ reproduction_investment_fraction = [0.10, 0.10, 0.10, 0.10]   # [--] growth frac
 max_absolute_growth_rate     = [0.8, 0.5, 0.4, 0.35]   # [cm/yr]
 max_absolute_growth_exponent = [0.0, 0.0, 0.0, 0.0]
 
-#----- Wood area and sapwood allometry (ED2 ed_params.f90, tropical broadleaf). ---------------------
-wai_b1             = [0.0096, 0.0096, 0.0096, 0.0096]
-wai_b2             = [2.0947, 2.0947, 2.0947, 2.0947]
-sapwood_area_b1    = [1.582, 1.582, 1.582, 1.582]
-sapwood_area_b2    = [1.764, 1.764, 1.764, 1.764]
 leaf_width         = [0.04, 0.04, 0.04, 0.04]
 branch_diameter    = [0.02, 0.02, 0.02, 0.02]
 
@@ -102,7 +96,6 @@ stomata_psi_onset    = [0.0, 0.0, 0.0, 0.0]   # [MPa] stress below field capacit
 
 #----- Other carbon traits (example 04). -----------------------------------------------------------
 huber_value            = [1.5e-4, 1.5e-4, 1.5e-4, 1.5e-4]
-aboveground_frac       = [0.7, 0.7, 0.7, 0.7]
 storage_cushion        = [3.0, 3.0, 3.0, 3.0]   # [--] storage target, x (leaf + fine-root target): three full
                                                 #      flushes, enough reserve to re-flush
 growth_resp_factor     = [0.3, 0.3, 0.3, 0.3]
@@ -188,7 +181,12 @@ agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry
 agb_c2     = 0.976          # Chave et al. (2014) eq. 4
 lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
-light_ext  = 0.5
+hgt_max            = [46.0, 46.0, 46.0, 46.0]    # [m] Chave's curve at E = 0.134 reaches it near 185 cm
+wai_b1             = [0.0096, 0.0096, 0.0096, 0.0096]
+wai_b2             = [2.0947, 2.0947, 2.0947, 2.0947]
+sapwood_area_b1    = [1.582, 1.582, 1.582, 1.582]
+sapwood_area_b2    = [1.764, 1.764, 1.764, 1.764]
+aboveground_frac       = [0.7, 0.7, 0.7, 0.7]
 height_allometry = "chave2014"
 chave_e    = 0.134          # [--] Chave's stress index at the forcing cell
 

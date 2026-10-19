@@ -12,7 +12,7 @@ module meds_config
    use meds_constants,  only : yr_day, yr_sec, day_sec, n_soil_layer_max
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
-   use meds_allometry,  only : allometry_t, HEIGHT_CHAVE
+   use meds_allometry,  only : HEIGHT_CHAVE
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
@@ -284,6 +284,7 @@ module meds_config
       !      patch count a target rather than a hard limit.                                          !
       real(wp)    :: patch_light_tol_max
       real(wp)    :: patch_light_tol_mult        !< DERIVED (geometric multiplier)
+      real(wp)    :: light_ext_coeff_fusefiss = 0.5_wp   !< [-] extinction of the light profiles fusion compares
       real(wp)    :: min_patch_area, patch_min_area_remain
       logical     :: enable_patch_fission
 
@@ -372,10 +373,6 @@ module meds_config
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
 
-      !----- Global allometry coefficients (populated by the loader; installed by derive_parameters). !
-      type(allometry_t) :: allom              !< the allometry coefficients ([allometry]); each site
-                                              !< carries a copy on its cohort block (cohort%allom)
-
       !----- The physical soil column ([soil]) and the plant hydraulics ([hydraulics]). ---------!
       type(soil_column_config_t) :: soil_column  !< [soil] the column's layers and texture
       type(hydraulics_config_t) :: hydraulics
@@ -459,7 +456,7 @@ contains
       if (allocated(cfg%height_edges)) deallocate(cfg%height_edges)
       allocate(cfg%height_edges(cfg%n_height_layers - 1_ik))
       do i = 1_ik, cfg%n_height_layers - 1_ik
-         cfg%height_edges(i) = real(i, wp) * maxval(cfg%pft%hgt_max(1:cfg%pft%n))                &
+         cfg%height_edges(i) = real(i, wp) * maxval(cfg%pft%allom(1:cfg%pft%n)%hgt_max)          &
                                / real(cfg%n_height_layers, wp)
       end do
    end subroutine derive_config
@@ -878,7 +875,8 @@ contains
          if (.not. soil_maps_on(cfg%maps))                                                       &
             error stop tag//'[run].mode = "region" needs the soil maps: maps.soil_depth_map, '//    &
                             'soil_texture_map and soil_chemistry_map'
-         if (cfg%allom%height_form == HEIGHT_CHAVE .and. len_trim(cfg%maps%chave_e_map) == 0)     &
+         if (any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)                          &
+             .and. len_trim(cfg%maps%chave_e_map) == 0)                                          &
             error stop tag//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//   &
                             'needs maps.chave_e_map'
          !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
@@ -898,8 +896,8 @@ contains
          if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND))     &
             error stop tag//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
       end if
-      if (len_trim(cfg%maps%chave_e_map) > 0 .and. cfg%allom%height_form /= HEIGHT_CHAVE)          &
-         error stop tag//'maps.chave_e_map needs allometry.height_allometry = "chave2014"'
+      if (len_trim(cfg%maps%chave_e_map) > 0 .and. .not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)) &
+         error stop tag//'maps.chave_e_map needs a PFT with allometry.height_allometry = "chave2014"'
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !
       !      has to clear the canopy: the forcing is moved to each patch's canopy-air top.              !

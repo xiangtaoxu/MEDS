@@ -673,7 +673,7 @@ contains
          end if
       end if
       call alloc_polygon(poly, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg), &
-                      cfg%allom, cfg%pft, n_site=ns)
+                      cfg%pft, n_site=ns)
       do is = 1_ik, ns
          if (present(site_cfg)) then
             call make_site_surface(poly%site%surface(is), site_cfg(is))

@@ -11,7 +11,6 @@ module meds_polygon_state_vars
    use meds_diag_vars,          only : polygon_diag_block, reset_cohort_diag, reset_patch_diag,          &
                                        reset_polygon_diag, reset_site_diag
    use meds_kinds,              only : wp, ik
-   use meds_allometry,          only : allometry_t
    use meds_pft_params,         only : pft_table_t
    use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, alloc_cohort_block, free_cohort_block, reorder_cohort_block
    use meds_patch_state_vars,   only : patch_block, alloc_patch_block, free_patch_block
@@ -115,15 +114,13 @@ contains
    !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
-   subroutine alloc_polygon(poly, n_pft, coh_cap, pat_cap, n_growth_window, allom, pft, n_site)
+   subroutine alloc_polygon(poly, n_pft, coh_cap, pat_cap, n_growth_window, pft, n_site)
       type(polygon_t),   intent(out) :: poly
       integer(ik),       intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
-      type(allometry_t), intent(in)  :: allom   !< the polygon's allometry (cfg%allom of its config)
-      type(pft_table_t), intent(in)  :: pft     !< the polygon's PFT trait table (cfg%pft of its config)
+      type(pft_table_t), intent(in)  :: pft     !< the polygon's PFT traits and allometry (cfg%pft of its config)
       integer(ik), optional, intent(in) :: n_site   !< its sites (1 when absent)
       integer(ik) :: ns
       poly%n_pft = n_pft
-      poly%cohort%allom     = allom
       poly%cohort%pft_table = pft
       !----- Its sites, sharing the polygon equally until the caller gives their areas; every   !
       !      patch starts in the first. --------------------------------------------------------!

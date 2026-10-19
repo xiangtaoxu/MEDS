@@ -60,7 +60,7 @@ contains
       integer(ik) :: ip, is, k, ns
       ns = int(size(n_patch), ik)
       call alloc_polygon(poly, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(sum(n_patch), 1_ik),  &
-                      n_growth_window = growth_window_steps(cfg), allom = cfg%allom, pft = cfg%pft, &
+                      n_growth_window = growth_window_steps(cfg), pft = cfg%pft,                    &
                       n_site = ns)
       poly%patch%n = sum(n_patch)
       ip = 0_ik
@@ -85,7 +85,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! A near-bare-ground start's seedlings (ED2's init_density): every patch gets one cohort of !
    ! each PFT with nbg_init_density > 0, that many plants per m2, at min_cohort_height on the  !
-   ! site's own height curve, where recruits are born. All densities 0 leave the site empty.   !
+   ! PFT's own height curve, where recruits are born. All densities 0 leave the site empty.    !
    !---------------------------------------------------------------------------------------!
    subroutine seed_bare_ground(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
@@ -93,11 +93,11 @@ contains
       real(wp)    :: dbh
       integer(ik) :: ip, ipft
       if (.not. any(cfg%pft%nbg_init_density > 0.0_wp)) return
-      dbh = height_to_dbh(poly%cohort%allom, cfg%pft%min_cohort_height)
       do ip = 1_ik, poly%patch%n
          do ipft = 1_ik, cfg%pft%n
-            if (cfg%pft%nbg_init_density(ipft) > 0.0_wp)                                         &
-               call add_cohort(poly, cfg, ip, ipft, cfg%pft%nbg_init_density(ipft), dbh)
+            if (cfg%pft%nbg_init_density(ipft) <= 0.0_wp) cycle
+            dbh = height_to_dbh(poly%cohort%pft_table%allom(ipft), cfg%pft%min_cohort_height)
+            call add_cohort(poly, cfg, ip, ipft, cfg%pft%nbg_init_density(ipft), dbh)
          end do
       end do
       call finalize_init(poly)

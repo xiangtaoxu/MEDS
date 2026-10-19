@@ -14,7 +14,6 @@
 program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
-   use meds_allometry,         only : allometry_t
    use meds_constants,     only : n_soil_layer_max
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,             &
@@ -48,7 +47,7 @@ contains
    !      stem-weighted MEAN and a basal-area-weighted MEAN are three different numbers.  -------!
    subroutine build_fixture(poly)
       type(polygon_t), intent(out) :: poly
-      call alloc_polygon(poly, 3_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
+      call alloc_polygon(poly, 3_ik, 16_ik, 4_ik, 4_ik, test_pft_table())
       poly%n_pft = 3_ik
       !----- patch 1 (area 0.75): cohorts 1,2 ; patch 2 (area 0.25): cohort 3. -----!
       poly%patch%n = 2_ik
@@ -299,7 +298,7 @@ contains
 
       !----- Two sites, a patch each: site 1 on 5 layers, site 2 on 3. Each site's column is its  !
       !      patch's, at the site's own stride, whatever the sites' areas. -----------------------!
-      call alloc_polygon(two, 3_ik, 4_ik, 4_ik, 4_ik, allometry_t(), test_pft_table(), n_site=2_ik)
+      call alloc_polygon(two, 3_ik, 4_ik, 4_ik, 4_ik, test_pft_table(), n_site=2_ik)
       two%site%area(1:2) = [0.75_wp, 0.25_wp]
       two%site%surface(1)%soil%n_active = 5_ik
       two%site%surface(2)%soil%n_active = 3_ik

@@ -23,7 +23,7 @@ module meds_cohort_state_vars
                                     internal_energy_liquid
    use meds_water_retention, only : water_curve_t, water_content
    use meds_numerics,        only : pair_mean
-   use meds_allometry,       only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,        &
+   use meds_allometry,       only : dbh_to_height, size2leaf_carbon, size2wood_carbon,                     &
                                     carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_pft_params,      only : pft_table_t
    use meds_config,          only : hydraulics_config_t, pft_tissue_curves
@@ -51,8 +51,8 @@ module meds_cohort_state_vars
       !==========================================================================================!
       integer(ik) :: n   = 0_ik            !< cohorts in use
       integer(ik) :: cap = 0_ik            !< allocated slots
-      type(allometry_t) :: allom           !< the site's allometry (cfg%allom), set by alloc_polygon
-      type(pft_table_t) :: pft_table       !< the site's PFT traits (cfg%pft), read as pft_table%x(pft(i))
+      type(pft_table_t) :: pft_table       !< the site's PFT traits (cfg%pft), read as pft_table%x(pft(i));
+                                           !< its allometry records carry the polygon's chave_e
       !==========================================================================================!
       ! 1. IDENTITY AND DENSITY                                                                  !
       !==========================================================================================!
@@ -588,10 +588,10 @@ contains
       integer(ik) :: pf
       pf = cohort%pft(i)
       associate (pft => cohort%pft_table)
-         height = dbh_to_height(cohort%allom, cohort%dbh(i), pft%hgt_max(pf))
-         cohort%leaf_carbon(i)          = size2leaf_carbon(cohort%allom, cohort%dbh(i), height, cohort%sla(i))
-         cohort%wood_carbon(i)          = size2wood_carbon(cohort%allom, cohort%dbh(i), height,              &
-                                                           pft%wood_density(pf), pft%aboveground_frac(pf))
+         height = dbh_to_height(pft%allom(pf), cohort%dbh(i))
+         cohort%leaf_carbon(i)          = size2leaf_carbon(pft%allom(pf), cohort%dbh(i), height, cohort%sla(i))
+         cohort%wood_carbon(i)          = size2wood_carbon(pft%allom(pf), cohort%dbh(i), height,             &
+                                                           pft%wood_density(pf))
          cohort%fineroot_carbon(i)      = pft%root_to_leaf_ratio(pf) * cohort%leaf_carbon(i)
          cohort%nonstructural_carbon(i) = storage_carbon_target(pft%storage_cushion(pf), cohort%leaf_carbon(i), &
                                                                 cohort%fineroot_carbon(i))
@@ -613,9 +613,8 @@ contains
       !       (meds_allometry); this per-slot wrapper just packs/unpacks the SoA fields.           !
       integer(ik) :: pf
       pf = cohort%pft(i)
-      call carbon_to_structure(cohort%allom, cohort%wood_carbon(i), cohort%leaf_carbon(i),        &
-                               cohort%pft_table%wood_density(pf), cohort%pft_table%hgt_max(pf),  &
-                               cohort%pft_table%aboveground_frac(pf), cohort%sla(i),             &
+      call carbon_to_structure(cohort%pft_table%allom(pf), cohort%wood_carbon(i), cohort%leaf_carbon(i), &
+                               cohort%pft_table%wood_density(pf), cohort%sla(i),                 &
                                cohort%dbh(i), cohort%height(i), cohort%basal_area(i),             &
                                cohort%agb(i), cohort%leaf_area(i))
       call set_cohort_wood_allometry(cohort, i)
@@ -637,9 +636,8 @@ contains
       pf = cohort%pft(i)
       associate (pft => cohort%pft_table)
          !----- dbh_to_wai is exactly linear in nplant, so passing 1 gives the per-plant area. ---!
-         cohort%wood_area(i)      = dbh_to_wai(cohort%dbh(i), 1.0_wp, pft%wai_b1(pf), pft%wai_b2(pf))
-         f_sap                    = sapwood_fraction(cohort%dbh(i), pft%sapwood_area_b1(pf),          &
-                                                     pft%sapwood_area_b2(pf))
+         cohort%wood_area(i)      = dbh_to_wai(pft%allom(pf), cohort%dbh(i), 1.0_wp)
+         f_sap                    = sapwood_fraction(pft%allom(pf), cohort%dbh(i))
          cohort%sapwood_carbon(i) = f_sap * cohort%wood_carbon(i)
          cohort%sapwood_area(i)   = f_sap * cohort%basal_area(i)
       end associate

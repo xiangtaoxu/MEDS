@@ -29,6 +29,7 @@ program test_surface_maps
                                           MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
                                           map_inputs_t, read_map_inputs, apply_map_inputs
    use meds_config,                only : meds_config_t
+   use meds_pft_params,            only : alloc_pft_table
    use meds_maps_opts,          only : maps_opts_t
    use meds_pedotransfer,          only : soil_texture_t, soil_hydraulics_from_texture,               &
                                           soil_thermal_from_texture
@@ -170,6 +171,7 @@ program test_surface_maps
    do k = 1_ik, masked%ncell
       if (masked%row(k) == 1_ik .and. masked%col(k) == 0_ik) exit
    end do
+   call alloc_pft_table(cfg%pft, 1_ik)      ! the cell's E goes into every PFT's allometry
    call apply_map_inputs(inp, k, cfg)
    t5 = texture_at(5_ik, 1_ik, 0_ik) ; t6 = texture_at(6_ik, 1_ik, 0_ik)
    tex%sand = (0.4_wp*t5%sand + 0.1_wp*t6%sand) / 0.5_wp ; tex%silt = (0.4_wp*t5%silt + 0.1_wp*t6%silt) / 0.5_wp
@@ -199,7 +201,7 @@ program test_surface_maps
    call check_true('the thermal anchor: the map''s temperature, d/sqrt(2) below the bottom node',          &
                    close(cfg%energy%deep_temp, deep_temp_at(1_ik, 0_ik)) .and.                            &
                    close(cfg%energy%deep_depth, 0.85_wp + annual_damping_depth / sqrt(2.0_wp)))
-   call check_true('Chave''s E is the cell''s', close(cfg%allom%chave_e, chave_e_at(1_ik, 0_ik)))
+   call check_true('Chave''s E is the cell''s', close(cfg%pft%allom(1)%chave_e, chave_e_at(1_ik, 0_ik)))
 
    !----- Rows 2-3, columns 14-17: cell (3, 17) is 2.55 m deep, 8 layers, the last 2.0-2.55 m, below    !
    !      the maps' 2 m: it takes the deepest map layer's soil. Its bottom is (3 + 17) mod 4 + 1 = 1. ---!
@@ -209,6 +211,7 @@ program test_surface_maps
       if (cells%row(k) == 3_ik .and. cells%col(k) == 17_ik) exit
    end do
    call check_true('the second box is read', len(msg) == 0 .and. k <= cells%ncell)
+   call alloc_pft_table(cfg2%pft, 1_ik)
    call apply_map_inputs(inp, k, cfg2)
    call soil_hydraulics_from_texture(texture_at(6_ik, 3_ik, 17_ik), ts, tr, al, vn, ks)
    call check_true('a layer below the maps'' 2 m takes the deepest map layer''s soil',                     &
