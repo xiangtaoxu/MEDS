@@ -168,8 +168,18 @@ internal water, both from the water network. Fresh wood's specific heat (about 2
 100 % moisture) is not used: the water is counted on its own, so a fresh-wood value would count it
 twice. The fast loop and the state layer's `cohort_tissue_heat_capacity` build the capacity the same
 way, so the fusion weights and the slow ledger use the same capacity. The intercepted film is a
-separate store and is not in $`\mathrm{cap}_{leaf}`$. The wood masses come from the ED2 allometry
-(`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`, `sapwood_area_b1/b2`).
+separate store and is not in $`\mathrm{cap}_{leaf}`$.
+
+The wood's area and its sapwood come from stem-size allometries (`meds_allometry`; PFT traits
+`wai_b1/b2`, `sapwood_area_b1/b2`), with $D$ the diameter [cm]. The wood area index is
+$`\mathrm{WAI} = n_{plant}\,b_1\,D^{b_2}`$ (`dbh_to_wai`), and the sapwood is the share
+$`f_{sap} = \min\big(1,\ b_{1SA}\,D^{b_{2SA}}/(\tfrac{\pi}{4} D^2)\big)`$ of the basal area
+(`sapwood_fraction`), capped at one because a small stem is sapwood throughout. WAI follows the stem
+rather than the leaf area on purpose: a wood area proportional to LAI would make
+$`\tau_{wood}`$ (wood mass over wood area) nearly independent of size and 6–20 times too short, and
+would mis-scale the wood's boundary layer, longwave emission and sensible-heat coefficient, which all
+take WAI (eq. (1)).
+
 Sized this way, with a saturated store (`wood_water_sat` = 1 kg per kg of carbon),
 `τ_wood ≈ 600–760 s` and `w_end ≈ 0.22–0.31` at `dt_fast = 900 s` — wood carries **genuine memory**.
 

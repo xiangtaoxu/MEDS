@@ -1,12 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_therm_lib -- shared thermodynamic / thermal-property helpers for the fast loop: moist-air  !
-! psychrometrics (saturation vapour pressure + specific humidity and their temperature slopes),  !
-! the phase-change energy inverter, moist-air enthalpy/density, AND the SOIL thermal properties   !
-! (Johansen conductivity + volumetric heat capacity -- the thermal twin of the soil retention      !
-! curves in meds_water_retention). Placed in the shared foundation so every fast-loop biophysics !
-! process shares ONE formula instead of re-deriving it. `pure`/`elemental`; the Bolton (1980) and   !
-! Johansen coefficients are universal empirical constants, not tunable model parameters.             !
+! meds_therm_lib -- the thermodynamics the fast-loop stores share, so each uses one        !
+! formula: tissue heat capacity and energy (docs/science/vegetation_energy_dynamics.md     !
+! eqs. (8)-(10)); saturation vapour pressure and humidity (docs/science/snow_biophysics.md !
+! eq. (1), docs/science/forcing.md eq. (11)); the energy -> temperature inverter with      !
+! phase change, and the specific energies of liquid, ice, vapour and canopy air in one     !
+! datum (MEDS_ENERGY_BALANCE_DESIGN.md §3.1); and the soil's thermal conductivity and      !
+! heat capacity (docs/science/soil_biophysics.md eq. (11)). The Bolton (1980) and          !
+! Johansen coefficients are fixed empirical constants, not model parameters.               !
 !==========================================================================================!
 module meds_therm_lib
    use meds_kinds,     only : wp
@@ -25,17 +26,14 @@ module meds_therm_lib
    public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density, cas_molar_density
    public :: temp_of_liquid_enthalpy, precip_enthalpy
    public :: cas_enthalpy_of_temp, cas_temp_of_enthalpy
-   !----- SOIL thermal properties (conductivity + volumetric heat capacity): thermal-property   !
-   !      constitutive kernels, the thermal twin of the soil retention curves. -----------------!
    public :: soil_thermal_cond, soil_heat_cap_vol
 
-   real(wp), parameter :: SR_FLOOR = 0.05_wp     !< Kersten log10 floor (Johansen validity limit)
+   real(wp), parameter :: SR_FLOOR = 0.05_wp     !< [-] floor on relative saturation, where Johansen's log10 form holds
 
 contains
 
-   !----- One tissue's heat capacity per m2 of ground [J/m2/K]: its dry matter (the tissue's carbon  !
-   !      as dry mass, at its dry specific heat) plus the liquid water it holds                    !
-   !      (docs/science/vegetation_energy_dynamics.md eq. (8)). -----------------------------------!
+   !----- A tissue's heat capacity [J/m2/K]: its dry matter plus the liquid water it holds !
+   !      (docs/science/vegetation_energy_dynamics.md eq. (8)). ---------------------------!
    elemental pure real(wp) function tissue_heat_capacity(nplant, carbon, c_dry, water) result(cap)
       real(wp), intent(in) :: nplant   !< [plant/m2]
       real(wp), intent(in) :: carbon   !< [kgC/plant] the tissue's carbon
@@ -44,8 +42,8 @@ contains
       cap = tissue_dry_heat_capacity(nplant, carbon, c_dry) + water * nplant * cp_liq
    end function tissue_heat_capacity
 
-   !----- The dry half of a tissue's heat capacity per m2 of ground [J/m2/K]: its carbon as dry      !
-   !      mass, at its dry specific heat (tissue_c_leaf or tissue_c_wood_dry). ----------------------!
+   !----- The dry part of a tissue's heat capacity [J/m2/K]: its carbon as dry mass, at    !
+   !      its dry specific heat (tissue_c_leaf or tissue_c_wood_dry). ---------------------!
    elemental pure real(wp) function tissue_dry_heat_capacity(nplant, carbon, c_dry) result(cap)
       real(wp), intent(in) :: nplant   !< [plant/m2]
       real(wp), intent(in) :: carbon   !< [kgC/plant] the tissue's carbon
@@ -53,10 +51,9 @@ contains
       cap = carbon * nplant * c2b_wood * c_dry
    end function tissue_dry_heat_capacity
 
-   !----- A tissue's internal energy [J per plant, or per m2 of ground with dry_hcap and wmass per m2]: !
-   !      its dry matter at its dry heat capacity and its water as liquid, in the soil's datum         !
-   !      (temp_to_internal_energy with fliq = 1; docs/science/vegetation_energy_dynamics.md eq. (9)). !
-   !      The water stays liquid at any temperature: a live tissue is taken not to freeze. ----------!
+   !----- A tissue's internal energy [J per plant, or per m2 with per-m2 inputs], with its !
+   !      water liquid at any temperature, since a live tissue is taken not to freeze      !
+   !      (docs/science/vegetation_energy_dynamics.md eq. (9)). ---------------------------!
    elemental pure real(wp) function tissue_energy(dry_hcap, wmass, temp) result(e)
       real(wp), intent(in) :: dry_hcap   !< [J/K]  dry heat capacity
       real(wp), intent(in) :: wmass      !< [kg]   the water it holds
@@ -64,9 +61,9 @@ contains
       e = dry_hcap * temp + wmass * cp_liq * (temp - tsupercool_liq)
    end function tissue_energy
 
-   !----- The inverse: the temperature of a tissue holding energy e (eq. (10)). Defined only for a     !
-   !      tissue with a heat capacity; one with neither dry matter nor water has no temperature of its  !
-   !      own, and the caller gives it its parent's. ------------------------------------------------!
+   !----- The inverse (eq. (10)): the temperature of a tissue holding energy e. A tissue   !
+   !      with neither dry matter nor water has no temperature of its own, and the caller  !
+   !      gives it its parent's. ----------------------------------------------------------!
    elemental pure real(wp) function tissue_temp(e, wmass, dry_hcap) result(temp)
       real(wp), intent(in) :: e          !< [J]
       real(wp), intent(in) :: wmass      !< [kg]
@@ -74,33 +71,10 @@ contains
       temp = (e + wmass * cp_liq * tsupercool_liq) / (dry_hcap + wmass * cp_liq)
    end function tissue_temp
 
-   !---------------------------------------------------------------------------------------!
-   ! SATURATION VAPOUR PRESSURE, over liquid water OR over ice                                 !
-   ! (docs/science/snow_biophysics.md eq. (1)).                                               !
-   !                                                                                          !
-   ! Magnus/Bolton pair, sharing the triple-point constant so the two branches meet EXACTLY:  !
-   !                                                                                          !
-   !     e_liq(Tc) = 611.2 exp( 17.67 Tc / (Tc + 243.5) )      (Bolton 1980)                  !
-   !     e_ice(Tc) = 611.2 exp( 21.87 Tc / (Tc + 265.5) )      (Magnus form over ice)         !
-   !                                                                                          !
-   ! WHY A BLEND AND NOT A BRANCH ON TEMPERATURE. `fliq` is the liquid fraction the store     !
-   ! already carries prognostically (internal_energy_to_temp returns it), so the weighting is !
-   ! a state the model tracks rather than a threshold invented here. It also keeps e_sat      !
-   ! CONTINUOUS through the melt plateau: a `T < 0` branch would put a step of up to 10 % of  !
-   ! e_sat into the right-hand side at the triple point, and a jump in the right-hand side is !
-   ! what breaks an adaptive step controller. Because both forms give 611.2 Pa at Tc = 0, the !
-   ! blend is continuous there for any fliq, so a store that freezes or melts moves smoothly  !
-   ! between the curves.                                                                      !
-   !                                                                                          !
-   ! `fliq` ABSENT means pure liquid. Supply it only where the surface's phase is genuinely   !
-   ! known (snow, frozen soil). Dewpoint conversions and diagnostic VPD must NOT supply it:   !
-   ! dewpoint is DEFINED over liquid, so an ice branch there would mis-convert the forcing    !
-   ! (docs/science/forcing.md §7).                                                            !
-   !                                                                                          !
-   ! The ice form is within 0.1 % of Murphy & Koop (2005) at -10 C and 0.9 % at -30 C; the    !
-   ! liquid curve over ice would overstate e_sat by 10 % at -10 C, 22 % at -20 C and 34 % at  !
-   ! -30 C.                                                                                   !
-   !---------------------------------------------------------------------------------------!
+   !----- Saturation vapour pressure [Pa] (docs/science/snow_biophysics.md eq. (1)):       !
+   !      Bolton (1980) over liquid, blended with the Magnus form over ice by the liquid   !
+   !      fraction fliq. Without fliq it is over liquid, as dewpoint and VPD need          !
+   !      (docs/science/forcing.md §7). ---------------------------------------------------!
    elemental function sat_vapor_pressure(t_k, fliq) result(esat)
       real(wp), intent(in)           :: t_k
       real(wp), intent(in), optional :: fliq    !< liquid fraction of the surface (absent = 1, all liquid)
@@ -114,8 +88,8 @@ contains
       end if
    end function sat_vapor_pressure
 
-   !----- Saturation specific humidity [kg/kg] at temperature t_k [K] and pressure p_pa [Pa]:  !
-   !      q = 0.622 e / (p - 0.378 e), the conversion of docs/science/forcing.md eq. (11). ------!
+   !----- Saturation specific humidity [kg/kg]: q = 0.622 e / (p - 0.378 e), the           !
+   !      conversion of docs/science/forcing.md eq. (11). ---------------------------------!
    elemental function sat_specific_humidity(t_k, p_pa, fliq) result(qs)
       real(wp), intent(in)           :: t_k, p_pa
       real(wp), intent(in), optional :: fliq
@@ -128,9 +102,8 @@ contains
       qs   = 0.622_wp * esat / max(p_pa - 0.378_wp * esat, tiny_num)
    end function sat_specific_humidity
 
-   !----- Clausius-Clapeyron slope d(e_sat)/dT [Pa/K]. `fliq` is held FIXED in the derivative:  !
-   !      it is a frozen coefficient of the linearization, and on the melt plateau temperature   !
-   !      is pinned at the triple point anyway, so its T-dependence has nothing to act on. ------!
+   !----- The slope d(e_sat)/dT [Pa/K], at fixed fliq: on the melt plateau, where fliq     !
+   !      changes, the temperature is pinned at the triple point. -------------------------!
    elemental function sat_vapor_pressure_temp_deriv(t_k, fliq) result(desat)
       real(wp), intent(in)           :: t_k
       real(wp), intent(in), optional :: fliq
@@ -148,9 +121,8 @@ contains
       end if
    end function sat_vapor_pressure_temp_deriv
 
-   !----- d(sat_specific_humidity)/dT [1/K] at temperature t_k [K], pressure p_pa [Pa] -- the  !
-   !      Clausius-Clapeyron slope of qsat, folding the (p - 0.378*esat) denominator. Shared by  !
-   !      every implicit latent-flux linearization (leaf/wood, snow, CAS, ground energy step).   !
+   !----- The slope d(q_sat)/dT [1/K] for the latent-flux linearizations                   !
+   !      (docs/science/vegetation_energy_dynamics.md eq. (2)). ---------------------------!
    elemental function sat_specific_humidity_temp_deriv(t_k, p_pa, fliq) result(dqsdt)
       real(wp), intent(in)           :: t_k, p_pa
       real(wp), intent(in), optional :: fliq
@@ -165,12 +137,9 @@ contains
       dqsdt = 0.622_wp * p_pa / max((p_pa - 0.378_wp * esat) ** 2, tiny_num) * desat
    end function sat_specific_humidity_temp_deriv
 
-   !----- Phase-change INVERTER: (internal energy, water mass, dry heat capacity) ->          !
-   !      (temperature, liquid fraction). Consistent per-unit-VOLUME (soil: J/m3, kg/m3,       !
-   !      J/m3/K) OR per-unit-AREA (leaf/wood: J/m2, kg/m2, J/m2/K). ED2 uextcm2tl/uint2tl.     !
-   !      Continuous at u_freeze/u_melt (temp = t_3ple at both); dry (wmass=0) stores fall to    !
-   !      temp = uext/dry_hcap via the ice/liquid branches (the plateau is empty).               !
-   !---------------------------------------------------------------------------------------!
+   !----- Phase-change inverter: internal energy, water and dry heat capacity ->           !
+   !      temperature and liquid fraction, per m3 of soil or per m2 of surface alike       !
+   !      (MEDS_ENERGY_BALANCE_DESIGN.md §3.1). With no water the plateau is empty. -------!
    elemental subroutine internal_energy_to_temp(uext, wmass, dry_hcap, temp, fliq)
       real(wp), intent(in)  :: uext, wmass, dry_hcap
       real(wp), intent(out) :: temp, fliq
@@ -186,7 +155,7 @@ contains
       end if
    end subroutine internal_energy_to_temp
 
-   !----- Forward map: (temperature, liquid fraction) -> internal energy. -------------------!
+   !----- The inverse: temperature and liquid fraction -> internal energy. ----------------!
    elemental function temp_to_internal_energy(dry_hcap, wmass, temp, fliq) result(uext)
       real(wp), intent(in) :: dry_hcap, wmass, temp, fliq
       real(wp)             :: uext
@@ -194,46 +163,40 @@ contains
                                         + (1.0_wp - fliq) * cp_ice * temp)
    end function temp_to_internal_energy
 
-   !----- Specific enthalpy of water vapour [J/kg] (thermal + phase baseline; any vapour       !
-   !      flux automatically transports its latent heat; MEDS_ENERGY_BALANCE_DESIGN.md §4b). ---!
+   !----- Specific enthalpy of water vapour [J/kg] in the common datum, so a vapour flux   !
+   !      carries its latent heat (MEDS_ENERGY_BALANCE_DESIGN.md §4b). --------------------!
    elemental function enthalpy_vapor(t_k) result(h)
       real(wp), intent(in) :: t_k
       real(wp)             :: h
       h = cp_vap * (t_k - tsupercool_vap)
    end function enthalpy_vapor
 
-   !----- Specific internal energy of liquid water [J/kg] (advected soil/xylem water). -------!
+   !----- Specific internal energy of liquid water [J/kg] (advected soil/xylem water). ----!
    elemental function internal_energy_liquid(t_k) result(u)
       real(wp), intent(in) :: t_k
       real(wp)             :: u
       u = cp_liq * (t_k - tsupercool_liq)
    end function internal_energy_liquid
 
-   !----- EXACT inverse of internal_energy_liquid: the temperature a liquid store of specific        !
-   !      internal energy u is at. Used to turn a (mass, enthalpy) pair back into the temperature    !
-   !      that values it, so a paired transfer can be handed to a consumer that wants a temperature  !
-   !      rather than an energy (e.g. the meltwater the snow pack sends to the ponding store). -----!
+   !----- The inverse of internal_energy_liquid, which turns a (mass, energy) transfer     !
+   !      into the temperature a consumer takes (docs/science/soil_plant_water.md §5). ----!
    elemental function temp_of_liquid_enthalpy(u) result(t_k)
       real(wp), intent(in) :: u
       real(wp)             :: t_k
       t_k = tsupercool_liq + u / cp_liq
    end function temp_of_liquid_enthalpy
 
-   !----- Specific internal energy of ICE [J/kg] (frozen store: snow/frost). Shares the 0-K ice   !
-   !      datum of internal_energy_to_temp's all-ice branch (u = wmass*cp_ice*T at dry_hcap=0), so a snow     !
-   !      layer's energy seeded with temp_to_internal_energy(0,swe,T,0) inverts back to T exactly, and melt   !
-   !      (ice at t_3ple -> liquid at t_3ple) costs latent_heat_fusion via internal_energy_liquid's !
-   !      tsupercool_liq offset -- ONE datum across ice/liquid/vapour (snow<->soil<->CAS closure).  !
+   !----- Specific internal energy of ice [J/kg], zero at 0 K: the datum of the inverter's !
+   !      all-ice branch, so ice melting at t_3ple costs exactly latent_heat_fusion. ------!
    elemental function internal_energy_ice(t_k) result(u)
       real(wp), intent(in) :: t_k
       real(wp)             :: u
       u = cp_ice * t_k
    end function internal_energy_ice
 
-   !----- Enthalpy falling precipitation carries: rain as liquid and snow as ice, both at the air       !
-   !      temperature above the canopy, snow no warmer than freezing. The one rule for precipitation,  !
-   !      wherever it lands -- a snowpack (snow_accumulate) or the ground (build_column_frozen). Rates  !
-   !      in give a flux [W/m2]; amounts in give an amount [J/m2]. ----------------------------------!
+   !----- The enthalpy precipitation brings, wherever it lands: rain as liquid at the air  !
+   !      temperature above the canopy, snow as ice no warmer than freezing                !
+   !      (docs/science/forcing.md §8). Rates give [W/m2], amounts [J/m2]. ----------------!
    elemental function precip_enthalpy(rain, snow, t_air) result(h)
       real(wp), intent(in) :: rain, snow   !< [kg/m2/s] or [kg/m2]
       real(wp), intent(in) :: t_air        !< [K] air temperature above the canopy
@@ -241,29 +204,30 @@ contains
       h = snow * internal_energy_ice(min(t_3ple, t_air)) + rain * internal_energy_liquid(t_air)
    end function precip_enthalpy
 
-   !----- Moist-air specific heat [J/kg/K]. -------------------------------------------------!
+   !----- Moist-air specific heat [J/kg/K]. -----------------------------------------------!
    elemental function cp_moist(shv) result(cp)
       real(wp), intent(in) :: shv
       real(wp)             :: cp
       cp = (1.0_wp - shv) * cp_air + shv * cp_vap
    end function cp_moist
 
-   !----- Moist-air density [kg/m3] via the virtual temperature. ----------------------------!
+   !----- Moist-air density [kg/m3] via the virtual temperature. --------------------------!
    elemental function air_density(t_k, p_pa, shv) result(rho)
       real(wp), intent(in) :: t_k, p_pa, shv
       real(wp)             :: rho
-      rho = p_pa / (r_dry * t_k * (1.0_wp + 0.608_wp * shv))   ! r_dry from meds_constants (single authority)
+      rho = p_pa / (r_dry * t_k * (1.0_wp + 0.608_wp * shv))
    end function air_density
 
-   !----- Canopy-air specific enthalpy [J/kg] from temperature + specific humidity             !
-   !      (MEDS_ENERGY_BALANCE_DESIGN.md §4b). ---------------------------------------------!
+   !----- Canopy-air specific enthalpy [J/kg] from temperature and specific humidity: dry  !
+   !      air from 0 K, vapour in the common datum                                         !
+   !      (docs/science/canopy_air_space_biophysics.md §The three CAS twins). -------------!
    elemental function cas_enthalpy_of_temp(t_k, shv) result(enth)
       real(wp), intent(in) :: t_k, shv
       real(wp)             :: enth
       enth = (1.0_wp - shv) * cp_air * t_k + shv * cp_vap * (t_k - tsupercool_vap)
    end function cas_enthalpy_of_temp
 
-   !----- Canopy-air temperature [K] from specific enthalpy + specific humidity (inverse). ---!
+   !----- The inverse: canopy-air temperature [K] from specific enthalpy and humidity. ----!
    elemental function cas_temp_of_enthalpy(enth, shv) result(t_k)
       real(wp), intent(in) :: enth, shv
       real(wp)             :: t_k
@@ -271,39 +235,34 @@ contains
    end function cas_temp_of_enthalpy
 
    !=======================================================================================!
-   !  SOIL thermal properties (docs/science/soil_biophysics.md §The soil thermal column; the  !
-   !  conductivity is eq. (11) there). Both `elemental`; fliq = liquid                        !
-   !  fraction of the soil water, so freeze/thaw enters ice-aware.                            !
+   !  Soil thermal properties (docs/science/soil_biophysics.md §The soil thermal column).  !
    !=======================================================================================!
 
-   !---------------------------------------------------------------------------------------!
-   ! Soil thermal conductivity [W/m/K] (Johansen). Kersten-number blend of dry & saturated. !
-   !---------------------------------------------------------------------------------------!
+   !----- Soil thermal conductivity [W/m/K], Johansen's made ice-aware                     !
+   !      (docs/science/soil_biophysics.md eq. (11)). -------------------------------------!
    elemental function soil_thermal_cond(theta, fliq, theta_sat, k_solid, k_dry) result(kappa)
       real(wp), intent(in) :: theta, fliq, theta_sat, k_solid, k_dry
       real(wp)             :: kappa, s_r, k_e, kappa_sat
       s_r = min(max(theta / max(theta_sat, tiny_num), SR_FLOOR), 1.0_wp)      ! relative saturation
-      !----- Kersten number: blend Johansen log10 form (unfrozen) with Farouki linear form (frozen)  !
-      !      by liquid fraction, so the interpolation weight is ice-aware like kappa_sat below. ------!
+      !----- Kersten number: Johansen's log form unfrozen, Farouki's linear frozen. -------!
       k_e = fliq * (log10(s_r) + 1.0_wp) + (1.0_wp - fliq) * s_r
-      k_e = min(max(k_e, 0.0_wp), 1.0_wp)                                     ! Kersten number, clamped
-      !----- Saturated geometric mean, ice-aware (ED2's kappa_sat is liquid-only). --------!
+      k_e = min(max(k_e, 0.0_wp), 1.0_wp)
+      !----- Saturated conductivity: the geometric mean of solids, liquid and ice. --------!
       kappa_sat = k_solid ** (1.0_wp - theta_sat)                                            &
                   * k_water ** (theta_sat * fliq) * k_ice ** (theta_sat * (1.0_wp - fliq))
       kappa = k_e * kappa_sat + (1.0_wp - k_e) * k_dry
    end function soil_thermal_cond
 
-   !---------------------------------------------------------------------------------------!
-   ! Effective volumetric heat capacity [J/m3/K] = dry matrix + phase-appropriate water.    !
-   !---------------------------------------------------------------------------------------!
+   !----- Soil volumetric heat capacity [J/m3/K]: the solids plus the water and ice. ------!
    elemental function soil_heat_cap_vol(theta, fliq, dry_cvol) result(c_eff)
       real(wp), intent(in) :: theta, fliq, dry_cvol
       real(wp)             :: c_eff
       c_eff = dry_cvol + theta * rho_h2o * (fliq * cp_liq + (1.0_wp - fliq) * cp_ice)
    end function soil_heat_cap_vol
 
-   !----- Molar density of DRY air in moist air [mol/m3] = rho*(1-q)/mmdry: the CAS CO2 box     !
-   !      capacity per metre of depth and the CAS<->atmosphere CO2 conductance scale. ----------!
+   !----- Molar density of dry air in moist air [mol/m3], rho (1 - q)/mmdry: the canopy    !
+   !      air's CO2 capacity per metre of depth and the scale of its exchange with the     !
+   !      atmosphere (docs/science/canopy_air_space_biophysics.md, the CO2 twin). ---------!
    elemental function cas_molar_density(rho, shv) result(dmol)
       real(wp), intent(in) :: rho, shv
       real(wp)             :: dmol
@@ -312,23 +271,20 @@ contains
 
 
    !=======================================================================================!
-   !  Vapour-pressure deficit. Thermodynamics, not a diagnostic: the fast loop accumulates    !
-   !  a dt-weighted CAS VPD and the output layer reads it back, so both need the SAME         !
-   !  formula, which cannot live in src/io/output: a kernel may not depend on the output.   !
+   !  Vapour-pressure deficit. The fast loop and the output both use it, and a kernel may  !
+   !  not depend on the output layer, so it lives here.                                    !
    !=======================================================================================!
 
-   !----- VPD [Pa] from temperature and ACTUAL vapour pressure. ---------------------------!
+   !----- VPD [Pa] from temperature and the actual vapour pressure. -----------------------!
    pure elemental real(wp) function air_vpd(temp, e_vap) result(vpd)
       real(wp), intent(in) :: temp    !< [K]
       real(wp), intent(in) :: e_vap   !< [Pa] actual vapour pressure
       vpd = max(0.0_wp, sat_vapor_pressure(temp) - e_vap)
    end function air_vpd
 
-   !----- VPD [Pa] from the canopy-air-space prognostic twins (temperature + SPECIFIC       !
-   !      humidity) at a given pressure: e = q*p / (0.622 + 0.378*q), the exact inverse of    !
-   !      q = 0.622 e / (p - 0.378 e) that sat_specific_humidity and every forcing conversion  !
-   !      use (docs/science/forcing.md eq. (11)), so a saturated forcing record reads back as  !
-   !      VPD = 0. --------------------------------------------------------------------------!
+   !----- VPD [Pa] from temperature, specific humidity and pressure. The vapour pressure   !
+   !      e = q p / (0.622 + 0.378 q) is the exact inverse of docs/science/forcing.md      !
+   !      eq. (11), so a saturated forcing record reads back as VPD = 0. ------------------!
    pure elemental real(wp) function specific_humidity_to_vpd(temp, shv, pressure) result(vpd)
       real(wp), intent(in) :: temp      !< [K]
       real(wp), intent(in) :: shv       !< [kg/kg] specific humidity
