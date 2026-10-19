@@ -25,7 +25,7 @@ A site run divides its polygon into sites with `[[sites]]` tables (#453). Each s
 its elevation and slope, and its phenology and leaf acclimation its own air (#454). A cohort's
 tissue state is its leaf and wood energy, with its temperatures derived from them, and the water it
 sheds takes its enthalpy to the ground (#457). `meds_constants` is grouped by kind, and every name in it
-is lower case (#458).
+is lower case; `src/shared` keeps one subfolder, `functions/` (#458).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -103,6 +103,9 @@ is lower case (#458).
   (universal; dry air and water vapour; liquid water and ice; leaf diffusion; plant tissue heat),
   reference conditions, conversions (time, units), array sizes and floating-point guards. Every name
   is lower case. Outputs are unchanged bit for bit.
+- **`src/shared/base/` and `src/shared/util/` are folded into `src/shared/`** (#458). The kinds,
+  constants, numerics, calendar and budget checks sit at the top of the folder, and the constitutive
+  laws stay in `src/shared/functions/`. No module is renamed, so no `use` line changes.
 - **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
   restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
   temperature, holding the water their tissues hold at the potential of the patch's top soil layer

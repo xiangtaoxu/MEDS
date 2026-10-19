@@ -128,10 +128,10 @@ function(meds_fortran_flags tgt)
    endif()
 endfunction()
 
-#----- FOUNDATION (src/shared/): kinds and constants (base/), the stateless constitutive laws      #
-#      (functions/: allometry, thermodynamics, retention and pressure-volume curves, the soil      #
-#      pedotransfer function, canopy optics, temperature response) and the calendar, numerics      #
-#      and budget checks (util/).                                                                  #
+#----- FOUNDATION (src/shared/): the kinds, the constants, the numerics, the calendar and the      #
+#      budget checks at the top, and the stateless constitutive laws in functions/ (allometry,     #
+#      thermodynamics, retention and pressure-volume curves, the soil pedotransfer function,       #
+#      canopy optics, temperature response).                                                       #
 #                                                                                                  #
 #      One folder, one library, and it links NOTHING. A module belongs in src/shared/ only if it   #
 #      `use`s nothing outside src/shared/ -- no model state, no configuration, no external         #
@@ -141,9 +141,8 @@ endfunction()
 #      other tissue share one code path without a plant-domain -> plant-domain library edge;       #
 #      meds_allometry because it is a geometric CONSTRAINT that state, demography, plant and       #
 #      config all read.                                                                            #
-file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/base/*.f90
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/functions/*.f90
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/util/*.f90)
+file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/functions/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
