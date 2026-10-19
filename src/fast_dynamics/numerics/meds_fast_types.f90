@@ -202,7 +202,7 @@ module meds_fast_types
       !      (docs/science/vegetation_energy_dynamics.md §The store is ON). ------------------------!
       real(wp),    allocatable :: bwood(:)                                    !< [kgC/plant] total wood (thermal store)
       real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
-      !----- Yesterday's daily-max leaf water potential, gathered from site%cohort: the predawn     !
+      !----- Yesterday's daily-max leaf water potential, gathered from poly%cohort: the predawn     !
       !      potential that drives the slow stomatal control beta_stomata                           !
       !      (docs/science/leaf_gas_exchange.md §4.2). It reaches the leaf kernel as the OPTIONAL   !
       !      `psi` argument of leaf_gas_exchange_batch, which reads an absent one as 0 (no stress), !
@@ -744,7 +744,7 @@ module meds_fast_types
       type(soil_water_column_t)  :: soil_water            !< soil water column (theta; psi_soil diagnosed)
       type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
       !----- FROZEN slow soil-carbon pool (docs/science/soil_carbon.md §7): a read-only snapshot of     !
-      !      site%patch%soil_carbon(ip), seeded ONCE at the top of the slow step and held constant      !
+      !      poly%patch%soil_carbon(ip), seeded ONCE at the top of the slow step and held constant      !
       !      across the day's fast sub-steps -- the fast loop's heterotrophic Rh respires against THIS  !
       !      frozen copy (never mutated here; the daily soil_carbon_step is the sole writer of the real !
       !      site-level pool). Zero (soil_carbon_t's own default) when [soil_carbon].soil_carbon_on =   !
@@ -752,7 +752,7 @@ module meds_fast_types
       !      and then charges no soil respiration. -----------------------------------------------------!
       type(soil_carbon_t)        :: soil_carbon
       !----- FROZEN daily leaf/root-turnover shed-water rate: a read-only snapshot of                   !
-      !      site%patch%shed_water_rate(ip), seeded ONCE at the top of the slow step and held constant  !
+      !      poly%patch%shed_water_rate(ip), seeded ONCE at the top of the slow step and held constant  !
       !      across the day's fast sub-steps, exactly like soil_carbon just above -- the fast loop adds !
       !      it to its ground-water input every sub-step (never mutated here; meds_vegetation_dynamics  !
       !      is the sole writer of the real site-level rate). ------------------------------------------!
@@ -935,7 +935,7 @@ contains
    ! Grow-only capacity check for the per-cohort arrays of patch_biophys_t (mirrors                !
    ! ensure_column_cohort_capacity). It does NOT touch biophys%cas/soil_energy/soil_water/snow/soil_carbon: !
    ! every caller overwrites those with the site's persisted per-patch reservoirs                  !
-   ! (site%patch%cas(ip) etc.) immediately after allocating, so their alloc_patch_biophys seed     !
+   ! (poly%patch%cas(ip) etc.) immediately after allocating, so their alloc_patch_biophys seed     !
    ! values are always discarded; only leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/        !
    ! leaf_surf_water/wood_surf_water need their CAPACITY ensured here (the caller's gather loop    !
    ! fills indices 1..n_coh).                                                                      !

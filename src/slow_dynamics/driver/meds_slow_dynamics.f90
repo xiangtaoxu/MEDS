@@ -10,7 +10,7 @@ module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
    use meds_config,                only : meds_config_t
    use meds_time,                  only : meds_time_t, day_of_year
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_demography_update, only : update_patch_states
    use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand, shed_excess_tissue_water
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
@@ -34,8 +34,8 @@ contains
    ! integrated environmental scalar. `step_start` gives leaf phenology its day of year; without  !
    ! it (a bare test call) the phenology is not advanced.                                         !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_slow_dynamics(site, cfg, step_start, seam, ledger, rho_air, latitude_deg)
-      type(site_t),        intent(inout) :: site
+   subroutine advance_slow_dynamics(poly, cfg, step_start, seam, ledger, rho_air, latitude_deg)
+      type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       type(meds_time_t),   intent(in), optional :: step_start   !< the slow step's start (its day of year)
       type(soilc_seam_t),  intent(inout), optional :: seam   !< per-run seam diagnostics (see the biogeochem driver)
@@ -47,27 +47,27 @@ contains
       real(wp),            intent(in),    optional :: rho_air
       real(wp),            intent(in),    optional :: latitude_deg   !< the polygon's (default [site])
 
-      if (present(ledger)) call slow_ledger_open(ledger, site, cfg, rho_air)
+      if (present(ledger)) call slow_ledger_open(ledger, poly, cfg, rho_air)
 
       if (present(step_start)) then
-         call vegetation_dynamics(site, cfg, day_of_year(step_start), ledger, latitude_deg)
+         call vegetation_dynamics(poly, cfg, day_of_year(step_start), ledger, latitude_deg)
       else
-         call vegetation_dynamics(site, cfg, ledger=ledger, latitude_deg=latitude_deg)
+         call vegetation_dynamics(poly, cfg, ledger=ledger, latitude_deg=latitude_deg)
       end if
 
-      call update_patch_states(site%patch, cfg%dt_years)
+      call update_patch_states(poly%patch, cfg%dt_years)
 
       !----- Resize each patch's canopy-air control volume to the stand that now exists. Done HERE, !
       !      after growth and mortality have settled, so the fast loop sees a can_depth that is     !
       !      constant across every sub-step of the coming day (advance_boundary_dynamics resizes    !
       !      again after a restructuring).                                                          !
-      call refresh_canopy_depth(site, cfg, ledger)
-      if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
+      call refresh_canopy_depth(poly, cfg, ledger)
+      if (present(ledger)) call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_CANOPY)
 
       !----- `seam` is intent(inout) and accumulates over the run, so when soil carbon is off it     !
       !      simply stays as it was. ----------------------------------------------------------------!
-      if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, seam, ledger)
-      if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_SOILC)
+      if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(poly, cfg, seam, ledger)
+      if (present(ledger)) call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
 
    !---------------------------------------------------------------------------------------!
@@ -81,18 +81,18 @@ contains
    ! still attributed to its own phase. A resumed run's first call precedes any step, so there  !
    ! it only takes the reference store (slow_ledger_rebase).                                    !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_boundary_dynamics(site, cfg, is_new_month, is_new_year, ledger)
-      type(site_t),        intent(inout) :: site
+   subroutine advance_boundary_dynamics(poly, cfg, is_new_month, is_new_year, ledger)
+      type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       type(slow_ledger_t), intent(inout), optional :: ledger
       if (.not. is_new_month) return
       if (present(ledger)) then
-         if (.not. ledger%has_first) call slow_ledger_rebase(ledger, site, cfg)
+         if (.not. ledger%has_first) call slow_ledger_rebase(ledger, poly, cfg)
       end if
-      call restructure_stand(site, cfg, is_new_month, is_new_year, ledger)
-      call refresh_canopy_depth(site, cfg, ledger)
-      if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
+      call restructure_stand(poly, cfg, is_new_month, is_new_year, ledger)
+      call refresh_canopy_depth(poly, cfg, ledger)
+      if (present(ledger)) call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_CANOPY)
    end subroutine advance_boundary_dynamics
 
    !---------------------------------------------------------------------------------------!
@@ -103,20 +103,20 @@ contains
    ! so it continues their ledger window in a phase of its own. Before a run's first step       !
    ! there is no window yet, and it takes the reference store, as a resumed run's boundary does. !
    !---------------------------------------------------------------------------------------!
-   subroutine settle_tissue_water(site, cfg, ledger)
-      type(site_t),        intent(inout) :: site
+   subroutine settle_tissue_water(poly, cfg, ledger)
+      type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp) :: water_shed, heat0
       heat0 = 0.0_wp
       if (present(ledger)) then
-         if (.not. ledger%has_first) call slow_ledger_rebase(ledger, site, cfg)
-         heat0 = slow_tissue_heat(site)
+         if (.not. ledger%has_first) call slow_ledger_rebase(ledger, poly, cfg)
+         heat0 = slow_tissue_heat(poly)
       end if
-      call shed_excess_tissue_water(site, cfg, water_shed)
+      call shed_excess_tissue_water(poly, cfg, water_shed)
       if (present(ledger)) then
-         call slow_ledger_declare(ledger, water_out = water_shed, energy_in = slow_tissue_heat(site) - heat0)
-         call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_TISSUE_WATER)
+         call slow_ledger_declare(ledger, water_out = water_shed, energy_in = slow_tissue_heat(poly) - heat0)
+         call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_TISSUE_WATER)
       end if
    end subroutine settle_tissue_water
 
@@ -131,14 +131,14 @@ contains
    !                                                                                          !
    ! An empty patch falls back to the floor alone (no cohorts, no canopy to sit under).            !
    !---------------------------------------------------------------------------------------!
-   subroutine refresh_canopy_depth(site, cfg, ledger)
-      type(site_t),        intent(inout) :: site
+   subroutine refresh_canopy_depth(poly, cfg, ledger)
+      type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp)    :: h_top, depth_new, de, dw, dc, rho
       integer(ik) :: ip, i0, i1, i
       logical     :: book
-      if (.not. allocated(site%patch%cas)) return
+      if (.not. allocated(poly%patch%cas)) return
       !----- Booking the open-volume exchange needs the air density the CAS is valued at; without  !
       !      a ledger there is nothing to book it into and the resize is a plain geometry update.  !
       book = .false. ; rho = 0.0_wp
@@ -146,25 +146,25 @@ contains
          book = ledger%active
          rho  = ledger%rho_air
       end if
-      do ip = 1_ik, site%patch%n
-         i0 = site%patch%cohort_offset(ip)
-         i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+      do ip = 1_ik, poly%patch%n
+         i0 = poly%patch%cohort_offset(ip)
+         i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          h_top = 0.0_wp
          do i = i0, i1
-            h_top = max(h_top, site%cohort%height(i))
+            h_top = max(h_top, poly%cohort%height(i))
          end do
          depth_new = max(cfg%aero%min_canopy_depth, h_top + cfg%aero%canopy_freeboard)
          if (book) then
             !----- Growing the canopy ENTRAINS air from just above; shrinking DETRAINS it. The     !
             !      intensive state is the invariant, so the extensive content moves, and that is   !
             !      a genuine exchange with the atmosphere -- a DECLARED boundary term, not a leak. ----!
-            call cas_set_depth(site%patch%cas(ip), depth_new, rho_air=rho,                         &
+            call cas_set_depth(poly%patch%cas(ip), depth_new, rho_air=rho,                         &
                                de_open=de, dw_open=dw, dc_open=dc)
             call slow_ledger_declare(ledger,                                                       &
-                     energy_in=site%patch%area(ip) * de, water_in=site%patch%area(ip) * dw,        &
-                     carbon_in=site%patch%area(ip) * dc * KGC_PER_UMOL_C)
+                     energy_in=poly%patch%area(ip) * de, water_in=poly%patch%area(ip) * dw,        &
+                     carbon_in=poly%patch%area(ip) * dc * KGC_PER_UMOL_C)
          else
-            call cas_set_depth(site%patch%cas(ip), depth_new)
+            call cas_set_depth(poly%patch%cas(ip), depth_new)
          end if
       end do
    end subroutine refresh_canopy_depth

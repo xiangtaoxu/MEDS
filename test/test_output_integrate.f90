@@ -13,15 +13,15 @@
 !==========================================================================================!
 module test_output_integrate_support
    use meds_kinds,            only : wp, ik
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    implicit none
 contains
    !----- Opaque per-cohort agb setter (separate compilation scope; nvfortran cannot CSE across it). !
-   subroutine set_cohort_agb(site, vals, n)
-      type(site_t), intent(inout) :: site
+   subroutine set_cohort_agb(poly, vals, n)
+      type(polygon_t), intent(inout) :: poly
       real(wp),     intent(in)    :: vals(:)
       integer(ik),  intent(in)    :: n
-      site%cohort%agb(1:n) = vals(1:n)
+      poly%cohort%agb(1:n) = vals(1:n)
    end subroutine set_cohort_agb
 end module test_output_integrate_support
 
@@ -29,7 +29,7 @@ program test_output_integrate
    use test_output_integrate_support, only : set_cohort_agb
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_vars,  only : site_t, site_alloc, site_free
+   use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon
    use meds_allometry,        only : allometry_t
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,  &
                                      diag_params_t, slab_col,                                     &
@@ -128,7 +128,7 @@ contains
    end subroutine test_zero_sample_guard
 
    subroutine test_slab_and_extract()
-      type(site_t)         :: site
+      type(polygon_t)      :: poly
       type(var_desc_t)     :: v_agb_c, v_agb_s, v_lt
       type(integ_buffer_t) :: buf
       real(wp)             :: slab(64), out(64), scal
@@ -136,21 +136,21 @@ contains
       type(diag_params_t)  :: dp
       integer(ik)          :: n_out, i
       !----- A fixed 3-cohort / 1-patch site (slot set constant across the window). ----------!
-      call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik, allometry_t(), test_pft_table())
-      site%cohort%n = 3_ik
-      site%cohort%nplant(1:3)     = [1.0_wp, 1.0_wp, 1.0_wp]
-      call set_cohort_agb(site, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)   ! opaque (see header note)
-      site%cohort%pft(1:3)        = [1_ik, 1_ik, 2_ik]
-      site%cohort%owner_patch(1:3)= [1_ik, 1_ik, 1_ik]
-      site%patch%n = 1_ik
-      site%patch%area(1)          = 1.0_wp
-      site%patch%cohort_offset(1) = 1_ik
-      site%patch%cohort_count(1)  = 3_ik
+      call alloc_polygon(poly, 2_ik, 64_ik, 8_ik, 4_ik, allometry_t(), test_pft_table())
+      poly%cohort%n = 3_ik
+      poly%cohort%nplant(1:3)     = [1.0_wp, 1.0_wp, 1.0_wp]
+      call set_cohort_agb(poly, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)   ! opaque (see header note)
+      poly%cohort%pft(1:3)        = [1_ik, 1_ik, 2_ik]
+      poly%cohort%owner_patch(1:3)= [1_ik, 1_ik, 1_ik]
+      poly%patch%n = 1_ik
+      poly%patch%area(1)          = 1.0_wp
+      poly%patch%cohort_offset(1) = 1_ik
+      poly%patch%cohort_count(1)  = 3_ik
 
       !----- extract_variable returns the live cohort slab + count. -----!
       v_agb_c%name = 'agb_cohort' ; v_agb_c%dim = DIM_COHORT ; v_agb_c%agg = AGG_TMEAN
       v_agb_c%source_id = FLD_C_AGB
-      call extract_variable(site, dp, v_agb_c, scal, slab, vslab, n_out)
+      call extract_variable(poly, dp, v_agb_c, scal, slab, vslab, n_out)
       call check(n_out == 3_ik, 'extract cohort n')
       call check_close(slab(2), 2.0_wp, 1.0e-12_wp, 'extract cohort agb(2)')
 
@@ -158,11 +158,11 @@ contains
       !      step1 agb=[1,2,3] dt=1 ; step2 agb=[3,4,5] dt=3 -> slot1 = (1+9)/4 = 2.5. The agb   !
       !      mutation goes through the OPAQUE set_cohort_agb (production mutates via veg dynamics). !
       call alloc_integ_buffer(buf, v_agb_c, FREQ_MONTHLY, 64_ik)
-      call set_cohort_agb(site, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)
-      call extract_variable(site, dp, v_agb_c, scal, slab, vslab, n_out)
+      call set_cohort_agb(poly, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)
+      call extract_variable(poly, dp, v_agb_c, scal, slab, vslab, n_out)
       call integrate_slab(buf, slab, n_out, 1.0_wp)
-      call set_cohort_agb(site, [3.0_wp, 4.0_wp, 5.0_wp], 3_ik)
-      call extract_variable(site, dp, v_agb_c, scal, slab, vslab, n_out)
+      call set_cohort_agb(poly, [3.0_wp, 4.0_wp, 5.0_wp], 3_ik)
+      call extract_variable(poly, dp, v_agb_c, scal, slab, vslab, n_out)
       call integrate_slab(buf, slab, n_out, 3.0_wp)
       call normalize_slab(buf, out, valid, n_out)
       call check(n_out == 3_ik, 'slab n_out')
@@ -174,36 +174,36 @@ contains
       call check(.not. valid(4), 'fill-tail slot invalid')
 
       !----- Site scalar reduction via extract (total_agb = sum area*nplant*agb = 1*(1+2+3)). -!
-      call set_cohort_agb(site, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)
+      call set_cohort_agb(poly, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)
       !----- The site twin is the SAME field with a different dim + weight: agb is EXTENSIVE, so   !
       !      it reduces as a weighted SUM over nplant (W_NPLANT), landing in kgC/m2 ground.  --------!
       v_agb_s%name = 'agb_site' ; v_agb_s%dim = DIM_SCALAR ; v_agb_s%agg = AGG_MEAN
       v_agb_s%source_id = FLD_C_AGB ; v_agb_s%weight = W_NPLANT ; v_agb_s%mean = .false.
-      call extract_variable(site, dp, v_agb_s, scal, slab, vslab, n_out)
+      call extract_variable(poly, dp, v_agb_s, scal, slab, vslab, n_out)
       call check(n_out == 0_ik, 'scalar extract n_out=0')
       call check_close(scal, 6.0_wp, 1.0e-12_wp, 'extract site agb')
 
       !----- Leaf temperature is the cohort block's within-step mean. A cohort with no         !
       !      samples -- recruited after the fast loop -- is fill on the cohort axis and out of the !
       !      leaf-area-weighted site mean; a mean over nothing is missing, not 0 K. -------------!
-      call alloc_cohort_diag(site%cohort%diag, 64_ik, .true.)
-      site%cohort%diag%n = 3_ik
-      site%cohort%leaf_area(1:3) = 1.0_wp
-      site%cohort%diag%v(CO_LEAF_TEMP, 1:2) = [300.0_wp, 310.0_wp] * 900.0_wp
-      site%cohort%diag%w(1:2) = 900.0_wp ; site%cohort%diag%w(3) = 0.0_wp
+      call alloc_cohort_diag(poly%cohort%diag, 64_ik, .true.)
+      poly%cohort%diag%n = 3_ik
+      poly%cohort%leaf_area(1:3) = 1.0_wp
+      poly%cohort%diag%v(CO_LEAF_TEMP, 1:2) = [300.0_wp, 310.0_wp] * 900.0_wp
+      poly%cohort%diag%w(1:2) = 900.0_wp ; poly%cohort%diag%w(3) = 0.0_wp
       v_lt%name = 'leaf_temp_cohort' ; v_lt%dim = DIM_COHORT ; v_lt%agg = AGG_TMEAN
       v_lt%source_id = FLD_C_DIAG0 + CO_LEAF_TEMP
-      call extract_variable(site, dp, v_lt, scal, slab, vslab, n_out)
+      call extract_variable(poly, dp, v_lt, scal, slab, vslab, n_out)
       call check(n_out == 3_ik .and. vslab(1) .and. vslab(2) .and. .not. vslab(3),               &
                  'a cohort with no samples is fill on the cohort axis')
       v_lt%name = 'leaf_temp_site' ; v_lt%dim = DIM_SCALAR ; v_lt%weight = W_LEAF_AREA ; v_lt%mean = .true.
-      call extract_variable(site, dp, v_lt, scal, slab, vslab, n_out)
+      call extract_variable(poly, dp, v_lt, scal, slab, vslab, n_out)
       call check_close(scal, 305.0_wp, 1.0e-12_wp, 'the site leaf temperature leaves it out')
-      site%cohort%diag%w(1:2) = 0.0_wp
-      call extract_variable(site, dp, v_lt, scal, slab, vslab, n_out)
+      poly%cohort%diag%w(1:2) = 0.0_wp
+      call extract_variable(poly, dp, v_lt, scal, slab, vslab, n_out)
       call check(scal == MISSING_VALUE, 'a mean over no sampled cohort is missing, not 0 K')
 
-      call site_free(site)
+      call free_polygon(poly)
       if (.false.) i = 0_ik   ! silence unused
    end subroutine test_slab_and_extract
 
@@ -428,7 +428,7 @@ contains
       type(meds_config_t)    :: cfg
       type(output_files_t)   :: files
       type(output_buffers_t) :: bufs
-      type(site_t)           :: site
+      type(polygon_t)        :: poly
       type(meds_time_t)      :: jan30, jan31, feb1
       integer(ik) :: k_s, k_c, k_n
       real(wp), parameter :: DT = 86400.0_wp
@@ -444,18 +444,18 @@ contains
       k_n = find_var_index(files%reg, 'n_cohort_site')
       call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
 
-      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik, allometry_t(), cfg%pft)
-      site%patch%n = 1_ik ; site%patch%area(1) = 1.0_wp ; site%patch%cohort_offset(1) = 1_ik
+      call alloc_polygon(poly, 2_ik, 8_ik, 8_ik, 4_ik, allometry_t(), cfg%pft)
+      poly%patch%n = 1_ik ; poly%patch%area(1) = 1.0_wp ; poly%patch%cohort_offset(1) = 1_ik
       jan30 = meds_time_t(year=2000_ik, month=1_ik, day=30_ik)
       jan31 = time_advance_days(jan30, 1_ik)
       feb1  = time_advance_days(jan31, 1_ik)
 
       !----- 30 and 31 January: one cohort, agb 10 then 12 at the ends of the two steps. The      !
       !      second step ends on the month boundary. ---------------------------------------------!
-      call set_cohorts(site, [10.0_wp])
-      call output_integrate(files, bufs, site, jan30, DT, .true., .false., .false.)
-      call set_cohorts(site, [12.0_wp])
-      call output_integrate(files, bufs, site, jan31, DT, .true., .true., .false.)
+      call set_cohorts(poly, [10.0_wp])
+      call output_integrate(files, bufs, poly, jan30, DT, .true., .false., .false.)
+      call set_cohorts(poly, [12.0_wp])
+      call output_integrate(files, bufs, poly, jan31, DT, .true., .true., .false.)
 
       call check(bufs%pending(2)%t_open%month == 1_ik .and. bufs%pending(2)%t_open%day == 31_ik,     &
                  'the step from 31 January to 1 February is the 31 January daily record')
@@ -471,26 +471,26 @@ contains
 
       !----- The boundary: a recruit joins (restructure_stand runs here in the driver). Then 1    !
       !      February's own step; close the month by hand. ---------------------------------------!
-      call set_cohorts(site, [20.0_wp, 5.0_wp])
-      call output_integrate(files, bufs, site, feb1, DT, .true., .false., .false.)
+      call set_cohorts(poly, [20.0_wp, 5.0_wp])
+      call output_integrate(files, bufs, poly, feb1, DT, .true., .false., .false.)
       call check(bufs%t_open(3)%month == 2_ik .and. bufs%t_open(3)%day == 1_ik, 'February opens on 1 February')
       call close_tier(files, bufs, 3_ik)
       call check_close(bufs%pending(3)%sval(k_s), 25.0_wp, 1.0e-12_wp, 'February''s site mean: its own step')
       call check(bufs%pending(3)%nslab(k_c) == 2_ik, 'February''s cohort slab: the new slot set')
       call check_close(bufs%pending(3)%slab(2,k_c), 5.0_wp, 1.0e-12_wp, 'February''s recruit')
       call check_close(bufs%pending(3)%sval(k_n), 2.0_wp, 1.0e-12_wp, 'February''s cohort count')
-      call site_free(site)
+      call free_polygon(poly)
    end subroutine test_boundary_step
 
    !----- One patch holding `agb`'s cohorts, one plant each. ------------------------------------!
-   subroutine set_cohorts(site, agb)
-      type(site_t), intent(inout) :: site
+   subroutine set_cohorts(poly, agb)
+      type(polygon_t), intent(inout) :: poly
       real(wp),     intent(in)    :: agb(:)
       integer(ik) :: n
       n = size(agb, kind=ik)
-      site%cohort%n = n ; site%patch%cohort_count(1) = n
-      site%cohort%nplant(1:n) = 1.0_wp ; site%cohort%pft(1:n) = 1_ik ; site%cohort%owner_patch(1:n) = 1_ik
-      call set_cohort_agb(site, agb, n)
+      poly%cohort%n = n ; poly%patch%cohort_count(1) = n
+      poly%cohort%nplant(1:n) = 1.0_wp ; poly%cohort%pft(1:n) = 1_ik ; poly%cohort%owner_patch(1:n) = 1_ik
+      call set_cohort_agb(poly, agb, n)
    end subroutine set_cohorts
 
    !----- Stage two FAST sub-steps with the given CAS temperatures and zero everything else. -----!

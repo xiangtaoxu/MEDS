@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""check_kernel_state.py -- the kernels never see site_t.
+"""check_kernel_state.py -- the kernels never see polygon_t.
 
 A kernel works on one patch at a time, through the store types that describe what one patch holds
 (canopy air, snow, soil water and heat, soil carbon, and the two accumulators). It never sees the
-site, the cohort block or the patch block: that keeps a kernel testable alone and eligible for an
+polygon, the cohort block or the patch block: that keeps a kernel testable alone and eligible for an
 OpenMP `target` device. A routine that needs more is driver code.
 
 The library boundary cannot hold this rule, because every module file goes to one shared
@@ -13,8 +13,8 @@ checks it on every ctest run. Code in the kernel folders (src/fast_dynamics/{can
 src/slow_dynamics/{plant,soil}):
   * takes from the state layer only the per-patch store types and their blends, through
     `use meds_patch_state_vars, only : ...`;
-  * never names site_t, cohort_block or patch_block;
-  * never uses meds_site_state_vars, meds_cohort_state_vars or meds_diag_vars.
+  * never names polygon_t, cohort_block or patch_block;
+  * never uses meds_polygon_state_vars, meds_cohort_state_vars or meds_diag_vars.
 
 Usage: check_kernel_state.py SRC_DIR   (exit 1 and a list when a kernel reaches past its patch)
 """
@@ -24,8 +24,8 @@ from pathlib import Path
 
 KERNEL_DIRS = ("fast_dynamics/canopy", "fast_dynamics/plant", "fast_dynamics/soil",
                "slow_dynamics/plant", "slow_dynamics/soil")
-FORBIDDEN_TYPES = ("site_t", "cohort_block", "patch_block")
-FORBIDDEN_MODULES = ("meds_site_state_vars", "meds_cohort_state_vars", "meds_diag_vars")
+FORBIDDEN_TYPES = ("polygon_t", "cohort_block", "patch_block")
+FORBIDDEN_MODULES = ("meds_polygon_state_vars", "meds_cohort_state_vars", "meds_diag_vars")
 PATCH_MODULE = "meds_patch_state_vars"
 ALLOWED = {"cas_state_t", "snow_column_t", "soil_water_column_t", "soil_energy_column_t", "soil_carbon_t",
            "xi_accum_t", "litter_input_t", "blend_cas", "blend_snow", "blend_soil_water", "blend_soil_energy",

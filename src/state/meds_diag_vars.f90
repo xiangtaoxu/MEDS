@@ -127,7 +127,7 @@ module meds_diag_vars
    !  fast rows accumulate ~48 sub-step samples per slow step, the slow rows get exactly one. One     !
    !  shared dt weight cannot normalize both.                                                         !
    !                                                                                          !
-   !  WHY NOT READ site%deriv DIRECTLY. `cohort_deriv_block` is TRANSIENT and deliberately NOT        !
+   !  WHY NOT READ poly%deriv DIRECTLY. `cohort_deriv_block` is TRANSIENT and deliberately NOT        !
    !  lockstep-reordered -- which is fine for its own consumer, since update_cohort_states applies it  !
    !  immediately. But the step re-sorts the cohorts after that, so at the output tick `deriv(i)` and  !
    !  `cohort(i)` need not be the same plant, and an error of that kind shows only when the ordering   !

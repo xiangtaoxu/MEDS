@@ -16,7 +16,7 @@ module meds_output_registry
    use meds_config,         only : meds_config_t
    use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
    use meds_soil_column_config, only : soil_params_t
-   use meds_site_state_vars,    only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, alloc_cohort_diag, alloc_patch_diag
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
@@ -198,7 +198,7 @@ contains
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_SHED)
       call add_variable(reg, 'dmax_psi_leaf_cohort', 'predawn (daily-max) leaf water potential', 'MPa', &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_DMAX_PSI_LEAF)
-      !----- Slow-loop RATES off the per-step diagnostic block (site%cohort%sdiag). -----------!
+      !----- Slow-loop RATES off the per-step diagnostic block (poly%cohort%sdiag). -----------!
       call add_variable(reg, 'dbh_growth_cohort', 'diameter growth rate', 'cm/yr',               &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_DIAG0 + CO_DDBH_DT)
       call add_variable(reg, 'agb_growth_cohort', 'per-plant AGB growth rate', 'kgC/plant/yr',   &
@@ -858,7 +858,7 @@ contains
    !  The FORCING the run used (docs/science/diagnostics.md §5): the atmospheric boundary after the !
    !  reader's shortwave partition, rain/snow split and optional height and lapse corrections --   !
    !  write-only provenance. The coarse tiers are dt-weighted means over the fast sub-steps, kept   !
-   !  once per polygon (site%diag, PY_*) with sw_in_site and precip_site, which carry the total     !
+   !  once per polygon (poly%diag, PY_*) with sw_in_site and precip_site, which carry the total     !
    !  shortwave and precipitation; the FAST tier is each record's mean of the sub-step samples,     !
    !  which is what checks the diurnal reconstruction against a tower. cosz is 0 while the sun is   !
    !  down, so a daily mean counts the night as zero.                                               !
@@ -1363,9 +1363,9 @@ contains
    !  point in meds_diag_vars a no-op, and the fast loop never even asks the leaf kernel for         !
    !  the extra flux fields.                                                                         !
    !=======================================================================================!
-   subroutine activate_site_diag(files, site)
+   subroutine activate_site_diag(files, poly)
       type(output_files_t),   intent(in)    :: files
-      type(site_t),           intent(inout) :: site
+      type(polygon_t),        intent(inout) :: poly
       logical     :: need_c, need_p, need_s, need_y
       integer(ik) :: t, j, k, src
       need_c = .false. ; need_p = .false. ; need_s = .false. ; need_y = .false.
@@ -1385,14 +1385,14 @@ contains
       !----- Only the fast loop fills the per-cohort and polygon blocks, and the fast rows of the     !
       !      patch block: in a slow-only run they stay off, and their variables read as missing. -----!
       need_c = need_c .and. files%fast_loop_on ; need_y = need_y .and. files%fast_loop_on
-      site%patch%diag%fast_rows = files%fast_loop_on
+      poly%patch%diag%fast_rows = files%fast_loop_on
       !----- Additive: a block already on stays on. -----------------------------------------------!
-      need_c = need_c .or. site%cohort%diag%active  ; need_s = need_s .or. site%cohort%sdiag%active
-      need_p = need_p .or. site%patch%diag%active   ; need_y = need_y .or. site%diag%active
-      call alloc_cohort_diag(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)
-      call alloc_cohort_diag(site%cohort%sdiag, max(site%cohort%cap, 1_ik), need_s, slow_rows=.true.)
-      call alloc_patch_diag (site%patch%diag,   max(site%patch%cap,  1_ik), need_p)
-      site%diag%active = need_y                    ! the polygon block: fixed size, nothing to allocate
+      need_c = need_c .or. poly%cohort%diag%active  ; need_s = need_s .or. poly%cohort%sdiag%active
+      need_p = need_p .or. poly%patch%diag%active   ; need_y = need_y .or. poly%diag%active
+      call alloc_cohort_diag(poly%cohort%diag,  max(poly%cohort%cap, 1_ik), need_c)
+      call alloc_cohort_diag(poly%cohort%sdiag, max(poly%cohort%cap, 1_ik), need_s, slow_rows=.true.)
+      call alloc_patch_diag (poly%patch%diag,   max(poly%patch%cap,  1_ik), need_p)
+      poly%diag%active = need_y                    ! the polygon block: fixed size, nothing to allocate
    end subroutine activate_site_diag
 
    !=======================================================================================!

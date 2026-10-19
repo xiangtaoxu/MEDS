@@ -23,7 +23,7 @@ module meds_output_integrate
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
-   use meds_site_state_vars,    only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, N_PY_ROWS, cohort_diag_value, patch_diag_value, &
                                        patch_diag_slow_row, polygon_diag_value
    use meds_constants,     only : n_soil_layer_max
@@ -125,13 +125,13 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_VEG_CARBON      = 1054_ik !< leaf+fineroot+wood+storage per plant
    integer(ik), parameter :: FLD_C_WAI             = 1055_ik !< nplant*wood_area [m2/m2]
    !----- Per-cohort DIAGNOSTICS (1100+): the id is FLD_C_DIAG0 + the row (CO_*). The fast loop's   !
-   !      rows are read from site%cohort%diag, the slow step's (above N_CO_FAST_ROWS) from            !
-   !      site%cohort%sdiag -- not from site%deriv, which is transient and NOT lockstep-reordered,    !
+   !      rows are read from poly%cohort%diag, the slow step's (above N_CO_FAST_ROWS) from            !
+   !      poly%cohort%sdiag -- not from poly%deriv, which is transient and NOT lockstep-reordered,    !
    !      so at the output tick its index need not match the cohort axis. -------------------------!
    integer(ik), parameter :: FLD_C_DIAG0           = 1100_ik
-   !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from site%patch%diag (PA_* + FLD_P_DIAG0). !
+   !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from poly%patch%diag (PA_* + FLD_P_DIAG0). !
    integer(ik), parameter :: FLD_P_DIAG0           = 2100_ik
-   !----- POLYGON diagnostics (4100+, a site-scalar family), read from site%diag (PY_* + FLD_PY_DIAG0). !
+   !----- POLYGON diagnostics (4100+, a site-scalar family), read from poly%diag (PY_* + FLD_PY_DIAG0). !
    integer(ik), parameter :: FLD_PY_DIAG0          = 4100_ik
 
    !----- Patch FIELDS (SRCK_PATCH). ---------------------------------------------------------!
@@ -360,7 +360,7 @@ contains
    !  Extract (copy the current value of one variable out of live state; NO pointers).      !
    !                                                                                        !
    !  nvfortran caveat (an optimizer trap like those in CLAUDE.md): nvfortran -O2 does not    !
-   !  always see a store to site%<allocatable component> as affecting a subsequent             !
+   !  always see a store to poly%<allocatable component> as affecting a subsequent             !
    !  extract_variable(site,...) read, so it can wrongly CSE two extracts across an INLINE     !
    !  mutation. Production is safe -- state changes happen through opaque routines            !
    !  (vegetation_dynamics, the calendar restructuring) that the optimizer cannot see through, !
@@ -370,19 +370,19 @@ contains
    !----- A diagnostic-block row whose block this run does not fill: a block that is off, or a fast  !
    !      row of the patch block in a slow-only run. Its variables read as missing, not as a        !
    !      0 nothing computed. ----------------------------------------------------------------------!
-   pure logical function not_simulated(site, src) result(ns)
-      type(site_t), intent(in) :: site
+   pure logical function not_simulated(poly, src) result(ns)
+      type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in) :: src
       ns = .false.
       if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) then
-         ns = .not. site%cohort%diag%active
+         ns = .not. poly%cohort%diag%active
       else if (src > FLD_C_DIAG0 + N_CO_FAST_ROWS .and. src <= FLD_C_DIAG0 + N_CO_ROWS) then
-         ns = .not. site%cohort%sdiag%active
+         ns = .not. poly%cohort%sdiag%active
       else if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) then
-         ns = .not. site%patch%diag%active .or.                                                    &
-              (.not. site%patch%diag%fast_rows .and. .not. patch_diag_slow_row(src - FLD_P_DIAG0))
+         ns = .not. poly%patch%diag%active .or.                                                    &
+              (.not. poly%patch%diag%fast_rows .and. .not. patch_diag_slow_row(src - FLD_P_DIAG0))
       else if (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PY_ROWS) then
-         ns = .not. site%diag%active
+         ns = .not. poly%diag%active
       end if
    end function not_simulated
 
@@ -406,120 +406,120 @@ contains
    !  derived kernels). NO reduction here; the reduction is chosen by the descriptor's dim.    !
    !=======================================================================================!
 
-   !----- Per-cohort field over the whole site SoA [1:site%cohort%n]. -----------------------!
-   pure subroutine cohort_source_field(site, src, x, n)
-      type(site_t), intent(in)  :: site
+   !----- Per-cohort field over the whole site SoA [1:poly%cohort%n]. -----------------------!
+   pure subroutine cohort_source_field(poly, src, x, n)
+      type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in)  :: src
       real(wp),     intent(out) :: x(:)
       integer(ik),  intent(out) :: n
-      n = site%cohort%n
+      n = poly%cohort%n
       if (n <= 0_ik) return
       select case (src)
-      case (FLD_C_NPLANT)          ; x(1:n) = site%cohort%nplant(1:n)
-      case (FLD_C_DBH)             ; x(1:n) = site%cohort%dbh(1:n)
-      case (FLD_C_HEIGHT)          ; x(1:n) = site%cohort%height(1:n)
-      case (FLD_C_BASAL_AREA)      ; x(1:n) = site%cohort%basal_area(1:n)
-      case (FLD_C_AGB)             ; x(1:n) = site%cohort%agb(1:n)
-      case (FLD_C_LEAF_AREA)       ; x(1:n) = site%cohort%leaf_area(1:n)
-      case (FLD_C_GROWTH_AVG)      ; x(1:n) = site%cohort%growth_avg(1:n)
-      case (FLD_C_PFT)             ; x(1:n) = real(site%cohort%pft(1:n), wp)
-      case (FLD_C_OWNER_PATCH)     ; x(1:n) = real(site%cohort%owner_patch(1:n), wp)
-      case (FLD_C_GLOBAL_ID)       ; x(1:n) = real(site%cohort%global_id(1:n), wp)
-      case (FLD_C_LEAF_CARBON)     ; x(1:n) = site%cohort%leaf_carbon(1:n)
-      case (FLD_C_FINEROOT_CARBON) ; x(1:n) = site%cohort%fineroot_carbon(1:n)
-      case (FLD_C_WOOD_CARBON)     ; x(1:n) = site%cohort%wood_carbon(1:n)
-      case (FLD_C_STORAGE_CARBON)  ; x(1:n) = site%cohort%nonstructural_carbon(1:n)
-      case (FLD_C_SLA)             ; x(1:n) = site%cohort%sla(1:n)
-      case (FLD_C_VCMAX25)         ; x(1:n) = site%cohort%vcmax25(1:n)
-      case (FLD_C_RD25)            ; x(1:n) = site%cohort%rd25(1:n)
-      case (FLD_C_LEAF_TURNOVER)   ; x(1:n) = site%cohort%leaf_turnover_rate(1:n)
-      case (FLD_C_OVERTOP_LAI)     ; x(1:n) = site%cohort%overtopping_lai(1:n)
-      case (FLD_C_GPP_ACCUM)       ; x(1:n) = site%cohort%gpp_accum(1:n)
-      case (FLD_C_LEAF_RESP)       ; x(1:n) = site%cohort%leaf_resp_accum(1:n)
-      case (FLD_C_STEM_RESP)       ; x(1:n) = site%cohort%stem_resp_accum(1:n)
-      case (FLD_C_ROOT_RESP)       ; x(1:n) = site%cohort%root_resp_accum(1:n)
-      case (FLD_C_DMAX_PSI_LEAF)   ; x(1:n) = site%cohort%dmax_psi_leaf(1:n)
-      case (FLD_C_PHENO_FLUSH)     ; x(1:n) = site%cohort%leaf_flush_tendency(1:n)
-      case (FLD_C_PHENO_SHED)      ; x(1:n) = site%cohort%leaf_shed_tendency(1:n)
+      case (FLD_C_NPLANT)          ; x(1:n) = poly%cohort%nplant(1:n)
+      case (FLD_C_DBH)             ; x(1:n) = poly%cohort%dbh(1:n)
+      case (FLD_C_HEIGHT)          ; x(1:n) = poly%cohort%height(1:n)
+      case (FLD_C_BASAL_AREA)      ; x(1:n) = poly%cohort%basal_area(1:n)
+      case (FLD_C_AGB)             ; x(1:n) = poly%cohort%agb(1:n)
+      case (FLD_C_LEAF_AREA)       ; x(1:n) = poly%cohort%leaf_area(1:n)
+      case (FLD_C_GROWTH_AVG)      ; x(1:n) = poly%cohort%growth_avg(1:n)
+      case (FLD_C_PFT)             ; x(1:n) = real(poly%cohort%pft(1:n), wp)
+      case (FLD_C_OWNER_PATCH)     ; x(1:n) = real(poly%cohort%owner_patch(1:n), wp)
+      case (FLD_C_GLOBAL_ID)       ; x(1:n) = real(poly%cohort%global_id(1:n), wp)
+      case (FLD_C_LEAF_CARBON)     ; x(1:n) = poly%cohort%leaf_carbon(1:n)
+      case (FLD_C_FINEROOT_CARBON) ; x(1:n) = poly%cohort%fineroot_carbon(1:n)
+      case (FLD_C_WOOD_CARBON)     ; x(1:n) = poly%cohort%wood_carbon(1:n)
+      case (FLD_C_STORAGE_CARBON)  ; x(1:n) = poly%cohort%nonstructural_carbon(1:n)
+      case (FLD_C_SLA)             ; x(1:n) = poly%cohort%sla(1:n)
+      case (FLD_C_VCMAX25)         ; x(1:n) = poly%cohort%vcmax25(1:n)
+      case (FLD_C_RD25)            ; x(1:n) = poly%cohort%rd25(1:n)
+      case (FLD_C_LEAF_TURNOVER)   ; x(1:n) = poly%cohort%leaf_turnover_rate(1:n)
+      case (FLD_C_OVERTOP_LAI)     ; x(1:n) = poly%cohort%overtopping_lai(1:n)
+      case (FLD_C_GPP_ACCUM)       ; x(1:n) = poly%cohort%gpp_accum(1:n)
+      case (FLD_C_LEAF_RESP)       ; x(1:n) = poly%cohort%leaf_resp_accum(1:n)
+      case (FLD_C_STEM_RESP)       ; x(1:n) = poly%cohort%stem_resp_accum(1:n)
+      case (FLD_C_ROOT_RESP)       ; x(1:n) = poly%cohort%root_resp_accum(1:n)
+      case (FLD_C_DMAX_PSI_LEAF)   ; x(1:n) = poly%cohort%dmax_psi_leaf(1:n)
+      case (FLD_C_PHENO_FLUSH)     ; x(1:n) = poly%cohort%leaf_flush_tendency(1:n)
+      case (FLD_C_PHENO_SHED)      ; x(1:n) = poly%cohort%leaf_shed_tendency(1:n)
       !----- derived ------------------------------------------------------------------------!
       case (FLD_C_ONE)             ; x(1:n) = 1.0_wp
-      case (FLD_C_LAI)             ; x(1:n) = cohort_lai(site%cohort%nplant(1:n),               &
-                                                         site%cohort%leaf_area(1:n))
-      case (FLD_C_WAI)             ; x(1:n) = site%cohort%nplant(1:n) * site%cohort%wood_area(1:n)
-      case (FLD_C_NPP_ACCUM)       ; x(1:n) = cohort_npp_per_plant(site%cohort%gpp_accum(1:n),  &
-                                                site%cohort%leaf_resp_accum(1:n),              &
-                                                site%cohort%stem_resp_accum(1:n),              &
-                                                site%cohort%root_resp_accum(1:n))
-      case (FLD_C_BGB)             ; x(1:n) = site%cohort%fineroot_carbon(1:n)                  &
-                                    + site%cohort%wood_carbon(1:n)                             &
-                                      * (1.0_wp - site%cohort%pft_table%aboveground_frac(site%cohort%pft(1:n)))
-      case (FLD_C_VEG_CARBON)      ; x(1:n) = site%cohort%leaf_carbon(1:n)                      &
-                                    + site%cohort%fineroot_carbon(1:n)                         &
-                                    + site%cohort%wood_carbon(1:n)                             &
-                                    + site%cohort%nonstructural_carbon(1:n)
+      case (FLD_C_LAI)             ; x(1:n) = cohort_lai(poly%cohort%nplant(1:n),               &
+                                                         poly%cohort%leaf_area(1:n))
+      case (FLD_C_WAI)             ; x(1:n) = poly%cohort%nplant(1:n) * poly%cohort%wood_area(1:n)
+      case (FLD_C_NPP_ACCUM)       ; x(1:n) = cohort_npp_per_plant(poly%cohort%gpp_accum(1:n),  &
+                                                poly%cohort%leaf_resp_accum(1:n),              &
+                                                poly%cohort%stem_resp_accum(1:n),              &
+                                                poly%cohort%root_resp_accum(1:n))
+      case (FLD_C_BGB)             ; x(1:n) = poly%cohort%fineroot_carbon(1:n)                  &
+                                    + poly%cohort%wood_carbon(1:n)                             &
+                                      * (1.0_wp - poly%cohort%pft_table%aboveground_frac(poly%cohort%pft(1:n)))
+      case (FLD_C_VEG_CARBON)      ; x(1:n) = poly%cohort%leaf_carbon(1:n)                      &
+                                    + poly%cohort%fineroot_carbon(1:n)                         &
+                                    + poly%cohort%wood_carbon(1:n)                             &
+                                    + poly%cohort%nonstructural_carbon(1:n)
       case default
          !----- Diagnostic-block rows (FLD_C_DIAG0 + CO_*): read the dt-weighted                       !
          !      accumulator and normalize. A block that is off never reaches here (not_simulated). ---!
          if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) then
-            call cohort_diag_value(site%cohort%diag, src - FLD_C_DIAG0, x, n, MISSING_VALUE)
+            call cohort_diag_value(poly%cohort%diag, src - FLD_C_DIAG0, x, n, MISSING_VALUE)
          else if (src > FLD_C_DIAG0 + N_CO_FAST_ROWS .and. src <= FLD_C_DIAG0 + N_CO_ROWS) then
-            call cohort_diag_value(site%cohort%sdiag, src - FLD_C_DIAG0, x, n, MISSING_VALUE)
+            call cohort_diag_value(poly%cohort%sdiag, src - FLD_C_DIAG0, x, n, MISSING_VALUE)
          else
             x(1:n) = MISSING_VALUE
          end if
       end select
    end subroutine cohort_source_field
 
-   !----- Per-patch field [1:site%patch%n]. -------------------------------------------------!
-   pure subroutine patch_source_field(site, src, x, n)
-      type(site_t), intent(in)  :: site
+   !----- Per-patch field [1:poly%patch%n]. -------------------------------------------------!
+   pure subroutine patch_source_field(poly, src, x, n)
+      type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in)  :: src
       real(wp),     intent(out) :: x(:)
       integer(ik),  intent(out) :: n
       integer(ik) :: ip
-      n = site%patch%n
+      n = poly%patch%n
       if (n <= 0_ik) return
       select case (src)
-      case (FLD_P_AREA)          ; x(1:n) = site%patch%area(1:n)
-      case (FLD_P_AGE)           ; x(1:n) = site%patch%age(1:n)
-      case (FLD_P_DIST_TYPE)     ; x(1:n) = real(site%patch%dist_type(1:n), wp)
-      case (FLD_P_COHORT_OFFSET) ; x(1:n) = real(site%patch%cohort_offset(1:n), wp)
-      case (FLD_P_COHORT_COUNT)  ; x(1:n) = real(site%patch%cohort_count(1:n), wp)
-      case (FLD_P_GLOBAL_ID)     ; x(1:n) = real(site%patch%global_id(1:n), wp)
-      case (FLD_P_CAS_DEPTH)     ; do ip = 1_ik, n ; x(ip) = site%patch%cas(ip)%can_depth    ; end do
+      case (FLD_P_AREA)          ; x(1:n) = poly%patch%area(1:n)
+      case (FLD_P_AGE)           ; x(1:n) = poly%patch%age(1:n)
+      case (FLD_P_DIST_TYPE)     ; x(1:n) = real(poly%patch%dist_type(1:n), wp)
+      case (FLD_P_COHORT_OFFSET) ; x(1:n) = real(poly%patch%cohort_offset(1:n), wp)
+      case (FLD_P_COHORT_COUNT)  ; x(1:n) = real(poly%patch%cohort_count(1:n), wp)
+      case (FLD_P_GLOBAL_ID)     ; x(1:n) = real(poly%patch%global_id(1:n), wp)
+      case (FLD_P_CAS_DEPTH)     ; do ip = 1_ik, n ; x(ip) = poly%patch%cas(ip)%can_depth    ; end do
       case (FLD_P_SWE)
-         do ip = 1_ik, n ; x(ip) = sum(site%patch%snow(ip)%swe(:))        ; end do
+         do ip = 1_ik, n ; x(ip) = sum(poly%patch%snow(ip)%swe(:))        ; end do
       case (FLD_P_SNOW_DEPTH)
-         do ip = 1_ik, n ; x(ip) = sum(site%patch%snow(ip)%snow_depth(:)) ; end do
+         do ip = 1_ik, n ; x(ip) = sum(poly%patch%snow(ip)%snow_depth(:)) ; end do
       case (FLD_P_SOILC_FAST_GRND)
-         do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%fast_grnd_carbon   ; end do
+         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon   ; end do
       case (FLD_P_SOILC_FAST_SOIL)
-         do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%fast_soil_carbon   ; end do
+         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%fast_soil_carbon   ; end do
       case (FLD_P_SOILC_STRUCT_GRND)
-         do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%struct_grnd_carbon ; end do
+         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%struct_grnd_carbon ; end do
       case (FLD_P_SOILC_STRUCT_SOIL)
-         do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%struct_soil_carbon ; end do
+         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%struct_soil_carbon ; end do
       case (FLD_P_SOILC_MICROBIAL)
-         do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%microbial_carbon   ; end do
+         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%microbial_carbon   ; end do
       case (FLD_P_SOILC_SLOW)
-         do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%slow_carbon        ; end do
+         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%slow_carbon        ; end do
       case (FLD_P_SOILC_PASSIVE)
-         do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%passive_carbon     ; end do
+         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%passive_carbon     ; end do
       case (FLD_P_SOILC_TOTAL)
          do ip = 1_ik, n
-            x(ip) = site%patch%soil_carbon(ip)%fast_grnd_carbon                                &
-                  + site%patch%soil_carbon(ip)%fast_soil_carbon                                &
-                  + site%patch%soil_carbon(ip)%struct_grnd_carbon                              &
-                  + site%patch%soil_carbon(ip)%struct_soil_carbon                              &
-                  + site%patch%soil_carbon(ip)%microbial_carbon                                &
-                  + site%patch%soil_carbon(ip)%slow_carbon                                     &
-                  + site%patch%soil_carbon(ip)%passive_carbon
+            x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon                                &
+                  + poly%patch%soil_carbon(ip)%fast_soil_carbon                                &
+                  + poly%patch%soil_carbon(ip)%struct_grnd_carbon                              &
+                  + poly%patch%soil_carbon(ip)%struct_soil_carbon                              &
+                  + poly%patch%soil_carbon(ip)%microbial_carbon                                &
+                  + poly%patch%soil_carbon(ip)%slow_carbon                                     &
+                  + poly%patch%soil_carbon(ip)%passive_carbon
          end do
       case (FLD_P_RH)
-         do ip = 1_ik, n ; x(ip) = site%patch%xi_accum(ip)%rh_fast_accum ; end do
+         do ip = 1_ik, n ; x(ip) = poly%patch%xi_accum(ip)%rh_fast_accum ; end do
       case default
          if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) then
-            call patch_diag_value(site%patch%diag, src - FLD_P_DIAG0, x, n)
+            call patch_diag_value(poly%patch%diag, src - FLD_P_DIAG0, x, n)
          else
             x(1:n) = MISSING_VALUE
          end if
@@ -539,42 +539,42 @@ contains
    !      build writes NaN. Bounded here, the reducers below mark only live slots valid,          !
    !      normalize_slab leaves the rest at MISSING_VALUE, and the serializer writes only the     !
    !      live extent, as for the cohort and patch axes.  -------------------------------------!
-   pure subroutine layer_source_field(site, dp, src, col, nlayer, ok)
-      type(site_t),        intent(in)  :: site
+   pure subroutine layer_source_field(poly, dp, src, col, nlayer, ok)
+      type(polygon_t),     intent(in)  :: poly
       type(diag_params_t), intent(in)  :: dp
       integer(ik),         intent(in)  :: src
       real(wp),            intent(out) :: col(:,:)
       integer(ik),         intent(out) :: nlayer
       logical,             intent(out) :: ok
       integer(ik) :: ip, np
-      np = site%patch%n
+      np = poly%patch%n
       nlayer = min(max(dp%n_soil, 1_ik), n_soil_layer_max) ; ok = .true.
       if (np <= 0_ik) then ; ok = .false. ; return ; end if
       select case (src)
       case (FLD_L_SOIL_TEMP)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_energy(ip)%soil_temp(1:nlayer)
+            col(1:nlayer, ip) = poly%patch%soil_energy(ip)%soil_temp(1:nlayer)
          end do
       case (FLD_L_SOIL_WATER)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_water(ip)%theta(1:nlayer)
+            col(1:nlayer, ip) = poly%patch%soil_water(ip)%theta(1:nlayer)
          end do
       case (FLD_L_SOIL_FLIQ)
          do ip = 1_ik, np
-            col(1:nlayer, ip) = site%patch%soil_energy(ip)%soil_fliq(1:nlayer)
+            col(1:nlayer, ip) = poly%patch%soil_energy(ip)%soil_fliq(1:nlayer)
          end do
       case (FLD_L_SOIL_PSI)
          if (.not. dp%soil_ready) then ; ok = .false. ; return ; end if
          do ip = 1_ik, np
             col(1:nlayer, ip) = soil_matric_potential(dp%retention,                            &
-                                   site%patch%soil_water(ip)%theta(1:nlayer),                      &
+                                   poly%patch%soil_water(ip)%theta(1:nlayer),                      &
                                    dp%theta_sat(1:nlayer), dp%theta_res(1:nlayer),             &
                                    dp%par_a(1:nlayer), dp%par_n(1:nlayer))
          end do
       case (FLD_L_SOIL_WETNESS)
          if (.not. dp%soil_ready) then ; ok = .false. ; return ; end if
          do ip = 1_ik, np
-            col(1:nlayer, ip) = soil_wetness(site%patch%soil_water(ip)%theta(1:nlayer),            &
+            col(1:nlayer, ip) = soil_wetness(poly%patch%soil_water(ip)%theta(1:nlayer),            &
                                              dp%theta_res(1:nlayer), dp%theta_sat(1:nlayer))
          end do
       case default ; ok = .false.
@@ -592,23 +592,23 @@ contains
    !  The nvfortran CSE caveat of the Extract block above applies here too: do NOT extract twice    !
    !  across an inline component store.                                                            !
    !=======================================================================================!
-   subroutine extract_variable(site, dp, v, scalar_out, slab_out, valid_out, n_out)
-      type(site_t),        intent(in)  :: site
+   subroutine extract_variable(poly, dp, v, scalar_out, slab_out, valid_out, n_out)
+      type(polygon_t),     intent(in)  :: poly
       type(diag_params_t), intent(in)  :: dp
       type(var_desc_t),    intent(in)  :: v
       real(wp),            intent(out) :: scalar_out
       real(wp),            intent(out) :: slab_out(:)
       logical,             intent(out) :: valid_out(:)
       integer(ik),         intent(out) :: n_out
-      real(wp)    :: x(max(site%cohort%n, site%patch%n, 1_ik))
-      real(wp)    :: col(n_soil_layer_max, max(site%patch%n, 1_ik))
+      real(wp)    :: x(max(poly%cohort%n, poly%patch%n, 1_ik))
+      real(wp)    :: col(n_soil_layer_max, max(poly%patch%n, 1_ik))
       integer(ik) :: nf, nlayer, kcls
       logical     :: ok
       scalar_out = 0.0_wp ; n_out = 0_ik
       kcls = src_class(v%source_id)
       !----- A source this run does not simulate reads as missing: no slab entries, and a scalar    !
       !      that integrate_scalar skips, so the whole window closes as _FillValue. ----------------!
-      if (not_simulated(site, v%source_id)) then
+      if (not_simulated(poly, v%source_id)) then
          scalar_out = MISSING_VALUE ; return
       end if
 
@@ -616,38 +616,38 @@ contains
 
       !----- RAW cohort slab: the field itself, no reduction. -------------------------------!
       case (DIM_COHORT)
-         call cohort_source_field(site, v%source_id, slab_out, n_out)
+         call cohort_source_field(poly, v%source_id, slab_out, n_out)
          valid_out(1:max(n_out,1_ik)) = .false.
          valid_out(1:n_out) = slab_out(1:n_out) /= MISSING_VALUE   ! a cohort with no samples: fill
 
       !----- Patch axis: either a per-patch field verbatim, or a cohort field reduced to it. -!
       case (DIM_PATCH)
          if (kcls == SRCK_COHORT) then
-            call cohort_source_field(site, v%source_id, x, nf)
-            call reduce_cohort_to_patch(site, x, v%weight, v%mean, slab_out, valid_out, n_out, &
+            call cohort_source_field(poly, v%source_id, x, nf)
+            call reduce_cohort_to_patch(poly, x, v%weight, v%mean, slab_out, valid_out, n_out, &
                                         scale=v%scale)
          else
-            call patch_source_field(site, v%source_id, slab_out, n_out)
+            call patch_source_field(poly, v%source_id, slab_out, n_out)
             valid_out(1:max(n_out,1_ik)) = .true.
          end if
 
       !----- PFT axis (run-time length; empty PFTs are a true 0 for sums, see the reducer). --!
       case (DIM_PFT)
-         call cohort_source_field(site, v%source_id, x, nf)
-         call reduce_cohort_to_pft(site, x, v%weight, v%mean, dp%n_pft, slab_out, valid_out,   &
+         call cohort_source_field(poly, v%source_id, x, nf)
+         call reduce_cohort_to_pft(poly, x, v%weight, v%mean, dp%n_pft, slab_out, valid_out,   &
                                    n_out, scale=v%scale)
 
       !----- DBH size class (ED2-style: bin by the cohort's mean dbh, never split a cohort). -!
       case (DIM_SIZE)
-         call cohort_source_field(site, v%source_id, x, nf)
-         call reduce_cohort_to_size(site, x, v%weight, v%mean, dp%dbh_edges, dp%n_dbh_class,   &
+         call cohort_source_field(poly, v%source_id, x, nf)
+         call reduce_cohort_to_size(poly, x, v%weight, v%mean, dp%dbh_edges, dp%n_dbh_class,   &
                                     slab_out, valid_out, n_out, scale=v%scale)
 
       !----- Area-weighted SITE soil column. ------------------------------------------------!
       case (DIM_SOIL)
-         call layer_source_field(site, dp, v%source_id, col, nlayer, ok)
+         call layer_source_field(poly, dp, v%source_id, col, nlayer, ok)
          if (ok) then
-            call reduce_patch_column_to_site(site, col, nlayer, slab_out, n_out)
+            call reduce_patch_column_to_site(poly, col, nlayer, slab_out, n_out)
             valid_out(1:max(n_out,1_ik)) = .true.
          else
             n_out = 0_ik
@@ -655,9 +655,9 @@ contains
 
       !----- 2-D (soil layer x patch), flattened at (ip-1)*n_soil_layer_max + k. -------------!
       case (DIM_SOIL_PATCH)
-         call layer_source_field(site, dp, v%source_id, col, nlayer, ok)
+         call layer_source_field(poly, dp, v%source_id, col, nlayer, ok)
          if (ok) then
-            call gather_patch_columns(site, col, nlayer, slab_out, valid_out, n_out)
+            call gather_patch_columns(poly, col, nlayer, slab_out, valid_out, n_out)
          else
             n_out = 0_ik
          end if
@@ -666,14 +666,14 @@ contains
       case default
          select case (kcls)
          case (SRCK_COHORT)
-            call cohort_source_field(site, v%source_id, x, nf)
-            call reduce_cohort_to_site(site, x, v%weight, v%mean, scalar_out, ok, scale=v%scale)
+            call cohort_source_field(poly, v%source_id, x, nf)
+            call reduce_cohort_to_site(poly, x, v%weight, v%mean, scalar_out, ok, scale=v%scale)
          case (SRCK_PATCH)
-            call patch_source_field(site, v%source_id, x, nf)
-            call reduce_patch_to_site(site, x, v%mean, scalar_out, ok)
+            call patch_source_field(poly, v%source_id, x, nf)
+            call reduce_patch_to_site(poly, x, v%mean, scalar_out, ok)
             scalar_out = scalar_out * v%scale
          case default
-            scalar_out = extract_scalar_source(site, v%source_id) ; ok = .true.
+            scalar_out = extract_scalar_source(poly, v%source_id) ; ok = .true.
          end select
          !----- A mean over nothing (bare ground, or only cohorts with no samples) has nothing to  !
          !      report this step: missing, which integrate_scalar skips, not a 0 it would average. !
@@ -682,34 +682,34 @@ contains
    end subroutine extract_variable
 
    !----- Site-ONLY scalars: quantities that are already site-level and need no reduction. ---!
-   pure real(wp) function extract_scalar_source(site, source_id) result(val)
-      type(site_t), intent(in) :: site
+   pure real(wp) function extract_scalar_source(poly, source_id) result(val)
+      type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in) :: source_id
       select case (source_id)
-      case (SRC_S_ET)         ; val = total_et(site)
-      case (SRC_S_RUNOFF)     ; val = site%runoff_surf_accum + site%drainage_accum
-      case (SRC_S_RUNOFF_SURF); val = site%runoff_surf_accum
-      case (SRC_S_DRAINAGE)   ; val = site%drainage_accum
-      case (SRC_S_N_COHORT)   ; val = real(site%cohort%n, wp)
-      case (SRC_S_N_PATCH)    ; val = real(site%patch%n, wp)
+      case (SRC_S_ET)         ; val = total_et(poly)
+      case (SRC_S_RUNOFF)     ; val = poly%runoff_surf_accum + poly%drainage_accum
+      case (SRC_S_RUNOFF_SURF); val = poly%runoff_surf_accum
+      case (SRC_S_DRAINAGE)   ; val = poly%drainage_accum
+      case (SRC_S_N_COHORT)   ; val = real(poly%cohort%n, wp)
+      case (SRC_S_N_PATCH)    ; val = real(poly%patch%n, wp)
       case (SRC_S_CANOPY_HEIGHT)
-         if (site%cohort%n > 0_ik) then
-            val = maxval(site%cohort%height(1:site%cohort%n))
+         if (poly%cohort%n > 0_ik) then
+            val = maxval(poly%cohort%height(1:poly%cohort%n))
          else
             val = 0.0_wp
          end if
-      case (SRC_S_WORK_STEPS)        ; val = site%work_integ_steps
-      case (SRC_S_WORK_REJ)          ; val = site%work_integ_rej
-      case (SRC_S_WORK_WATER_NSUB)   ; val = site%work_water_nsub
-      case (SRC_S_WORK_WATER_NEWTON) ; val = site%work_water_newton
-      case (SRC_S_WORK_WATER_NFAIL)  ; val = site%work_water_nfail
-      case (SRC_S_WORK_WATER_REJECT) ; val = site%work_water_reject
-      case (SRC_S_WORK_RK45_RESCUE)  ; val = site%work_rk45_rescue
-      case (SRC_S_WORK_CLAMP_STAGE)  ; val = site%work_clamp_stage
+      case (SRC_S_WORK_STEPS)        ; val = poly%work_integ_steps
+      case (SRC_S_WORK_REJ)          ; val = poly%work_integ_rej
+      case (SRC_S_WORK_WATER_NSUB)   ; val = poly%work_water_nsub
+      case (SRC_S_WORK_WATER_NEWTON) ; val = poly%work_water_newton
+      case (SRC_S_WORK_WATER_NFAIL)  ; val = poly%work_water_nfail
+      case (SRC_S_WORK_WATER_REJECT) ; val = poly%work_water_reject
+      case (SRC_S_WORK_RK45_RESCUE)  ; val = poly%work_rk45_rescue
+      case (SRC_S_WORK_CLAMP_STAGE)  ; val = poly%work_clamp_stage
       case default
          if (source_id > FLD_PY_DIAG0 .and. source_id <= FLD_PY_DIAG0 + N_PY_ROWS) then
             val = MISSING_VALUE
-            if (site%diag%active) val = polygon_diag_value(site%diag, source_id - FLD_PY_DIAG0)
+            if (poly%diag%active) val = polygon_diag_value(poly%diag, source_id - FLD_PY_DIAG0)
          else
             val = MISSING_VALUE
          end if
@@ -730,10 +730,10 @@ contains
    !  window holds one cohort/patch slot set and the restructuring's events reach          !
    !  the period that begins.                                                              !
    !=======================================================================================!
-   subroutine output_integrate(files, bufs, site, prev, dt, is_new_day, is_new_month, is_new_year)
+   subroutine output_integrate(files, bufs, poly, prev, dt, is_new_day, is_new_month, is_new_year)
       type(output_files_t),   intent(in)    :: files
       type(output_buffers_t), intent(inout) :: bufs
-      type(site_t),           intent(in)    :: site
+      type(polygon_t),        intent(in)    :: poly
       type(meds_time_t),      intent(in)    :: prev          !< the start of the step just taken
       real(wp),               intent(in)    :: dt
       logical,                intent(in)    :: is_new_day, is_new_month, is_new_year  !< its end left prev's period
@@ -744,8 +744,8 @@ contains
       if (.not. files%enabled) return
       !----- The cohort and patch slabs are output.cohort_max and patch_max long. Stop at the step the  !
       !      stand outgrows one, not when its record is written, up to a month later. ------------------!
-      if (files%cohort_axis .and. site%cohort%n > files%cohort_max) call cap_exceeded('cohort', site%cohort%n, files%cohort_max)
-      if (files%patch_axis  .and. site%patch%n  > files%patch_max)  call cap_exceeded('patch',  site%patch%n,  files%patch_max)
+      if (files%cohort_axis .and. poly%cohort%n > files%cohort_max) call cap_exceeded('cohort', poly%cohort%n, files%cohort_max)
+      if (files%patch_axis  .and. poly%patch%n  > files%patch_max)  call cap_exceeded('patch',  poly%patch%n,  files%patch_max)
       !----- fold the step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately from the    !
       !      staged sub-step samples (output_integrate_fast), because sub-daily resolution exists !
       !      only inside the fast loop.                                                           !
@@ -754,7 +754,7 @@ contains
          if (.not. bufs%has_data(t)) bufs%t_open(t) = prev
          do j = 1_ik, files%reg%nidx(t)
             k = files%reg%idx_freq(j, t)
-            call extract_variable(site, bufs%diag, files%reg%var(k), scal, slab, vslab, n_out)
+            call extract_variable(poly, bufs%diag, files%reg%var(k), scal, slab, vslab, n_out)
             if (files%reg%var(k)%dim == DIM_SCALAR) then
                call integrate_scalar(bufs%buf(k,t), scal, dt)
             else

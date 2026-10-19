@@ -170,14 +170,14 @@ meds_fortran_flags(meds_config)
 
 #----- STATE, one LAYER in four files by model hierarchy (src/README.md, rule 3). -------------#
 #                                                                                            #
-#  meds_cohort_state_vars -- the flat cohort SoA and the cohort lockstep.                     #
-#  meds_patch_state_vars  -- ONE patch's stores (canopy air, snow, soil water and heat, soil  #
-#                            carbon) and their blends, and the patch SoA with its CSR map.    #
-#  meds_site_state_vars   -- site_t: one cohort block and one patch block.                    #
-#  meds_diag_vars         -- the diagnostic accumulators, per cohort, per patch, per polygon. #
+#  meds_cohort_state_vars  -- the flat cohort SoA and the cohort lockstep.                    #
+#  meds_patch_state_vars   -- ONE patch's stores (canopy air, snow, soil water and heat,      #
+#                             soil carbon), their blends, and the patch SoA with its CSR map. #
+#  meds_polygon_state_vars -- polygon_t: one cohort block and one patch block.                #
+#  meds_diag_vars          -- the diagnostic accumulators, per cohort, patch and polygon.     #
 #                                                                                            #
 #  The kernels take only the per-patch store types (from meds_patch_state_vars), never        #
-#  site_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_no_site_state       #
+#  polygon_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_no_site_state    #
 #  checks it, because the shared module directory cannot. The parameters that describe the    #
 #  stores are config (meds_soil_column_config): a parameter is not state.                     #
 file(GLOB STATE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/*.f90)

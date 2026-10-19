@@ -28,7 +28,7 @@ module meds_demography_update
    use meds_constants, only : tiny_num, lnexp_min, lnexp_max
    use meds_cohort_state_vars, only : cohort_block, cohort_deriv_block, set_cohort_size_from_carbon
    use meds_patch_state_vars, only : patch_block
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    implicit none
    private
 
@@ -195,12 +195,12 @@ contains
    ! cumulative LAI of all TALLER cohorts), with equal-height cohorts sharing one layer      !
    ! (co-dominance). A pure GEOMETRIC reduction -- NO rate law, NO plant physiology.          !
    !---------------------------------------------------------------------------------------!
-   subroutine update_overtopping_lai(site)
-      type(site_t), intent(inout) :: site
+   subroutine update_overtopping_lai(poly)
+      type(polygon_t), intent(inout) :: poly
       integer(ik) :: ip, i0, i1, i, j, k
       real(wp)    :: cum, over_lai, layer_lai
 
-      associate (cohort => site%cohort, patch => site%patch)
+      associate (cohort => poly%cohort, patch => poly%patch)
          do ip = 1_ik, patch%n
             i0  = patch%cohort_offset(ip)
             i1  = i0 + patch%cohort_count(ip) - 1_ik

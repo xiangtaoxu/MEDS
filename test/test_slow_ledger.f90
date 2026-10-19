@@ -23,7 +23,7 @@
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
-   use meds_site_state_vars,    only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
    use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
@@ -49,7 +49,7 @@ program test_slow_ledger
 
    real(wp), parameter :: RHO = 1.2_wp        !< the density the canopy-air store is valued at
    type(meds_config_t) :: cfg
-   type(site_t)        :: site
+   type(polygon_t)     :: poly
    type(soil_params_t) :: soil
    type(slow_store_t)  :: s0, s1
    type(slow_ledger_t) :: led
@@ -58,11 +58,11 @@ program test_slow_ledger
    call banner('slow ledger: store coverage and declaration arithmetic')
 
    cfg = build_test_config()
-   call init_bare_ground(site, cfg, 1_ik)
-   call add_cohort(site, cfg, 1_ik, 2_ik, 0.3_wp, 18.0_wp)
-   call add_cohort(site, cfg, 1_ik, 1_ik, 0.8_wp,  6.0_wp)
-   call finalize_init(site)
-   call check(site%cohort%n == 2_ik .and. site%patch%n == 1_ik, 'fixture: 2 cohorts in 1 patch')
+   call init_bare_ground(poly, cfg, 1_ik)
+   call add_cohort(poly, cfg, 1_ik, 2_ik, 0.3_wp, 18.0_wp)
+   call add_cohort(poly, cfg, 1_ik, 1_ik, 0.8_wp,  6.0_wp)
+   call finalize_init(poly)
+   call check(poly%cohort%n == 2_ik .and. poly%patch%n == 1_ik, 'fixture: 2 cohorts in 1 patch')
 
    associate (sc => cfg%soil_column)
       call soil_column_layers(sc, soil_bottoms, n_soil_layer)
@@ -72,35 +72,35 @@ program test_slow_ledger
 
    !----- Give every reservoir a non-zero value, so a perturbation below is a change to a store !
    !      that already exists rather than the creation of one. --------------------------------!
-   site%patch%soil_water(1)%theta(1:soil%n_active)      = 0.30_wp
-   site%patch%soil_energy(1)%soil_energy(1:soil%n_active) = 5.0e7_wp
-   site%patch%soil_water(1)%w_surface      = 2.0_wp
-   site%patch%soil_water(1)%w_surface_energy = 8.0e5_wp
-   site%patch%snow(1)%swe(1)           = 5.0_wp
-   site%patch%snow(1)%snow_energy(1)   = -1.0e6_wp
-   site%patch%cas(1)%can_shv      = 0.008_wp
-   site%patch%cas(1)%can_enthalpy = 2.9e5_wp
-   site%patch%cas(1)%can_co2      = 400.0_wp
-   site%patch%cas(1)%can_depth    = 20.0_wp
-   site%patch%soil_carbon(1)%slow_carbon = 3.0_wp
-   site%patch%recruit_pool(:,1)          = 0.0_wp
-   site%cohort%leaf_water_mass(1:2) = 0.02_wp
-   site%cohort%wood_water_mass(1:2) = 0.05_wp
-   site%cohort%leaf_surf_water(1:2) = 0.01_wp
-   site%cohort%wood_surf_water(1:2) = 0.03_wp
+   poly%patch%soil_water(1)%theta(1:soil%n_active)      = 0.30_wp
+   poly%patch%soil_energy(1)%soil_energy(1:soil%n_active) = 5.0e7_wp
+   poly%patch%soil_water(1)%w_surface      = 2.0_wp
+   poly%patch%soil_water(1)%w_surface_energy = 8.0e5_wp
+   poly%patch%snow(1)%swe(1)           = 5.0_wp
+   poly%patch%snow(1)%snow_energy(1)   = -1.0e6_wp
+   poly%patch%cas(1)%can_shv      = 0.008_wp
+   poly%patch%cas(1)%can_enthalpy = 2.9e5_wp
+   poly%patch%cas(1)%can_co2      = 400.0_wp
+   poly%patch%cas(1)%can_depth    = 20.0_wp
+   poly%patch%soil_carbon(1)%slow_carbon = 3.0_wp
+   poly%patch%recruit_pool(:,1)          = 0.0_wp
+   poly%cohort%leaf_water_mass(1:2) = 0.02_wp
+   poly%cohort%wood_water_mass(1:2) = 0.05_wp
+   poly%cohort%leaf_surf_water(1:2) = 0.01_wp
+   poly%cohort%wood_surf_water(1:2) = 0.03_wp
 
    !=== 1. STORE COVERAGE: every reservoir must reach the total, in its own currency. =========!
    call moves_water ('soil theta',        perturb_theta,        0.01_wp * soil%dz(1) * 1000.0_wp)
    call moves_water ('pond w_surface',    perturb_pond,         1.0_wp)
    call moves_water ('snow swe',          perturb_swe,          1.0_wp)
    call moves_water ('canopy vapour',     perturb_shv,          RHO * 20.0_wp * 0.001_wp)
-   call moves_water ('tissue water',      perturb_tissue_water, site%cohort%nplant(1) * 0.01_wp)
+   call moves_water ('tissue water',      perturb_tissue_water, poly%cohort%nplant(1) * 0.01_wp)
    call moves_water ('interception film', perturb_film,         0.01_wp)
    call moves_energy('soil energy',       perturb_soil_energy,  1.0e6_wp * soil%dz(1))
    call moves_energy('pond energy',       perturb_pond_energy,  1.0e5_wp)
    call moves_energy('snow energy',       perturb_snow_energy,  1.0e5_wp)
    call moves_energy('canopy enthalpy',   perturb_cas_enth,     RHO * 20.0_wp * 1.0e4_wp)
-   call moves_carbon('live pools',        perturb_live_c,       site%cohort%nplant(1) * 0.5_wp)
+   call moves_carbon('live pools',        perturb_live_c,       poly%cohort%nplant(1) * 0.5_wp)
    call moves_carbon('CENTURY pools',     perturb_necromass,    1.0_wp)
    !----- Tissue HEAT and canopy CO2 have no closed-form expectation worth restating here (they  !
    !      are the store's own formulae); assert only that they reach the total, which is the     !
@@ -111,9 +111,9 @@ program test_slow_ledger
 
    !=== 2. DECLARATION ARITHMETIC: a declared term is subtracted from the residual. ===========!
    led%active = .true.
-   call slow_ledger_open(led, site, cfg, RHO)
+   call slow_ledger_open(led, poly, cfg, RHO)
    call slow_ledger_declare(led, carbon_in = 1.0_wp, water_out = 2.0_wp, energy_in = 3.0_wp)
-   call slow_ledger_mark(led, site, cfg, SLOW_PHASE_GROW)   ! nothing moved: residual = -(in - out)
+   call slow_ledger_mark(led, poly, cfg, SLOW_PHASE_GROW)   ! nothing moved: residual = -(in - out)
    call check_close(led%resid_sum(SLOW_PHASE_GROW)%carbon, -1.0_wp, 1.0e-12_wp, 'declared carbon_in is subtracted')
    call check_close(led%resid_sum(SLOW_PHASE_GROW)%water,   2.0_wp, 1.0e-12_wp, 'declared water_out is added back')
    call check_close(led%resid_sum(SLOW_PHASE_GROW)%energy, -3.0_wp, 1.0e-12_wp, 'declared energy_in is subtracted')
@@ -121,16 +121,16 @@ program test_slow_ledger
    !----- An UNDECLARED, UNCHANGED step must be exactly zero, or every phase carries a bias. ----!
    led = slow_ledger_t()
    led%active = .true.
-   call slow_ledger_open(led, site, cfg, RHO)
-   call slow_ledger_mark(led, site, cfg, SLOW_PHASE_GROW)
+   call slow_ledger_open(led, poly, cfg, RHO)
+   call slow_ledger_mark(led, poly, cfg, SLOW_PHASE_GROW)
    call check(led%resid_sum(SLOW_PHASE_GROW)%carbon == 0.0_wp .and.                                &
               led%resid_sum(SLOW_PHASE_GROW)%water  == 0.0_wp .and.                                &
               led%resid_sum(SLOW_PHASE_GROW)%energy == 0.0_wp, 'a step that changes nothing closes at exactly zero')
 
    !=== 3. The canopy-air OPEN-VOLUME terms must equal the store change they explain. ==========!
-   s0 = slow_site_store(site, cfg, soil, RHO)
-   call cas_set_depth(site%patch%cas(1), 8.0_wp, rho_air=RHO, de_open=de, dw_open=dw, dc_open=dc)
-   s1 = slow_site_store(site, cfg, soil, RHO)
+   s0 = slow_site_store(poly, cfg, soil, RHO)
+   call cas_set_depth(poly%patch%cas(1), 8.0_wp, rho_air=RHO, de_open=de, dw_open=dw, dc_open=dc)
+   s1 = slow_site_store(poly, cfg, soil, RHO)
    call check_close(s1%energy - s0%energy, de,             1.0e-6_wp, 'de_open explains the canopy energy change')
    call check_close(s1%water  - s0%water,  dw,             1.0e-12_wp, 'dw_open explains the canopy vapour change')
    call check_close(s1%carbon - s0%carbon, dc * 1.2e-8_wp, 1.0e-14_wp, 'dc_open explains the canopy CO2 change')
@@ -138,12 +138,12 @@ program test_slow_ledger
 
    !=== 4. The fast->slow handover is nplant- and area-weighted. ==============================!
    cfg%fast_biophysics_on = .true.
-   site%cohort%gpp_accum(1:2)       = 1.0e-3_wp
-   site%cohort%leaf_resp_accum(1:2) = 2.0e-4_wp
-   site%cohort%stem_resp_accum(1:2) = 1.0e-4_wp
-   site%cohort%root_resp_accum(1:2) = 1.0e-4_wp
-   expect = site%patch%area(1) * (site%cohort%nplant(1) + site%cohort%nplant(2)) * 6.0e-4_wp
-   hand   = slow_fast_carbon_handover(site, cfg)
+   poly%cohort%gpp_accum(1:2)       = 1.0e-3_wp
+   poly%cohort%leaf_resp_accum(1:2) = 2.0e-4_wp
+   poly%cohort%stem_resp_accum(1:2) = 1.0e-4_wp
+   poly%cohort%root_resp_accum(1:2) = 1.0e-4_wp
+   expect = poly%patch%area(1) * (poly%cohort%nplant(1) + poly%cohort%nplant(2)) * 6.0e-4_wp
+   hand   = slow_fast_carbon_handover(poly, cfg)
    call check_close(hand, expect, 1.0e-14_wp, 'handover = area * sum(nplant * (gpp - maintenance resp))')
 
    !=== 5. A CULL hands its water to the ground channel, and the store sees its heat go. =======!
@@ -198,7 +198,7 @@ contains
    !       ground.                                                                                   !
    subroutine check_tissue_water_ledger()
       type(meds_config_t) :: c
-      type(site_t)        :: st
+      type(polygon_t)     :: st
       type(slow_ledger_t) :: lg
       type(water_curve_t) :: leaf_curve, wood_curve
       real(wp) :: shed0, excess, n_new, tol, theta_start(n_soil_layer_max)
@@ -289,7 +289,7 @@ contains
 
    subroutine check_reflush_water()
       type(meds_config_t) :: c
-      type(site_t)        :: st
+      type(polygon_t)     :: st
       type(slow_ledger_t) :: lg
       type(water_curve_t) :: leaf_curve, wood_curve
       real(wp) :: w_plant0, w_plant1, psi_leaf, psi_wood
@@ -366,7 +366,7 @@ contains
       real(wp), optional, intent(in)  :: shade_decay   !< pft.recruit_shade_decay (default 0)
       real(wp), optional, intent(out) :: lai           !< the stand's LAI before the first step
       type(meds_config_t) :: c
-      type(site_t)        :: st
+      type(polygon_t)     :: st
       integer(ik)         :: k
       c = build_test_config()
       c%fast_biophysics_on = .true.
@@ -409,7 +409,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine check_litter_patch_lockstep()
       type(meds_config_t) :: c
-      type(site_t)        :: st
+      type(polygon_t)     :: st
       real(wp)    :: tot0, tot1
       integer(ik) :: np0
 
@@ -466,7 +466,7 @@ contains
       logical,  intent(in)  :: soil_carbon_on
       real(wp), intent(out) :: litter, grow_residual
       type(meds_config_t) :: c
-      type(site_t)        :: st
+      type(polygon_t)     :: st
       type(slow_ledger_t) :: lg
       c = build_test_config()
       c%fast_biophysics_on = .true.
@@ -488,7 +488,7 @@ contains
 
    !----- Area-weighted site total of today's litter [kgC/m2/day]. ---------------------------!
    pure function litter_site_total(st) result(t)
-      type(site_t), intent(in) :: st
+      type(polygon_t), intent(in) :: st
       real(wp)    :: t
       integer(ik) :: ip
       t = 0.0_wp
@@ -502,7 +502,7 @@ contains
 
    subroutine check_mortality_water()
       type(meds_config_t) :: c
-      type(site_t)        :: st
+      type(polygon_t)     :: st
       real(wp) :: tis0, tis1, shed0, shed1
       c = build_test_config()
       c%fast_biophysics_on = .true.
@@ -530,17 +530,17 @@ contains
       type(pool_change_block) :: dpool
       type(slow_ledger_t)     :: lg
       integer(ik) :: nc
-      nc = site%cohort%n
+      nc = poly%cohort%n
       allocate(dpool%leaf(nc), dpool%fineroot(nc), dpool%wood(nc), dpool%nonstructural(nc))
       dpool%wood = 0.0_wp ; dpool%nonstructural = 0.0_wp
-      dpool%leaf     = -0.25_wp * site%cohort%leaf_carbon(1:nc)       ! a quarter of the leaves shed
-      dpool%fineroot = -0.10_wp * site%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
-      site%cohort%leaf_water_mass(1:nc) = 0.7_wp
-      site%cohort%wood_water_mass(1:nc) = 2.3_wp
+      dpool%leaf     = -0.25_wp * poly%cohort%leaf_carbon(1:nc)       ! a quarter of the leaves shed
+      dpool%fineroot = -0.10_wp * poly%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
+      poly%cohort%leaf_water_mass(1:nc) = 0.7_wp
+      poly%cohort%wood_water_mass(1:nc) = 2.3_wp
       lg%active = .true.
-      call slow_ledger_open(lg, site, cfg, RHO)
-      call shed_turnover_water(site, cfg, dpool, lg)
-      call slow_ledger_mark(lg, site, cfg, SLOW_PHASE_ALLOCATE)
+      call slow_ledger_open(lg, poly, cfg, RHO)
+      call shed_turnover_water(poly, cfg, dpool, lg)
+      call slow_ledger_mark(lg, poly, cfg, SLOW_PHASE_ALLOCATE)
       call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy > 0.0_wp, 'shed heat: the shed declares energy')
       call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%energy)                                      &
                  <= 1.0e-12_wp * lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy,                            &
@@ -551,7 +551,7 @@ contains
    end subroutine check_shed_heat
 
    pure function tissue_water_total(st) result(w)
-      type(site_t), intent(in) :: st
+      type(polygon_t), intent(in) :: st
       real(wp)    :: w
       integer(ik) :: ip, i, i0, i1
       w = 0.0_wp
@@ -565,7 +565,7 @@ contains
    end function tissue_water_total
 
    pure function shed_total(st, c) result(w)
-      type(site_t),        intent(in) :: st
+      type(polygon_t),     intent(in) :: st
       type(meds_config_t), intent(in) :: c
       real(wp)    :: w
       integer(ik) :: ip
@@ -584,12 +584,12 @@ contains
    subroutine check_tissue_thermal_mass()
       type(slow_store_t) :: a, b
       real(wp) :: e0, e1, de_store, de_tissue
-      e0 = slow_tissue_heat(site)
-      a  = slow_site_store(site, cfg, soil, RHO)
+      e0 = slow_tissue_heat(poly)
+      a  = slow_site_store(poly, cfg, soil, RHO)
       !----- Grow one cohort's wood: temperatures untouched, so ONLY the thermal mass changes. ----!
-      site%cohort%wood_carbon(1) = site%cohort%wood_carbon(1) * 1.5_wp
-      e1 = slow_tissue_heat(site)
-      b  = slow_site_store(site, cfg, soil, RHO)
+      poly%cohort%wood_carbon(1) = poly%cohort%wood_carbon(1) * 1.5_wp
+      e1 = slow_tissue_heat(poly)
+      b  = slow_site_store(poly, cfg, soil, RHO)
       de_tissue = e1 - e0
       de_store  = b%energy - a%energy
       call check(de_tissue > 0.0_wp, 'thermal mass: growing biomass raises the tissue heat store')
@@ -597,8 +597,8 @@ contains
                        'thermal mass: slow_tissue_heat is exactly the store''s tissue slice')
       !----- and it is the BIOMASS doing it, not the temperature: cool the cohort and the store    !
       !      must fall, so a declaration written against biomass alone would not cancel that.  ----!
-      site%cohort%leaf_temp(1) = site%cohort%leaf_temp(1) - 10.0_wp
-      call check(slow_tissue_heat(site) < e1, 'thermal mass: temperature moves it too (so T is not frozen in)')
+      poly%cohort%leaf_temp(1) = poly%cohort%leaf_temp(1) - 10.0_wp
+      call check(slow_tissue_heat(poly) < e1, 'thermal mass: temperature moves it too (so T is not frozen in)')
    end subroutine check_tissue_thermal_mass
 
    subroutine check_routing()
@@ -659,7 +659,7 @@ contains
       real(wp), optional, intent(out) :: dt_yr      !< the step's length [yr]
       real(wp) :: dbh_start
       type(meds_config_t) :: c
-      type(site_t)        :: st
+      type(polygon_t)     :: st
       c = build_test_config()
       c%fast_biophysics_on = .true.
       c%demography_on      = .false.        ! isolate allocation from the structural operators
@@ -715,25 +715,25 @@ contains
       real(wp) :: w_before, shed_before, w_shed, expect_w, heat_before, heat_after
       integer(ik) :: n0
       !----- Drive cohort 2 below the density floor so the cull takes it, and nothing else. ------!
-      site%cohort%nplant(2)   = 0.5_wp * cfg%negligible_nplant
-      site%cohort%leaf_temp(2) = 291.0_wp ; site%cohort%wood_temp(2) = 289.0_wp
-      n0          = site%cohort%n
-      shed_before = site%patch%shed_water_rate(1)
-      heat_before = slow_tissue_heat(site)
-      w_before    = site%cohort%nplant(2) * (site%cohort%leaf_water_mass(2) + site%cohort%wood_water_mass(2)) &
-                  + site%cohort%leaf_surf_water(2) + site%cohort%wood_surf_water(2)
-      expect_w    = site%patch%area(1) * w_before
+      poly%cohort%nplant(2)   = 0.5_wp * cfg%negligible_nplant
+      poly%cohort%leaf_temp(2) = 291.0_wp ; poly%cohort%wood_temp(2) = 289.0_wp
+      n0          = poly%cohort%n
+      shed_before = poly%patch%shed_water_rate(1)
+      heat_before = slow_tissue_heat(poly)
+      w_before    = poly%cohort%nplant(2) * (poly%cohort%leaf_water_mass(2) + poly%cohort%wood_water_mass(2)) &
+                  + poly%cohort%leaf_surf_water(2) + poly%cohort%wood_surf_water(2)
+      expect_w    = poly%patch%area(1) * w_before
 
-      call terminate_cohorts(site, cfg, w_shed)
+      call terminate_cohorts(poly, cfg, w_shed)
 
-      call check(site%cohort%n == n0 - 1_ik, 'cull: the sub-floor cohort is removed')
+      call check(poly%cohort%n == n0 - 1_ik, 'cull: the sub-floor cohort is removed')
       call check_close(w_shed, expect_w, 1.0e-12_wp, 'cull: reports the tissue + film water it carried')
-      call check_close(site%patch%shed_water_rate(1) - shed_before, w_before / cfg%dt_slow,       &
+      call check_close(poly%patch%shed_water_rate(1) - shed_before, w_before / cfg%dt_slow,       &
                        1.0e-12_wp, 'cull: the water reaches the patch shed channel, not the void')
       !----- The cull's tissue HEAT is not reported by the operator: it is one part of the        !
       !      phase's thermal-mass change, which the driver brackets with slow_tissue_heat. Assert !
       !      that the store SEES the loss, which is what makes that bracket able to declare it.   !
-      heat_after = slow_tissue_heat(site)
+      heat_after = slow_tissue_heat(poly)
       call check(heat_after < heat_before, 'cull: the tissue heat store falls when a cohort goes')
    end subroutine check_cull
 
@@ -744,28 +744,28 @@ contains
       integer(ik) :: m
       real(wp)    :: t_birth, psi_birth, t_save, theta_start(n_soil_layer_max)
       type(water_curve_t) :: leaf_curve, wood_curve
-      m = site%cohort%n + 1_ik
-      t_save = site%patch%cas(1)%can_temp
-      site%patch%cas(1)%can_temp = 268.0_wp        ! a cold, seeded patch
-      call patch_physical_state(site%patch%cas(1), site%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
+      m = poly%cohort%n + 1_ik
+      t_save = poly%patch%cas(1)%can_temp
+      poly%patch%cas(1)%can_temp = 268.0_wp        ! a cold, seeded patch
+      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
       call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
-      call check_close(psi_birth, top_soil_psi(soil, site%patch%soil_water(1)%theta(1)), 1.0e-12_wp,   &
+      call check_close(psi_birth, top_soil_psi(soil, poly%patch%soil_water(1)%theta(1)), 1.0e-12_wp,   &
                        'birth: a seeded patch gives its top soil layer''s potential')
-      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics, t_birth, psi_birth)
-      call check_close(site%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
-      call check_close(site%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
+      call init_cohort(poly%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics, t_birth, psi_birth)
+      call check_close(poly%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
+      call check_close(poly%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
       call pft_tissue_curves(cfg%hydraulics, cfg%pft, 1_ik, leaf_curve, wood_curve)
-      call check_close(psi_from_water_content(site%cohort%leaf_water_mass(m), leaf_curve,                &
-                       site%cohort%leaf_carbon(m)), psi_birth, 1.0e-9_wp,                               &
+      call check_close(psi_from_water_content(poly%cohort%leaf_water_mass(m), leaf_curve,                &
+                       poly%cohort%leaf_carbon(m)), psi_birth, 1.0e-9_wp,                               &
                        'birth: the leaves hold the water of that potential')
       !----- A patch not seeded yet (its canopy air at the type's UNSET_POSITIVE) gives the starting state. !
-      site%patch%cas(1)%can_temp = UNSET_POSITIVE
-      call patch_physical_state(site%patch%cas(1), site%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
+      poly%patch%cas(1)%can_temp = UNSET_POSITIVE
+      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
       call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta_start)
       call check_close(t_birth, cfg%init_soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
       call check_close(psi_birth, top_soil_psi(soil, theta_start(1)), 1.0e-12_wp,                       &
                        'birth: unseeded, the starting soil water''s potential')
-      site%patch%cas(1)%can_temp = t_save
+      poly%patch%cas(1)%can_temp = t_save
    end subroutine check_birth_temp
 
    !----- Assert a perturbation moves the named currency by `amount` (and moves it at all). ----!
@@ -777,9 +777,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(site, cfg, soil, RHO)
+      a = slow_site_store(poly, cfg, soil, RHO)
       call perturb()
-      b = slow_site_store(site, cfg, soil, RHO)
+      b = slow_site_store(poly, cfg, soil, RHO)
       call check_close(b%water - a%water, amount, 1.0e-9_wp * max(1.0_wp, abs(amount)),            &
                        'store: '//name//' reaches the water total')
    end subroutine moves_water
@@ -792,9 +792,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(site, cfg, soil, RHO)
+      a = slow_site_store(poly, cfg, soil, RHO)
       call perturb()
-      b = slow_site_store(site, cfg, soil, RHO)
+      b = slow_site_store(poly, cfg, soil, RHO)
       call check_close(b%energy - a%energy, amount, 1.0e-6_wp * max(1.0_wp, abs(amount)),          &
                        'store: '//name//' reaches the energy total')
    end subroutine moves_energy
@@ -807,9 +807,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(site, cfg, soil, RHO)
+      a = slow_site_store(poly, cfg, soil, RHO)
       call perturb()
-      b = slow_site_store(site, cfg, soil, RHO)
+      b = slow_site_store(poly, cfg, soil, RHO)
       call check_close(b%carbon - a%carbon, amount, 1.0e-9_wp * max(1.0_wp, abs(amount)),          &
                        'store: '//name//' reaches the carbon total')
    end subroutine moves_carbon
@@ -822,9 +822,9 @@ contains
       end interface
       type(slow_store_t) :: a, b
       real(wp) :: d
-      a = slow_site_store(site, cfg, soil, RHO)
+      a = slow_site_store(poly, cfg, soil, RHO)
       call perturb()
-      b = slow_site_store(site, cfg, soil, RHO)
+      b = slow_site_store(poly, cfg, soil, RHO)
       select case (currency)
       case ('carbon') ; d = b%carbon - a%carbon
       case ('water')  ; d = b%water  - a%water
@@ -833,38 +833,38 @@ contains
       call check(abs(d) > 0.0_wp, 'store: '//name//' reaches the '//currency//' total')
    end subroutine moves
 
-   subroutine perturb_theta()        ; site%patch%soil_water(1)%theta(1) = site%patch%soil_water(1)%theta(1) + 0.01_wp
+   subroutine perturb_theta()        ; poly%patch%soil_water(1)%theta(1) = poly%patch%soil_water(1)%theta(1) + 0.01_wp
    end subroutine perturb_theta
-   subroutine perturb_pond()         ; site%patch%soil_water(1)%w_surface = site%patch%soil_water(1)%w_surface + 1.0_wp
+   subroutine perturb_pond()         ; poly%patch%soil_water(1)%w_surface = poly%patch%soil_water(1)%w_surface + 1.0_wp
    end subroutine perturb_pond
-   subroutine perturb_swe()          ; site%patch%snow(1)%swe(1) = site%patch%snow(1)%swe(1) + 1.0_wp
+   subroutine perturb_swe()          ; poly%patch%snow(1)%swe(1) = poly%patch%snow(1)%swe(1) + 1.0_wp
    end subroutine perturb_swe
-   subroutine perturb_shv()          ; site%patch%cas(1)%can_shv = site%patch%cas(1)%can_shv + 0.001_wp
+   subroutine perturb_shv()          ; poly%patch%cas(1)%can_shv = poly%patch%cas(1)%can_shv + 0.001_wp
    end subroutine perturb_shv
-   subroutine perturb_tissue_water() ; site%cohort%leaf_water_mass(1) = site%cohort%leaf_water_mass(1) + 0.01_wp
+   subroutine perturb_tissue_water() ; poly%cohort%leaf_water_mass(1) = poly%cohort%leaf_water_mass(1) + 0.01_wp
    end subroutine perturb_tissue_water
-   subroutine perturb_film()         ; site%cohort%leaf_surf_water(1) = site%cohort%leaf_surf_water(1) + 0.01_wp
+   subroutine perturb_film()         ; poly%cohort%leaf_surf_water(1) = poly%cohort%leaf_surf_water(1) + 0.01_wp
    end subroutine perturb_film
    subroutine perturb_soil_energy()
-      site%patch%soil_energy(1)%soil_energy(1) = site%patch%soil_energy(1)%soil_energy(1) + 1.0e6_wp
+      poly%patch%soil_energy(1)%soil_energy(1) = poly%patch%soil_energy(1)%soil_energy(1) + 1.0e6_wp
    end subroutine perturb_soil_energy
    subroutine perturb_pond_energy()
-      site%patch%soil_water(1)%w_surface_energy = site%patch%soil_water(1)%w_surface_energy + 1.0e5_wp
+      poly%patch%soil_water(1)%w_surface_energy = poly%patch%soil_water(1)%w_surface_energy + 1.0e5_wp
    end subroutine perturb_pond_energy
    subroutine perturb_snow_energy()
-      site%patch%snow(1)%snow_energy(1) = site%patch%snow(1)%snow_energy(1) + 1.0e5_wp
+      poly%patch%snow(1)%snow_energy(1) = poly%patch%snow(1)%snow_energy(1) + 1.0e5_wp
    end subroutine perturb_snow_energy
-   subroutine perturb_cas_enth()     ; site%patch%cas(1)%can_enthalpy = site%patch%cas(1)%can_enthalpy + 1.0e4_wp
+   subroutine perturb_cas_enth()     ; poly%patch%cas(1)%can_enthalpy = poly%patch%cas(1)%can_enthalpy + 1.0e4_wp
    end subroutine perturb_cas_enth
-   subroutine perturb_cas_co2()      ; site%patch%cas(1)%can_co2 = site%patch%cas(1)%can_co2 + 50.0_wp
+   subroutine perturb_cas_co2()      ; poly%patch%cas(1)%can_co2 = poly%patch%cas(1)%can_co2 + 50.0_wp
    end subroutine perturb_cas_co2
-   subroutine perturb_live_c()       ; site%cohort%wood_carbon(1) = site%cohort%wood_carbon(1) + 0.5_wp
+   subroutine perturb_live_c()       ; poly%cohort%wood_carbon(1) = poly%cohort%wood_carbon(1) + 0.5_wp
    end subroutine perturb_live_c
-   subroutine perturb_necromass()    ; site%patch%soil_carbon(1)%slow_carbon = site%patch%soil_carbon(1)%slow_carbon + 1.0_wp
+   subroutine perturb_necromass()    ; poly%patch%soil_carbon(1)%slow_carbon = poly%patch%soil_carbon(1)%slow_carbon + 1.0_wp
    end subroutine perturb_necromass
-   subroutine perturb_tissue_temp()  ; site%cohort%leaf_temp(1) = site%cohort%leaf_temp(1) + 5.0_wp
+   subroutine perturb_tissue_temp()  ; poly%cohort%leaf_temp(1) = poly%cohort%leaf_temp(1) + 5.0_wp
    end subroutine perturb_tissue_temp
-   subroutine perturb_recruit()      ; site%patch%recruit_pool(1,1) = site%patch%recruit_pool(1,1) + 0.5_wp
+   subroutine perturb_recruit()      ; poly%patch%recruit_pool(1,1) = poly%patch%recruit_pool(1,1) + 0.5_wp
    end subroutine perturb_recruit
 
 end program test_slow_ledger

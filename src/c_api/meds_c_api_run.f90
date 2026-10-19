@@ -15,7 +15,7 @@
 ! `region_step` takes one slow step of what the executable steps a month at a time, so a          !
 ! Python-driven run and a `meds_main` run of the same config produce byte-identical output.        !
 !                                                                                          !
-! Conventions match the other shims: `site_t` and friends never cross the boundary. A run is an     !
+! Conventions match the other shims: `polygon_t` and friends never cross the boundary. A run is an  !
 ! opaque integer handle into a module-`save` registry; scalars return by value; arrays COPY into a  !
 ! caller-allocated buffer. The bind(c) entry points are also PUBLIC Fortran so `test_c_api_run`     !
 ! can call them -- a shim no test calls can stop compiling without anyone noticing.                 !

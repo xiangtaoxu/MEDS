@@ -31,7 +31,7 @@ module meds_demography_cohort_fusefiss
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity,           &
                                       cohort_tissue_water, set_cohort_size_from_carbon,                  &
                                       fuse_cohort_fast_state
-   use meds_site_state_vars,  only : site_t, rebuild_csr, assign_cohort_id
+   use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id
    use meds_patch_state_vars, only : patch_physical_state
    use meds_litter_partition, only : necromass_to_litter
    implicit none
@@ -45,19 +45,19 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Sort cohorts within every patch slice: height descending, DBH descending on ties.      !
    !---------------------------------------------------------------------------------------!
-   subroutine sort_cohorts(site)
-      type(site_t), intent(inout) :: site
+   subroutine sort_cohorts(poly)
+      type(polygon_t), intent(inout) :: poly
       integer(ik), allocatable :: perm(:)
       integer(ik) :: ip, i0, i1, i, j, key
       integer(ik) :: n
 
-      n = site%cohort%n
+      n = poly%cohort%n
       if (n < 1_ik) return
       allocate(perm(n))
       do i = 1_ik, n
          perm(i) = i
       end do
-      associate (cohort => site%cohort, patch => site%patch)
+      associate (cohort => poly%cohort, patch => poly%patch)
          do ip = 1_ik, patch%n
             i0 = patch%cohort_offset(ip)
             i1 = i0 + patch%cohort_count(ip) - 1_ik
@@ -74,7 +74,7 @@ contains
             end do
          end do
       end associate
-      call reorder_cohort_block(site%cohort, perm, n)
+      call reorder_cohort_block(poly%cohort, perm, n)
    end subroutine sort_cohorts
 
    !----- True if (h1,d1) ranks at least as high as (h2,d2) under the sort order. ----------!
@@ -89,20 +89,20 @@ contains
       end if
    end function higher
 
-   integer(ik) function max_cohort_count(site)
-      type(site_t), intent(in) :: site
-      if (site%patch%n < 1_ik) then
+   integer(ik) function max_cohort_count(poly)
+      type(polygon_t), intent(in) :: poly
+      if (poly%patch%n < 1_ik) then
          max_cohort_count = 0_ik
       else
-         max_cohort_count = maxval(site%patch%cohort_count(1:site%patch%n))
+         max_cohort_count = maxval(poly%patch%cohort_count(1:poly%patch%n))
       end if
    end function max_cohort_count
 
    !---------------------------------------------------------------------------------------!
    ! Cohort fusion with geometric tolerance relaxation.                                     !
    !---------------------------------------------------------------------------------------!
-   subroutine new_fuse_cohorts(site, cfg)
-      type(site_t),     intent(inout) :: site
+   subroutine new_fuse_cohorts(poly, cfg)
+      type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: tol
       integer(ik) :: ifus, maxc
@@ -114,17 +114,17 @@ contains
       tol   = cfg%cohort_size_tol_min
 
       do ifus = 1_ik, cfg%n_cohort_fusion_iter
-         call fuse_pass(site, cfg, tol, force)
+         call fuse_pass(poly, cfg, tol, force)
          if (.not. force) then
-            if (max_cohort_count(site) <= maxc) exit
+            if (max_cohort_count(poly) <= maxc) exit
          end if
          tol = tol * cfg%cohort_size_tol_mult
       end do
    end subroutine new_fuse_cohorts
 
    !----- One fusion sweep over all patches at a fixed tolerance. --------------------------!
-   subroutine fuse_pass(site, cfg, tol, force)
-      type(site_t),     intent(inout) :: site
+   subroutine fuse_pass(poly, cfg, tol, force)
+      type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: tol
       logical,             intent(in)    :: force
@@ -134,9 +134,9 @@ contains
       logical     :: did_fuse
 
       did_fuse = .false.
-      allocate(alive(site%cohort%n))
+      allocate(alive(poly%cohort%n))
       alive = .true.
-      associate (cohort => site%cohort, patch => site%patch)
+      associate (cohort => poly%cohort, patch => poly%patch)
          do ip = 1_ik, patch%n
             i0 = patch%cohort_offset(ip)
             i1 = i0 + patch%cohort_count(ip) - 1_ik
@@ -158,7 +158,7 @@ contains
                   if (.not. force .and. lai_comb >= cfg%cohort_lai_cap) cycle
                   diff_height = abs(cohort%height(donc) - cohort%height(recc))
                   if (force .or. diff_height < h_top * tol) then
-                     call fuse_2_cohorts(site, recc, donc, cfg%conservation_tol)
+                     call fuse_2_cohorts(poly, recc, donc, cfg%conservation_tol)
                      alive(donc) = .false.
                      did_fuse    = .true.
                   end if
@@ -167,9 +167,9 @@ contains
          end do
       end associate
       if (did_fuse) then
-         call compact_cohort_block(site%cohort, alive)
-         call rebuild_csr(site)
-         call sort_cohorts(site)
+         call compact_cohort_block(poly%cohort, alive)
+         call rebuild_cohort_map(poly)
+         call sort_cohorts(poly)
       end if
    end subroutine fuse_pass
 
@@ -178,8 +178,8 @@ contains
    ! AGB and leaf area). The fused per-plant pools are nplant-weighted means; the diameter and   !
    ! the rest of the geometry are re-derived from them (set_cohort_size_from_carbon).            !
    !---------------------------------------------------------------------------------------!
-   subroutine fuse_2_cohorts(site, recc, donc, conservation_tol)
-      type(site_t), intent(inout) :: site
+   subroutine fuse_2_cohorts(poly, recc, donc, conservation_tol)
+      type(polygon_t), intent(inout) :: poly
       integer(ik),     intent(in)    :: recc, donc
       real(wp),        intent(in)    :: conservation_tol
       real(wp) :: nr, nd, ntot, agb_tot, agb_new, wr, wd, wtot
@@ -187,7 +187,7 @@ contains
       real(wp) :: cr, cd                                        !< the two cohorts' leaf carbon [kgC/m2]
       real(wp) :: hlr, hld, hwr, hwd                            !< their leaf and wood heat capacities [J/m2/K]
 
-      associate (cohort => site%cohort)
+      associate (cohort => poly%cohort)
          nr      = cohort%nplant(recc)
          nd      = cohort%nplant(donc)
          ntot    = nr + nd
@@ -240,7 +240,7 @@ contains
          cohort%fineroot_carbon(recc)      = fc_tot / ntot
          cohort%wood_carbon(recc)          = wc_tot / ntot
          cohort%nonstructural_carbon(recc) = nc_tot / ntot
-         call set_cohort_size_from_carbon(site%cohort, recc)   ! dbh=wood_to_dbh(wood_carbon); pools kept
+         call set_cohort_size_from_carbon(poly%cohort, recc)   ! dbh=wood_to_dbh(wood_carbon); pools kept
          !----- Carbon-pool conservation guard (per pool, density). ------------------------!
          !      The pools are non-negative, so each density total is also its magnitude.        !
          if (.not. (conserved(lc_tot, ntot*cohort%leaf_carbon(recc),          lc_tot, conservation_tol) .and. &
@@ -267,8 +267,8 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Split every cohort whose LAI density exceeds the cap, iterating until none do.          !
    !---------------------------------------------------------------------------------------!
-   subroutine split_cohorts(site, cfg)
-      type(site_t),     intent(inout) :: site
+   subroutine split_cohorts(poly, cfg)
+      type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: iter, i, n0, m, nsplit
       real(wp)    :: eps, agb_before, agb_after, wc0, film_before, film_after, film_magnitude
@@ -277,18 +277,18 @@ contains
       eps = cfg%split_eps
 
       do iter = 1_ik, cfg%n_cohort_fusion_iter
-         n0 = site%cohort%n
+         n0 = poly%cohort%n
          nsplit = 0_ik
          do i = 1_ik, n0
-            if (site%cohort%nplant(i) * site%cohort%leaf_area(i) > cfg%cohort_lai_cap) nsplit = nsplit + 1_ik
+            if (poly%cohort%nplant(i) * poly%cohort%leaf_area(i) > cfg%cohort_lai_cap) nsplit = nsplit + 1_ik
          end do
          if (nsplit == 0_ik) exit
-         agb_before = sum(site%cohort%nplant(1:n0) * site%cohort%agb(1:n0))
-         film_before = sum(site%cohort%leaf_surf_water(1:n0) + site%cohort%wood_surf_water(1:n0))
-         film_magnitude = sum(abs(site%cohort%leaf_surf_water(1:n0)) + abs(site%cohort%wood_surf_water(1:n0)))
-         call expand_cohort_block(site%cohort, n0 + nsplit)
+         agb_before = sum(poly%cohort%nplant(1:n0) * poly%cohort%agb(1:n0))
+         film_before = sum(poly%cohort%leaf_surf_water(1:n0) + poly%cohort%wood_surf_water(1:n0))
+         film_magnitude = sum(abs(poly%cohort%leaf_surf_water(1:n0)) + abs(poly%cohort%wood_surf_water(1:n0)))
+         call expand_cohort_block(poly%cohort, n0 + nsplit)
          m = n0
-         associate (cohort => site%cohort)
+         associate (cohort => poly%cohort)
             do i = 1_ik, n0
                if (cohort%nplant(i) * cohort%leaf_area(i) <= cfg%cohort_lai_cap) cycle
                cohort%nplant(i) = 0.5_wp * cohort%nplant(i)
@@ -315,14 +315,14 @@ contains
          !----- The '-eps' daughters (slots n0+1..m) are NEW cohorts -> fresh global ids; the !
          !      '+eps' half kept slot i and its parent id (the continuation).                 !
          do i = n0 + 1_ik, m
-            call assign_cohort_id(site, i)
+            call assign_cohort_id(poly, i)
          end do
          if (.not. conserved(agb_before, agb_after, agb_before, cfg%conservation_tol))             &
             error stop 'split_cohorts: AGB conservation violated'
          if (.not. conserved(film_before, film_after, film_magnitude, ROUNDOFF_RTOL))               &
             error stop 'split_cohorts: canopy film water not conserved'
-         call rebuild_csr(site)
-         call sort_cohorts(site)
+         call rebuild_cohort_map(poly)
+         call sort_cohorts(poly)
       end do
    end subroutine split_cohorts
 
@@ -337,8 +337,8 @@ contains
    ! directly onto the named fields, since this module cannot link biogeochemistry                !
    ! (necromass_to_litter takes plain scalars).                                                   !
    !---------------------------------------------------------------------------------------!
-   subroutine terminate_cohorts(site, cfg, water_shed)
-      type(site_t),     intent(inout) :: site
+   subroutine terminate_cohorts(poly, cfg, water_shed)
+      type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       !----- What the cull HANDED ON, for the caller to declare to the slow ledger                !
       !      (meds_slow_ledger). Reported rather than declared here because the demography library  !
@@ -351,10 +351,10 @@ contains
 
       w_tot = 0.0_wp
       if (present(water_shed)) water_shed = 0.0_wp
-      n = site%cohort%n
+      n = poly%cohort%n
       if (n < 1_ik) return
       allocate(keep(n))
-      associate (cohort => site%cohort, pft => cfg%pft, patch => site%patch)
+      associate (cohort => poly%cohort, pft => cfg%pft, patch => poly%patch)
          do i = 1_ik, n
             keep(i) = (cohort%nplant(i) * cohort%agb(i) >= cfg%min_cohort_agb) .and.               &
                       (cohort%nplant(i) > cfg%negligible_nplant)
@@ -402,8 +402,8 @@ contains
       end associate
       if (present(water_shed)) water_shed = w_tot
       if (all(keep)) return
-      call compact_cohort_block(site%cohort, keep)
-      call rebuild_csr(site)
+      call compact_cohort_block(poly%cohort, keep)
+      call rebuild_cohort_map(poly)
    end subroutine terminate_cohorts
 
    !---------------------------------------------------------------------------------------!
@@ -418,8 +418,8 @@ contains
    ! 12-point sample of a quantity the model computes every day and make the pool's carbon         !
    ! depend on which days are month boundaries. ---------------------------------------------------!
    !---------------------------------------------------------------------------------------!
-   subroutine apply_recruitment(site, cfg, carbon_drawn, heat_drawn, water_drawn)
-      type(site_t),        intent(inout) :: site
+   subroutine apply_recruitment(poly, cfg, carbon_drawn, heat_drawn, water_drawn)
+      type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       !----- What a recruit brought IN FROM OUTSIDE the modelled system, for the caller to declare  !
       !      to the slow ledger. Recruitment is a stand-in for everything between a seed and         !
@@ -448,17 +448,17 @@ contains
       if (present(carbon_drawn)) carbon_drawn = 0.0_wp
       if (present(heat_drawn))   heat_drawn   = 0.0_wp
       if (present(water_drawn))  water_drawn  = 0.0_wp
-      np = site%patch%n
+      np = poly%patch%n
       if (np < 1_ik) return
 
       !----- All PFTs recruit at the smallest tracked size -> the same diameter. ----------!
-      recruit_dbh = height_to_dbh(site%cohort%allom, cfg%pft%min_cohort_height)
+      recruit_dbh = height_to_dbh(poly%cohort%allom, cfg%pft%min_cohort_height)
 
       !----- Count pools that have reached the spawn threshold. ---------------------------!
       nspawn = 0_ik
       do ip = 1_ik, np
-         do pf = 1_ik, site%n_pft
-            if (site%patch%recruit_pool(pf, ip) >= cfg%min_recruit_size) nspawn = nspawn + 1_ik
+         do pf = 1_ik, poly%n_pft
+            if (poly%patch%recruit_pool(pf, ip) >= cfg%min_recruit_size) nspawn = nspawn + 1_ik
          end do
       end do
       !----- No pool reached the spawn threshold: nothing is born, so nothing is drawn (the seed    !
@@ -468,13 +468,13 @@ contains
          return
       end if
 
-      call expand_cohort_block(site%cohort, site%cohort%n + nspawn)
+      call expand_cohort_block(poly%cohort, poly%cohort%n + nspawn)
       call soil_column_params(cfg%soil_column, soil)
-      n_before = site%cohort%n
-      m = site%cohort%n
-      associate (cohort => site%cohort, patch => site%patch, pft => cfg%pft)
+      n_before = poly%cohort%n
+      m = poly%cohort%n
+      associate (cohort => poly%cohort, patch => poly%patch, pft => cfg%pft)
          do ip = 1_ik, np
-            do pf = 1_ik, site%n_pft
+            do pf = 1_ik, poly%n_pft
                if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
                m = m + 1_ik
                !----- Born in its patch's state: at the canopy-air temperature, holding the water     !
@@ -502,12 +502,12 @@ contains
       if (present(water_drawn))  water_drawn  = w_tot
 
       !----- Stamp each freshly spawned cohort with a persistent global id. ----------------!
-      do k = n_before + 1_ik, site%cohort%n
-         call assign_cohort_id(site, k)
+      do k = n_before + 1_ik, poly%cohort%n
+         call assign_cohort_id(poly, k)
       end do
 
-      call rebuild_csr(site)
-      call sort_cohorts(site)
+      call rebuild_cohort_map(poly)
+      call sort_cohorts(poly)
    end subroutine apply_recruitment
 
 end module meds_demography_cohort_fusefiss

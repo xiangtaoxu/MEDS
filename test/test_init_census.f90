@@ -3,14 +3,14 @@
 program test_init_census
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_init,             only : init_from_census, restructure_census_stand
    use meds_diagnostic_reduce, only : total_nplant
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg
-   type(site_t)        :: site
+   type(polygon_t)     :: poly
    integer(ik)         :: u, i, ip
    logical             :: found
    real(wp)            :: n0, agb0
@@ -31,22 +31,22 @@ program test_init_census
    close(u)
 
    !=== Default: first site_id (1) selected; site 2 row excluded. ==========================!
-   call init_from_census(site, cfg, 'test_census_tmp.csv', found)
+   call init_from_census(poly, cfg, 'test_census_tmp.csv', found)
    call check(found, 'census file should be usable')
-   call check(site%patch%n  == 2_ik, 'site 1 should yield 2 patches')
-   call check(site%cohort%n == 3_ik, 'site 1 should yield 3 cohorts (site 2 row excluded)')
-   call check(sum(site%patch%cohort_count(1:site%patch%n)) == site%cohort%n, 'CSR count mismatch')
+   call check(poly%patch%n  == 2_ik, 'site 1 should yield 2 patches')
+   call check(poly%cohort%n == 3_ik, 'site 1 should yield 3 cohorts (site 2 row excluded)')
+   call check(sum(poly%patch%cohort_count(1:poly%patch%n)) == poly%cohort%n, 'CSR count mismatch')
    !----- dbh drove the allometry: every cohort has a positive derived height/agb/leaf area. !
-   call check(all(site%cohort%height(1:site%cohort%n)    > 0.0_wp), 'derived height not positive')
-   call check(all(site%cohort%agb(1:site%cohort%n)       > 0.0_wp), 'derived agb not positive')
-   call check(all(site%cohort%leaf_area(1:site%cohort%n) > 0.0_wp), 'derived leaf area not positive')
+   call check(all(poly%cohort%height(1:poly%cohort%n)    > 0.0_wp), 'derived height not positive')
+   call check(all(poly%cohort%agb(1:poly%cohort%n)       > 0.0_wp), 'derived agb not positive')
+   call check(all(poly%cohort%leaf_area(1:poly%cohort%n) > 0.0_wp), 'derived leaf area not positive')
 
    !=== Explicit site selection: site 2 -> one patch, one (climax, pft 3) cohort. ==========!
-   call init_from_census(site, cfg, 'test_census_tmp.csv', found, use_site_id = 2_ik)
+   call init_from_census(poly, cfg, 'test_census_tmp.csv', found, use_site_id = 2_ik)
    call check(found, 'site 2 should be usable')
-   call check(site%patch%n  == 1_ik, 'site 2 should yield 1 patch')
-   call check(site%cohort%n == 1_ik, 'site 2 should yield 1 cohort')
-   call check(site%cohort%pft(1) == 3_ik, 'site 2 cohort should be pft 3')
+   call check(poly%patch%n  == 1_ik, 'site 2 should yield 1 patch')
+   call check(poly%cohort%n == 1_ik, 'site 2 should yield 1 cohort')
+   call check(poly%cohort%pft(1) == 3_ik, 'site 2 cohort should be pft 3')
 
    !=== Header-LESS CSV: the first data line must be KEPT, not silently dropped as a header. ==!
    open(newunit=u, file='test_census_nohdr.csv', status='replace', action='write')
@@ -54,9 +54,9 @@ program test_init_census
    write(u,'(a)') '1,1,2,10.0,12.0,2,0.20'
    write(u,'(a)') '1,2,3, 5.0, 8.0,1,0.40'
    close(u)
-   call init_from_census(site, cfg, 'test_census_nohdr.csv', found)
+   call init_from_census(poly, cfg, 'test_census_nohdr.csv', found)
    call check(found, 'header-less census should be usable')
-   call check(site%cohort%n == 3_ik, 'header-less census must keep all 3 cohorts (first not dropped)')
+   call check(poly%cohort%n == 3_ik, 'header-less census must keep all 3 cohorts (first not dropped)')
    open(newunit=u, file='test_census_nohdr.csv', status='old', action='read')
    close(u, status='delete')
 
@@ -69,17 +69,17 @@ program test_init_census
    write(u,'(a)') '0.20,1,10.0,300.0,7'
    write(u,'(a)') '0.40,1,5.0,100.0,9'
    close(u)
-   call init_from_census(site, cfg, 'test_census_named.csv', found)
+   call init_from_census(poly, cfg, 'test_census_named.csv', found)
    call check(found, 'named-column census should be usable')
-   call check(site%patch%n  == 2_ik, 'named-column census should yield 2 patches')
-   call check(site%cohort%n == 3_ik, 'named-column census should yield 3 cohorts')
-   call check_close(sum(site%patch%area(1:2)), 1.0_wp, 1.0e-12_wp, 'patch areas must sum to the site')
-   call check_close(site%patch%area(1), 0.75_wp, 1.0e-12_wp, 'patch_area not normalized to the site (7)')
-   call check_close(site%patch%area(2), 0.25_wp, 1.0e-12_wp, 'patch_area not normalized to the site (9)')
-   do i = 1_ik, site%cohort%n
-      if (abs(site%cohort%dbh(i) - 5.0_wp) < 1.0e-9_wp) then
-         call check(site%cohort%owner_patch(i) == 2_ik, 'the 5 cm cohort must sit in patch 9')
-         call check_close(site%cohort%nplant(i), 0.40_wp, 1.0e-12_wp, 'nplant not read by name')
+   call check(poly%patch%n  == 2_ik, 'named-column census should yield 2 patches')
+   call check(poly%cohort%n == 3_ik, 'named-column census should yield 3 cohorts')
+   call check_close(sum(poly%patch%area(1:2)), 1.0_wp, 1.0e-12_wp, 'patch areas must sum to the site')
+   call check_close(poly%patch%area(1), 0.75_wp, 1.0e-12_wp, 'patch_area not normalized to the site (7)')
+   call check_close(poly%patch%area(2), 0.25_wp, 1.0e-12_wp, 'patch_area not normalized to the site (9)')
+   do i = 1_ik, poly%cohort%n
+      if (abs(poly%cohort%dbh(i) - 5.0_wp) < 1.0e-9_wp) then
+         call check(poly%cohort%owner_patch(i) == 2_ik, 'the 5 cm cohort must sit in patch 9')
+         call check_close(poly%cohort%nplant(i), 0.40_wp, 1.0e-12_wp, 'nplant not read by name')
       end if
    end do
    open(newunit=u, file='test_census_named.csv', status='old', action='read')
@@ -94,32 +94,32 @@ program test_init_census
       write(u,'(i0,a)') ip, ',400.0,4.0,1,0.0500'
    end do
    close(u)
-   call init_from_census(site, cfg, 'test_census_cells.csv', found)
-   call check(found .and. site%patch%n == 20_ik .and. site%cohort%n == 60_ik, 'the cell census did not load')
-   n0   = total_nplant(site)
-   agb0 = sum([(site%patch%area(site%cohort%owner_patch(i)) * site%cohort%nplant(i) * site%cohort%agb(i), &
-                i = 1_ik, site%cohort%n)])
-   call restructure_census_stand(site, cfg)
-   call check(site%patch%n == 1_ik,  'identical census cells must fuse to one patch')
-   call check(site%cohort%n == 2_ik, 'identical sizes must fuse to one cohort each')
-   call check_close(total_nplant(site), n0, 1.0e-12_wp, 'restructuring must conserve the site''s stems')
-   call check_close(sum([(site%patch%area(site%cohort%owner_patch(i)) * site%cohort%nplant(i)             &
-                          * site%cohort%agb(i), i = 1_ik, site%cohort%n)]), agb0, 1.0e-12_wp,         &
+   call init_from_census(poly, cfg, 'test_census_cells.csv', found)
+   call check(found .and. poly%patch%n == 20_ik .and. poly%cohort%n == 60_ik, 'the cell census did not load')
+   n0   = total_nplant(poly)
+   agb0 = sum([(poly%patch%area(poly%cohort%owner_patch(i)) * poly%cohort%nplant(i) * poly%cohort%agb(i), &
+                i = 1_ik, poly%cohort%n)])
+   call restructure_census_stand(poly, cfg)
+   call check(poly%patch%n == 1_ik,  'identical census cells must fuse to one patch')
+   call check(poly%cohort%n == 2_ik, 'identical sizes must fuse to one cohort each')
+   call check_close(total_nplant(poly), n0, 1.0e-12_wp, 'restructuring must conserve the site''s stems')
+   call check_close(sum([(poly%patch%area(poly%cohort%owner_patch(i)) * poly%cohort%nplant(i)             &
+                          * poly%cohort%agb(i), i = 1_ik, poly%cohort%n)]), agb0, 1.0e-12_wp,         &
                     'restructuring must conserve the site''s biomass')
    !----- With both switches off it leaves the stand alone. ----------------------------------!
-   call init_from_census(site, cfg, 'test_census_cells.csv', found)
+   call init_from_census(poly, cfg, 'test_census_cells.csv', found)
    cfg%do_cohort_fissfuse = .false. ; cfg%do_patch_fissfuse = .false.
-   call restructure_census_stand(site, cfg)
-   call check(site%patch%n == 20_ik .and. site%cohort%n == 60_ik, 'restructuring must honour the switches')
+   call restructure_census_stand(poly, cfg)
+   call check(poly%patch%n == 20_ik .and. poly%cohort%n == 60_ik, 'restructuring must honour the switches')
    cfg%do_cohort_fissfuse = .true. ; cfg%do_patch_fissfuse = .true.
    open(newunit=u, file='test_census_cells.csv', status='old', action='read')
    close(u, status='delete')
    !=== A missing file, or a site the file has no row for, is reported (found=.false.) with  !
    !    the reason, not a crash: the driver stops the run with it. ========================!
-   call init_from_census(site, cfg, 'no_such_census_file.csv', found, why=why)
+   call init_from_census(poly, cfg, 'no_such_census_file.csv', found, why=why)
    call check(.not. found, 'missing census file should report found=.false.')
    call check(why == 'cannot be opened', 'a missing census file should say it cannot be opened')
-   call init_from_census(site, cfg, 'test_census_tmp.csv', found, use_site_id=7_ik, why=why)
+   call init_from_census(poly, cfg, 'test_census_tmp.csv', found, use_site_id=7_ik, why=why)
    call check(.not. found, 'a site with no row should report found=.false.')
    call check(why == 'holds no cohort for the site', 'a site with no row should say the file holds none')
 

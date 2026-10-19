@@ -12,7 +12,7 @@
 program test_init_soil_state
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_init,             only : init_bare_ground, seed_bare_ground, finalize_init
    use meds_soil_column_config, only : soil_column_layers
    use meds_constants,        only : n_soil_layer_max
@@ -20,7 +20,7 @@ program test_init_soil_state
    use meds_test_support,     only : banner, build_test_config, check, check_close
    implicit none
    type(meds_config_t)  :: cfg
-   type(site_t)         :: site
+   type(polygon_t)      :: poly
    type(fast_context_t) :: ctx
    integer(ik)          :: ip, nsl, k, n
    real(wp)             :: bottoms(n_soil_layer_max)
@@ -38,14 +38,14 @@ program test_init_soil_state
    call build_fast_context(cfg, ctx)
    call check_close(ctx%soil_temp_init, 298.65_wp, 1.0e-14_wp, 'soil_temp did not reach the fast context')
    call check_close(ctx%theta_init(1),  0.25_wp,   1.0e-14_wp, 'soil_theta did not reach the fast context')
-   call init_bare_ground(site, cfg, 3_ik)
-   call finalize_init(site)
-   call init_fast_reservoirs(site, ctx)
+   call init_bare_ground(poly, cfg, 3_ik)
+   call finalize_init(poly)
+   call init_fast_reservoirs(poly, ctx)
    nsl = ctx%col_config%soil%n_active
-   do ip = 1_ik, site%patch%n
-      call check(all(abs(site%patch%soil_energy(ip)%soil_temp(1:nsl) - 298.65_wp) < 1.0e-12_wp),         &
+   do ip = 1_ik, poly%patch%n
+      call check(all(abs(poly%patch%soil_energy(ip)%soil_temp(1:nsl) - 298.65_wp) < 1.0e-12_wp),         &
                  'a soil layer did not start at [init].soil_temp')
-      call check(all(abs(site%patch%soil_water(ip)%theta(1:nsl) - 0.25_wp) < 1.0e-12_wp),              &
+      call check(all(abs(poly%patch%soil_water(ip)%theta(1:nsl) - 0.25_wp) < 1.0e-12_wp),              &
                  'a soil layer did not start at [init].soil_theta')
    end do
 
@@ -73,24 +73,24 @@ program test_init_soil_state
       call check(all(ctx%theta_init(1:n) == soil%theta_fc(1:n)) .and. soil%theta_fc(1) /= soil%theta_fc(n),    &
                  'a layer did not start at its own field capacity')
    end associate
-   call init_bare_ground(site, cfg, 3_ik)
-   call finalize_init(site)
-   call init_fast_reservoirs(site, ctx)
-   call check(all(site%patch%soil_water(2)%theta(1:n) == ctx%col_config%soil%theta_fc(1:n)),                    &
+   call init_bare_ground(poly, cfg, 3_ik)
+   call finalize_init(poly)
+   call init_fast_reservoirs(poly, ctx)
+   call check(all(poly%patch%soil_water(2)%theta(1:n) == ctx%col_config%soil%theta_fc(1:n)),                    &
               'a patch''s soil did not start at field capacity')
 
    !=== 4. Bare ground is empty by default; nbg_init_density seeds each patch with each PFT. ======!
-   call init_bare_ground(site, cfg, 3_ik)
-   call seed_bare_ground(site, cfg)
-   call check(site%cohort%n == 0_ik, 'bare ground is not empty with nbg_init_density = 0')
+   call init_bare_ground(poly, cfg, 3_ik)
+   call seed_bare_ground(poly, cfg)
+   call check(poly%cohort%n == 0_ik, 'bare ground is not empty with nbg_init_density = 0')
    cfg%pft%nbg_init_density = [0.5_wp, 0.0_wp, 0.2_wp]
-   call init_bare_ground(site, cfg, 3_ik)
-   call seed_bare_ground(site, cfg)
-   call check(site%cohort%n == 6_ik, 'not one cohort per seeded PFT per patch')
-   call check(all(abs(site%cohort%height(1:6) - cfg%pft%min_cohort_height) < 1.0e-9_wp),                    &
+   call init_bare_ground(poly, cfg, 3_ik)
+   call seed_bare_ground(poly, cfg)
+   call check(poly%cohort%n == 6_ik, 'not one cohort per seeded PFT per patch')
+   call check(all(abs(poly%cohort%height(1:6) - cfg%pft%min_cohort_height) < 1.0e-9_wp),                    &
               'a seeded cohort is not at min_cohort_height')
-   call check(all(site%cohort%nplant(1:6) == 0.5_wp .or. site%cohort%nplant(1:6) == 0.2_wp) .and.             &
-              count(site%cohort%pft(1:6) == 1_ik) == 3 .and. count(site%cohort%pft(1:6) == 3_ik) == 3,       &
+   call check(all(poly%cohort%nplant(1:6) == 0.5_wp .or. poly%cohort%nplant(1:6) == 0.2_wp) .and.             &
+              count(poly%cohort%pft(1:6) == 1_ik) == 3 .and. count(poly%cohort%pft(1:6) == 3_ik) == 3,       &
               'a seeded cohort has the wrong PFT or density')
    write(*,'(a)') '   PASS'
 end program test_init_soil_state

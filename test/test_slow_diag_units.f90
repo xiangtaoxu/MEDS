@@ -17,7 +17,7 @@
 !                                                                                          !
 !     reported_rate [x/yr]  x  elapsed [yr]  ==  the amount that actually flowed [x]                !
 !                                                                                          !
-! -- for litter, site%patch%litter_in, the very accumulator biogeochemistry consumes; for          !
+! -- for litter, poly%patch%litter_in, the very accumulator biogeochemistry consumes; for          !
 ! recruitment, the carry-forward recruit pool the same step credits; for disturbance, the area     !
 ! fraction its own hazard implies. No physics number is asserted, so the test cannot go stale with !
 ! the parameters, and a scale error of any size in any of the five slots fails it.                  !
@@ -37,7 +37,7 @@ program test_slow_diag_units
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : yr_sec, n_soil_layer_max
    use meds_config,              only : meds_config_t
-   use meds_site_state_vars,     only : site_t, reset_step_diagnostics
+   use meds_polygon_state_vars,  only : polygon_t, reset_step_diagnostics
    use meds_diag_vars,           only : alloc_patch_diag, patch_diag_value, patch_diag_slow_row, PA_LITTER_LEAF, &
                                         PA_LITTER_FINEROOT, PA_LITTER_STRUCT, PA_RECRUIT_NPLANT, PA_DISTURB_AREA, PA_LE, PA_GPP
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
@@ -55,7 +55,7 @@ program test_slow_diag_units
 
    integer(ik), parameter :: nsl = 10_ik
    type(meds_config_t)  :: cfg
-   type(site_t)         :: site
+   type(polygon_t)      :: poly
    type(fast_context_t) :: ctx
    real(wp)             :: x(8), pool0, pool1, elapsed_yr, frac_expected
    integer(ik)          :: np
@@ -81,47 +81,47 @@ program test_slow_diag_units
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 295.0_wp
 
-   call init_bare_ground(site, cfg, 1_ik)
-   call add_cohort(site, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)     ! one climax cohort (turnover -> litter)
-   call finalize_init(site)
-   call init_fast_reservoirs(site, ctx)
+   call init_bare_ground(poly, cfg, 1_ik)
+   call add_cohort(poly, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)     ! one climax cohort (turnover -> litter)
+   call finalize_init(poly)
+   call init_fast_reservoirs(poly, ctx)
 
    !----- Turn the patch diagnostic block on by hand. In production meds_output_registry does this !
    !      from the enabled-variable set; a test has no registry, and the block is a no-op at every !
    !      entry point until it is active. -----------------------------------------------------!
-   call alloc_patch_diag(site%patch%diag, max(site%patch%cap, 1_ik), .true.)
+   call alloc_patch_diag(poly%patch%diag, max(poly%patch%cap, 1_ik), .true.)
 
    !=== 1. THE FIXTURE MIRRORS THE DRIVER: one fast window weighs exactly one slow step. =========!
-   call fast_dynamics(site, ctx, cfg)
-   call check_close(site%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                                  &
+   call fast_dynamics(poly, ctx, cfg)
+   call check_close(poly%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                                  &
                     'fast window accumulates exactly dt_slow of weight (the fixture mirrors the driver)')
-   elapsed_yr = site%patch%diag%w(1) / yr_sec
+   elapsed_yr = poly%patch%diag%w(1) / yr_sec
 
    !=== 2. LITTER: reported rate x elapsed == the amount biogeochemistry consumed. ===============!
-   pool0 = sum(site%patch%recruit_pool(:, 1))
-   call advance_slow_dynamics(site, cfg)
-   pool1 = sum(site%patch%recruit_pool(:, 1))
+   pool0 = sum(poly%patch%recruit_pool(:, 1))
+   call advance_slow_dynamics(poly, cfg)
+   pool1 = sum(poly%patch%recruit_pool(:, 1))
 
-   call check(site%patch%litter_in(1)%leaf_c > 0.0_wp, 'the step actually shed leaf litter')
+   call check(poly%patch%litter_in(1)%leaf_c > 0.0_wp, 'the step actually shed leaf litter')
 
-   call patch_diag_value(site%patch%diag, PA_LITTER_LEAF, x, np)
+   call patch_diag_value(poly%patch%diag, PA_LITTER_LEAF, x, np)
    call check(np >= 1_ik, 'the patch diagnostic block reports at least one slot')
-   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%leaf_c, 1.0e-10_wp,                 &
+   call check_close(x(1) * elapsed_yr, poly%patch%litter_in(1)%leaf_c, 1.0e-10_wp,                 &
                     'PA_LITTER_LEAF rate x elapsed == the leaf litter amount')
    write(*,'(a,es12.5,a)') '   (leaf litterfall: ', x(1), ' kgC/m2/yr)'
 
-   call patch_diag_value(site%patch%diag, PA_LITTER_FINEROOT, x, np)
-   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%fineroot_c, 1.0e-10_wp,             &
+   call patch_diag_value(poly%patch%diag, PA_LITTER_FINEROOT, x, np)
+   call check_close(x(1) * elapsed_yr, poly%patch%litter_in(1)%fineroot_c, 1.0e-10_wp,             &
                     'PA_LITTER_FINEROOT rate x elapsed == the fine-root litter amount')
 
-   call patch_diag_value(site%patch%diag, PA_LITTER_STRUCT, x, np)
+   call patch_diag_value(poly%patch%diag, PA_LITTER_STRUCT, x, np)
    call check_close(x(1) * elapsed_yr,                                                             &
-                    site%patch%litter_in(1)%struct_grnd + site%patch%litter_in(1)%struct_soil,     &
+                    poly%patch%litter_in(1)%struct_grnd + poly%patch%litter_in(1)%struct_soil,     &
                     1.0e-10_wp, 'PA_LITTER_STRUCT rate x elapsed == the structural litter amount')
 
    !=== 3. RECRUITMENT: the same identity against the pool the SAME step credits. The pool is     !
    !    consumed only on a month boundary, and this step is not one, so its change IS the amount.  !
-   call patch_diag_value(site%patch%diag, PA_RECRUIT_NPLANT, x, np)
+   call patch_diag_value(poly%patch%diag, PA_RECRUIT_NPLANT, x, np)
    call check(pool1 - pool0 > 0.0_wp, 'the step actually credited the recruit pool')
    call check_close(x(1) * elapsed_yr, pool1 - pool0, 1.0e-10_wp,                                  &
                     'PA_RECRUIT_NPLANT rate x elapsed == the recruit-pool credit')
@@ -132,15 +132,15 @@ program test_slow_diag_units
    !    the output has read the step and zeroed the block, so its event lands in the NEXT window,   !
    !    which the next fast loop then weighs. ------------------------------------------------------!
    block
-      call reset_step_diagnostics(site)                          ! the output has read step 1
-      call advance_boundary_dynamics(site, cfg, .true., .true.)  ! new month AND new year
-      call fast_dynamics(site, ctx, cfg)                         ! the next step's window
-      elapsed_yr = site%patch%diag%w(1) / yr_sec
-      call check_close(site%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
+      call reset_step_diagnostics(poly)                          ! the output has read step 1
+      call advance_boundary_dynamics(poly, cfg, .true., .true.)  ! new month AND new year
+      call fast_dynamics(poly, ctx, cfg)                         ! the next step's window
+      elapsed_yr = poly%patch%diag%w(1) / yr_sec
+      call check_close(poly%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
                        'the window after the boundary weighs exactly one slow step')
       frac_expected = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)   ! PATCH_DYNAMICS_INTERVAL
       call check(frac_expected > 0.0_wp, 'the test config actually disturbs')
-      call patch_diag_value(site%patch%diag, PA_DISTURB_AREA, x, np)
+      call patch_diag_value(poly%patch%diag, PA_DISTURB_AREA, x, np)
       call check_close(x(1) * elapsed_yr, frac_expected, 1.0e-9_wp,                                &
                        'PA_DISTURB_AREA rate x elapsed == the area fraction disturbed')
       write(*,'(a,es12.5,a,es12.5,a)') '   (disturbance: reported ', x(1),                         &
@@ -153,16 +153,16 @@ program test_slow_diag_units
    block
       type(meds_config_t) :: cfg_slow
       cfg_slow = cfg ; cfg_slow%fast_biophysics_on = .false.
-      call reset_step_diagnostics(site)
-      site%patch%diag%n = 0_ik                                   ! as if no fast loop had ever run
-      pool0 = sum(site%patch%recruit_pool(:, 1))
-      call advance_slow_dynamics(site, cfg_slow)
-      pool1 = sum(site%patch%recruit_pool(:, 1))
-      call check_close(site%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
+      call reset_step_diagnostics(poly)
+      poly%patch%diag%n = 0_ik                                   ! as if no fast loop had ever run
+      pool0 = sum(poly%patch%recruit_pool(:, 1))
+      call advance_slow_dynamics(poly, cfg_slow)
+      pool1 = sum(poly%patch%recruit_pool(:, 1))
+      call check_close(poly%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
                        'slow-only: the slow step weighs the block by dt_slow')
-      call check(site%patch%diag%n == site%patch%n, 'slow-only: the slow step sets the patch count')
-      elapsed_yr = site%patch%diag%w(1) / yr_sec
-      call patch_diag_value(site%patch%diag, PA_RECRUIT_NPLANT, x, np)
+      call check(poly%patch%diag%n == poly%patch%n, 'slow-only: the slow step sets the patch count')
+      elapsed_yr = poly%patch%diag%w(1) / yr_sec
+      call patch_diag_value(poly%patch%diag, PA_RECRUIT_NPLANT, x, np)
       call check(np >= 1_ik .and. pool1 - pool0 > 0.0_wp, 'slow-only: the recruit row has a slot')
       call check_close(x(1) * elapsed_yr, pool1 - pool0, 1.0e-10_wp,                               &
                        'slow-only: PA_RECRUIT_NPLANT rate x elapsed == the recruit-pool credit')

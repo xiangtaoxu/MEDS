@@ -12,7 +12,7 @@ module meds_init
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_allometry,  only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
-   use meds_site_state_vars,       only : site_t, site_alloc, rebuild_csr, assign_cohort_id, assign_patch_id
+   use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_cohort_map, assign_cohort_id, assign_patch_id
    use meds_patch_state_vars,      only : patch_physical_state
    use meds_soil_column_config,    only : soil_params_t, soil_column_params
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
@@ -35,25 +35,25 @@ module meds_init
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Near-bare-ground site_t: n_patch identical empty patches sharing the site_t area.     !
+   ! A near-bare-ground polygon: n_patch identical empty patches sharing its area.         !
    !---------------------------------------------------------------------------------------!
-   subroutine init_bare_ground(site, cfg, n_patch)
-      type(site_t),        intent(out) :: site
+   subroutine init_bare_ground(poly, cfg, n_patch)
+      type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: n_patch
       integer(ik) :: ip
-      call site_alloc(site, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),          &
+      call alloc_polygon(poly, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),       &
                       n_growth_window = growth_window_steps(cfg), allom = cfg%allom, pft = cfg%pft)
-      site%patch%n = n_patch
+      poly%patch%n = n_patch
       do ip = 1_ik, n_patch
-         site%patch%area(ip)      = 1.0_wp / real(n_patch, wp)
-         site%patch%age(ip)       = 0.0_wp
-         site%patch%dist_type(ip) = DIST_PRIMARY
-         call assign_patch_id(site, ip)
+         poly%patch%area(ip)      = 1.0_wp / real(n_patch, wp)
+         poly%patch%age(ip)       = 0.0_wp
+         poly%patch%dist_type(ip) = DIST_PRIMARY
+         call assign_patch_id(poly, ip)
       end do
-      site%patch%recruit_pool = 0.0_wp
-      site%cohort%n = 0_ik
-      call rebuild_csr(site)
+      poly%patch%recruit_pool = 0.0_wp
+      poly%cohort%n = 0_ik
+      call rebuild_cohort_map(poly)
    end subroutine init_bare_ground
 
    !---------------------------------------------------------------------------------------!
@@ -61,48 +61,48 @@ contains
    ! each PFT with nbg_init_density > 0, that many plants per m2, at min_cohort_height on the  !
    ! site's own height curve, where recruits are born. All densities 0 leave the site empty.   !
    !---------------------------------------------------------------------------------------!
-   subroutine seed_bare_ground(site, cfg)
-      type(site_t),        intent(inout) :: site
+   subroutine seed_bare_ground(poly, cfg)
+      type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: dbh
       integer(ik) :: ip, ipft
       if (.not. any(cfg%pft%nbg_init_density > 0.0_wp)) return
-      dbh = height_to_dbh(site%cohort%allom, cfg%pft%min_cohort_height)
-      do ip = 1_ik, site%patch%n
+      dbh = height_to_dbh(poly%cohort%allom, cfg%pft%min_cohort_height)
+      do ip = 1_ik, poly%patch%n
          do ipft = 1_ik, cfg%pft%n
             if (cfg%pft%nbg_init_density(ipft) > 0.0_wp)                                         &
-               call add_cohort(site, cfg, ip, ipft, cfg%pft%nbg_init_density(ipft), dbh)
+               call add_cohort(poly, cfg, ip, ipft, cfg%pft%nbg_init_density(ipft), dbh)
          end do
       end do
-      call finalize_init(site)
+      call finalize_init(poly)
    end subroutine seed_bare_ground
 
    !---------------------------------------------------------------------------------------!
    ! Append one cohort to patch ip (caller invokes finalize_init afterwards).               !
    !---------------------------------------------------------------------------------------!
-   subroutine add_cohort(site, cfg, ip, ipft, nplant, dbh)
-      type(site_t),     intent(inout) :: site
+   subroutine add_cohort(poly, cfg, ip, ipft, nplant, dbh)
+      type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       integer(ik),         intent(in)    :: ip, ipft
       real(wp),            intent(in)    :: nplant, dbh
       integer(ik) :: m
       type(soil_params_t) :: soil
       real(wp)    :: t_birth, psi_birth
-      call expand_cohort_block(site%cohort, site%cohort%n + 1_ik)
-      m = site%cohort%n + 1_ik
+      call expand_cohort_block(poly%cohort, poly%cohort%n + 1_ik)
+      m = poly%cohort%n + 1_ik
       !----- Born in its patch's state (patch_physical_state); at setup the patch is not seeded yet, so !
       !      that is the run's starting state, and init_fast_reservoirs re-seeds it from the patch. -!
       call soil_column_params(cfg%soil_column, soil)
-      call patch_physical_state(site%patch%cas(ip), site%patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
-      call init_cohort(site%cohort, m, cfg%pft, ipft, ip, nplant, dbh, cfg%hydraulics, t_birth, psi_birth)
-      call assign_cohort_id(site, m)
-      site%cohort%n = m
+      call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
+      call init_cohort(poly%cohort, m, cfg%pft, ipft, ip, nplant, dbh, cfg%hydraulics, t_birth, psi_birth)
+      call assign_cohort_id(poly, m)
+      poly%cohort%n = m
    end subroutine add_cohort
 
-   subroutine finalize_init(site)
-      type(site_t), intent(inout) :: site
-      call rebuild_csr(site)
-      call sort_cohorts(site)
+   subroutine finalize_init(poly)
+      type(polygon_t), intent(inout) :: poly
+      call rebuild_cohort_map(poly)
+      call sort_cohorts(poly)
    end subroutine finalize_init
 
    !---------------------------------------------------------------------------------------!
@@ -129,8 +129,8 @@ contains
    ! patch_area stops the run. The file is read twice (patches, then cohorts), so no row buffer !
    ! is needed.                                                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine init_from_census(site, cfg, path, found, use_site_id, why)
-      type(site_t),        intent(out) :: site
+   subroutine init_from_census(poly, cfg, path, found, use_site_id, why)
+      type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
       logical,             intent(out) :: found
@@ -164,8 +164,8 @@ contains
             npatch = int(size(patch_id_of), ik)
             if (npatch == 0_ik) exit                         ! no rows for the selected site
             !----- The patches: equal areas, or the file's areas normalized to the site. --------!
-            call init_bare_ground(site, cfg, npatch)
-            if (cols%area > 0) site%patch%area(1:npatch) = patch_area_of / sum(patch_area_of)
+            call init_bare_ground(poly, cfg, npatch)
+            if (cols%area > 0) poly%patch%area(1:npatch) = patch_area_of / sum(patch_area_of)
             rewind(u)
          end if
          have_layout = .false.
@@ -199,14 +199,14 @@ contains
                if (ipft < 1_ik .or. ipft > cfg%pft%n)                                              &
                   error stop 'meds_init: census pft index out of range in '//trim(path)
                ip = int(findloc(patch_id_of, pid, dim=1), ik)
-               call add_cohort(site, cfg, ip, ipft, nplant, dbh)
+               call add_cohort(poly, cfg, ip, ipft, nplant, dbh)
             end if
          end do
       end do
       close(u)
       if (npatch == 0_ik) return
 
-      call finalize_init(site)
+      call finalize_init(poly)
       found = .true.
       if (present(why)) why = ''
    end subroutine init_from_census
@@ -218,22 +218,22 @@ contains
    ! both than a step should carry, and nothing else fuses them before the first month or year !
    ! boundary. Each block runs under the same switches as in the slow step.                    !
    !---------------------------------------------------------------------------------------!
-   subroutine restructure_census_stand(site, cfg)
-      type(site_t),        intent(inout) :: site
+   subroutine restructure_census_stand(poly, cfg)
+      type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       if (cfg%demography_on .and. cfg%do_cohort_fissfuse) then
-         call new_fuse_cohorts(site, cfg)
-         call terminate_cohorts(site, cfg)
-         call split_cohorts(site, cfg)
-         call sort_cohorts(site)
+         call new_fuse_cohorts(poly, cfg)
+         call terminate_cohorts(poly, cfg)
+         call split_cohorts(poly, cfg)
+         call sort_cohorts(poly)
       end if
       if (cfg%demography_on .and. cfg%do_patch_fissfuse) then
-         call sort_patches(site)
-         call new_fuse_patches(site, cfg)
-         call terminate_patches(site, cfg)
-         call new_fuse_cohorts(site, cfg)
-         call terminate_cohorts(site, cfg)
-         call sort_cohorts(site)
+         call sort_patches(poly)
+         call new_fuse_patches(poly, cfg)
+         call terminate_patches(poly, cfg)
+         call new_fuse_cohorts(poly, cfg)
+         call terminate_cohorts(poly, cfg)
+         call sort_cohorts(poly)
       end if
    end subroutine restructure_census_stand
 

@@ -33,7 +33,7 @@ module meds_region
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
-   use meds_site_state_vars,        only : site_t, site_free
+   use meds_polygon_state_vars,     only : polygon_t, free_polygon
    use meds_io,                     only : state_file_t, state_file_open, state_file_put, state_file_close, &
                                            state_file_polygons, io_read_state, state_file_refusal
    use meds_demography_update,      only : update_overtopping_lai
@@ -71,7 +71,7 @@ module meds_region
       type(output_files_t)  :: out_files           !< the run's files (built only if output.enabled)
       !----- Each polygon as two records side by side: its state (the stand) and what the run needs  !
       !      to step and check it (meds_polygon). -------------------------------------------------!
-      type(site_t),        allocatable :: poly(:)
+      type(polygon_t),     allocatable :: poly(:)
       type(polygon_run_t), allocatable :: run(:)
       !----- Each polygon's share of the files, one per polygon. A contiguous array of its own, so  !
       !      the I/O phase passes it whole: a section run(:)%bufs of a type with allocatable         !
@@ -711,7 +711,7 @@ contains
       call met_close(reg%met_src)
       if (allocated(reg%poly)) then
          do p = 1_ik, size(reg%poly, kind=ik)
-            call site_free(reg%poly(p))
+            call free_polygon(reg%poly(p))
          end do
       end if
       reg = never_opened

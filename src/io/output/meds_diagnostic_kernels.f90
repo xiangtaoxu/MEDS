@@ -4,7 +4,7 @@
 !                                                                                          !
 ! Stage [1] of the diagnostic wall (docs/science/diagnostics.md §1): quantities that are not        !
 ! stored anywhere in state but are a closed-form function of things that are. Plain arguments      !
-! only -- no site_t, no config aggregator -- so every routine here is directly unit-testable.      !
+! only -- no polygon_t, no config aggregator -- so every routine here is directly unit-testable.   !
 !                                                                                          !
 ! CONTENT RULE. Anything a physics library already owns is CALLED, never re-implemented:           !
 ! soil_psi_from_theta / psi_from_water_content live in meds_water_retention, internal_energy_to_temp !

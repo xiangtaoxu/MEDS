@@ -6,28 +6,28 @@
 !==========================================================================================!
 module test_ro_support
    use meds_kinds,            only : wp, ik
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    implicit none
 contains
    !----- Opaque per-cohort agb mutation (production mutates through veg dynamics; see the        !
    !      test_output_integrate header note on the nvfortran -O2 aliasing hazard).                !
-   subroutine set_site_agb(site, a)
-      type(site_t), intent(inout) :: site
+   subroutine set_site_agb(poly, a)
+      type(polygon_t), intent(inout) :: poly
       real(wp),     intent(in)    :: a
-      site%cohort%agb(1) = a
+      poly%cohort%agb(1) = a
    end subroutine set_site_agb
 
    !----- Opaque setters for the flux/state sources (fast-loop accumulators + soil column). -------!
-   subroutine set_site_gpp(site, g)
-      type(site_t), intent(inout) :: site
+   subroutine set_site_gpp(poly, g)
+      type(polygon_t), intent(inout) :: poly
       real(wp),     intent(in)    :: g
-      site%cohort%gpp_accum(1) = g
+      poly%cohort%gpp_accum(1) = g
    end subroutine set_site_gpp
 
-   subroutine set_site_soil_temp(site, t)
-      type(site_t), intent(inout) :: site
+   subroutine set_site_soil_temp(poly, t)
+      type(polygon_t), intent(inout) :: poly
       real(wp),     intent(in)    :: t
-      site%patch%soil_energy(1)%soil_temp(:) = t
+      poly%patch%soil_energy(1)%soil_temp(:) = t
    end subroutine set_site_soil_temp
 end module test_ro_support
 
@@ -36,7 +36,7 @@ program test_output_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_time,             only : meds_time_t, time_advance_days
-   use meds_site_state_vars,  only : site_t, site_alloc, site_free
+   use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon
    use meds_allometry,        only : allometry_t
    use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
@@ -56,7 +56,7 @@ program test_output_roundtrip
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
 
    type(meds_config_t)    :: cfg
-   type(site_t)           :: site
+   type(polygon_t)        :: poly
    type(output_files_t)   :: files
    type(output_buffers_t) :: bufs(1)     !< one site's buffers: an array of one, as the driver holds them
    type(meds_time_t)      :: prev, now
@@ -68,20 +68,20 @@ program test_output_roundtrip
    call banner('output_roundtrip')
 
    !----- A fixed 1-cohort / 1-patch site (constant slot set). -----!
-   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
-   site%cohort%n = 1_ik ; site%patch%n = 1_ik
-   site%cohort%nplant(1) = 1.0_wp ; site%cohort%dbh(1) = 5.0_wp
-   site%cohort%height(1) = 4.0_wp ; site%cohort%basal_area(1) = 19.6_wp
-   site%cohort%leaf_area(1) = 2.0_wp ; site%cohort%growth_avg(1) = 0.1_wp
-   site%cohort%pft(1) = 1_ik ; site%cohort%owner_patch(1) = 1_ik ; site%cohort%global_id(1) = 1_ik
-   site%patch%area(1) = 1.0_wp ; site%patch%cohort_offset(1) = 1_ik ; site%patch%cohort_count(1) = 1_ik
-   site%patch%age(1) = 0.0_wp ; site%patch%dist_type(1) = 1_ik ; site%patch%global_id(1) = 1_ik
+   call alloc_polygon(poly, 1_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
+   poly%cohort%n = 1_ik ; poly%patch%n = 1_ik
+   poly%cohort%nplant(1) = 1.0_wp ; poly%cohort%dbh(1) = 5.0_wp
+   poly%cohort%height(1) = 4.0_wp ; poly%cohort%basal_area(1) = 19.6_wp
+   poly%cohort%leaf_area(1) = 2.0_wp ; poly%cohort%growth_avg(1) = 0.1_wp
+   poly%cohort%pft(1) = 1_ik ; poly%cohort%owner_patch(1) = 1_ik ; poly%cohort%global_id(1) = 1_ik
+   poly%patch%area(1) = 1.0_wp ; poly%patch%cohort_offset(1) = 1_ik ; poly%patch%cohort_count(1) = 1_ik
+   poly%patch%age(1) = 0.0_wp ; poly%patch%dist_type(1) = 1_ik ; poly%patch%global_id(1) = 1_ik
 
    !----- Constant carbon + soil sources (fast loop is off in this unit test, so set them here    !
    !      via opaque setters, as the fast loop would). gpp_accum=2 -> daily AGG_SUM gpp_site=2;     !
    !      soil_temp=290 -> daily AGG_TMEAN soil_temp_site=290 per layer.                            !
-   call set_site_gpp(site, 2.0_wp)
-   call set_site_soil_temp(site, 290.0_wp)
+   call set_site_gpp(poly, 2.0_wp)
+   call set_site_soil_temp(poly, 290.0_wp)
 
    !----- Output config: daily + annual streams; enable the energy group (soil). -----!
    cfg = build_cfg()
@@ -111,8 +111,8 @@ program test_output_roundtrip
    now = meds_time_t(year=2000_ik, month=1_ik, day=1_ik)
    do iday = 1_ik, 3_ik
       prev = now ; now = time_advance_days(prev, 1_ik)
-      call set_site_agb(site, 10.0_wp * real(iday, wp))
-      call output_integrate(files, bufs(1), site, prev, dt, .true., .false., .false.)
+      call set_site_agb(poly, 10.0_wp * real(iday, wp))
+      call output_integrate(files, bufs(1), poly, prev, dt, .true., .false., .false.)
       call output_serialize(files, bufs)
    end do
 
@@ -122,7 +122,7 @@ program test_output_roundtrip
    call check_daily('test_ro-D-200001.nc')
    call check_annual('test_ro-Y.nc')
 
-   call site_free(site)
+   call free_polygon(poly)
    write(*,'(a)') 'test_output_roundtrip: ALL PASSED'
 
 contains

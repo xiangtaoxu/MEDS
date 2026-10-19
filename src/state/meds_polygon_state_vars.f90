@@ -1,12 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_site_state_vars -- the site: one cohort block and one patch block, and the          !
-! routines that need both (the CSR map, the persistent ids, the step diagnostic reset).    !
+! meds_polygon_state_vars -- the polygon's ecological state: its cohort block and patch    !
+! block, the polygon-level numbers, and the routines that need both blocks (the cohort     !
+! map, the persistent ids, the step diagnostic reset).                                     !
 !                                                                                          !
-! A polygon holds exactly one site_t, so this is the polygon's ecological state too; the   !
-! run keeps beside it a polygon_run_t (src/main) with its forcing, budgets and ledgers.    !
+! The run keeps beside each polygon_t a polygon_run_t (src/main) with its forcing, budgets !
+! and ledgers.                                                                             !
 !==========================================================================================!
-module meds_site_state_vars
+module meds_polygon_state_vars
    use meds_diag_vars,          only : polygon_diag_block, reset_cohort_diag, reset_patch_diag,          &
                                        reset_polygon_diag
    use meds_kinds,              only : wp, ik
@@ -18,10 +19,10 @@ module meds_site_state_vars
    implicit none
    private
 
-   public :: site_t, site_alloc, site_free, rebuild_csr
+   public :: polygon_t, alloc_polygon, free_polygon, rebuild_cohort_map
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
 
-   type :: site_t
+   type :: polygon_t
       !==========================================================================================!
       ! 0. THE BLOCKS IT HOLDS                                                                   !
       !==========================================================================================!
@@ -108,7 +109,7 @@ module meds_site_state_vars
       !      §3, `rk45`). ---------------------------------------------------------------------------!
       real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid with the ARK
       real(wp)           :: work_clamp_stage = 0.0_wp   !< stage-input clamp activations (throwaway states)
-   end type site_t
+   end type polygon_t
 
 contains
 
@@ -119,24 +120,24 @@ contains
    !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
-   subroutine site_alloc(site, n_pft, coh_cap, pat_cap, n_growth_window, allom, pft)
-      type(site_t),      intent(out) :: site
+   subroutine alloc_polygon(poly, n_pft, coh_cap, pat_cap, n_growth_window, allom, pft)
+      type(polygon_t),   intent(out) :: poly
       integer(ik),       intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
       type(allometry_t), intent(in)  :: allom   !< the site's allometry (cfg%allom of its config)
       type(pft_table_t), intent(in)  :: pft     !< the site's PFT trait table (cfg%pft of its config)
-      site%n_pft = n_pft
-      site%cohort%allom     = allom
-      site%cohort%pft_table = pft
-      call alloc_cohort_block(site%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
-      call alloc_patch_block(site%patch, max(pat_cap, 1_ik), n_pft)
-   end subroutine site_alloc
+      poly%n_pft = n_pft
+      poly%cohort%allom     = allom
+      poly%cohort%pft_table = pft
+      call alloc_cohort_block(poly%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
+      call alloc_patch_block(poly%patch, max(pat_cap, 1_ik), n_pft)
+   end subroutine alloc_polygon
 
    !----- Each level frees its own fields: the cohort and patch files list them. -------------!
-   subroutine site_free(site)
-      type(site_t), intent(inout) :: site
-      call free_cohort_block(site%cohort)
-      call free_patch_block(site%patch)
-   end subroutine site_free
+   subroutine free_polygon(poly)
+      type(polygon_t), intent(inout) :: poly
+      call free_cohort_block(poly%cohort)
+      call free_patch_block(poly%patch)
+   end subroutine free_polygon
 
    !=======================================================================================!
    !  STRUCTURE                                                                            !
@@ -145,39 +146,39 @@ contains
    !=======================================================================================!
    !  Rebuild the CSR patch map by stably regrouping cohorts by owner_patch (counting sort).!
    !=======================================================================================!
-   subroutine rebuild_csr(site)
-      type(site_t), intent(inout) :: site
+   subroutine rebuild_cohort_map(poly)
+      type(polygon_t), intent(inout) :: poly
       integer(ik), allocatable :: perm(:), pos(:), slot(:)
       integer(ik)              :: i, ip, np, nc
-      np = site%patch%n
-      nc = site%cohort%n
+      np = poly%patch%n
+      nc = poly%cohort%n
       if (np < 1_ik) then                                  ! no patches: nothing to group
-         if (nc > 0_ik) error stop 'rebuild_csr: cohorts present with no patches'
+         if (nc > 0_ik) error stop 'rebuild_cohort_map: cohorts present with no patches'
          return
       end if
-      site%patch%cohort_count(1:np) = 0_ik
+      poly%patch%cohort_count(1:np) = 0_ik
       do i = 1_ik, nc
-         ip = site%cohort%owner_patch(i)
-         if (ip < 1_ik .or. ip > np) error stop 'rebuild_csr: owner_patch out of range'
-         site%patch%cohort_count(ip) = site%patch%cohort_count(ip) + 1_ik
+         ip = poly%cohort%owner_patch(i)
+         if (ip < 1_ik .or. ip > np) error stop 'rebuild_cohort_map: owner_patch out of range'
+         poly%patch%cohort_count(ip) = poly%patch%cohort_count(ip) + 1_ik
       end do
-      site%patch%cohort_offset(1) = 1_ik
+      poly%patch%cohort_offset(1) = 1_ik
       do ip = 2_ik, np
-         site%patch%cohort_offset(ip) = site%patch%cohort_offset(ip-1) + site%patch%cohort_count(ip-1)
+         poly%patch%cohort_offset(ip) = poly%patch%cohort_offset(ip-1) + poly%patch%cohort_count(ip-1)
       end do
       !----- Stable placement: preserve within-patch order. -------------------------------!
       allocate(pos(np), slot(nc), perm(nc))
-      pos(1:np) = site%patch%cohort_offset(1:np)
+      pos(1:np) = poly%patch%cohort_offset(1:np)
       do i = 1_ik, nc
-         ip = site%cohort%owner_patch(i)
+         ip = poly%cohort%owner_patch(i)
          slot(i) = pos(ip)
          pos(ip) = pos(ip) + 1_ik
       end do
       do i = 1_ik, nc
          perm(slot(i)) = i
       end do
-      call reorder_cohort_block(site%cohort, perm, nc)
-   end subroutine rebuild_csr
+      call reorder_cohort_block(poly%cohort, perm, nc)
+   end subroutine rebuild_cohort_map
 
    !=======================================================================================!
    !  IDENTITY                                                                             !
@@ -188,18 +189,18 @@ contains
    !  monotonic counter. Ids are never reused within a run, so a terminated/fused-away id    !
    !  simply never reappears -- exactly what an external tracker needs.                      !
    !=======================================================================================!
-   subroutine assign_cohort_id(site, slot)
-      type(site_t), intent(inout) :: site
+   subroutine assign_cohort_id(poly, slot)
+      type(polygon_t), intent(inout) :: poly
       integer(ik),  intent(in)    :: slot
-      site%cohort%global_id(slot) = site%next_cohort_id
-      site%next_cohort_id = site%next_cohort_id + 1_ik
+      poly%cohort%global_id(slot) = poly%next_cohort_id
+      poly%next_cohort_id = poly%next_cohort_id + 1_ik
    end subroutine assign_cohort_id
 
-   subroutine assign_patch_id(site, slot)
-      type(site_t), intent(inout) :: site
+   subroutine assign_patch_id(poly, slot)
+      type(polygon_t), intent(inout) :: poly
       integer(ik),  intent(in)    :: slot
-      site%patch%global_id(slot) = site%next_patch_id
-      site%next_patch_id = site%next_patch_id + 1_ik
+      poly%patch%global_id(slot) = poly%next_patch_id
+      poly%next_patch_id = poly%next_patch_id + 1_ik
    end subroutine assign_patch_id
 
    !=======================================================================================!
@@ -211,11 +212,11 @@ contains
    !      adds each sub-step, the slow step its rows, and a calendar boundary between two steps    !
    !      its events (disturbance, culls), which therefore reach the record of the step that       !
    !      follows. The slow cohort block is SET each step instead and needs no reset here. --------!
-   subroutine reset_step_diagnostics(site)
-      type(site_t), intent(inout) :: site
-      call reset_cohort_diag(site%cohort%diag)
-      call reset_patch_diag(site%patch%diag)
-      call reset_polygon_diag(site%diag)
+   subroutine reset_step_diagnostics(poly)
+      type(polygon_t), intent(inout) :: poly
+      call reset_cohort_diag(poly%cohort%diag)
+      call reset_patch_diag(poly%patch%diag)
+      call reset_polygon_diag(poly%diag)
    end subroutine reset_step_diagnostics
 
-end module meds_site_state_vars
+end module meds_polygon_state_vars

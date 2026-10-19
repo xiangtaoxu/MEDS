@@ -138,7 +138,7 @@ module meds_patch_state_vars
       real(wp),    allocatable :: area(:)           !< fraction, sum = 1 (kept real64)
       real(wp),    allocatable :: age(:)            !< [yr]
       !==========================================================================================!
-      ! 2. COHORT MAP: a CSR map into the cohort block (rebuild_csr derives it)                  !
+      ! 2. COHORT MAP: a CSR map into the cohort block (rebuild_cohort_map derives it)           !
       !==========================================================================================!
       integer(ik), allocatable :: cohort_offset(:)  !< first cohort of the patch (1-based)
       integer(ik), allocatable :: cohort_count(:)   !< cohorts in the patch
@@ -454,7 +454,7 @@ contains
       patch%area(1:m)      = patch%area(perm(1:m))
       patch%age(1:m)       = patch%age(perm(1:m))
       !----- 2. Cohort map ----------------------------------------------------------------------!
-      !      (not permuted: rebuild_csr derives the map from the cohorts afterwards)
+      !      (not permuted: rebuild_cohort_map derives the map from the cohorts afterwards)
       !----- 3. Recruit bank --------------------------------------------------------------------!
       patch%recruit_pool(:,1:m) = patch%recruit_pool(:,perm(1:m))
       !----- 4. Canopy air ----------------------------------------------------------------------!

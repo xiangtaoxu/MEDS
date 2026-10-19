@@ -19,7 +19,7 @@
 program test_biogeochem_dynamics
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
-   use meds_site_state_vars,     only : site_t
+   use meds_polygon_state_vars,  only : polygon_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,     only : n_soil_layer_max
@@ -37,7 +37,7 @@ program test_biogeochem_dynamics
    integer(ik)            :: n_budget_fail
    integer(ik), parameter :: nsl = 10_ik
    type(meds_config_t)  :: cfg
-   type(site_t)         :: site
+   type(polygon_t)      :: poly
    type(fast_context_t) :: ctx
    real(wp) :: total0, total1
    type(soilc_seam_t) :: seam   !< per-run seam worsts, accumulated by advance_slow_dynamics
@@ -62,35 +62,35 @@ program test_biogeochem_dynamics
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 295.0_wp
 
-   call init_bare_ground(site, cfg, 1_ik)
-   call add_cohort(site, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)     ! one climax cohort (turnover -> litter)
-   call finalize_init(site)
-   call init_fast_reservoirs(site, ctx)
+   call init_bare_ground(poly, cfg, 1_ik)
+   call add_cohort(poly, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)     ! one climax cohort (turnover -> litter)
+   call finalize_init(poly)
+   call init_fast_reservoirs(poly, ctx)
 
    !----- Seed a nonzero starting pool so decomposition (and hence Rh) is actually active. -----!
-   site%patch%soil_carbon(1)%fast_grnd_carbon   = 2.0_wp
-   site%patch%soil_carbon(1)%fast_soil_carbon   = 1.0_wp
-   site%patch%soil_carbon(1)%struct_grnd_carbon = 20.0_wp
-   site%patch%soil_carbon(1)%struct_soil_carbon = 10.0_wp
-   site%patch%soil_carbon(1)%slow_carbon        = 500.0_wp
+   poly%patch%soil_carbon(1)%fast_grnd_carbon   = 2.0_wp
+   poly%patch%soil_carbon(1)%fast_soil_carbon   = 1.0_wp
+   poly%patch%soil_carbon(1)%struct_grnd_carbon = 20.0_wp
+   poly%patch%soil_carbon(1)%struct_soil_carbon = 10.0_wp
+   poly%patch%soil_carbon(1)%slow_carbon        = 500.0_wp
 
-   total0 = site%patch%soil_carbon(1)%fast_grnd_carbon + site%patch%soil_carbon(1)%fast_soil_carbon &
-          + site%patch%soil_carbon(1)%struct_grnd_carbon + site%patch%soil_carbon(1)%struct_soil_carbon &
-          + site%patch%soil_carbon(1)%microbial_carbon + site%patch%soil_carbon(1)%slow_carbon      &
-          + site%patch%soil_carbon(1)%passive_carbon
+   total0 = poly%patch%soil_carbon(1)%fast_grnd_carbon + poly%patch%soil_carbon(1)%fast_soil_carbon &
+          + poly%patch%soil_carbon(1)%struct_grnd_carbon + poly%patch%soil_carbon(1)%struct_soil_carbon &
+          + poly%patch%soil_carbon(1)%microbial_carbon + poly%patch%soil_carbon(1)%slow_carbon      &
+          + poly%patch%soil_carbon(1)%passive_carbon
 
    !=== 1. Run one real slow step: fast loop (accumulates xi_int/rh_fast_accum against the FROZEN !
    !    pool seeded above) THEN advance_slow_dynamics (vegetation turnover -> litter, then the       !
    !    daily soil_carbon_step consuming that litter + xi_int). ====================================!
-   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
+   call fast_dynamics(poly, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
    call check(n_budget_fail == 0_ik, 'fast loop whole-column budgets closed (n_fail == 0)')
 
    block
       real(wp) :: rh_fast_accum_ref
-      rh_fast_accum_ref = site%patch%xi_accum(1)%rh_fast_accum
+      rh_fast_accum_ref = poly%patch%xi_accum(1)%rh_fast_accum
       call check(rh_fast_accum_ref > 0.0_wp, 'fast loop accumulated positive matrix Rh over the day')
 
-      call advance_slow_dynamics(site, cfg, seam=seam)
+      call advance_slow_dynamics(poly, cfg, seam=seam)
 
       call check_true('rh_seam_gap ~ 0 (the double-count gate)',                                   &
                       seam%worst_rh_gap < 1.0e-9_wp * max(rh_fast_accum_ref, 1.0_wp), seam%worst_rh_gap)
@@ -105,10 +105,10 @@ program test_biogeochem_dynamics
                       seam%worst_lambda < 0.1_wp, seam%worst_lambda)
    end block
 
-   total1 = site%patch%soil_carbon(1)%fast_grnd_carbon + site%patch%soil_carbon(1)%fast_soil_carbon &
-          + site%patch%soil_carbon(1)%struct_grnd_carbon + site%patch%soil_carbon(1)%struct_soil_carbon &
-          + site%patch%soil_carbon(1)%microbial_carbon + site%patch%soil_carbon(1)%slow_carbon      &
-          + site%patch%soil_carbon(1)%passive_carbon
+   total1 = poly%patch%soil_carbon(1)%fast_grnd_carbon + poly%patch%soil_carbon(1)%fast_soil_carbon &
+          + poly%patch%soil_carbon(1)%struct_grnd_carbon + poly%patch%soil_carbon(1)%struct_soil_carbon &
+          + poly%patch%soil_carbon(1)%microbial_carbon + poly%patch%soil_carbon(1)%slow_carbon      &
+          + poly%patch%soil_carbon(1)%passive_carbon
 
    !----- Direction is not asserted (this cohort's turnover litter can outweigh or be outweighed by !
    !      Rh depending on the seeded pool -- test_soil_biogeochem's INDEPENDENT mass check (Rh        !
@@ -123,21 +123,21 @@ program test_biogeochem_dynamics
 
    !=== 2. OFF-PATH: soil_carbon_on = .false. must leave the pool exactly untouched. ==============!
    block
-      type(site_t) :: site2
+      type(polygon_t) :: poly2
       real(wp)     :: totalA, totalB
       cfg%soil_carbon_on = .false.
-      call init_bare_ground(site2, cfg, 1_ik)
-      call add_cohort(site2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)
-      call finalize_init(site2)
-      call init_fast_reservoirs(site2, ctx)
-      site2%patch%soil_carbon(1)%slow_carbon = 500.0_wp
-      totalA = site2%patch%soil_carbon(1)%slow_carbon
-      call fast_dynamics(site2, ctx, cfg)
-      call advance_slow_dynamics(site2, cfg)
-      totalB = site2%patch%soil_carbon(1)%fast_grnd_carbon + site2%patch%soil_carbon(1)%fast_soil_carbon &
-             + site2%patch%soil_carbon(1)%struct_grnd_carbon + site2%patch%soil_carbon(1)%struct_soil_carbon &
-             + site2%patch%soil_carbon(1)%microbial_carbon + site2%patch%soil_carbon(1)%slow_carbon  &
-             + site2%patch%soil_carbon(1)%passive_carbon
+      call init_bare_ground(poly2, cfg, 1_ik)
+      call add_cohort(poly2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)
+      call finalize_init(poly2)
+      call init_fast_reservoirs(poly2, ctx)
+      poly2%patch%soil_carbon(1)%slow_carbon = 500.0_wp
+      totalA = poly2%patch%soil_carbon(1)%slow_carbon
+      call fast_dynamics(poly2, ctx, cfg)
+      call advance_slow_dynamics(poly2, cfg)
+      totalB = poly2%patch%soil_carbon(1)%fast_grnd_carbon + poly2%patch%soil_carbon(1)%fast_soil_carbon &
+             + poly2%patch%soil_carbon(1)%struct_grnd_carbon + poly2%patch%soil_carbon(1)%struct_soil_carbon &
+             + poly2%patch%soil_carbon(1)%microbial_carbon + poly2%patch%soil_carbon(1)%slow_carbon  &
+             + poly2%patch%soil_carbon(1)%passive_carbon
       call check_close(totalB, totalA, 1.0e-12_wp, 'soil_carbon_on=.false.: pool exactly untouched')
    end block
 

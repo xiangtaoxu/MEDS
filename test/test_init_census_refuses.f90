@@ -5,12 +5,12 @@
 program test_init_census_refuses
    use meds_kinds,            only : ik
    use meds_config,           only : meds_config_t
-   use meds_site_state_vars,  only : site_t
+   use meds_polygon_state_vars, only : polygon_t
    use meds_init,             only : init_from_census
    use meds_test_support,     only : build_test_config
    implicit none
    type(meds_config_t) :: cfg
-   type(site_t)        :: site
+   type(polygon_t)     :: poly
    character(len=16)   :: which
    character(len=64)   :: path
    integer             :: u
@@ -30,7 +30,7 @@ program test_init_census_refuses
       write(u,'(a)') '1,0.5,10.0,1,0.01'
    end select
    close(u)
-   call init_from_census(site, cfg, trim(path), found)
+   call init_from_census(poly, cfg, trim(path), found)
    write(*,'(a)') 'NOT REFUSED: the census was accepted'
    error stop 1
 end program test_init_census_refuses
