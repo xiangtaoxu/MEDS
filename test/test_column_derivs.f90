@@ -15,7 +15,7 @@
 program test_column_derivs
    use meds_test_assert, only : check, check_true, check_close, test_report
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o, n_soil_layer_max
+   use meds_constants,      only : latent_heat_vap, stefan_boltzmann, cp_air, tiny_num, rho_h2o, n_soil_layer_max
    use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
                                    sat_specific_humidity, sat_vapor_pressure,                    &
                                    sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_internal_energy, internal_energy_to_temp
@@ -156,7 +156,7 @@ contains
       worst = 0.0_wp
       do i = 1_ik, n
          dtl      = f%leaf_temp(i) - tcas
-         lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(i) * stefan * tcas ** 3 * frozen%tissue%lai(i)
+         lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(i) * stefan_boltzmann * tcas ** 3 * frozen%tissue%lai(i)
          !----- the leaf pays the FULL vapour enthalpy at the linearization temperature             !
          !      (docs/science/vegetation_energy_dynamics.md eq. (2)). ------------------------------!
          le_slope = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * dqdt
@@ -187,7 +187,7 @@ contains
       y%cas_shv      = 0.010_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, 1_ik, f)
       tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
-      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan * tcas ** 3 * frozen%tissue%lai(1)
+      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan_boltzmann * tcas ** 3 * frozen%tissue%lai(1)
       expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
       call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
    end subroutine test_leaf_analytic

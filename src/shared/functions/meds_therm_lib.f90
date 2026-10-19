@@ -12,7 +12,7 @@ module meds_therm_lib
    use meds_kinds,     only : wp
    use meds_constants, only : mmdry, tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,    &
                               t_3ple, tsupercool_liq, tsupercool_vap, r_dry,                    &
-                              rho_h2o, k_water, k_ice, C2B_WOOD
+                              rho_h2o, k_water, k_ice, c2b_wood
    implicit none
    private
 
@@ -45,12 +45,12 @@ contains
    end function tissue_heat_capacity
 
    !----- The dry half of a tissue's heat capacity per m2 of ground [J/m2/K]: its carbon as dry      !
-   !      mass, at its dry specific heat (TISSUE_C_LEAF or TISSUE_C_WOOD_DRY). ----------------------!
+   !      mass, at its dry specific heat (tissue_c_leaf or tissue_c_wood_dry). ----------------------!
    elemental pure real(wp) function tissue_dry_heat_capacity(nplant, carbon, c_dry) result(cap)
       real(wp), intent(in) :: nplant   !< [plant/m2]
       real(wp), intent(in) :: carbon   !< [kgC/plant] the tissue's carbon
       real(wp), intent(in) :: c_dry    !< [J/kg/K]    specific heat of its dry matter
-      cap = carbon * nplant * C2B_WOOD * c_dry
+      cap = carbon * nplant * c2b_wood * c_dry
    end function tissue_dry_heat_capacity
 
    !----- A tissue's internal energy [J per plant, or per m2 of ground with dry_hcap and wmass per m2]: !

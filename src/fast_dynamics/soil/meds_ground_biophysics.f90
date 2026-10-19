@@ -18,7 +18,7 @@
 !==========================================================================================!
 module meds_ground_biophysics
    use meds_kinds,              only : wp, ik
-   use meds_constants,          only : t_3ple, tiny_num, cp_air, cp_ice, cp_liq, stefan,           &
+   use meds_constants,          only : t_3ple, tiny_num, cp_air, cp_ice, cp_liq, stefan_boltzmann, &
                                        latent_heat_fusion, tsupercool_liq
    use meds_therm_lib,          only : internal_energy_to_temp, sat_specific_humidity,                        &
                                        sat_specific_humidity_temp_deriv, enthalpy_vapor,           &
@@ -243,7 +243,7 @@ contains
       g_n      = gcond * (t_n - env%t_soil_top)
       dh_dt    = env%ggnet * env%rho_air * cp_air
       dw_dt    = env%ggnet * env%rho_air * sat_specific_humidity_temp_deriv(t_n, env%press, fliq_n)
-      demit_dt = 4.0_wp * params%snow_emiss * stefan * t_n ** 3
+      demit_dt = 4.0_wp * params%snow_emiss * stefan_boltzmann * t_n ** 3
       l_vap    = enthalpy_vapor(t_n) - e_old / swe0
       r0       = env%abs_sw + env%abs_lw - h_n - l_vap * w_n - g_n
       drdt     = -(demit_dt + dh_dt + l_vap * dw_dt + gcond)                ! < 0

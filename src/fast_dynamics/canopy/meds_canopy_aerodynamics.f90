@@ -22,7 +22,7 @@
 !==========================================================================================!
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : grav, pi, tiny_num, vonkarman, safe_exp
+   use meds_constants,        only : grav, pi, tiny_num, von_karman, safe_exp
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_biophysics_opts, only : aero_cfg_t
    implicit none
@@ -223,16 +223,16 @@ contains
 
       !----- Fixed-iteration solve (no data-dependent exit -> warp-uniform on GPU). --------!
       ustar = cfg%ustmin
-      temp1 = vonkarman / log(zldis / z0m)
+      temp1 = von_karman / log(zldis / z0m)
       do it = 1_ik, cfg%n_iter_mo
-         ustar   = max(cfg%ustmin, vonkarman * um / d_mom(zeta, zldis, z0m, cfg))
-         temp1   = vonkarman / d_heat(zeta, zldis, z0m, cfg)
+         ustar   = max(cfg%ustmin, von_karman * um / d_mom(zeta, zldis, z0m, cfg))
+         temp1   = von_karman / d_heat(zeta, zldis, z0m, cfg)
          thvstar = (temp1 * dth) * (1.0_wp + 0.61_wp * shv_atm) + 0.61_wp * theta_atm * (temp1 * dqh)
-         zeta    = zldis * vonkarman * grav * thvstar / (ustar * ustar * thv_atm)
+         zeta    = zldis * von_karman * grav * thvstar / (ustar * ustar * thv_atm)
       end do
       !----- Final ustar/temp1 consistent with the converged zeta. -------------------------!
-      ustar = max(cfg%ustmin, vonkarman * um / d_mom(zeta, zldis, z0m, cfg))
-      temp1 = vonkarman / d_heat(zeta, zldis, z0m, cfg)
+      ustar = max(cfg%ustmin, von_karman * um / d_mom(zeta, zldis, z0m, cfg))
+      temp1 = von_karman / d_heat(zeta, zldis, z0m, cfg)
       obu   = zldis / sign(max(abs(zeta), 1.0e-6_wp), zeta)   ! clamp-ok: a finite Obukhov length near neutral
    end subroutine mo_surface_layer
 
@@ -312,7 +312,7 @@ contains
       hd     = max(height - displace, rough * 1.001_wp)
       zeta_h = zeta * hd    / zldis
       zeta_0 = zeta * rough / zldis
-      u      = (ustar / vonkarman) * (log(hd / rough) - psim(zeta_h) + psim(zeta_0))
+      u      = (ustar / von_karman) * (log(hd / rough) - psim(zeta_h) + psim(zeta_0))
       u      = max(u, cfg%ugbmin)
    end function reduced_wind
 

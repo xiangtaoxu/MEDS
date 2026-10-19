@@ -11,7 +11,7 @@
 !==========================================================================================!
 module meds_optics_lib
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : pi, halfpi, tiny_num
+   use meds_constants, only : pi, pio2, tiny_num
    implicit none
    private
 
@@ -150,7 +150,7 @@ contains
             chi_s = 0.0_wp
          else
             bts   = acos(min(max(-cs / as, -1.0_wp), 1.0_wp))
-            chi_s = (2.0_wp / pi) * ((bts - halfpi) * cs + sin(bts) * ss)
+            chi_s = (2.0_wp / pi) * ((bts - pio2) * cs + sin(bts) * ss)
          end if
          gee = gee + lidf(k) * chi_s
       end do

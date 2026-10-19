@@ -16,7 +16,7 @@
 program test_tissue_energy
    use meds_test_assert,                only : check_true, test_report
    use meds_kinds,                      only : wp, ik
-   use meds_constants,                  only : cp_liq, tsupercool_liq, TISSUE_C_WOOD_DRY
+   use meds_constants,                  only : cp_liq, tsupercool_liq, tissue_c_wood_dry
    use meds_therm_lib,                  only : tissue_energy, tissue_temp, temp_to_internal_energy,          &
                                                internal_energy_liquid, tissue_dry_heat_capacity
    use meds_config,                     only : meds_config_t
@@ -65,7 +65,7 @@ program test_tissue_energy
    call check_true('wood that grows at its temperature keeps it', abs(poly%cohort%wood_temp(1) - t_wood) < 1.0e-10_wp)
    call check_true('and its energy rises by the new dry wood''s heat at that temperature',          &
                    abs(poly%cohort%wood_energy(1) - e_wood                                          &
-                       - tissue_dry_heat_capacity(1.0_wp, 0.2_wp * c_wood, TISSUE_C_WOOD_DRY) * t_wood) &
+                       - tissue_dry_heat_capacity(1.0_wp, 0.2_wp * c_wood, tissue_c_wood_dry) * t_wood) &
                    <= 1.0e-9_wp * e_wood)
    poly%cohort%leaf_carbon(1)     = 0.0_wp
    poly%cohort%leaf_water_mass(1) = 0.0_wp

@@ -15,7 +15,7 @@
 !==========================================================================================!
 module meds_fast_prepass
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, cp_air, r_gas, kgCday_2_umols
+   use meds_constants,        only : tiny_num, cp_air, r_gas, kgcday_2_umols
    use meds_config,           only : meds_config_t
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM, CO_BETA_NONSTOM, &
                                      CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, &
@@ -382,7 +382,7 @@ contains
          !----- TWO CURRENCIES, and they are not interchangeable. heterotrophic_respiration_matrix   !
          !      returns [kgC/m2/day] -- the units the CENTURY pools and the daily soil_carbon_step   !
          !      are written in. `rh` feeds nee_biotic beside ra_leaf/ra_stem/ra_root, which are      !
-         !      [umol/m2/s], so it is converted with kgCday_2_umols: unconverted, soil respiration   !
+         !      [umol/m2/s], so it is converted with kgcday_2_umols: unconverted, soil respiration   !
          !      would reach the canopy air ~964x too small.                                          !
          !      budget%rh_matrix_step KEEPS the kgC/m2/day form on purpose: the fast loop integrates !
          !      it into xi_accum%rh_fast_accum, which the daily step compares against its own pool   !
@@ -390,7 +390,7 @@ contains
          !      the source would break the seam check instead. --------------------------------------!
          rh_kgc = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)
          budget%xi_step = xi ; budget%rh_matrix_step = rh_kgc      ! [kgC/m2/day] -- the seam's currency
-         rh = rh_kgc * kgCday_2_umols                              ! [umol/m2/s]  -- what the CAS gets
+         rh = rh_kgc * kgcday_2_umols                              ! [umol/m2/s]  -- what the CAS gets
       else
          !----- NO SOIL CARBON MODELLED => NO SOIL RESPIRATION. A prescribed constant pool respired    !
          !      through an empirical Q10 form would not be a coarser approximation of the CENTURY      !

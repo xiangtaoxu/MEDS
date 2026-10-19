@@ -37,8 +37,8 @@ module meds_constants
    real(wp), parameter :: t_kelvin    = 273.15_wp            !< [K] 0 degC in Kelvin
    real(wp), parameter :: p_std       = 101325.0_wp          !< [Pa] standard atmospheric pressure
    real(wp), parameter :: t_ref_photo = 298.15_wp            !< [K] 25 degC reference for photosynthesis
-   real(wp), parameter :: stefan      = 5.670374419e-8_wp    !< [W/m2/K4] Stefan-Boltzmann (canopy RT longwave)
-   real(wp), parameter :: halfpi      = 0.5_wp * pi          !< [rad] pi/2 (leaf-inclination domain upper bound)
+   real(wp), parameter :: stefan_boltzmann      = 5.670374419e-8_wp    !< [W/m2/K4] Stefan-Boltzmann (canopy RT longwave)
+   real(wp), parameter :: pio2      = 0.5_wp * pi            !< [rad] pi/2 (leaf-inclination domain upper bound)
    !----- Leaf gas-exchange diffusion (H2O:CO2 diffusivity ratios) + mole-fraction -> ppm. -!
    real(wp), parameter :: gsw_2_gsc  = 1.6_wp    !< [-] stomatal H2O:CO2 diffusivity ratio; gs(CO2) = gs(H2O)/gsw_2_gsc
    real(wp), parameter :: gbw_2_gbc  = 1.4_wp    !< [-] boundary-layer H2O:CO2 diffusivity ratio; gb(CO2) = gb(H2O)/gbw_2_gbc
@@ -47,16 +47,16 @@ module meds_constants
    !----- Canopy-air CO2 balance + soil respiration (carbon <-> mole conversions). --------!
    real(wp), parameter :: mmdry          = 0.0289655_wp        !< [kg/mol] dry-air molar mass (~28.97 g/mol)
    real(wp), parameter :: mmh2o          = 0.01801528_wp       !< [kg/mol] water molar mass (~18.02 g/mol)
-   real(wp), parameter :: umol_2_kgC     = 1.20107e-8_wp       !< [kgC/umol] carbon mass per umol CO2 (12.0107 g/mol)
-   real(wp), parameter :: kgC_2_umol     = 1.0_wp / umol_2_kgC !< [umol/kgC]  (~8.3259e7)
-   real(wp), parameter :: kgCday_2_umols = kgC_2_umol / day_sec  !< [(umol/m2/s) per (kgC/m2/day)]  (~963.6)
-   real(wp), parameter :: umols_per_kgCyr = kgC_2_umol / yr_sec  !< [(umol/m2/s) per (kgC/m2/yr)]   (~2.638)
+   real(wp), parameter :: umol_2_kgc     = 1.20107e-8_wp       !< [kgC/umol] carbon mass per umol CO2 (12.0107 g/mol)
+   real(wp), parameter :: kgc_2_umol     = 1.0_wp / umol_2_kgc !< [umol/kgC]  (~8.3259e7)
+   real(wp), parameter :: kgcday_2_umols = kgc_2_umol / day_sec  !< [(umol/m2/s) per (kgC/m2/day)]  (~963.6)
+   real(wp), parameter :: umols_per_kgcyr = kgc_2_umol / yr_sec  !< [(umol/m2/s) per (kgC/m2/yr)]   (~2.638)
 
    !----- Soil hydrology (vertical water column). -----------------------------------------!
    real(wp), parameter :: rho_h2o     = 1000.0_wp            !< [kg/m3] liquid-water density (kg/m2 <-> m <-> m3/m3)
    real(wp), parameter :: grav        = 9.80665_wp           !< [m/s2] standard gravity (alpha_soil, aerodynamics, lapse)
    real(wp), parameter :: grav_head   = rho_h2o * grav * 1.0e-6_wp  !< [MPa/m] rho_w*g, potential per metre of head (soil, plant)
-   real(wp), parameter :: vonkarman   = 0.4_wp               !< [-] von Karman constant (Monin-Obukhov surface layer)
+   real(wp), parameter :: von_karman   = 0.4_wp              !< [-] von Karman constant (Monin-Obukhov surface layer)
    real(wp), parameter :: r_wv        = 461.5_wp             !< [J/kg/K] water-vapour gas constant (Philip alpha_soil)
    real(wp), parameter :: latent_heat_vap = 2.501e6_wp       !< [J/kg] latent heat of vaporization
 
@@ -70,9 +70,9 @@ module meds_constants
    !----- Plant tissue heat (docs/science/vegetation_energy_dynamics.md eq. (8)): the dry-matter !
    !      specific heats and the carbon -> dry-biomass factor. One set for the fast loop and the  !
    !      slow side (the fusion weights, the slow ledger), so both weigh a tissue's heat alike. --!
-   real(wp), parameter :: C2B_WOOD          = 2.0_wp    !< [-] carbon -> dry biomass (carbon fraction 0.5)
-   real(wp), parameter :: TISSUE_C_LEAF     = 3200.0_wp !< [J/kg/K] dry leaf specific heat
-   real(wp), parameter :: TISSUE_C_WOOD_DRY = 1217.0_wp !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
+   real(wp), parameter :: c2b_wood          = 2.0_wp    !< [-] carbon -> dry biomass (carbon fraction 0.5)
+   real(wp), parameter :: tissue_c_leaf     = 3200.0_wp !< [J/kg/K] dry leaf specific heat
+   real(wp), parameter :: tissue_c_wood_dry = 1217.0_wp !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
 
    !----- PAR (VIS, 400-700 nm) energy -> photon flux [umol photon / J]; the 400-700 nm solar     !
    !      spectrum gives ~4.57. ------------------------------------------------------------------!

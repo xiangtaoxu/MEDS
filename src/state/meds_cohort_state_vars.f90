@@ -18,7 +18,7 @@
 module meds_cohort_state_vars
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,           only : wp, ik
-   use meds_constants,       only : TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, cp_liq
+   use meds_constants,       only : tissue_c_leaf, tissue_c_wood_dry, cp_liq
    use meds_therm_lib,       only : tissue_heat_capacity, tissue_dry_heat_capacity, tissue_energy, tissue_temp, &
                                     internal_energy_liquid
    use meds_water_retention, only : water_curve_t, water_content
@@ -707,9 +707,9 @@ contains
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
       real(wp),           intent(out) :: cap_leaf, cap_wood             !< [J/m2 ground/K]
-      cap_leaf = tissue_heat_capacity(cohort%nplant(i), cohort%leaf_carbon(i), TISSUE_C_LEAF,           &
+      cap_leaf = tissue_heat_capacity(cohort%nplant(i), cohort%leaf_carbon(i), tissue_c_leaf,           &
                                       max(cohort%leaf_water_mass(i), 0.0_wp))
-      cap_wood = tissue_heat_capacity(cohort%nplant(i), cohort%wood_carbon(i), TISSUE_C_WOOD_DRY,       &
+      cap_wood = tissue_heat_capacity(cohort%nplant(i), cohort%wood_carbon(i), tissue_c_wood_dry,       &
                                       max(cohort%wood_water_mass(i), 0.0_wp))
    end subroutine cohort_tissue_heat_capacity
 
@@ -720,8 +720,8 @@ contains
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
       real(wp),           intent(out) :: dry_leaf, w_leaf, dry_wood, w_wood
-      dry_leaf = tissue_dry_heat_capacity(1.0_wp, cohort%leaf_carbon(i), TISSUE_C_LEAF)
-      dry_wood = tissue_dry_heat_capacity(1.0_wp, cohort%wood_carbon(i), TISSUE_C_WOOD_DRY)
+      dry_leaf = tissue_dry_heat_capacity(1.0_wp, cohort%leaf_carbon(i), tissue_c_leaf)
+      dry_wood = tissue_dry_heat_capacity(1.0_wp, cohort%wood_carbon(i), tissue_c_wood_dry)
       w_leaf   = max(cohort%leaf_water_mass(i), 0.0_wp)
       w_wood   = max(cohort%wood_water_mass(i), 0.0_wp)
    end subroutine cohort_tissue_masses

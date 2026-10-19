@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_column_ark
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
+   use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -284,7 +284,7 @@ contains
       call reset_state()
       call set_noon_forcing()
       w_store = biophys%wood_water_mass(1)
-      cap_dry = col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * TISSUE_C_WOOD_DRY
+      cap_dry = col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * tissue_c_wood_dry
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, n, nsl, fz, ys)
       cap_full = fz%tissue%wood_hcap_per_dt(1) * dt_fast
@@ -584,10 +584,10 @@ contains
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       !----- ...and the tissues' energy at t0, the state the column advances. ----------------------!
       biophys%leaf_energy(1:n) = tissue_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
-                                    col_cohort%bleaf(1:n), TISSUE_C_LEAF),                                    &
+                                    col_cohort%bleaf(1:n), tissue_c_leaf),                                    &
                                     max(biophys%leaf_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
       biophys%wood_energy(1:n) = tissue_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
-                                    col_cohort%bwood(1:n), TISSUE_C_WOOD_DRY),                                &
+                                    col_cohort%bwood(1:n), tissue_c_wood_dry),                                &
                                     max(biophys%wood_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
       budget = column_budget_t()
       biophys%soil_water%theta(1:nsl) = theta_seed

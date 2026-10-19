@@ -20,7 +20,7 @@
 program test_canopy_radiation
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : stefan
+   use meds_constants,      only : stefan_boltzmann
    use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_forcing, RAD_VIS, RAD_NIR, RAD_LW, &
                                  N_RAD_BAND_DEFAULT
    use meds_optics_lib,     only : beta_lidf, leaf_bf, beta_params_from_mean, gfun_direct,    &
@@ -97,7 +97,7 @@ contains
       f%cosz = cosz
       f%incid_beam(RAD_VIS) = 300.0_wp ; f%incid_diff(RAD_VIS) = 100.0_wp
       f%incid_beam(RAD_NIR) = 250.0_wp ; f%incid_diff(RAD_NIR) =  80.0_wp
-      f%incid_beam(RAD_LW)  = 0.0_wp   ; f%incid_diff(RAD_LW)  = stefan * t_sky ** 4
+      f%incid_beam(RAD_LW)  = 0.0_wp   ; f%incid_diff(RAD_LW)  = stefan_boltzmann * t_sky ** 4
       surf%n_band = N_RAD_BAND_DEFAULT
       allocate(surf%soil_albedo(N_RAD_BAND_DEFAULT))
       surf%soil_albedo = [0.15_wp, 0.30_wp, 0.0_wp]
@@ -356,7 +356,7 @@ contains
          net_lw = flux%abs_leaf(RAD_LW,i) + flux%abs_wood(RAD_LW,i)
          maxnet = max(maxnet, abs(net_lw))
       end do
-      call check('max |net LW| at equilibrium', maxnet, 0.0_wp, 1.0e-7_wp * stefan * teq ** 4)
+      call check('max |net LW| at equilibrium', maxnet, 0.0_wp, 1.0e-7_wp * stefan_boltzmann * teq ** 4)
    end subroutine test_longwave_equilibrium
 
 end program test_canopy_radiation

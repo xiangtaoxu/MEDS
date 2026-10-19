@@ -10,7 +10,7 @@
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan
+   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan_boltzmann
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_therm_lib,         only : sat_vapor_pressure
    use meds_time,           only : meds_time_t, solar_cosz, day_of_year, solar_declination
@@ -316,7 +316,7 @@ contains
       real(wp) :: lw, eps, kt_use
       eps    = clear_sky_emissivity(form, tair_k, qair, psurf_pa)
       kt_use = min(1.0_wp, max(0.0_wp, kt))
-      lw     = eps * stefan * tair_k ** 4 * (1.0_wp + max(cloud_a, 0.0_wp) * (1.0_wp - kt_use))
+      lw     = eps * stefan_boltzmann * tair_k ** 4 * (1.0_wp + max(cloud_a, 0.0_wp) * (1.0_wp - kt_use))
    end function synthesize_lwdown
 
    !----- Erbs et al. (1982) diffuse fraction of hourly global radiation vs clearness index. ---!

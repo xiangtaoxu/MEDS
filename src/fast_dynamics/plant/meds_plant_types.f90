@@ -211,7 +211,7 @@ module meds_plant_types
    !=======================================================================================!
 
    !----- Per-PFT vegetation thermal parameters (docs/science/vegetation_energy_dynamics.md eq.   !
-   !      (1)). The tissues' specific heats are constants (TISSUE_C_LEAF, TISSUE_C_WOOD_DRY in     !
+   !      (1)). The tissues' specific heats are constants (tissue_c_leaf, tissue_c_wood_dry in     !
    !      meds_constants). -----------------------------------------------------------------------!
    type :: veg_thermal_params_t
       real(wp) :: effarea_heat   = 2.0_wp                   !< [-] sensible sidedness (both leaf sides)

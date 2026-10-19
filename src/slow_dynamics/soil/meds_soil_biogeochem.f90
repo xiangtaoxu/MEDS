@@ -29,7 +29,7 @@
 !==========================================================================================!
 module meds_soil_biogeochem
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : yr_day, tiny_num, kgCday_2_umols
+   use meds_constants,        only : yr_day, tiny_num, kgcday_2_umols
    use meds_numerics,         only : matrix_exp
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
@@ -262,7 +262,7 @@ contains
    !  This is ALSO what the fast loop respires into the canopy air, per sub-step, against the frozen    !
    !  daily pool -- which is what makes the day's atmospheric Rh equal the daily step's pool debit by    !
    !  construction (the rh_seam_gap contract). Callers crossing into the CAS must convert with           !
-   !  kgCday_2_umols; patch_heterotrophic_respiration is where that happens.                             !
+   !  kgcday_2_umols; patch_heterotrophic_respiration is where that happens.                             !
    !  docs/science/soil_carbon.md eq. (2) and §7.                                                        !
    !=======================================================================================!
    pure function heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools) result(rh)

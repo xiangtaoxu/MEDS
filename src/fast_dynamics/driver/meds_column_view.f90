@@ -27,7 +27,7 @@
 !==========================================================================================!
 module meds_column_view
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cm2_to_m2, C2B_WOOD, t_3ple
+   use meds_constants,        only : cm2_to_m2, c2b_wood, t_3ple
    use meds_cohort_state_vars, only : cohort_block, alloc_cohort_block, init_cohort, set_cohort_size
    use meds_pft_params,       only : pft_table_t
    use meds_config,           only : hydraulics_config_t
@@ -88,7 +88,7 @@ contains
          !----- Sapwood volume [m3/plant]: its carbon as dry mass, over the PFT's wood density   !
          !      [g/cm3 = 1000 kg/m3]. Biomass grows as density^0.976, so the volume barely      !
          !      depends on the density: it is the stem's geometry. ---------------------------!
-         cc%sap_volume(j)    = cohort%sapwood_carbon(i) * C2B_WOOD / (1.0e3_wp * pft%wood_density(pf))
+         cc%sap_volume(j)    = cohort%sapwood_carbon(i) * c2b_wood / (1.0e3_wp * pft%wood_density(pf))
          cc%root_resp_factor25(j) = pft%root_resp_factor25(pf)
       end do
       end associate
