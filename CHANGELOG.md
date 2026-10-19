@@ -19,6 +19,7 @@ and a new cohort starts in its patch's state instead of at two constants (#447).
 reorganized by model hierarchy, with no change to any result (#448). A run is a region of one polygon
 or many, and every output and state file has a `polygon` dimension (#449). The polygon's state is
 `polygon_t`, with a site block beside its patch and cohort blocks, ready for several sites (#450).
+Each site owns its soil column and the column's bottom, and the run keeps one configuration (#451).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -47,6 +48,12 @@ or many, and every output and state file has a `polygon` dimension (#449). The p
   `rebuild_cohort_map`. `io_read_state` sets the restructuring a checkpoint owes on the polygon it
   reads (`poly%restructure_pending`, `poly%restructure_new_year`) and no longer returns it through
   two arguments. Output and state files do not change.
+- **Fortran code that builds a soil column from the configuration reads the site's** (#451):
+  `poly%site%surface(is)` holds the column (`soil_column`, `soil`, `soil_thermal`), each layer's
+  starting water (`theta_start`, which replaces `fast_context_t%theta_init`) and the column's bottom.
+  `patch_physical_state` takes the patch's site's surface in place of a soil column, and
+  `slow_site_store` no longer takes one. `polygon_run_t` has no config: `polygon_prepare`,
+  `polygon_step`, `polygon_report` and `attach_output` take the run's.
 
 ### Changed
 
@@ -151,6 +158,18 @@ or many, and every output and state file has a `polygon` dimension (#449). The p
 
   Results are unchanged: the same eight cases match the previous version bit for bit, in every
   variable of every output and state file.
+- **Each site owns its surface** (#451; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S2). A site
+  holds its soil column (from `[soil]` or its cell's soil maps) with the parameters derived from it
+  once, each layer's starting water, the column's bottom (water boundary, drainage factor, deep
+  temperature and depth) and its terrain (elevation, slope, aspect; not read yet). Every reader of
+  the soil column takes the patch's site's: the fast loop runs each patch on its site's column
+  configuration (the polygon's, with the site's soil and bottom), and the fast reservoirs, the slow
+  ledger's stores, a new cohort's birth state, recruitment and a restart's tissue fallback read the
+  site's surface. With the soil on the sites, the run keeps one configuration: a polygon's run
+  machinery no longer carries a copy. A run without the fast loop now writes its real soil layers
+  in the output's `soil_z` (it wrote an unbuilt column).
+
+  Results are unchanged: the eight cases match the previous version bit for bit.
 
 ### Removed
 
