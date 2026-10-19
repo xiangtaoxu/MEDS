@@ -952,18 +952,15 @@ contains
    end subroutine shed_excess_tissue_water
 
    !---------------------------------------------------------------------------------------!
-   ! Continuous background-mortality WATER. The individuals that die this step take their          !
-   ! tissue water with them; without this routine it would vanish when `update_cohort_states`      !
-   ! lowers nplant -- a silent sink on every cohort on every step. (Their tissue HEAT is a change  !
-   ! in thermal MASS, declared with the growth commit's, since the two are one mechanism.)         !
+   ! Continuous background-mortality WATER. The individuals that die this step take their         !
+   ! tissue water and their canopy films with them; without this routine it would vanish when     !
+   ! `update_cohort_states` lowers nplant -- a silent sink on every cohort on every step. (Their  !
+   ! tissue HEAT is a change in thermal MASS, declared with the growth commit's, since the two    !
+   ! are one mechanism.)                                                                          !
    !                                                                                          !
    ! The water goes to the ground down the SAME channel turnover shedding already uses, so there  !
    ! is one verified path for "tissue water that stopped being tissue water" rather than a second  !
    ! mechanism to keep in step with the first.                                                      !
-   !                                                                                          !
-   ! Only the TISSUE water moves. The interception film is per m2 of ground and `update_cohort_     !
-   ! states` does not scale it when nplant falls, so no film leaves the store here -- routing it     !
-   ! would invent a flux the state never made.                                                       !
    !                                                                                          !
    ! Runs AFTER update_cohort_states commits the new nplant, with the density from BEFORE the       !
    ! commit (nplant_before): the dying number is n0 - n1, exactly as accumulate_mortality_litter    !
@@ -987,7 +984,8 @@ contains
             !      not a fraction of what the survivors still hold. cohort_tissue_water carries    !
             !      the post-commit nplant, so using it here would scale the loss by n1/n0. --------!
             w_j = died_nplant * (max(cohort%leaf_water_mass(j), 0.0_wp)                            &
-                               + max(cohort%wood_water_mass(j), 0.0_wp))
+                               + max(cohort%wood_water_mass(j), 0.0_wp)                            &
+                               + cohort%leaf_surf_water(j) + cohort%wood_surf_water(j))
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
             water_shed = water_shed + patch_polygon_area(poly, ip) * w_j
          end do

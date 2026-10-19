@@ -32,7 +32,7 @@ module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : rho_h2o
    use meds_config,             only : meds_config_t
-   use meds_cohort_state_vars,  only : cohort_tissue_heat_capacity
+   use meds_cohort_state_vars,  only : cohort_tissue_heat_capacity, cohort_film_water
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
@@ -354,8 +354,7 @@ contains
          end do
 
          !----- Cohorts of this patch. nplant is per m2 of PATCH ground, so the patch area weight  !
-         !      converts to site; the interception films are ALREADY ground-referenced and must    !
-         !      not take the nplant factor.                                                        !
+         !      converts to site.                                                                 !
          i0 = poly%patch%cohort_offset(ip)
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          associate (c => poly%cohort)
@@ -363,7 +362,7 @@ contains
                store%carbon = store%carbon + a * c%nplant(i) * (c%leaf_carbon(i)                   &
                             + c%fineroot_carbon(i) + c%wood_carbon(i) + c%nonstructural_carbon(i))
                store%water  = store%water  + a * c%nplant(i) * (c%leaf_water_mass(i) + c%wood_water_mass(i))
-               store%water  = store%water  + a * (c%leaf_surf_water(i) + c%wood_surf_water(i))
+               store%water  = store%water  + a * cohort_film_water(c, i)
                !----- Tissue heat, through the SHARED capacity (cohort state), so the ledger, the  !
                !      demography operators and the slow driver cannot drift apart on what a        !
                !      cohort's thermal mass is. ---------------------------------------------------!

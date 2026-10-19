@@ -35,9 +35,10 @@ module meds_cohort_state_vars
 
    public :: cohort_block, alloc_cohort_block, free_cohort_block, expand_cohort_block, reorder_cohort_block
    public :: compact_cohort_block, copy_cohort, set_cohort_size, set_cohort_size_from_carbon, init_cohort
-   public :: scale_cohort_ground_fields, fuse_cohort_fast_state
+   public :: fuse_cohort_fast_state
    public :: cohort_deriv_block, cohort_deriv_alloc
-   public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
+   public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_film_water, cohort_wood_store_carbon
+   public :: set_cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
    !----- All cohorts of a site. The model integrates nplant and the four carbon pools; the  !
@@ -81,8 +82,8 @@ module meds_cohort_state_vars
       !==========================================================================================!
       real(wp),    allocatable :: leaf_water_mass(:)  !< [kg/plant] water inside the leaves
       real(wp),    allocatable :: wood_water_mass(:)  !< [kg/plant] water inside the sapwood and fine roots
-      real(wp),    allocatable :: leaf_surf_water(:)  !< [kg/m2 ground] intercepted water on the leaves
-      real(wp),    allocatable :: wood_surf_water(:)  !< [kg/m2 ground] intercepted water on the wood
+      real(wp),    allocatable :: leaf_surf_water(:)  !< [kg/plant] intercepted water on the leaves
+      real(wp),    allocatable :: wood_surf_water(:)  !< [kg/plant] intercepted water on the wood
       real(wp),    allocatable :: dmax_psi_leaf(:)    !< [MPa] yesterday's daily-max (predawn) leaf potential
       !==========================================================================================!
       ! 5. ENERGY                                                                                !
@@ -663,6 +664,14 @@ contains
                             + max(cohort%wood_water_mass(i), 0.0_wp))
    end function cohort_tissue_water
 
+   !----- One cohort's canopy films [kg/m2 ground]: the water intercepted on its leaves and wood. --!
+   pure function cohort_film_water(cohort, i) result(w)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i
+      real(wp)                       :: w
+      w = cohort%nplant(i) * (cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
+   end function cohort_film_water
+
    !----- One cohort's leaf and wood heat capacity [J/m2 ground/K], from tissue_heat_capacity. The  !
    !      wood holds the sapwood's share of the wood store's water (wood_thermal_water); the fine   !
    !      roots' share sits in the soil. The fusion weights, the demography operators and the slow  !
@@ -743,43 +752,21 @@ contains
    !  FUSION AND FISSION: the per-field policy for the fast-loop-owned state               !
    !=======================================================================================!
 
-   !---------------------------------------------------------------------------------------!
-   ! Rescale the per-cohort fields that are referenced to the PATCH GROUND AREA [kg/m2     !
-   ! ground] rather than to the plant -- the canopy interception films. Every operation    !
-   ! that changes the ground area a cohort's density refers to must apply the same factor  !
-   ! to these fields as it applies to nplant -- cohort fission (0.5 each daughter), patch  !
-   ! fusion (area weights), and the survivor copy into a disturbance gap. Copying them     !
-   ! verbatim after halving nplant would double the site's film water on every split.      !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine scale_cohort_ground_fields(cohort, i, factor)
-      type(cohort_block), intent(inout) :: cohort
-      integer(ik),        intent(in)    :: i
-      real(wp),           intent(in)    :: factor
-      !----- GROUND-referenced fields only -- see fuse_cohort_fast_state for the one place the      !
-      !      per-field policy is declared. A field that is per PLANT must NOT appear here: it       !
-      !      carries no area normalization to rescale.  ------------------------------------------!
-      cohort%leaf_surf_water(i) = cohort%leaf_surf_water(i) * factor
-      cohort%wood_surf_water(i) = cohort%wood_surf_water(i) * factor
-   end subroutine scale_cohort_ground_fields
-
    !=========================================================================================!
    !  THE PER-FIELD FUSION POLICY OF THE FAST-LOOP-OWNED COHORT STATE -- declared once,      !
    !  here.                                                                                  !
    !                                                                                         !
    !  These fields are written by the fast loop and read back by it; the slow loop only has  !
-   !  to carry them correctly through a fusion. Each is one of three kinds, and getting the  !
+   !  to carry them correctly through a fusion. Each is one of two kinds, and getting the    !
    !  kind wrong is invisible: the AGB assert still passes, the conservation ledgers still   !
    !  close, and the answer is quietly wrong.                                                !
    !                                                                                         !
-   !    FSK_INTENSIVE  a per-mass property (a temperature). Weighted by the HEAT CAPACITY     !
+   !    FSK_INTENSIVE  a per-mass property (a temperature). Weighted by the HEAT CAPACITY    !
    !                  that carries it, which is what conserves the tissue's energy through   !
    !                  the merge.                                                             !
-   !    FSK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux).      !
+   !    FSK_EXTENSIVE  a per-PLANT amount (tissue water, a canopy film, a per-plant flux).   !
    !                  nplant-weighted mean, so the site total (nplant * value, summed) is    !
    !                  conserved.                                                             !
-   !    FSK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts    !
-   !                  over the same ground simply ADD; weighting would double-count the      !
-   !                  normalization.                                                         !
    !                                                                                         !
    !  The diagnostic twins are fused from their own declared table (CO_FUSION_KIND,          !
    !  meds_diag_vars) on weights the caller computes: the tissue heat capacities for         !
@@ -787,15 +774,15 @@ contains
    !  (transpiration per m2 of leaf, say), which is not a temperature. Adding a fast-loop    !
    !  field is one line here; the compiler will not remind you, so the line is the reminder. !
    !=========================================================================================!
-   !----- THE per-field policy for the fast-loop cohort state, declared once. Three kinds, and    !
-   !      the headings below are the declaration: INTENSIVE (weighted by the capacity that carries  !
-   !      the quantity), EXTENSIVE (nplant-weighted), GROUND (added, never weighted).                !
-   !                                                                                          !
-   !      It is centralised but not enforced: a per-cohort fast field left out of this routine       !
-   !      compiles clean and is silently wrong at the next fusion. A new field needs a line here, a   !
-   !      line in scale_cohort_ground_fields if it is per m2 of ground, and a witness in             !
-   !      test_fusion_cohort. A table the blend iterated would be no safer (the compiler cannot      !
-   !      check that a table lists every field either) and would be longer than these lines. -------!
+   !----- THE per-field policy for the fast-loop cohort state, declared once. Two kinds, and the  !
+   !      headings below are the declaration: INTENSIVE (weighted by the capacity that carries    !
+   !      the quantity) and EXTENSIVE (nplant-weighted).                                          !
+   !                                                                                              !
+   !      It is centralised but not enforced: a per-cohort fast field left out of this routine    !
+   !      compiles clean and is silently wrong at the next fusion. A new field needs a line here  !
+   !      and a witness in test_fusion_cohort. A table the blend iterated would be no safer (the  !
+   !      compiler cannot check that a table lists every field either) and would be longer than   !
+   !      these lines. ---------------------------------------------------------------------------!
    pure subroutine fuse_cohort_fast_state(cohort, recc, donc, np_r, np_d)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: recc, donc   !< survivor, donor
@@ -819,16 +806,16 @@ contains
       call cohort_tissue_heat_capacity(cohort, donc, cld, cwd)
       call blend(cohort%leaf_temp,        clr, cld)
       call blend(cohort%wood_temp,        cwr, cwd)
-      !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
+      !----- EXTENSIVE: tissue water and the canopy films [kg/plant], and the per-plant flux     !
+      !      accumulators. ----------------------------------------------------------------------!
       call blend(cohort%leaf_water_mass,  np_r, np_d)
       call blend(cohort%wood_water_mass,  np_r, np_d)
       call blend(cohort%gpp_accum,        np_r, np_d)
       call blend(cohort%leaf_resp_accum,  np_r, np_d)
       call blend(cohort%stem_resp_accum,  np_r, np_d)
       call blend(cohort%root_resp_accum,  np_r, np_d)
-      !----- GROUND: the interception film [kg/m2 ground] -- add, never weight. ----------------!
-      cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
-      cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
+      call blend(cohort%leaf_surf_water,  np_r, np_d)
+      call blend(cohort%wood_surf_water,  np_r, np_d)
       !----- SURVIVOR-KEEPS, declared rather than left implicit: the phenology memories            !
       !      (the two tendencies, the degree-day and psi sums, the light mean), light_hours_accum    !
       !      (already consumed this step) and dmax_psi_leaf are absent from this routine ON PURPOSE,  !

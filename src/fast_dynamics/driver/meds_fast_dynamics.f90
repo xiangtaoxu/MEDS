@@ -603,9 +603,10 @@ contains
             biophys%wood_water_mass(j) = poly%cohort%wood_water_mass(i)
             !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !
             !      initial condition here, not a placeholder -- a freshly-created cohort simply hasn't  !
-            !      been rained on yet. -----------------------------------------------------------------!
-            biophys%leaf_surf_water(j) = poly%cohort%leaf_surf_water(i)
-            biophys%wood_surf_water(j) = poly%cohort%wood_surf_water(i)
+            !      been rained on yet. The cohort holds it per plant, the fast loop per m2 of        !
+            !      ground. --------------------------------------------------------------------------!
+            biophys%leaf_surf_water(j) = poly%cohort%leaf_surf_water(i) * poly%cohort%nplant(i)
+            biophys%wood_surf_water(j) = poly%cohort%wood_surf_water(i) * poly%cohort%nplant(i)
          end do
 
          call ensure_aero_out_capacity(aero, ncoh)
@@ -816,8 +817,8 @@ contains
             poly%cohort%wood_temp(i) = biophys%wood_temp(j)
             poly%cohort%leaf_water_mass(i) = biophys%leaf_water_mass(j)
             poly%cohort%wood_water_mass(i) = biophys%wood_water_mass(j)
-            poly%cohort%leaf_surf_water(i) = biophys%leaf_surf_water(j)
-            poly%cohort%wood_surf_water(i) = biophys%wood_surf_water(j)
+            poly%cohort%leaf_surf_water(i) = biophys%leaf_surf_water(j) / poly%cohort%nplant(i)
+            poly%cohort%wood_surf_water(i) = biophys%wood_surf_water(j) / poly%cohort%nplant(i)
          end do
 
          red_worst_energy(ip) = budget%whole_energy%worst

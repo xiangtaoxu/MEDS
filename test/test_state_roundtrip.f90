@@ -1,7 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !----- State restart round-trip: the per-cohort PLASTIC leaf traits (sla/vcmax25/rd25 and the ----!
 !----- leaf turnover rate) must be written to and recovered from a state checkpoint, not reset ----!
-!----- to top-of-canopy; a file holding the rate as a leaf lifespan (`llspan`) still reads. -------!
+!----- to top-of-canopy; a file holding the rate as a leaf lifespan (`llspan`) still reads, and ---!
+!----- one holding the canopy films per m2 of ground (no `units`) reads them per plant. ----------!
 program test_state_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
@@ -22,6 +23,11 @@ program test_state_roundtrip
          integer(c_int), value, intent(in) :: ncid, varid
          character(kind=c_char), intent(in) :: name(*)
       end function nc_rename_var
+      integer(c_int) function nc_del_att(ncid, varid, name) bind(c, name="nc_del_att")
+         import :: c_int, c_char
+         integer(c_int), value, intent(in) :: ncid, varid
+         character(kind=c_char), intent(in) :: name(*)
+      end function nc_del_att
    end interface
 
    type(meds_config_t) :: cfg
@@ -64,6 +70,9 @@ program test_state_roundtrip
       poly%cohort%dry_psi_sum(i)         = 5.0_wp + real(i, wp)
       poly%cohort%wet_psi_sum(i)         = 2.0_wp + real(i, wp)
       poly%cohort%light_hours_mean(i) = 10.0_wp + 0.1_wp * real(i, wp)
+      !----- The canopy films [kg/plant]. ---------------------------------------------------------!
+      poly%cohort%leaf_surf_water(i) = 0.020_wp + 0.001_wp * real(i, wp)
+      poly%cohort%wood_surf_water(i) = 0.007_wp + 0.001_wp * real(i, wp)
    end do
 
    !----- Stamp distinct, non-default FAST reservoir values on every patch -- a bare-ground site     !
@@ -133,6 +142,9 @@ program test_state_roundtrip
                         'light_hours_mean recovered')
       call check_close(poly2%cohort%dmax_psi_leaf_accum(i), poly%cohort%dmax_psi_leaf_accum(i), 1.0e-12_wp, &
                         'dmax_psi_leaf_accum recovered from state (partial day not discarded)')
+      call check(poly2%cohort%leaf_surf_water(i) == poly%cohort%leaf_surf_water(i) .and.          &
+                 poly2%cohort%wood_surf_water(i) == poly%cohort%wood_surf_water(i),               &
+                 'the canopy films [kg/plant] recovered bit for bit')
    end do
    do i = 1_ik, poly2%patch%n
       call check_close(poly2%patch%cas(i)%can_enthalpy, poly%patch%cas(i)%can_enthalpy, 1.0e-6_wp, &
@@ -164,7 +176,10 @@ program test_state_roundtrip
 
    !----- A state file written while the trait was a leaf lifespan holds `llspan` [yr] in place of  !
    !      `leaf_turnover_rate`: the reader takes the rate as its reciprocal. The file just written is  !
-   !      made into one by renaming the variable and writing a 4-yr lifespan into it. --------------!
+   !      made into one by renaming the variable and writing a 4-yr lifespan into it. And a file      !
+   !      written while the films were per m2 of ground has no `units` on them: removing it makes    !
+   !      the reader take the same numbers as per m2 of ground, so per plant they are 1/nplant as   !
+   !      large. ----------------------------------------------------------------------------------!
    block
       integer(c_int)              :: ncid, vid
       integer(c_size_t)           :: start(2), count(2)
@@ -181,6 +196,8 @@ program test_state_roundtrip
       count = [1_c_size_t, int(poly%cohort%n, c_size_t)]                 ! the polygon's row
       call check(nc_put_vara_double(ncid, vid, start, count, lifespan) == NC_NOERR,                  &
                  'a 4-yr lifespan is written into it')
+      call check(nc_inq_varid_f(ncid, 'leaf_surf_water', vid) == NC_NOERR .and.                      &
+                 nc_del_att(ncid, vid, cstr('units')) == NC_NOERR, 'the leaf film loses its units')
       call check(nc_close(ncid) == NC_NOERR, 'the state file closes')
    end block
    call io_read_state(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
@@ -189,6 +206,8 @@ program test_state_roundtrip
       call check_close(poly2%cohort%leaf_turnover_rate(i), 0.25_wp, 1.0e-15_wp,                     &
                        'llspan [yr] is read as the leaf turnover rate 1/llspan [1/yr]')
       call check_close(poly2%cohort%sla(i), sla_set, 1.0e-9_wp, 'the other traits read as before')
+      call check_close(poly2%cohort%leaf_surf_water(i), poly%cohort%leaf_surf_water(i) / poly%cohort%nplant(i), &
+                       1.0e-15_wp, 'a film without units is read per m2 of ground')
    end do
 
    write(*,'(a)') '   PASS'

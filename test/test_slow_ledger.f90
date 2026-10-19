@@ -95,7 +95,7 @@ program test_slow_ledger
    call moves_water ('snow swe',          perturb_swe,          1.0_wp)
    call moves_water ('canopy vapour',     perturb_shv,          RHO * 20.0_wp * 0.001_wp)
    call moves_water ('tissue water',      perturb_tissue_water, poly%cohort%nplant(1) * 0.01_wp)
-   call moves_water ('interception film', perturb_film,         0.01_wp)
+   call moves_water ('interception film', perturb_film,         poly%cohort%nplant(1) * 0.01_wp)
    call moves_energy('soil energy',       perturb_soil_energy,  1.0e6_wp * soil%dz(1))
    call moves_energy('pond energy',       perturb_pond_energy,  1.0e5_wp)
    call moves_energy('snow energy',       perturb_snow_energy,  1.0e5_wp)
@@ -720,8 +720,8 @@ contains
       n0          = poly%cohort%n
       shed_before = poly%patch%shed_water_rate(1)
       heat_before = slow_tissue_heat(poly)
-      w_before    = poly%cohort%nplant(2) * (poly%cohort%leaf_water_mass(2) + poly%cohort%wood_water_mass(2)) &
-                  + poly%cohort%leaf_surf_water(2) + poly%cohort%wood_surf_water(2)
+      w_before    = poly%cohort%nplant(2) * (poly%cohort%leaf_water_mass(2) + poly%cohort%wood_water_mass(2) &
+                                         + poly%cohort%leaf_surf_water(2) + poly%cohort%wood_surf_water(2))
       expect_w    = poly%patch%area(1) * w_before
 
       call terminate_cohorts(poly, cfg, w_shed)

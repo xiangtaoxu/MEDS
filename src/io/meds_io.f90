@@ -50,6 +50,7 @@ module meds_io
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
+   character(len=*), parameter :: FILM_UNITS  = 'kg/plant'   !< the canopy films' units attribute
 
    !----- An open state file, its polygon axis ahead of every other. --------------------------------!
    type :: state_file_t
@@ -188,9 +189,10 @@ contains
       call dv('overtopping_lai',      NC_DOUBLE, [d_cohort], 'LAI of the taller cohorts in the patch [m2/m2]')
       !----- The canopy interception film ([fast].canopy_water_on). A dry canopy is a valid start,   !
       !      but not the state the writing run was in. OPTIONAL on read (a file without it starts   !
-      !      dry). ---------------------------------------------------------------------------------!
-      call dv('leaf_surf_water',      NC_DOUBLE, [d_cohort], 'leaf interception film [kg/m2 ground]')
-      call dv('wood_surf_water',      NC_DOUBLE, [d_cohort], 'wood interception film [kg/m2 ground]')
+      !      dry). Per plant, and marked so: a file whose films have no `units` holds them per m2   !
+      !      of ground, as files written before did. -----------------------------------------------!
+      call dv('leaf_surf_water',      NC_DOUBLE, [d_cohort], 'leaf interception film [kg/plant]', units=FILM_UNITS)
+      call dv('wood_surf_water',      NC_DOUBLE, [d_cohort], 'wood interception film [kg/plant]', units=FILM_UNITS)
       !----- The growth-rate ring buffer behind growth_avg (the mortality predictor) and its site-wide !
       !      write slot. OPTIONAL on read: a file without it, or one written with another window       !
       !      length, reseeds the buffer from growth_avg. ---------------------------------------------!
@@ -287,10 +289,11 @@ contains
                        'state long_name '//name)
       end subroutine coord_var
       !----- Define a state variable on its site dimensions, behind the polygon axis, with its     !
-      !      long_name. ----------------------------------------------------------------------------!
-      subroutine dv(name, xtype, dimids, lname)
+      !      long_name and, where the reader needs it, its units. ----------------------------------!
+      subroutine dv(name, xtype, dimids, lname, units)
          character(len=*), intent(in) :: name, lname
          integer(c_int),   intent(in) :: xtype, dimids(:)
+         character(len=*), intent(in), optional :: units
          integer(c_int)    :: v, dims(size(dimids) + 1)
          integer(c_size_t) :: chunk(size(dimids) + 1)
          integer           :: nd, k
@@ -300,6 +303,8 @@ contains
          call nc_check(nc_def_var_f(ncid, name, xtype, int(nd, c_int), dims(1:nd), v), 'state def '//name)
          call nc_check(nc_put_att_text_f(ncid, v, 'long_name',                              &
                        int(len_trim(lname), c_size_t), lname), 'state long_name '//name)
+         if (present(units)) call nc_check(nc_put_att_text_f(ncid, v, 'units',              &
+                                           int(len_trim(units), c_size_t), units), 'state units '//name)
          !----- One polygon's row per chunk. Each polygon writes its own rows (state_file_put), so a   !
          !      chunk shared by many polygons is decompressed and recompressed at each of their writes   !
          !      once the chunks of a row outgrow HDF5's chunk cache: a 606-polygon region (example 06)   !
@@ -617,7 +622,7 @@ contains
       logical, optional,   intent(out) :: fast_found
       integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
       type(meds_config_t), optional, intent(in) :: site_cfg(:)   !< each site's configuration
-      character(len=16) :: pending
+      character(len=16) :: pending, units_attr
       character(len=160) :: msg
       integer(c_int) :: ncid, vid, st
       integer(ik)    :: ncoh, npat, npft, ip, i, nwin, slot, ns, is, meta_i(N_META_INT)
@@ -745,6 +750,14 @@ contains
             call gv_dbl_opt(ncid, 'light_hours_mean', ncoh, c%light_hours_mean(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_surf_water',    ncoh, c%leaf_surf_water(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
+            !----- A file whose films carry no units held them per m2 of ground. --------------------!
+            if (nc_inq_varid_f(ncid, 'leaf_surf_water', vid) == NC_NOERR) then
+               if (nc_get_att_text_f(ncid, vid, 'units', units_attr) /= NC_NOERR) units_attr = ''
+               if (trim(units_attr) /= FILM_UNITS) then
+                  c%leaf_surf_water(1:ncoh) = c%leaf_surf_water(1:ncoh) / c%nplant(1:ncoh)
+                  c%wood_surf_water(1:ncoh) = c%wood_surf_water(1:ncoh) / c%nplant(1:ncoh)
+               end if
+            end if
          end associate
          !----- The carbon pools the writing run held, and the geometry derived from them as the  !
          !      run derives it (the file's height/agb/leaf_area are for its readers, not read back). !

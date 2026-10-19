@@ -21,13 +21,13 @@
 module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num
-   use meds_numerics,   only : conserved, ROUNDOFF_RTOL, pair_mean
+   use meds_numerics,   only : conserved, pair_mean
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_config,     only : meds_config_t
    use meds_diag_vars,        only : fuse_cohort_diag, PA_MORT_C_CULL
    use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &
                                       expand_cohort_block, copy_cohort, init_cohort,           &
-                                      scale_cohort_ground_fields, cohort_tissue_heat_capacity,           &
+                                      cohort_tissue_heat_capacity, cohort_film_water,                    &
                                       cohort_tissue_water, set_cohort_size_from_carbon,                  &
                                       fuse_cohort_fast_state
    use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id, patch_polygon_area
@@ -193,8 +193,8 @@ contains
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
          !----- The fast-loop-owned state fuses by its DECLARED per-field policy, in one place  !
          !      (meds_cohort_state_vars%fuse_cohort_fast_state): heat-capacity-weighted for the        !
-         !      tissue temperatures, nplant-weighted for the per-plant amounts, summed for the         !
-         !      ground-referenced film. Enumerating it here would let a field drift from its           !
+         !      tissue temperatures, nplant-weighted for the per-plant amounts (the films among      !
+         !      them). Enumerating it here would let a field drift from its                          !
          !      declared convention. The dynamic leaf traits stay here: they are slow-loop state,      !
          !      not fast, and they must be set BEFORE the survivor's geometry is re-derived because    !
          !      sla maps its leaf_carbon <-> leaf_area. Each trait blends on the quantity it is per: !
@@ -270,7 +270,7 @@ contains
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: iter, i, n0, m, nsplit
-      real(wp)    :: eps, agb_before, agb_after, wc0, film_before, film_after, film_magnitude
+      real(wp)    :: eps, agb_before, agb_after, wc0
 
       if (.not. cfg%enable_cohort_fission) return
       eps = cfg%split_eps
@@ -283,8 +283,6 @@ contains
          end do
          if (nsplit == 0_ik) exit
          agb_before = sum(poly%cohort%nplant(1:n0) * poly%cohort%agb(1:n0))
-         film_before = sum(poly%cohort%leaf_surf_water(1:n0) + poly%cohort%wood_surf_water(1:n0))
-         film_magnitude = sum(abs(poly%cohort%leaf_surf_water(1:n0)) + abs(poly%cohort%wood_surf_water(1:n0)))
          call expand_cohort_block(poly%cohort, n0 + nsplit)
          m = n0
          associate (cohort => poly%cohort)
@@ -298,10 +296,6 @@ contains
                !      hgt_max cap (no dbh-renorm approximation).  ------------------------------------!
                wc0 = cohort%wood_carbon(i)
                call copy_cohort(cohort, m, i)           ! copies halved nplant + params + pools
-               !----- the interception films are per m2 GROUND, not per plant: each daughter keeps  !
-               !      half, or the split creates film water. ---------------------------------------!
-               call scale_cohort_ground_fields(cohort, i, 0.5_wp)
-               call scale_cohort_ground_fields(cohort, m, 0.5_wp)
                cohort%wood_carbon(i) = wc0 * (1.0_wp + eps)
                cohort%wood_carbon(m) = wc0 * (1.0_wp - eps)
                call set_cohort_size_from_carbon(cohort, i)
@@ -309,7 +303,6 @@ contains
             end do
             cohort%n = m
             agb_after  = sum(cohort%nplant(1:m) * cohort%agb(1:m))
-            film_after = sum(cohort%leaf_surf_water(1:m) + cohort%wood_surf_water(1:m))
          end associate
          !----- The '-eps' daughters (slots n0+1..m) are NEW cohorts -> fresh global ids; the !
          !      '+eps' half kept slot i and its parent id (the continuation).                 !
@@ -318,8 +311,6 @@ contains
          end do
          if (.not. conserved(agb_before, agb_after, agb_before, cfg%conservation_tol))             &
             error stop 'split_cohorts: AGB conservation violated'
-         if (.not. conserved(film_before, film_after, film_magnitude, ROUNDOFF_RTOL))               &
-            error stop 'split_cohorts: canopy film water not conserved'
          call rebuild_cohort_map(poly)
          call sort_cohorts(poly)
       end do
@@ -364,8 +355,7 @@ contains
             !      HEAT is a change in thermal MASS and is declared with the rest of the phase's,  !
             !      by the caller, since fusion and fission change it too and they are one          !
             !      mechanism. ---------------------------------------------------------------------!
-            w_cohort = cohort_tissue_water(cohort, i)                                              &
-                     + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
+            w_cohort = cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
             w_tot = w_tot + patch_polygon_area(poly, ip) * w_cohort
             !----- The CULL pathway's carbon. BEFORE the soil_carbon_on cycle below, for the          !

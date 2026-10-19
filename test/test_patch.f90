@@ -8,12 +8,13 @@ program test_patch
    use meds_demography_patch_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches,  &
                                               patch_light_profile
    use meds_diagnostic_reduce, only : total_nplant, total_area
+   use meds_cohort_state_vars, only : cohort_film_water
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg
    type(polygon_t)  :: poly
-   real(wp)            :: n0, w_before, w_after, cas_before, cas_after, davg
+   real(wp)            :: n0, w_before, w_after, cas_before, cas_after, davg, film0
    real(wp), allocatable :: light1(:), light2(:)
    integer(ik)         :: ip
 
@@ -28,19 +29,18 @@ program test_patch
    call add_cohort(poly, cfg, 2_ik, 1_ik, 0.7_wp,  6.0_wp)
    call finalize_init(poly)
    n0 = total_nplant(poly)
-   !----- Films are per m2 of THEIR patch; on fusion they must dilute by the area weights like      !
-   !      nplant. Site total before = 0.5*(0.2+0.1) + 0.5*(0.4+0.0) = 0.35. -------------------------!
+   !----- Films are per plant: fusion rescales the densities and leaves the films alone, and the   !
+   !      site's film water, the area- and nplant-weighted sum, is what it was. -------------------!
    poly%cohort%leaf_surf_water(1) = 0.20_wp ; poly%cohort%wood_surf_water(2) = 0.10_wp   ! patch 1
    poly%cohort%leaf_surf_water(3) = 0.40_wp                                               ! patch 2
+   film0 = site_film(poly)
    call new_fuse_patches(poly, cfg)
    call check(poly%patch%n == 1_ik, 'identical patches should fuse to one')
    call check_close(total_area(poly),   1.0_wp, 1.0e-9_wp, 'total area not conserved by fusion')
    call check_close(total_nplant(poly), n0,     1.0e-9_wp, 'the polygon''s plant number not conserved by fusion')
    call check(poly%site%patch_offset(1) == 1_ik .and. poly%site%patch_count(1) == poly%patch%n,            &
               'the site map covers the fused patch block')
-   call check_close(poly%patch%area(1) * sum(poly%cohort%leaf_surf_water(1:poly%cohort%n)               &
-                                             + poly%cohort%wood_surf_water(1:poly%cohort%n)),            &
-                    0.35_wp, 1.0e-12_wp, 'patch fusion broke canopy film water conservation')
+   call check_close(site_film(poly), film0, 1.0e-12_wp, 'patch fusion broke canopy film water conservation')
 
    !=== A negligible-area patch is removed and the remaining areas renormalize to 1. ======!
    !----- TWO doomed patches, not one: the merge loop reads the survivor's CSR slice, so a       !
@@ -148,4 +148,14 @@ contains
       call add_cohort(poly, cfg, 2_ik, 1_ik, 0.050_wp,  5.0_wp)
       call finalize_init(poly)
    end subroutine two_unlike_patches
+
+   !----- The site's canopy film water [kg/m2 of site]: each cohort's, area-weighted by its patch. -!
+   real(wp) function site_film(p) result(w)
+      type(polygon_t), intent(in) :: p
+      integer(ik) :: i
+      w = 0.0_wp
+      do i = 1_ik, p%cohort%n
+         w = w + p%patch%area(p%cohort%owner_patch(i)) * cohort_film_water(p%cohort, i)
+      end do
+   end function site_film
 end program test_patch
