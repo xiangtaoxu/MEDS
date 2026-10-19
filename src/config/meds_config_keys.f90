@@ -19,7 +19,7 @@ module meds_config_keys
    implicit none
    private
 
-   public :: key_report_t, check_config_keys, nearest_key, MAIN_KEYS, PFT_KEYS
+   public :: key_report_t, check_config_keys, nearest_key, MAIN_KEYS, PFT_KEYS, SITE_GROUND_KEYS
 
    integer, parameter :: KEY_LEN = 64            !< meds_toml's key length
    include 'meds_config_keys.inc'                ! MAIN_KEYS, PFT_KEYS
@@ -227,6 +227,13 @@ module meds_config_keys
                     'every polygon, cohort, patch and sub-daily output included; choose the '//      &
                     'variables with [output].io_config') ]
 
+   !----- The [soil] keys a [[sites]] table may set, under the same names: the site's soil column !
+   !      and its bottom. The ground's surface and its thermal boundary are the run's. -----------!
+   character(len=*), parameter :: SITE_GROUND_KEYS(15) = [character(len=24) ::                     &
+      'depth', 'layer_bottoms', 'retention', 'theta_sat', 'theta_res', 'ksat', 'curve_par_a',        &
+      'curve_par_n', 'psi_fc', 'solid_conductivity', 'dry_conductivity', 'dry_heat_capacity',         &
+      'water_bottom_bc', 'deep_temp', 'deep_depth']
+
    !----- What the check found, one line per key, reported with the missing required keys. -----!
    integer, parameter :: MAX_REPORT = 256
    type :: key_report_t
@@ -237,23 +244,27 @@ module meds_config_keys
 contains
 
    !----- Check every key of `t` against `known`, the keys its reference lists (MAIN_KEYS or    !
-   !      PFT_KEYS), adding a line to `report` for each retired or unknown one. ------------------!
+   !      PFT_KEYS), adding a line to `report` for each retired or unknown one. A key of an     !
+   !      array's table, `sites.2.depth`, is checked as `sites.depth`; a [[sites]] table also   !
+   !      takes SITE_GROUND_KEYS. --------------------------------------------------------------!
    subroutine check_config_keys(t, known, report)
       type(toml_table_t), intent(in)    :: t
       character(len=*),   intent(in)    :: known(:)
       type(key_report_t), intent(inout) :: report
       character(len=480)     :: line
-      character(len=KEY_LEN) :: hint
+      character(len=KEY_LEN) :: hint, key
       integer(ik) :: i, j
       do i = 1_ik, t%n
-         if (any(known == t%key(i))) cycle
+         key = table_key(t%key(i))
+         if (any(known == key)) cycle
+         if (key(1:6) == 'sites.' .and. any(SITE_GROUND_KEYS == key(7:))) cycle
          line = trim(t%key(i))//' (in '//trim(t%source)//')'
-         j = retired_index(t%key(i))
+         j = retired_index(key)
          if (j > 0_ik) then
             line = trim(line)//' is retired: '//trim(RETIRED(j)%why)
          else
             line = trim(line)//' is not a key MEDS reads'
-            hint = nearest_key(t%key(i), known)
+            hint = nearest_key(key, known)
             if (len_trim(hint) > 0) line = trim(line)//'; did you mean '//trim(hint)//'?'
          end if
          if (report%n < MAX_REPORT) then
@@ -262,6 +273,19 @@ contains
          end if
       end do
    end subroutine check_config_keys
+
+   !----- A key without its table's number: `sites.2.depth` is `sites.depth`. ------------------!
+   pure function table_key(key) result(k)
+      character(len=*), intent(in) :: key
+      character(len=KEY_LEN) :: k
+      integer :: d1, d2
+      k = key
+      d1 = index(key, '.')
+      if (d1 == 0) return
+      d2 = index(key(d1 + 1:), '.')
+      if (d2 <= 1) return
+      if (verify(key(d1 + 1:d1 + d2 - 1), '0123456789') == 0) k = key(1:d1)//key(d1 + d2 + 1:)
+   end function table_key
 
    pure integer(ik) function retired_index(key) result(j)
       character(len=*), intent(in) :: key

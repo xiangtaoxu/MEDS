@@ -55,6 +55,14 @@ def test_dumps_writes_every_digit_and_nested_tables():
     assert tomllib.loads(dumps(d)) == d
 
 
+def test_dumps_writes_the_sites_as_tables_of_an_array():
+    d = {"run": {"dt_slow": "1d"}, "soil": {"depth": 2.0},
+         "sites": [{"area_fraction": 0.25, "depth": 0.6}, {"area_fraction": 0.75}]}
+    text = dumps(d)
+    assert text.count("[[sites]]") == 2
+    assert tomllib.loads(text) == d
+
+
 def test_read_record_labels_the_files(tmp_path):
     rec = tmp_path / "r.csv"
     rec.write_text('source,key,index,present,value\n"/a/main.toml",run.n_threads,0,false,"1"\n'

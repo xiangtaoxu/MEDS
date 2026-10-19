@@ -21,6 +21,7 @@ or many, and every output and state file has a `polygon` dimension (#449). The p
 `polygon_t`, with a site block beside its patch and cohort blocks, ready for several sites (#450).
 Each site owns its soil column and the column's bottom, and the run keeps one configuration (#451).
 A polygon can hold several sites, each on its own soil, and its files report each site's soil (#452).
+A site run divides its polygon into sites with `[[sites]]` tables (#453).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -204,6 +205,19 @@ A polygon can hold several sites, each on its own soil, and its files report eac
   and 0.7 each evolve as a one-site polygon through disturbance and fusion, that two soils give two
   stands, each its one-site polygon's, that four patch threads give one thread's polygon bit for bit,
   and that a state file keeps the sites.
+
+- **A site run defines its sites** (#453; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S4). Each
+  `[[sites]]` table of the main config is one site of the polygon: its `area_fraction` (the shares sum
+  to 1), its terrain (`elevation`, `slope`, `aspect`), the census rows it reads (`census_site_id`) and,
+  under `[soil]`'s names, any of `[soil]`'s column keys, which give it its own ground, `[soil]`'s
+  values for the keys it leaves out. Bare ground, a census and a restart build the polygon from them,
+  and each site with its own ground is validated as `[soil]` is. With the soil maps the column keys
+  are refused, and a region refuses `[[sites]]` until a site map gives a cell its sites
+  (docs/configuration.md, "Several sites"). The TOML reader takes arrays of tables (`[[name]]`, its
+  keys `name.<i>.key`), the key check takes their keys, and the Python writer (`meds.config.dumps`)
+  writes them. A config without `[[sites]]` runs as before: the eight comparison cases match bit
+  for bit. `test_site_definitions` runs two sites from example 04's config (output, state file,
+  restart, a census by `census_site_id`) and checks what `meds_main` refuses.
 
 ### Removed
 

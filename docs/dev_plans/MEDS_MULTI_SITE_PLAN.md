@@ -1,6 +1,6 @@
 # Several sites per polygon — plan
 
-**Status:** revision 6, 2026-10-19. S0–S2 merged (#449–#451); S3 implemented in PR #452 (§10); S4–S5 not started.
+**Status:** revision 6, 2026-10-19. S0–S3 merged (#449–#452); S4 implemented in PR #453 (§10); S5 not started.
 **Base:** `beta` at `835458c` (the state hierarchy, PR #448).
 **Decided (owner, 2026-10-18):**
 - D1 — all patches of a polygon in one patch block; a site block records which patches are its own,
@@ -383,7 +383,7 @@ takes a site) and the simplest to verify; S3 holds the new behaviour.
 | D2 | The polygon | **Decided:** `polygon_t` (state, argument `poly`) beside `polygon_run_t` (machinery, src/main), both in the region; no type extension (§3.3) |
 | D3 | Where each field lives | §4 |
 | D4 | Soil-layer grid | **Decided:** each site its own |
-| D5 | How sites are defined | `[[site]]` in a site run; a site map in a region, its product the owner's choice (§6) |
+| D5 | How sites are defined | **Taken (S4, on the recommendation):** `[[sites]]` in a site run (the name departs from §6, see §10); a site map in a region, its product the owner's choice (§6), one site per cell until then |
 | D6 | Output names | **Taken (S3, on the recommendation):** keep `*_site` as the polygon totals; `patch_site`; the optional per-site stand output deferred |
 | D7 | Areas | **Decided:** patch area a fraction of its site, site area a fraction of the polygon |
 | D8 | Ids | **Taken (S3, on the recommendation):** unique within the polygon |
@@ -529,4 +529,33 @@ Notes:
   no user until sites can be defined; the soil texture echo per layer (§7.4) waits for a site map
   that varies it. Scripts that weight cohorts by a state file's `patch_area` treat it as the
   polygon's share, right for one site.
+
+**S4, PR #453 (2026-10-19).** One commit on `feat/site-definitions`, checked against the merged S3
+build (`0fb0ce8`) on the eight cases (none defines sites): every variable matches bit for bit.
+
+- **`[[sites]]`, not `[[site]]`** (departure from §6): `[site]` is already the polygon's place, and a
+  TOML file cannot hold a table and an array of tables of one name. Each table: `area_fraction`
+  (required, the shares summing to 1 within 1e-6, made exact when the polygon is built), `elevation`
+  (default the polygon's), `slope`, `aspect` (default flat), `census_site_id` (required in a census
+  run) and any of `[soil]`'s column keys under their own names (`SITE_GROUND_KEYS`: the column, its
+  water bottom, `deep_temp`, `deep_depth`). A table with any of them has its own ground,
+  `[soil]`'s values for the rest; one without takes the polygon's (so the soil maps' cell soil in a
+  mapped site run, where those keys are refused).
+- **Reading.** `meds_toml` numbers the tables of `[[name]]` (`sites.2.depth`); `check_config_keys`
+  checks `sites.2.depth` as `sites.depth` or as a ground key; the CMake key lister reads `[[name]]`
+  headers. Each table is read through a view under `[soil]`'s names (`site_view`), so the `[soil]`
+  readers serve it and the parameter record lists its values with `<file> [[sites]] <i>` as the
+  source.
+- **Building.** `site_config(cfg, is)` is the polygon's configuration with the site's ground; the
+  region passes the sites to `init_bare_sites`, `init_from_census` (`site_ids`) and `io_read_state`
+  (`site_cfg`), and `set_site_terrain` sets each site's elevation, slope and aspect.
+  `validate_config` checks the shares, terrain and census ids, and validates each site's own ground
+  as the run with that ground.
+- **A region refuses `[[sites]]`** (D5): the site-map interface is a cell's one site, its config the
+  cell's; a real map adds sites in `apply_map_inputs` once the owner picks its product.
+- **Python:** `meds.config.dumps` writes a list of tables as `[[name]]` tables.
+- **Tests:** `test_site_definitions` (two sites from example 04's config: the config, the polygon,
+  its output's site axis, its state file and a restart from it, a census by `census_site_id`, and
+  four refusals by `meds_main`); `test_region` refuses `[[sites]]` in a region and a site's soil key
+  beside the maps; `test_config.py` round-trips `[[sites]]`.
 

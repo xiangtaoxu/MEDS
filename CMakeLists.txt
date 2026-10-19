@@ -638,6 +638,15 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME c_api_run COMMAND test_c_api_run
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example04_column_biophysics)
 
+   #      A run's sites from [[sites]]: derived from example 04's config, it runs from that example's
+   #      directory and writes under the build tree; meds_main checks what a config may not hold.
+   add_executable(test_site_definitions test/test_site_definitions.f90)
+   target_link_libraries(test_site_definitions PRIVATE meds_testsupport meds_driver)
+   meds_fortran_flags(test_site_definitions)
+   add_test(NAME site_definitions
+            COMMAND test_site_definitions ${CMAKE_CURRENT_BINARY_DIR}/site_definitions $<TARGET_FILE:meds_main>
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example04_column_biophysics)
+
    #      A region against its site runs, on the synthetic archive.
    #      Runs from test/region, whose site config it derives its configs from; it writes
    #      everything under the work directory in the build tree.

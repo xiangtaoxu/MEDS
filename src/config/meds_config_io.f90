@@ -53,9 +53,9 @@ module meds_config_io
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
-                              toml_int, toml_real,                                          &
+                              toml_int, toml_real, toml_table_count,                        &
                                toml_logical, toml_string, toml_real_array, toml_record_reset
-   use meds_config_keys, only : key_report_t, check_config_keys, MAIN_KEYS, PFT_KEYS
+   use meds_config_keys, only : key_report_t, check_config_keys, MAIN_KEYS, PFT_KEYS, SITE_GROUND_KEYS
    implicit none
    private
 
@@ -222,18 +222,7 @@ contains
    subroutine load_soil_opts(tm, s)
       type(toml_table_t), intent(in)    :: tm
       type(soil_opts_t),  intent(inout) :: s
-      character(len=64) :: str
-      if (toml_has(tm, 'soil.water_bottom_bc')) then
-         str = toml_string(tm, 'soil.water_bottom_bc', '')
-         !----- free_drain and bedrock are the drainage boundary's two ends, f = 1 and f = 0  !
-         !      (docs/science/soil_biophysics.md §Boundary conditions). ---------------------!
-         select case (trim(str))
-         case ('free_drain') ; s%bottom_bc = SOIL_BC_DRAIN ; s%drain_factor = 1.0_wp
-         case ('bedrock')    ; s%bottom_bc = SOIL_BC_DRAIN ; s%drain_factor = 0.0_wp
-         case ('aquifer')    ; s%bottom_bc = SOIL_BC_AQUIFER
-         case default ; error stop 'load_meds_config: soil.water_bottom_bc must be free_drain|aquifer|bedrock'
-         end select
-      end if
+      call load_water_bottom_bc(tm, s%bottom_bc, s%drain_factor)
       s%rtol           = toml_real   (tm, 'fast.water_rtol',      s%rtol)
       s%atol           = toml_real   (tm, 'fast.water_atol',      s%atol)
       s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
@@ -245,6 +234,25 @@ contains
       s%ground_albedo_nir = toml_real(tm, 'soil.ground_albedo_nir', s%ground_albedo_nir)
       s%ground_emissivity = toml_real(tm, 'soil.ground_emissivity', s%ground_emissivity)
    end subroutine load_soil_opts
+
+   !----- [soil].water_bottom_bc: the column's water boundary and its drainage factor, kept when   !
+   !      the key is absent. ----------------------------------------------------------------------!
+   subroutine load_water_bottom_bc(tm, bc, drain_factor)
+      type(toml_table_t), intent(in)    :: tm
+      integer(ik),        intent(inout) :: bc
+      real(wp),           intent(inout) :: drain_factor
+      character(len=64) :: str
+      if (.not. toml_has(tm, 'soil.water_bottom_bc')) return
+      str = toml_string(tm, 'soil.water_bottom_bc', '')
+      !----- free_drain and bedrock are the drainage boundary's two ends, f = 1 and f = 0 !
+      !      (docs/science/soil_biophysics.md §Boundary conditions). ---------------------!
+      select case (trim(str))
+      case ('free_drain') ; bc = SOIL_BC_DRAIN ; drain_factor = 1.0_wp
+      case ('bedrock')    ; bc = SOIL_BC_DRAIN ; drain_factor = 0.0_wp
+      case ('aquifer')    ; bc = SOIL_BC_AQUIFER
+      case default ; error stop 'load_meds_config: soil.water_bottom_bc must be free_drain|aquifer|bedrock'
+      end select
+   end subroutine load_water_bottom_bc
 
    !----- The soil heat's options: the ground's thermal bottom boundary from [soil], the budget  !
    !      check from [fast]. --------------------------------------------------------------------!
@@ -688,6 +696,73 @@ contains
       end do
    end subroutine load_maps_config
 
+   !----- [[sites]] (docs/configuration.md, "Several sites"): the polygon's sites, one table each,   !
+   !      after [soil] and [maps]. A table that sets any of [soil]'s column keys gives its site its  !
+   !      own ground, [soil]'s values for each key it leaves out; with the soil maps every site      !
+   !      takes the cell's soil, and those keys are refused. Each table is read through a view under !
+   !      [soil]'s names (site_view), so the [soil] readers serve it and the parameter record lists  !
+   !      its values with the table as their source. ------------------------------------------------!
+   subroutine load_sites(t, cfg, m)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      type(keymiss_t),     intent(inout) :: m
+      type(toml_table_t) :: v
+      integer(ik) :: ns, is
+      ns = toml_table_count(t, 'sites')
+      if (ns == 0_ik) return
+      allocate(cfg%sites(ns))
+      do is = 1_ik, ns
+         call site_view(t, is, v)
+         associate (s => cfg%sites(is))
+            call req_r(v, 'sites.area_fraction', s%area_fraction, m)
+            s%has_elevation  = toml_has(v, 'sites.elevation')
+            s%elevation_m    = toml_real(v, 'sites.elevation', cfg%forcing%elevation_m)
+            s%slope_deg      = toml_real(v, 'sites.slope',  s%slope_deg)
+            s%aspect_deg     = toml_real(v, 'sites.aspect', s%aspect_deg)
+            s%census_site_id = toml_int (v, 'sites.census_site_id', s%census_site_id)
+            s%own_ground     = toml_has_section(v, 'soil')
+            if (s%own_ground .and. soil_maps_on(cfg%maps))                                          &
+               error stop 'load_meds_config: with the soil maps every [[sites]] table takes the '// &
+                          'cell''s soil; remove its [soil] keys'
+            if (s%own_ground) then
+               s%soil_column = cfg%soil_column
+               call load_soil_column(v, s%soil_column)
+               s%water_bottom_bc = cfg%soil%bottom_bc
+               s%drain_factor    = cfg%soil%drain_factor
+               call load_water_bottom_bc(v, s%water_bottom_bc, s%drain_factor)
+               s%deep_temp  = toml_real(v, 'soil.deep_temp',  cfg%energy%deep_temp)
+               s%deep_depth = toml_real(v, 'soil.deep_depth', cfg%energy%deep_depth)
+            end if
+         end associate
+      end do
+   end subroutine load_sites
+
+   !----- Table `is` of [[sites]] as its own table: its [soil] keys (SITE_GROUND_KEYS) as            !
+   !      soil.<key>, the rest as sites.<key>, its source the file and the table's place. -----------!
+   subroutine site_view(t, is, v)
+      type(toml_table_t), intent(in)  :: t
+      integer(ik),        intent(in)  :: is
+      type(toml_table_t), intent(out) :: v
+      character(len=32) :: pre
+      character(len=64) :: key
+      integer(ik) :: i
+      write(pre, '(a,i0,a)') 'sites.', is, '.'
+      write(v%source, '(2a,i0)') trim(t%source), ' [[sites]] ', is
+      allocate(v%key(t%n), v%val(t%n))
+      v%n = 0_ik
+      do i = 1_ik, t%n
+         if (index(t%key(i), trim(pre)) /= 1) cycle
+         key = t%key(i)(len_trim(pre) + 1:)
+         v%n = v%n + 1_ik
+         if (any(SITE_GROUND_KEYS == key)) then
+            v%key(v%n) = 'soil.'//key
+         else
+            v%key(v%n) = 'sites.'//key
+         end if
+         v%val(v%n) = t%val(i)
+      end do
+   end subroutine site_view
+
    !----- [run].mode and the [region] block (docs/configuration.md, "Regional runs"). The mode      !
    !      is a DEFAULTED read ("site"). In region mode the box is required; the selection rule      !
    !      and the cell mask default. In site mode a [region] key would parse and do nothing, so     !
@@ -1127,6 +1202,9 @@ contains
       call load_forcing_config(tm, cfg, miss)
       !----- [maps]: the maps a run takes its soil (and its Chave site index) from. ----------!
       call load_maps_config(tm, cfg)
+      !----- [[sites]]: the polygon's sites, after the [soil] they inherit and the maps that    !
+      !      refuse their soil. ----------------------------------------------------------------!
+      call load_sites(tm, cfg, miss)
 
       !----- Diagnostic-aggregation output (opt-in; gated on output.enabled, defaulted false; !
       !      a config with no [output] block emits no diagnostic stream).  ------------------!

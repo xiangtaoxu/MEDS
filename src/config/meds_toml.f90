@@ -7,6 +7,7 @@
 ! configs are a flat set of `key = value` lines under `[section]` headers, so we parse     !
 ! that subset directly: `# comments`, `[section]` headers, and scalar int/real/bool/string !
 ! values plus `[a, b, c]` real arrays. Keys are stored fully qualified as `section.key`.   !
+! A table of an array, `[[name]]`, is numbered by its place: its keys are `name.<i>.key`.  !
 ! The typed getters return the supplied default ONLY when the key is ABSENT; a key that is !
 ! PRESENT but unparseable is a HARD ERROR (error stop with the offending key + raw text)   !
 ! -- silently zero-filling malformed values would let a typo'd REQUIRED parameter (every   !
@@ -19,17 +20,22 @@ module meds_toml
 
    public :: toml_table_t, toml_parse_file
    public :: toml_has, toml_has_section, toml_int, toml_real, toml_logical, toml_string, toml_real_array
+   public :: toml_table_count
    public :: toml_write_record, toml_record_reset
 
    !----- VALLEN is also the line buffer, so it bounds a whole `key = value` line. 1024 holds     !
    !      the forcing path fields (MET_PATH_LEN) with room for the key. --------------------------!
-   integer, parameter :: KEYLEN = 64, VALLEN = 1024, MAXKEYS = 512
+   integer, parameter :: KEYLEN = 64, VALLEN = 1024, MAXKEYS = 512, MAXARRAYS = 8
 
    type :: toml_table_t
       integer(ik)                     :: n = 0_ik
       character(len=KEYLEN), allocatable :: key(:)
       character(len=VALLEN), allocatable :: val(:)
       character(len=256)              :: source = ''   !< the file it was parsed from (the record's label)
+      !----- The arrays of tables, `[[name]]`, and how many tables each holds. ------------------!
+      integer(ik)           :: n_array = 0_ik
+      character(len=KEYLEN) :: array_name(MAXARRAYS) = ''
+      integer(ik)           :: array_count(MAXARRAYS) = 0_ik
    end type toml_table_t
 
    !----- The parameter record. Every value a toml_* reader returns is logged here with the file  !
@@ -57,7 +63,7 @@ contains
       character(len=*),    intent(in)  :: path
       type(toml_table_t),  intent(out) :: t
       logical,             intent(out) :: ok
-      integer                :: unit, ios, ieq, nb
+      integer                :: unit, ios, ieq, nb, ia
       character(len=VALLEN)  :: line
       character(len=KEYLEN)  :: section
       character(len=VALLEN)  :: raw
@@ -79,6 +85,22 @@ contains
          line = adjustl(line)
          if (len_trim(line) == 0) cycle
 
+         if (line(1:2) == '[[') then                      ! [[name]]: the array's next table
+            nb = index(line, ']]')
+            if (nb > 3) then
+               section = adjustl(line(3:nb-1))
+               ia = int(findloc(t%array_name(1:t%n_array), section, dim=1))
+               if (ia == 0) then
+                  if (t%n_array >= MAXARRAYS) error stop 'meds_toml: too many [[array]] names in '//trim(path)
+                  t%n_array = t%n_array + 1_ik
+                  ia = int(t%n_array)
+                  t%array_name(ia) = section
+               end if
+               t%array_count(ia) = t%array_count(ia) + 1_ik
+               write(section, '(a,".",i0)') trim(t%array_name(ia)), t%array_count(ia)
+            end if
+            cycle
+         end if
          if (line(1:1) == '[') then                       ! [section] header
             nb = index(line, ']')
             if (nb > 2) section = adjustl(line(2:nb-1))
@@ -134,6 +156,17 @@ contains
       character(len=*),   intent(in) :: key
       yes = find_key(t, key) > 0_ik
    end function toml_has
+
+   !----- How many tables the array `[[name]]` holds (0 when the file has none). -----------------!
+   pure integer(ik) function toml_table_count(t, name) result(n)
+      type(toml_table_t), intent(in) :: t
+      character(len=*),   intent(in) :: name
+      integer(ik) :: ia
+      n = 0_ik
+      do ia = 1_ik, t%n_array
+         if (trim(t%array_name(ia)) == trim(name)) n = t%array_count(ia)
+      end do
+   end function toml_table_count
 
    !----- Is there ANY key under `[section]`? Keys are stored flattened ("section.key"), so a     !
    !      section header leaves no entry of its own and toml_has cannot see one.                  !

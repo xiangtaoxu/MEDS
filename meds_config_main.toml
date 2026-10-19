@@ -647,3 +647,21 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 #                    #   organic_carbon [g/kg], cec [cmol(c)/kg] and ph_h2o, on the same layers
 # chave_e_map        = "/path/to/ED_ERA5land_Chave2014_E.nc"
 #                    #   chave_e (lat, lon), Chave et al. (2014)'s E; allometry.chave_e is then refused
+
+#-------------------------------------------------------------------------------------------------#
+# [[sites]] -- the polygon's sites, one table each, in a site run (docs/configuration.md "Several  #
+# sites"). Without them the polygon is one site, the whole of it, on [soil]. Each site has its own #
+# share of the polygon, terrain, soil column and patches; the patch operators work within a site,  #
+# and every _site output scalar is the polygon's. A table may also set any of [soil]'s column keys #
+# under the same names -- depth, layer_bottoms, retention, theta_sat, theta_res, ksat,            #
+# curve_par_a, curve_par_n, psi_fc, solid_conductivity, dry_conductivity, dry_heat_capacity,       #
+# water_bottom_bc, deep_temp, deep_depth -- and takes [soil]'s value for each it leaves out (with   #
+# the soil maps, every site takes the cell's soil and those keys are refused). A region refuses    #
+# [[sites]]: each cell is one site until a site map gives its sites.                              #
+#-------------------------------------------------------------------------------------------------#
+# [[sites]]
+# area_fraction  = 0.6              # [-] the site's share of the polygon; required, the shares sum to 1
+# elevation      = 320.0            # [m] default: the polygon's ([site].elevation)
+# slope          = 0.0              # [degrees] from horizontal; default 0
+# aspect         = 180.0            # [degrees] clockwise from north, the way the slope faces; default 0
+# census_site_id = 1                # the census rows the site reads (init_mode = 1; required there)

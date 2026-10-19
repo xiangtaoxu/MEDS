@@ -73,12 +73,18 @@ def _fmt(v) -> str:
     raise TypeError(f"cannot write a {type(v).__name__} to TOML")
 
 
+def _is_array_of_tables(v) -> bool:
+    return isinstance(v, list) and len(v) > 0 and all(isinstance(x, dict) for x in v)
+
+
 def dumps(d: dict) -> str:
-    """Nested dicts to TOML text, each table's values before its sub-tables."""
+    """Nested dicts to TOML text, each table's values before its sub-tables, and a list of
+    tables (the [[sites]] of a run) as one [[name]] table each, last."""
     def walk(table: dict, prefix: str, out: list):
-        scalars = {k: v for k, v in table.items() if not isinstance(v, dict)}
+        arrays = {k: v for k, v in table.items() if _is_array_of_tables(v)}
+        scalars = {k: v for k, v in table.items() if not isinstance(v, dict) and k not in arrays}
         tables = {k: v for k, v in table.items() if isinstance(v, dict)}
-        if prefix and (scalars or not tables):
+        if prefix and (scalars or not (tables or arrays)):
             out.append(f"[{prefix}]")
         for k, v in scalars.items():
             out.append(f"{k} = {_fmt(v)}")
@@ -86,6 +92,12 @@ def dumps(d: dict) -> str:
             out.append("")
         for k, v in tables.items():
             walk(v, f"{prefix}.{k}" if prefix else k, out)
+        for k, items in arrays.items():
+            for item in items:
+                out.append(f"[[{prefix}.{k}]]" if prefix else f"[[{k}]]")
+                for kk, vv in item.items():
+                    out.append(f"{kk} = {_fmt(vv)}")
+                out.append("")
     lines: list[str] = []
     walk(d, "", lines)
     return "\n".join(lines) + "\n"

@@ -390,6 +390,13 @@ program test_region
    call refused('a chave_e map needs the Chave height allometry', '[maps]'//nl()//'chave_e_map = "'//    &
                 trim(work)//'/archive/chave_e.nc"'//nl()//site_block(1_ik), .false., .false.,               &
                 'maps.chave_e_map needs allometry.height_allometry = "chave2014"')
+   !----- [[sites]] (docs/configuration.md §Several sites): a region takes one site per cell, and  !
+   !      with the soil maps a site takes the cell's soil. ----------------------------------------!
+   call refused('a region refuses [[sites]]', '[[sites]]'//nl()//'area_fraction = 1.0'//nl()//         &
+                region_block(), .true., .false., 'a region refuses [[sites]]')
+   call refused('a [[sites]] soil key beside the maps is refused', '[[sites]]'//nl()//               &
+                'area_fraction = 1.0'//nl()//'depth = 1.0'//nl()//site_block(1_ik), .false., .false.,   &
+                'every [[sites]] table takes the cell''s soil')
    call refused('a region''s recycle window starts at 00:00 or 01:00 on the 1st',                   &
                 '[forcing]'//nl()//'recycle = true'//nl()//'recycle_start = "2021-01-01 06:00:00"'//nl()// &
                 'recycle_end = "2022-01-01 06:00:00"'//nl()//region_block(), .true., .false.,          &

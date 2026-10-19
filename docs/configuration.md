@@ -73,6 +73,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
 | `[hydraulics]` | Plant water transport: the pressure–volume and vulnerability traits, the sapwood path factor `vessel_curl` (the sapwood conductivity follows wood density; `pft.wood_kmax` overrides it), and the roots (`root_beta`, `root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait, so `[soil_column].root_beta` is refused. |
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
+| `[[sites]]` | A site run's polygon as several sites, one table each: its share, terrain and ground ([Several sites](#several-sites)). |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
 | `[state]` | Restart checkpointing: output directory, prefix, interval. *(The spelling `[io]` is refused.)* |
@@ -196,6 +197,46 @@ Three keys named after a leaf lifespan are refused, each with its replacement:
 - `[trait_dynamics].fineroot_lifespan_plastic`: `fineroot_turnover_plastic`.
 
 A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.
+
+## Several sites
+
+A polygon is one site unless `[[sites]]` divides it, in a site run. Each `[[sites]]` table is one site:
+
+| Key | Meaning |
+|---|---|
+| `area_fraction` | its share of the polygon (required; the shares sum to 1) |
+| `elevation` [m] | default: the polygon's, `[site].elevation` |
+| `slope`, `aspect` [degrees] | from horizontal, and clockwise from north the way the slope faces; default flat (0, 0) |
+| `census_site_id` | the census rows it reads (`init_mode = 1`, where every site needs one) |
+| any of `[soil]`'s column keys | `depth`, `layer_bottoms`, `retention`, the hydraulic and thermal texture, `psi_fc`, `water_bottom_bc`, `deep_temp`, `deep_depth`, under the same names |
+
+- **The ground.** A table that sets any of `[soil]`'s column keys gives its site its own column,
+  taking `[soil]`'s value for each key it leaves out; a table that sets none takes `[soil]`'s
+  column. Each site's column is checked as `[soil]`'s is. The ground's surface (pond, dry surface
+  layer, optics) and its thermal boundary are the run's. With the soil maps, every site takes the
+  cell's soil, and the column keys are refused.
+- **What a site is.** Each site has its own patches, made at the start (`init_mode = 0`, the same
+  number per site) or from its census rows; the patch operators work within a site
+  ([order of processes](science/order_of_processes.md)), so no area moves between sites. The output
+  reports each site's soil column and properties on a `site` axis, and every `_site` scalar is the
+  polygon's ([diagnostics](science/diagnostics.md) §2–3).
+- **A restart** reads the sites back from the state file, which must hold as many as the config and,
+  for each, as many soil layers.
+- **A region refuses `[[sites]]`**: each cell is one site until a site map gives its sites.
+
+```toml
+[[sites]]                 # a quarter of the polygon on a shallow, south-east-facing slope
+area_fraction = 0.25
+depth         = 0.6
+elevation     = 400.0
+slope         = 12.0
+aspect        = 135.0
+[[sites]]                 # the rest on [soil]
+area_fraction = 0.75
+```
+
+The `[site]` block is the polygon's place; the name `[[sites]]` differs because a TOML file cannot
+hold both a table and an array of tables of one name.
 
 ## How a run starts
 
