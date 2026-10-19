@@ -40,7 +40,9 @@ _REAL = {"dbh": 0, "height": 1, "nplant": 2, "agb": 3, "leaf_area": 4,
          "npp_leaf": 18, "npp_fineroot": 19, "npp_storage": 20, "npp_repro": 21,
          "growth_resp": 22, "exudate": 23}
 _INT = {"pft": 0, "owner_patch": 1, "global_id": 2}
-_PATCH_REAL = {"area": 0, "age": 1}
+_PATCH_REAL = {"area": 0, "age": 1, "share": 2}
+_PATCH_INT = {"site": 0}
+_SITE_REAL = {"area": 0}
 
 #----- A step's status codes (the DRIVER_* parameters of meds_polygon). -----------------------#
 OK, FINISHED, ERR_NAN, ERR_AREA, ERR_BOUNDS = 0, 1, 2, 3, 4
@@ -182,6 +184,10 @@ class Run:
         return lib.meds_run_n_cohort(self.handle)
 
     @property
+    def n_site(self):
+        return lib.meds_run_n_site(self.handle)
+
+    @property
     def total_agb(self):
         """Above-ground biomass [kgC/m2], area-weighted over patches."""
         return lib.meds_run_total_agb(self.handle)
@@ -239,28 +245,53 @@ class Run:
 
     #----- Per-patch state, copied out ----------------------------------------------------
     def patches(self, *fields):
-        """Copy per-patch fields into numpy arrays: ``run.patches("area")``.
+        """Copy per-patch fields into numpy arrays: ``run.patches("share")``.
 
-        ``area`` is the patch's fraction of the site and ``age`` its years since the disturbance
-        that made it. A cohort's ``owner_patch`` (1-based) indexes these, so a site total of a
-        cohort quantity x is ``sum(area[owner_patch - 1] * nplant * x)``.
+        ``area`` is the patch's fraction of its site, ``site`` that site (1-based), ``share`` the
+        patch's fraction of the polygon (its area times its site's) and ``age`` its years since
+        the disturbance that made it. A cohort's ``owner_patch`` (1-based) indexes these, so a
+        polygon total of a cohort quantity x is ``sum(share[owner_patch - 1] * nplant * x)``.
         """
         if not fields:
-            fields = tuple(_PATCH_REAL)
+            fields = tuple(_PATCH_REAL) + tuple(_PATCH_INT)
         n = self.n_patch
         out = {}
         for f in fields:
-            if f not in _PATCH_REAL:
-                raise KeyError(f"unknown patch field {f!r}; have {sorted(_PATCH_REAL)}")
+            if f in _PATCH_REAL:
+                buf = np.zeros(max(n, 1), dtype=np.float64)
+                lib.meds_run_get_patch_real(self.handle, _PATCH_REAL[f],
+                                            buf.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
+            elif f in _PATCH_INT:
+                buf = np.zeros(max(n, 1), dtype=np.int32)
+                lib.meds_run_get_patch_int(self.handle, _PATCH_INT[f],
+                                           buf.ctypes.data_as(ctypes.POINTER(ctypes.c_int)))
+            else:
+                raise KeyError(f"unknown patch field {f!r}; "
+                               f"have {sorted(set(_PATCH_REAL) | set(_PATCH_INT))}")
+            out[f] = buf[:n]
+        return out
+
+    #----- Per-site state, copied out -----------------------------------------------------
+    def sites(self, *fields):
+        """Copy per-site fields into numpy arrays: ``run.sites("area")``, each site's fraction of
+        the polygon. A patch's ``site`` (1-based) indexes them."""
+        if not fields:
+            fields = tuple(_SITE_REAL)
+        n = self.n_site
+        out = {}
+        for f in fields:
+            if f not in _SITE_REAL:
+                raise KeyError(f"unknown site field {f!r}; have {sorted(_SITE_REAL)}")
             buf = np.zeros(max(n, 1), dtype=np.float64)
-            lib.meds_run_get_patch_real(self.handle, _PATCH_REAL[f],
-                                        buf.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
+            lib.meds_run_get_site_real(self.handle, _SITE_REAL[f],
+                                       buf.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
             out[f] = buf[:n]
         return out
 
     real_fields = tuple(_REAL)
     int_fields = tuple(_INT)
-    patch_fields = tuple(_PATCH_REAL)
+    patch_fields = tuple(_PATCH_REAL) + tuple(_PATCH_INT)
+    site_fields = tuple(_SITE_REAL)
 
     def __repr__(self):
         if self.handle is None:

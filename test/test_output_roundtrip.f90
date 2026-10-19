@@ -36,7 +36,7 @@ program test_output_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_time,             only : meds_time_t, time_advance_days
-   use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon
+   use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_allometry,        only : allometry_t
    use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
@@ -48,7 +48,6 @@ program test_output_roundtrip
    use meds_constants,        only : n_soil_layer_max
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
    use meds_water_retention,  only : SOIL_RETENTION_VG
-   use meds_output_registry,  only : manager_set_soil_params
    use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close, test_pft_table
    use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp
@@ -76,6 +75,7 @@ program test_output_roundtrip
    poly%cohort%pft(1) = 1_ik ; poly%cohort%owner_patch(1) = 1_ik ; poly%cohort%global_id(1) = 1_ik
    poly%patch%area(1) = 1.0_wp ; poly%patch%cohort_offset(1) = 1_ik ; poly%patch%cohort_count(1) = 1_ik
    poly%patch%age(1) = 0.0_wp ; poly%patch%dist_type(1) = 1_ik ; poly%patch%global_id(1) = 1_ik
+   call rebuild_patch_map(poly)
 
    !----- Constant carbon + soil sources (fast loop is off in this unit test, so set them here    !
    !      via opaque setters, as the fast loop would). gpp_accum=2 -> daily AGG_SUM gpp_site=2;     !
@@ -97,12 +97,13 @@ program test_output_roundtrip
    call geometric_layer_bottoms(2.0_wp, N_ACTIVE, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
                                2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
-   !----- The polygon's row of the file set gives the files their layer depths, as attach_output   !
-   !      does in a run; the buffer's copy of the curve gives the extraction. ----------------------!
-   files%polygon_n_soil(1)       = soilp%n_active
-   files%polygon_soil_z(:, 1)    = soilp%z_node
-   files%polygon_soil_face(:, 1) = soilp%soil_layer_z
-   call manager_set_soil_params(bufs(1)%diag, soilp)
+   !----- The site's soil column gives the extraction its layers and curve; the polygon's row of  !
+   !      the file set gives the files their layer depths, as attach_output does in a run. -------!
+   poly%site%surface(1)%soil = soilp
+   bufs(1)%diag%soil_ready = .true.
+   files%site_n_soil(1, 1)       = soilp%n_active
+   files%site_soil_z(:, 1, 1)    = soilp%z_node
+   files%site_soil_face(:, 1, 1) = soilp%soil_layer_z
    call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 
    !----- Walk 3 daily steps of 2000-01, as polygon_step calls the tick: the step from `prev` to  !
@@ -178,26 +179,26 @@ contains
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], gpp), &
                     'get gpp_site')
       call check_close(real(gpp(2), wp), 2.0_wp, 1.0e-9_wp, 'daily gpp_site (AGG_SUM) = 2')
-      !----- Soil (DIM_SOIL): soil_temp_site(time, polygon, soil) AGG_TMEAN = 290 K per layer. -----!
+      !----- Soil (DIM_SOIL): soil_temp_site(time, polygon, site, soil) AGG_TMEAN = 290 K per layer. -!
       call nc_check(nc_inq_varid_f(ncid, 'soil_temp_site', vid), 'daily soil_temp_site id')
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t],               &
-                    [3_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_temp')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t, 0_c_size_t],   &
+                    [3_c_size_t, 1_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_temp')
       call check_close(real(soilt(1), wp), 290.0_wp, 1.0e-9_wp, 'daily soil_temp_site layer1 = 290')
 
       !----- ...and the INACTIVE tail is fill, not data. The source array is 290 K in every       !
       !      slot including the padding, so if the writer emitted the full ceiling this would read  !
       !      290 and pass for the wrong reason. It has to read _FillValue, as the cohort and patch  !
       !      axes do with their own unused capacity. -----------------------------------------------!
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, int(N_ACTIVE, c_size_t)], &
-                    [1_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_temp padding')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t, int(N_ACTIVE, c_size_t)], &
+                    [1_c_size_t, 1_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_temp padding')
       call check_close(real(soilt(1), wp), MISSING_VALUE, 1.0e-9_wp,                              &
                        'soil_temp_site padding slot is _FillValue, not data')
 
       !----- The coordinate must describe the same number of layers. A soil_z running on past the  !
       !      active column with 0.0 m node depths reads as extra layers at the surface.  -----------!
       call nc_check(nc_inq_varid_f(ncid, 'soil_z', vid), 'daily soil_z id')
-      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, int(N_ACTIVE, c_size_t)],          &
-                    [1_c_size_t, 1_c_size_t], soilt), 'get soil_z padding')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, int(N_ACTIVE, c_size_t)], &
+                    [1_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_z padding')
       call check_close(real(soilt(1), wp), MISSING_VALUE, 1.0e-9_wp,                              &
                        'soil_z padding slot is _FillValue, not 0 m')
       call nc_check(nc_close(ncid), 'close daily')

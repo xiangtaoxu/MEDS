@@ -136,18 +136,23 @@ contains
    !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
-   subroutine alloc_polygon(poly, n_pft, coh_cap, pat_cap, n_growth_window, allom, pft)
+   subroutine alloc_polygon(poly, n_pft, coh_cap, pat_cap, n_growth_window, allom, pft, n_site)
       type(polygon_t),   intent(out) :: poly
       integer(ik),       intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
       type(allometry_t), intent(in)  :: allom   !< the polygon's allometry (cfg%allom of its config)
       type(pft_table_t), intent(in)  :: pft     !< the polygon's PFT trait table (cfg%pft of its config)
+      integer(ik), optional, intent(in) :: n_site   !< its sites (1 when absent)
+      integer(ik) :: ns
       poly%n_pft = n_pft
       poly%cohort%allom     = allom
       poly%cohort%pft_table = pft
-      !----- One site, the whole polygon; every patch starts in it. ---------------------------!
-      call alloc_site_block(poly%site, 1_ik)
-      poly%site%n       = 1_ik
-      poly%site%area(1) = 1.0_wp
+      !----- Its sites, sharing the polygon equally until the caller gives their areas; every   !
+      !      patch starts in the first. --------------------------------------------------------!
+      ns = 1_ik
+      if (present(n_site)) ns = max(n_site, 1_ik)
+      call alloc_site_block(poly%site, ns)
+      poly%site%n          = ns
+      poly%site%area(1:ns) = 1.0_wp / real(ns, wp)
       call alloc_patch_block(poly%patch, max(pat_cap, 1_ik), n_pft)
       call alloc_cohort_block(poly%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
    end subroutine alloc_polygon

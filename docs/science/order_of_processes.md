@@ -187,6 +187,10 @@ two steps sit the output tick, the I/O phase and any checkpoint. The restructuri
 2. patch fusion and termination (`do_patch_fissfuse`), followed by the cohort fusion, culling and
    re-sort they call for.
 
+Each patch operator works within one site: a disturbance cuts one gap per site from that site's
+patches, fusion pairs patches of one site, and termination merges a sliver into its own site's
+largest patch. A patch's area is a fraction of its site, so no operator moves area between sites.
+
 **Then**, for the restructured stand: the overtopping LAI, and the canopy-air depth.
 
 Three consequences:

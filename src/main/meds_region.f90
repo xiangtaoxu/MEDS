@@ -322,7 +322,7 @@ contains
       !      rest of each axis empty; the files carry each polygon's own layer depths and inputs. -----!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
-         call open_output_files(cfg, reg%out_files, reg%verbose, cells, ids)
+         call open_output_files(cfg, reg%out_files, reg%verbose, cells, ids, reg%poly(:)%site%n)
          do p = 1_ik, n
             call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p))
          end do
@@ -584,17 +584,18 @@ contains
       end associate
    end subroutine step_polygons
 
-   !----- The state file: every polygon's row, at the current date (meds_io). The cohort and patch   !
-   !      axes are the largest polygon's. The polygons share the calendar, so they owe the same       !
+   !----- The state file: every polygon's row, at the current date (meds_io). The cohort, patch and   !
+   !      site axes are the largest polygon's. The polygons share the calendar, so they owe the same  !
    !      boundary restructuring. --------------------------------------------------------------------!
    subroutine region_write_state(reg)
       type(meds_region_t), intent(in) :: reg
       type(state_file_t)       :: sf
       integer(ik), allocatable :: ids(:)
       real(wp),    allocatable :: lat(:), lon(:)
-      integer(ik)              :: p, n_cohort, n_patch
+      integer(ik)              :: p, n_cohort, n_patch, n_site
       n_cohort = 0_ik
       n_patch = 0_ik
+      n_site = 0_ik
       allocate(ids(size(reg%poly)), lat(size(reg%poly)), lon(size(reg%poly)))
       do p = 1_ik, size(reg%poly, kind=ik)
          ids(p)   = reg%poly(p)%id
@@ -602,10 +603,11 @@ contains
          lon(p)   = reg%poly(p)%longitude_deg
          n_cohort = max(n_cohort, reg%poly(p)%cohort%n)
          n_patch  = max(n_patch, reg%poly(p)%patch%n)
+         n_site   = max(n_site, reg%poly(p)%site%n)
       end do
       call state_file_open(sf, trim(reg%cfg%state_output_dir), trim(reg%cfg%state_output_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
-                           n_patch, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,                      &
+                           n_patch, n_site, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,              &
                            restructure_pending=reg%poly(1)%restructure_pending,                            &
                            restructure_new_year=reg%poly(1)%restructure_new_year)
       do p = 1_ik, size(reg%poly, kind=ik)

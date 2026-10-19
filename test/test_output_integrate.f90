@@ -245,8 +245,8 @@ contains
 
       !----- Stage 2 sub-steps of two patches with known values (as fast_dynamics would). -----!
       nl = n_soil_layer_max
-      call alloc_fast_staging(bufs, 2_ik, 2_ik, 8_ik)
-      bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 2_ik
+      call alloc_fast_staging(bufs, 2_ik, 2_ik, 8_ik, 2_ik)
+      bufs%fast_n_cohort = 2_ik
       bufs%fast_site(PA_CAS_TEMP, :) = [290.0_wp, 294.0_wp]                 ! mean 292
       bufs%fast_site(PA_LE, :)       = [100.0_wp, 200.0_wp]
       bufs%fast_patch(PA_CAS_TEMP, 1, :) = [290.0_wp, 294.0_wp]             ! patch 1 mean 292
@@ -276,7 +276,8 @@ contains
       call check_close(bufs%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp TMEAN')
       !----- Soil-column slab path: soil_temp_site slot means. -----!
       k_soil = find_var_index(files%reg, 'soil_temp_site_fast')
-      call check(bufs%pending(1)%nslab(k_soil) == 2_ik, 'FAST soil slab length 2')
+      call check(bufs%pending(1)%nslab(k_soil) == nl .and. bufs%pending(1)%slabvalid(2,k_soil)          &
+                 .and. .not. bufs%pending(1)%slabvalid(3,k_soil), 'FAST soil slab: the site''s 2 layers of nl')
       call check_close(bufs%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
       call check_close(bufs%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
       !----- Per-cohort slab path: leaf_temp_cohort_fast slot means + n_cohort. -----!
@@ -337,8 +338,8 @@ contains
       call manager_alloc_buffers(files, bufs)
       call check(files%max_slab >= nl, 'max_slab covers the soil axis an override switched on')
 
-      call alloc_fast_staging(bufs, 1_ik, 0_ik, 1_ik)
-      bufs%fast_n_soil = nl ; bufs%fast_n_cohort = 0_ik
+      call alloc_fast_staging(bufs, 1_ik, 0_ik, 1_ik, nl)
+      bufs%fast_n_cohort = 0_ik
       bufs%fast_soil_temp(:,1) = [(270.0_wp + real(i, wp), i = 1_ik, nl)]
       call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
       call close_tier(files, bufs, 1_ik)
@@ -374,8 +375,7 @@ contains
       call build_freq_index(files%reg)
       call manager_finalize(files)
       call manager_alloc_buffers(files, bufs)
-      call alloc_fast_staging(bufs, 1_ik, 3_ik, 1_ik)
-      bufs%fast_n_soil = 2_ik
+      call alloc_fast_staging(bufs, 1_ik, 3_ik, 1_ik, 2_ik)
       bufs%fast_soil_temp_patch(:,1) = 285.0_wp
       call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
       call close_tier(files, bufs, 1_ik)
@@ -497,8 +497,8 @@ contains
    subroutine stage_cas(bufs, cas)
       type(output_buffers_t), intent(inout) :: bufs
       real(wp),            intent(in)    :: cas(2)
-      call alloc_fast_staging(bufs, 2_ik, 1_ik, 8_ik)
-      bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 1_ik
+      call alloc_fast_staging(bufs, 2_ik, 1_ik, 8_ik, 2_ik)
+      bufs%fast_n_cohort = 1_ik
       bufs%fast_site(PA_CAS_TEMP, :) = cas
       bufs%fast_patch(PA_CAS_TEMP, 1, :) = cas
       bufs%fast_soil_temp = 280.0_wp ; bufs%fast_soil_temp_patch = 280.0_wp
@@ -506,17 +506,23 @@ contains
    end subroutine stage_cas
 
    !----- One polygon's FAST staging as fast_dynamics sizes it (size_fast_staging): nsub sub-steps, !
-   !      np patches and nc cohort slots, all zero. ---------------------------------------------!
-   subroutine alloc_fast_staging(bufs, nsub, np, nc)
+   !      np patches and nc cohort slots, all zero, in one site of n_soil layers. ------------------!
+   subroutine alloc_fast_staging(bufs, nsub, np, nc, n_soil)
       type(output_buffers_t), intent(inout) :: bufs
-      integer(ik),            intent(in)    :: nsub, np, nc
-      integer(ik) :: nl
+      integer(ik),            intent(in)    :: nsub, np, nc, n_soil
+      integer(ik) :: nl, ip
       nl = n_soil_layer_max
       allocate(bufs%fast_time(nsub), bufs%fast_forcing(N_PY_ROWS, nsub), bufs%fast_site(N_PA_ROWS, nsub),  &
                bufs%fast_patch(N_PA_ROWS, max(np, 1_ik), nsub))
       allocate(bufs%fast_soil_temp(nl, nsub), bufs%fast_soil_water(nl, nsub),                        &
                bufs%fast_soil_temp_patch(nl * max(np, 1_ik), nsub),                                  &
                bufs%fast_soil_water_patch(nl * max(np, 1_ik), nsub))
+      allocate(bufs%fast_soil_live(nl), bufs%fast_soil_patch_live(nl * max(np, 1_ik)), source=.false.)
+      bufs%fast_n_site = 1_ik
+      bufs%fast_soil_live(1:n_soil) = .true.
+      do ip = 1_ik, np
+         bufs%fast_soil_patch_live((ip - 1_ik) * nl + 1_ik:(ip - 1_ik) * nl + n_soil) = .true.
+      end do
       allocate(bufs%fast_coh_ltemp(nc, nsub), bufs%fast_coh_gpp(nc, nsub), bufs%fast_coh_height(nc, nsub))
       bufs%fast_forcing = 0.0_wp ; bufs%fast_site = 0.0_wp ; bufs%fast_patch = 0.0_wp
       bufs%fast_soil_temp = 0.0_wp ; bufs%fast_soil_water = 0.0_wp

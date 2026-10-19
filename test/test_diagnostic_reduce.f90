@@ -13,12 +13,12 @@
 !==========================================================================================!
 program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
-   use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon
+   use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_allometry,         only : allometry_t
    use meds_constants,     only : n_soil_layer_max
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,             &
-                                       reduce_patch_to_site, reduce_patch_column_to_site,       &
+                                       reduce_patch_to_site, reduce_patch_columns_to_sites,     &
                                        gather_patch_columns,                                     &
                                        W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA,             &
                                        total_agb, total_lai, total_nplant
@@ -63,6 +63,7 @@ contains
       poly%cohort%leaf_area(1:3)   = [ 1.0_wp,  3.0_wp,  5.0_wp]
       poly%cohort%basal_area(1:3)  = [ 5.0_wp,  1.0_wp,  2.0_wp]
       poly%cohort%dbh(1:3)         = [ 5.0_wp, 15.0_wp, 45.0_wp]   ! -> classes 1, 2, 4
+      call rebuild_patch_map(poly)                                 ! both patches in the one site
    end subroutine build_fixture
 
    !=======================================================================================!
@@ -253,29 +254,32 @@ contains
    !  whose stride is the COMPILE-TIME layer ceiling. The closure below -- area-weighted mean    !
    !  over the patch axis of the 2-D slab == the site column -- is the acceptance test, and      !
    !  it is what proves the flattening index is right. Varying the ACTIVE layer count while the  !
-   !  stride stays fixed is the specific mis-mapping it has to rule out.                         !
+   !  stride stays fixed is the specific mis-mapping it has to rule out. Two sites on columns of !
+   !  different depths each keep their own layers, at their own stride.                          !
    !=======================================================================================!
    subroutine test_soil_columns()
-      type(polygon_t) :: poly
-      real(wp) :: col(n_soil_layer_max, 2), sitecol(n_soil_layer_max)
+      type(polygon_t) :: poly, two
+      real(wp) :: col(n_soil_layer_max, 2), sitecol(2*n_soil_layer_max)
       real(wp) :: flat(2*n_soil_layer_max), wmean
-      logical  :: vld(2*n_soil_layer_max)
+      logical  :: vld(2*n_soil_layer_max), svld(2*n_soil_layer_max)
       integer(ik) :: n, k, nlayer
       call build_fixture(poly)
       nlayer = 5_ik                                     ! ACTIVE layers < the ceiling, on purpose
+      poly%site%surface(1)%soil%n_active = nlayer
       do k = 1_ik, nlayer
          col(k, 1) = 0.10_wp * real(k, wp)              ! patch 1 profile
          col(k, 2) = 0.50_wp * real(k, wp)              ! patch 2 profile (deliberately different)
       end do
 
-      call reduce_patch_column_to_site(poly, col, nlayer, sitecol, n)
-      call check(n == nlayer, 'site column length = active layers')
+      call reduce_patch_columns_to_sites(poly, col, sitecol, svld, n)
+      call check(n == n_soil_layer_max, 'one site column = the layer ceiling')
+      call check(all(svld(1:nlayer)) .and. .not. any(svld(nlayer + 1_ik:n)), 'only the active layers are valid')
       !----- area-weighted: 0.75*0.1k + 0.25*0.5k = 0.2k  ------------------------------------!
       do k = 1_ik, nlayer
          call check_close(sitecol(k), 0.2_wp*real(k,wp), 1.0e-12_wp, 'area-weighted site soil column')
       end do
 
-      call gather_patch_columns(poly, col, nlayer, flat, vld, n)
+      call gather_patch_columns(poly, col, flat, vld, n)
       call check(n == 2_ik*n_soil_layer_max, 'flat slab length = n_patch * n_soil_layer_max')
       !----- The STRIDE is the compile-time ceiling, NOT nlayer: patch 2 layer 1 sits at         !
       !      n_soil_layer_max + 1, not nlayer + 1. Striding by the live count is the mis-mapping  !
@@ -293,6 +297,27 @@ contains
          call check_close(wmean, sitecol(k), 1.0e-12_wp, 'area-weighted 2-D slab == site column')
       end do
 
+      !----- Two sites, a patch each: site 1 on 5 layers, site 2 on 3. Each site's column is its  !
+      !      patch's, at the site's own stride, whatever the sites' areas. -----------------------!
+      call alloc_polygon(two, 3_ik, 4_ik, 4_ik, 4_ik, allometry_t(), test_pft_table(), n_site=2_ik)
+      two%site%area(1:2) = [0.75_wp, 0.25_wp]
+      two%site%surface(1)%soil%n_active = 5_ik
+      two%site%surface(2)%soil%n_active = 3_ik
+      two%patch%n = 2_ik
+      two%patch%area(1:2) = 1.0_wp
+      two%patch%owner_site(1:2) = [1_ik, 2_ik]
+      call rebuild_patch_map(two)
+      call reduce_patch_columns_to_sites(two, col, sitecol, svld, n)
+      call check(n == 2_ik*n_soil_layer_max, 'two site columns, each the layer ceiling long')
+      call check_close(sitecol(3), col(3, 1), 1.0e-12_wp, 'site 1 is its patch''s column')
+      call check_close(sitecol(n_soil_layer_max + 3_ik), col(3, 2), 1.0e-12_wp,                    &
+                       'site 2 is its patch''s column, at the ceiling stride')
+      call check(svld(5) .and. .not. svld(n_soil_layer_max + 4_ik), 'each site has its own layers')
+      call gather_patch_columns(two, col, flat, vld, n)
+      call check(vld(5) .and. vld(n_soil_layer_max + 3_ik) .and. .not. vld(n_soil_layer_max + 4_ik),    &
+                 'each patch has its site''s layers')
+
+      call free_polygon(two)
       call free_polygon(poly)
    end subroutine test_soil_columns
 

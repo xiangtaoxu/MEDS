@@ -394,15 +394,19 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own count, and the entries past it
   are the fill value. `[region].detail_polygons` is retired. Once a polygon has failed, the end of
   the run writes nothing more, so a closed file is never rewritten.
-- **Each polygon's soil and map inputs in its files.** Polygons have their own layers, so the
-  files' soil coordinate is per polygon: `soil_z (polygon, soil)` holds each polygon's layer node
-  depths, and its CF bounds `soil_z_bnds (polygon, soil, nv)` each layer's top and bottom, so the
-  bottom layer ends at that polygon's own soil depth. Both are negative downward, and the fill value
-  below the polygon's bottom layer, as its soil variables are. Each file also carries the inputs the
-  cell's maps gave the polygon, as it runs them: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2
-  for drain, aquifer), `drain_factor` (the drainage factor $f$ of the bottom flux $`q = f\,K`$: 1 on a
+- **Each polygon's sites, their soils and map inputs in its files.** Every file has a `site` axis
+  behind `polygon`, as long as the largest polygon's site count; `n_site (polygon)` gives each
+  polygon's own, and the entries past it are the fill value. A region runs one site per cell. Sites
+  have their own layers, so the files' soil coordinate is per site: `soil_z (polygon, site, soil)`
+  holds each site's layer node depths, and its CF bounds `soil_z_bnds (polygon, site, soil, nv)` each
+  layer's top and bottom, so the bottom layer ends at that site's own soil depth. Both are negative
+  downward, and the fill value below the site's bottom layer, as its soil variables are. Each file
+  also carries each site's area and terrain, `site_area` (its fraction of the polygon),
+  `site_elevation` [m], `site_slope` and `site_aspect` [degrees], and the inputs the cell's maps gave
+  it, as it runs them, all `(polygon, site)`: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2 for
+  drain, aquifer), `drain_factor` (the drainage factor $f$ of the bottom flux $`q = f\,K`$: 1 on a
   free-draining base, the cell's `f_leak` on a leaky one, 0 on a sealed one; the fill value on an
-  aquifer), `deep_temp` [K] and, with `height_allometry = "chave2014"`, `chave_e`.
+  aquifer) and `deep_temp` [K]; with `height_allometry = "chave2014"`, `chave_e (polygon)`.
 - **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its

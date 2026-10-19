@@ -22,7 +22,7 @@ module meds_init
    implicit none
    private
 
-   public :: init_bare_ground, seed_bare_ground, add_cohort, finalize_init, init_from_census
+   public :: init_bare_ground, init_bare_sites, seed_bare_ground, add_cohort, finalize_init, init_from_census
    public :: restructure_census_stand
 
    !----- The census file's column layout: each index is the column's position, 0 if absent. -!
@@ -36,28 +36,51 @@ module meds_init
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! A near-bare-ground polygon: n_patch identical empty patches sharing its area.         !
+   ! A bare polygon of one site: n_patch identical empty patches sharing the site's area.  !
    !---------------------------------------------------------------------------------------!
    subroutine init_bare_ground(poly, cfg, n_patch)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: n_patch
-      integer(ik) :: ip
-      call alloc_polygon(poly, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),       &
-                      n_growth_window = growth_window_steps(cfg), allom = cfg%allom, pft = cfg%pft)
-      call make_site_surface(poly%site%surface(1), cfg)
-      poly%patch%n = n_patch
-      do ip = 1_ik, n_patch
-         poly%patch%area(ip)      = 1.0_wp / real(n_patch, wp)
-         poly%patch%age(ip)       = 0.0_wp
-         poly%patch%dist_type(ip) = DIST_PRIMARY
-         call assign_patch_id(poly, ip)
+      call init_bare_sites(poly, cfg, [n_patch], [cfg], [1.0_wp])
+   end subroutine init_bare_ground
+
+   !-------------------------------------------------------------------------------------------!
+   ! A near-bare-ground polygon of several sites: site `is` takes its share `site_area(is)` of !
+   ! the polygon, its surface from `site_cfg(is)` (its soil, from [soil] or its own maps) and  !
+   ! n_patch(is) identical empty patches sharing its area. The patches are numbered site by    !
+   ! site, so the block is sorted by site. Everything else comes from `cfg`, the run's.        !
+   !-------------------------------------------------------------------------------------------!
+   subroutine init_bare_sites(poly, cfg, n_patch, site_cfg, site_area)
+      type(polygon_t),     intent(out) :: poly
+      type(meds_config_t), intent(in)  :: cfg
+      integer(ik),         intent(in)  :: n_patch(:)     !< patches per site
+      type(meds_config_t), intent(in)  :: site_cfg(:)
+      real(wp),            intent(in)  :: site_area(:)   !< [-] fractions of the polygon
+      integer(ik) :: ip, is, k, ns
+      ns = int(size(n_patch), ik)
+      call alloc_polygon(poly, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(sum(n_patch), 1_ik),  &
+                      n_growth_window = growth_window_steps(cfg), allom = cfg%allom, pft = cfg%pft, &
+                      n_site = ns)
+      poly%patch%n = sum(n_patch)
+      ip = 0_ik
+      do is = 1_ik, ns
+         call make_site_surface(poly%site%surface(is), site_cfg(is))
+         poly%site%area(is) = site_area(is)
+         do k = 1_ik, n_patch(is)
+            ip = ip + 1_ik
+            poly%patch%area(ip)       = 1.0_wp / real(n_patch(is), wp)
+            poly%patch%age(ip)        = 0.0_wp
+            poly%patch%dist_type(ip)  = DIST_PRIMARY
+            poly%patch%owner_site(ip) = is
+            call assign_patch_id(poly, ip)
+         end do
       end do
       poly%patch%recruit_pool = 0.0_wp
       poly%cohort%n = 0_ik
       call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
-   end subroutine init_bare_ground
+   end subroutine init_bare_sites
 
    !---------------------------------------------------------------------------------------!
    ! A near-bare-ground start's seedlings (ED2's init_density): every patch gets one cohort of !
@@ -108,17 +131,19 @@ contains
    end subroutine finalize_init
 
    !---------------------------------------------------------------------------------------!
-   ! Initialize a site from a cohort CENSUS file: a CSV with one row per cohort, produced by   !
-   ! a previous MEDS run or from a field inventory. One site is built.                        !
+   ! Initialize a polygon from a cohort CENSUS file: a CSV with one row per cohort, produced    !
+   ! by a previous MEDS run or from a field inventory.                                          !
    !                                                                                          !
    ! COLUMNS ARE MATCHED BY NAME from the header line, in any order:                           !
    !   required  patch_id, dbh [cm], pft, nplant [plants per m2 of the patch]                  !
    !   optional  patch_area [any unit], site_id, cohort_id, height [m]                         !
-   ! Each distinct patch_id is one primary patch of age 0. With patch_area the patches take     !
-   ! their areas normalized to fractions of the site; without it they share the site equally.  !
-   ! Rows are filtered to one site_id (`use_site_id` if present, else the first one seen); a    !
-   ! file without the column is one site. `dbh` drives the allometry (set_cohort_size), so      !
-   ! `height` and `cohort_id` are provenance: height, when present, must be positive.          !
+   ! Each distinct (site_id, patch_id) is one primary patch of age 0. With patch_area a site's  !
+   ! patches take their areas normalized to fractions of the site; without it they share it     !
+   ! equally. One site is built from the rows of one site_id (`use_site_id` if present, else    !
+   ! the first one seen); with `site_ids`, site k is built from the rows of site_ids(k), with   !
+   ! its surface from site_cfg(k) and its share site_area(k) of the polygon. A file without     !
+   ! the column is one site. `dbh` drives the allometry (set_cohort_size), so `height` and      !
+   ! `cohort_id` are provenance: height, when present, must be positive.                        !
    !                                                                                          !
    ! A file whose first data line is seven numbers is read positionally as                    !
    ! `site_id, patch_id, cohort_id, dbh, height, pft, nplant`, the layout of a census file    !
@@ -131,21 +156,24 @@ contains
    ! patch_area stops the run. The file is read twice (patches, then cohorts), so no row buffer !
    ! is needed.                                                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine init_from_census(poly, cfg, path, found, use_site_id, why)
+   subroutine init_from_census(poly, cfg, path, found, use_site_id, why, site_ids, site_cfg, site_area)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
       logical,             intent(out) :: found
       integer(ik), intent(in), optional :: use_site_id
       character(len=:), allocatable, intent(out), optional :: why   !< why found = .false.; '' when found
+      integer(ik),         intent(in), optional :: site_ids(:)      !< several sites: each one's census site_id,
+      type(meds_config_t), intent(in), optional :: site_cfg(:)      !< configuration
+      real(wp),            intent(in), optional :: site_area(:)     !< and share of the polygon
 
       integer,     parameter :: LINELEN = 1024
       character(len=LINELEN) :: line
       type(census_columns_t) :: cols
-      integer(ik)            :: sid, pid, ipft, sel_site, npatch, ip
+      integer(ik)            :: sid, pid, ipft, npatch, ip, k, i, j
       real(wp)               :: dbh, height, nplant, area
-      integer(ik), allocatable :: patch_id_of(:)
-      real(wp),    allocatable :: patch_area_of(:)
+      integer(ik), allocatable :: sel(:), site_of(:), patch_id_of(:), slot_of(:), n_patch(:)
+      real(wp),    allocatable :: patch_area_of(:), site_patch_area(:)
       logical                :: target_known, have_layout
       integer                :: u, ios, ipass
       character(len=24)      :: pid_str
@@ -156,18 +184,52 @@ contains
       if (ios /= 0) return
       if (present(why)) why = 'holds no cohort for the site'
 
-      target_known = present(use_site_id)
-      if (target_known) sel_site = use_site_id
-      allocate(patch_id_of(0), patch_area_of(0))
+      !----- The census site of each site built: the given ones, or the first one the file names. -!
+      target_known = .true.
+      if (present(site_ids)) then
+         sel = site_ids
+      else if (present(use_site_id)) then
+         sel = [use_site_id]
+      else
+         allocate(sel(0))
+         target_known = .false.
+      end if
+      allocate(site_of(0), patch_id_of(0), patch_area_of(0))
       npatch = 0_ik
 
       do ipass = 1, 2
          if (ipass == 2) then
             npatch = int(size(patch_id_of), ik)
-            if (npatch == 0_ik) exit                         ! no rows for the selected site
-            !----- The patches: equal areas, or the file's areas normalized to the site. --------!
-            call init_bare_ground(poly, cfg, npatch)
-            if (cols%area > 0) poly%patch%area(1:npatch) = patch_area_of / sum(patch_area_of)
+            if (npatch == 0_ik) exit                         ! no rows for the selected sites
+            !----- The patches, site by site, first seen first within a site: equal areas, or   !
+            !      the file's areas normalized to their site. ----------------------------------!
+            allocate(slot_of(npatch), n_patch(size(sel)))
+            j = 0_ik
+            do k = 1_ik, int(size(sel), ik)
+               n_patch(k) = int(count(site_of == k), ik)
+               do i = 1_ik, npatch
+                  if (site_of(i) /= k) cycle
+                  j = j + 1_ik
+                  slot_of(i) = j
+               end do
+            end do
+            if (present(site_ids)) then
+               call init_bare_sites(poly, cfg, n_patch, site_cfg, site_area)
+            else
+               call init_bare_ground(poly, cfg, npatch)
+            end if
+            if (cols%area > 0) then
+               do k = 1_ik, int(size(sel), ik)
+                  site_patch_area = pack(patch_area_of, site_of == k)
+                  site_patch_area = site_patch_area / sum(site_patch_area)
+                  j = 0_ik
+                  do i = 1_ik, npatch
+                     if (site_of(i) /= k) cycle
+                     j = j + 1_ik
+                     poly%patch%area(slot_of(i)) = site_patch_area(j)
+                  end do
+               end do
+            end if
             rewind(u)
          end if
          have_layout = .false.
@@ -181,12 +243,17 @@ contains
                if (cols%header) cycle
             end if
             call parse_census_line(line, cols, path, sid, pid, dbh, height, ipft, nplant, area)
-            if (.not. target_known) then ; sel_site = sid ; target_known = .true. ; end if
-            if (sid /= sel_site) cycle
+            if (.not. target_known) then
+               sel = [sid]
+               target_known = .true.
+            end if
+            k = int(findloc(sel, sid, dim=1), ik)
+            if (k == 0_ik) cycle
+            ip = census_patch(k, pid)
             if (ipass == 1) then
                !----- Pass 1: the distinct patches, first seen first, and their areas. ----------!
-               ip = int(findloc(patch_id_of, pid, dim=1), ik)
                if (ip == 0_ik) then
+                  site_of       = [site_of, k]
                   patch_id_of   = [patch_id_of, pid]
                   patch_area_of = [patch_area_of, area]
                else if (cols%area > 0) then
@@ -197,11 +264,10 @@ contains
                   end if
                end if
             else
-               !----- Pass 2: every cohort of the selected site, into its patch. ------------------!
+               !----- Pass 2: every cohort of the selected sites, into its patch. -----------------!
                if (ipft < 1_ik .or. ipft > cfg%pft%n)                                              &
                   error stop 'meds_init: census pft index out of range in '//trim(path)
-               ip = int(findloc(patch_id_of, pid, dim=1), ik)
-               call add_cohort(poly, cfg, ip, ipft, nplant, dbh)
+               call add_cohort(poly, cfg, slot_of(ip), ipft, nplant, dbh)
             end if
          end do
       end do
@@ -211,6 +277,21 @@ contains
       call finalize_init(poly)
       found = .true.
       if (present(why)) why = ''
+
+   contains
+
+      !----- The patch of site k with census patch_id pid, in first-seen order (0 if new). ----!
+      integer(ik) function census_patch(k, pid) result(ip)
+         integer(ik), intent(in) :: k, pid
+         integer(ik) :: i
+         ip = 0_ik
+         do i = 1_ik, int(size(patch_id_of), ik)
+            if (site_of(i) == k .and. patch_id_of(i) == pid) then
+               ip = i
+               return
+            end if
+         end do
+      end function census_patch
    end subroutine init_from_census
 
    !---------------------------------------------------------------------------------------!

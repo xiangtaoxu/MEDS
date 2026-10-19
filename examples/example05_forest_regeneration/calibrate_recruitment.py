@@ -83,7 +83,7 @@ def run_trial(cfg, out):
         prev = {}
         for step in run:
             c = run.cohorts("global_id", "pft", "nplant", "dbh", "leaf_area", "owner_patch")
-            area = run.patches("area")["area"]
+            area = run.patches("share")["share"]
             ip = c["owner_patch"] - 1
             lai = np.zeros(len(area))
             np.add.at(lai, ip, c["nplant"] * c["leaf_area"])

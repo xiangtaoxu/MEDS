@@ -36,9 +36,12 @@ for _n in ("year", "month", "day", "istep", "iyear"):
 # site aggregates
 _sig("meds_run_n_patch",  c_int, [c_int])
 _sig("meds_run_n_cohort", c_int, [c_int])
+_sig("meds_run_n_site",   c_int, [c_int])
 for _n in ("total_agb", "total_lai", "total_nplant", "total_basal_area", "soil_carbon"):
     _sig(f"meds_run_{_n}", c_double, [c_int])
 # array copy-out
 _sig("meds_run_get_real", None, [c_int, c_int, _dptr])
 _sig("meds_run_get_int",  None, [c_int, c_int, _iptr])
 _sig("meds_run_get_patch_real", None, [c_int, c_int, _dptr])
+_sig("meds_run_get_patch_int",  None, [c_int, c_int, _iptr])
+_sig("meds_run_get_site_real",  None, [c_int, c_int, _dptr])

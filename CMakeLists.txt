@@ -873,4 +873,10 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_state_roundtrip PRIVATE meds_model meds_io_stream meds_testsupport)
    meds_fortran_flags(test_state_roundtrip)
    add_test(NAME state_roundtrip COMMAND test_state_roundtrip)
+
+   #----- A polygon of several sites: its stands, threads and state file (links the IO layer). #
+   add_executable(test_several_sites test/test_several_sites.f90)
+   target_link_libraries(test_several_sites PRIVATE meds_model meds_io_stream meds_testsupport)
+   meds_fortran_flags(test_several_sites)
+   add_test(NAME several_sites COMMAND test_several_sites)
 endif()

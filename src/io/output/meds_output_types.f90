@@ -15,7 +15,6 @@ module meds_output_types
    use meds_kinds,         only : wp, ik
    use meds_time,          only : meds_time_t
    use meds_output_config,      only : N_FREQ
-   use meds_constants,     only : n_soil_layer_max
    implicit none
    private
 
@@ -43,6 +42,8 @@ module meds_output_types
    integer(ik), parameter :: DIM_SCALAR = 0_ik
    integer(ik), parameter :: DIM_COHORT = 1_ik
    integer(ik), parameter :: DIM_PATCH  = 2_ik
+   !----- (soil layer x site): each site's column on its own layers, flattened as DIM_SOIL_PATCH    !
+   !      is below, at (is-1)*n_soil_layer_max + k, and written (time, polygon, site, soil). -------!
    integer(ik), parameter :: DIM_SOIL   = 3_ik
    integer(ik), parameter :: DIM_PFT    = 4_ik
    integer(ik), parameter :: DIM_SIZE   = 5_ik   !< DBH size class (ED2-style; edges from TOML)
@@ -75,35 +76,19 @@ module meds_output_types
    ! The run-dependent parameters the DERIVED diagnostics need, resolved once at manager setup   !
    ! and carried as plain data (netCDF-free, allocatable-free).                                   !
    !                                                                                          !
-   ! WHY THIS EXISTS. extract_variable is handed `site` and a descriptor -- it has no config      !
-   ! aggregator and no fast context. But a soil matric potential needs the retention curve's       !
-   ! texture parameters, a PFT-axis reduction needs the run's PFT count, and a size-class          !
-   ! reduction needs the class edges. Passing the whole meds_config_t down would drag the config    !
-   ! aggregator into the per-step tick; passing this small bundle keeps the tick's dependencies     !
-   ! exactly as narrow as they were.                                                                !
+   ! WHY THIS EXISTS. extract_variable is handed the polygon and a descriptor -- it has no    !
+   ! config aggregator and no fast context. But a PFT-axis reduction needs the run's PFT      !
+   ! count, and a size-class reduction needs the class edges. Passing the whole meds_config_t !
+   ! down would drag the config aggregator into the per-step tick; passing this small bundle  !
+   ! keeps the tick's dependencies exactly as narrow as they were.                            !
    !                                                                                          !
-   ! The soil block is COPIED FROM THE FAST CONTEXT the physics actually ran (attach_output wires   !
-   ! it, through manager_set_soil_params), not re-derived from the TOML. That is deliberate: a psi  !
-   ! reported here and a psi the roots saw are then the same curve by construction, rather than     !
-   ! two independent derivations that agree until someone edits one of them.                         !
+   ! A soil matric potential takes the retention curve of the patch's site, from the site's   !
+   ! surface: the column the fast loop integrates, so a psi reported here and a psi the roots !
+   ! saw are the same curve by construction.                                                  !
    !==========================================================================================!
    type :: diag_params_t
       integer(ik) :: n_pft       = 0_ik      !< run-time PFT count (the DIM_PFT axis length)
-      integer(ik) :: n_soil      = 0_ik      !< active soil layers
-      !----- Soil retention curve: the SOIL_RETENTION_* family code plus the van Genuchten /     !
-      !      Campbell parameters, PER LAYER (soil_params_t stores them per layer, and texture can   !
-      !      legitimately vary with depth -- collapsing them to a scalar here would silently        !
-      !      report the wrong curve for every layer but one).  --------------------------------!
-      integer(ik) :: retention   = 1_ik
-      real(wp)    :: theta_sat(n_soil_layer_max) = 0.0_wp
-      real(wp)    :: theta_res(n_soil_layer_max) = 0.0_wp
-      real(wp)    :: par_a(n_soil_layer_max)     = 0.0_wp
-      real(wp)    :: par_n(n_soil_layer_max)     = 0.0_wp
-      !----- Layer NODE depths [m], negative downward -- the `soil` axis coordinate. Written to any  !
-      !      file carrying the soil dim, for the same reason the pft and dbh_class axes carry theirs:  !
-      !      the vertical grid is a run-time property (depth, layer count, geometric growth), so a     !
-      !      file without it cannot be plotted against depth without re-deriving the grid by hand.     !
-      real(wp)    :: soil_z(n_soil_layer_max)    = 0.0_wp
+      !----- The fast loop runs, so the soil water has a curve to read (attach_output). ----------!
       logical     :: soil_ready  = .false.   !< .false. => psi/wetness diagnostics emit _FillValue
       !----- DBH size classes (DIM_SIZE): n_class+1 ascending edges [cm]. ----------------------!
       integer(ik) :: n_dbh_class = 0_ik
@@ -221,6 +206,7 @@ module meds_output_types
       integer(ik) :: d_time = -1_ik, d_cohort = -1_ik, d_patch = -1_ik, d_soil = -1_ik
       integer(ik) :: d_pft = -1_ik, d_size = -1_ik
       integer(ik) :: d_polygon = -1_ik       !< a region file's polygon dimension
+      integer(ik) :: d_site = -1_ik          !< the site dimension, behind the polygon's
       integer(ik) :: v_pft = -1_ik, v_dbh_lower = -1_ik, v_dbh_upper = -1_ik  !< self-describing axis coords
       integer(ik) :: v_soil_z = -1_ik                                        !< soil layer node depths [m]
       integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's ACTUAL trimmed cohort/patch axis length
@@ -267,15 +253,22 @@ module meds_output_types
       integer(ik), allocatable :: polygon_id(:)             !< the cell's row-major index on the forcing grid
       integer(ik), allocatable :: polygon_row(:), polygon_col(:)   !< 0-based grid indices
       real(wp),    allocatable :: polygon_lat(:), polygon_lon(:)   !< [deg] cell centre
-      !----- Each polygon's own soil layers and the inputs its cell's maps gave it, as it            !
-      !      runs them, recorded by attach_output: its files' soil coordinate and static variables. -!
-      integer(ik), allocatable :: polygon_n_soil(:)          !< active soil layers
-      real(wp),    allocatable :: polygon_soil_z(:,:)        !< (layer, polygon) [m] node depths, <= 0
-      real(wp),    allocatable :: polygon_soil_face(:,:)     !< (layer + 1, polygon) [m] layer faces, <= 0
-      real(wp),    allocatable :: polygon_soil_depth(:)      !< [m] soil column depth
-      integer(ik), allocatable :: polygon_bottom_bc(:)       !< the bottom water boundary (SOIL_BC_*)
-      real(wp),    allocatable :: polygon_drain_factor(:)    !< [-] drainage's f; MISSING_VALUE on an aquifer
-      real(wp),    allocatable :: polygon_deep_temp(:)       !< [K] deep soil temperature
+      !----- Each polygon's sites, as it runs them, recorded by attach_output: each one's area,     !
+      !      terrain and soil column, the files' soil coordinate and static variables. The site     !
+      !      axis is the largest polygon's; a polygon's other entries hold the fill value. ---------!
+      integer(ik)              :: site_max = 1_ik
+      integer(ik), allocatable :: polygon_n_site(:)          !< the polygon's sites
+      real(wp),    allocatable :: site_area(:,:)             !< (site, polygon) [-] fraction of the polygon
+      real(wp),    allocatable :: site_elevation(:,:)        !< (site, polygon) [m]
+      real(wp),    allocatable :: site_slope(:,:)            !< (site, polygon) [degrees]
+      real(wp),    allocatable :: site_aspect(:,:)           !< (site, polygon) [degrees from north]
+      integer(ik), allocatable :: site_n_soil(:,:)           !< (site, polygon) active soil layers
+      real(wp),    allocatable :: site_soil_z(:,:,:)         !< (layer, site, polygon) [m] node depths, <= 0
+      real(wp),    allocatable :: site_soil_face(:,:,:)      !< (layer + 1, site, polygon) [m] layer faces, <= 0
+      real(wp),    allocatable :: site_soil_depth(:,:)       !< (site, polygon) [m] soil column depth
+      integer(ik), allocatable :: site_bottom_bc(:,:)        !< (site, polygon) the bottom water boundary (SOIL_BC_*)
+      real(wp),    allocatable :: site_drain_factor(:,:)     !< (site, polygon) [-] drainage's f; MISSING_VALUE on an aquifer
+      real(wp),    allocatable :: site_deep_temp(:,:)        !< (site, polygon) [K] deep soil temperature
       real(wp),    allocatable :: polygon_chave_e(:)         !< [-] Chave's E; only with that allometry
    end type output_files_t
 
@@ -297,11 +290,14 @@ module meds_output_types
       real(wp),            allocatable :: fast_patch(:,:,:)     !< (PA_*, patch, n_fast_sub) each patch's row
       real(wp),            allocatable :: fast_site(:,:)        !< (PA_*, n_fast_sub) their area-weighted sum
       !----- The soil columns, per patch in the soil-by-patch slab's layout, (ip-1)*n_soil_layer_max  !
-      !      + k (DIM_SOIL_PATCH), and area-weighted over the patches. ------------------------------!
+      !      + k (DIM_SOIL_PATCH), and per site, each site's patches area-weighted, at                !
+      !      (is-1)*n_soil_layer_max + k (DIM_SOIL). The masks mark the layers each column has. ------!
       real(wp),            allocatable :: fast_soil_temp_patch(:,:)   !< (layer x patch, n_fast_sub) [K]
       real(wp),            allocatable :: fast_soil_water_patch(:,:)  !< (layer x patch, n_fast_sub) [m3/m3]
-      real(wp),            allocatable :: fast_soil_temp(:,:)   !< (n_soil, n_fast_sub)  area-weighted [K]
-      real(wp),            allocatable :: fast_soil_water(:,:)  !< (n_soil, n_fast_sub)  area-weighted [m3/m3]
+      real(wp),            allocatable :: fast_soil_temp(:,:)   !< (layer x site, n_fast_sub) [K]
+      real(wp),            allocatable :: fast_soil_water(:,:)  !< (layer x site, n_fast_sub) [m3/m3]
+      logical,             allocatable :: fast_soil_live(:)        !< (layer x site) a layer of its site
+      logical,             allocatable :: fast_soil_patch_live(:)  !< (layer x patch) a layer of its patch's site
       real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort, n_fast_sub) per-cohort leaf temp [K]
       real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
       !< (cohort, n_fast_sub) per-cohort height [m] (tallest post-proc)
@@ -309,13 +305,12 @@ module meds_output_types
       !< (cohort, CO_*, n_fast_sub) the per-cohort diagnostic block's rows, staged while it is on
       real(wp),            allocatable :: fast_coh_cdiag(:,:,:)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
-      integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs
+      integer(ik)          :: fast_n_site  = 0_ik              !< sites in the fast soil slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
       integer(ik)          :: fast_n_patch  = 0_ik             !< live patches in the fast patch rows
       logical              :: fast_ready   = .false.           !< the staging is filled and awaits replay
-      !----- The diagnostic parameters this polygon's extraction reads: its file set's, with the     !
-      !      polygon's own soil curve (attach_output), so a region's derived soil diagnostics follow   !
-      !      each polygon's soil. ----------------------------------------------------------------!
+      !----- The diagnostic parameters this polygon's extraction reads: its file set's, with         !
+      !      soil_ready set when its fast loop runs (attach_output). --------------------------------!
       type(diag_params_t)  :: diag
    end type output_buffers_t
 

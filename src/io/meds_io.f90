@@ -14,13 +14,15 @@
 ! allometry, so re-deriving them would move the leaf area and reset the fine-root carbon. The     !
 ! geometry is a function of the pools, and the reader re-derives it from them.                    !
 !                                                                                          !
-! A file holds every polygon of the run (docs/science/order_of_processes.md §6): each variable     !
-! has a leading `polygon` axis, and the cohort and patch axes are the largest any polygon has.     !
-! n_cohort, n_patch and n_window mark each polygon's live part (also its row of meta_int); the     !
-! rest holds the fill value. polygon_id, lat and lon name the rows. It is written by               !
-! state_file_open / state_file_put / state_file_close and read by io_read_state, a polygon's row   !
-! at a time; io_read_state also reads a file without the axis, one site's, as every one-polygon   !
-! run wrote one before runs became regions.                                                        !
+! A file holds every polygon of the run (docs/science/order_of_processes.md §6): each      !
+! variable has a leading `polygon` axis, and the cohort, patch and site axes are the       !
+! largest any polygon has. n_cohort, n_patch, n_site and n_window mark each polygon's live !
+! part (the first two also in its row of meta_int); the rest holds the fill value.         !
+! polygon_id, lat and lon name the rows. Each site's area and surface, and each patch's    !
+! site, are stored; a file without them is one site, its area meta_real(1). It is written  !
+! by state_file_open / state_file_put / state_file_close and read by io_read_state, a      !
+! polygon's row at a time; io_read_state also reads a file without the axis, one site's,   !
+! as every one-polygon run wrote one before runs became regions.                           !
 !==========================================================================================!
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
@@ -67,17 +69,17 @@ contains
    ! polygons'. A `polygon` axis leads every variable, `polygon_id` names its rows, and the       !
    ! variables are compressed, since most polygons fill only part of the padded axes.            !
    !---------------------------------------------------------------------------------------!
-   subroutine state_file_open(sf, dir, prefix, now, n_pft, n_window, n_cohort, n_patch,             &
+   subroutine state_file_open(sf, dir, prefix, now, n_pft, n_window, n_cohort, n_patch, n_site,     &
                               polygon_id, polygon_lat, polygon_lon, restructure_pending, restructure_new_year)
       type(state_file_t),    intent(out) :: sf
       character(len=*),      intent(in)  :: dir, prefix
       type(meds_time_t),     intent(in)  :: now
-      integer(ik),           intent(in)  :: n_pft, n_window, n_cohort, n_patch
+      integer(ik),           intent(in)  :: n_pft, n_window, n_cohort, n_patch, n_site
       integer(ik),           intent(in)  :: polygon_id(:)                  !< the polygons' ids ...
       real(wp),              intent(in)  :: polygon_lat(:), polygon_lon(:)  !< ... and locations [deg]
       logical,     optional, intent(in)  :: restructure_pending, restructure_new_year
       character(len=5) :: pending
-      integer(c_int) :: ncid, d_poly, d_cohort, d_patch, d_pft, d_mi, d_mr, d_soill, d_snowl, d_gwin
+      integer(c_int) :: ncid, d_poly, d_cohort, d_patch, d_site, d_pft, d_mi, d_mr, d_soill, d_snowl, d_gwin
       integer(c_int) :: v_id, v_lat, v_lon
       integer(c_size_t) :: start1(1), count1(1)
       real(c_double), allocatable :: coord(:)
@@ -89,6 +91,7 @@ contains
       call nc_check(nc_def_dim_f(ncid, 'polygon', int(size(polygon_id), c_size_t), d_poly), 'state dim polygon')
       call nc_check(nc_def_dim_f(ncid, 'cohort', int(max(n_cohort,1_ik), c_size_t), d_cohort), 'state dim cohort')
       call nc_check(nc_def_dim_f(ncid, 'patch',  int(max(n_patch,1_ik), c_size_t), d_patch),   'state dim patch')
+      call nc_check(nc_def_dim_f(ncid, 'site',   int(max(n_site,1_ik), c_size_t),  d_site),    'state dim site')
       call nc_check(nc_def_dim_f(ncid, 'pft',    int(n_pft, c_size_t),             d_pft),     'state dim pft')
       call nc_check(nc_def_dim_f(ncid, 'nmeta_int',  int(N_META_INT, c_size_t), d_mi), 'state dim mi')
       call nc_check(nc_def_dim_f(ncid, 'nmeta_real', int(N_META_REAL, c_size_t), d_mr), 'state dim mr')
@@ -100,12 +103,22 @@ contains
       call coord_var('lon',        NC_DOUBLE, 'the polygon''s longitude [degrees_east]',          v_lon)
       call coord_var('n_cohort',   NC_INT,    'the polygon''s live cohorts (the rest is fill)',    v_id)
       call coord_var('n_patch',    NC_INT,    'the polygon''s live patches (the rest is fill)',    v_id)
+      call coord_var('n_site',     NC_INT,    'the polygon''s sites (the rest is fill)',           v_id)
       call coord_var('n_window',   NC_INT,    'the polygon''s growth-window length',              v_id)
       call nc_check(nc_inq_varid_f(ncid, 'polygon_id', v_id), 'state inq polygon_id')
 
       call dv('meta_int',         NC_INT,    [d_mi],                                   &
               '[n_cohort,n_patch,n_pft,next_cohort_id,next_patch_id,year,month,day,hour,minute,second]')
-      call dv('meta_real',        NC_DOUBLE, [d_mr],     '[site_area, decimal_year]')
+      call dv('meta_real',        NC_DOUBLE, [d_mr],     '[area of the sites (1), decimal_year]')
+      !----- The sites: each one's area and the surface it was made with. The surface is made again   !
+      !      from the configuration on read; its layer count must match, or the soil state would be   !
+      !      read onto another column. ---------------------------------------------------------------!
+      call dv('site_area',        NC_DOUBLE, [d_site],   'site area fraction of the polygon')
+      call dv('site_n_soil',      NC_INT,    [d_site],   'the site''s active soil layers')
+      call dv('site_soil_depth',  NC_DOUBLE, [d_site],   'the site''s soil column depth [m]')
+      call dv('site_elevation',   NC_DOUBLE, [d_site],   'the site''s elevation [m]')
+      call dv('site_slope',       NC_DOUBLE, [d_site],   'the site''s slope [degrees]')
+      call dv('site_aspect',      NC_DOUBLE, [d_site],   'the site''s aspect [degrees from north]')
       call dv('pft',              NC_INT,    [d_cohort], 'plant functional type index')
       call dv('nplant',           NC_DOUBLE, [d_cohort], 'plant number density [plant/m2]')
       call dv('dbh',              NC_DOUBLE, [d_cohort], 'diameter at breast height [cm]')
@@ -192,7 +205,8 @@ contains
       !      which re-adopts the first day's mean rather than relaxing from an arbitrary origin over !
       !      a month.  ------------------------------------------------------------------------------!
       call dv('t_growth_avg', NC_DOUBLE, [d_mr], 'running-mean growth temperature [K]')
-      call dv('patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction')
+      call dv('patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction of its site')
+      call dv('owner_site',       NC_INT,    [d_patch],  'owning site index (1-based)')
       call dv('patch_age',        NC_DOUBLE, [d_patch],  'time since last disturbance [yr]')
       call dv('dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
       call dv('global_patch_id',  NC_INT,    [d_patch],  'persistent patch id')
@@ -313,10 +327,11 @@ contains
       type(polygon_t),       intent(in) :: poly
       type(meds_time_t),     intent(in) :: now
       integer(ik),           intent(in) :: polygon
-      integer(ik) :: ncoh, npat, npft, ip, ic, nwin, slot, meta_i(N_META_INT)
+      integer(ik) :: ncoh, npat, npft, ip, ic, nwin, slot, ns, meta_i(N_META_INT)
       real(wp)    :: meta_r(N_META_REAL)
 
       ncoh = poly%cohort%n ; npat = poly%patch%n ; npft = poly%n_pft
+      ns = poly%site%n
       nwin = int(size(poly%cohort%growth_hist, 1), ik)
       slot = polygon - 1_ik
 
@@ -325,9 +340,27 @@ contains
       call put_count('n_cohort', ncoh)
       call put_count('n_patch', npat)
       call put_count('n_window', nwin)
-      meta_r = [poly%site%area(1), time_to_decimal_year(now)]
+      call put_count('n_site', ns)
+      meta_r = [sum(poly%site%area(1:ns)), time_to_decimal_year(now)]
       call put_int('meta_int', meta_i)
       call put_dbl('meta_real', meta_r)
+      block                                 ! the sites, from contiguous buffers as below
+         integer(ik) :: nsoil(ns), is
+         real(wp)    :: depth(ns), elev(ns), slope(ns), aspect(ns)
+         do is = 1_ik, ns
+            nsoil(is)  = poly%site%surface(is)%soil%n_active
+            depth(is)  = poly%site%surface(is)%soil_column%depth
+            elev(is)   = poly%site%surface(is)%elevation_m
+            slope(is)  = poly%site%surface(is)%slope_deg
+            aspect(is) = poly%site%surface(is)%aspect_deg
+         end do
+         call put_dbl('site_area',       poly%site%area(1:ns))
+         call put_int('site_n_soil',     nsoil)
+         call put_dbl('site_soil_depth', depth)
+         call put_dbl('site_elevation',  elev)
+         call put_dbl('site_slope',      slope)
+         call put_dbl('site_aspect',     aspect)
+      end block
       call put_dbl('t_growth_avg', [poly%t_growth_avg])
       if (ncoh > 0_ik) then
          associate (c => poly%cohort)
@@ -378,6 +411,7 @@ contains
       if (npat > 0_ik) then
          associate (p => poly%patch)
             call put_dbl('patch_area',      p%area(1:npat))
+            call put_int('owner_site',      p%owner_site(1:npat))
             call put_dbl('patch_age',       p%age(1:npat))
             call put_int('dist_type',       p%dist_type(1:npat))
             call put_int('global_patch_id', p%global_id(1:npat))
@@ -562,15 +596,17 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Reconstruct a polygon from a state file written by state_file_put: with `polygon`        !
    ! (1-based) that row of a file with the polygon axis, or the whole of an older file without !
-   ! it. The geometry is re-derived from the carbon pools (set_cohort_size_from_carbon); the   !
-   ! maps and within-patch sort order are rebuilt, and the restructuring the stand owes at      !
+   ! it. Each site's surface is made from `site_cfg` (the run's `cfg` for every site when       !
+   ! absent). The geometry is re-derived from the carbon pools (set_cohort_size_from_carbon);   !
+   ! the maps and within-patch sort order are rebuilt, and the restructuring the stand owes at  !
    ! restart_time is set on the polygon (state_file_open; a file without the attribute is an    !
    ! older format, written AFTER its boundary's restructuring, so it owes nothing).             !
    ! found=.false. (no error stop) if the file cannot be opened or its layout is not the one    !
    ! `polygon` asks for (state_file_refusal says which). Errors out only on a genuine           !
-   ! inconsistency (PFT-count mismatch).                                                        !
+   ! inconsistency: the PFT count, the site count or a site's soil layer count differs from the !
+   ! configuration's.                                                                           !
    !---------------------------------------------------------------------------------------!
-   subroutine io_read_state(poly, cfg, path, restart_time, found, fast_found, polygon)
+   subroutine io_read_state(poly, cfg, path, restart_time, found, fast_found, polygon, site_cfg)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
@@ -582,9 +618,11 @@ contains
       !      (init_fast_reservoirs, from meds_polygon). ----------------------------------------------!
       logical, optional,   intent(out) :: fast_found
       integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
+      type(meds_config_t), optional, intent(in) :: site_cfg(:)   !< each site's configuration
       character(len=16) :: pending
+      character(len=160) :: msg
       integer(c_int) :: ncid, vid, st
-      integer(ik)    :: ncoh, npat, npft, ip, i, nwin, slot, meta_i(N_META_INT)
+      integer(ik)    :: ncoh, npat, npft, ip, i, nwin, slot, ns, is, meta_i(N_META_INT)
       real(wp)       :: meta_r(N_META_REAL)
       logical        :: fast_ok, pools_ok, olai_ok, ghist_ok, region, tissue_water_ok, tissue_temp_ok
       integer(c_size_t) :: nwin_file
@@ -611,9 +649,25 @@ contains
       ncoh = meta_i(1) ; npat = meta_i(2) ; npft = meta_i(3)
       if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
 
+      !----- The sites: a file without the site axis holds one. ---------------------------------!
+      ns = 1_ik
+      if (nc_inq_varid_f(ncid, 'n_site', vid) == NC_NOERR) ns = polygon_count(vid)
+      if (present(site_cfg)) then
+         if (size(site_cfg, kind=ik) /= ns) then
+            write(msg, '(a,i0,a,i0,a)') 'io_read_state: the state file holds ', ns,                     &
+                                        ' sites and the configuration ', size(site_cfg), ' for the polygon'
+            error stop trim(msg)
+         end if
+      end if
       call alloc_polygon(poly, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg), &
-                      cfg%allom, cfg%pft)
-      call make_site_surface(poly%site%surface(1), cfg)
+                      cfg%allom, cfg%pft, n_site=ns)
+      do is = 1_ik, ns
+         if (present(site_cfg)) then
+            call make_site_surface(poly%site%surface(is), site_cfg(is))
+         else
+            call make_site_surface(poly%site%surface(is), cfg)
+         end if
+      end do
       poly%cohort%n = ncoh ; poly%patch%n = npat
       poly%restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
       poly%restructure_new_year = trim(pending) == 'year'
@@ -626,7 +680,24 @@ contains
          poly%t_growth_avg = tg(1)
       end block
       poly%next_cohort_id = meta_i(4) ; poly%next_patch_id = meta_i(5)
-      poly%site%area(1) = meta_r(1)                 ! a file holds one site, every patch in it
+      if (nc_inq_varid_f(ncid, 'site_area', vid) == NC_NOERR) then
+         call gv_dbl(ncid, 'site_area', ns, poly%site%area(1:ns))
+         !----- Each site's soil state is per layer of the column it was written on. -------------!
+         block
+            integer(ik) :: nsoil(ns)
+            call gv_int(ncid, 'site_n_soil', ns, nsoil)
+            do is = 1_ik, ns
+               if (nsoil(is) /= poly%site%surface(is)%soil%n_active) then
+                  write(msg, '(a,i0,a,i0,a,i0,a)') 'io_read_state: site ', is, ' has ', nsoil(is),       &
+                        ' soil layers in the state file and ', poly%site%surface(is)%soil%n_active,     &
+                        ' in the configuration'
+                  error stop trim(msg)
+               end if
+            end do
+         end block
+      else
+         poly%site%area(1) = meta_r(1)              ! one site, every patch in it
+      end if
       restart_time = meds_time_t(year=meta_i(6), month=meta_i(7), day=meta_i(8),               &
                                  hour=meta_i(9), minute=meta_i(10), second=meta_i(11))
 
@@ -736,6 +807,9 @@ contains
       if (npat > 0_ik) then
          associate (p => poly%patch)
             call gv_dbl (ncid, 'patch_area',      npat, p%area(1:npat))
+            !----- Each patch's site; a file without them has one site, alloc_polygon's default. ---!
+            if (nc_inq_varid_f(ncid, 'owner_site', vid) == NC_NOERR)                                 &
+               call gv_int(ncid, 'owner_site', npat, p%owner_site(1:npat))
             call gv_dbl (ncid, 'patch_age',       npat, p%age(1:npat))
             call gv_int (ncid, 'dist_type',       npat, p%dist_type(1:npat))
             call gv_int (ncid, 'global_patch_id', npat, p%global_id(1:npat))
@@ -875,6 +949,16 @@ contains
       found = .true.
 
    contains
+      !----- A per-polygon count (n_site), at the polygon's row. ----------------------------------!
+      integer(ik) function polygon_count(v) result(n)
+         integer(c_int), intent(in) :: v
+         integer(c_size_t) :: st1(1), ct1(1)
+         integer(ik)       :: x(1)
+         st1 = int(slot, c_size_t)
+         ct1 = 1_c_size_t
+         call nc_check(nc_get_vara_int(ncid, v, st1, ct1, x), 'get polygon count')
+         n = x(1)
+      end function polygon_count
       !----- Where a read starts: the polygon's row in a region's file, then `row` (1-based) of a   !
       !      2-D variable when given, then the first n entries. ------------------------------------!
       subroutine where_from(n, row, st, ct, nd)
