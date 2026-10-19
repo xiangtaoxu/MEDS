@@ -16,7 +16,7 @@ module meds_therm_lib
    implicit none
    private
 
-   public :: tissue_heat_capacity, tissue_dry_heat_capacity
+   public :: tissue_heat_capacity, tissue_dry_heat_capacity, tissue_energy, tissue_temp
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
    public :: air_vpd, specific_humidity_to_vpd
 
@@ -52,6 +52,27 @@ contains
       real(wp), intent(in) :: c_dry    !< [J/kg/K]    specific heat of its dry matter
       cap = carbon * nplant * C2B_WOOD * c_dry
    end function tissue_dry_heat_capacity
+
+   !----- A tissue's internal energy [J per plant, or per m2 of ground with dry_hcap and wmass per m2]: !
+   !      its dry matter at its dry heat capacity and its water as liquid, in the soil's datum         !
+   !      (temp_to_internal_energy with fliq = 1; docs/science/vegetation_energy_dynamics.md eq. (9)). !
+   !      The water stays liquid at any temperature: a live tissue is taken not to freeze. ----------!
+   elemental pure real(wp) function tissue_energy(dry_hcap, wmass, temp) result(e)
+      real(wp), intent(in) :: dry_hcap   !< [J/K]  dry heat capacity
+      real(wp), intent(in) :: wmass      !< [kg]   the water it holds
+      real(wp), intent(in) :: temp       !< [K]
+      e = dry_hcap * temp + wmass * cp_liq * (temp - tsupercool_liq)
+   end function tissue_energy
+
+   !----- The inverse: the temperature of a tissue holding energy e (eq. (10)). Defined only for a     !
+   !      tissue with a heat capacity; one with neither dry matter nor water has no temperature of its  !
+   !      own, and the caller gives it its parent's. ------------------------------------------------!
+   elemental pure real(wp) function tissue_temp(e, wmass, dry_hcap) result(temp)
+      real(wp), intent(in) :: e          !< [J]
+      real(wp), intent(in) :: wmass      !< [kg]
+      real(wp), intent(in) :: dry_hcap   !< [J/K]
+      temp = (e + wmass * cp_liq * tsupercool_liq) / (dry_hcap + wmass * cp_liq)
+   end function tissue_temp
 
    !---------------------------------------------------------------------------------------!
    ! SATURATION VAPOUR PRESSURE, over liquid water OR over ice                                 !

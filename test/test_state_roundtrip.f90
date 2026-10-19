@@ -8,6 +8,7 @@ program test_state_roundtrip
    use meds_config,           only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
+   use meds_cohort_state_vars, only : hold_cohort_tissue_temps
    use meds_io,               only : state_file_t, state_file_open, state_file_put, state_file_close, &
                                      io_read_state
    use meds_time,             only : meds_time_t
@@ -73,6 +74,8 @@ program test_state_roundtrip
       !----- The canopy films [kg/plant]. ---------------------------------------------------------!
       poly%cohort%leaf_surf_water(i) = 0.020_wp + 0.001_wp * real(i, wp)
       poly%cohort%wood_surf_water(i) = 0.007_wp + 0.001_wp * real(i, wp)
+      !----- The energies the stamped temperatures and waters give, the state. -------------------!
+      call hold_cohort_tissue_temps(poly%cohort, i)
    end do
 
    !----- Stamp distinct, non-default FAST reservoir values on every patch -- a bare-ground site     !
@@ -142,6 +145,12 @@ program test_state_roundtrip
                         'light_hours_mean recovered')
       call check_close(poly2%cohort%dmax_psi_leaf_accum(i), poly%cohort%dmax_psi_leaf_accum(i), 1.0e-12_wp, &
                         'dmax_psi_leaf_accum recovered from state (partial day not discarded)')
+      call check(poly2%cohort%leaf_energy(i) == poly%cohort%leaf_energy(i) .and.                  &
+                 poly2%cohort%wood_energy(i) == poly%cohort%wood_energy(i),                       &
+                 'the tissue energies recovered bit for bit')
+      call check(poly2%cohort%leaf_temp(i) == poly%cohort%leaf_temp(i) .and.                      &
+                 poly2%cohort%wood_temp(i) == poly%cohort%wood_temp(i),                           &
+                 'and their temperatures, read as twins, bit for bit')
       call check(poly2%cohort%leaf_surf_water(i) == poly%cohort%leaf_surf_water(i) .and.          &
                  poly2%cohort%wood_surf_water(i) == poly%cohort%wood_surf_water(i),               &
                  'the canopy films [kg/plant] recovered bit for bit')

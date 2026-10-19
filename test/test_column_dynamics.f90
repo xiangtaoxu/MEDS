@@ -15,10 +15,12 @@
 !==========================================================================================!
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : latent_heat_fusion, rho_h2o, grav, pio4, n_soil_layer_max
+   use meds_constants,           only : latent_heat_fusion, rho_h2o, grav, pio4, n_soil_layer_max, TISSUE_C_LEAF, &
+                                        TISSUE_C_WOOD_DRY
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
-   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy
+   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, tissue_energy,       &
+                                        tissue_dry_heat_capacity
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
@@ -552,6 +554,13 @@ contains
             col_cohort%bleaf(1:n))
       biophys%wood_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      !----- ...and the tissues' energy at t0, the state the column advances. ----------------------!
+      biophys%leaf_energy(1:n) = tissue_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
+                                    col_cohort%bleaf(1:n), TISSUE_C_LEAF),                                    &
+                                    max(biophys%leaf_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
+      biophys%wood_energy(1:n) = tissue_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
+                                    col_cohort%bwood(1:n), TISSUE_C_WOOD_DRY),                                &
+                                    max(biophys%wood_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
       budget = column_budget_t()
       biophys%shed_water_rate = shed_seed
       !----- RUN 8: seed a snow pack when asked. snow_seed = 0 (RUNS 1-7) leaves nlayer = 0, which is  !

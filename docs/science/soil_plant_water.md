@@ -167,9 +167,9 @@ The network moves water; the soil-energy solve and the tissue stores carry its e
 - Water crossing a soil face, the pond face or the base carries the liquid enthalpy of the node it
   leaves.
 - Root uptake leaves each layer at that layer's own temperature (`root_heat`, per layer).
-- A tissue's heat is its frozen capacity times its temperature; the change in its water is booked at
-  its start-of-step temperature (`water_store_enth`), and arriving water heats it only by its
-  temperature difference. The wood's capacity counts the whole wood store's water, fine roots
+- A tissue's energy is its state ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq.
+  (9)): the water it gains or loses carries its liquid enthalpy at the tissue's start-of-step
+  temperature (eq. (5) below), and arriving water heats it only by its temperature difference. The wood's capacity counts the whole wood store's water, fine roots
   included ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq. (8)), at the wood's
   temperature, which is the temperature eq. (4) moves all of the store's water at.
 - The pond carries its own enthalpy through each sub-step: rain joins it first, what infiltrates
@@ -186,17 +186,19 @@ q_{wl} = s\,u(T_{up}) - (s-E)\,u(T_L), \qquad
 q_{w} = Q_{loss} - U\,u(T_W) - s\,\big[u(T_{up}) - u(T_W)\big] \qquad(4)
 ```
 
-and the change in their water is booked, in the ledgers, at the start-of-step temperatures:
+and the change in their water carries, into their energies, its enthalpy at the start-of-step
+temperatures:
 
 ```math
 H_{store} = (U-s)\,u(T_W) + (s-E)\,u(T_L) \qquad(5)
 ```
 
-($`q_{wl}`$, $`q_{w}`$ and $`H_{store}`$ are `qwflux_wl`, `q_wood_net` and `water_store_enth` in
-`build_column_frozen`; the upwind temperatures are frozen at the start of the step, which keeps the
-energy ledger exact.) The heat store, capacity × temperature, has no term for water mass coming or
-going, so counting the arriving water's whole enthalpy (about 4.4×10⁵ J kg⁻¹ from the liquid datum)
-as heat would warm the wood whenever it refills: about 10 W m⁻² every night at BCI, and at a storm
+($`q_{wl}`$ and $`q_{w}`$ are `qwflux_wl` and `q_wood_net`, and $`H_{store}`$ the per-cohort
+`leaf_water_enth` and `wood_water_enth`, in `build_column_frozen`; the upwind temperatures are
+frozen at the start of the step, which keeps the energy ledger exact.) Water that arrives at a
+tissue's own temperature changes its energy and not its temperature. Counting the arriving water's
+whole enthalpy (about 4.4×10⁵ J kg⁻¹ from the liquid datum) as heat, into the temperature at the
+held capacity, would warm the wood whenever it refills: about 10 W m⁻² every night at BCI, and at a storm
 front, where wet soil refills dry-season wood with about 7 kg m⁻² in a quarter hour, 13 K above the
 canopy air and +600 W m⁻² of sensible heat at zero net radiation.
 

@@ -29,7 +29,8 @@ module meds_demography_cohort_fusefiss
                                       expand_cohort_block, copy_cohort, init_cohort,           &
                                       cohort_tissue_heat_capacity, cohort_film_water,                    &
                                       cohort_tissue_water, set_cohort_size_from_carbon,                  &
-                                      fuse_cohort_fast_state
+                                      fuse_cohort_fast_state, set_cohort_tissue_temps,                   &
+                                      hold_cohort_tissue_temps
    use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id, patch_polygon_area
    use meds_patch_state_vars, only : patch_physical_state
    use meds_litter_partition, only : necromass_to_litter
@@ -192,9 +193,9 @@ contains
          ntot    = nr + nd
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
          !----- The fast-loop-owned state fuses by its DECLARED per-field policy, in one place  !
-         !      (meds_cohort_state_vars%fuse_cohort_fast_state): heat-capacity-weighted for the        !
-         !      tissue temperatures, nplant-weighted for the per-plant amounts (the films among      !
-         !      them). Enumerating it here would let a field drift from its                          !
+         !      (meds_cohort_state_vars%fuse_cohort_fast_state): nplant-weighted for every per-plant !
+         !      amount, the tissue energies and films among them; the temperatures follow from the   !
+         !      fused energies. Enumerating it here would let a field drift from its                 !
          !      declared convention. The dynamic leaf traits stay here: they are slow-loop state,      !
          !      not fast, and they must be set BEFORE the survivor's geometry is re-derived because    !
          !      sla maps its leaf_carbon <-> leaf_area. Each trait blends on the quantity it is per: !
@@ -240,6 +241,8 @@ contains
          cohort%wood_carbon(recc)          = wc_tot / ntot
          cohort%nonstructural_carbon(recc) = nc_tot / ntot
          call set_cohort_size_from_carbon(poly%cohort, recc)   ! dbh=wood_to_dbh(wood_carbon); pools kept
+         !----- The merged tissues' temperatures, from the energies fused above and the merged masses. !
+         call set_cohort_tissue_temps(poly%cohort, recc)
          !----- Carbon-pool conservation guard (per pool, density). ------------------------!
          !      The pools are non-negative, so each density total is also its magnitude.        !
          if (.not. (conserved(lc_tot, ntot*cohort%leaf_carbon(recc),          lc_tot, conservation_tol) .and. &
@@ -300,6 +303,10 @@ contains
                cohort%wood_carbon(m) = wc0 * (1.0_wp - eps)
                call set_cohort_size_from_carbon(cohort, i)
                call set_cohort_size_from_carbon(cohort, m)
+               !----- Both daughters keep their parent's temperatures: the wood carbon each gained  !
+               !      or lost is held at them, and the two together hold the parent's energy. ----!
+               call hold_cohort_tissue_temps(cohort, i)
+               call hold_cohort_tissue_temps(cohort, m)
             end do
             cohort%n = m
             agb_after  = sum(cohort%nplant(1:m) * cohort%agb(1:m))
@@ -430,7 +437,7 @@ contains
       real(wp), optional,  intent(out)   :: heat_drawn    !< [J/m2 site]
       real(wp), optional,  intent(out)   :: water_drawn   !< [kg/m2 site]
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
-      real(wp)    :: recruit_dbh, c_min, endow, t_birth, psi_birth, cap_leaf, cap_wood, c_tot, e_tot, w_tot
+      real(wp)    :: recruit_dbh, c_min, endow, t_birth, psi_birth, c_tot, e_tot, w_tot
 
       c_tot = 0.0_wp ; e_tot = 0.0_wp ; w_tot = 0.0_wp
       if (present(carbon_drawn)) carbon_drawn = 0.0_wp
@@ -476,8 +483,8 @@ contains
                endow = cohort%leaf_carbon(m) + cohort%fineroot_carbon(m)                           &
                      + cohort%wood_carbon(m) + cohort%nonstructural_carbon(m)
                c_tot = c_tot + patch_polygon_area(poly, ip) * patch%recruit_pool(pf, ip) * (endow - c_min)
-               call cohort_tissue_heat_capacity(cohort, m, cap_leaf, cap_wood)
-               e_tot = e_tot + patch_polygon_area(poly, ip) * (cap_leaf + cap_wood) * t_birth
+               e_tot = e_tot + patch_polygon_area(poly, ip) * cohort%nplant(m)                       &
+                             * (cohort%leaf_energy(m) + cohort%wood_energy(m))
                w_tot = w_tot + patch_polygon_area(poly, ip) * cohort_tissue_water(cohort, m)
                patch%recruit_pool(pf, ip) = 0.0_wp
             end do

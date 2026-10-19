@@ -34,7 +34,7 @@ module meds_fast_rk45
                                      clamp_cas, soil_water_store,                                   &
                                      soil_energy_store, plant_water_store, canopy_film_store,       &
                                      deposit_condensate, clamp_canopy_film, unpack_column_state,     &
-                                     diagnose_soil_temps, transp_per_leaf_area
+                                     diagnose_soil_temps, transp_per_leaf_area, commit_tissue_energy
    use meds_diag_vars,        only : CO_TRANSP
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
@@ -505,7 +505,6 @@ contains
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
       real(wp)    :: tissue_store0, tissue_store1
       real(wp)    :: tl_int_acc(col_cohort%n), tw_int_acc(col_cohort%n), tr_int_acc(col_cohort%n)
-      real(wp)    :: cap_leaf_a(col_cohort%n), cap_wood_a(col_cohort%n)
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, i, nsteps, nrej
 
@@ -612,37 +611,15 @@ contains
          w_pond_rk = w_surface0 ; e_pond_rk = e_pond0 ; runoff_rk = 0.0_wp ; over_enth_rk = 0.0_wp
       end if
 
-      !----- Commit the tissue temperatures from the b-weighted stage time integrals (below); the      !
-      !      frozen store relaxed them from frozen%tissue%t_leaf0/t_wood0 against a = cap/dt inside every    !
-      !      stage, so nothing is corrected afterwards. ----------------------------------------------!
-      tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
-      do i = 1_ik, n
-         !----- Capacity from the SAME *_hcap_per_dt the kernel relaxed against, as on the ARK           !
-         !      path (column_fast_step_ark says why). ---------------------------------------------------!
-         cap_leaf_a(i) = frozen%tissue%leaf_hcap_per_dt(i) * dt_fast
-         cap_wood_a(i) = frozen%tissue%wood_hcap_per_dt(i) * dt_fast
-         tissue_store0 = tissue_store0 + cap_leaf_a(i) * frozen%tissue%t_leaf0(i)                          &
-                                       + cap_wood_a(i) * frozen%tissue%t_wood0(i)
-      end do
-      !----- Commit the TIME-AVERAGE over the march, not the last stage -- identical treatment to    !
-      !      the ARK path, and for the identical reason (see column_bflux_t's note). -----------------!
-      if (col_config%mask%veg_energy) then
-         biophys%leaf_temp(1:n) = tl_int_acc(1:n) / dt_fast
-         biophys%wood_temp(1:n) = tw_int_acc(1:n) / dt_fast
-      else
-         biophys%leaf_temp(1:n) = frozen%tissue%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%tissue%t_wood0(1:n)
-      end if
+      !----- Commit the tissues' energy from the TIME-AVERAGE of where they relaxed to over the march,!
+      !      the b-weighted stage time integrals -- identical treatment to the ARK path, and for the  !
+      !      identical reason (see column_bflux_t's note). -------------------------------------------!
+      call commit_tissue_energy(frozen%tissue, col_cohort%nplant, col_config%mask%veg_energy,                  &
+                                col_config%mask%hydraulics, dt_fast, tl_int_acc(1:n) / dt_fast,             &
+                                tw_int_acc(1:n) / dt_fast, n, biophys, tissue_store0, tissue_store1)
       !----- The transpiration each cohort's leaves lost over the step, as on the ARK path. ---------!
       if (present(cdiag)) cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(tr_int_acc(1:n), dt_fast,          &
                                                                        col_cohort%nplant(1:n), col_cohort%leaf_area(1:n))
-      do i = 1_ik, n
-         tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
-                                       + cap_wood_a(i) * biophys%wood_temp(i)
-      end do
-      !----- ...plus what the tissue WATER stores gained as their water mass changed, valued at each    !
-      !      tissue's start-of-step temperature (build_column_frozen). The tissue temperatures never saw  !
-      !      that part, so cap*T alone would leave it unbooked. -------------------------------------------!
-      tissue_store1 = tissue_store1 + frozen%tissue%water_store_enth * dt_fast
 
       !----- WHOLE-COLUMN CONSERVATION LEDGER: unlike ARK's per-kernel + whole ledgers, RK45 checks     !
       !      the WHOLE-COLUMN water and energy budgets only -- every store advances through the         !

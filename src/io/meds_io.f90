@@ -33,7 +33,8 @@ module meds_io
    use meds_netcdf_c
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
-   use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water
+   use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water, &
+                                           set_cohort_tissue_temps, hold_cohort_tissue_temps
    use meds_site_state_vars,        only : make_site_surface
    use meds_polygon_state_vars,     only : alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_demography_update,      only : update_overtopping_lai
@@ -138,8 +139,10 @@ contains
       !      leaf-surface (interception) film is stored below with the pools. ---------------------------!
       call dv('leaf_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal leaf water [kg/plant]')
       call dv('wood_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal wood water [kg/plant]')
-      call dv('leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K]')
-      call dv('wood_temp',        NC_DOUBLE, [d_cohort], 'per-cohort wood temperature [K]')
+      call dv('leaf_energy',      NC_DOUBLE, [d_cohort], 'per-cohort leaf internal energy [J/plant] (prognostic)')
+      call dv('wood_energy',      NC_DOUBLE, [d_cohort], 'per-cohort wood internal energy [J/plant] (prognostic)')
+      call dv('leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K] (diagnosed twin)')
+      call dv('wood_temp',        NC_DOUBLE, [d_cohort], 'per-cohort wood temperature [K] (diagnosed twin)')
       !----- Per-cohort stomatal water-stress feedback (docs/science/leaf_gas_exchange.md §4.2).      !
       !      `dmax_psi_leaf` is YESTERDAY's completed daily-max leaf water potential and drives TODAY's !
       !      beta_stomata; `dmax_psi_leaf_accum` is the running accumulator the fast loop fills,        !
@@ -379,6 +382,8 @@ contains
             call put_dbl('leaf_turnover_rate', c%leaf_turnover_rate(1:ncoh))
             call put_dbl('leaf_water_mass', c%leaf_water_mass(1:ncoh))
             call put_dbl('wood_water_mass', c%wood_water_mass(1:ncoh))
+            call put_dbl('leaf_energy', c%leaf_energy(1:ncoh))
+            call put_dbl('wood_energy', c%wood_energy(1:ncoh))
             call put_dbl('leaf_temp',   c%leaf_temp(1:ncoh))
             call put_dbl('wood_temp',   c%wood_temp(1:ncoh))
             call put_dbl('dmax_psi_leaf',       c%dmax_psi_leaf(1:ncoh))
@@ -628,10 +633,12 @@ contains
       integer(ik)    :: ncoh, npat, npft, ip, i, nwin, slot, ns, is, meta_i(N_META_INT)
       real(wp)       :: meta_r(N_META_REAL)
       logical        :: fast_ok, pools_ok, olai_ok, ghist_ok, region, tissue_water_ok, tissue_temp_ok
+      logical        :: tissue_energy_ok
       integer(c_size_t) :: nwin_file
 
       found = .false. ; restart_time = meds_time_t()
       tissue_water_ok = .true. ; tissue_temp_ok = .true.
+      tissue_energy_ok = .true.
       if (present(fast_found)) fast_found = .false.
       region = present(polygon)
       slot = 0_ik
@@ -730,10 +737,13 @@ contains
             !      and the pools are read (below).                                                       !
             tissue_water_ok = nc_inq_varid_f(ncid, 'leaf_water_mass', vid) == NC_NOERR
             tissue_temp_ok  = nc_inq_varid_f(ncid, 'leaf_temp', vid) == NC_NOERR
+            tissue_energy_ok = nc_inq_varid_f(ncid, 'leaf_energy', vid) == NC_NOERR
             call gv_dbl_opt(ncid, 'leaf_water_mass', ncoh, c%leaf_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_water_mass', ncoh, c%wood_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_temp',       ncoh, c%wood_temp(1:ncoh))
+            call gv_dbl_opt(ncid, 'leaf_energy',     ncoh, c%leaf_energy(1:ncoh))
+            call gv_dbl_opt(ncid, 'wood_energy',     ncoh, c%wood_energy(1:ncoh))
             !----- Stomatal feedback (OPTIONAL): alloc_polygon has already set UNSET_NEGATIVE /        !
             !      DMAX_PSI_LEAF_ACCUM_RESET, so a state file without them seeds from the soil; one with  !
             !      them restores the true feedback state. ------------------------------------------------!
@@ -943,6 +953,18 @@ contains
                end if
             end do
          end block
+      end if
+      !----- The tissue energies are the state, and their temperatures are read beside them as twins. !
+      !      A file written before the energies were the state, or one whose tissue water was         !
+      !      re-seeded above, derives them from the temperatures at the masses just read. ------------!
+      if (ncoh > 0_ik .and. .not. (tissue_energy_ok .and. tissue_water_ok .and. tissue_temp_ok)) then
+         do i = 1_ik, ncoh
+            if (tissue_energy_ok .and. tissue_water_ok) then
+               call set_cohort_tissue_temps(poly%cohort, i)
+            else
+               call hold_cohort_tissue_temps(poly%cohort, i)
+            end if
+         end do
       end if
       call nc_check(nc_close(ncid), 'state nc_close (read)')
 

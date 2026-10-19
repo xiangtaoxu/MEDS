@@ -7,7 +7,7 @@ program test_fusion_cohort
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_cohort_state_vars,          only : set_cohort_size, cohort_tissue_heat_capacity, set_cohort_size_from_carbon, &
                                                cohort_bad_field, cohort_field_name, cohort_deriv_block, cohort_deriv_alloc, &
-                                               init_cohort
+                                               init_cohort, hold_cohort_tissue_temps
    use meds_polygon_state_vars,         only : polygon_t
    use meds_demography_update, only : fill_cohort_deriv
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
@@ -24,7 +24,7 @@ program test_fusion_cohort
    real(wp)            :: agb_tot, n0, agb0, dbh_avg
    real(wp)            :: wr, wd, leafmass_exp, woodmass_exp, ltemp_exp, wtemp_exp
    real(wp)            :: cl1, cw1, cl2, cw2, clf, cwf, e_leaf0, e_wood0
-   real(wp) :: np1, np2, xdiag(4), film0
+   real(wp) :: np1, np2, xdiag(4), film0, e_sum0
    integer(ik) :: ndiag
    integer(ik)         :: j, pf
 
@@ -49,6 +49,11 @@ program test_fusion_cohort
    poly%cohort%wood_water_mass(1) = 3.0_wp ; poly%cohort%wood_water_mass(2) = 7.0_wp
    poly%cohort%leaf_temp(1) = 300.0_wp ; poly%cohort%leaf_temp(2) = 305.0_wp
    poly%cohort%wood_temp(1) = 298.0_wp ; poly%cohort%wood_temp(2) = 306.0_wp
+   !----- ...through their energies, the state: each tissue holds what it does at those temperatures. !
+   call hold_cohort_tissue_temps(poly%cohort, 1_ik)
+   call hold_cohort_tissue_temps(poly%cohort, 2_ik)
+   e_sum0 = poly%cohort%nplant(1) * (poly%cohort%leaf_energy(1) + poly%cohort%wood_energy(1))         &
+          + poly%cohort%nplant(2) * (poly%cohort%leaf_energy(2) + poly%cohort%wood_energy(2))
    !----- The four per-plant flux accumulators are EXTENSIVE too. Assert them, so the declared     !
    !      policy in fuse_cohort_fast_state has a witness for every kind it names.                  !
    poly%cohort%gpp_accum(1)       = 1.0_wp ; poly%cohort%gpp_accum(2)       = 4.0_wp
@@ -113,6 +118,8 @@ program test_fusion_cohort
                     'cohort fusion must conserve LEAF tissue energy exactly')
    call check_close(cwf*poly%cohort%wood_temp(1), e_wood0, 1.0e-12_wp,                              &
                     'cohort fusion must conserve WOOD tissue energy exactly')
+   call check_close(poly%cohort%nplant(1) * (poly%cohort%leaf_energy(1) + poly%cohort%wood_energy(1)),   &
+                    e_sum0, 1.0e-12_wp, 'cohort fusion sums the tissue energies, the state')
    block
       real(wp) :: nt
       nt = np1 + np2

@@ -13,7 +13,7 @@
 program test_fast_loop
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
-   use meds_cohort_state_vars,   only : set_cohort_size_from_carbon
+   use meds_cohort_state_vars,   only : set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
@@ -96,7 +96,9 @@ program test_fast_loop
    call check_close(mass0_leaf, water_content(top_soil_psi(ctx%col_config%soil, theta0_1),           &
                     ctx%col_config%hydraulics_table%pft(1)%leaf_curve, poly%cohort%leaf_carbon(1)),     &
                     1.0e-12_wp, 'a cohort starts with its leaf water at its patch''s top-soil potential')
-   call check(t_leaf0 == t_cas0 .and. t_wood0 == t_cas0, 'a cohort starts at its patch''s canopy-air temperature')
+   !----- To round-off: the temperatures are what the energies the cohort was born with give. ------!
+   call check(abs(t_leaf0 - t_cas0) < 1.0e-9_wp .and. abs(t_wood0 - t_cas0) < 1.0e-9_wp,            &
+              'a cohort starts at its patch''s canopy-air temperature')
    call check(mass1_leaf > 0.0_wp .and. mass1_leaf /= mass0_leaf,                                 &
               'the fast loop evolved the birth water and wrote it back')
    !----- A SECOND call starts from mass1_leaf, so its own evolution is a clean round-trip proof:   !
@@ -536,6 +538,7 @@ program test_fast_loop
       !      1% of its former value, so the OLD mass is now ~100x above the new ceiling               !
       !      water_sat*bleaf -- exactly the state a real dormant-canopy snap would leave behind.  ----!
       poly%cohort%leaf_carbon(1) = leaf_carbon_before * 0.01_wp
+      call hold_cohort_tissue_temps(poly%cohort, 1_ik)   ! at the leaf's temperature, as an operator would
 
       call settle_tissue_water(poly, cfg)
       call check_close(poly%cohort%leaf_water_mass(1),                                              &
@@ -562,6 +565,7 @@ program test_fast_loop
          poly%cohort%leaf_water_mass(1) = 0.0_wp
          wood_set = 0.98_wp * poly%cohort%wood_water_mass(1)  ! a 2% deficit a seed cannot produce
          poly%cohort%wood_water_mass(1) = wood_set
+         call hold_cohort_tissue_temps(poly%cohort, 1_ik)
          !----- ONE short sub-step with a SMALL deficit: near saturation the PV curve gives a small    !
          !      driving potential, so root uptake moves the store by << 0.5% in 60 s (a 30% deficit,   !
          !      by contrast, refills a third of the way in that minute). A re-seed from the soil puts  !
@@ -623,6 +627,7 @@ program test_fast_loop
             poly%cohort%leaf_carbon(1) = 0.0_wp
             poly%cohort%leaf_water_mass(1) = 0.0_wp
             call set_cohort_size_from_carbon(poly%cohort, 1_ik)
+            call hold_cohort_tissue_temps(poly%cohort, 1_ik)
          end if
          call met_open(drv, cfg%forcing)
          call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg,        &

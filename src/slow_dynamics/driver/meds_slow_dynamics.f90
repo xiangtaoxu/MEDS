@@ -17,7 +17,7 @@ module meds_slow_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_patch_state_vars,   only : cas_set_depth
    use meds_slow_ledger,           only : slow_ledger_t, slow_ledger_open, slow_ledger_mark,       &
-                                          slow_ledger_rebase, slow_tissue_heat,                   &
+                                          slow_ledger_rebase, slow_tissue_energy,                   &
                                           slow_ledger_declare, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC, &
                                           SLOW_PHASE_TISSUE_WATER, KGC_PER_UMOL_C
    implicit none
@@ -111,11 +111,11 @@ contains
       heat0 = 0.0_wp
       if (present(ledger)) then
          if (.not. ledger%has_first) call slow_ledger_rebase(ledger, poly, cfg)
-         heat0 = slow_tissue_heat(poly)
+         heat0 = slow_tissue_energy(poly)
       end if
       call shed_excess_tissue_water(poly, cfg, water_shed)
       if (present(ledger)) then
-         call slow_ledger_declare(ledger, water_out = water_shed, energy_in = slow_tissue_heat(poly) - heat0)
+         call slow_ledger_declare(ledger, water_out = water_shed, energy_in = slow_tissue_energy(poly) - heat0)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_TISSUE_WATER)
       end if
    end subroutine settle_tissue_water

@@ -365,9 +365,9 @@ Rank by `Phi'`, not by peak-to-peak.
 
 Both schemes close the whole-column water and energy ledgers to machine precision in the unsaturated
 regime every production run lives in (residuals ~10⁻¹³ kg m⁻² and ~10⁻⁷ J m⁻²), with a snow pack
-present and with condensation active. This holds with the tissue heat store active: its energy is
-carried as a b-weighted time integral so the store's gain is exactly the complement of the flux the
-canopy air received.
+present and with condensation active. This holds with the tissue heat store active: the heat each
+tissue's energy gains is taken from a b-weighted time integral of its temperature, so it is exactly
+the complement of the flux the canopy air received.
 
 **Read 5a and 5b together.** They are the same run. A ledger that closes to 10⁻⁶ J tells you the
 bookkeeping is right; it tells you nothing about whether the trajectory is physical.

@@ -29,14 +29,14 @@ program test_slow_ledger
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
                                        soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
-   use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon
+   use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : fuse_2_patches
    use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand, shed_turnover_water, pool_change_block
    use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
-                                       slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW, &
+                                       slow_fast_carbon_handover, slow_tissue_energy, SLOW_PHASE_GROW, &
                                        SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
    use meds_slow_dynamics,      only : settle_tissue_water
    use meds_config,             only : pft_tissue_curves
@@ -86,6 +86,8 @@ program test_slow_ledger
    poly%patch%recruit_pool(:,1)          = 0.0_wp
    poly%cohort%leaf_water_mass(1:2) = 0.02_wp
    poly%cohort%wood_water_mass(1:2) = 0.05_wp
+   call hold_cohort_tissue_temps(poly%cohort, 1_ik)   ! the tissues' energy with that water
+   call hold_cohort_tissue_temps(poly%cohort, 2_ik)
    poly%cohort%leaf_surf_water(1:2) = 0.01_wp
    poly%cohort%wood_surf_water(1:2) = 0.03_wp
 
@@ -105,7 +107,7 @@ program test_slow_ledger
    !----- Tissue HEAT and canopy CO2 have no closed-form expectation worth restating here (they  !
    !      are the store's own formulae); assert only that they reach the total, which is the     !
    !      blindness this test is about. ----------------------------------------------------!
-   call moves('tissue heat',   perturb_tissue_temp, 'energy')
+   call moves('tissue energy', perturb_tissue_energy, 'energy')
    call moves('canopy CO2',    perturb_cas_co2,     'carbon')
    call moves('recruit pool',  perturb_recruit,     'carbon')
 
@@ -579,26 +581,28 @@ contains
    !----- A cohort's heat capacity is a function of its biomass, so changing biomass alone moves   !
    !       the tissue store with no flux. That is the exchange the growth commit declares; these   !
    !       assert the two properties the declaration rests on -- that the term is real (biomass    !
-   !       moves it) and that slow_tissue_heat is exactly the store's tissue slice (so declaring   !
+   !       moves it) and that slow_tissue_energy is exactly the store's tissue slice (so declaring   !
    !       the one cancels the other).  ----------------------------------------------------------!
    subroutine check_tissue_thermal_mass()
       type(slow_store_t) :: a, b
       real(wp) :: e0, e1, de_store, de_tissue
-      e0 = slow_tissue_heat(poly)
+      e0 = slow_tissue_energy(poly)
       a  = slow_site_store(poly, cfg, RHO)
-      !----- Grow one cohort's wood: temperatures untouched, so ONLY the thermal mass changes. ----!
+      !----- Grow one cohort's wood at its temperature, as the growth commit does: ONLY the        !
+      !      thermal mass changes. ----------------------------------------------------------------!
       poly%cohort%wood_carbon(1) = poly%cohort%wood_carbon(1) * 1.5_wp
-      e1 = slow_tissue_heat(poly)
+      call hold_cohort_tissue_temps(poly%cohort, 1_ik)
+      e1 = slow_tissue_energy(poly)
       b  = slow_site_store(poly, cfg, RHO)
       de_tissue = e1 - e0
       de_store  = b%energy - a%energy
       call check(de_tissue > 0.0_wp, 'thermal mass: growing biomass raises the tissue heat store')
       call check_close(de_store, de_tissue, 1.0e-9_wp,                                             &
-                       'thermal mass: slow_tissue_heat is exactly the store''s tissue slice')
-      !----- and it is the BIOMASS doing it, not the temperature: cool the cohort and the store    !
+                       'thermal mass: slow_tissue_energy is exactly the store''s tissue slice')
+      !----- and it is the BIOMASS doing it, not the heat: take heat from the leaves and the store  !
       !      must fall, so a declaration written against biomass alone would not cancel that.  ----!
-      poly%cohort%leaf_temp(1) = poly%cohort%leaf_temp(1) - 10.0_wp
-      call check(slow_tissue_heat(poly) < e1, 'thermal mass: temperature moves it too (so T is not frozen in)')
+      poly%cohort%leaf_energy(1) = poly%cohort%leaf_energy(1) - 1.0e4_wp
+      call check(slow_tissue_energy(poly) < e1, 'thermal mass: heat moves it too (so it is not frozen in)')
    end subroutine check_tissue_thermal_mass
 
    subroutine check_routing()
@@ -719,7 +723,7 @@ contains
       poly%cohort%leaf_temp(2) = 291.0_wp ; poly%cohort%wood_temp(2) = 289.0_wp
       n0          = poly%cohort%n
       shed_before = poly%patch%shed_water_rate(1)
-      heat_before = slow_tissue_heat(poly)
+      heat_before = slow_tissue_energy(poly)
       w_before    = poly%cohort%nplant(2) * (poly%cohort%leaf_water_mass(2) + poly%cohort%wood_water_mass(2) &
                                          + poly%cohort%leaf_surf_water(2) + poly%cohort%wood_surf_water(2))
       expect_w    = poly%patch%area(1) * w_before
@@ -731,9 +735,9 @@ contains
       call check_close(poly%patch%shed_water_rate(1) - shed_before, w_before / cfg%dt_slow,       &
                        1.0e-12_wp, 'cull: the water reaches the patch shed channel, not the void')
       !----- The cull's tissue HEAT is not reported by the operator: it is one part of the        !
-      !      phase's thermal-mass change, which the driver brackets with slow_tissue_heat. Assert !
+      !      phase's thermal-mass change, which the driver brackets with slow_tissue_energy. Assert !
       !      that the store SEES the loss, which is what makes that bracket able to declare it.   !
-      heat_after = slow_tissue_heat(poly)
+      heat_after = slow_tissue_energy(poly)
       call check(heat_after < heat_before, 'cull: the tissue heat store falls when a cohort goes')
    end subroutine check_cull
 
@@ -865,8 +869,9 @@ contains
    end subroutine perturb_live_c
    subroutine perturb_necromass()    ; poly%patch%soil_carbon(1)%slow_carbon = poly%patch%soil_carbon(1)%slow_carbon + 1.0_wp
    end subroutine perturb_necromass
-   subroutine perturb_tissue_temp()  ; poly%cohort%leaf_temp(1) = poly%cohort%leaf_temp(1) + 5.0_wp
-   end subroutine perturb_tissue_temp
+   subroutine perturb_tissue_energy()
+      poly%cohort%leaf_energy(1) = poly%cohort%leaf_energy(1) + 1.0e3_wp
+   end subroutine perturb_tissue_energy
    subroutine perturb_recruit()      ; poly%patch%recruit_pool(1,1) = poly%patch%recruit_pool(1,1) + 0.5_wp
    end subroutine perturb_recruit
 

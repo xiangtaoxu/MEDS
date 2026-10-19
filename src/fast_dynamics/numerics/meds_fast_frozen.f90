@@ -98,6 +98,7 @@ contains
       allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
                frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
+      allocate(frozen%tissue%leaf_water_enth(n), frozen%tissue%wood_water_enth(n))
       allocate(frozen%tissue%leaf_emiss(n), frozen%tissue%wood_emiss(n))
       !----- ZERO the advective-enthalpy terms AT ALLOCATION. They get their real values further           !
       !      down, after the water network supplies sapflow and uptake, but the sf0 surface_derivs         !
@@ -469,11 +470,11 @@ contains
       !      number, both sides). The root water arrives at each layer's own temperature                     !
       !      (qloss_frozen, above).                                                                          !
       !                                                                                                      !
-      !      Each tissue's own WATER is valued at its start-of-step temperature, and arriving water          !
-      !      heats it only by its temperature difference: the heat store cap*T has no term for water         !
-      !      mass coming or going (docs/science/soil_plant_water.md eqs. (4)-(5)). The leaf still pays the   !
-      !      full vapour enthalpy of what it transpires (surface_derivs). -----------------------------------!
-      frozen%tissue%water_store_enth = 0.0_wp
+      !      Each tissue's own WATER carries its liquid enthalpy, at the tissue's start-of-step            !
+      !      temperature, into the tissue's energy as its mass changes (leaf_water_enth, wood_water_enth), !
+      !      and arriving water heats the tissue only by its temperature difference                        !
+      !      (docs/science/soil_plant_water.md eqs. (4)-(5)). The leaf still pays the full vapour enthalpy !
+      !      of what it transpires (surface_derivs). ------------------------------------------------------!
       do i = 1_ik, n
          t_up_wl    = merge(biophys%wood_temp(i), biophys%leaf_temp(i), spac%sapflow(i) >= 0.0_wp)
          u_liq_up   = internal_energy_liquid(t_up_wl)
@@ -485,9 +486,8 @@ contains
          frozen%tissue%qwflux_wl(i)  = sapflow_gnd * u_liq_up - (sapflow_gnd - transp_gnd) * u_liq_leaf
          frozen%tissue%q_wood_net(i) = frozen%roots%qloss_frozen(i) - uptake_gnd * u_liq_wood                &
                                        - sapflow_gnd * (u_liq_up - u_liq_wood)
-         frozen%tissue%water_store_enth = frozen%tissue%water_store_enth                                     &
-                                        + (uptake_gnd - sapflow_gnd) * u_liq_wood                             &
-                                        + (sapflow_gnd - transp_gnd) * u_liq_leaf
+         frozen%tissue%wood_water_enth(i) = (uptake_gnd - sapflow_gnd) * u_liq_wood
+         frozen%tissue%leaf_water_enth(i) = (sapflow_gnd - transp_gnd) * u_liq_leaf
       end do
 
       !----- Pack the prognostic state; plant water MASS is itself prognostic, so it is copied           !

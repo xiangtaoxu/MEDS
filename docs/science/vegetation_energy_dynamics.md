@@ -210,13 +210,63 @@ not negligible. Wood is also treated as
 lumped capacitance needs, so real wood is a diffusion problem with no single τ. That is a limitation of
 the one-node wood store, not of the integrator.
 
+## The tissue's energy is its state
+
+Each cohort carries the internal energy of its leaves and of its wood, `leaf_energy` and `wood_energy`
+[J per plant], and their temperatures are derived from them. The energy is counted in the soil's
+datum, `temp_to_internal_energy` with the water liquid, which is the datum of every other store and of
+every water flow:
+
+```math
+E = D\,T + W\,c_{liq}\,(T - T_{sc}) \qquad(9)
+```
+
+```math
+T = \frac{E + W\,c_{liq}\,T_{sc}}{D + W\,c_{liq}} \qquad(10)
+```
+
+with $D$ the dry heat capacity and $W$ the water of eq. (8), per plant, and $`T_{sc}`$
+`tsupercool_liq`; $`dE/dT`$ at fixed water is eq. (8)'s capacity (`tissue_energy`, `tissue_temp`). The
+water stays liquid at any temperature: a live tissue is taken not to freeze, so a tissue below 0 °C is
+supercooled liquid. Water that comes or goes at the tissue's temperature carries
+$`u_{liq}(T)=c_{liq}(T-T_{sc})`$ with it, which leaves the temperature where it was.
+
+**In the fast step.** The kernel relaxes each tissue in temperature, at the heat capacity held over the
+step (eqs. (3)–(7)). The commit (`commit_tissue_energy`) then adds two things to the energy: the heat
+the tissue relaxed through, $`\mathrm{cap}_0(\bar T-T_0)`$, with $`\bar T`$ the march's time-average; and
+the enthalpy its own water gained ([soil_plant_water](soil_plant_water.md) eq. (5)). It takes the
+temperature from that energy, eq. (10), with the water the tissue holds at the end of the step. The
+water gained is thereby mixed in at the start-of-step temperature it was valued at,
+$`T_{end}=(\mathrm{cap}_0\,\bar T+\Delta W\,c_{liq}\,T_0)/\mathrm{cap}_1`$. The next step starts from
+that energy, and the whole-column ledger counts the tissue store as the sum of the energies.
+
+**In the slow step.** Matter that a slow operator adds or removes does so at its tissue's temperature.
+That covers tissue grown or shed, and water taken into new leaves, shed to the ground, or held above a
+store's capacity. The operator changes the mass and holds the temperature (`hold_cohort_tissue_temps`),
+so the energy changes by the matter's heat, which the slow ledger declares.
+
+- **Fusion** sums the energies, nplant-weighted per plant like the tissue water. The merged tissue's
+  temperature follows from the merged masses, so a fusion conserves the tissue energy exactly.
+- **A split** keeps the parent's temperatures in both daughters.
+- **A leafless crown** holds no energy and takes its wood's temperature.
+
+As the fast loop reads each cohort, it checks that the stored temperatures are the ones the energies
+give.
+
+**Why energy, and in this datum.** Valuing the tissue in the same datum as the water that crosses it
+makes the tissue store a quantity the model can add up across steps, fusions and splits. Valued
+instead as capacity × temperature, it sits $`W c_{liq} T_{sc}`$ (about 2.4×10⁵ J per kg of water) away
+from the water's datum. The store a step ends with is then not the one the next step begins with: it
+is re-valued by $`\Delta W c_{liq}(T_1-T_0+T_{sc})`$ each step, about 1.7×10⁶ J m⁻² in the quarter
+hour in which wet soil refills dry-season wood at a BCI storm front.
+
 ---
 
 ## Prognostic state
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
-| Leaf / wood tissue | `patch_biophys_t` | `leaf_temp`, `wood_temp` [K] (heat store, exact exponential relaxation) | — |
+| Leaf / wood tissue | `cohort_block` (per plant); `patch_biophys_t` (per m² of ground) | `leaf_energy`, `wood_energy` [J plant⁻¹], eq. (9) | `leaf_temp`, `wood_temp` [K], eq. (10) |
 
 ## Code map
 
@@ -226,6 +276,9 @@ the one-node wood store, not of the integrator.
 | coefficients $h$, $g$, emission slope | `sensible_heat_coeff`, `leaf_transp_coeff`, `leaf_film_coeff`, `lw_emission_slope` |
 | latent terms, eq. (2); the per-cohort call | `meds_fast_time_derivs`: `surface_derivs` |
 | tissue heat capacity, eq. (8), and $`a_{\rm store}`$ | `meds_fast_frozen`: `build_column_frozen` |
+| tissue energy and temperature, eqs. (9)–(10) | `meds_therm_lib`: `tissue_energy`, `tissue_temp` |
+| the fast step's energy commit | `meds_column_state_ops`: `commit_tissue_energy` |
+| a cohort's temperatures from its energies; holding them through a change of mass | `meds_cohort_state_vars`: `cohort_tissue_temps`, `set_cohort_tissue_temps`, `hold_cohort_tissue_temps` |
 | ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |
 
 ## References

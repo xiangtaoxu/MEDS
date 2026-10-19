@@ -13,11 +13,12 @@
 !==========================================================================================!
 program test_column_ark
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, TISSUE_C_WOOD_DRY
+   use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
-                                        sat_specific_humidity, internal_energy_liquid
+                                        sat_specific_humidity, internal_energy_liquid, tissue_energy,       &
+                                        tissue_dry_heat_capacity
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
@@ -265,7 +266,8 @@ contains
       call check_true('the refill brings the wood no heat (soil, wood and leaf at one temperature)',            &
                       maxval(abs(fz%tissue%q_wood_net(1:n))) < 1.0e-9_wp * refill * internal_energy_liquid(t0), &
                       maxval(abs(fz%tissue%q_wood_net(1:n))))
-      gained = sum(fz%tissue%q_wood_net(1:n)) + sum(fz%tissue%qwflux_wl(1:n)) + fz%tissue%water_store_enth
+      gained = sum(fz%tissue%q_wood_net(1:n)) + sum(fz%tissue%qwflux_wl(1:n))                              &
+             + sum(fz%tissue%leaf_water_enth(1:n)) + sum(fz%tissue%wood_water_enth(1:n))
       given  = sum(fz%roots%qloss_frozen(1:n))
       call check_close(gained, given, 1.0e-12_wp * abs(given),                                                &
                        'what the soil gives up = what the tissues and their water stores gain')
@@ -578,6 +580,13 @@ contains
             col_cohort%bleaf(1:n))
       biophys%wood_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      !----- ...and the tissues' energy at t0, the state the column advances. ----------------------!
+      biophys%leaf_energy(1:n) = tissue_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
+                                    col_cohort%bleaf(1:n), TISSUE_C_LEAF),                                    &
+                                    max(biophys%leaf_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
+      biophys%wood_energy(1:n) = tissue_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
+                                    col_cohort%bwood(1:n), TISSUE_C_WOOD_DRY),                                &
+                                    max(biophys%wood_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
       budget = column_budget_t()
       biophys%soil_water%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl

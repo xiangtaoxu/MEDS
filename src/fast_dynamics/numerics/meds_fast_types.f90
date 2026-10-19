@@ -417,12 +417,13 @@ module meds_fast_types
       real(wp), allocatable :: leaf_hcap_per_dt(:), wood_hcap_per_dt(:)   !< [W/m2/K] cap/dt_fast
       real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
       !----- Heat the moving plant water brings each tissue, counted against the tissue's OWN water   !
-      !      (valued at its start-of-step temperature; see build_column_frozen). water_store_enth is the !
-      !      enthalpy the leaf and wood water stores gain as their water mass changes, which the energy  !
-      !      ledgers add to the tissue store.                                                           !
+      !      (valued at its start-of-step temperature; see build_column_frozen), and the enthalpy each !
+      !      tissue's own water gains as its mass changes, valued the same way, which its energy gains !
+      !      with it (docs/science/soil_plant_water.md eqs. (4)-(5)). ----------------------------------!
       real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] into the leaf, from sapflow (wood->leaf)
       real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] into the wood, from root uptake less sapflow
-      real(wp) :: water_store_enth = 0.0_wp   !< [W/m2 ground] summed over cohorts
+      real(wp), allocatable :: leaf_water_enth(:)  !< [W/m2 ground] the leaf's water, eq. (5)
+      real(wp), allocatable :: wood_water_enth(:)  !< [W/m2 ground] the wood's water, eq. (5)
       !----- Each cohort's transpiration over the step [kg/m2 ground/s], set by the soil-plant water     !
       !      network once it has solved (docs/science/soil_plant_water.md §4). While transp_held is true !
       !      the leaf energy balance holds the leaf's transpiration at it, as the stages hold ground     !
@@ -762,16 +763,17 @@ module meds_fast_types
       !      the shed water above: seeded ONCE per patch at the top of the fast window, constant   !
       !      across every sub-step, never written here. -------------------------------------------!
       real(wp)                   :: slow_co2_rate   = 0.0_wp  !< [umol/m2 ground/s]
-      real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
-      real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
+      real(wp), allocatable      :: leaf_energy(:)    !< [J/m2 ground] per-cohort leaf internal energy
+      real(wp), allocatable      :: wood_energy(:)    !< [J/m2 ground] per-cohort wood internal energy
+      real(wp), allocatable      :: leaf_temp(:)      !< [K] derived from leaf_energy
+      real(wp), allocatable      :: wood_temp(:)      !< [K] derived from wood_energy
       !----- Internal (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic state;      !
       !      psi is diagnosed from it wherever needed (psi_from_water_content), never persisted      !
       !      (docs/science/soil_plant_water.md §2). -------------------------------------------------!
       real(wp), allocatable      :: leaf_water_mass(:) !< [kg/plant] internal leaf water
       real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
       !----- Surface (interception film) water [kg/m2 ground] -- DISTINCT store from the internal      !
-      !      water above. Already ground-area-referenced (unlike the per-plant internal water), so     !
-      !      fusion SUMS it (meds_demography_cohort_fusefiss.f90). ------------------------------------!
+      !      water above. Per m2 of ground here; the cohort holds it per plant. -----------------------!
       real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
       real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       !----- WARM START for the adaptive march (docs/science/numerical_scheme.md §3, `ark`). The         !
@@ -916,13 +918,16 @@ contains
       type(patch_biophys_t), intent(out) :: biophys
       integer(ik),           intent(in)  :: n_coh
       real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
+      allocate(biophys%leaf_energy(n_coh), biophys%wood_energy(n_coh))
       allocate(biophys%leaf_temp(n_coh), biophys%wood_temp(n_coh))
       allocate(biophys%leaf_water_mass(n_coh), biophys%wood_water_mass(n_coh))
       allocate(biophys%leaf_surf_water(n_coh), biophys%wood_surf_water(n_coh))
+      biophys%leaf_energy      = 0.0_wp    ! scratch seed: the gather sets it, a column fixture with tissue_energy
+      biophys%wood_energy      = 0.0_wp
       biophys%leaf_temp        = leaf_temp0
       biophys%wood_temp        = leaf_temp0
       biophys%leaf_water_mass  = 0.0_wp    ! scratch seed only -- always discarded by the next real gather
-      biophys%wood_water_mass  = 0.0_wp    ! (mirrors leaf_temp/wood_temp's own scratch-seed discipline)
+      biophys%wood_water_mass  = 0.0_wp    ! (mirrors the tissue state's own scratch-seed discipline)
       biophys%leaf_surf_water  = 0.0_wp    ! ditto
       biophys%wood_surf_water  = 0.0_wp
       biophys%cas%can_temp     = can_temp0
@@ -936,8 +941,8 @@ contains
    ! ensure_column_cohort_capacity). It does NOT touch biophys%cas/soil_energy/soil_water/snow/soil_carbon: !
    ! every caller overwrites those with the site's persisted per-patch reservoirs                  !
    ! (poly%patch%cas(ip) etc.) immediately after allocating, so their alloc_patch_biophys seed     !
-   ! values are always discarded; only leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/        !
-   ! leaf_surf_water/wood_surf_water need their CAPACITY ensured here (the caller's gather loop    !
+   ! values are always discarded; only the per-cohort tissue energies, temperatures, waters and   !
+   ! films need their CAPACITY ensured here (the caller's gather loop                              !
    ! fills indices 1..n_coh).                                                                      !
    !---------------------------------------------------------------------------------------!
    subroutine ensure_patch_biophys_capacity(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
