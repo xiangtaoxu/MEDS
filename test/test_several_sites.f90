@@ -2,13 +2,14 @@
 !==========================================================================================!
 ! test_several_sites -- a polygon of several sites.                                        !
 !                                                                                          !
-! 1. Two identical sites of areas 0.3 and 0.7 each evolve as a polygon of one site does,    !
-!    over 60 days of fast and slow steps on a short calendar -- a month boundary every 15    !
-!    days, a year boundary every 30, each with a disturbance and patch fusion: every site's !
-!    stand is the one-site stand, and the polygon totals are the one site's to round-off.   !
+! 1. Two identical sites of areas 0.3 and 0.7 each evolve as a polygon of one site does,   !
+!    over 60 days of fast and slow steps on a short calendar -- a month boundary every 15  !
+!    days, a year boundary every 30, each with a disturbance and patch fusion: every       !
+!    site's stand is the one-site stand, and the polygon totals are the one site's to      !
+!    round-off.                                                                            !
 ! 2. Two sites on different soils each evolve as a one-site polygon on its own soil, and   !
-!    their soil columns differ.                                                             !
-! 3. The patch loop gives the same polygon on one thread and on four.                       !
+!    their soil columns differ.                                                            !
+! 3. The patch loop gives the same polygon on one thread and on four.                      !
 ! 4. A state file keeps the sites: their areas and soils, and each patch's site.           !
 !==========================================================================================!
 program test_several_sites
@@ -121,7 +122,7 @@ program test_several_sites
 contains
 
    !----- A two-patch stand in each site: a canopy tree and an understorey in one patch, a     !
-   !      sapling in the other. ------------------------------------------------------------!
+   !      sapling in the other. ---------------------------------------------------------------!
    subroutine stand(poly, run_cfg, site_cfg, site_area)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: run_cfg, site_cfg(:)

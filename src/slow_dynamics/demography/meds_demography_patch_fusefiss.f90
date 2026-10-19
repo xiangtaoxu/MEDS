@@ -112,11 +112,11 @@ contains
    end subroutine patch_light_profile
 
    !---------------------------------------------------------------------------------------!
-   ! Patch fusion with geometric tolerance relaxation, from patch_light_tol to               !
-   ! patch_light_tol_max over n_patch_fusion_iter passes. It stops at the first pass that    !
-   ! brings every site's count to max_patch. The ceiling is hard: patches more different than !
-   ! it stay apart even when the count is still above max_patch (forced fusion aside). Two    !
-   ! patches fuse only within one site: their areas are fractions of it.                      !
+   ! Patch fusion with geometric tolerance relaxation, from patch_light_tol to             !
+   ! patch_light_tol_max over n_patch_fusion_iter passes. It stops at the first pass that  !
+   ! brings every site's count to max_patch. The ceiling is hard: patches more different   !
+   ! than it stay apart even when the count is still above max_patch (forced fusion        !
+   ! aside). Two patches fuse only within one site: their areas are fractions of it.       !
    !---------------------------------------------------------------------------------------!
    subroutine new_fuse_patches(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
@@ -276,8 +276,8 @@ contains
    end subroutine fuse_2_patches
 
    !---------------------------------------------------------------------------------------!
-   ! Remove patches with area below the floor, site by site; renormalize each site's areas  !
-   ! to sum to 1.                                                                           !
+   ! Remove patches with area below the floor, site by site; renormalize each site's areas !
+   ! to sum to 1.                                                                          !
    !---------------------------------------------------------------------------------------!
    subroutine terminate_patches(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
@@ -314,7 +314,7 @@ contains
          !      relies on, and says something defensible: a sliver of ground joins its biggest  !
          !      neighbour rather than evaporating. fuse_2_patches zeroes the donor's area, so   !
          !      the renormalisation below becomes a round-off no-op instead of a redistribution.!
-         !      The neighbour is in the sliver's own site: the areas are fractions of it.        !
+         !      The neighbour is in the sliver's own site: the areas are fractions of it.       !
          do is = 1_ik, poly%site%n
             p0 = poly%site%patch_offset(is)
             p1 = p0 + poly%site%patch_count(is) - 1_ik
@@ -332,7 +332,7 @@ contains
       end if
 
       !----- Renormalize each site's areas to sum to 1. After the merge above this corrects      !
-      !      round-off only. ---------------------------------------------------------------------!
+      !      round-off only. --------------------------------------------------------------------!
       do is = 1_ik, poly%site%n
          p0 = poly%site%patch_offset(is)
          p1 = p0 + poly%site%patch_count(is) - 1_ik
@@ -388,8 +388,8 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Treefall patch disturbance (ED2 analogue). A fraction f = 1 - exp(-rate*dt) of EVERY     !
-   ! patch's area is disturbed and aggregated into one new age-0 gap patch per site          !
-   ! (DIST_TREEFALL), cut from that site's patches: their areas are fractions of it.         !
+   ! patch's area is disturbed and aggregated into one new age-0 gap patch per site           !
+   ! (DIST_TREEFALL), cut from that site's patches: their areas are fractions of it.          !
    ! Survivorship follows ED2 treefall: tall canopy cohorts (height >= survive_height) die in !
    ! the gap; the short understory (height < threshold) survives into it. Each donor keeps    !
    ! area (1-f)*area with ALL its cohorts intact. Site area is conserved; plant number is     !
@@ -587,14 +587,14 @@ contains
             end do
          end associate
 
-         !----- Stamp the new gap patch with a fresh global id (the gap fragments are new        !
+         !----- Stamp the new gap patch with a fresh global id (the gap fragments are new            !
          !      entities). Its diagnostics: it inherits its donors' slots blended by area, as its    !
-         !      reservoirs above inherit their state, so the stand total Sum(area * v) is unchanged   !
+         !      reservoirs above inherit their state, so the stand total Sum(area * v) is unchanged  !
          !      by the carving. At a calendar boundary the donors hold only that boundary's events   !
          !      (the step's sums were read and reset), and the gap keeps its share of them; inside a !
-         !      step (the C API) they hold the step so far. Every donor lost the same fraction, so    !
-         !      their current areas give the same blend as their original ones. (expand_patch_block !
-         !      above grew the block with the patch arrays.) -------------------------------------!
+         !      step (the C API) they hold the step so far. Every donor lost the same fraction, so   !
+         !      their current areas give the same blend as their original ones. (expand_patch_block  !
+         !      above grew the block with the patch arrays.) ----------------------------------------!
          call assign_patch_id(poly, newp)
          donor_area = 0.0_wp
          donor_area(p0:p1) = poly%patch%area(p0:p1)

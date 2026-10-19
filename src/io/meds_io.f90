@@ -14,15 +14,15 @@
 ! allometry, so re-deriving them would move the leaf area and reset the fine-root carbon. The     !
 ! geometry is a function of the pools, and the reader re-derives it from them.                    !
 !                                                                                          !
-! A file holds every polygon of the run (docs/science/order_of_processes.md §6): each variable     !
-! has a leading `polygon` axis, and the cohort, patch and site axes are the largest any polygon    !
-! has. n_cohort, n_patch, n_site and n_window mark each polygon's live part (the first two also in !
-! its row of meta_int); the rest holds the fill value. polygon_id, lat and lon name the rows. Each !
-! site's area and surface, and each patch's site, are stored; a file without them is one site, its !
-! area meta_real(1). It is written by                                                              !
-! state_file_open / state_file_put / state_file_close and read by io_read_state, a polygon's row   !
-! at a time; io_read_state also reads a file without the axis, one site's, as every one-polygon   !
-! run wrote one before runs became regions.                                                        !
+! A file holds every polygon of the run (docs/science/order_of_processes.md §6): each      !
+! variable has a leading `polygon` axis, and the cohort, patch and site axes are the       !
+! largest any polygon has. n_cohort, n_patch, n_site and n_window mark each polygon's live !
+! part (the first two also in its row of meta_int); the rest holds the fill value.         !
+! polygon_id, lat and lon name the rows. Each site's area and surface, and each patch's    !
+! site, are stored; a file without them is one site, its area meta_real(1). It is written  !
+! by state_file_open / state_file_put / state_file_close and read by io_read_state, a      !
+! polygon's row at a time; io_read_state also reads a file without the axis, one site's,   !
+! as every one-polygon run wrote one before runs became regions.                           !
 !==========================================================================================!
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
@@ -111,7 +111,7 @@ contains
               '[n_cohort,n_patch,n_pft,next_cohort_id,next_patch_id,year,month,day,hour,minute,second]')
       call dv('meta_real',        NC_DOUBLE, [d_mr],     '[area of the sites (1), decimal_year]')
       !----- The sites: each one's area and the surface it was made with. The surface is made again   !
-      !      from the configuration on read; its layer count must match, or the soil state would be  !
+      !      from the configuration on read; its layer count must match, or the soil state would be   !
       !      read onto another column. ---------------------------------------------------------------!
       call dv('site_area',        NC_DOUBLE, [d_site],   'site area fraction of the polygon')
       call dv('site_n_soil',      NC_INT,    [d_site],   'the site''s active soil layers')
@@ -596,8 +596,8 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Reconstruct a polygon from a state file written by state_file_put: with `polygon`        !
    ! (1-based) that row of a file with the polygon axis, or the whole of an older file without !
-   ! it. Each site's surface is made from `site_cfg` (the run's `cfg` for every site when      !
-   ! absent). The geometry is re-derived from the carbon pools (set_cohort_size_from_carbon);  !
+   ! it. Each site's surface is made from `site_cfg` (the run's `cfg` for every site when       !
+   ! absent). The geometry is re-derived from the carbon pools (set_cohort_size_from_carbon);   !
    ! the maps and within-patch sort order are rebuilt, and the restructuring the stand owes at  !
    ! restart_time is set on the polygon (state_file_open; a file without the attribute is an    !
    ! older format, written AFTER its boundary's restructuring, so it owes nothing).             !

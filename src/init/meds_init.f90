@@ -36,7 +36,7 @@ module meds_init
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! A near-bare-ground polygon of one site: n_patch identical empty patches sharing its area. !
+   ! A bare polygon of one site: n_patch identical empty patches sharing the site's area.  !
    !---------------------------------------------------------------------------------------!
    subroutine init_bare_ground(poly, cfg, n_patch)
       type(polygon_t),     intent(out) :: poly
@@ -45,12 +45,12 @@ contains
       call init_bare_sites(poly, cfg, [n_patch], [cfg], [1.0_wp])
    end subroutine init_bare_ground
 
-   !---------------------------------------------------------------------------------------!
+   !-------------------------------------------------------------------------------------------!
    ! A near-bare-ground polygon of several sites: site `is` takes its share `site_area(is)` of !
    ! the polygon, its surface from `site_cfg(is)` (its soil, from [soil] or its own maps) and  !
    ! n_patch(is) identical empty patches sharing its area. The patches are numbered site by    !
-   ! site, so the block is sorted by site. Everything else comes from `cfg`, the run's.       !
-   !---------------------------------------------------------------------------------------!
+   ! site, so the block is sorted by site. Everything else comes from `cfg`, the run's.        !
+   !-------------------------------------------------------------------------------------------!
    subroutine init_bare_sites(poly, cfg, n_patch, site_cfg, site_area)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
@@ -131,8 +131,8 @@ contains
    end subroutine finalize_init
 
    !---------------------------------------------------------------------------------------!
-   ! Initialize a polygon from a cohort CENSUS file: a CSV with one row per cohort, produced   !
-   ! by a previous MEDS run or from a field inventory.                                        !
+   ! Initialize a polygon from a cohort CENSUS file: a CSV with one row per cohort, produced    !
+   ! by a previous MEDS run or from a field inventory.                                          !
    !                                                                                          !
    ! COLUMNS ARE MATCHED BY NAME from the header line, in any order:                           !
    !   required  patch_id, dbh [cm], pft, nplant [plants per m2 of the patch]                  !
@@ -143,7 +143,7 @@ contains
    ! the first one seen); with `site_ids`, site k is built from the rows of site_ids(k), with   !
    ! its surface from site_cfg(k) and its share site_area(k) of the polygon. A file without     !
    ! the column is one site. `dbh` drives the allometry (set_cohort_size), so `height` and      !
-   ! `cohort_id` are provenance: height, when present, must be positive.                       !
+   ! `cohort_id` are provenance: height, when present, must be positive.                        !
    !                                                                                          !
    ! A file whose first data line is seven numbers is read positionally as                    !
    ! `site_id, patch_id, cohort_id, dbh, height, pft, nplant`, the layout of a census file    !
@@ -201,8 +201,8 @@ contains
          if (ipass == 2) then
             npatch = int(size(patch_id_of), ik)
             if (npatch == 0_ik) exit                         ! no rows for the selected sites
-            !----- The patches, site by site, first seen first within a site: equal areas, or the  !
-            !      file's areas normalized to their site. --------------------------------------!
+            !----- The patches, site by site, first seen first within a site: equal areas, or   !
+            !      the file's areas normalized to their site. ----------------------------------!
             allocate(slot_of(npatch), n_patch(size(sel)))
             j = 0_ik
             do k = 1_ik, int(size(sel), ik)
