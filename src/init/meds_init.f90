@@ -12,10 +12,10 @@ module meds_init
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_allometry,  only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
+   use meds_site_state_vars,       only : make_site_surface
    use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map,      &
                                           assign_cohort_id, assign_patch_id
    use meds_patch_state_vars,      only : patch_physical_state
-   use meds_soil_column_config,    only : soil_params_t, soil_column_params
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
                                                split_cohorts
    use meds_demography_patch_fusefiss,  only : sort_patches, new_fuse_patches, terminate_patches
@@ -45,6 +45,7 @@ contains
       integer(ik) :: ip
       call alloc_polygon(poly, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),       &
                       n_growth_window = growth_window_steps(cfg), allom = cfg%allom, pft = cfg%pft)
+      call make_site_surface(poly%site%surface(1), cfg)
       poly%patch%n = n_patch
       do ip = 1_ik, n_patch
          poly%patch%area(ip)      = 1.0_wp / real(n_patch, wp)
@@ -88,14 +89,13 @@ contains
       integer(ik),         intent(in)    :: ip, ipft
       real(wp),            intent(in)    :: nplant, dbh
       integer(ik) :: m
-      type(soil_params_t) :: soil
       real(wp)    :: t_birth, psi_birth
       call expand_cohort_block(poly%cohort, poly%cohort%n + 1_ik)
       m = poly%cohort%n + 1_ik
       !----- Born in its patch's state (patch_physical_state); at setup the patch is not seeded yet, so !
       !      that is the run's starting state, and init_fast_reservoirs re-seeds it from the patch. -!
-      call soil_column_params(cfg%soil_column, soil)
-      call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
+      call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg,                   &
+                                poly%site%surface(poly%patch%owner_site(ip)), t_birth, psi_birth)
       call init_cohort(poly%cohort, m, cfg%pft, ipft, ip, nplant, dbh, cfg%hydraulics, t_birth, psi_birth)
       call assign_cohort_id(poly, m)
       poly%cohort%n = m

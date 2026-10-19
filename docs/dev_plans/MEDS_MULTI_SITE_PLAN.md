@@ -1,6 +1,6 @@
 # Several sites per polygon — plan
 
-**Status:** revision 6, 2026-10-18. S0 merged (PR #449); S1 implemented in PR #450 (§10); S2–S5 not started.
+**Status:** revision 6, 2026-10-18. S0 (#449) and S1 (#450) merged; S2 implemented in PR #451 (§10); S3–S5 not started.
 **Base:** `beta` at `835458c` (the state hierarchy, PR #448).
 **Decided (owner, 2026-10-18):**
 - D1 — all patches of a polygon in one patch block; a site block records which patches are its own,
@@ -462,4 +462,30 @@ Notes:
   - The output `area_patch` and the C API's patch-area export give a patch's own area, a fraction of
     its site; Python's `Run` uses it as a polygon weight, so it needs `owner_site` and the site areas
     beside it (S3, with `patch_site`).
+
+**S2, PR #451 (2026-10-19).** Three commits on `refactor/site-surface`, each bit-identical to the
+merged S1 build (`6fa01cc`) on the eight cases, the region of cells with different soils included.
+
+1. `site_surface_t` on the site block (`meds_site_state_vars`): the soil column with its derived
+   parameters and each layer's starting water, the column's bottom (water boundary, drainage factor,
+   deep temperature and depth), and the terrain (elevation, slope, aspect). `make_site_surface` makes
+   it from a configuration wherever a polygon is made from one (bare ground, a census, a restart); a
+   region sets each site's elevation to its cell's.
+2. Every reader takes the patch's site's surface: the fast loop's column configuration
+   (`site_column_configs`, made at each fast step from the polygon's, so each copy carries the
+   acclimated leaf table), the fast reservoirs (`theta_init` leaves the fast context), the slow
+   ledger's stores, a new cohort's birth state (`patch_physical_state`), recruitment and the
+   restart's tissue fallback. The output echo reads site 1's surface.
+3. The region keeps one configuration: `polygon_run_t%cfg` goes, and the polygon routines take the
+   run's. A cell's own inputs reach only the initial community (its sites' surfaces) and, through
+   the cohort block's allometry, the height allometry's site index.
+
+Notes:
+
+- **The thermal bottom boundary stays run-wide** (`[soil].thermal_bottom_bc`; the soil maps do not set
+  it). **The ground albedo and emissivity stay run-wide too** (D10): `[soil]` sets them for every site.
+- **A run without the fast loop** now writes its real soil layers in `soil_z` (it wrote the unbuilt
+  column of a fast context it never made).
+- **The restart does not store the surface yet:** it is made again from the configuration and maps
+  (S3 adds the site axis).
 

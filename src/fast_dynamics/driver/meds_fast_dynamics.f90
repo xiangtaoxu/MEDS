@@ -24,7 +24,7 @@ module meds_fast_dynamics
                                      stefan
    use meds_numerics,         only : ascending_order
    use meds_config,           only : meds_config_t
-   use meds_soil_column_config, only : soil_column_params, soil_column_start_theta, top_soil_psi
+   use meds_soil_column_config, only : soil_column_params, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
@@ -110,6 +110,8 @@ module meds_fast_dynamics
    !      from the run config); the scalar reference met is the constant, horizontally uniform   !
    !      climate a run without a forcing source uses.                                           !
    type :: fast_context_t
+      !----- The polygon's column configuration. Its soil is the run config's; each site runs on a   !
+      !      copy with its own soil column and bottom (site_column_configs). ----------------------!
       type(column_config_t) :: col_config                 !< soil/thermal/hydro/aero/resp column config
       real(wp) :: u_ref   = 2.0_wp                  !< [m/s] reference wind (at the canopy-air top)
       real(wp) :: press   = 101325.0_wp             !< [Pa]
@@ -120,7 +122,6 @@ module meds_fast_dynamics
       real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
       real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
       real(wp) :: precip          = 0.0_wp            !< [kg/m2/s] total precipitation (split like any record)
-      real(wp) :: theta_init(n_soil_layer_max) = 0.30_wp   !< [m3/m3] initial soil moisture, per layer
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       !----- Threads for this polygon's patch loop: [run].n_threads in a site run, 1 in a region,   !
       !      whose threads go to the polygons instead (polygon_prepare sets it). ------------------!
@@ -167,9 +168,8 @@ contains
       ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
       ctx%soil_emiss     = cfg%soil%ground_emissivity
       ctx%col_config%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
-      !----- The initial soil state, from [init]: what init_fast_reservoirs seeds every layer with. --!
-      !      A column with a texture per layer starts each layer at its own field capacity. ----------!
-      call soil_column_start_theta(cfg%soil_column, ctx%col_config%soil, cfg%init_soil_theta, ctx%theta_init)
+      !----- The initial soil temperature, from [init]; the initial water is each site's            !
+      !      (site_surface_t%theta_start). ---------------------------------------------------------!
       ctx%soil_temp_init = cfg%init_soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
@@ -213,20 +213,21 @@ contains
       type(fast_context_t), intent(in)    :: ctx
       integer(ik) :: ip, k, nsl, i
       real(wp)    :: psi
-      nsl = ctx%col_config%soil%n_active
       do ip = 1_ik, poly%patch%n
-         associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip))
-            sw%theta(1:nsl)  = ctx%theta_init(1:nsl) ; sw%w_surface = 0.0_wp
+         associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
+                    surf => poly%site%surface(poly%patch%owner_site(ip)))
+            nsl = surf%soil%n_active
+            sw%theta(1:nsl)  = surf%theta_start(1:nsl) ; sw%w_surface = 0.0_wp
             sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
             do k = 1_ik, nsl
-               se%soil_energy(k) = temp_to_internal_energy(ctx%col_config%soil_thermal%soil_dry_heat_capacity(k),    &
-                                   ctx%theta_init(k) * rho_h2o, ctx%soil_temp_init, 1.0_wp)
+               se%soil_energy(k) = temp_to_internal_energy(surf%soil_thermal%soil_dry_heat_capacity(k),             &
+                                   surf%theta_start(k) * rho_h2o, ctx%soil_temp_init, 1.0_wp)
                se%soil_temp(k)   = ctx%soil_temp_init ; se%soil_fliq(k) = 1.0_wp
             end do
             cas%can_shv      = ctx%shv_atm ; cas%can_co2 = ctx%co2_atm
             cas%can_enthalpy = cas_enthalpy_of_temp(ctx%air_temp, ctx%shv_atm)
             cas%can_temp     = ctx%air_temp
-            psi = top_soil_psi(ctx%col_config%soil, sw%theta(1))
+            psi = top_soil_psi(surf%soil, sw%theta(1))
             do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
                poly%cohort%leaf_temp(i) = cas%can_temp ; poly%cohort%wood_temp(i) = cas%can_temp
                associate (hyd => ctx%col_config%hydraulics_table%pft(poly%cohort%pft(i)))
@@ -290,6 +291,9 @@ contains
       !      folded (dt-weighted) into poly%cohort%diag. PER THREAD, because the patch loop is         !
       !      parallel -- it rides the same per-thread pool discipline as the rest of the scratch.  ---!
       real(wp),    allocatable :: cdiag_pool(:,:,:)                !< (N_CO_FAST_ROWS, cohort, thread)
+      !----- Each site's column configuration (site_column_configs), shared read-only by the       !
+      !      patch loop: a patch's work takes its site's. ----------------------------------------!
+      type(column_config_t), allocatable :: site_col(:)
       !=========================================================================================!
       !  The PER-THREAD scratch POOL. One copy of every per-patch working buffer per thread,    !
       !  indexed by thread id. The patch loop aliases its own slice with `associate`, so the    !
@@ -377,6 +381,10 @@ contains
       !      this routine. Air temperature is site-uniform, so accumulating once per (patch,       !
       !      sub-step) and dividing by the count still yields the daily mean. ---------------------!
 
+      !----- Each site's column configuration, for the patch loop. ---------------------------------!
+      allocate(site_col(poly%site%n))
+      call site_column_configs(ctx, poly, site_col)
+
       !----- FAST (sub-daily) output staging: fill it only when the tier is active and a diurnal    !
       !      signal exists (forcing on). Serialize stays in main.                                    !
       do_fast = present(out_bufs) .and. do_forcing
@@ -406,7 +414,7 @@ contains
          !----- The slabs are sized to the ceiling, but only the ACTIVE layers are data: the layers !
          !      past n_active stay unwritten and read back as the fill value, as on the coarse      !
          !      tiers. -----------------------------------------------------------------------------!
-         out_bufs%fast_n_soil   = min(ctx%col_config%soil%n_active, nl)
+         out_bufs%fast_n_soil   = min(maxval(poly%site%surface(1:poly%site%n)%soil%n_active), nl)
          out_bufs%fast_n_cohort = poly%cohort%n
          out_bufs%fast_n_patch  = npatch
          out_bufs%fast_site = 0.0_wp
@@ -613,13 +621,15 @@ contains
             !      leaf_flux_t fields, so a production run pays nothing for a feature it is not using. !
             if (do_cdiag) then
                cdiag_buf(:, 1:ncoh) = 0.0_wp
-               call column_fast_step(cfg%dt_fast, cfg, ctx%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+               call column_fast_step(cfg%dt_fast, cfg, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
+                                     forc, biophys, aero, budget,                                                     &
                                      fast_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux, cdiag=cdiag_buf(:, 1:ncoh))
             else
-               call column_fast_step(cfg%dt_fast, cfg, ctx%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+               call column_fast_step(cfg%dt_fast, cfg, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
+                                     forc, biophys, aero, budget,                                                     &
                                      fast_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
@@ -870,6 +880,27 @@ contains
       end if
       if (do_fast) out_bufs%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
    end subroutine fast_dynamics
+
+   !----- Each site's column configuration: the polygon's, with the site's soil column and the   !
+   !      column's bottom. Made at each fast step, so every copy has the leaf table the polygon's  !
+   !      acclimation rewrote since the last one. ---------------------------------------------!
+   subroutine site_column_configs(ctx, poly, site_col)
+      type(fast_context_t),  intent(in)  :: ctx
+      type(polygon_t),       intent(in)  :: poly
+      type(column_config_t), intent(out) :: site_col(:)
+      integer(ik) :: is
+      do is = 1_ik, poly%site%n
+         site_col(is) = ctx%col_config
+         associate (col => site_col(is), surf => poly%site%surface(is))
+            col%soil                         = surf%soil
+            col%soil_thermal                 = surf%soil_thermal
+            col%soil_water_opts%bottom_bc    = surf%water_bottom_bc
+            col%soil_water_opts%drain_factor = surf%drain_factor
+            col%energy%deep_temp             = surf%deep_temp
+            col%energy%deep_depth            = surf%deep_depth
+         end associate
+      end do
+   end subroutine site_column_configs
 
    !----- Sub-daily diagnostic PROBE. Opt-in ([fast].fast_probe): one CSV row per (patch, sub-step) !
    !      with the fast-loop state an integrator or dt_fast evaluation resolves on -- shortwave in, !

@@ -24,7 +24,6 @@ module meds_demography_cohort_fusefiss
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL, pair_mean
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_config,     only : meds_config_t
-   use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_diag_vars,        only : fuse_cohort_diag, PA_MORT_C_CULL
    use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &
                                       expand_cohort_block, copy_cohort, init_cohort,           &
@@ -442,7 +441,6 @@ contains
       real(wp), optional,  intent(out)   :: water_drawn   !< [kg/m2 site]
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
       real(wp)    :: recruit_dbh, c_min, endow, t_birth, psi_birth, cap_leaf, cap_wood, c_tot, e_tot, w_tot
-      type(soil_params_t) :: soil
 
       c_tot = 0.0_wp ; e_tot = 0.0_wp ; w_tot = 0.0_wp
       if (present(carbon_drawn)) carbon_drawn = 0.0_wp
@@ -469,7 +467,6 @@ contains
       end if
 
       call expand_cohort_block(poly%cohort, poly%cohort%n + nspawn)
-      call soil_column_params(cfg%soil_column, soil)
       n_before = poly%cohort%n
       m = poly%cohort%n
       associate (cohort => poly%cohort, patch => poly%patch, pft => cfg%pft)
@@ -479,7 +476,8 @@ contains
                m = m + 1_ik
                !----- Born in its patch's state: at the canopy-air temperature, holding the water     !
                !      its tissues hold at the top soil layer's potential (patch_physical_state). -------!
-               call patch_physical_state(patch%cas(ip), patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
+               call patch_physical_state(patch%cas(ip), patch%soil_water(ip), cfg,                     &
+                                         poly%site%surface(patch%owner_site(ip)), t_birth, psi_birth)
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
                                 cfg%hydraulics, t_birth, psi_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !

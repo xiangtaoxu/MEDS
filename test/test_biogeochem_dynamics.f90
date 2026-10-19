@@ -60,9 +60,11 @@ program test_biogeochem_dynamics
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
-   ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 295.0_wp
+   ctx%soil_temp_init = 295.0_wp
 
    call init_bare_ground(poly, cfg, 1_ik)
+
+   call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)     ! one climax cohort (turnover -> litter)
    call finalize_init(poly)
    call init_fast_reservoirs(poly, ctx)
@@ -127,6 +129,7 @@ program test_biogeochem_dynamics
       real(wp)     :: totalA, totalB
       cfg%soil_carbon_on = .false.
       call init_bare_ground(poly2, cfg, 1_ik)
+      call use_test_column(poly2)
       call add_cohort(poly2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)
       call finalize_init(poly2)
       call init_fast_reservoirs(poly2, ctx)
@@ -146,6 +149,15 @@ program test_biogeochem_dynamics
    call test_report('test_biogeochem_dynamics')
 
 contains
+
+   !----- The test's hand-built soil column is the site's, which the fast loop runs on, starting  !
+   !      at 0.30 in every layer. ------------------------------------------------------------!
+   subroutine use_test_column(p)
+      type(polygon_t), intent(inout) :: p
+      p%site%surface(1)%soil         = ctx%col_config%soil
+      p%site%surface(1)%soil_thermal = ctx%col_config%soil_thermal
+      p%site%surface(1)%theta_start  = 0.30_wp
+   end subroutine use_test_column
 
 
 end program test_biogeochem_dynamics

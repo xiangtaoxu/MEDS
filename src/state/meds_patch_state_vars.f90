@@ -21,7 +21,8 @@ module meds_patch_state_vars
    use meds_diag_vars,        only : patch_diag_block, expand_patch_diag, reorder_patch_diag
    use meds_state_defaults,   only : UNSET_POSITIVE, is_unset_positive, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
    use meds_config,           only : meds_config_t, DIST_PRIMARY
-   use meds_soil_column_config, only : soil_params_t, soil_column_start_theta, top_soil_psi
+   use meds_soil_column_config, only : top_soil_psi
+   use meds_site_state_vars,    only : site_surface_t
    implicit none
    private
 
@@ -506,23 +507,21 @@ contains
    !----- A patch's canopy-air temperature [K] and the water potential of its top soil     !
    !      layer [MPa] (top_soil_psi), which a new cohort takes so it starts in equilibrium !
    !      with where it stands. A patch the fast loop has not seeded yet -- at setup, or in!
-   !      a run without the fast loop -- gives the run's [init] state instead.             !
-   !      init_fast_reservoirs re-seeds the setup cohorts once it has seeded their patch.  !
-   !      `soil` is the column's parameters (soil_column_params). -------------------------!
-   pure subroutine patch_physical_state(cas, soil_water, cfg, soil, temp, psi)
+   !      a run without the fast loop -- gives the run's [init] temperature and the site's   !
+   !      starting water instead. init_fast_reservoirs re-seeds the setup cohorts once it  !
+   !      has seeded their patch. `surf` is the patch's site's surface. --------------------!
+   pure subroutine patch_physical_state(cas, soil_water, cfg, surf, temp, psi)
       type(cas_state_t),         intent(in)  :: cas          !< the patch's canopy air
       type(soil_water_column_t), intent(in)  :: soil_water   !< the patch's soil water
       type(meds_config_t),       intent(in)  :: cfg
-      type(soil_params_t),       intent(in)  :: soil
+      type(site_surface_t),      intent(in)  :: surf
       real(wp),                  intent(out) :: temp, psi
-      real(wp) :: theta(n_soil_layer_max)
       if (.not. is_unset_positive(cas%can_temp)) then
          temp = cas%can_temp
-         psi  = top_soil_psi(soil, soil_water%theta(1))
+         psi  = top_soil_psi(surf%soil, soil_water%theta(1))
       else
          temp = cfg%init_soil_temp
-         call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta)
-         psi  = top_soil_psi(soil, theta(1))
+         psi  = top_soil_psi(surf%soil, surf%theta_start(1))
       end if
    end subroutine patch_physical_state
 

@@ -34,7 +34,6 @@ module meds_slow_ledger
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_tissue_heat_capacity
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_soil_column_config, only : soil_params_t, soil_column_params
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
    use meds_budget_check,       only : budget_rtol_flux
@@ -97,9 +96,6 @@ module meds_slow_ledger
    !      rather than hidden in site state.  ------------------------------------------------------!
    type :: slow_ledger_t
       logical             :: active = .false.       !< off => every entry point is a no-op
-      !----- Soil layer geometry, built once from [soil]; only `dz` is used (store depth).         !
-      type(soil_params_t) :: soil
-      logical             :: soil_ready = .false.
       !----- The air density the canopy-air store is valued at. Supplied by the caller from the    !
       !      fast context (site-uniform, from the forcing). Held CONSTANT across the step, which   !
       !      is exact: no fast sub-step runs during a slow step, so rho cannot change inside the   !
@@ -147,8 +143,7 @@ contains
       real(wp), optional,  intent(in)    :: rho_air
       if (.not. ledger%active) return
       if (present(rho_air)) ledger%rho_air = rho_air
-      call ensure_soil_geometry(ledger, cfg)
-      ledger%at_mark  = slow_site_store(poly, cfg, ledger%soil, ledger%rho_air)
+      ledger%at_mark  = slow_site_store(poly, cfg, ledger%rho_air)
       ledger%decl_in  = slow_store_t()
       ledger%decl_out = slow_store_t()
       ledger%n_step   = ledger%n_step + 1_ik
@@ -167,8 +162,7 @@ contains
       type(polygon_t),     intent(in)    :: poly
       type(meds_config_t), intent(in)    :: cfg
       if (.not. ledger%active) return
-      call ensure_soil_geometry(ledger, cfg)
-      ledger%at_mark  = slow_site_store(poly, cfg, ledger%soil, ledger%rho_air)
+      ledger%at_mark  = slow_site_store(poly, cfg, ledger%rho_air)
       ledger%decl_in  = slow_store_t()
       ledger%decl_out = slow_store_t()
       if (.not. ledger%has_first) then
@@ -215,7 +209,7 @@ contains
       type(slow_store_t) :: now, r
       if (.not. ledger%active) return
       if (phase < 1_ik .or. phase > N_SLOW_PHASE) return
-      now = slow_site_store(poly, cfg, ledger%soil, ledger%rho_air)
+      now = slow_site_store(poly, cfg, ledger%rho_air)
       r%carbon = (now%carbon - ledger%at_mark%carbon) - (ledger%decl_in%carbon - ledger%decl_out%carbon)
       r%water  = (now%water  - ledger%at_mark%water ) - (ledger%decl_in%water  - ledger%decl_out%water )
       r%energy = (now%energy - ledger%at_mark%energy) - (ledger%decl_in%energy - ledger%decl_out%energy)
@@ -296,10 +290,9 @@ contains
    !  one-signed water leak in the allocate phase. It is DECLARED instead, the exact mirror of    !
    !  the fast->slow carbon handover.                                                             !
    !=======================================================================================!
-   pure function slow_site_store(poly, cfg, soil, rho_air) result(store)
+   pure function slow_site_store(poly, cfg, rho_air) result(store)
       type(polygon_t),     intent(in) :: poly
       type(meds_config_t), intent(in) :: cfg
-      type(soil_params_t), intent(in) :: soil
       real(wp),            intent(in) :: rho_air
       type(slow_store_t)              :: store
       real(wp)    :: a, dmol, cap_mass, cap_mol, e_soil, w_soil
@@ -316,12 +309,15 @@ contains
          if (a <= 0.0_wp) cycle
 
          !----- Soil column: theta is volumetric and soil_energy is per m3, so both integrate     !
-         !      over the layer thicknesses (identical to soil_water_store / soil_energy_store).   !
+         !      over the layer thicknesses of the patch's site (identical to soil_water_store /    !
+         !      soil_energy_store). ---------------------------------------------------------------!
          w_soil = 0.0_wp ; e_soil = 0.0_wp
-         do k = 1_ik, soil%n_active
-            w_soil = w_soil + poly%patch%soil_water(ip)%theta(k)       * soil%dz(k) * rho_h2o
-            e_soil = e_soil + poly%patch%soil_energy(ip)%soil_energy(k) * soil%dz(k)
-         end do
+         associate (soil => poly%site%surface(poly%patch%owner_site(ip))%soil)
+            do k = 1_ik, soil%n_active
+               w_soil = w_soil + poly%patch%soil_water(ip)%theta(k)       * soil%dz(k) * rho_h2o
+               e_soil = e_soil + poly%patch%soil_energy(ip)%soil_energy(k) * soil%dz(k)
+            end do
+         end associate
          store%water  = store%water  + a * w_soil
          store%energy = store%energy + a * e_soil
 
@@ -432,16 +428,6 @@ contains
          end associate
       end do
    end function slow_fast_carbon_handover
-
-   !----- Build the soil layer geometry once, from the same [soil] block the fast context         !
-   !      uses, so the two tiers integrate over identical layer thicknesses. --------------------!
-   subroutine ensure_soil_geometry(ledger, cfg)
-      type(slow_ledger_t), intent(inout) :: ledger
-      type(meds_config_t), intent(in)    :: cfg
-      if (ledger%soil_ready) return
-      call soil_column_params(cfg%soil_column, ledger%soil)
-      ledger%soil_ready = .true.
-   end subroutine ensure_soil_geometry
 
    !----- Phase labels for the report. ---------------------------------------------------------!
    pure function slow_phase_name(phase) result(nm)

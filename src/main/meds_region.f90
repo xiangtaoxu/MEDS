@@ -271,6 +271,7 @@ contains
             poly%latitude_deg  = cells%lat(p)
             poly%longitude_deg = cells%lon(p)
             poly%elevation_m   = cells%elevation(p)
+            poly%site%surface(1:poly%site%n)%elevation_m = poly%elevation_m   ! its sites, where it is
 
             !----- Census cohorts sit in an established stand but carry NO trait history, so with     !
             !      plasticity on their leaf traits acclimate to their light INSTANTANEOUSLY (after the !
@@ -290,7 +291,7 @@ contains
 
             !----- The fast context and reservoirs, the forcing cursor, snow, soil-carbon spin-up. One  !
             !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
-            call polygon_prepare(pcfg, reg%met_src, poly, run, keep_fast_state=fast_found,             &
+            call polygon_prepare(cfg, reg%met_src, poly, run, keep_fast_state=fast_found,              &
                                  keep_soil_carbon=cfg%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)
@@ -323,7 +324,7 @@ contains
          call ensure_output_dir(trim(cfg%output%dir))
          call open_output_files(cfg, reg%out_files, reg%verbose, cells, ids)
          do p = 1_ik, n
-            call attach_output(reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p))
+            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p))
          end do
          if (reg%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
@@ -543,7 +544,8 @@ contains
          if (.not. was_running(p)) cycle
          call system_clock(tick0, tick_rate)
          do s = 1_ik, nstep
-            call polygon_step(reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p),  &
+            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p),         &
+                              reg%run(p),                                                              &
                               step_start(s), step_end(s), reg%step_days, new_month(s), new_year(s), st)
             if (st /= DRIVER_OK) then
                failed_step(p) = s
@@ -663,7 +665,7 @@ contains
                write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%area_start, '  end=', a1
             end if
             if (abs(a1 - 1.0_wp) > area_tol) st = DRIVER_ERR_AREA
-            if (reg%verbose) call polygon_report(run)
+            if (reg%verbose) call polygon_report(reg%cfg, run)
          end associate
       else
          if (reg%verbose) then
