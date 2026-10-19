@@ -33,7 +33,8 @@ program test_c_api_run
    use meds_c_api_run,     only : meds_run_open, meds_run_step, meds_run_is_done,                 &
                                  meds_run_finalize, meds_run_free, meds_run_year, meds_run_day,  &
                                  meds_run_istep, meds_run_n_patch, meds_run_n_cohort,            &
-                                 meds_run_total_agb, meds_run_total_lai, meds_run_soil_carbon
+                                 meds_run_total_agb, meds_run_total_lai, meds_run_soil_carbon,   &
+                                 meds_run_n_site, meds_run_get_patch_int, meds_run_get_site_real
    use meds_test_support, only : banner, check
    implicit none
 
@@ -73,6 +74,15 @@ program test_c_api_run
    call check(h > 0_c_int, 'a run opens from a config through the C-API')
    call check(meds_run_is_done(h) == 0_c_int, 'a freshly opened run is not already done')
    call check(meds_run_n_patch(h) >= 1_c_int, 'the opened run reports its patch count')
+   block
+      integer(c_int) :: owner(64)
+      real(c_double) :: site_area(1)
+      call check(meds_run_n_site(h) == 1_c_int, 'the opened run reports its one site')
+      call meds_run_get_site_real(h, 0_c_int, site_area)
+      call check(site_area(1) == 1.0_c_double, 'its one site is the whole polygon')
+      call meds_run_get_patch_int(h, 0_c_int, owner)
+      call check(all(owner(1:meds_run_n_patch(h)) == 1_c_int), 'every patch is in the one site')
+   end block
 
    h2 = meds_run_open(to_c(CFG_DERIVED), int(len(CFG_DERIVED), c_int), 0_c_int)
    call check(h2 > 0_c_int .and. h2 /= h, 'two live runs get DISTINCT handles')

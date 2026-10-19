@@ -139,7 +139,7 @@ def run_trial(cfg, out):
             if start is None or step.date.day == 1:
                 c = run.cohorts("global_id", "dbh", "overtopping_lai", "nplant", "pft", "owner_patch")
                 t = step.date.toordinal() / 365.25
-                area = run.patches("area")["area"][c["owner_patch"] - 1]
+                area = run.patches("share")["share"][c["owner_patch"] - 1]
                 if start is None:
                     start = {int(i): (d, l, a * n, p, t) for i, d, l, a, n, p in
                              zip(c["global_id"], c["dbh"], c["overtopping_lai"], area, c["nplant"], c["pft"])}

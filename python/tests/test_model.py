@@ -93,12 +93,16 @@ def test_patch_areas_weight_cohorts_to_the_site_totals(tmp_path):
     from meds.model import Run
     with Run(two_days(tmp_path), verbose=False) as r:
         r.step()
-        area = r.patches("area")["area"]
+        p = r.patches("area", "site", "share")
         c = r.cohorts("agb", "nplant", "owner_patch")
-        assert len(area) == r.n_patch
-        assert area.sum() == pytest.approx(1.0, abs=1e-12)
-        site_agb = (area[c["owner_patch"] - 1] * c["nplant"] * c["agb"]).sum()
+        assert len(p["area"]) == r.n_patch
+        assert p["area"].sum() == pytest.approx(1.0, abs=1e-12)
+        site_agb = (p["share"][c["owner_patch"] - 1] * c["nplant"] * c["agb"]).sum()
         assert site_agb == pytest.approx(r.total_agb, rel=1e-12)
+        #----- one site: every patch in it, its area the whole polygon, each share the patch's area
+        assert r.n_site == 1 and (p["site"] == 1).all()
+        assert r.sites("area")["area"].tolist() == [1.0]
+        assert (p["share"] == p["area"]).all()
 
 
 def test_cohort_gpp_is_the_last_steps(tmp_path):

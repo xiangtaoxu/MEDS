@@ -39,10 +39,10 @@ module meds_c_api_run
 
    public :: meds_run_open, meds_run_step, meds_run_is_done, meds_run_finalize, meds_run_free
    public :: meds_run_year, meds_run_month, meds_run_day, meds_run_istep, meds_run_iyear
-   public :: meds_run_n_patch, meds_run_n_cohort
+   public :: meds_run_n_patch, meds_run_n_cohort, meds_run_n_site
    public :: meds_run_total_agb, meds_run_total_lai, meds_run_total_nplant
    public :: meds_run_total_basal_area, meds_run_soil_carbon, meds_run_get_real, meds_run_get_int
-   public :: meds_run_get_patch_real
+   public :: meds_run_get_patch_real, meds_run_get_patch_int, meds_run_get_site_real
 
    !----- Small registry: a handful of concurrent runs is plenty (the example opens two, one per   !
    !      stage, and could hold both at once). Fixed-size and module-`save` for the same reason    !
@@ -174,6 +174,13 @@ contains
       integer(c_int)                    :: v
       v = -1_c_int ; if (live(h)) v = int(g_run(h)%poly(1)%patch%n, c_int)
    end function meds_run_n_patch
+
+   function meds_run_n_site(h) result(v) bind(c, name="meds_run_n_site")
+      integer(c_int), value, intent(in) :: h
+      integer(c_int)                    :: v
+      v = -1_c_int
+      if (live(h)) v = int(g_run(h)%poly(1)%site%n, c_int)
+   end function meds_run_n_site
 
    function meds_run_n_cohort(h) result(v) bind(c, name="meds_run_n_cohort")
       integer(c_int), value, intent(in) :: h
@@ -307,22 +314,57 @@ contains
       end associate
    end subroutine meds_run_get_int
 
-   !----- Copy-out per-patch getter (caller allocates buf of length n_patch). A cohort's      !
-   !      owner_patch indexes it, so a site total of a cohort quantity is                     !
-   !      sum(area(owner_patch) * nplant * x).                                                !
+   !----- Copy-out per-patch getters (caller allocates buf of length n_patch). A cohort's     !
+   !      owner_patch indexes them, so a polygon total of a cohort quantity is                 !
+   !      sum(share(owner_patch) * nplant * x), the share being the patch's fraction of the     !
+   !      polygon: its area in its site times the site's area. ----------------------------------!
    subroutine meds_run_get_patch_real(h, field_id, buf) bind(c, name="meds_run_get_patch_real")
       integer(c_int), value, intent(in)  :: h, field_id
       real(c_double),        intent(out) :: buf(*)
+      integer(ik) :: n, ip
+      if (.not. live(h)) return
+      associate (p => g_run(h)%poly(1)%patch)
+         n = p%n
+         if (n < 1_ik) return
+         select case (field_id)
+         case (0_c_int) ; buf(1:n) = real(p%area(1:n), c_double)   ! fraction of its site
+         case (1_c_int) ; buf(1:n) = real(p%age(1:n),  c_double)   ! [yr] since disturbance
+         case (2_c_int)                                            ! fraction of the polygon
+            do ip = 1_ik, n
+               buf(ip) = real(patch_polygon_area(g_run(h)%poly(1), ip), c_double)
+            end do
+         end select
+      end associate
+   end subroutine meds_run_get_patch_real
+
+   subroutine meds_run_get_patch_int(h, field_id, buf) bind(c, name="meds_run_get_patch_int")
+      integer(c_int), value, intent(in)  :: h, field_id
+      integer(c_int),        intent(out) :: buf(*)
       integer(ik) :: n
       if (.not. live(h)) return
       associate (p => g_run(h)%poly(1)%patch)
          n = p%n
          if (n < 1_ik) return
          select case (field_id)
-         case (0_c_int) ; buf(1:n) = real(p%area(1:n), c_double)   ! fraction of the site
-         case (1_c_int) ; buf(1:n) = real(p%age(1:n),  c_double)   ! [yr] since disturbance
+         case (0_c_int)                                            ! its site (1-based)
+            buf(1:n) = int(p%owner_site(1:n), c_int)
          end select
       end associate
-   end subroutine meds_run_get_patch_real
+   end subroutine meds_run_get_patch_int
+
+   !----- Copy-out per-site getter (caller allocates buf of length n_site). ------------------!
+   subroutine meds_run_get_site_real(h, field_id, buf) bind(c, name="meds_run_get_site_real")
+      integer(c_int), value, intent(in)  :: h, field_id
+      real(c_double),        intent(out) :: buf(*)
+      integer(ik) :: n
+      if (.not. live(h)) return
+      associate (s => g_run(h)%poly(1)%site)
+         n = s%n
+         select case (field_id)
+         case (0_c_int)                                            ! fraction of the polygon
+            buf(1:n) = real(s%area(1:n), c_double)
+         end select
+      end associate
+   end subroutine meds_run_get_site_real
 
 end module meds_c_api_run
