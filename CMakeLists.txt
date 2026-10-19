@@ -168,12 +168,13 @@ target_include_directories(meds_config PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gener
 target_link_libraries(meds_config PUBLIC meds_shared)
 meds_fortran_flags(meds_config)
 
-#----- STATE, one LAYER in four files by model hierarchy (src/README.md, rule 3). -------------#
+#----- STATE, one LAYER in five files by model hierarchy (src/README.md, rule 3). -------------#
 #                                                                                            #
 #  meds_cohort_state_vars  -- the flat cohort SoA and the cohort lockstep.                    #
 #  meds_patch_state_vars   -- ONE patch's stores (canopy air, snow, soil water and heat,      #
 #                             soil carbon), their blends, and the patch SoA with its CSR map. #
-#  meds_polygon_state_vars -- polygon_t: one cohort block and one patch block.                #
+#  meds_polygon_state_vars -- polygon_t: its site, patch and cohort blocks, and its numbers.  #
+#  meds_site_state_vars    -- the site block: each site's area and its slice of the patches.  #
 #  meds_diag_vars          -- the diagnostic accumulators, per cohort, patch and polygon.     #
 #                                                                                            #
 #  The kernels take only the per-patch store types (from meds_patch_state_vars), never        #

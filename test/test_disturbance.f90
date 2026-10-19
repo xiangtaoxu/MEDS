@@ -51,6 +51,8 @@ program test_disturbance
 
    !----- A new age-0 treefall gap patch was opened; area is conserved. --------------------!
    call check(poly%patch%n == 2_ik, 'disturbance should add exactly one gap patch')
+   call check(poly%site%n == 1_ik .and. poly%site%patch_count(1) == 2_ik .and.                             &
+              all(poly%patch%owner_site(1:2) == 1_ik), 'the gap patch is in the polygon''s one site')
    call check_close(total_area(poly), 1.0_wp, 1.0e-9_wp, 'disturbance broke area conservation')
 
    !----- The disturbed-area flux is REPORTED. A slot declared and never written reads as a       !

@@ -1,8 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_polygon_state_vars -- the polygon's ecological state: its cohort block and patch    !
-! block, the polygon-level numbers, and the routines that need both blocks (the cohort     !
-! map, the persistent ids, the step diagnostic reset).                                     !
+! meds_polygon_state_vars -- the polygon's ecological state: its site, patch and cohort    !
+! blocks, the polygon-level numbers, and the routines that need more than one block (the   !
+! patch and cohort maps, the persistent ids, the step diagnostic reset).                   !
 !                                                                                          !
 ! The run keeps beside each polygon_t a polygon_run_t (src/main) with its forcing, budgets !
 ! and ledgers.                                                                             !
@@ -16,18 +16,20 @@ module meds_polygon_state_vars
    use meds_pft_params,         only : pft_table_t
    use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, alloc_cohort_block, free_cohort_block, reorder_cohort_block
    use meds_patch_state_vars,   only : patch_block, alloc_patch_block, free_patch_block
+   use meds_site_state_vars,    only : site_block, alloc_site_block, free_site_block
    implicit none
    private
 
-   public :: polygon_t, alloc_polygon, free_polygon, rebuild_cohort_map
+   public :: polygon_t, alloc_polygon, free_polygon, rebuild_patch_map, rebuild_cohort_map
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
 
    type :: polygon_t
       !==========================================================================================!
       ! 0. THE BLOCKS IT HOLDS                                                                   !
       !==========================================================================================!
-      type(cohort_block) :: cohort
+      type(site_block)   :: site
       type(patch_block)  :: patch
+      type(cohort_block) :: cohort
       !==========================================================================================!
       ! 1. DIMENSIONS AND ID COUNTERS                                                            !
       !==========================================================================================!
@@ -35,8 +37,6 @@ module meds_polygon_state_vars
       !----- Monotonic counters for the persistent global ids (never reused within a run). ---!
       integer(ik)        :: next_cohort_id = 1_ik
       integer(ik)        :: next_patch_id  = 1_ik
-      !----- Unused: only the restart writes and reads it (one site per polygon, patch areas sum to 1). !
-      real(wp)           :: site_area = 1.0_wp
       !==========================================================================================!
       ! 2. SHARED COHORT CLOCK                                                                   !
       !==========================================================================================!
@@ -57,17 +57,17 @@ module meds_polygon_state_vars
       !==========================================================================================!
       ! 4. FAST-TO-SLOW ACCUMULATORS (the model reads them)                                      !
       !==========================================================================================!
-      !----- Site daily-mean air-temperature accumulator for phenology: the fast loop sums the   !
-      !      met air temperature over the slow step (reset                                        !
-      !      each step), and the slow-loop phenology driver reads the mean (sum/n) then. Transient !
-      !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
+      !----- The daily-mean air-temperature accumulator for phenology: the fast loop sums the     !
+      !      met air temperature over the slow step (reset each step), and the slow-loop           !
+      !      phenology driver reads the mean (sum/n) then. Transient (never restarted). One per    !
+      !      polygon: every site of a polygon has the polygon's forcing.                           !
       real(wp)           :: pheno_tair_sum = 0.0_wp
       integer(ik)        :: pheno_tair_n   = 0_ik
       !==========================================================================================!
       ! 5. TENDENCIES (scratch)                                                                  !
       !==========================================================================================!
       !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
-      !      step and update_cohort_states applies. Site-carried so it allocates once (resize-on-   !
+      !      step and update_cohort_states applies. Held here so it allocates once (resize-on-      !
       !      grow) instead of per step; refilled every step, so it is NOT lockstep-reordered and    !
       !      NOT serialized (a scratch buffer, not prognostic state).                               !
       type(cohort_deriv_block) :: deriv
@@ -77,8 +77,8 @@ module meds_polygon_state_vars
       !----- TRANSIENT fast-loop diagnostics that are the same across the polygon -- its forcing   !
       !      (PY_* in meds_diag_vars): one slot, the cohort and patch blocks' polygon twin. ---      !
       type(polygon_diag_block) :: diag
-      !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
-      !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
+      !----- The polygon's evapotranspiration accumulator [kg/m2 = mm]: the fast loop sums the       !
+      !      area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the              !
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
       !      (total_et) at the output tick. Transient (never restarted).                                !
       real(wp)           :: et_accum       = 0.0_wp
@@ -123,25 +123,54 @@ contains
    subroutine alloc_polygon(poly, n_pft, coh_cap, pat_cap, n_growth_window, allom, pft)
       type(polygon_t),   intent(out) :: poly
       integer(ik),       intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
-      type(allometry_t), intent(in)  :: allom   !< the site's allometry (cfg%allom of its config)
-      type(pft_table_t), intent(in)  :: pft     !< the site's PFT trait table (cfg%pft of its config)
+      type(allometry_t), intent(in)  :: allom   !< the polygon's allometry (cfg%allom of its config)
+      type(pft_table_t), intent(in)  :: pft     !< the polygon's PFT trait table (cfg%pft of its config)
       poly%n_pft = n_pft
       poly%cohort%allom     = allom
       poly%cohort%pft_table = pft
-      call alloc_cohort_block(poly%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
+      !----- One site, the whole polygon; every patch starts in it. ---------------------------!
+      call alloc_site_block(poly%site, 1_ik)
+      poly%site%n       = 1_ik
+      poly%site%area(1) = 1.0_wp
       call alloc_patch_block(poly%patch, max(pat_cap, 1_ik), n_pft)
+      call alloc_cohort_block(poly%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
    end subroutine alloc_polygon
 
-   !----- Each level frees its own fields: the cohort and patch files list them. -------------!
+   !----- Each level frees its own fields: the site, patch and cohort files list them. -------!
    subroutine free_polygon(poly)
       type(polygon_t), intent(inout) :: poly
-      call free_cohort_block(poly%cohort)
+      call free_site_block(poly%site)
       call free_patch_block(poly%patch)
+      call free_cohort_block(poly%cohort)
    end subroutine free_polygon
 
    !=======================================================================================!
    !  STRUCTURE                                                                            !
    !=======================================================================================!
+
+   !=======================================================================================!
+   !  Rebuild the site -> patch map from owner_site. The patch block is sorted by site      !
+   !  (sort_patches), so each site's patches are one slice; a block out of that order stops. !
+   !=======================================================================================!
+   subroutine rebuild_patch_map(poly)
+      type(polygon_t), intent(inout) :: poly
+      integer(ik) :: ip, is
+      associate (site => poly%site, patch => poly%patch)
+         site%patch_count(1:site%n) = 0_ik
+         do ip = 1_ik, patch%n
+            is = patch%owner_site(ip)
+            if (is < 1_ik .or. is > site%n) error stop 'rebuild_patch_map: owner_site out of range'
+            if (ip > 1_ik) then
+               if (is < patch%owner_site(ip - 1_ik)) error stop 'rebuild_patch_map: patches not sorted by site'
+            end if
+            site%patch_count(is) = site%patch_count(is) + 1_ik
+         end do
+         site%patch_offset(1) = 1_ik
+         do is = 2_ik, site%n
+            site%patch_offset(is) = site%patch_offset(is - 1_ik) + site%patch_count(is - 1_ik)
+         end do
+      end associate
+   end subroutine rebuild_patch_map
 
    !=======================================================================================!
    !  Rebuild the CSR patch map by stably regrouping cohorts by owner_patch (counting sort).!

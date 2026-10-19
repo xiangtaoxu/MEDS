@@ -22,7 +22,8 @@ module meds_demography_patch_fusefiss
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
                                       scale_cohort_ground_fields, cohort_tissue_water
-   use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id, assign_patch_id
+   use meds_polygon_state_vars, only : polygon_t, rebuild_patch_map, rebuild_cohort_map, assign_cohort_id,      &
+                                       assign_patch_id
    use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_patch_state_vars,   only : expand_patch_block, reorder_patch_block, blend_cas, blend_soil_water,      &
@@ -38,7 +39,8 @@ module meds_demography_patch_fusefiss
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Sort patches by age descending; remap cohort ownership and rebuild the CSR map.        !
+   ! Sort patches by site, then by age descending; remap cohort ownership and rebuild both !
+   ! maps.                                                                                  !
    !---------------------------------------------------------------------------------------!
    subroutine sort_patches(poly)
       type(polygon_t), intent(inout) :: poly
@@ -51,12 +53,14 @@ contains
          pperm(i) = i
       end do
       associate (patch => poly%patch, cohort => poly%cohort)
-         !----- Insertion sort patch index by age descending. -----------------------------!
+         !----- Insertion sort patch index by site, then by age descending. ----------------!
          do i = 2_ik, np
             key = pperm(i)
             j   = i - 1_ik
             do while (j >= 1_ik)
-               if (patch%age(pperm(j)) >= patch%age(key)) exit
+               if (patch%owner_site(pperm(j)) < patch%owner_site(key)) exit
+               if (patch%owner_site(pperm(j)) == patch%owner_site(key) .and.                        &
+                   patch%age(pperm(j)) >= patch%age(key)) exit
                pperm(j + 1_ik) = pperm(j)
                j = j - 1_ik
             end do
@@ -72,6 +76,7 @@ contains
             cohort%owner_patch(i) = inv(cohort%owner_patch(i))
          end do
       end associate
+      call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
    end subroutine sort_patches
 
@@ -321,7 +326,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Compact the patch list by keep-mask: drop dropped patches AND their cohorts, remap      !
-   ! owner_patch to the new patch indices, and rebuild the CSR map.                          !
+   ! owner_patch to the new patch indices, and rebuild both maps.                            !
    !---------------------------------------------------------------------------------------!
    subroutine patch_compact(poly, pkeep)
       type(polygon_t), intent(inout) :: poly
@@ -355,6 +360,7 @@ contains
       !----- Patches: keep the survivors, in order. The surviving-index list is the permutation   !
       !      reorder_patch_block takes, exactly as compact_cohort_block builds it for the cohort axis. --------!
       call reorder_patch_block(poly%patch, keep_idx, k)
+      call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
    end subroutine patch_compact
 
@@ -445,6 +451,7 @@ contains
          patch%area(newp)           = new_area
          patch%age(newp)            = 0.0_wp
          patch%dist_type(newp)      = DIST_TREEFALL
+         patch%owner_site(newp)     = 1_ik      ! the gap is cut from every patch, all in the one site
          !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
          !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
          patch%shed_water_rate(newp) = 0.0_wp
@@ -559,6 +566,7 @@ contains
          call assign_cohort_id(poly, i)
       end do
 
+      call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
       call sort_cohorts(poly)
    end subroutine apply_patch_disturbance

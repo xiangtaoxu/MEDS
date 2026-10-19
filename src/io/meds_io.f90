@@ -32,7 +32,7 @@ module meds_io
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
    use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water
-   use meds_polygon_state_vars,     only : alloc_polygon, rebuild_cohort_map
+   use meds_polygon_state_vars,     only : alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_soil_column_config,     only : soil_params_t, soil_column_params
    use meds_demography_update,      only : update_overtopping_lai
    use meds_constants,     only : n_soil_layer_max, n_snow_layer_max
@@ -325,7 +325,7 @@ contains
       call put_count('n_cohort', ncoh)
       call put_count('n_patch', npat)
       call put_count('n_window', nwin)
-      meta_r = [poly%site_area, time_to_decimal_year(now)]
+      meta_r = [poly%site%area(1), time_to_decimal_year(now)]
       call put_int('meta_int', meta_i)
       call put_dbl('meta_real', meta_r)
       call put_dbl('t_growth_avg', [poly%t_growth_avg])
@@ -629,7 +629,7 @@ contains
          poly%t_growth_avg = tg(1)
       end block
       poly%next_cohort_id = meta_i(4) ; poly%next_patch_id = meta_i(5)
-      poly%site_area = meta_r(1)
+      poly%site%area(1) = meta_r(1)                 ! a file holds one site, every patch in it
       restart_time = meds_time_t(year=meta_i(6), month=meta_i(7), day=meta_i(8),               &
                                  hour=meta_i(9), minute=meta_i(10), second=meta_i(11))
 
@@ -870,6 +870,7 @@ contains
       end if
       call nc_check(nc_close(ncid), 'state nc_close (read)')
 
+      call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
       call sort_cohorts(poly)
       !----- A file without overtopping_lai: compute it from the stand as read, so the traits'     !

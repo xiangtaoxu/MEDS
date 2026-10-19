@@ -35,7 +35,9 @@ program test_patch
    call new_fuse_patches(poly, cfg)
    call check(poly%patch%n == 1_ik, 'identical patches should fuse to one')
    call check_close(total_area(poly),   1.0_wp, 1.0e-9_wp, 'total area not conserved by fusion')
-   call check_close(total_nplant(poly), n0,     1.0e-9_wp, 'polygon_t plant number not conserved by fusion')
+   call check_close(total_nplant(poly), n0,     1.0e-9_wp, 'the polygon''s plant number not conserved by fusion')
+   call check(poly%site%patch_offset(1) == 1_ik .and. poly%site%patch_count(1) == poly%patch%n,            &
+              'the site map covers the fused patch block')
    call check_close(poly%patch%area(1) * sum(poly%cohort%leaf_surf_water(1:poly%cohort%n)               &
                                              + poly%cohort%wood_surf_water(1:poly%cohort%n)),            &
                     0.35_wp, 1.0e-12_wp, 'patch fusion broke canopy film water conservation')

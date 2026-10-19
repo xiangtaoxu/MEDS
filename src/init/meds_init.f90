@@ -12,7 +12,8 @@ module meds_init
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_allometry,  only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
-   use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_cohort_map, assign_cohort_id, assign_patch_id
+   use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map,      &
+                                          assign_cohort_id, assign_patch_id
    use meds_patch_state_vars,      only : patch_physical_state
    use meds_soil_column_config,    only : soil_params_t, soil_column_params
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
@@ -53,6 +54,7 @@ contains
       end do
       poly%patch%recruit_pool = 0.0_wp
       poly%cohort%n = 0_ik
+      call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
    end subroutine init_bare_ground
 
