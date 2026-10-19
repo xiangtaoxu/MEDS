@@ -76,7 +76,7 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  Corollary: more goes on the stack, so the OMP_STACKSIZE note above applies with more force.
 #-----------------------------------------------------------------------------------------#
 option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note above)" OFF)
-option(MEDS_OPENMP "Compile the patch (site run) and polygon (region run) parallelism; serial if the compiler has none" ON)
+option(MEDS_OPENMP "Compile the patch (one polygon) and polygon (several) parallelism; serial if the compiler has none" ON)
 #      ON BY DEFAULT. The thread count is a RUNTIME setting ([run].n_threads, default 1), so an OpenMP
 #      build still runs serially until a config asks for threads, and its output is byte-identical at
 #      any thread count. Only an OpenMP build lets test_fast_loop's 4-thread check test anything: in a

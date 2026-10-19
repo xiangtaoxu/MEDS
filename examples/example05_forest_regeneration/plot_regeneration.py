@@ -36,7 +36,9 @@ def read(path):
     """The run's yearly output, in field units."""
     with Dataset(path) as ds:
         ds.set_auto_mask(False)
-        v = lambda k: np.array(ds[k][:], dtype=float)
+        def v(k):                                          # a variable on the run's one polygon
+            x, dims = np.array(ds[k][:], dtype=float), ds[k].dimensions
+            return x.take(0, axis=dims.index("polygon")) if "polygon" in dims else x
         lower = v("dbh_lower")
         return {"year": v("year"), "agb": v("agb_pft") * 10.0,                 # kgC/m2 -> MgC/ha
                 "ba": v("basal_area_pft") * 1e4, "lai": v("lai_pft"),          # m2/m2 -> m2/ha

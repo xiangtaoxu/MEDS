@@ -77,8 +77,8 @@ season at the wrong hour with a perfectly healthy-looking energy budget.
 
 ## How it reaches the model
 
-Gated on `[forcing].forcing_on`. When on, the run's driver (`meds_driver` for a site, `meds_region`
-for a region) opens one `met_source_t` and gives each polygon a `met_cursor_t`, and each step's
+Gated on `[forcing].forcing_on`. When on, the run (`meds_region`, one polygon or many) opens one
+`met_source_t` and gives each polygon a `met_cursor_t`, and each step's
 forcing is loaded before the step (`met_prefetch`), so no step reads a file. The fast loop samples
 the forcing **once per sub-step** (`met_advance`, `met_instant`), outside the patch loop, and moves
 it to each patch's canopy-air top (`meds_lapse_rate`) — so the diurnal cycle lives inside the

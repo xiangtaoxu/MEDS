@@ -25,8 +25,8 @@ The design is `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` §14 (RP2, RP3).
 - **The cell mask** (`[region].cell_mask`, `cell_mask_var`, `cell_mask_min`): `meds_region` keeps the
   cells of its box whose mask value is at least the threshold, through `apply_cell_mask`, which
   regroups the kept cells by archive chunk (`era5land_keep_cells`).
-- **The input maps** (`[maps]`): `meds_region` reads them for every polygon once and gives each
-  polygon its cell's; `meds_driver` reads them at a site's forcing cell. A run cell a map leaves empty
+- **The input maps** (`[maps]`): `meds_region` reads them once for a region's polygons and gives each
+  polygon its cell's, or reads them at the forcing cell of a one-polygon run. A run cell a map leaves empty
   is an error that names the map, the variable and the cell (OR17). The products' variable names are
   fixed here: ED-SoilMaps v2 (`soil_depth`, `bc_class`, `f_leak`, `deep_temp`; `sand`, `silt`, `clay`,
   `bulk_density`, `coarse_fragments`; `organic_carbon`, `cec`, `ph_h2o`, on `depth` with `depth_bnds`)

@@ -16,7 +16,8 @@ before and after.
 
 The soil column's parameters become configuration, the ground becomes one block of the main config,
 and a new cohort starts in its patch's state instead of at two constants (#447). The state layer is
-reorganized by model hierarchy, with no change to any result (#448).
+reorganized by model hierarchy, with no change to any result (#448). A run is a region of one polygon
+or many, and every output and state file has a `polygon` dimension (#449).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -32,6 +33,14 @@ reorganized by model hierarchy, with no change to any result (#448).
 
   There are no `[soil_column]` and `[energy]` blocks any more. With the soil maps, `[soil]`'s column
   keys, `water_bottom_bc`, `deep_temp` and `deep_depth` are refused, as their old spellings were.
+- **A site run's files have a `polygon` dimension of length 1** (#449), as a region's do: an output
+  variable is `(time, polygon, ...)`, `soil_z` is `(polygon, soil)`, and every state variable has a
+  leading `polygon` axis. The values are unchanged. A script that reads a site run's files takes the
+  polygon's row (`[:, 0]` after `time`, or `[0]` in a state file). A site run still restarts from a
+  state file written before, without the axis.
+- **Fortran callers of `meds_driver` use `meds_region`** (#449): `region_open`, `region_step` (one
+  slow step), `region_step_month`, `region_finalize` and `region_free` run every run. The Python API
+  is unchanged.
 
 ### Changed
 
@@ -102,6 +111,23 @@ reorganized by model hierarchy, with no change to any result (#448).
   Results are unchanged: a two-year census run and a one-year run with every output group on match
   the previous version bit for bit. Fortran code that imports the old modules imports the new ones;
   the Python API is unchanged.
+- **One run path** (#449; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S0). A run is a region of one
+  polygon or many: `meds_region` opens, steps and finishes every run, and `meds_main`'s choice
+  between a site driver and a region driver is gone. `[run].mode = "site"` is one polygon at the
+  `[site]` location, on either forcing format, and gives its patch loop the run's threads as before.
+  `meds_main` steps a month at a time; the C API and Python step one slow step at a time.
+  - Every output and state file carries the `polygon` dimension and its coordinates (`polygon_id`,
+    `lat`, `lon`, `row`, `col`, the live counts, and each polygon's `soil_z`, `soil_depth`,
+    `bottom_bc`, `drain_factor` and `deep_temp`); the writers have no site-only branch.
+  - `meds_polygon_t` is `polygon_run_t`: what the run needs to step and check a polygon (its config,
+    fast context, forcing cursor, ledgers and status), beside the polygon's state. The region holds
+    `poly(:)`, each polygon's stand, and `run(:)`.
+
+  Results are unchanged: a two-year census run, a one-year run with every output group on, example
+  04's evaluation month, a Palo Verde inventory site on the ERA5-Land archive with the soil maps, a
+  four-cell region, and a site and a region restart match the previous version bit for bit, apart
+  from the new coordinate variables. A site restarted from its new state file runs as one restarted
+  from the old format.
 
 ### Removed
 
@@ -111,6 +137,9 @@ reorganized by model hierarchy, with no change to any result (#448).
   for bit; `docs/science/vegetation_energy_dynamics.md` eq. (8) loses the floor.
 - **`LEAF_TEMP_INIT` and `PSI_INIT`** (#447), the constant birth temperature and potential (see
   Changed).
+- **`meds_driver`** (#449), the site run's driver (`meds_run_t`), and `state_write_state`, the site
+  state writer: every run goes through `meds_region` and every state file through `state_file_open`,
+  `state_file_put` and `state_file_close`.
 
 ## [0.3.5] — 2026-10-17
 

@@ -9,8 +9,9 @@ executable holds -- with the time loop handed back to Python:
             if step.is_new_year:
                 print(step.date, run.total_agb, run.soil_carbon)
 
-``driver_step`` is the identical call the executable makes, so a Python-driven run
-and a ``meds_main`` run of the same config produce byte-identical netCDF. Nothing is
+Each step is one slow step of the same run (``meds_region``) the executable steps a month
+at a time, so a Python-driven run and a ``meds_main`` run of the same config produce
+byte-identical netCDF. Nothing is
 re-implemented here; this is the executable's loop, in Python.
 
 Array getters COPY out of the Fortran SoA into fresh numpy arrays (they never alias),
@@ -41,7 +42,7 @@ _REAL = {"dbh": 0, "height": 1, "nplant": 2, "agb": 3, "leaf_area": 4,
 _INT = {"pft": 0, "owner_patch": 1, "global_id": 2}
 _PATCH_REAL = {"area": 0, "age": 1}
 
-#----- driver_step status codes (meds_driver's DRIVER_* parameters). --------------------------#
+#----- A step's status codes (the DRIVER_* parameters of meds_polygon). -----------------------#
 OK, FINISHED, ERR_NAN, ERR_AREA, ERR_BOUNDS = 0, 1, 2, 3, 4
 
 
@@ -89,7 +90,7 @@ class Run:
         if status == ERR_NAN:
             #----- The Fortran driver RETURNS these rather than `error stop`ping, which is
             #      the only reason a bad state is an exception here instead of a dead
-            #      interpreter. See the meds_driver module header.
+            #      interpreter. See the meds_region module header.
             raise RuntimeError(f"MEDS: NaN in the state or the energy/water ledger at {self.date}")
         if status == ERR_BOUNDS:
             #----- A cohort's density, carbon or water went negative or infinite, or a CENTURY

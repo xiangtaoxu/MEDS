@@ -115,7 +115,7 @@ instead, and report their values.
 | `pft` | **run-time** PFT count | carries a `pft` coordinate variable, so the file stays self-describing |
 | `dbh_class` | from `[output].dbh_class_edges` | carries `dbh_lower` / `dbh_upper` coordinates |
 | `(patch, soil)` | 2-D | per-patch soil profiles; `axes_soil_patch = true` |
-| `polygon` | region runs only | after `time`; coordinates `polygon_id`, `lat`, `lon`, `row`, `col` ([configuration](../configuration.md), Regional runs) |
+| `polygon` | every file; length 1 in a site run | after `time`; coordinates `polygon_id`, `lat`, `lon`, `row`, `col` ([configuration](../configuration.md), Regional runs) |
 
 **DBH classes are a size class of *plants*, ED2-style.** A cohort is assigned whole to the bin
 containing its mean `dbh` — never split — and contributes with weight `area · nplant`. Bins are

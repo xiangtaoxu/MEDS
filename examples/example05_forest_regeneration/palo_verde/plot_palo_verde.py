@@ -36,7 +36,9 @@ def read(path):
     """The run's records, in field units; the stand's age [yr] from the run's first day."""
     with Dataset(path) as ds:
         ds.set_auto_mask(False)
-        v = lambda k: np.array(ds[k][:], dtype=float)
+        def v(k):                                          # a variable on the run's one polygon
+            x, dims = np.array(ds[k][:], dtype=float), ds[k].dimensions
+            return x.take(0, axis=dims.index("polygon")) if "polygon" in dims else x
         t = v("year") + (v("month") - 1.0) / 12.0 if "month" in ds.variables else v("year")
         lower = v("dbh_lower")
         return {"age": t - t[0], "agb": v("agb_pft") * 10.0, "ba": v("basal_area_pft") * 1e4,   # MgC/ha, m2/ha

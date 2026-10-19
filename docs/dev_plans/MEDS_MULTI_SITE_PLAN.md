@@ -1,6 +1,6 @@
 # Several sites per polygon — plan
 
-**Status:** revision 6, 2026-10-18, for the owner's comments. Nothing is implemented.
+**Status:** revision 6, 2026-10-18. S0 implemented in PR #449 (§10); S1–S5 not started.
 **Base:** `beta` at `835458c` (the state hierarchy, PR #448).
 **Decided (owner, 2026-10-18):**
 - D1 — all patches of a polygon in one patch block; a site block records which patches are its own,
@@ -358,7 +358,8 @@ soil columns.
 
 | Step | What | Results |
 |---|---|---|
-| **S0** | One run path (§3.6): `meds_region_t` runs one polygon or many; `meds_driver` and `meds_run_t` go; `meds_polygon_t` becomes `polygon_run_t` beside the state; a one-step entry for the C API; `ED_default` sources in a region; the `polygon` dimension in every output and restart file. | Values bit-identical; one-polygon files gain the `polygon` dimension |
+| **S0** | One run path (§3.6): `meds_region_t` runs one polygon or many; `meds_driver` and `meds_run_t` go; `meds_polygon_t` becomes `polygon_run_t` beside the state; a one-step entry for the C API; the `polygon` dimension in every output and restart file. | Values bit-identical; one-polygon files gain the `polygon` dimension |
+| **S0b** | `ED_default` sources in a region: the file reader holds the series of every grid the region selects, and the region takes the grids within its box (§10). | New behaviour; S0's results unchanged |
 | **S1** | `polygon_t` holds the three blocks and the polygon-level numbers; `site_block` with one site of area 1 covering every patch; `owner_site` = 1; `sort_patches` sorts by (site, age); `rebuild_site_map`. The 120 routines take `polygon_t` (`site%` → `poly%`). Every polygon total weights by `patch_polygon_area` (§3.4). | Bit-identical |
 | **S2** | Each site owns its surface (§5), its own layer grid included: the soil column moves from `cfg` to the site block, the fast context and the slow ledger hold one soil column per site, the 7 call sites read the patch's site's. | Bit-identical |
 | **S3** | Several sites run: the structural operations by site slice (§7.2), initialization per site (bare ground or census by `site_id`), the restart's `site` axis, `patch_site`, per-site soil-layer output (D11) and optional per-site stand output. Tests: two identical sites with areas 0.3 and 0.7 reproduce one site's polygon output, to round-off; two soils give two different stands; thread-count invariance. | Bit-identical with one site |
@@ -389,3 +390,31 @@ takes a site) and the simplest to verify; S3 holds the new behaviour.
 | D12 | Run paths | **Decided:** one; a run is a region of one polygon or many (S0) |
 | D13 | `polygon` dimension | **Decided:** always written |
 | D14 | Forcing formats | **Decided:** gridded only; a tower's forcing is a one-grid `ED_default` file |
+
+---
+
+## 10. Implementation log
+
+**S0, PR #449 (2026-10-18).** Four commits on `refactor/one-run-path`, each checked against `beta` at
+`835458c` on seven cases: a two-year census run, a one-year run with every output group on, example
+04's evaluation month, a Palo Verde inventory site on the ERA5-Land archive with the soil maps, a
+four-cell region, a site restart from an old-format state file and a region restart. Every variable
+the old files hold matches bit for bit; the new files add only the polygon coordinates. A site
+restarted from a new one-polygon state file runs as one restarted from the old format.
+
+1. One run path: `meds_region` runs every run, `meds_driver` is deleted, `region_step` is the C API's
+   one-step entry, and a one-polygon run writes the polygon axis.
+2. The output and state writers lose their site-only branches; `manager_set_polygons` lays out a file
+   set's polygon axis.
+3. `polygon_run_t` beside the state: the region holds `poly(:)` (a `site_t` until S1) and `run(:)`.
+4. The scripts, tests and documents read the polygon axis.
+
+Departures from the plan:
+
+- **`ED_default` sources in a region moved to S0b.** An `ED_default` file binds to one grid when it
+  opens (`grid_index`, or the grid nearest `[site]`); a region over its grids needs the reader to hold
+  several grids' series and the region to select the grids in its box. That is new behaviour rather
+  than a refactor, so it has a step of its own. Until then a region needs the ERA5-Land archive.
+- **`id`, the location and the restructure flags stay in `polygon_run_t`** until S1 creates
+  `polygon_t` (§3.3).
+- **The `meds_driver` CMake library keeps its name**; it now builds `meds_polygon` and `meds_region`.
