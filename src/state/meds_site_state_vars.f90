@@ -3,8 +3,8 @@
 ! meds_site_state_vars -- the site: one cohort block and one patch block, and the          !
 ! routines that need both (the CSR map, the persistent ids, the step diagnostic reset).    !
 !                                                                                          !
-! A polygon holds exactly one site_t, so this is the polygon's ecological state too;       !
-! meds_polygon_t (src/main) wraps it with the run's forcing, budgets and ledgers.          !
+! A polygon holds exactly one site_t, so this is the polygon's ecological state too; the   !
+! run keeps beside it a polygon_run_t (src/main) with its forcing, budgets and ledgers.    !
 !==========================================================================================!
 module meds_site_state_vars
    use meds_diag_vars,          only : polygon_diag_block, reset_cohort_diag, reset_patch_diag,          &

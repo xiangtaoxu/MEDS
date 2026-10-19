@@ -89,7 +89,7 @@ program test_state_roundtrip
 
    now = meds_time_t(year=2000, month=1, day=1, hour=0, minute=0, second=0)
    !----- The file is written on a year boundary with its restructuring still owed, as the driver's   !
-   !      yearly checkpoint is (meds_polygon_t%restructure_pending); the reader must say so. ---------!
+   !      yearly checkpoint is (polygon_run_t%restructure_pending); the reader must say so. ----------!
    call write_state(site, now, .true., .true.)
    call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, fast_found=fast_ok,  &
                       restructure_pending=owed, restructure_new_year=owed_year)

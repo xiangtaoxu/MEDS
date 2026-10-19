@@ -171,37 +171,37 @@ contains
    function meds_run_n_patch(h) result(v) bind(c, name="meds_run_n_patch")
       integer(c_int), value, intent(in) :: h
       integer(c_int)                    :: v
-      v = -1_c_int ; if (live(h)) v = int(g_run(h)%poly(1)%site%patch%n, c_int)
+      v = -1_c_int ; if (live(h)) v = int(g_run(h)%poly(1)%patch%n, c_int)
    end function meds_run_n_patch
 
    function meds_run_n_cohort(h) result(v) bind(c, name="meds_run_n_cohort")
       integer(c_int), value, intent(in) :: h
       integer(c_int)                    :: v
-      v = -1_c_int ; if (live(h)) v = int(count_cohorts(g_run(h)%poly(1)%site), c_int)
+      v = -1_c_int ; if (live(h)) v = int(count_cohorts(g_run(h)%poly(1)), c_int)
    end function meds_run_n_cohort
 
    function meds_run_total_agb(h) result(v) bind(c, name="meds_run_total_agb")
       integer(c_int), value, intent(in) :: h
       real(c_double)                    :: v
-      v = 0.0_c_double ; if (live(h)) v = real(total_agb(g_run(h)%poly(1)%site), c_double)
+      v = 0.0_c_double ; if (live(h)) v = real(total_agb(g_run(h)%poly(1)), c_double)
    end function meds_run_total_agb
 
    function meds_run_total_lai(h) result(v) bind(c, name="meds_run_total_lai")
       integer(c_int), value, intent(in) :: h
       real(c_double)                    :: v
-      v = 0.0_c_double ; if (live(h)) v = real(total_lai(g_run(h)%poly(1)%site), c_double)
+      v = 0.0_c_double ; if (live(h)) v = real(total_lai(g_run(h)%poly(1)), c_double)
    end function meds_run_total_lai
 
    function meds_run_total_nplant(h) result(v) bind(c, name="meds_run_total_nplant")
       integer(c_int), value, intent(in) :: h
       real(c_double)                    :: v
-      v = 0.0_c_double ; if (live(h)) v = real(total_nplant(g_run(h)%poly(1)%site), c_double)
+      v = 0.0_c_double ; if (live(h)) v = real(total_nplant(g_run(h)%poly(1)), c_double)
    end function meds_run_total_nplant
 
    function meds_run_total_basal_area(h) result(v) bind(c, name="meds_run_total_basal_area")
       integer(c_int), value, intent(in) :: h
       real(c_double)                    :: v
-      v = 0.0_c_double ; if (live(h)) v = real(total_basal_area(g_run(h)%poly(1)%site), c_double)
+      v = 0.0_c_double ; if (live(h)) v = real(total_basal_area(g_run(h)%poly(1)), c_double)
    end function meds_run_total_basal_area
 
    !----- Site total soil carbon [kgC/m2], area-weighted over patches: all seven CENTURY pools.    !
@@ -216,7 +216,7 @@ contains
       v = 0.0_c_double
       if (.not. live(h)) return
       tot = 0.0_wp
-      associate (p => g_run(h)%poly(1)%site%patch)
+      associate (p => g_run(h)%poly(1)%patch)
          do ip = 1_ik, p%n
             tot = tot + p%area(ip) * (p%soil_carbon(ip)%fast_grnd_carbon                        &
                                     + p%soil_carbon(ip)%fast_soil_carbon                        &
@@ -239,7 +239,7 @@ contains
       real(c_double),        intent(out) :: buf(*)
       integer(ik) :: n
       if (.not. live(h)) return
-      associate (c => g_run(h)%poly(1)%site%cohort)
+      associate (c => g_run(h)%poly(1)%cohort)
          n = c%n
          if (n < 1_ik) return
          select case (field_id)
@@ -295,7 +295,7 @@ contains
       integer(c_int),        intent(out) :: buf(*)
       integer(ik) :: n
       if (.not. live(h)) return
-      associate (c => g_run(h)%poly(1)%site%cohort)
+      associate (c => g_run(h)%poly(1)%cohort)
          n = c%n
          if (n < 1_ik) return
          select case (field_id)
@@ -314,7 +314,7 @@ contains
       real(c_double),        intent(out) :: buf(*)
       integer(ik) :: n
       if (.not. live(h)) return
-      associate (p => g_run(h)%poly(1)%site%patch)
+      associate (p => g_run(h)%poly(1)%patch)
          n = p%n
          if (n < 1_ik) return
          select case (field_id)

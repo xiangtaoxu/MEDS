@@ -33,7 +33,7 @@ module meds_region
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
-   use meds_site_state_vars,        only : site_free
+   use meds_site_state_vars,        only : site_t, site_free
    use meds_io,                     only : state_file_t, state_file_open, state_file_put, state_file_close, &
                                            state_file_polygons, io_read_state, state_file_refusal
    use meds_demography_update,      only : update_overtopping_lai
@@ -48,7 +48,7 @@ module meds_region
                                            map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
    use meds_era5land_reader,        only : era5land_select_box, era5land_static_file, ERA_OK, ERA_ERR_NO_CELL
    use meds_diagnostic_reduce,      only : print_summary, total_area, total_agb, total_lai, count_cohorts
-   use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step, polygon_report, &
+   use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
                                            open_output_files, attach_output, ensure_output_dir,   &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
                                            DRIVER_ERR_BOUNDS, N_PATCH_INIT
@@ -69,9 +69,12 @@ module meds_region
       type(meds_config_t)   :: cfg
       type(met_source_t)    :: met_src          !< one reader for every polygon (opened only if forcing_on)
       type(output_files_t)  :: out_files           !< the run's files (built only if output.enabled)
-      type(meds_polygon_t), allocatable :: poly(:)
+      !----- Each polygon as two records side by side: its state (the stand) and what the run needs  !
+      !      to step and check it (meds_polygon). -------------------------------------------------!
+      type(site_t),        allocatable :: poly(:)
+      type(polygon_run_t), allocatable :: run(:)
       !----- Each polygon's share of the files, one per polygon. A contiguous array of its own, so  !
-      !      the I/O phase passes it whole: a section poly(:)%bufs of a type with allocatable        !
+      !      the I/O phase passes it whole: a section run(:)%bufs of a type with allocatable         !
       !      components makes gfortran copy it through a temporary whose copy-out dangles them. ----!
       type(output_buffers_t), allocatable :: out_bufs(:)
       type(meds_time_t)     :: now
@@ -211,18 +214,18 @@ contains
 
       !----- Each polygon at its location, from its initial community, with its own configuration: !
       !      the run's, with a region cell's own soil and site index. --------------------------------!
-      allocate(reg%poly(n), reg%out_bufs(n))
+      allocate(reg%poly(n), reg%run(n), reg%out_bufs(n))
       reg%now = cfg%start_time
       do p = 1_ik, n
-         associate (poly => reg%poly(p))
-            poly%cell = p
-            poly%id   = ids(p)
-            poly%restructure_pending = .false.
-            poly%restructure_new_year = .false.
+         associate (poly => reg%poly(p), run => reg%run(p))
+            run%cell = p
+            run%id   = ids(p)
+            run%restructure_pending = .false.
+            run%restructure_new_year = .false.
             pcfg = cfg
             if (region) then
-               write(poly%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', poly%id, ' (', cells%lat(p), ', ', &
-                                                        cells%lon(p), ')'
+               write(run%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', run%id, ' (', cells%lat(p), ', ',   &
+                                                       cells%lon(p), ')'
                call apply_map_inputs(inputs, p, pcfg)
                call validate_config(pcfg)
             end if
@@ -230,23 +233,23 @@ contains
             select case (cfg%init_mode)
             case (INIT_RESTART)
                if (slot(p) > 0_ik) then
-                  call io_read_state(poly%site, pcfg, trim(cfg%init_restart_file), restart_time, found, &
-                                     fast_found=fast_found, restructure_pending=poly%restructure_pending, &
-                                     restructure_new_year=poly%restructure_new_year, polygon=slot(p))
+                  call io_read_state(poly, pcfg, trim(cfg%init_restart_file), restart_time, found,      &
+                                     fast_found=fast_found, restructure_pending=run%restructure_pending,  &
+                                     restructure_new_year=run%restructure_new_year, polygon=slot(p))
                else
-                  call io_read_state(poly%site, pcfg, trim(cfg%init_restart_file), restart_time, found, &
-                                     fast_found=fast_found, restructure_pending=poly%restructure_pending, &
-                                     restructure_new_year=poly%restructure_new_year)
+                  call io_read_state(poly, pcfg, trim(cfg%init_restart_file), restart_time, found,      &
+                                     fast_found=fast_found, restructure_pending=run%restructure_pending,  &
+                                     restructure_new_year=run%restructure_new_year)
                end if
                if (.not. found) then
-                  write(*,'(5a)') ' init  : restart (mode 2): cannot read ', trim(polygon_name(poly)),     &
+                  write(*,'(5a)') ' init  : restart (mode 2): cannot read ', trim(polygon_name(run)),      &
                                   ' from the state file ', trim(cfg%init_restart_file)
                   return
                end if
                reg%now = restart_time
-               if (reg%verbose .and. n == 1_ik) call report_restart(cfg, reg%now, fast_found, poly%restructure_pending)
+               if (reg%verbose .and. n == 1_ik) call report_restart(cfg, reg%now, fast_found, run%restructure_pending)
             case (INIT_CENSUS)
-               call init_from_census(poly%site, pcfg, trim(cfg%init_census_file), found, why=msg)
+               call init_from_census(poly, pcfg, trim(cfg%init_census_file), found, why=msg)
                if (.not. found) then
                   write(*,'(4a)') ' init  : census (mode 1): the census file ', trim(cfg%init_census_file), &
                                   ' ', msg
@@ -254,18 +257,18 @@ contains
                end if
                if (reg%verbose) then
                   write(*,'(2a)') ' init  : census (mode 1) ', trim(cfg%init_census_file)
-                  write(*,'(a,i0,a,i0,a)') '         read ', poly%site%patch%n, ' patches, ',           &
-                                           poly%site%cohort%n, ' cohorts'
+                  write(*,'(a,i0,a,i0,a)') '         read ', poly%patch%n, ' patches, ',                &
+                                           poly%cohort%n, ' cohorts'
                end if
                !----- A census stand is restructured by the slow step's own operators before the first  !
                !      step: it arrives with a cohort per measured size and a patch per plot cell.  -------!
-               call restructure_census_stand(poly%site, pcfg)
+               call restructure_census_stand(poly, pcfg)
                if (reg%verbose) write(*,'(a,i0,a,i0,a,i0,a)') '         restructured to ',              &
-                     poly%site%patch%n, ' patches, ', poly%site%cohort%n, ' cohorts (at most ',          &
-                     max_cohort_count(poly%site), ' in a patch)'
+                     poly%patch%n, ' patches, ', poly%cohort%n, ' cohorts (at most ',                    &
+                     max_cohort_count(poly), ' in a patch)'
             case default
-               call init_bare_ground(poly%site, pcfg, N_PATCH_INIT)
-               call seed_bare_ground(poly%site, pcfg)
+               call init_bare_ground(poly, pcfg, N_PATCH_INIT)
+               call seed_bare_ground(poly, pcfg)
                if (reg%verbose .and. n == 1_ik) write(*,'(a)') ' init  : bare ground (mode 0)'
             end select
 
@@ -276,19 +279,19 @@ contains
             !      for this run's PFT file instead (a calibration trial that restarts from a shared    !
             !      state with changed traits).                                                           !
             if (pcfg%trait_plasticity_on .and. cfg%init_mode == INIT_CENSUS) then
-               call update_overtopping_lai(poly%site)
-               call advance_plant_traits(poly%site, pcfg, pcfg%dt_years, instantaneous=.true.)
+               call update_overtopping_lai(poly)
+               call advance_plant_traits(poly, pcfg, pcfg%dt_years, instantaneous=.true.)
             end if
             if (pcfg%init_reacclimate_traits .and. cfg%init_mode == INIT_RESTART) then
-               call reacclimate_plant_traits(poly%site, pcfg)
+               call reacclimate_plant_traits(poly, pcfg)
                if (reg%verbose .and. n == 1_ik)                                                       &
                   write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
             end if
 
             !----- The fast context and reservoirs, the forcing cursor, snow, soil-carbon spin-up. One  !
             !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
-            call polygon_prepare(pcfg, reg%met_src, poly, cells%lat(p), cells%lon(p), cells%elevation(p), &
-                                 keep_fast_state=fast_found,                                         &
+            call polygon_prepare(pcfg, reg%met_src, poly, run, cells%lat(p), cells%lon(p),            &
+                                 cells%elevation(p), keep_fast_state=fast_found,                     &
                                  keep_soil_carbon=cfg%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)
@@ -321,7 +324,7 @@ contains
          call ensure_output_dir(trim(cfg%output%dir))
          call open_output_files(cfg, reg%out_files, reg%verbose, cells, ids)
          do p = 1_ik, n
-            call attach_output(reg%out_files, reg%out_bufs(p), reg%poly(p))
+            call attach_output(reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p))
          end do
          if (reg%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
@@ -338,7 +341,7 @@ contains
 
       if (reg%verbose .and. n == 1_ik) then
          write(*,'(a)') '-----------------------------------------------------------------------------'
-         call print_summary(reg%poly(1)%site, 'start')
+         call print_summary(reg%poly(1), 'start')
       end if
       end associate
       ok = .true.
@@ -401,11 +404,11 @@ contains
    end subroutine site_cell
 
    !----- How messages name a polygon: its label, or "the site" for a one-polygon run. -------------!
-   function polygon_name(poly) result(name)
-      type(meds_polygon_t), intent(in) :: poly
+   function polygon_name(run) result(name)
+      type(polygon_run_t), intent(in) :: run
       character(len=:), allocatable :: name
-      if (len_trim(poly%label) > 0) then
-         name = trim(poly%label)
+      if (len_trim(run%label) > 0) then
+         name = trim(run%label)
       else
          name = 'the site'
       end if
@@ -532,7 +535,7 @@ contains
       !      and buffers. ---------------------------------------------------------------------------!
       allocate(order(npoly), failed_step(npoly), was_running(npoly))
       call ascending_order(-reg%cost, npoly, order)
-      was_running = reg%poly(:)%status == DRIVER_OK
+      was_running = reg%run(:)%status == DRIVER_OK
       failed_step = 0_ik
       !$omp parallel do schedule(dynamic, 1) num_threads(cfg%n_threads) default(shared) if(npoly > 1)   &
       !$omp    private(k, p, s, st, tick0, tick1, tick_rate)
@@ -541,7 +544,7 @@ contains
          if (.not. was_running(p)) cycle
          call system_clock(tick0, tick_rate)
          do s = 1_ik, nstep
-            call polygon_step(reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p),              &
+            call polygon_step(reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p),  &
                               step_start(s), step_end(s), reg%step_days, new_month(s), new_year(s), st)
             if (st /= DRIVER_OK) then
                failed_step(p) = s
@@ -555,9 +558,9 @@ contains
 
       do p = 1_ik, npoly
          if (failed_step(p) == 0_ik) cycle
-         if (npoly > 1_ik) write(*,'(4a)') ' region: ', trim(reg%poly(p)%label), ' failed on ',      &
+         if (npoly > 1_ik) write(*,'(4a)') ' region: ', trim(reg%run(p)%label), ' failed on ',       &
                                            time_to_string(step_end(failed_step(p)))
-         if (status == DRIVER_OK) status = reg%poly(p)%status
+         if (status == DRIVER_OK) status = reg%run(p)%status
       end do
       reg%now   = step_end(nstep)
       reg%istep = reg%istep + nstep
@@ -593,19 +596,19 @@ contains
       n_patch = 0_ik
       allocate(ids(size(reg%poly)), lat(size(reg%poly)), lon(size(reg%poly)))
       do p = 1_ik, size(reg%poly, kind=ik)
-         ids(p)   = reg%poly(p)%id
-         lat(p)   = reg%poly(p)%latitude_deg
-         lon(p)   = reg%poly(p)%longitude_deg
-         n_cohort = max(n_cohort, reg%poly(p)%site%cohort%n)
-         n_patch  = max(n_patch, reg%poly(p)%site%patch%n)
+         ids(p)   = reg%run(p)%id
+         lat(p)   = reg%run(p)%latitude_deg
+         lon(p)   = reg%run(p)%longitude_deg
+         n_cohort = max(n_cohort, reg%poly(p)%cohort%n)
+         n_patch  = max(n_patch, reg%poly(p)%patch%n)
       end do
       call state_file_open(sf, trim(reg%cfg%state_output_dir), trim(reg%cfg%state_output_prefix), reg%now, &
-                           reg%cfg%pft%n, int(size(reg%poly(1)%site%cohort%growth_hist, 1), ik), n_cohort,  &
+                           reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
                            n_patch, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,                      &
-                           restructure_pending=reg%poly(1)%restructure_pending,                            &
-                           restructure_new_year=reg%poly(1)%restructure_new_year)
+                           restructure_pending=reg%run(1)%restructure_pending,                             &
+                           restructure_new_year=reg%run(1)%restructure_new_year)
       do p = 1_ik, size(reg%poly, kind=ik)
-         call state_file_put(sf, reg%poly(p)%site, reg%now, p)
+         call state_file_put(sf, reg%poly(p), reg%now, p)
       end do
       call state_file_close(sf)
    end subroutine region_write_state
@@ -619,12 +622,12 @@ contains
       integer(ik) :: p
       when = time_to_string(reg%now)
       if (size(reg%poly) == 1) then
-         if (mod(reg%iyear, 5_ik) == 0_ik .or. reg%iyear == 1_ik) call print_summary(reg%poly(1)%site, when(1:10))
+         if (mod(reg%iyear, 5_ik) == 0_ik .or. reg%iyear == 1_ik) call print_summary(reg%poly(1), when(1:10))
          return
       end if
       do p = 1_ik, size(reg%poly, kind=ik)
-         agb(p) = total_agb(reg%poly(p)%site)
-         lai(p) = total_lai(reg%poly(p)%site)
+         agb(p) = total_agb(reg%poly(p))
+         lai(p) = total_lai(reg%poly(p))
       end do
       write(*,'(a,a10,a,3(1x,f0.3),a,3(1x,f0.3))') ' ', when(1:10), '  AGB kgC/m2 min/mean/max:',     &
             minval(agb), sum(agb) / size(agb), maxval(agb), '   LAI:', minval(lai),                  &
@@ -649,19 +652,19 @@ contains
 
       st = DRIVER_OK
       n_bad = 0_ik
-      failed = any(reg%poly(:)%status /= DRIVER_OK)
+      failed = any(reg%run(:)%status /= DRIVER_OK)
       !----- The true terminal state, so a restart resumes exactly here. -----------------------------!
       if (reg%cfg%state_write_state .and. .not. failed) call region_write_state(reg)
       if (size(reg%poly) == 1) then
-         associate (poly => reg%poly(1))
-            if (reg%verbose) call print_summary(poly%site, 'final')
-            a1 = total_area(poly%site)
+         associate (poly => reg%poly(1), run => reg%run(1))
+            if (reg%verbose) call print_summary(poly, 'final')
+            a1 = total_area(poly)
             if (reg%verbose) then
                write(*,'(a)') '-----------------------------------------------------------------------------'
-               write(*,'(a,f12.9,a,f12.9)') ' site area start=', poly%area_start, '  end=', a1
+               write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%area_start, '  end=', a1
             end if
             if (abs(a1 - 1.0_wp) > area_tol) st = DRIVER_ERR_AREA
-            if (reg%verbose) call polygon_report(poly)
+            if (reg%verbose) call polygon_report(run)
          end associate
       else
          if (reg%verbose) then
@@ -669,17 +672,17 @@ contains
             write(*,'(a)') '  polygon      lat      lon  AGB kgC/m2    LAI  cohorts  area error  energy/water fails'
          end if
          do p = 1_ik, size(reg%poly, kind=ik)
-            associate (poly => reg%poly(p))
-               a1 = total_area(poly%site)
+            associate (poly => reg%poly(p), run => reg%run(p))
+               a1 = total_area(poly)
                if (abs(a1 - 1.0_wp) > area_tol) then
                   st = DRIVER_ERR_AREA
                   n_bad = n_bad + 1_ik
                end if
                if (reg%verbose)                                                                    &
-                  write(*,'(i9,2f9.2,f12.4,f7.3,i9,es12.2,2(1x,i0))') poly%id,                      &
-                        poly%latitude_deg, poly%longitude_deg, total_agb(poly%site),                &
-                        total_lai(poly%site), count_cohorts(poly%site), a1 - 1.0_wp,               &
-                        poly%energy_budget%n_fail, poly%water_budget%n_fail
+                  write(*,'(i9,2f9.2,f12.4,f7.3,i9,es12.2,2(1x,i0))') run%id,                       &
+                        run%latitude_deg, run%longitude_deg, total_agb(poly),                       &
+                        total_lai(poly), count_cohorts(poly), a1 - 1.0_wp,                          &
+                        run%energy_budget%n_fail, run%water_budget%n_fail
             end associate
          end do
          if (n_bad > 0_ik) write(*,'(a,i0,a)') ' ERROR: ', n_bad, ' polygon(s) did not conserve area'
@@ -708,7 +711,7 @@ contains
       call met_close(reg%met_src)
       if (allocated(reg%poly)) then
          do p = 1_ik, size(reg%poly, kind=ik)
-            call site_free(reg%poly(p)%site)
+            call site_free(reg%poly(p))
          end do
       end if
       reg = never_opened
