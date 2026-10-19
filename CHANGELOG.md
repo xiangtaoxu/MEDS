@@ -346,7 +346,10 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   which only their unit test called; `ROUNDOFF_RTOL` (`meds_numerics`), which only the test of
   `conserved` read; an unused zenith angle in `gfun_direct`; and in `soil_unknown_from_theta` a test
   for Campbell layers that no Campbell layer reaches. `SE_START` repeated `SE_MIN` and is gone.
-  Outputs are unchanged bit for bit.
+  Every output but two is unchanged bit for bit. The ledger residuals `resid_energy_site` and
+  `resid_water_site` move at round-off (at most 2.1×10⁻¹² J m⁻² and 1.3×10⁻¹⁷ kg m⁻², against closures
+  of ~10⁻⁷ J m⁻² and ~10⁻¹³ kg m⁻²): with `store0` and `store1` no longer written, the optimised build
+  adds the residual's terms in another order. Restoring the two writes alone restores the old bits.
 
 ## [0.3.5] — 2026-10-17
 
