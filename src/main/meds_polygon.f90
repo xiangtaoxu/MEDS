@@ -73,12 +73,8 @@ module meds_polygon
 
    !----- What the run needs to step and check one polygon; its state is the polygon_t beside it. --!
    type :: polygon_run_t
-      integer(ik)            :: id = 0_ik         !< global id: the cell's row-major index (0 for a site run)
       integer(ik)            :: cell = 1_ik       !< the cell in the forcing source's cell list
       character(len=40)      :: label = ''        !< how messages name it ('' for a site run)
-      !----- Where it is: the cell centre and orography of a region's polygon, the [site] of a site   !
-      !      run. The forcing cursor, the leaf phenology's day length and the output all read it. ---!
-      real(wp)               :: latitude_deg = 0.0_wp, longitude_deg = 0.0_wp, elevation_m = 0.0_wp
       !----- Its own copy of the run's config: everything that steps the polygon reads this one, so a !
       !      region's polygons can each carry their own inputs (docs/configuration.md §Regional       !
       !      runs). ----------------------------------------------------------------------------------!
@@ -108,14 +104,6 @@ module meds_polygon
       integer(ik)            :: fast_step_total = 0_ik      !< fast sub-steps replayed into the output
       real(wp)               :: area_start = 0.0_wp
       integer(ik)            :: status = DRIVER_OK          !< the last step's status
-      !----- The calendar restructuring the last step's end owes: set when a step ends on a month    !
-      !      (and, with restructure_new_year, a year) boundary, run at the start of the next step,   !
-      !      before its fast loop. Between the two sit the output tick, the I/O phase and any        !
-      !      checkpoint, so a checkpoint holds the stand before the restructuring together with      !
-      !      this flag, and a run resumed from it restructures first, exactly as the continuous run  !
-      !      does. ----------------------------------------------------------------------------------!
-      logical                :: restructure_pending  = .false.
-      logical                :: restructure_new_year = .false.
    end type polygon_run_t
 
 contains
@@ -127,13 +115,12 @@ contains
    ! pack, and the soil-carbon spin-up. `keep_fast_state` / `keep_soil_carbon` are set when a       !
    ! restart already restored those states, which re-seeding would silently discard.                !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_prepare(run_cfg, met_src, poly, run, latitude_deg, longitude_deg, elevation_m, &
-                              keep_fast_state, keep_soil_carbon, patch_threads, verbose)
+   subroutine polygon_prepare(run_cfg, met_src, poly, run, keep_fast_state, keep_soil_carbon,      &
+                              patch_threads, verbose)
       type(meds_config_t),  intent(in)    :: run_cfg
       type(met_source_t),   intent(in)    :: met_src
       type(polygon_t),      intent(inout) :: poly
       type(polygon_run_t),  intent(inout) :: run
-      real(wp),             intent(in)    :: latitude_deg, longitude_deg, elevation_m
       logical,              intent(in)    :: keep_fast_state, keep_soil_carbon, verbose
       !----- Threads for the polygon's patch loop: a site run gives it [run].n_threads, a region, whose  !
       !      threads go to the polygons, gives each polygon one. ----------------------------------!
@@ -149,14 +136,13 @@ contains
       run%most_patches_when = '' ; run%most_cohorts_when = ''
       run%fast_step_total = 0_ik ; run%status = DRIVER_OK
       run%area_start = total_area(poly)
-      run%latitude_deg = latitude_deg ; run%longitude_deg = longitude_deg ; run%elevation_m = elevation_m
 
       if (cfg%fast_biophysics_on) then
          call build_fast_context(cfg, run%fast_ctx)
          run%fast_ctx%patch_threads = patch_threads
          if (cfg%forcing%forcing_on) then
-            call met_cursor_init(met_src, run%met_cur, run%cell, run%latitude_deg,                  &
-                                 run%longitude_deg, run%elevation_m)
+            call met_cursor_init(met_src, run%met_cur, run%cell, poly%latitude_deg,                 &
+                                 poly%longitude_deg, poly%elevation_m)
          end if
          !----- Skip the generic re-seed when a restart already restored the true evolved            !
          !      CAS/soil/snow state (docs/science/order_of_processes.md §1): overwriting it here     !
@@ -209,10 +195,10 @@ contains
 
       !----- The boundary the last step ended on (restructure_pending): the stand's monthly and       !
       !      yearly restructuring, before this step's fast loop sees the stand. ----------------------!
-      if (run%restructure_pending) then
-         call advance_boundary(poly, cfg, .true., run%restructure_new_year,                        &
+      if (poly%restructure_pending) then
+         call advance_boundary(poly, cfg, .true., poly%restructure_new_year,                       &
                                slow_ledger=run%slow_ledger)
-         run%restructure_pending = .false. ; run%restructure_new_year = .false.
+         poly%restructure_pending = .false. ; poly%restructure_new_year = .false.
          if (poly%patch%n > run%most_patches) then
             run%most_patches = poly%patch%n ; run%most_patches_when = time_to_string(prev)
          end if
@@ -254,8 +240,8 @@ contains
       !      stand, and what the restructuring does -- its events, and the stand it leaves --        !
       !      belongs to the period that begins (docs/science/diagnostics.md §4). --------------------!
       call reset_step_diagnostics(poly)
-      run%restructure_pending  = is_new_month
-      run%restructure_new_year = is_new_year
+      poly%restructure_pending  = is_new_month
+      poly%restructure_new_year = is_new_year
 
       !----- NAN GUARD, every step: the stand, the tissue temperatures and the canopy air         !
       !      (has_nan), and the run's energy and water ledgers, whose running residual turns NaN    !
@@ -337,7 +323,7 @@ contains
                                run_water_budget=run%water_budget,                                   &
                                run_face_budget=run%face_budget,                                     &
                                slow_ledger=run%slow_ledger, seam=run%seam,                          &
-                               latitude_deg=run%latitude_deg)
+                               latitude_deg=poly%latitude_deg)
       end subroutine stepper
 
       !----- FAST tier: replay the sub-step samples the fast loop staged in bufs%fast(:), closing   !

@@ -31,20 +31,35 @@ module meds_polygon_state_vars
       type(patch_block)  :: patch
       type(cohort_block) :: cohort
       !==========================================================================================!
-      ! 1. DIMENSIONS AND ID COUNTERS                                                            !
+      ! 1. IDENTITY AND LOCATION                                                                 !
+      !==========================================================================================!
+      integer(ik)        :: id = 0_ik       !< global id: the cell's row-major index (0 for a site run)
+      !----- Where it is: the cell centre and orography of a region's polygon, the [site] of a site   !
+      !      run. The forcing cursor, the leaf phenology's day length and the output all read it. ---!
+      real(wp)           :: latitude_deg = 0.0_wp, longitude_deg = 0.0_wp, elevation_m = 0.0_wp
+      !==========================================================================================!
+      ! 2. DIMENSIONS AND ID COUNTERS                                                            !
       !==========================================================================================!
       integer(ik)        :: n_pft     = 0_ik
       !----- Monotonic counters for the persistent global ids (never reused within a run). ---!
       integer(ik)        :: next_cohort_id = 1_ik
       integer(ik)        :: next_patch_id  = 1_ik
       !==========================================================================================!
-      ! 2. SHARED COHORT CLOCK                                                                   !
+      ! 3. CALENDAR: the cohorts' shared sample clock and the restructuring owed                 !
       !==========================================================================================!
       !----- Global ring-buffer write slot for the moving-average growth (same for all cohorts !
       !      since they all take one sample per step); advanced by update_demography.           !
       integer(ik)        :: growth_hist_pos = 0_ik
+      !----- The calendar restructuring the last step's end owes: set when a step ends on a month    !
+      !      (and, with restructure_new_year, a year) boundary, run at the start of the next step,   !
+      !      before its fast loop. Between the two sit the output tick, the I/O phase and any        !
+      !      checkpoint, so a checkpoint holds the stand before the restructuring together with      !
+      !      this flag, and a run resumed from it restructures first, exactly as the continuous run  !
+      !      does. ----------------------------------------------------------------------------------!
+      logical            :: restructure_pending  = .false.
+      logical            :: restructure_new_year = .false.
       !==========================================================================================!
-      ! 3. CLIMATE MEMORY                                                                        !
+      ! 4. CLIMATE MEMORY                                                                        !
       !==========================================================================================!
       !----- GROWTH TEMPERATURE for thermal acclimation (docs/science/leaf_gas_exchange.md eq.       !
       !      (4)): an exponential running mean of the daily-mean air temperature, window             !
@@ -55,7 +70,7 @@ module meds_polygon_state_vars
       !      than relaxing from an arbitrary origin. -------------------------------------------------!
       real(wp)           :: t_growth_avg = UNSET_POSITIVE  !< [K] running-mean growth temperature
       !==========================================================================================!
-      ! 4. FAST-TO-SLOW ACCUMULATORS (the model reads them)                                      !
+      ! 5. FAST-TO-SLOW ACCUMULATORS (the model reads them)                                      !
       !==========================================================================================!
       !----- The daily-mean air-temperature accumulator for phenology: the fast loop sums the     !
       !      met air temperature over the slow step (reset each step), and the slow-loop           !
@@ -64,7 +79,7 @@ module meds_polygon_state_vars
       real(wp)           :: pheno_tair_sum = 0.0_wp
       integer(ik)        :: pheno_tair_n   = 0_ik
       !==========================================================================================!
-      ! 5. TENDENCIES (scratch)                                                                  !
+      ! 6. TENDENCIES (scratch)                                                                  !
       !==========================================================================================!
       !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
       !      step and update_cohort_states applies. Held here so it allocates once (resize-on-      !
@@ -72,7 +87,7 @@ module meds_polygon_state_vars
       !      NOT serialized (a scratch buffer, not prognostic state).                               !
       type(cohort_deriv_block) :: deriv
       !==========================================================================================!
-      ! 6. OUTPUT ACCUMULATORS (only output reads them; never restarted)                         !
+      ! 7. OUTPUT ACCUMULATORS (only output reads them; never restarted)                         !
       !==========================================================================================!
       !----- TRANSIENT fast-loop diagnostics that are the same across the polygon -- its forcing   !
       !      (PY_* in meds_diag_vars): one slot, the cohort and patch blocks' polygon twin. ---      !

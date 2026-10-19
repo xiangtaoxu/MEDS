@@ -27,7 +27,7 @@ program test_state_roundtrip
    type(meds_config_t) :: cfg
    type(polygon_t)     :: poly, poly2
    type(meds_time_t)   :: now, rt
-   logical             :: found, fast_ok, owed, owed_year
+   logical             :: found, fast_ok
    real(wp)            :: sla_set, vc_set, rd_set, turnover_set
    integer(ik)         :: i
 
@@ -89,11 +89,11 @@ program test_state_roundtrip
 
    now = meds_time_t(year=2000, month=1, day=1, hour=0, minute=0, second=0)
    !----- The file is written on a year boundary with its restructuring still owed, as the driver's   !
-   !      yearly checkpoint is (polygon_run_t%restructure_pending); the reader must say so. ----------!
+   !      yearly checkpoint is (polygon_t%restructure_pending); the reader must say so. --------------!
    call write_state(poly, now, .true., .true.)
-   call io_read_state(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, fast_found=fast_ok,  &
-                      restructure_pending=owed, restructure_new_year=owed_year)
-   call check(owed .and. owed_year, 'a checkpoint records the year''s restructuring as still owed')
+   call io_read_state(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, fast_found=fast_ok)
+   call check(poly2%restructure_pending .and. poly2%restructure_new_year,                                 &
+              'a checkpoint records the year''s restructuring as still owed')
 
    call check(found, 'state file read back')
    call check(fast_ok, 'fast reservoirs found in state file just written')
@@ -158,9 +158,9 @@ program test_state_roundtrip
 
    !----- Nothing owed: a checkpoint between boundaries, or one written before the flag existed.  !
    call write_state(poly, now, .false., .false.)
-   call io_read_state(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik,                     &
-                      restructure_pending=owed, restructure_new_year=owed_year)
-   call check(found .and. .not. owed .and. .not. owed_year, 'a checkpoint with nothing owed reads so')
+   call io_read_state(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
+   call check(found .and. .not. poly2%restructure_pending .and. .not. poly2%restructure_new_year,          &
+              'a checkpoint with nothing owed reads so')
 
    !----- A state file written while the trait was a leaf lifespan holds `llspan` [yr] in place of  !
    !      `leaf_turnover_rate`: the reader takes the rate as its reciprocal. The file just written is  !

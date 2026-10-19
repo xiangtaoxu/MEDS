@@ -560,15 +560,17 @@ contains
    end function has_polygon_axis
 
    !---------------------------------------------------------------------------------------!
-   ! Reconstruct a site from a state file written by state_file_put: a site's file, or with   !
-   ! `polygon` (1-based) that row of a region's. The geometry is re-derived from the carbon    !
-   ! pools (set_cohort_size_from_carbon); the CSR map and within-patch sort order are rebuilt. !
-   ! found=.false. (no error stop) if the file cannot be opened or holds the other kind's      !
-   ! state, a region's read as a site's or a site's as a polygon's (state_file_refusal says    !
-   ! which). Errors out only on a genuine inconsistency (PFT-count mismatch).                  !
+   ! Reconstruct a polygon from a state file written by state_file_put: with `polygon`        !
+   ! (1-based) that row of a file with the polygon axis, or the whole of an older file without !
+   ! it. The geometry is re-derived from the carbon pools (set_cohort_size_from_carbon); the   !
+   ! maps and within-patch sort order are rebuilt, and the restructuring the stand owes at      !
+   ! restart_time is set on the polygon (state_file_open; a file without the attribute is an    !
+   ! older format, written AFTER its boundary's restructuring, so it owes nothing).             !
+   ! found=.false. (no error stop) if the file cannot be opened or its layout is not the one    !
+   ! `polygon` asks for (state_file_refusal says which). Errors out only on a genuine           !
+   ! inconsistency (PFT-count mismatch).                                                        !
    !---------------------------------------------------------------------------------------!
-   subroutine io_read_state(poly, cfg, path, restart_time, found, fast_found, restructure_pending, &
-                            restructure_new_year, polygon)
+   subroutine io_read_state(poly, cfg, path, restart_time, found, fast_found, polygon)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
@@ -579,10 +581,6 @@ contains
       !      means a file without them -- the caller then re-seeds them generically                    !
       !      (init_fast_reservoirs, from meds_polygon). ----------------------------------------------!
       logical, optional,   intent(out) :: fast_found
-      !----- The restructuring the stand owes at restart_time (state_file_open). A file without     !
-      !      the attribute is an older format, written AFTER its boundary's restructuring, so it    !
-      !      owes nothing. -------------------------------------------------------------------------!
-      logical, optional,   intent(out) :: restructure_pending, restructure_new_year
       integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
       character(len=16) :: pending
       integer(c_int) :: ncid, vid, st
@@ -594,8 +592,6 @@ contains
       found = .false. ; restart_time = meds_time_t()
       tissue_water_ok = .true. ; tissue_temp_ok = .true.
       if (present(fast_found)) fast_found = .false.
-      if (present(restructure_pending))  restructure_pending  = .false.
-      if (present(restructure_new_year)) restructure_new_year = .false.
       region = present(polygon)
       slot = 0_ik
       if (region) slot = polygon - 1_ik
@@ -609,8 +605,6 @@ contains
       end if
       pending = 'none'
       if (nc_get_att_text_f(ncid, NC_GLOBAL, 'restructure_pending', pending) /= NC_NOERR) pending = 'none'
-      if (present(restructure_pending))  restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
-      if (present(restructure_new_year)) restructure_new_year = trim(pending) == 'year'
 
       call gv_int(ncid, 'meta_int',  int(N_META_INT, ik),  meta_i)
       call gv_dbl(ncid, 'meta_real', int(N_META_REAL, ik), meta_r)
@@ -620,6 +614,8 @@ contains
       call alloc_polygon(poly, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg), &
                       cfg%allom, cfg%pft)
       poly%cohort%n = ncoh ; poly%patch%n = npat
+      poly%restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
+      poly%restructure_new_year = trim(pending) == 'year'
       !----- Growth temperature: OPTIONAL, so a state file without it keeps the unseeded          !
       !      sentinel alloc_polygon set and the first slow step adopts that day's mean.  ------------!
       block
