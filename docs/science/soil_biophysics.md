@@ -29,7 +29,11 @@ C(\psi_k)\,\frac{\partial\psi_k}{\partial t}
 
 with matric potential $`\psi(\theta)`$, hydraulic conductivity $`K(\theta)`$, and specific moisture
 capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **Campbell / Clapp-Hornberger**
-retention curves (`meds_water_retention`). The van Genuchten conductivity is Mualem's,
+retention curves (`meds_water_retention`). In effective saturation
+$`S_e=(\theta-\theta_{res})/(\theta_{sat}-\theta_{res})`$ and matric head $h<0$ [m], van Genuchten's
+curve is $`S_e=[1+(\alpha|h|)^n]^{-m}`$ with $`m=1-1/n`$, and Campbell's is $`h=\psi_{sat}\,S_e^{-b}`$,
+saturated between its air-entry head $`\psi_{sat}<0`$ and zero, with $`K=K_{sat}\,S_e^{2b+3}`$. The van
+Genuchten conductivity is Mualem's,
 
 ```math
 K = K_{sat}\,S_e^{L}\,\big[1-(1-S_e^{1/m})^m\big]^2, \qquad L = -1 \qquad(2)

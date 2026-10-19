@@ -1,20 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_hydr_lib -- how water MOVES into and through the plant, as conductances and the flows   !
-! they carry (docs/science/plant_hydraulics.md §3-§4, docs/science/soil_plant_water.md §1):    !
-!   * the rhizosphere: from a soil layer into a cohort's roots, a single-root (Gardner)        !
-!     conductance times the soil's conductivity, never back out to drier soil;                !
-!   * the xylem: from a cohort's wood up to its leaves, the intact sapwood conductance          !
-!     reduced by the vulnerability curve through its Kirchhoff (matric flux) potential;        !
-!   * the leaves' supply limit on transpiration;                                               !
-! with what they are built from: the vulnerability curve and its Kirchhoff potential (closed     !
-! form, or a fixed-grid lookup table for a general exponent), the sapwood conductivity of a     !
-! wood density, and the root profile. Every flow comes with its derivatives in the potentials at !
-! its two ends, so the solver (meds_spac_solver) builds its Jacobian from the numbers it moves   !
-! water with. How much water a tissue or soil layer holds is in meds_water_retention; flow       !
-! between soil layers in meds_soil_water. All are stateless, elemental/pure, scalar-in kernels   !
-! -- the hydraulics analogue of meds_allometry -- so they live in src/shared/functions and can be  !
-! evaluated at config-load (table build) and on the GPU hot path alike.                          !
+! meds_hydr_lib -- how water moves into and through a plant: the conductances, the flows   !
+! they carry and the leaves' supply limit on transpiration                                 !
+! (docs/science/plant_hydraulics.md §3-§4, docs/science/soil_plant_water.md §1 and §4),    !
+! and what they are built from: the vulnerability curve and its Kirchhoff potential, the   !
+! sapwood conductivity of a wood density and the root profile. Every flow comes with its   !
+! derivatives in the potentials at its two ends, so the solver (meds_spac_solver) builds   !
+! its Jacobian from the numbers it moves water with. How much water a store holds is in    !
+! meds_water_retention; flow between soil layers in meds_soil_water.                       !
 !==========================================================================================!
 module meds_hydr_lib
    use meds_kinds,     only : wp, ik
@@ -22,75 +15,70 @@ module meds_hydr_lib
    implicit none
    private
 
-   !----- Vulnerability curve, Kirchhoff potential and its lookup table. --------------------!
+   !----- Vulnerability curve, Kirchhoff potential and its lookup table, sapwood           !
+   !      conductivity. -------------------------------------------------------------------!
    public :: plc_retained, flux_potential, wood_kmax_from_density
    public :: hydro_table_t, build_hydro_table, flux_potential_lin
    public :: HYDRO_TABLE_NTAB, HYDRO_TABLE_RMAX
-   !----- The conductances and flows: rhizosphere, xylem, transpiration supply. -------------!
+   !----- The conductances and flows: rhizosphere, xylem, transpiration supply. -----------!
    public :: UPTAKE_RAMP_WIDTH, TRANSP_CLOSE_WIDTH, smooth_max0
    public :: rhizosphere_conductance, root_water_uptake, root_water_uptake_profile
    public :: xylem_max_conductance, xylem_sapflow, supply_limited_transpiration
-   !----- The root profile. -----------------------------------------------------------------!
+   !----- The root profile. ---------------------------------------------------------------!
    public :: root_fraction_profile
 
-   !----- [MPa] Width of the ramp that keeps water from flowing back out of the roots: below a     !
-   !      zero driving force the root takes nothing (no hydraulic redistribution); above this      !
-   !      width it takes the full Gardner flow (docs/science/soil_plant_water.md eq. (1)). Small   !
-   !      against the 0.1-1 MPa a root works across. ----------------------------------------------!
-   real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-3_wp
-   !----- [-] Width, in relative water content, of the corner where a leaf's transpiration starts  !
-   !      to follow its remaining water (supply_limited_transpiration). -----------------------!
-   real(wp), parameter :: TRANSP_CLOSE_WIDTH = 2.0e-2_wp
-   !----- Xylem conductance kept when the vulnerability curve has taken the rest, as a share of   !
-   !      the intact xylem's: it keeps a fully embolised cohort's leaf joined to its wood, so its   !
-   !      equations stay solvable, and moves no water that matters. --------------------------!
-   real(wp), parameter :: XYLEM_RETAINED_MIN = 1.0e-12_wp
-   !----- [kg/s/MPa per plant] The least maximum conductance a plant is given, for a cohort with no !
-   !      sapwood yet. -----------------------------------------------------------------------------!
-   real(wp), parameter :: XYLEM_COND_MIN = 1.0e-15_wp
-   !----- Root spacing below which the single-root (Gardner) form fails: closer, the roots all  !
-   !      but touch. ---------------------------------------------------------------------------!
+   !----- Widths over which smooth_max0 rounds a one-way flow's corner                     !
+   !      (docs/science/soil_plant_water.md eqs. (1) and (3)). ----------------------------!
+   real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-3_wp    !< [MPa] root uptake; small against the 0.1-1 MPa a root works across
+   real(wp), parameter :: TRANSP_CLOSE_WIDTH = 2.0e-2_wp   !< [-] the leaves' supply limit, in relative water content
+   !----- Floors that keep a cohort's leaves joined to its wood however dry or small it    !
+   !      is, so its equations stay solvable; neither moves water that matters. -----------!
+   real(wp), parameter :: XYLEM_RETAINED_MIN = 1.0e-12_wp   !< [-] share of the intact conductance a fully embolised xylem keeps
+   real(wp), parameter :: XYLEM_COND_MIN = 1.0e-15_wp       !< [kg/s/MPa per plant] intact conductance of a plant without sapwood
+   !----- [-] Floor of half-spacing / root radius in the single-root (Gardner)             !
+   !      conductance: closer, the roots all but touch and the form fails. ----------------!
    real(wp), parameter :: MIN_SPACING_RATIO = 2.0_wp
-   !----- [MPa] Below this difference of potentials the Kirchhoff mean conductance is taken at   !
-   !      the midpoint, where the difference quotient would lose its digits. ---------------------!
+   !----- [MPa] Below this difference of potentials the Kirchhoff mean conductance is      !
+   !      taken at the midpoint, where the difference quotient would lose its digits. -----!
    real(wp), parameter :: KIRCHHOFF_EPS = 1.0e-6_wp
 
-   !----- Sapwood specific conductivity against wood density (Xu et al. 2016, New Phytol 212:80;   !
-   !      ED2 plant_hydro_scheme 2): ln Ks = a + b rho, residual variance s2, fitted to 72 species  !
-   !      of neotropical seasonally dry forests (R2 0.21). Panama canopy branches give 2-4 at 0.6.  !
-   !      This is docs/science/plant_hydraulics.md eq. (11). --------------------------------------!
+   !----- Sapwood specific conductivity against wood density, ln Ks = a + b rho: a         !
+   !      lognormal fit to 72 neotropical dry-forest species (Xu et al. 2016, New Phytol   !
+   !      212:80; docs/science/plant_hydraulics.md eq. (11)). -----------------------------!
    real(wp), parameter :: kmax_ln_a     =  2.348_wp   !< [ln(kg/m/s/MPa)] intercept
    real(wp), parameter :: kmax_ln_b     = -2.455_wp   !< [ln(kg/m/s/MPa) per g/cm3] slope
    real(wp), parameter :: kmax_ln_var   =  0.6186_wp  !< [-] residual variance of ln Ks
-   real(wp), parameter :: kmax_rho_min  =  0.35_wp    !< [g/cm3] wood densities outside the fitted
-   real(wp), parameter :: kmax_rho_max  =  0.95_wp    !<   range take its edge (ED2's bounds)
+   real(wp), parameter :: kmax_rho_min  =  0.35_wp    !< [g/cm3] lowest wood density fitted; a lower one takes it
+   real(wp), parameter :: kmax_rho_max  =  0.95_wp    !< [g/cm3] highest wood density fitted; a higher one takes it
 
-   !----- Fixed-grid Kirchhoff lookup table (POD value type: trivially copyable + GPU-mappable). -!
-   integer,  parameter :: HYDRO_TABLE_NTAB = 512        !< uniform intervals over [0, R_MAX]
-   real(wp), parameter :: HYDRO_TABLE_RMAX = 8.0_wp     !< table domain in r = psi/psi50
-   real(wp), parameter :: KIRCH_PANEL      = 0.25_wp    !< widest quadrature panel in r
+   !----- The Kirchhoff lookup table for a general vulnerability exponent: G(r) on a       !
+   !      uniform grid (docs/science/plant_hydraulics.md §3). A fixed-size record, so a    !
+   !      PFT's parameters copy as plain data. --------------------------------------------!
+   integer,  parameter :: HYDRO_TABLE_NTAB = 512        !< intervals over [0, HYDRO_TABLE_RMAX]
+   real(wp), parameter :: HYDRO_TABLE_RMAX = 8.0_wp     !< [-] table domain in r = psi/psi50
+   real(wp), parameter :: KIRCH_PANEL      = 0.25_wp    !< [-] widest quadrature panel in r
    type :: hydro_table_t
-      real(wp)    :: kexp  = 0.0_wp                       !< shape the table was built for (staleness guard)
-      real(wp)    :: r_max = HYDRO_TABLE_RMAX             !< table domain [0, r_max]
-      real(wp)    :: inv_h = 0.0_wp                       !< NTAB / r_max (uniform-grid index scale)
+      real(wp)    :: kexp  = 0.0_wp                       !< [-] vulnerability exponent the table holds; its tail uses it too
+      real(wp)    :: r_max = HYDRO_TABLE_RMAX             !< [-] table domain [0, r_max]
+      real(wp)    :: inv_h = 0.0_wp                       !< [-] 1 / grid spacing
       integer(ik) :: n     = int(HYDRO_TABLE_NTAB, ik)    !< number of intervals
       real(wp)    :: g(0:HYDRO_TABLE_NTAB) = 0.0_wp       !< g(j) = integral_0^{j*h} du/(1+u^kexp)
    end type hydro_table_t
 
 contains
 
-   !----- Sapwood specific conductivity [kg/m/s/MPa] of a wood density rho [g/cm3]: the mean of   !
-   !      the lognormal fit, exp(a + b rho + s2/2) -- 6.0 at rho 0.35, 3.3 at 0.60, 1.4 at 0.95. -!
+   !----- Sapwood specific conductivity [kg/m/s/MPa] of a wood density rho [g/cm3]: the    !
+   !      mean of the lognormal fit, exp(a + b rho + s2/2)                                 !
+   !      (docs/science/plant_hydraulics.md eq. (11)). ------------------------------------!
    elemental real(wp) function wood_kmax_from_density(rho) result(kmax)
       real(wp), intent(in) :: rho
       kmax = exp(kmax_ln_a + kmax_ln_b*min(max(rho, kmax_rho_min), kmax_rho_max) + 0.5_wp*kmax_ln_var)
    end function wood_kmax_from_density
 
-   !----- Fraction of conductance retained (1 - PLC). psi<0, psi50<0 => r>0; clamp for psi>0.    !
-   !      r=0 is guarded explicitly (0**kexp=0 for any kexp>0): nvfortran's real**real codegen      !
-   !      for a general (non-integer-recognized) exponent routes through log(u), and log(0) trips   !
-   !      its strict -Ktrap=fp even though the OVERALL mathematical result is well-defined. The      !
-   !      Kirchhoff integrand below guards u=0 for the same reason. -------------------------------!
+   !----- Retained fraction of xylem conductance, 1 - PLC = 1 / (1 + r^kexp),              !
+   !      r = psi/psi50, and one at or above zero potential                                !
+   !      (docs/science/plant_hydraulics.md eq. (7)). r = 0 is kept off the general power: !
+   !      under floating-point trapping a compiler may take 0**kexp through log(0). -------!
    elemental real(wp) function plc_retained(psi, psi50, kexp) result(f)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
@@ -102,13 +90,14 @@ contains
       end if
    end function plc_retained
 
-   !----- Kirchhoff (matric flux) potential Phi(psi) = integral_0^psi plc ds [MPa]. ----------!
-   !      Closed form for kexp in {1,2}; a fixed quadrature otherwise. Phi(0)=0, Phi(psi<0)<0,  !
-   !      strictly increasing in psi.                                                           !
+   !----- Kirchhoff (matric flux) potential [MPa], Phi(psi) = integral of the retained     !
+   !      fraction from 0 to psi: closed form for kexp 1 and 2, panel quadrature           !
+   !      otherwise; zero at and above zero potential (docs/science/plant_hydraulics.md    !
+   !      eq. (8)). -----------------------------------------------------------------------!
    pure real(wp) function flux_potential(psi, psi50, kexp) result(phi)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
-      r = max(psi/psi50, 0.0_wp)                 ! r >= 0
+      r = max(psi/psi50, 0.0_wp)
       if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
          phi = psi50 * log(1.0_wp + r)
       else if (abs(kexp - 2.0_wp) < 1.0e-9_wp) then
@@ -118,11 +107,10 @@ contains
       end if
    end function flux_potential
 
-   !----- integral_0^r du/(1+u^kexp). The integrand falls from 1 to near 0 around u ~ 1, so one       !
-   !      7-point rule over all of [0, r] is accurate only for small r: at r = 7,800 it gives about   !
-   !      1e-6 instead of 1.11 (kexp 4), which would hand a wood-to-leaf edge with a desiccated leaf  !
-   !      a negative conductance. Panels no wider than KIRCH_PANEL cover                              !
-   !      [0, min(r, HYDRO_TABLE_RMAX)]; beyond the table's edge the tail is added analytically. -----!
+   !----- integral_0^r du/(1+u^kexp): 7-point panels no wider than KIRCH_PANEL up to the   !
+   !      table's edge, and the analytic tail beyond it. One rule over a long range would  !
+   !      miss the integrand's fall near u = 1 and could give a dried leaf's xylem a       !
+   !      negative conductance (docs/science/plant_hydraulics.md §3). ---------------------!
    pure real(wp) function kirchhoff_integral(r, kexp) result(g)
       real(wp), intent(in) :: r, kexp
       real(wp)    :: rc, w
@@ -137,11 +125,10 @@ contains
       if (r > HYDRO_TABLE_RMAX) g = g + kirchhoff_tail(HYDRO_TABLE_RMAX, r, kexp)
    end function kirchhoff_integral
 
-   !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre: exact   !
-   !      for polynomials up to degree 13, far below any model tolerance on a short panel. The sum   !
-   !      is written out rather than handed a function, because ifx allocates a lock-guarded record  !
-   !      on every call that passes a contained function as an argument, which makes more than four !
-   !      threads slower than four. u=0 is guarded as in plc_retained. ---------------------------!
+   !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre, !
+   !      exact for polynomials up to degree 13. The sum is written out rather than handed !
+   !      a function (docs/building.md, no procedure arguments); u = 0 is guarded as in    !
+   !      plc_retained. -------------------------------------------------------------------!
    pure real(wp) function kirchhoff_panel(a, b, kexp) result(g)
       real(wp), intent(in) :: a, b, kexp
       real(wp), parameter :: node(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
@@ -168,10 +155,9 @@ contains
       g = half * acc
    end function kirchhoff_panel
 
-   !----- integral_a^b du/(1+u^kexp) far out on the curve (a >= HYDRO_TABLE_RMAX): the integrand is  !
-   !      u^-kexp to leading order there, so the tail is (b^(1-kexp) - a^(1-kexp)) / (1 - kexp). It   !
-   !      is positive and, for kexp > 1, bounded as b -> infinity, so the potential beyond the table  !
-   !      keeps rising toward its asymptote instead of following an extrapolated slope. -------------!
+   !----- integral_a^b du/(1+u^kexp) beyond the table (a >= HYDRO_TABLE_RMAX), where the   !
+   !      integrand is u^-kexp to leading order: positive and, for kexp > 1, bounded as b  !
+   !      grows, so the potential keeps rising toward its asymptote. ----------------------!
    pure real(wp) function kirchhoff_tail(a, b, kexp) result(g)
       real(wp), intent(in) :: a, b, kexp
       if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
@@ -182,13 +168,12 @@ contains
    end function kirchhoff_tail
 
    !=======================================================================================!
-   !     Fixed-grid lookup table for the general-exponent Kirchhoff integral.               !
+   !     Fixed-grid lookup table for the general-exponent Kirchhoff integral.              !
    !=======================================================================================!
 
-   !----- Build the table G(r) = integral_0^r du/(1+u^kexp) on a uniform grid over [0, R_MAX],      !
-   !      one 7-point panel per interval added to the last node, so the table rises monotonically by !
-   !      construction (one-time cost). A subroutine (not an array-returning fn) to avoid the        !
-   !      nvfortran array-temp trap.                                                                  !
+   !----- Fill the table, one 7-point panel per interval added to the node below, so it    !
+   !      rises monotonically. A subroutine, not an array-valued function                  !
+   !      (docs/building.md, Compilers). --------------------------------------------------!
    pure subroutine build_hydro_table(tab, kexp)
       type(hydro_table_t), intent(out) :: tab
       real(wp),            intent(in)  :: kexp
@@ -205,11 +190,10 @@ contains
       end do
    end subroutine build_hydro_table
 
-   !----- Kirchhoff potential Phi(psi) via linear interpolation of the table [MPa]. ------------!
-   !      G depends only on kexp; psi50 enters here as a runtime multiply (so a psi50 change needs   !
-   !      no rebuild). Beyond r_max the analytic tail is added to the last node (kirchhoff_tail): a   !
-   !      linear extrapolation of the last interval, over thousands of intervals for a desiccated     !
-   !      leaf, could turn the potential's sign.                                                     !
+   !----- Kirchhoff potential [MPa] read from the table by linear interpolation; psi50 is  !
+   !      a run-time scale, so only kexp sets the table. Beyond the table the analytic     !
+   !      tail is added to its last node: extrapolating the last interval could turn a     !
+   !      dried leaf's potential positive. ------------------------------------------------!
    pure real(wp) function flux_potential_lin(psi, psi50, tab) result(phi)
       real(wp),            intent(in) :: psi, psi50
       type(hydro_table_t), intent(in) :: tab
@@ -226,12 +210,11 @@ contains
       phi = psi50 * ( tab%g(idx)*(1.0_wp - t) + tab%g(idx+1)*t )
    end function flux_potential_lin
 
-   !----- ED2 cumulative-exponential root fraction in a soil layer spanning depths [z_top, z_bot]     !
-   !      (both >= 0, below surface, z_bot > z_top): frac = beta^(z_top/D) - beta^(z_bot/D), with      !
-   !      D = root_depth and beta in (0,1). Shallower layers get more roots; depths clamp to [0, D] so  !
-   !      layers below the rooting depth contribute 0. Summed over [0, D] the profile telescopes to     !
-   !      1 - beta (ED2 convention); the caller divides by that, giving the normalised profile of       !
-   !      docs/science/plant_hydraulics.md eq. (13). ---------------------------------------------------!
+   !----- The share of a cohort's roots in the soil layer between depths z_top and z_bot,  !
+   !      beta^(z_top/D) - beta^(z_bot/D) with D = root_depth and the depths clamped to    !
+   !      [0, D], so a layer below the rooting depth gets none. Over [0, D] the shares sum !
+   !      to 1 - beta, which the caller divides by (docs/science/plant_hydraulics.md       !
+   !      eq. (13)). ----------------------------------------------------------------------!
    elemental real(wp) function root_fraction_profile(root_beta, root_depth, z_top, z_bot) result(frac)
       real(wp), intent(in) :: root_beta   !< [-]  root-profile decay (0,1); smaller => shallower
       real(wp), intent(in) :: root_depth  !< [m]  maximum rooting depth (> 0)
@@ -245,15 +228,13 @@ contains
    end function root_fraction_profile
 
    !=======================================================================================!
-   !     The conductances and flows.                                                        !
+   !     The conductances and flows.                                                       !
    !=======================================================================================!
 
-   !----- max(x, 0) with its corner rounded over [0, width]: exactly zero below zero and exactly x  !
-   !      above the width, joined by the cubic 2x^2/w - x^3/w^2, which matches both in value and     !
-   !      slope and rises monotonically, so a Newton iteration never meets a corner. Every one-way    !
-   !      water flow uses it: root uptake, the leaves' supply limit, and ground evaporation          !
-   !      (meds_soil_water). It lives with the flows so the hot ones inline it                      !
-   !      (docs/science/soil_plant_water.md eq. (1)). --------------------------------------------!
+   !----- max(x, 0) with its corner rounded over [0, width] by the cubic 2x^2/w - x^3/w^2, !
+   !      which matches both sides in value and slope, so Newton never meets a corner.     !
+   !      Every one-way water flow uses it: root uptake, the leaves' supply limit and      !
+   !      ground evaporation (docs/science/soil_plant_water.md eq. (1)). ------------------!
    elemental subroutine smooth_max0(x, width, f, df)
       real(wp), intent(in)  :: x, width
       real(wp), intent(out) :: f, df
@@ -269,12 +250,11 @@ contains
       end if
    end subroutine smooth_max0
 
-   !----- A cohort's rhizosphere conductance in one soil layer, per unit of the soil's hydraulic   !
-   !      conductivity [kg/s/MPa per m2 of ground, per m/s]: steady radial flow to a single root   !
-   !      (Gardner 1960), 2 pi L / ln(r_half / r_root) for each of nplant plants with root length L !
-   !      in the layer, made a potential gradient by rho/grav_head. It depends on the roots alone,  !
-   !      so it is set once a step; times the layer's current conductivity it is the conductance   !
-   !      root_water_uptake uses (docs/science/plant_hydraulics.md eq. (14)). ---------------------!
+   !----- A cohort's rhizosphere conductance in one soil layer per unit soil conductivity  !
+   !      [kg/s/MPa per m2 of ground, per m/s]: steady radial flow to a single root        !
+   !      (Gardner 1960), 2 pi L / ln(r_half / r_root) for each plant, made a potential    !
+   !      gradient by rho/grav_head. It depends on the roots alone, so it is set once a    !
+   !      step (docs/science/plant_hydraulics.md eq. (14)). -------------------------------!
    elemental function rhizosphere_conductance(nplant, root_length, half_spacing, root_radius)      &
                       result(g_rhizo)
       real(wp), intent(in) :: nplant        !< [plants/m2]
@@ -286,10 +266,10 @@ contains
                / (grav_head * log(max(half_spacing / root_radius, MIN_SPACING_RATIO)))
    end function rhizosphere_conductance
 
-   !----- A cohort's root water uptake [kg/m2/s] from one soil layer into its wood: the rhizosphere   !
-   !      conductance g_rhizo K_soil times the driving force psi_soil + grav_head z_soil - psi_wood    !
-   !      (z_soil the layer's depth, < 0), passed through the ramp so a root never loses water to     !
-   !      drier soil (no hydraulic redistribution; docs/science/plant_hydraulics.md eq. (15)). ---!
+   !----- A cohort's root water uptake [kg/m2/s] from one soil layer: g_rhizo K_soil times !
+   !      the driving force psi_soil + grav_head z_soil - psi_wood (z_soil < 0), through   !
+   !      the ramp, so a root never loses water to drier soil                              !
+   !      (docs/science/plant_hydraulics.md eq. (15)). ------------------------------------!
    elemental subroutine root_water_uptake(g_rhizo, k_soil, psi_soil, z_soil, psi_wood, u,             &
                                           du_dpsi_soil, du_dpsi_wood, du_dk)
       real(wp), intent(in)  :: g_rhizo, k_soil, psi_soil, z_soil, psi_wood
@@ -302,9 +282,9 @@ contains
       du_dk        = g_rhizo * drive
    end subroutine root_water_uptake
 
-   !----- A cohort's uptake from every layer of its root profile in one call: root_water_uptake for !
-   !      each layer it roots in, and nothing from a layer without roots (g_rhizo <= 0). The wood's  !
-   !      derivative is minus the soil's, so it is not returned. ----------------------------------!
+   !----- root_water_uptake for every layer of a cohort's profile, nothing from a layer    !
+   !      without roots (g_rhizo <= 0). The wood's derivative is minus the soil's, so it   !
+   !      is not returned. ----------------------------------------------------------------!
    pure subroutine root_water_uptake_profile(nsl, g_rhizo, k_soil, psi_soil, z_soil, psi_wood, u,      &
                                              du_dpsi_soil, du_dk)
       integer(ik), intent(in)  :: nsl
@@ -322,10 +302,9 @@ contains
       end do
    end subroutine root_water_uptake_profile
 
-   !----- One plant's intact-xylem conductance [kg/s/MPa]: the sapwood's specific conductivity over  !
-   !      its cross-section and its path, height x vessel_curl. A plant with no sapwood yet keeps the  !
-   !      least conductance, so its leaf stays joined to its wood                                  !
-   !      (docs/science/plant_hydraulics.md eq. (10)). -------------------------------------------!
+   !----- One plant's intact-xylem conductance [kg/s/MPa]: the sapwood's specific          !
+   !      conductivity over its cross-section and its path, height x vessel_curl, floored  !
+   !      for a plant with no sapwood yet (docs/science/plant_hydraulics.md eq. (10)). ----!
    elemental function xylem_max_conductance(wood_kmax, sap_area, height, vessel_curl) result(k)
       real(wp), intent(in) :: wood_kmax    !< [kg/m/s/MPa] sapwood specific conductivity
       real(wp), intent(in) :: sap_area     !< [m2] sapwood cross-section
@@ -335,15 +314,11 @@ contains
       k = max(wood_kmax * sap_area / max(height * vessel_curl, tiny_num), XYLEM_COND_MIN)
    end function xylem_max_conductance
 
-   !----- Sapflow [kg/m2/s] from a cohort's wood (potential psi_w) up its xylem to its leaves       !
-   !      (psi_l), and its derivatives. k_cond [kg/s/MPa per m2] is the intact xylem conductance of  !
-   !      all the cohort's plants; the vulnerability curve reduces it through the Kirchhoff mean     !
-   !      over the two ends, K = k_cond (Phi(psi_w) - Phi(psi_l)) / (psi_w - psi_l), and the leaves  !
-   !      sit `grav` [MPa] of hydrostatic head above the wood. Phi is closed-form for vulnerability  !
-   !      exponents 1 and 2 and read from the PFT's table otherwise; its derivative is the retained  !
-   !      fraction itself. Near equal potentials the mean is taken at the midpoint, value and        !
-   !      slopes, where the quotient would lose its digits (docs/science/plant_hydraulics.md       !
-   !      eqs. (7)-(9)). --------------------------------------------------------------------------!
+   !----- Sapflow [kg/m2/s] from a cohort's wood (psi_w) up to its leaves (psi_l), `grav`  !
+   !      [MPa] of head above it, and its derivatives. k_cond [kg/s/MPa per m2] is the     !
+   !      intact conductance of all the cohort's plants; the vulnerability curve reduces   !
+   !      it through the Kirchhoff mean over the two ends, taken at the midpoint when they !
+   !      nearly meet (docs/science/plant_hydraulics.md eqs. (7)-(9)). --------------------!
    pure subroutine xylem_sapflow(k_cond, psi_w, psi_l, grav, psi50, kexp, table, s, ds_dpsi_w, ds_dpsi_l)
       real(wp),            intent(in)  :: k_cond, psi_w, psi_l, grav, psi50, kexp
       type(hydro_table_t), intent(in)  :: table
@@ -368,12 +343,11 @@ contains
       ds_dpsi_l = dk_dl * drive - keff
    end subroutine xylem_sapflow
 
-   !----- Transpiration [kg/m2/s] of a leaf whose stomata ask for e_demand, given its symplastic    !
-   !      relative water content r (docs/science/soil_plant_water.md eq. (3)). Above r_close -- the !
-   !      water content at which the fast stomatal limb has shut the stomata -- the demand stands.  !
-   !      Below it, a leaf with closed stomata loses its residual water in proportion to the water  !
-   !      it has left, r/r_close, so an emptying leaf stops transpiring before it empties and every !
-   !      step has a solution. The corner is rounded over [r_close, r_close + TRANSP_CLOSE_WIDTH]. -!
+   !----- Transpiration [kg/m2/s] of a leaf whose stomata ask for e_demand, at symplastic  !
+   !      relative water content r: the demand above r_close, the water content at the     !
+   !      closing potential, and below it the demand scaled by r/r_close, so an emptying   !
+   !      leaf stops transpiring before it empties. The corner is rounded over             !
+   !      TRANSP_CLOSE_WIDTH (docs/science/soil_plant_water.md eq. (3)). ------------------!
    elemental subroutine supply_limited_transpiration(e_demand, r, r_close, e, de_dr)
       real(wp), intent(in)  :: e_demand, r, r_close
       real(wp), intent(out) :: e, de_dr
@@ -385,14 +359,13 @@ contains
    end subroutine supply_limited_transpiration
 
    !=======================================================================================!
-   !     The Kirchhoff mean conductance's potential and its slopes.                         !
+   !     The Kirchhoff mean conductance's potential and its slopes.                        !
    !=======================================================================================!
 
-   !----- The Kirchhoff potential Phi(psi) = integral of the retained fraction from 0 to psi [MPa]   !
-   !      that xylem_sapflow uses: closed-form for vulnerability exponents 1 and 2, the PFT's lookup !
-   !      table otherwise. Above zero potential nothing is embolised, so Phi rises one for one     !
-   !      (flux_potential holds it flat there, which would read a supersaturated tissue's xylem as !
-   !      partly blocked). ----------------------------------------------------------------------!
+   !----- The Kirchhoff potential [MPa] xylem_sapflow uses: closed form for kexp 1 and 2,  !
+   !      the PFT's table otherwise. Above zero potential nothing is embolised, so         !
+   !      Phi = psi there, where flux_potential's flat Phi would read a supersaturated     !
+   !      tissue's xylem as blocked. ------------------------------------------------------!
    pure real(wp) function kirchhoff_potential(psi, psi50, kexp, table) result(phi)
       real(wp),            intent(in) :: psi, psi50, kexp
       type(hydro_table_t), intent(in) :: table
@@ -405,10 +378,9 @@ contains
       end if
    end function kirchhoff_potential
 
-   !----- dPhi/dpsi, the slope of exactly the potential kirchhoff_potential computes: the retained  !
-   !      fraction for the closed forms, the slope of the table's linear piece (or of its analytic   !
-   !      tail beyond the table) otherwise, so the solver's Jacobian is the derivative of the flow  !
-   !      it moves. --------------------------------------------------------------------------!
+   !----- dPhi/dpsi of exactly the potential kirchhoff_potential computes (the retained    !
+   !      fraction, the slope of the table's linear piece, or the tail's), so the solver's !
+   !      Jacobian is the derivative of the flow it moves. --------------------------------!
    pure real(wp) function kirchhoff_slope(psi, psi50, kexp, table) result(dphi)
       real(wp),            intent(in) :: psi, psi50, kexp
       type(hydro_table_t), intent(in) :: table
@@ -429,10 +401,9 @@ contains
       end if
    end function kirchhoff_slope
 
-   !----- d2Phi/dpsi2, the slope of kirchhoff_slope: for the closed forms the slope of the retained  !
-   !      fraction 1/(1 + r^kexp), r = psi/psi50; zero on the table's linear pieces and above zero    !
-   !      potential; the tail's own slope beyond the table. r = 0 is kept off the general power for   !
-   !      the reason plc_retained keeps it off (0**x through log(0) on strict compilers). ----------!
+   !----- d2Phi/dpsi2, the slope of kirchhoff_slope: d/dpsi of 1/(1 + r^kexp) for the      !
+   !      closed forms; zero on the table's linear pieces and above zero potential; the    !
+   !      tail's slope beyond the table. r = 0 is guarded as in plc_retained. -------------!
    pure real(wp) function kirchhoff_curvature(psi, psi50, kexp, table) result(d2phi)
       real(wp),            intent(in) :: psi, psi50, kexp
       type(hydro_table_t), intent(in) :: table

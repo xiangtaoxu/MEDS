@@ -94,6 +94,10 @@ Each store is solved in the unknown in which its curve is best behaved:
   for $0<h<\delta$, $h-\delta/2$ above. An empty pond holds nothing and its head follows the soil
   below.
 
+The read-offs that report a store's potential from its water, for output and at setup, floor a soil
+layer's $S_e$ at 10⁻⁹ and a tissue's $R$ at 10⁻⁴, so a reported potential stays finite. The
+solver's curves have no floor; it keeps every $S_e$ and $R$ above zero itself.
+
 ## 3. The solve
 
 Over one `dt_fast`, **implicit Euler on sub-steps**. A sub-step of length $h$ solves the water
