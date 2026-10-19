@@ -22,10 +22,11 @@ module meds_output_integrate
                                    slab_col,                                                     &
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
-                                   DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
+                                   DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, MISSING_VALUE
    use meds_polygon_state_vars, only : polygon_t
    use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, N_PY_ROWS, cohort_diag_value, patch_diag_value, &
-                                       patch_diag_slow_row, polygon_diag_value
+                                       patch_diag_slow_row, polygon_diag_value, N_SI_ROWS, site_diag_value
+   use meds_state_defaults,     only : is_unset_positive
    use meds_constants,     only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
                                        soil_matric_potential
@@ -40,7 +41,7 @@ module meds_output_integrate
    public :: normalize_scalar, normalize_slab, slab_capacity
    public :: extract_variable, extract_scalar_source, extract_fast_scalar
    public :: output_integrate, output_integrate_fast, close_tier
-   public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_SITE, SRCK_FAST
+   public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_SITE, SRCK_FAST, SRCK_SITES
    !----- Cohort FIELDS (1000-1999). ---------------------------------------------------------!
    public :: FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA
    public :: FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID
@@ -68,6 +69,8 @@ module meds_output_integrate
    public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0
    public :: SRC_F_PY0, SRC_F_PA0
+   !----- Per-site fields (6000-6999). -------------------------------------------------------!
+   public :: FLD_SI_GROWTH_TEMP, FLD_SI_DIAG0
 
    !==========================================================================================!
    !  SOURCE CODE SPACE. Each source id names a FIELD, and its NUMERIC RANGE says which entity   !
@@ -86,6 +89,7 @@ module meds_output_integrate
    integer(ik), parameter :: SRCK_LAYER  = 3_ik   !< 3000-3999 : per-soil-layer field (per patch)
    integer(ik), parameter :: SRCK_SITE   = 4_ik   !< 4000-4999 : site-only scalar (no reduction)
    integer(ik), parameter :: SRCK_FAST   = 5_ik   !< 5000-5999 : FAST-tier staged sample
+   integer(ik), parameter :: SRCK_SITES  = 6_ik   !< 6000-6999 : one value per site of the polygon
 
    !----- Cohort FIELDS (SRCK_COHORT). Raw SoA columns first, then derived ones. --------------!
    integer(ik), parameter :: FLD_C_NPLANT          = 1001_ik
@@ -133,6 +137,10 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_DIAG0           = 2100_ik
    !----- POLYGON diagnostics (4100+, a site-scalar family), read from poly%diag (PY_* + FLD_PY_DIAG0). !
    integer(ik), parameter :: FLD_PY_DIAG0          = 4100_ik
+   !----- Per-site fields (6000+, SRCK_SITES): the growth temperature, and the site block's        !
+   !      forcing rows (SI_* + FLD_SI_DIAG0). -----------------------------------------------------!
+   integer(ik), parameter :: FLD_SI_GROWTH_TEMP    = 6001_ik
+   integer(ik), parameter :: FLD_SI_DIAG0          = 6100_ik
 
    !----- Patch FIELDS (SRCK_PATCH). ---------------------------------------------------------!
    integer(ik), parameter :: FLD_P_AREA            = 2001_ik
@@ -384,6 +392,8 @@ contains
               (.not. poly%patch%diag%fast_rows .and. .not. patch_diag_slow_row(src - FLD_P_DIAG0))
       else if (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PY_ROWS) then
          ns = .not. poly%diag%active
+      else if (src > FLD_SI_DIAG0 .and. src <= FLD_SI_DIAG0 + N_SI_ROWS) then
+         ns = .not. poly%site%diag%active
       end if
    end function not_simulated
 
@@ -398,6 +408,8 @@ contains
       else if (src >= 3000_ik .and. src < 4000_ik) then ; k = SRCK_LAYER
       else if (src >= 4000_ik .and. src < 5000_ik) then ; k = SRCK_SITE
       else if (src >= 5000_ik .and. src < 6000_ik) then ; k = SRCK_FAST
+      else if (src >= 6000_ik .and. src < 7000_ik) then
+         k = SRCK_SITES
       else                                              ; k = SRCK_NONE
       end if
    end function src_class
@@ -577,6 +589,29 @@ contains
       end do
    end subroutine layer_source_field
 
+   !----- Per-site field [1:poly%site%n]: a row of the site block's forcing (SI_*), or the growth  !
+   !      temperature; a site with nothing to report this step is not valid. ----------------------!
+   pure subroutine site_source_field(poly, src, x, valid, n)
+      type(polygon_t), intent(in)  :: poly
+      integer(ik),     intent(in)  :: src
+      real(wp),        intent(out) :: x(:)
+      logical,         intent(out) :: valid(:)
+      integer(ik),     intent(out) :: n
+      integer(ik) :: is
+      n = poly%site%n
+      if (src > FLD_SI_DIAG0 .and. src <= FLD_SI_DIAG0 + N_SI_ROWS) then
+         call site_diag_value(poly%site%diag, src - FLD_SI_DIAG0, n, x, valid)
+      else if (src == FLD_SI_GROWTH_TEMP) then
+         do is = 1_ik, n
+            valid(is) = .not. is_unset_positive(poly%site%t_growth_avg(is))
+            x(is) = poly%site%t_growth_avg(is)
+         end do
+      else
+         valid(1:n) = .false.
+         x(1:n) = MISSING_VALUE
+      end if
+   end subroutine site_source_field
+
    !=======================================================================================!
    !  THE DISPATCHER. One variable -> one value (scalar) or one slab, by reducing its FIELD    !
    !  to the scale its `dim` names, with the weight/mean/scale its descriptor declares.         !
@@ -647,6 +682,10 @@ contains
          else
             n_out = 0_ik
          end if
+
+      !----- One value per site. --------------------------------------------------------------!
+      case (DIM_SITE)
+         call site_source_field(poly, v%source_id, slab_out, valid_out, n_out)
 
       !----- 2-D (soil layer x patch), flattened at (ip-1)*n_soil_layer_max + k. -------------!
       case (DIM_SOIL_PATCH)

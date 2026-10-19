@@ -56,8 +56,8 @@ module meds_diag_vars
    implicit none
    private
 
-   public :: cohort_diag_block, patch_diag_block, polygon_diag_block
-   public :: reset_polygon_diag, polygon_diag_value
+   public :: cohort_diag_block, patch_diag_block, polygon_diag_block, site_diag_block
+   public :: reset_polygon_diag, polygon_diag_value, alloc_site_diag, reset_site_diag, site_diag_value
    public :: alloc_cohort_diag, free_cohort_diag, expand_cohort_diag, reset_cohort_diag
    public :: reorder_cohort_diag, copy_cohort_diag, fuse_cohort_diag, clear_cohort_diag
    public :: alloc_patch_diag, free_patch_diag, expand_patch_diag, reset_patch_diag
@@ -292,6 +292,17 @@ module meds_diag_vars
    integer(ik), parameter, public :: PY_CO2         = 15_ik  !< [umol/mol] free-atmosphere CO2
    integer(ik), parameter, public :: PY_RHO_AIR     = 16_ik  !< [kg/m3] air density
    integer(ik), parameter, public :: N_PY_ROWS       = 16_ik
+   !----- SI_: the forcing each site receives, the polygon's after the site's terrain              !
+   !      (docs/science/forcing.md §8). -----------------------------------------------------------!
+   integer(ik), parameter, public :: SI_SW_IN    = 1_ik  !< [W/m2] incident shortwave at canopy top
+   integer(ik), parameter, public :: SI_PAR_BEAM = 2_ik  !< [W/m2] direct-beam PAR on the slope
+   integer(ik), parameter, public :: SI_NIR_BEAM = 3_ik  !< [W/m2] direct-beam NIR on the slope
+   integer(ik), parameter, public :: SI_LWDOWN   = 4_ik  !< [W/m2] downward longwave
+   integer(ik), parameter, public :: SI_TAIR     = 5_ik  !< [K] reference-height air temperature
+   integer(ik), parameter, public :: SI_QAIR     = 6_ik  !< [kg/kg] specific humidity
+   integer(ik), parameter, public :: SI_PSURF    = 7_ik  !< [Pa] surface pressure
+   integer(ik), parameter, public :: SI_RHO_AIR  = 8_ik  !< [kg/m3] air density
+   integer(ik), parameter, public :: N_SI_ROWS   = 8_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !
@@ -316,12 +327,19 @@ module meds_diag_vars
       real(wp), allocatable :: w(:)          !< (cap)          running Sum(dt)
    end type patch_diag_block
 
-   !----- One slot: the polygon (the site). Fixed size, so nothing to allocate or blend. -------!
+   !----- One slot: the polygon. Fixed size, so nothing to allocate or blend. --------------------!
    type :: polygon_diag_block
       logical  :: active = .false.
       real(wp) :: v(N_PY_ROWS) = 0.0_wp      !< running Sum(x*dt)
       real(wp) :: w = 0.0_wp                !< running Sum(dt)
    end type polygon_diag_block
+
+   !----- One slot per site. The sites never change, so nothing to reorder or blend. ------------!
+   type :: site_diag_block
+      logical  :: active = .false.
+      real(wp), allocatable :: v(:,:)        !< (N_SI_ROWS, site) running Sum(x*dt)
+      real(wp), allocatable :: w(:)          !< (site)            running Sum(dt)
+   end type site_diag_block
 
 contains
 
@@ -662,5 +680,40 @@ contains
       x = 0.0_wp
       if (d%active .and. d%w > tiny_num) x = d%v(field) / d%w
    end function polygon_diag_value
+
+   !=======================================================================================!
+   !  SITE block. Reset at the start of each slow step's fast loop, read as the step mean. !
+   !=======================================================================================!
+   subroutine alloc_site_diag(d, n_site, on)
+      type(site_diag_block), intent(inout) :: d
+      integer(ik),           intent(in)    :: n_site
+      logical,               intent(in)    :: on
+      d%active = on
+      if (.not. on .or. allocated(d%v)) return
+      allocate(d%v(N_SI_ROWS, n_site), d%w(n_site))
+      d%v = 0.0_wp
+      d%w = 0.0_wp
+   end subroutine alloc_site_diag
+
+   subroutine reset_site_diag(d)
+      type(site_diag_block), intent(inout) :: d
+      if (.not. d%active) return
+      d%v = 0.0_wp
+      d%w = 0.0_wp
+   end subroutine reset_site_diag
+
+   !----- The step mean of one field at each site; `valid` false where nothing was accumulated. -!
+   pure subroutine site_diag_value(d, field, n_site, x, valid)
+      type(site_diag_block), intent(in)  :: d
+      integer(ik),           intent(in)  :: field, n_site
+      real(wp),              intent(out) :: x(:)
+      logical,               intent(out) :: valid(:)
+      integer(ik) :: is
+      do is = 1_ik, n_site
+         valid(is) = d%active .and. d%w(is) > tiny_num
+         x(is) = 0.0_wp
+         if (valid(is)) x(is) = d%v(field, is) / d%w(is)
+      end do
+   end subroutine site_diag_value
 
 end module meds_diag_vars

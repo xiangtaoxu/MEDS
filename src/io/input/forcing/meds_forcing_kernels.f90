@@ -13,7 +13,7 @@ module meds_forcing_kernels
    use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_therm_lib,         only : sat_vapor_pressure
-   use meds_time,           only : meds_time_t, solar_cosz, day_of_year
+   use meds_time,           only : meds_time_t, solar_cosz, day_of_year, solar_declination
    use meds_forcing_config, only : INTERP_LINEAR, INTERP_STEP, INTERP_COSZ,                    &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN
    implicit none
@@ -22,6 +22,7 @@ module meds_forcing_kernels
    public :: interpolate_forcing, interpolate_wind_energy
    public :: clearness_index, clear_sky_emissivity, synthesize_lwdown
    public :: apparent_solar_seconds, met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw
+   public :: slope_incidence_cosz, slope_beam_factor
    public :: partition_shortwave, dewpoint_to_specific_humidity, rh_to_specific_humidity
    public :: precip_phase
    public :: great_circle_distance, nearest_grid_index
@@ -385,6 +386,41 @@ contains
               + (cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon)) ** 2 )
       dist_m = EARTH_RADIUS_M * atan2(y, x)
    end function great_circle_distance
+
+   !----- The sun on a slope (docs/science/forcing.md §8): the cosine of its incidence on a            !
+   !      surface tilted `slope_deg` from horizontal and facing `aspect_deg` (clockwise from north),   !
+   !      cos i = cos z cos s + sin z sin s cos(A - aspect), with A the sun's azimuth, also clockwise  !
+   !      from north. 0 with the sun below the horizon or behind the slope. ---------------------------!
+   pure real(wp) function slope_incidence_cosz(t, sec_utc, latitude_deg, longitude_deg, slope_deg,     &
+                                               aspect_deg) result(cosi)
+      type(meds_time_t), intent(in) :: t
+      real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg, slope_deg, aspect_deg
+      real(wp) :: d2r, lat, decl, hour_angle, cosz, sinz, azimuth, slope
+      d2r        = pi / 180.0_wp
+      lat        = latitude_deg * d2r
+      decl       = solar_declination(day_of_year(t))
+      hour_angle = 2.0_wp * pi * (apparent_solar_seconds(t, sec_utc, longitude_deg) / 86400.0_wp - 0.5_wp)
+      cosz       = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hour_angle)
+      cosi       = 0.0_wp
+      if (cosz <= 0.0_wp) return
+      sinz    = sqrt(max(0.0_wp, 1.0_wp - cosz * cosz))
+      azimuth = atan2(-cos(decl) * sin(hour_angle), sin(decl) * cos(lat) - cos(decl) * sin(lat) * cos(hour_angle))
+      slope   = slope_deg * d2r
+      cosi    = max(0.0_wp, cosz * cos(slope) + sinz * sin(slope) * cos(azimuth - aspect_deg * d2r))
+   end function slope_incidence_cosz
+
+   !----- The factor the direct beam takes on a slope: the beam normal to the sun, beam / cos z,       !
+   !      times cos i, over the beam on level ground. The beam normal is held at most the solar        !
+   !      constant, which keeps a low sun's small cos z from inflating the beam a slope facing it      !
+   !      receives. 1 with no beam to scale. ----------------------------------------------------------!
+   pure real(wp) function slope_beam_factor(beam, cosz, cosi) result(f)
+      real(wp), intent(in) :: beam   !< [W/m2] direct beam on level ground (all bands)
+      real(wp), intent(in) :: cosz   !< [-] cosine of the solar zenith angle
+      real(wp), intent(in) :: cosi   !< [-] cosine of the incidence on the slope
+      f = 1.0_wp
+      if (beam <= 0.0_wp .or. cosz <= COSZ_MIN) return
+      f = min(cosi / cosz, SOLAR_CONSTANT * cosi / beam)
+   end function slope_beam_factor
 
    pure function nearest_grid_index(site_lon, site_lat, lon, lat) result(idx)
       real(wp), intent(in) :: site_lon, site_lat, lon(:), lat(:)

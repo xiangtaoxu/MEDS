@@ -26,7 +26,7 @@ module meds_output_stream
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
                                   output_files_t, output_buffers_t,                                  &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
-                                  DIM_SIZE, DIM_SOIL_PATCH, diag_params_t,                        &
+                                  DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, diag_params_t,              &
                                   XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,    &
                                   AGG_LAST, AGG_TMEAN, AGG_FLUXSUM,                                &
                                   MISSING_VALUE, MISSING_INT, ragged_dim
@@ -533,6 +533,10 @@ contains
       case (DIM_SOIL_PATCH)
          rank = rank + 1_c_int ; dims(rank) = dp  ; chunk(rank) = int(patch_dim, c_size_t)
          rank = rank + 1_c_int ; dims(rank) = ds  ; chunk(rank) = int(n_soil_layer_max, c_size_t)
+      case (DIM_SITE)
+         rank = rank + 1_c_int
+         dims(rank) = dsi
+         chunk(rank) = int(ns, c_size_t)
       end select
       call nc_check(nc_def_var_f(ncid, trim(v%name), xt, rank, dims(1:rank), vid), 'def '//trim(v%name))
       call nc_check(nc_def_var_chunking(ncid, vid, NC_CHUNKED, chunk(1:rank)), 'chunk '//trim(v%name))
@@ -604,6 +608,8 @@ contains
          case (DIM_PFT)        ; n = max(files%diag%n_pft, 1_ik)
          case (DIM_SIZE)       ; n = max(files%diag%n_dbh_class, 1_ik)
          case (DIM_SOIL_PATCH) ; n = stream%patch_dim * n_soil_layer_max
+         case (DIM_SITE)
+            n = files%site_max
          case default          ; n = 1_ik
          end select
          rank = 2_c_int

@@ -29,8 +29,9 @@ module meds_fast_dynamics
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
+   use meds_plant_types, only : leaf_photo_table_t
    use meds_column_view, only : copy_column_cohort
-   use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
+   use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string, seconds_into_day
    use meds_output_types,     only : output_buffers_t
    use meds_diag_vars,        only : N_CO_FAST_ROWS, N_PA_ROWS, patch_diag_block, polygon_diag_block, PA_LE, PA_H, &
                                      PA_RNET, PA_SW_GROUND, &
@@ -40,13 +41,15 @@ module meds_fast_dynamics
                                      PA_W_SURFACE, PA_RESID_ENERGY, PA_RESID_WATER, PA_WIND_CAS_TOP, PA_TAIR_CAS_TOP, &
                                      PA_Z_CAS_TOP, PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND, PY_LWDOWN, &
                                      PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM, PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, &
-                                     PY_RHO_AIR, PY_RAINF, N_PY_ROWS, expand_cohort_diag, expand_patch_diag
+                                     PY_RHO_AIR, PY_RAINF, N_PY_ROWS, expand_cohort_diag, expand_patch_diag, &
+                                     site_diag_block, SI_SW_IN, SI_PAR_BEAM, SI_NIR_BEAM, SI_LWDOWN, SI_TAIR,  &
+                                     SI_QAIR, SI_PSURF, SI_RHO_AIR, N_SI_ROWS
    use meds_constants,     only : n_soil_layer_max
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
-   use meds_forcing_kernels,  only : precip_phase
+   use meds_forcing_kernels,  only : precip_phase, slope_incidence_cosz, slope_beam_factor
    use meds_met_driver,       only : met_advance, met_instant
-   use meds_lapse_rate,       only : met_to_cas_top
+   use meds_lapse_rate,       only : met_to_cas_top, met_at_site
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
    use meds_cohort_state_vars, only : set_cohort_tissue_water
    use meds_state_defaults,    only : DMAX_PSI_LEAF_ACCUM_RESET
@@ -113,6 +116,9 @@ module meds_fast_dynamics
       !----- The polygon's column configuration. Its soil is the run config's; each site runs on a   !
       !      copy with its own soil column and bottom (site_column_configs). ----------------------!
       type(column_config_t) :: col_config                 !< soil/thermal/hydro/aero/resp column config
+      !----- Each site's leaf table, acclimated to the site's growth temperature once a slow step !
+      !      has seeded it; until then the sites run on col_config's. ----------------------------!
+      type(leaf_photo_table_t), allocatable :: site_leaf_photo(:)
       real(wp) :: u_ref   = 2.0_wp                  !< [m/s] reference wind (at the canopy-air top)
       real(wp) :: press   = 101325.0_wp             !< [Pa]
       real(wp) :: rho_air = 1.2_wp                  !< [kg/m3]
@@ -273,6 +279,8 @@ contains
       !      reader out of the parallel region. --------------------------------------------------!
       type(met_forcing_t), allocatable :: met_sample(:)
       type(meds_time_t),   allocatable :: t_sample(:)
+      !----- Each site's forcing per sub-step: the polygon's sample after the site's terrain. -----!
+      type(met_forcing_t), allocatable :: met_site(:,:)   !< (sub-step, site)
       !----- Reduction staging: one cell per (accumulator, sub-step, patch), written exactly once  !
       !      inside the patch loop and folded into poly%... in patch order afterwards. Sized per   !
       !      call (O(1) allocations per slow step); never zeroed, because every cell is ASSIGNED,  !
@@ -462,6 +470,26 @@ contains
             call met_advance(met_src, met_cur, t_sample(isub))
             met_sample(isub) = met_instant(met_src, met_cur, t_sample(isub))
          end do
+         !----- Each site's: the sample moved to the site's elevation and its beam to the site's     !
+         !      slope (met_at_site, docs/science/forcing.md §8). A flat site at the polygon's        !
+         !      elevation takes the sample as it is. ------------------------------------------------!
+         allocate(met_site(nsub, poly%site%n))
+         do is = 1_ik, poly%site%n
+            associate (surf => poly%site%surface(is))
+               do isub = 1_ik, nsub
+                  met_site(isub, is) = met_sample(isub)
+                  if (surf%elevation_m == poly%elevation_m .and. surf%slope_deg == 0.0_wp) cycle
+                  associate (m => met_sample(isub))
+                     met_site(isub, is) = met_at_site(m, cfg%forcing, t_sample(isub)%month,             &
+                        surf%elevation_m - poly%elevation_m,                                          &
+                        slope_beam_factor(m%par_beam + m%nir_beam, m%cosz,                               &
+                                          slope_incidence_cosz(t_sample(isub), seconds_into_day(t_sample(isub)), &
+                                                               met_cur%latitude_deg, met_cur%longitude_deg,   &
+                                                               surf%slope_deg, surf%aspect_deg)))
+                  end associate
+               end do
+            end associate
+         end do
       end if
       !----- The FAST tier stamps a record by its window's start, as the slower tiers do: each      !
       !      sub-step's start, not the instant its forcing is sampled at. Site-uniform, so out of   !
@@ -601,7 +629,7 @@ contains
             !      with the canopy-top shortwave at the reference transmittance f_ground (the constant !
             !      path keeps the reference value itself). `met` and `sw_ground` are per-THREAD. ------!
             if (do_forcing) then
-               met = met_sample(isub)
+               met = met_site(isub, poly%patch%owner_site(ip))
                met_top = met_to_cas_top(met, cfg%forcing, z_top, displace_p, rough_p)
                sw_ground = f_ground * met%swdown()
             else
@@ -809,7 +837,8 @@ contains
       !  diagnostic independent of the thread count, and equal bit-for-bit to the serial fold   !
       !  (docs/science/numerical_scheme.md §6a).                                                !
       !=========================================================================================!
-      poly%pheno_tair_sum = 0.0_wp ; poly%pheno_tair_n = 0_ik
+      poly%site%pheno_tair_sum = 0.0_wp
+      poly%site%pheno_tair_n = 0_ik
       poly%et_accum       = 0.0_wp ; poly%runoff_surf_accum = 0.0_wp ; poly%drainage_accum = 0.0_wp
       poly%work_integ_steps = 0.0_wp ; poly%work_integ_rej  = 0.0_wp
       poly%work_water_nsub  = 0.0_wp ; poly%work_water_newton = 0.0_wp
@@ -820,8 +849,10 @@ contains
             poly%et_accum          = poly%et_accum          + red_site(RED_ET,            isub, ip)
             poly%runoff_surf_accum = poly%runoff_surf_accum + red_site(RED_RUNOFF_SURF,   isub, ip)
             poly%drainage_accum    = poly%drainage_accum    + red_site(RED_DRAINAGE,      isub, ip)
-            poly%pheno_tair_sum    = poly%pheno_tair_sum    + red_site(RED_PHENO_TAIR,    isub, ip)
-            poly%pheno_tair_n      = poly%pheno_tair_n      + 1_ik
+            associate (is_p => poly%patch%owner_site(ip))
+               poly%site%pheno_tair_sum(is_p) = poly%site%pheno_tair_sum(is_p) + red_site(RED_PHENO_TAIR, isub, ip)
+               poly%site%pheno_tair_n(is_p)   = poly%site%pheno_tair_n(is_p) + 1_ik
+            end associate
             poly%work_integ_steps  = poly%work_integ_steps  + red_site(RED_INTEG_STEPS,   isub, ip)
             poly%work_integ_rej    = poly%work_integ_rej    + red_site(RED_INTEG_REJ,     isub, ip)
             poly%work_water_nsub   = poly%work_water_nsub   + red_site(RED_WATER_NSUB,   isub, ip)
@@ -870,6 +901,18 @@ contains
             if (poly%diag%active) call accumulate_polygon_diag(poly%diag, cfg%dt_fast, echo)
          end do
       end if
+      !----- Each site's forcing (SI_*), for the coarse tiers. ---------------------------------------!
+      if (poly%site%diag%active) then
+         do isub = 1_ik, nsub
+            do is = 1_ik, poly%site%n
+               if (do_forcing) then
+                  call accumulate_site_diag(poly%site%diag, is, cfg%dt_fast, met_site(isub, is))
+               else
+                  call accumulate_site_diag(poly%site%diag, is, cfg%dt_fast, met_ref)
+               end if
+            end do
+         end do
+      end if
 
       if (present(worst_energy)) then
          worst_energy = 0.0_wp
@@ -894,9 +937,9 @@ contains
       if (do_fast) out_bufs%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
    end subroutine fast_dynamics
 
-   !----- Each site's column configuration: the polygon's, with the site's soil column and the   !
-   !      column's bottom. Made at each fast step, so every copy has the leaf table the polygon's  !
-   !      acclimation rewrote since the last one. ---------------------------------------------!
+   !----- Each site's column configuration: the polygon's, with the site's soil column, the        !
+   !      column's bottom and the leaf table acclimated to the site's growth temperature. Made at  !
+   !      each fast step, so every copy has the table its acclimation rewrote since the last one. -!
    subroutine site_column_configs(ctx, poly, site_col)
       type(fast_context_t),  intent(in)  :: ctx
       type(polygon_t),       intent(in)  :: poly
@@ -911,6 +954,7 @@ contains
             col%soil_water_opts%drain_factor = surf%drain_factor
             col%energy%deep_temp             = surf%deep_temp
             col%energy%deep_depth            = surf%deep_depth
+            if (allocated(ctx%site_leaf_photo)) col%leaf_photo = ctx%site_leaf_photo(is)
          end associate
       end do
    end subroutine site_column_configs
@@ -1295,6 +1339,25 @@ contains
       d%v = d%v + f * dt
       d%w = d%w + dt
    end subroutine accumulate_polygon_diag
+
+   !----- One sub-step of a site's forcing, in the site block's table (SI_*). ---------------------!
+   subroutine accumulate_site_diag(d, is, dt, met)
+      type(site_diag_block), intent(inout) :: d
+      integer(ik),           intent(in)    :: is
+      real(wp),              intent(in)    :: dt     !< [s] sample weight
+      type(met_forcing_t),   intent(in)    :: met    !< the site's forcing
+      real(wp) :: f(N_SI_ROWS)
+      f(SI_SW_IN)    = met%swdown()
+      f(SI_PAR_BEAM) = met%par_beam
+      f(SI_NIR_BEAM) = met%nir_beam
+      f(SI_LWDOWN)   = met%lwdown
+      f(SI_TAIR)     = met%tair_k
+      f(SI_QAIR)     = met%qair
+      f(SI_PSURF)    = met%psurf_pa
+      f(SI_RHO_AIR)  = met%rho_air
+      d%v(:, is) = d%v(:, is) + f * dt
+      d%w(is)    = d%w(is) + dt
+   end subroutine accumulate_site_diag
 
    !----- The forcing one sub-step used, in the polygon block's table (PY_*): the one list of the  !
    !      forcing echo, which the coarse tiers accumulate (accumulate_polygon_diag) and the FAST    !

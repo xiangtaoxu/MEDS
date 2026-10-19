@@ -150,9 +150,10 @@ Three things about this are deliberate:
   mean **air** temperature of the preceding weeks, so MEDS tracks an exponential running mean of the
   daily-mean air temperature (window `acclim_window_days`, default 30 d) and feeds that. An
   instantaneous leaf temperature would use the relation far outside what it was fitted to.
-- **It is site-level, not per cohort**, for the same reason. Per-cohort acclimation is a different
-  question — it would need a relation calibrated on leaf rather than air temperature (see
-  `docs/ROADMAP.md`).
+- **It is one per site, not per cohort**, for the same reason: each site's running mean of its own air
+  temperature, after its terrain ([forcing](forcing.md) §8, Each site of a polygon), and each site's
+  leaf table. Per-cohort acclimation is a different question — it would need a relation calibrated on
+  leaf rather than air temperature (see `docs/ROADMAP.md`).
 
 The running mean is prognostic and slow, so it is written to the state file: rebuilding a month of
 memory after every restart would make the acclimated optimum jump. It is applied by refreshing the

@@ -16,7 +16,9 @@ module meds_output_registry
    use meds_config,         only : meds_config_t
    use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
    use meds_polygon_state_vars, only : polygon_t
-   use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, alloc_cohort_diag, alloc_patch_diag
+   use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, alloc_cohort_diag, alloc_patch_diag, &
+                                       N_SI_ROWS, alloc_site_diag, SI_SW_IN, SI_PAR_BEAM, SI_NIR_BEAM, SI_LWDOWN, &
+                                       SI_TAIR, SI_QAIR, SI_PSURF, SI_RHO_AIR
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
@@ -26,7 +28,7 @@ module meds_output_registry
    use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
-                                   DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
+                                   DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, &
                                    XTYPE_DOUBLE, XTYPE_INT, MISSING_VALUE, MISSING_INT, ragged_dim
    use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
    use meds_constants,         only : cm2_to_m2, n_soil_layer_max
@@ -50,7 +52,7 @@ module meds_output_registry
         SRC_S_WORK_CLAMP_STAGE,                                                                  &
         SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PA0,                                &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0, FLD_C_DIAG0, FLD_P_DIAG0, &
-        FLD_PY_DIAG0
+        FLD_PY_DIAG0, FLD_SI_DIAG0, FLD_SI_GROWTH_TEMP
    use meds_diag_vars,       only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_TRANSP, CO_BETA_STOM, &
                                     CO_BETA_NONSTOM, CO_LEAF_VPD, CO_PSI_LEAF, CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE, &
                                     CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_LEAF_TEMP, &
@@ -865,6 +867,26 @@ contains
    !=======================================================================================!
    subroutine register_forcing(reg)
       type(output_registry_t), intent(inout) :: reg
+      !----- Each site's forcing: the polygon's after the site's terrain (docs/science/forcing.md  !
+      !      §8), and the growth temperature its leaves acclimate to. -----------------------------!
+      call add_variable(reg, 'air_temp_by_site', 'each site''s air temperature at the forcing''s height', 'K', &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_DIAG0 + SI_TAIR)
+      call add_variable(reg, 'qair_by_site', 'each site''s specific humidity', 'kg/kg',            &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_DIAG0 + SI_QAIR)
+      call add_variable(reg, 'psurf_by_site', 'each site''s surface pressure', 'Pa',               &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_DIAG0 + SI_PSURF)
+      call add_variable(reg, 'rho_air_by_site', 'each site''s air density', 'kg/m3',               &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_DIAG0 + SI_RHO_AIR)
+      call add_variable(reg, 'lwdown_by_site', 'each site''s downward longwave', 'W/m2',           &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_DIAG0 + SI_LWDOWN)
+      call add_variable(reg, 'sw_in_by_site', 'each site''s incident shortwave, its beam on its slope', 'W/m2', &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_DIAG0 + SI_SW_IN)
+      call add_variable(reg, 'par_beam_by_site', 'each site''s direct-beam PAR on its slope', 'W/m2', &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_DIAG0 + SI_PAR_BEAM)
+      call add_variable(reg, 'nir_beam_by_site', 'each site''s direct-beam NIR on its slope', 'W/m2', &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_DIAG0 + SI_NIR_BEAM)
+      call add_variable(reg, 'growth_temp_by_site', 'each site''s running-mean growth temperature', 'K', &
+                        DIM_SITE, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_SI_GROWTH_TEMP)
       call add_variable(reg, 'air_temp_site', 'air temperature at the forcing''s own height (forcing)', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_TAIR)
       call add_variable(reg, 'qair_site', 'specific humidity at the forcing''s own height (forcing)', 'kg/kg', &
@@ -1198,6 +1220,8 @@ contains
       case (DIM_PFT)        ; cap = max(files%diag%n_pft, 1_ik)
       case (DIM_SIZE)       ; cap = max(files%diag%n_dbh_class, 1_ik)
       case (DIM_SOIL_PATCH) ; cap = files%patch_max * n_soil_layer_max
+      case (DIM_SITE)
+         cap = files%site_max
       case default          ; cap = 0_ik
       end select
    end function dim_capacity
@@ -1345,9 +1369,10 @@ contains
    subroutine activate_site_diag(files, poly)
       type(output_files_t),   intent(in)    :: files
       type(polygon_t),        intent(inout) :: poly
-      logical     :: need_c, need_p, need_s, need_y
+      logical     :: need_c, need_p, need_s, need_y, need_si
       integer(ik) :: t, j, k, src
       need_c = .false. ; need_p = .false. ; need_s = .false. ; need_y = .false.
+      need_si = .false.
       if (files%enabled) then
          do t = 1_ik, N_FREQ
             do j = 1_ik, files%reg%nidx(t)
@@ -1358,12 +1383,14 @@ contains
                if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) need_p = .true.
                if (src > FLD_C_DIAG0 + N_CO_FAST_ROWS .and. src <= FLD_C_DIAG0 + N_CO_ROWS) need_s = .true.
                if (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PY_ROWS) need_y = .true.
+               if (src > FLD_SI_DIAG0 .and. src <= FLD_SI_DIAG0 + N_SI_ROWS) need_si = .true.
             end do
          end do
       end if
       !----- Only the fast loop fills the per-cohort and polygon blocks, and the fast rows of the     !
       !      patch block: in a slow-only run they stay off, and their variables read as missing. -----!
       need_c = need_c .and. files%fast_loop_on ; need_y = need_y .and. files%fast_loop_on
+      need_si = (need_si .and. files%fast_loop_on) .or. poly%site%diag%active
       poly%patch%diag%fast_rows = files%fast_loop_on
       !----- Additive: a block already on stays on. -----------------------------------------------!
       need_c = need_c .or. poly%cohort%diag%active  ; need_s = need_s .or. poly%cohort%sdiag%active
@@ -1372,6 +1399,7 @@ contains
       call alloc_cohort_diag(poly%cohort%sdiag, max(poly%cohort%cap, 1_ik), need_s, slow_rows=.true.)
       call alloc_patch_diag (poly%patch%diag,   max(poly%patch%cap,  1_ik), need_p)
       poly%diag%active = need_y                    ! the polygon block: fixed size, nothing to allocate
+      call alloc_site_diag(poly%site%diag, poly%site%n, need_si)
    end subroutine activate_site_diag
 
    !=======================================================================================!
@@ -1453,6 +1481,8 @@ contains
       case (DIM_PFT)        ; s = 'pft'
       case (DIM_SIZE)       ; s = 'dbh_class'
       case (DIM_SOIL_PATCH) ; s = 'soil,patch'
+      case (DIM_SITE)
+         s = 'by site'
       case default          ; s = '?'
       end select
    end function dim_name

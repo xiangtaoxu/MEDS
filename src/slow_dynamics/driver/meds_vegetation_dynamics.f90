@@ -1169,13 +1169,16 @@ contains
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
-      integer(ik) :: i, pf
-      real(wp)    :: dt_days, temp_day, lat
+      integer(ik) :: i, pf, is
+      real(wp)    :: dt_days, temp_day(poly%site%n), lat
       logical     :: north
 
-      if (poly%pheno_tair_n < 1_ik) return             ! no fast sub-steps this slow step -> no drivers
+      if (all(poly%site%pheno_tair_n(1:poly%site%n) < 1_ik)) return   ! no fast sub-steps -> no drivers
       dt_days  = cfg%dt_slow / day_sec
-      temp_day = poly%pheno_tair_sum / real(poly%pheno_tair_n, wp)
+      !----- Each site's daily-mean air temperature: its own forcing after its terrain. -----------!
+      do is = 1_ik, poly%site%n
+         temp_day(is) = poly%site%pheno_tair_sum(is) / real(max(poly%site%pheno_tair_n(is), 1_ik), wp)
+      end do
       lat = cfg%forcing%latitude_deg
       if (present(latitude_deg)) lat = latitude_deg
       north    = lat >= 0.0_wp
@@ -1188,7 +1191,7 @@ contains
          !      -- already a completed daily maximum, double-buffered against its accumulator.      !
          !      An UNSET cohort (born today) reports 0, which reads as well-watered for one day;     !
          !      that is the same seeding convention the leaf kernel uses.                            !
-         env%temp_day         = temp_day
+         env%temp_day         = temp_day(poly%patch%owner_site(poly%cohort%owner_patch(i)))
          !----- light_hours_accum is the time [h] the PAR at the cohort's top exceeded its PFT's   !
          !      par_min over the step (counted in the fast loop); per day for the cue. -----------!
          env%par_hours        = poly%cohort%light_hours_accum(i) / dt_days

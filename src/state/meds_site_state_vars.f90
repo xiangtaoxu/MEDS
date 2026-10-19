@@ -8,11 +8,14 @@
 ! and the site block maps each site to its slice with an offset and a count, as the patch   !
 ! block maps each patch to its cohorts. A patch's area is a fraction of its site, and a     !
 ! site's area a fraction of the polygon. Each site has its own surface: its soil column and !
-! the parameters derived from it, the column's bottom, and its terrain.                     !
+! the parameters derived from it, the column's bottom, and its terrain; and its own climate,!
+! the polygon's forcing after its terrain (docs/science/forcing.md §8).                     !
 !==========================================================================================!
 module meds_site_state_vars
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : n_soil_layer_max
+   use meds_state_defaults,     only : UNSET_POSITIVE
+   use meds_diag_vars,          only : site_diag_block
    use meds_config,             only : meds_config_t
    use meds_soil_column_config, only : soil_column_config_t, soil_params_t, soil_thermal_params_t,     &
                                        soil_column_params, soil_column_start_theta
@@ -63,6 +66,30 @@ module meds_site_state_vars
       ! 3. SURFACE                                                                               !
       !==========================================================================================!
       type(site_surface_t), allocatable :: surface(:)
+      !==========================================================================================!
+      ! 4. CLIMATE MEMORY                                                                        !
+      !==========================================================================================!
+      !----- GROWTH TEMPERATURE for thermal acclimation (docs/science/leaf_gas_exchange.md eq.   !
+      !      (4)): an exponential running mean of the site's daily-mean air temperature, window  !
+      !      [leaf_physiology].acclim_window_days (~30 d), which is what Kattge & Knorr (2007)   !
+      !      fitted dS against. PROGNOSTIC and slow, so it is written to the state file:         !
+      !      rebuilding a month of memory after every restart would make the acclimated optimum  !
+      !      jump. Until it is seeded, the first slow step adopts that day's mean outright       !
+      !      rather than relaxing from an arbitrary origin. -------------------------------------!
+      real(wp),    allocatable :: t_growth_avg(:)   !< [K] running-mean growth temperature
+      !==========================================================================================!
+      ! 5. FAST-TO-SLOW ACCUMULATORS (the model reads them)                                      !
+      !==========================================================================================!
+      !----- The daily-mean air-temperature accumulator for phenology: the fast loop sums the    !
+      !      site's air temperature over the slow step (reset each step), and the slow-loop      !
+      !      phenology and growth temperature read the mean (sum/n) then. Transient (never       !
+      !      restarted). ------------------------------------------------------------------------!
+      real(wp),    allocatable :: pheno_tair_sum(:)
+      integer(ik), allocatable :: pheno_tair_n(:)
+      !==========================================================================================!
+      ! 6. OUTPUT ACCUMULATORS (only output reads them; never restarted)                         !
+      !==========================================================================================!
+      type(site_diag_block) :: diag                 !< the forcing each site receives (SI_*)
    end type site_block
 
 contains
@@ -85,6 +112,13 @@ contains
       site%patch_count = 0_ik
       !----- 3. Surface ------------------------------------------------------------------------!
       allocate(site%surface(cap))                                ! default-initialised by its type
+      !----- 4. Climate memory -----------------------------------------------------------------!
+      allocate(site%t_growth_avg(cap))
+      site%t_growth_avg = UNSET_POSITIVE
+      !----- 5. Fast-to-slow accumulators ------------------------------------------------------!
+      allocate(site%pheno_tair_sum(cap), site%pheno_tair_n(cap))
+      site%pheno_tair_sum = 0.0_wp
+      site%pheno_tair_n = 0_ik
    end subroutine alloc_site_block
 
    !----- Free every per-site array. ------------------------------------------------------!
@@ -92,7 +126,10 @@ contains
       type(site_block), intent(inout) :: site
       site%n = 0_ik
       site%cap = 0_ik
-      if (allocated(site%area)) deallocate(site%area, site%patch_offset, site%patch_count, site%surface)
+      if (allocated(site%area)) deallocate(site%area, site%patch_offset, site%patch_count, site%surface,     &
+                                           site%t_growth_avg, site%pheno_tair_sum, site%pheno_tair_n)
+      if (allocated(site%diag%v)) deallocate(site%diag%v, site%diag%w)
+      site%diag%active = .false.
    end subroutine free_site_block
 
    !=======================================================================================!

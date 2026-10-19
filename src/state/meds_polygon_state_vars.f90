@@ -9,9 +9,8 @@
 !==========================================================================================!
 module meds_polygon_state_vars
    use meds_diag_vars,          only : polygon_diag_block, reset_cohort_diag, reset_patch_diag,          &
-                                       reset_polygon_diag
+                                       reset_polygon_diag, reset_site_diag
    use meds_kinds,              only : wp, ik
-   use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_allometry,          only : allometry_t
    use meds_pft_params,         only : pft_table_t
    use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, alloc_cohort_block, free_cohort_block, reorder_cohort_block
@@ -60,27 +59,7 @@ module meds_polygon_state_vars
       logical            :: restructure_pending  = .false.
       logical            :: restructure_new_year = .false.
       !==========================================================================================!
-      ! 4. CLIMATE MEMORY                                                                        !
-      !==========================================================================================!
-      !----- GROWTH TEMPERATURE for thermal acclimation (docs/science/leaf_gas_exchange.md eq.       !
-      !      (4)): an exponential running mean of the daily-mean air temperature, window             !
-      !      [leaf_physiology].acclim_window_days (~30 d), which is what Kattge & Knorr (2007)       !
-      !      fitted dS against. PROGNOSTIC and slow, so it is written to the state file:             !
-      !      rebuilding a month of memory after every restart would make the acclimated optimum      !
-      !      jump. Until it is seeded, the first slow step adopts that day's mean outright rather    !
-      !      than relaxing from an arbitrary origin. -------------------------------------------------!
-      real(wp)           :: t_growth_avg = UNSET_POSITIVE  !< [K] running-mean growth temperature
-      !==========================================================================================!
-      ! 5. FAST-TO-SLOW ACCUMULATORS (the model reads them)                                      !
-      !==========================================================================================!
-      !----- The daily-mean air-temperature accumulator for phenology: the fast loop sums the     !
-      !      met air temperature over the slow step (reset each step), and the slow-loop           !
-      !      phenology driver reads the mean (sum/n) then. Transient (never restarted). One per    !
-      !      polygon: every site of a polygon has the polygon's forcing.                           !
-      real(wp)           :: pheno_tair_sum = 0.0_wp
-      integer(ik)        :: pheno_tair_n   = 0_ik
-      !==========================================================================================!
-      ! 6. TENDENCIES (scratch)                                                                  !
+      ! 4. TENDENCIES (scratch)                                                                     !
       !==========================================================================================!
       !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
       !      step and update_cohort_states applies. Held here so it allocates once (resize-on-      !
@@ -88,7 +67,7 @@ module meds_polygon_state_vars
       !      NOT serialized (a scratch buffer, not prognostic state).                               !
       type(cohort_deriv_block) :: deriv
       !==========================================================================================!
-      ! 7. OUTPUT ACCUMULATORS (only output reads them; never restarted)                         !
+      ! 5. OUTPUT ACCUMULATORS (only output reads them; never restarted)                         !
       !==========================================================================================!
       !----- TRANSIENT fast-loop diagnostics that are the same across the polygon -- its forcing   !
       !      (PY_* in meds_diag_vars): one slot, the cohort and patch blocks' polygon twin. ---      !
@@ -290,6 +269,7 @@ contains
       call reset_cohort_diag(poly%cohort%diag)
       call reset_patch_diag(poly%patch%diag)
       call reset_polygon_diag(poly%diag)
+      call reset_site_diag(poly%site%diag)
    end subroutine reset_step_diagnostics
 
 end module meds_polygon_state_vars

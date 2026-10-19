@@ -3,11 +3,14 @@
 ! meds_lapse_rate -- every VERTICAL correction of the forcing, in one place                       !
 ! (docs/science/forcing.md §8). Two steps, in this order:                                         !
 !                                                                                          !
-!   1. TERRAIN, per record at ingest (the reader): from the forcing cell's elevation to the site's. !
+!   1. TERRAIN, per record at ingest (the reader): from the forcing cell's elevation to the        !
+!      polygon's.                                                                                  !
 !      Temperature by the month's environmental lapse rate, pressure hydrostatically with the same  !
 !      linear T(z), specific humidity at constant RELATIVE humidity, and file longwave by the ratio !
 !      of clear-sky emission eps*T^4 (NLDAS, Cosgrove et al. 2003; ERA5-Land's own terrain step    !
-!      also holds relative humidity).                                                              !
+!      also holds relative humidity). Then per sub-step (the fast loop), the same step from the    !
+!      polygon's elevation to each of its sites', and the direct beam on the site's slope          !
+!      (met_at_site).                                                                              !
 !   2. HEIGHT, per patch and sub-step (the fast loop): from the forcing's own heights to the top of !
 !      the patch's canopy air space, z_top = can_depth, which grows with the stand. Neutral surface !
 !      layer: potential temperature and specific humidity are conserved, and the wind follows the  !
@@ -32,6 +35,7 @@ module meds_lapse_rate
    public :: lapse_air_temperature, lapse_pressure
    public :: monthly_lapse_rate, lapse_specific_humidity, lapse_longwave
    public :: cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
+   public :: met_at_site
 
 contains
 
@@ -92,6 +96,32 @@ contains
       lw_site = lw_grid * (clear_sky_emissivity(form, t_site, q_site, p_site) * t_site**4)      &
                         / (clear_sky_emissivity(form, t_grid, q_grid, p_grid) * t_grid**4)
    end function lapse_longwave
+
+   !----- A site within its polygon (docs/science/forcing.md §8): the polygon's sample taken by the   !
+   !      terrain step to the site's elevation, dz above the polygon's, when the run lapses its       !
+   !      forcing, and its direct beam scaled by beam_factor (slope_beam_factor) to the site's slope. !
+   !      The diffuse light, the wind and the precipitation are the polygon's. -----------------------!
+   pure function met_at_site(met, f, month, dz, beam_factor) result(site)
+      type(met_forcing_t),    intent(in) :: met
+      type(forcing_config_t), intent(in) :: f
+      integer(ik),            intent(in) :: month
+      real(wp),               intent(in) :: dz            !< [m] site above polygon
+      real(wp),               intent(in) :: beam_factor   !< [-] slope_beam_factor
+      type(met_forcing_t) :: site
+      real(wp) :: gamma
+      site = met
+      if (f%apply_elevation_lapse .and. dz /= 0.0_wp) then
+         gamma         = monthly_lapse_rate(f%lapse_rate_tair, month)
+         site%psurf_pa = lapse_pressure(met%psurf_pa, met%tair_k, dz, gamma)
+         site%tair_k   = lapse_air_temperature(met%tair_k, dz, gamma)
+         site%qair     = lapse_specific_humidity(met%qair, met%tair_k, met%psurf_pa, site%tair_k, site%psurf_pa)
+         site%lwdown   = lapse_longwave(met%lwdown, f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,     &
+                                        site%tair_k, site%qair, site%psurf_pa)
+         site%rho_air  = air_density(site%tair_k, site%psurf_pa, site%qair)
+      end if
+      site%par_beam = met%par_beam * beam_factor
+      site%nir_beam = met%nir_beam * beam_factor
+   end function met_at_site
 
    !=======================================================================================!
    !  2. HEIGHT (per patch and sub-step): the forcing's own heights -> the canopy-air top.        !

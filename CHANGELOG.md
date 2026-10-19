@@ -21,7 +21,8 @@ or many, and every output and state file has a `polygon` dimension (#449). The p
 `polygon_t`, with a site block beside its patch and cohort blocks, ready for several sites (#450).
 Each site owns its soil column and the column's bottom, and the run keeps one configuration (#451).
 A polygon can hold several sites, each on its own soil, and its files report each site's soil (#452).
-A site run divides its polygon into sites with `[[sites]]` tables (#453).
+A site run divides its polygon into sites with `[[sites]]` tables (#453). Each site's forcing follows
+its elevation and slope, and its phenology and leaf acclimation its own air (#454).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -63,6 +64,10 @@ A site run divides its polygon into sites with `[[sites]]` tables (#453).
   `(polygon, site)`. The values are unchanged. A script that reads them takes the site's row too
   (`[:, 0, 0]` after `time` for a site run's soil column). State files gain the site axis as new
   variables only.
+- **The growth temperature and the phenology's air temperature are each site's** (#454):
+  `poly%t_growth_avg`, `poly%pheno_tair_sum` and `poly%pheno_tair_n` are
+  `poly%site%t_growth_avg(:)`, `pheno_tair_sum(:)` and `pheno_tair_n(:)`. The state file's
+  `t_growth_avg` is `(polygon, site)`; a file written before reads as before.
 - **Fortran: the output and state writers take the site counts** (#452). `state_file_open` takes
   `n_site`, and `open_output_files` and `manager_set_polygons` each polygon's site count.
   `reduce_patch_column_to_site` is `reduce_patch_columns_to_sites` (each site's column, with a
@@ -218,6 +223,21 @@ A site run divides its polygon into sites with `[[sites]]` tables (#453).
   writes them. A config without `[[sites]]` runs as before: the eight comparison cases match bit
   for bit. `test_site_definitions` runs two sites from example 04's config (output, state file,
   restart, a census by `census_site_id`) and checks what `meds_main` refuses.
+
+- **Terrain corrects each site's forcing** (#454; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S5;
+  `docs/science/forcing.md` §8, "Each site of a polygon"). Each sub-step, each site takes the polygon's
+  forcing to its own elevation, by the run's lapse (temperature, pressure, humidity at constant
+  relative humidity, longwave, air density), and its direct beam onto its slope, by the cosine of the
+  sun's incidence over that of its zenith angle, the beam normal to the sun held at most the solar
+  constant. Each patch works from its site's forcing. Each site's daily-mean air temperature drives
+  the phenology of its cohorts and its own growth temperature, and its leaves acclimate to that on
+  their own leaf table. The output reports each site's forcing and growth temperature on the site
+  axis: `air_temp_by_site`, `qair_by_site`, `psurf_by_site`, `rho_air_by_site`, `lwdown_by_site`,
+  `sw_in_by_site`, `par_beam_by_site`, `nir_beam_by_site` and `growth_temp_by_site` (the `forcing`
+  group). A flat site at the polygon's elevation takes the polygon's forcing exactly, so every run
+  without `[[sites]]` is unchanged: the eight comparison cases match bit for bit, the restarts from
+  state files of either format included. `test_site_terrain` checks the sun and the beam on a slope
+  and the lapse to a site; `test_region` runs two sites 500 m apart on the synthetic archive.
 
 ### Removed
 
