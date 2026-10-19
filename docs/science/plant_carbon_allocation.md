@@ -234,7 +234,7 @@ The flush and senescence rates, `min_leaf_cover` and `bare_leaf_cover` are pheno
 
 ## Interface with other modules
 
-`meds_plant_carbon_allocation` is a **pure kernel library**: it `use`s only `meds_kinds` — no `site_t`,
+`meds_plant_carbon_allocation` is a **pure kernel library**: it `use`s only `meds_kinds` — no `polygon_t`,
 no config, no PFT table. Everything is passed as plain scalars, so the **driver**
 (`meds_vegetation_dynamics.compute_carbon_allocation`) is the single place that assembles the inputs and disposes of
 the outputs, calling the kernel once per cohort as an `elemental` sweep over the cohort Structure-of-Arrays.

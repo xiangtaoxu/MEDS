@@ -238,6 +238,6 @@ Three consequences:
 | soil carbon | `advance_biogeochem_dynamics` | `meds_biogeochem_dynamics` |
 | the calendar boundary | `advance_boundary` → `advance_boundary_dynamics` → `restructure_stand` | `meds_stepper`, `meds_slow_dynamics`, `meds_vegetation_dynamics` |
 | the output tick | `output_integrate`, `output_integrate_fast`, `close_tier` | `meds_output_integrate` |
-| zeroing the step diagnostics | `reset_step_diagnostics` | `meds_site_state_vars` |
+| zeroing the step diagnostics | `reset_step_diagnostics` | `meds_polygon_state_vars` |
 | writing records | `output_serialize` | `meds_output_manager` |
 | checkpoints | `region_write_state` → `state_file_open` / `state_file_put`; `io_read_state` | `meds_region`, `meds_io` |

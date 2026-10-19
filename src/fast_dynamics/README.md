@@ -2,7 +2,7 @@
 
 **Everything that runs on the `dt_fast` tier.** The kernels are mostly-stateless physical flux
 calculators: device-eligible, netCDF-free (forcing arrives as passed-in value types, never a direct
-`use netcdf`), and free of `site_t`, so they compile and unit-test standalone.
+`use netcdf`), and free of `polygon_t`, so they compile and unit-test standalone.
 
 | folder | what it is |
 |---|---|
@@ -12,7 +12,7 @@ calculators: device-eligible, netCDF-free (forcing arrives as passed-in value ty
 | `numerics/` | the integrator machinery: the state vector, the frozen work record, ARK and RK45, the soil-plant water solver, the pre-pass, error control |
 | `driver/` | the loop that walks one slow step in `dt_fast` sub-steps over the patch axis |
 
-`numerics/` and `driver/` may see `site_t`; **the kernel folders may not**, and that is what
+`numerics/` and `driver/` may see `polygon_t`; **the kernel folders may not**, and that is what
 keeps them device-eligible and standalone-buildable. The slow half is `src/slow_dynamics/`; the
 split between them is by **timescale**, and within each half by domain. See
 [`../README.md`](../README.md) for the tree-wide rules.

@@ -235,7 +235,7 @@ meds_fortran_flags(meds_demography)
 
 #----- Output PREP (src/io/output): the netCDF-FREE half of the output subsystem -- the site-level        #
 #      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
-#      the extract switchboard. Links meds_demography (site_t + the reductions) ONLY -- NO netCDF --  #
+#      the extract switchboard. Links meds_demography (polygon_t + reductions) ONLY -- NO netCDF --  #
 #      the stepper edge that ticks the integrators pulls no C dependency (src/README.md, "The       #
 #      library graph"). The netCDF serializer half lives in meds_io_stream (below). The stages:     #
 #      docs/science/diagnostics.md §1.                                                              #
@@ -513,7 +513,7 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME no_issue_refs
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_issue_refs.py
                        ${CMAKE_CURRENT_SOURCE_DIR})
-      #----- The kernels take only the per-patch store types from the state layer, never site_t:    #
+      #----- The kernels take only the per-patch store types from the state layer, never polygon_t: #
       #      the shared module directory cannot enforce it, so this does, on every run.             #
       add_test(NAME kernels_no_site_state
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_kernel_state.py
