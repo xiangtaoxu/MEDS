@@ -562,27 +562,25 @@ contains
    end subroutine state_file_polygons
 
    !---------------------------------------------------------------------------------------!
-   ! Why the state file at `path` cannot start a region run (`region`) or a site run, or ''    !
-   ! when it can: it cannot be opened, or it holds the other kind's state. A region's file has  !
-   ! a `polygon` axis, one row per polygon, and a site's has none. io_read_state refuses the    !
-   ! same files, so a caller whose read failed can say why.                                     !
+   ! Why the state file at `path` cannot start a run of `n_polygon` polygons, or '' when it     !
+   ! can: it cannot be opened, or it holds one site without a `polygon` axis (a file written    !
+   ! before every run had one) and the run has more than one polygon.                           !
    !---------------------------------------------------------------------------------------!
-   function state_file_refusal(path, region) result(why)
+   function state_file_refusal(path, n_polygon) result(why)
       character(len=*), intent(in)  :: path
-      logical,          intent(in)  :: region
+      integer(ik),      intent(in)  :: n_polygon
       character(len=:), allocatable :: why
       integer(c_int) :: ncid, st
-      logical        :: holds_region
+      logical        :: has_axis
       why = ''
       if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) then
          why = 'cannot be opened'
          return
       end if
-      holds_region = has_polygon_axis(ncid)
+      has_axis = has_polygon_axis(ncid)
       st = nc_close(ncid)
-      if (holds_region .and. .not. region)                                                         &
-         why = 'is a region''s state file (one row per polygon); a site run restarts from a site''s'
-      if (region .and. .not. holds_region) why = 'is a site''s state file; a region restarts from a region''s'
+      if (n_polygon > 1_ik .and. .not. has_axis)                                                     &
+         why = 'holds one site without a polygon axis; a run of several polygons needs a row for each'
    end function state_file_refusal
 
    !----- Does the open state file hold a region's state, a `polygon` axis ahead of every other? ---!

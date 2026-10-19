@@ -5,14 +5,15 @@
 ! On the synthetic ED_ERA5land archive, a region over a box that crosses 180 degrees,      !
 ! holds a no-data cell and a mostly-water column, runs its three polygons for twelve days  !
 ! across a month boundary. Then each polygon is run again as a site at its cell (centre,   !
-! orography, UTC). The region's files must hold, in every variable's `polygon = p` slice,  !
-! exactly the site run's series, bit for bit, on every tier, cohort and patch variables    !
-! included, with the fill value past the polygon's own count; and the polygon axis must    !
-! carry the cells' ids and coordinates. The region is run again on four threads and must   !
-! give the same files. A region run in two halves, the second restarted from the first's   !
-! state file, must write the second half's files exactly as the whole run does, and a      !
-! region with a cell masked out must resume from that file, its polygons running on as     !
-! they do in the second half. A region freed without finalizing must open again in the     !
+! orography, UTC), one slow step at a time as the C API steps a run, where the region      !
+! steps a month at a time. The region's files must hold, in every variable's `polygon = p` !
+! slice, exactly the site run's series, bit for bit, on every tier, cohort and patch       !
+! variables included, with the fill value past the polygon's own count; and the polygon    !
+! axis must carry the cells' ids and coordinates. The region is run again on four threads  !
+! and must give the same files. A region run in two halves, the second restarted from the  !
+! first's state file, must write the second half's files exactly as the whole run does,    !
+! and a region with a cell masked out must resume from that file, its polygons running on  !
+! as they do in the second half. A region freed without finalizing must open again in the  !
 ! same variable. Every run takes its soil from the archive's [maps] files                  !
 ! (docs/configuration.md §Input maps), so the three polygons have their own soil depth,    !
 ! layers and bottom boundaries (a leaky base drains at its cell's f_leak), and each site   !
@@ -21,10 +22,10 @@
 ! argument) must refuse each config that breaks a region-mode rule, with that rule's       !
 ! message.                                                                                 !
 !                                                                                          !
-! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that          !
-! directory): an override block is prepended -- meds_toml returns the FIRST match of a              !
-! key -- and the keys the archive or region mode reject are dropped. Everything the test writes     !
-! goes under the work directory given as the first argument.                                         !
+! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that  !
+! directory): an override block is prepended -- meds_toml returns the FIRST match of a key !
+! -- and the keys the archive or region mode reject are dropped. Everything the test       !
+! writes goes under the work directory given as the first argument.                        !
 !==========================================================================================!
 program test_region
    use iso_c_binding,              only : c_int, c_size_t, c_double
@@ -38,10 +39,9 @@ program test_region
    use meds_output_types,          only : output_registry_t, DIM_SCALAR, DIM_COHORT, DIM_PATCH,   &
                                           DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, XTYPE_INT,  &
                                           MISSING_INT
-   use meds_driver,                only : meds_run_t, driver_open, driver_step, driver_finalize,  &
-                                          driver_free, driver_done, DRIVER_OK, DRIVER_ERR_BOUNDS
-   use meds_region,                only : meds_region_t, region_open, region_step_month,          &
-                                          region_done, region_finalize, region_free
+   use meds_region,                only : meds_region_t, region_open, region_step, region_step_month, &
+                                          region_done, region_finalize, region_free, DRIVER_OK,   &
+                                          DRIVER_ERR_BOUNDS
    implicit none
 
    character(len=*), parameter :: TEMPLATE = 'meds_config_site.toml'
@@ -62,8 +62,7 @@ program test_region
    integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_DRAIN, SOIL_BC_DRAIN, SOIL_BC_AQUIFER]
 
    character(len=512)  :: work, meds_main
-   type(meds_region_t) :: reg
-   type(meds_run_t)    :: run
+   type(meds_region_t) :: reg, run
    type(output_registry_t) :: reg_region, reg_site
    character(len=64), allocatable :: files(:), files2(:)
    integer(ik) :: p, st, f, nf, nbad, nf2, f2
@@ -114,15 +113,16 @@ program test_region
    do p = 1_ik, NP
       write(idstr,'(i0)') IDS(p)
       call derive(trim(work)//'/site'//trim(idstr)//'.toml', site_block(p), region=.false.)
-      call driver_open(trim(work)//'/site'//trim(idstr)//'.toml', run, ok, verbose=.false.)
+      call region_open(trim(work)//'/site'//trim(idstr)//'.toml', run, ok, verbose=.false.)
       if (.not. ok) error stop 'test_region: a site run did not open'
-      do while (.not. driver_done(run))
-         call driver_step(run, st)
+      call check_true('a site run is a region of one polygon', size(run%poly) == 1)
+      do while (.not. region_done(run))
+         call region_step(run, st)
          if (st /= DRIVER_OK) error stop 'test_region: a site step failed'
       end do
-      call driver_finalize(run, st)
+      call region_finalize(run, st)
       if (p == 1_ik) reg_site = run%out_files%reg
-      call driver_free(run)
+      call region_free(run)
    end do
 
    !----- The polygon axis. ----------------------------------------------------------------------!
@@ -194,40 +194,41 @@ program test_region
                    nbad == 0_ik .and. f2 >= 2_ik)
 
    !----- A reused run owes no restructuring from the run before it. A run ending on the 1st leaves  !
-   !      its boundary's restructuring pending; driver_open must clear that, or the next stand is     !
-   !      restructured at its first step. It writes a site's state file, which a region refuses     !
+   !      its boundary's restructuring pending; region_open must clear that, or the next stand is     !
+   !      restructured at its first step. It writes a one-polygon state file, which a region refuses  !
    !      below. -------------------------------------------------------------------------------------!
    call derive(trim(work)//'/reuse.toml', '[run]'//nl()//'end_time = "2021-02-01"'//nl()//            &
                '[output]'//nl()//'enabled = false'//nl()//'[state]'//nl()//'write_state = true'//nl()//   &
                'output_dir = "'//trim(work)//'/state"'//nl()//'output_prefix = "site"'//nl()//          &
                site_block(1_ik), region=.false.)
-   call driver_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
+   call region_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
    if (.not. ok) error stop 'test_region: the reuse run did not open'
-   do while (.not. driver_done(run))
-      call driver_step(run, st)
+   do while (.not. region_done(run))
+      call region_step(run, st)
    end do
    call check_true('a run ending on the 1st leaves its boundary''s restructuring owed',              &
-                   run%poly%restructure_pending)
-   call driver_finalize(run, st) ; call driver_free(run)
-   call driver_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
-   call check_true('a reused run opens owing no restructuring', ok .and. .not. run%poly%restructure_pending)
+                   run%poly(1)%restructure_pending)
+   call region_finalize(run, st) ; call region_free(run)
+   call region_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
+   call check_true('a reused run opens owing no restructuring', ok .and. .not. run%poly(1)%restructure_pending)
    !----- ...and its canopy air starts at the bare-ground floor, not the type's default depth. ------!
    call check_true('a bare-ground stand opens at the canopy-air floor',                               &
-                   all(run%poly%site%patch%cas(1:run%poly%site%patch%n)%can_depth                     &
+                   all(run%poly(1)%site%patch%cas(1:run%poly(1)%site%patch%n)%can_depth               &
                        == run%cfg%aero%min_canopy_depth))
-   call driver_finalize(run, st) ; call driver_free(run)
+   call region_finalize(run, st) ; call region_free(run)
 
    !----- A state file that cannot start the run stops it, naming the file: one that is not there,  !
-   !      a region's in a site run (its variables have a polygon axis), and a site's in a region. ---!
+   !      and one without a row for each of the run's polygons (a region's in a site run, whose      !
+   !      polygon is not among the region's, and a site's in a region). -----------------------------!
    call refused('a region restart from a missing state file stops, saying it cannot be opened',     &
                 '[init]'//nl()//'init_mode = 2'//nl()//'restart_file = "'//trim(work)//'/none.nc"'//nl()// &
                 region_block(), .true., .false., trim(work)//'/none.nc cannot be opened')
    call refused('a site run refuses a region state file', '[init]'//nl()//'init_mode = 2'//nl()//      &
                 'restart_file = "'//trim(work)//'/state/half-S-20230101000000.nc"'//nl()//site_block(1_ik), &
-                .false., .false., 'half-S-20230101000000.nc is a region''s state file')
+                .false., .false., 'polygon 0 is not in the state file')
    call refused('a region refuses a site state file', '[init]'//nl()//'init_mode = 2'//nl()//          &
                 'restart_file = "'//trim(work)//'/state/site-S-20210201000000.nc"'//nl()//region_block(), &
-                .true., .false., 'site-S-20210201000000.nc is a site''s state file')
+                .true., .false., 'polygon 35 is not in the state file')
 
    !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !
    !      first month, so its first February step fails. The others finish the month: polygons 1     !
@@ -617,7 +618,8 @@ contains
 
    !----- Region file vs one polygon's site file: the polygon's slice of every live variable. Its    !
    !      first entries are the site's (a cohort or patch axis as long as the site's own count); the  !
-   !      rest of a padded axis is the fill value. The region file has every variable the site has. --!
+   !      rest of a padded axis is the fill value. The region file has every variable the site has;  !
+   !      the site's file has a polygon axis of one. --------------------------------------------------!
    integer(ik) function compare_region_file(rpath, p, spath) result(nbad)
       character(len=*), intent(in) :: rpath, spath
       integer(ik),      intent(in) :: p
@@ -632,10 +634,10 @@ contains
       do j = 1_ik, reg_site%nidx(t)
          k = reg_site%idx_freq(j, t)
          rs = var_shape(rn, reg_site%var(k)%dim, .true.)
-         ss = var_shape(sn, reg_site%var(k)%dim, .false.)
+         ss = var_shape(sn, reg_site%var(k)%dim, .true.)
          call read_var(rn, trim(reg_site%var(k)%name), rs, xr, fr)
          call read_var(sn, trim(reg_site%var(k)%name), ss, xs, fs)
-         nt = rs(1) ; np_ = rs(2) ; na = product(rs(3:)) ; ns = product(ss(2:))   ! C order: axis fastest
+         nt = rs(1) ; np_ = rs(2) ; na = product(rs(3:)) ; ns = product(ss(3:))   ! C order: axis fastest
          if (.not. (fr .and. fs) .or. rs(1) /= ss(1) .or. ns > na) then
             write(*,'(5a)') '  missing or mismatched: ', trim(reg_site%var(k)%name), ' in ', rpath, ''
             nbad = nbad + 1_ik ; cycle
@@ -943,7 +945,7 @@ contains
          n = N_LAYER(p) ; base = (p - 1_ik) * ns
          write(id,'(i0)') IDS(p)
          sn = open_nc(trim(work)//'/out/site'//trim(id)//suffix)
-         call read_var(sn, 'soil_z', [ns], zs, fs)
+         call read_var(sn, 'soil_z', [1_ik, ns], zs, fs)
          call nc_check(nc_close(sn), 'close')
          same_z = fs .and. all(z(base + 1_ik : base + n) == zs(1:n)) .and.                           &
                   all(z(base + n + 1_ik : base + ns) > 1.0e30_c_double)      ! the loop stops at a miss

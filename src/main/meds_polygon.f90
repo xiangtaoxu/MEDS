@@ -8,8 +8,8 @@
 ! polygon of a run shares -- the forcing source, the output files -- is passed in read-only. Its    !
 ! output buffers are passed in too: the run holds them, one per polygon in a                       !
 ! contiguous array, so the I/O phase takes that array whole rather than a component section.      !
-! A site run (meds_driver) is one polygon; a region (meds_region) is many, stepped by the same     !
-! polygon_step, so a polygon of a region computes exactly what a site run at its cell computes.    !
+! A run (meds_region) is one polygon or many, each stepped by polygon_step, so a polygon of a      !
+! region computes exactly what a one-polygon run at its cell computes.                            !
 !                                                                                          !
 ! polygon_step does no file work: the caller loads the step's forcing before it (met_prefetch)     !
 ! and writes the queued output records after a month closes.                                       !
@@ -46,7 +46,6 @@ module meds_polygon
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
    use meds_constants,              only : n_soil_layer_max
-   use meds_soil_column_config,     only : soil_params_t
    use meds_allometry,              only : HEIGHT_CHAVE
    use meds_biophysics_opts,        only : SOIL_BC_AQUIFER
    use meds_forcing_types,          only : met_cells_t
@@ -497,46 +496,40 @@ contains
    end subroutine soil_carbon_steady
 
    !---------------------------------------------------------------------------------------!
-   ! open_output_files -- lay out one output file set: the registry from the config, a site's soil   !
-   ! curve (the one the fast loop integrates on, whose layers its files carry), the per-variable     !
-   ! overrides of [output].io_config and, for a region's files, the polygon axis. A site run's files !
-   ! and a region's come through here; each polygon that writes into the set then calls             !
-   ! attach_output, which gives a region's files that polygon's own layers and map inputs.          !
+   ! open_output_files -- lay out one output file set: the registry from the config, the         !
+   ! per-variable overrides of [output].io_config, and the polygon axis with each polygon's cell. !
+   ! Each polygon that writes into the set then calls attach_output, which gives the files that   !
+   ! polygon's own layers and map inputs.                                                         !
    !---------------------------------------------------------------------------------------!
-   subroutine open_output_files(cfg, files, verbose, soil, cells, polygon_id)
+   subroutine open_output_files(cfg, files, verbose, cells, polygon_id)
       type(meds_config_t),  intent(in)    :: cfg
       type(output_files_t), intent(inout) :: files
       logical,              intent(in)    :: verbose
-      type(soil_params_t), optional, intent(in) :: soil          !< a site's soil column (its fast context)
-      type(met_cells_t),   optional, intent(in) :: cells         !< a region's cells ...
-      integer(ik),         optional, intent(in) :: polygon_id(:) !< ... and their polygon ids
+      type(met_cells_t),    intent(in)    :: cells          !< the run's cells, one per polygon ...
+      integer(ik),          intent(in)    :: polygon_id(:)  !< ... and their polygon ids
       integer(ik) :: n
       call manager_setup(files, cfg)
-      if (cfg%fast_biophysics_on .and. present(soil)) call manager_set_soil_params(files%diag, soil)
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
-      if (present(cells)) then
-         n = cells%ncell
-         files%n_polygon   = n
-         files%polygon_id  = polygon_id
-         files%polygon_row = cells%row ; files%polygon_col = cells%col
-         files%polygon_lat = cells%lat ; files%polygon_lon = cells%lon
-         allocate(files%polygon_n_soil(n), source=0_ik)
-         allocate(files%polygon_soil_z(n_soil_layer_max, n), source=0.0_wp)
-         allocate(files%polygon_soil_face(n_soil_layer_max + 1_ik, n), source=0.0_wp)
-         allocate(files%polygon_soil_depth(n), files%polygon_deep_temp(n), source=0.0_wp)
-         allocate(files%polygon_bottom_bc(n), source=0_ik)
-         allocate(files%polygon_drain_factor(n), source=0.0_wp)
-         if (cfg%allom%height_form == HEIGHT_CHAVE) allocate(files%polygon_chave_e(n), source=0.0_wp)
-      end if
+      n = cells%ncell
+      files%n_polygon   = n
+      files%polygon_id  = polygon_id
+      files%polygon_row = cells%row ; files%polygon_col = cells%col
+      files%polygon_lat = cells%lat ; files%polygon_lon = cells%lon
+      allocate(files%polygon_n_soil(n), source=0_ik)
+      allocate(files%polygon_soil_z(n_soil_layer_max, n), source=0.0_wp)
+      allocate(files%polygon_soil_face(n_soil_layer_max + 1_ik, n), source=0.0_wp)
+      allocate(files%polygon_soil_depth(n), files%polygon_deep_temp(n), source=0.0_wp)
+      allocate(files%polygon_bottom_bc(n), source=0_ik)
+      allocate(files%polygon_drain_factor(n), source=0.0_wp)
+      if (cfg%allom%height_form == HEIGHT_CHAVE) allocate(files%polygon_chave_e(n), source=0.0_wp)
       call manager_finalize(files)
    end subroutine open_output_files
 
    !----- A polygon's share of an output file set: its buffers, which take the polygon's own soil !
-   !      curve for the derived soil diagnostics, and the diagnostic blocks its site must         !
-   !      accumulate for the set's variables. In a region's set, also its row of the per-polygon  !
-   !      variables: its layers and the inputs its cell's maps gave it, as it runs them. A region !
-   !      always runs the fast loop, so its column is built. --------------------------------------!
+   !      curve for the derived soil diagnostics, the diagnostic blocks its site must accumulate   !
+   !      for the set's variables, and its row of the per-polygon variables: its layers and the    !
+   !      inputs its cell's maps gave it, as it runs them. ------------------------------------------!
    subroutine attach_output(files, bufs, poly)
       type(output_files_t),   intent(inout) :: files
       type(output_buffers_t), intent(inout) :: bufs
@@ -546,7 +539,6 @@ contains
       if (poly%cfg%fast_biophysics_on)                                                          &
          call manager_set_soil_params(bufs%diag, poly%fast_ctx%col_config%soil)
       call activate_site_diag(files, poly%site)
-      if (files%n_polygon == 0_ik) return
       p = poly%cell
       associate (soil => poly%fast_ctx%col_config%soil, cfg => poly%cfg)
          files%polygon_n_soil(p)       = soil%n_active
