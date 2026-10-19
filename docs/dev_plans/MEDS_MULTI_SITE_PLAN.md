@@ -13,8 +13,9 @@
 - D2 — the polygon's state is `polygon_t` (argument `poly`); its run machinery is `polygon_run_t`.
 - D12 — one run path: a run is a region of one polygon or many (S0, §3.6).
 - D13 — output always writes the `polygon` dimension, a one-polygon run included.
-- D14 — forcing comes only in a gridded format: the MEDS `(time, grid)` file (`ED_default`) or the
-  ERA5-Land archive; a tower's forcing is a file of one grid.
+- D14 — two forcing formats, each with its own role: the ERA5-Land archive, for a site or a region,
+  and the site forcing file (`ED_default`), for a site only, read at one grid (`grid_index`). A tower's
+  measurements stay in the site file, with their own measurement heights.
 
 ---
 
@@ -222,9 +223,12 @@ region's"). `meds_main` picks one by `[run].mode`, and the restart and output co
   and output code (about 25 lines).
 - **Stepping.** The region steps a month at a time, its polygons in parallel; the C API and Python
   step one slow step at a time. The region gains a one-step entry beside the monthly one.
-- **Forcing (D14).** Only gridded sources: the MEDS `(time, grid)` file (`ED_default`) and the ERA5-Land
-  archive. A tower's forcing is a file of one grid, as it is today. The region takes its polygons from
-  either source: the grids within a box, or the one nearest a point.
+- **Forcing (D14).** Two formats, as today. The ERA5-Land archive serves a site (the cell nearest the
+  `[site]`) or a region (the cells of a box). The site forcing file (`ED_default`) serves a site only,
+  at one grid (`grid_index`, or the grid nearest `[site]`): a tower's measurements, or a reanalysis
+  extracted at a point. Its heights (`[forcing].tq_height`, `wind_height`, `height_above`) are the
+  run's, which suits one site's instruments; a region over a file's grids would need them per grid, so
+  a region stays on the archive (owner, 2026-10-18).
 - **Output and restart (D13)** always carry the `polygon` dimension, a one-polygon run included, as the
   region files do today: one layout for every run, in the order ED2's output also follows (polygon,
   site, patch, cohort). A one-polygon run's files change layout once; their values do not change.
@@ -359,7 +363,6 @@ soil columns.
 | Step | What | Results |
 |---|---|---|
 | **S0** | One run path (§3.6): `meds_region_t` runs one polygon or many; `meds_driver` and `meds_run_t` go; `meds_polygon_t` becomes `polygon_run_t` beside the state; a one-step entry for the C API; the `polygon` dimension in every output and restart file. | Values bit-identical; one-polygon files gain the `polygon` dimension |
-| **S0b** | `ED_default` sources in a region: the file reader holds the series of every grid the region selects, and the region takes the grids within its box (§10). | New behaviour; S0's results unchanged |
 | **S1** | `polygon_t` holds the three blocks and the polygon-level numbers; `site_block` with one site of area 1 covering every patch; `owner_site` = 1; `sort_patches` sorts by (site, age); `rebuild_site_map`. The 120 routines take `polygon_t` (`site%` → `poly%`). Every polygon total weights by `patch_polygon_area` (§3.4). | Bit-identical |
 | **S2** | Each site owns its surface (§5), its own layer grid included: the soil column moves from `cfg` to the site block, the fast context and the slow ledger hold one soil column per site, the 7 call sites read the patch's site's. | Bit-identical |
 | **S3** | Several sites run: the structural operations by site slice (§7.2), initialization per site (bare ground or census by `site_id`), the restart's `site` axis, `patch_site`, per-site soil-layer output (D11) and optional per-site stand output. Tests: two identical sites with areas 0.3 and 0.7 reproduce one site's polygon output, to round-off; two soils give two different stands; thread-count invariance. | Bit-identical with one site |
@@ -389,7 +392,7 @@ takes a site) and the simplest to verify; S3 holds the new behaviour.
 | D11 | Soil-layer output layout | **Decided:** state `(time, site, soil_layer)`; geometry and site properties without time |
 | D12 | Run paths | **Decided:** one; a run is a region of one polygon or many (S0) |
 | D13 | `polygon` dimension | **Decided:** always written |
-| D14 | Forcing formats | **Decided:** gridded only; a tower's forcing is a one-grid `ED_default` file |
+| D14 | Forcing formats | **Decided:** two: the archive (site or region) and the site file (`ED_default`, site only, one grid); a region stays on the archive |
 
 ---
 
@@ -411,10 +414,9 @@ restarted from a new one-polygon state file runs as one restarted from the old f
 
 Departures from the plan:
 
-- **`ED_default` sources in a region moved to S0b.** An `ED_default` file binds to one grid when it
-  opens (`grid_index`, or the grid nearest `[site]`); a region over its grids needs the reader to hold
-  several grids' series and the region to select the grids in its box. That is new behaviour rather
-  than a refactor, so it has a step of its own. Until then a region needs the ERA5-Land archive.
+- **`ED_default` sources in a region are dropped** (owner, 2026-10-18; D14). The site file stays a
+  site's: one grid, read by `grid_index`, with the run's measurement heights. A region needs the
+  ERA5-Land archive, as before.
 - **`id`, the location and the restructure flags stay in `polygon_run_t`** until S1 creates
   `polygon_t` (§3.3).
 - **The `meds_driver` CMake library keeps its name**; it now builds `meds_polygon` and `meds_region`.
