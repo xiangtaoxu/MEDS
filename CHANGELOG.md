@@ -25,7 +25,7 @@ A site run divides its polygon into sites with `[[sites]]` tables (#453). Each s
 its elevation and slope, and its phenology and leaf acclimation its own air (#454). A cohort's
 tissue state is its leaf and wood energy, with its temperatures derived from them, and the water it
 sheds takes its enthalpy to the ground (#457). `meds_constants` is grouped by kind, and every name in it
-is lower case (#NNN).
+is lower case (#458).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -92,14 +92,14 @@ is lower case (#NNN).
   `slow_tissue_heat` is `slow_tissue_energy`; `tissue_coefficients_t%water_store_enth` is the
   per-cohort `leaf_water_enth` and `wood_water_enth`; `veg_thermal_params_t` loses `c_leaf` and
   `c_wood_dry`, and `tissue_dry_heat_capacity` (`meds_therm_lib`) gives the dry capacities.
-- **Fortran code that names three constants uses their new names** (#NNN): `halfpi` is `pio2`,
+- **Fortran code that names three constants uses their new names** (#458): `halfpi` is `pio2`,
   `stefan` is `stefan_boltzmann` and `vonkarman` is `von_karman`. `C2B_WOOD`, `TISSUE_C_LEAF`,
   `TISSUE_C_WOOD_DRY`, `umol_2_kgC` and `kgCday_2_umols` are spelled in lower case; Fortran ignores
   case, so the old spellings still compile.
 
 ### Changed
 
-- **`meds_constants` is grouped by kind** (#NNN): mathematical constants, physical constants
+- **`meds_constants` is grouped by kind** (#458): mathematical constants, physical constants
   (universal; dry air and water vapour; liquid water and ice; leaf diffusion; plant tissue heat),
   reference conditions, conversions (time, units), array sizes and floating-point guards. Every name
   is lower case. Outputs are unchanged bit for bit.
@@ -311,7 +311,7 @@ is lower case (#NNN).
 - **`scale_cohort_ground_fields`** (#457) and the film-conservation stops in a split and a patch
   fusion: the films are per plant.
 - **`wood_thermal_water`** (#457), the sapwood share of the wood store's water (see Changed).
-- **`mon_per_yr`, `day_per_mon`, `umols_per_kgCyr` and `k_air`** (#NNN), which nothing used, and
+- **`mon_per_yr`, `day_per_mon`, `umols_per_kgCyr` and `k_air`** (#458), which nothing used, and
   `area_tol` from `meds_constants`: the end-of-run patch-area check in `meds_region`, its one user,
   holds it as `AREA_TOL`, so `meds_constants` holds no tolerance.
 
