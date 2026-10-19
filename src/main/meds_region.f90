@@ -29,7 +29,7 @@ module meds_region
    use meds_constants,              only : day_sec, yr_day, area_tol
    use meds_numerics,               only : ascending_order
    use meds_config,                 only : meds_config_t, validate_config, INIT_CENSUS, INIT_RESTART,  &
-                                           RUN_MODE_REGION, soil_maps_on
+                                           RUN_MODE_REGION, soil_maps_on, site_config
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
@@ -39,8 +39,8 @@ module meds_region
    use meds_demography_update,      only : update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_vegetation_dynamics,    only : advance_plant_traits, reacclimate_plant_traits
-   use meds_init,                   only : init_bare_ground, seed_bare_ground, init_from_census,      &
-                                           restructure_census_stand
+   use meds_init,                   only : init_bare_ground, init_bare_sites, seed_bare_ground,       &
+                                           init_from_census, restructure_census_stand
    use meds_forcing_types,          only : met_source_t, met_cells_t
    use meds_forcing_config,         only : MET_PATH_LEN, MET_BACKEND_ED_ERA5LAND
    use meds_met_driver,             only : met_open, met_close, met_prefetch, MET_OK
@@ -115,6 +115,8 @@ contains
       integer(ik), allocatable   :: ids(:), file_ids(:), slot(:)
       type(map_inputs_t)         :: inputs
       type(meds_config_t)        :: pcfg
+      type(meds_config_t), allocatable :: site_cfg(:)     !< [[sites]]: each site's configuration ...
+      real(wp),            allocatable :: site_area(:)    !< ... and share of the polygon
       character(len=:), allocatable :: msg
       type(meds_time_t)          :: restart_time
       logical                    :: found, fast_found, region
@@ -227,14 +229,17 @@ contains
                call validate_config(pcfg)
             end if
             fast_found = .false.
+            !----- Its sites: [[sites]]'s, each with its configuration and share, or one site. ----------!
+            if (allocated(site_cfg)) deallocate(site_cfg, site_area)
+            if (allocated(pcfg%sites)) call polygon_sites(pcfg, site_cfg, site_area)
             select case (cfg%init_mode)
             case (INIT_RESTART)
                if (slot(p) > 0_ik) then
                   call io_read_state(poly, pcfg, trim(cfg%init_restart_file), restart_time, found,      &
-                                     fast_found=fast_found, polygon=slot(p))
+                                     fast_found=fast_found, polygon=slot(p), site_cfg=site_cfg)
                else
                   call io_read_state(poly, pcfg, trim(cfg%init_restart_file), restart_time, found,      &
-                                     fast_found=fast_found)
+                                     fast_found=fast_found, site_cfg=site_cfg)
                end if
                if (.not. found) then
                   write(*,'(5a)') ' init  : restart (mode 2): cannot read ', trim(polygon_name(run)),      &
@@ -244,7 +249,13 @@ contains
                reg%now = restart_time
                if (reg%verbose .and. n == 1_ik) call report_restart(cfg, reg%now, fast_found, poly%restructure_pending)
             case (INIT_CENSUS)
-               call init_from_census(poly, pcfg, trim(cfg%init_census_file), found, why=msg)
+               if (allocated(site_cfg)) then
+                  call init_from_census(poly, pcfg, trim(cfg%init_census_file), found, why=msg,            &
+                                        site_ids=pcfg%sites%census_site_id, site_cfg=site_cfg,           &
+                                        site_area=site_area)
+               else
+                  call init_from_census(poly, pcfg, trim(cfg%init_census_file), found, why=msg)
+               end if
                if (.not. found) then
                   write(*,'(4a)') ' init  : census (mode 1): the census file ', trim(cfg%init_census_file), &
                                   ' ', msg
@@ -262,7 +273,11 @@ contains
                      poly%patch%n, ' patches, ', poly%cohort%n, ' cohorts (at most ',                    &
                      max_cohort_count(poly), ' in a patch)'
             case default
-               call init_bare_ground(poly, pcfg, N_PATCH_INIT)
+               if (allocated(site_cfg)) then
+                  call init_bare_sites(poly, pcfg, spread(N_PATCH_INIT, 1, size(site_cfg)), site_cfg, site_area)
+               else
+                  call init_bare_ground(poly, pcfg, N_PATCH_INIT)
+               end if
                call seed_bare_ground(poly, pcfg)
                if (reg%verbose .and. n == 1_ik) write(*,'(a)') ' init  : bare ground (mode 0)'
             end select
@@ -271,7 +286,7 @@ contains
             poly%latitude_deg  = cells%lat(p)
             poly%longitude_deg = cells%lon(p)
             poly%elevation_m   = cells%elevation(p)
-            poly%site%surface(1:poly%site%n)%elevation_m = poly%elevation_m   ! its sites, where it is
+            call set_site_terrain(poly, pcfg)
 
             !----- Census cohorts sit in an established stand but carry NO trait history, so with     !
             !      plasticity on their leaf traits acclimate to their light INSTANTANEOUSLY (after the !
@@ -346,6 +361,37 @@ contains
       end associate
       ok = .true.
    end subroutine region_open
+
+   !----- A polygon's sites from its configuration's [[sites]]: each one's configuration (the        !
+   !      polygon's, with the site's own ground when it has one) and its share of the polygon, the   !
+   !      shares made to sum to exactly 1. ----------------------------------------------------------!
+   subroutine polygon_sites(pcfg, site_cfg, site_area)
+      type(meds_config_t),              intent(in)  :: pcfg
+      type(meds_config_t), allocatable, intent(out) :: site_cfg(:)
+      real(wp),            allocatable, intent(out) :: site_area(:)
+      integer(ik) :: is
+      allocate(site_cfg(size(pcfg%sites)))
+      do is = 1_ik, size(pcfg%sites, kind=ik)
+         site_cfg(is) = site_config(pcfg, is)
+      end do
+      site_area = pcfg%sites%area_fraction / sum(pcfg%sites%area_fraction)
+   end subroutine polygon_sites
+
+   !----- Each site's terrain: the polygon's elevation, flat, unless its [[sites]] table gives its own. !
+   subroutine set_site_terrain(poly, pcfg)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: pcfg
+      integer(ik) :: is
+      poly%site%surface(1:poly%site%n)%elevation_m = poly%elevation_m
+      if (.not. allocated(pcfg%sites)) return
+      do is = 1_ik, poly%site%n
+         associate (spec => pcfg%sites(is), surf => poly%site%surface(is))
+            if (spec%has_elevation) surf%elevation_m = spec%elevation_m
+            surf%slope_deg  = spec%slope_deg
+            surf%aspect_deg = spec%aspect_deg
+         end associate
+      end do
+   end subroutine set_site_terrain
 
    !----- A region's cells: the box's valid cells with enough land, in row-major order, less those   !
    !      the cell mask drops. .false. (after saying why) when none is left or a file cannot be read. !

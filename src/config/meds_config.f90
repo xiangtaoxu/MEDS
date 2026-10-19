@@ -33,7 +33,7 @@ module meds_config
    implicit none
    private
 
-   public :: meds_config_t, hydraulics_config_t
+   public :: meds_config_t, hydraulics_config_t, site_spec_t, site_config
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps
@@ -139,6 +139,24 @@ module meds_config
                                                        !<   10 m/g dry for tropical fine roots (Panama, GRooT) * 2
       real(wp) :: fine_root_radius     = 2.5e-4_wp     !< [m] fine-root radius: tropical diameters 0.4-0.6 mm
    end type hydraulics_config_t
+
+   !----- One site of the polygon ([[sites]]; docs/configuration.md, Several sites): its share of !
+   !      the polygon, its terrain, the census rows it reads and, when its table sets any of      !
+   !      [soil]'s column keys, its own ground, [soil]'s values for each key it leaves out. ------!
+   type :: site_spec_t
+      real(wp)    :: area_fraction  = 0.0_wp      !< [-] its share of the polygon
+      logical     :: has_elevation  = .false.     !< .false.: the polygon's elevation
+      real(wp)    :: elevation_m    = 0.0_wp      !< [m]
+      real(wp)    :: slope_deg      = 0.0_wp      !< [degrees] from horizontal
+      real(wp)    :: aspect_deg     = 0.0_wp      !< [degrees] clockwise from north
+      integer(ik) :: census_site_id = 0_ik        !< the census rows it reads; 0: not given
+      logical     :: own_ground     = .false.     !< .false.: the polygon's ground
+      type(soil_column_config_t) :: soil_column
+      integer(ik) :: water_bottom_bc = 0_ik       !< SOIL_BC_*
+      real(wp)    :: drain_factor    = 1.0_wp     !< [-]
+      real(wp)    :: deep_temp       = 0.0_wp     !< [K]
+      real(wp)    :: deep_depth      = 0.0_wp     !< [m]
+   end type site_spec_t
 
    type :: meds_config_t
       !----- Time stepping (run bounded by start/end calendar dates). ----------------------!
@@ -361,6 +379,8 @@ module meds_config
       !----- The physical soil column ([soil]) and the plant hydraulics ([hydraulics]). ---------!
       type(soil_column_config_t) :: soil_column  !< [soil] the column's layers and texture
       type(hydraulics_config_t) :: hydraulics
+      !----- The polygon's sites ([[sites]]); not allocated: one site, the polygon, on [soil]. ---!
+      type(site_spec_t), allocatable :: sites(:)
 
       !----- Fast-loop biophysics run-config ([soil]/[snow]/[aerodynamics] and the solver settings  !
       !      in [fast], every key optional, defaults in meds_biophysics_opts). build_fast_context   !
@@ -548,13 +568,64 @@ contains
       end if
    end function pft_wstress_psi_close
 
+   !----- Site `is`'s configuration: the polygon's, with the site's ground when its table gives  !
+   !      one. make_site_surface builds the site's surface from it. -----------------------------!
+   function site_config(cfg, is) result(scfg)
+      type(meds_config_t), intent(in) :: cfg
+      integer(ik),         intent(in) :: is
+      type(meds_config_t)             :: scfg
+      scfg = cfg
+      if (.not. cfg%sites(is)%own_ground) return
+      scfg%soil_column       = cfg%sites(is)%soil_column
+      scfg%soil%bottom_bc    = cfg%sites(is)%water_bottom_bc
+      scfg%soil%drain_factor = cfg%sites(is)%drain_factor
+      scfg%energy%deep_temp  = cfg%sites(is)%deep_temp
+      scfg%energy%deep_depth = cfg%sites(is)%deep_depth
+   end function site_config
+
    !---------------------------------------------------------------------------------------!
-   ! Validate a configuration; halt on a setting that would corrupt the run.               !
+   ! Validate a configuration; halt on a setting that would corrupt the run. Each site     !
+   ! with its own ground is validated as the run with that ground.                         !
    !---------------------------------------------------------------------------------------!
-   subroutine validate_config(cfg)
+   recursive subroutine validate_config(cfg)
       type(meds_config_t), intent(in) :: cfg
       character(len=*), parameter :: tag = 'meds_config: '
       integer(ik) :: ipft
+
+      !----- [[sites]]: shares of the polygon that sum to 1, a terrain that is a surface, the      !
+      !      census rows of each site in a census run, and a valid ground for each site that has   !
+      !      its own. A region takes one site per cell until a site map gives its sites. ----------!
+      if (allocated(cfg%sites)) then
+         sites: block
+            type(meds_config_t) :: scfg
+            integer(ik) :: is, ns
+            ns = size(cfg%sites, kind=ik)
+            if (cfg%run_mode == RUN_MODE_REGION)                                                     &
+               error stop tag//'a region refuses [[sites]]: each cell is one site until a site map gives its sites'
+            if (any(cfg%sites%area_fraction <= 0.0_wp)) error stop tag//'[[sites]].area_fraction must be > 0'
+            if (abs(sum(cfg%sites%area_fraction) - 1.0_wp) > 1.0e-6_wp)                             &
+               error stop tag//'the [[sites]] area_fraction values must sum to 1'
+            if (any(cfg%sites%slope_deg < 0.0_wp .or. cfg%sites%slope_deg >= 90.0_wp))              &
+               error stop tag//'[[sites]].slope must lie in [0, 90) degrees'
+            if (any(cfg%sites%aspect_deg < 0.0_wp .or. cfg%sites%aspect_deg > 360.0_wp))            &
+               error stop tag//'[[sites]].aspect must lie in [0, 360] degrees'
+            if (cfg%init_mode == INIT_CENSUS) then
+               if (any(cfg%sites%census_site_id <= 0_ik))                                           &
+                  error stop tag//'a census run needs [[sites]].census_site_id > 0 for every site'
+               do is = 2_ik, ns
+                  if (any(cfg%sites(1:is - 1_ik)%census_site_id == cfg%sites(is)%census_site_id))   &
+                     error stop tag//'two [[sites]] read the same census_site_id'
+               end do
+            end if
+            do is = 1_ik, ns
+               if (.not. cfg%sites(is)%own_ground) cycle
+               write(*,'(a,i0,a)') ' config: checking the ground of [[sites]] ', is, ''
+               scfg = site_config(cfg, is)
+               deallocate(scfg%sites)
+               call validate_config(scfg)
+            end do
+         end block sites
+      end if
 
       !----- [hydraulics]: the rooting traits set the root profile over the soil column, and the    !
       !      sapwood conductance needs a positive conductivity and path factor, shared and per PFT. --!
