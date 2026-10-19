@@ -18,7 +18,6 @@ program test_allometry_defaults
    use meds_toml,         only : toml_table_t, toml_parse_file, toml_has, toml_real, toml_string, toml_real_array
    use meds_allometry,    only : allometry_t, HEIGHT_POWER
    use meds_test_support, only : banner, check, check_close
-   use meds_pft_params,   only : pft_table_t, alloc_pft_table
    implicit none
 
    real(wp), parameter :: c2b              = 2.0_wp          ! ED2 C2B, carbon -> biomass
@@ -27,7 +26,6 @@ program test_allometry_defaults
    real(wp), parameter :: ed2_bl_xx_scale  = 0.46769540_wp   ! ED2 c14f15_bl_xx(1)
    real(wp), parameter :: rtol             = 1.0e-12_wp
    type(toml_table_t)  :: t
-   type(pft_table_t)   :: pft
    character(len=512)  :: arg
    logical             :: ok
    type(allometry_t)   :: d          ! a record at its initializers
@@ -73,13 +71,6 @@ program test_allometry_defaults
    call check_close(d%gmm_a, 58.0_wp, rtol, 'gmm_a initializer = Cano et al. (2019) eq. 7')
    call check_close(d%gmm_b, 0.73_wp, rtol, 'gmm_b initializer = Cano et al. (2019) eq. 7')
    call check_close(d%gmm_k, 21.8_wp, rtol, 'gmm_k initializer = Cano et al. (2019) eq. 7')
-
-   !----- Reproduction: the shipped config omits the optional fraction, so it takes the table's  !
-   !      default, 0.33 of the local maximum height. ---------------------------------------------!
-   call check(.not. toml_has(t, 'pft.reproduction_height_fraction'),                              &
-              'meds_config_pft.toml leaves pft.reproduction_height_fraction at its default')
-   call alloc_pft_table(pft, 1)
-   call check_close(pft%reproduction_height_fraction, 0.33_wp, rtol, 'reproduction_height_fraction default = 0.33')
 
    print '(a)', 'test_allometry_defaults: ALL PASSED'
 

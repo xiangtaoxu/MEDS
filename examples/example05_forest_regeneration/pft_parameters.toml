@@ -45,8 +45,7 @@ stem_resp_sapwood25 = [31.25, 31.25, 31.25]   # [umol CO2/m3 sapwood/s @25C]
 # litterfall (Chave et al. 2010, Table 1, Leigh 1999's traps), 2-5 % of a tropical forest's NPP
 # (Malhi et al. 2011: 5-15 % of canopy NPP).
 reproduction_investment_fraction = [0.10, 0.10, 0.10]   # [--] growth fraction to reproduction ...
-reproduction_height_fraction = 0.1595434651742923   # [--] ... from this share of the local maximum height
-                                                    #      (calibrate_growth.py; 5.27 m)
+min_repro_height   = [5.27, 5.27, 5.27]   # [m] ... from this height (calibrate_growth.py)
 
 #----- Sink limit on wood growth (docs/science/plant_carbon_allocation.md eq. (4)): a cohort's diameter
 #      grows at most max_absolute_growth_rate x dbh[cm]^0.5 a year, and the carbon it cannot use is

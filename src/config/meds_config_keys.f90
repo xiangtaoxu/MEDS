@@ -238,7 +238,10 @@ module meds_config_keys
       retired_key_t('pft.aboveground_frac', 'moved to allometry.aboveground_frac'//ALLOM_PFT),  &
       retired_key_t('allometry.light_ext', 'renamed demography.light_ext_coeff_fusefiss, in the '// &
                     'main config (default 0.5): the extinction of the light profiles patch fusion '// &
-                    'compares, which is all it ever set') ]
+                    'compares, which is all it ever set'),                                       &
+      retired_key_t('pft.reproduction_height_fraction', 'replaced by pft.min_repro_height [m], one '// &
+                    'per PFT: the height a cohort reproduces from, worked out outside MEDS (the old '// &
+                    'rule was the fraction times the height of a 100 cm tree, capped at hgt_max)') ]
 
    !----- The [soil] keys a [[sites]] table may set, under the same names: the site's soil column !
    !      and its bottom. The ground's surface and its thermal boundary are the run's. -----------!

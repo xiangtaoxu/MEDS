@@ -90,13 +90,12 @@ kernel funds, in order:
 3. **reproduction** — a fraction $`f_{\mathrm{repro}}`$ of the post-storage residual (zero below the maturity height);
 4. **wood** — the residual sink: everything left becomes structural growth.
 
-Wood needs no explicit demand (it simply absorbs the remainder), and any cohort below the maturity height
-sets $`f_{\mathrm{repro}}=0`$. The maturity height is a share, `reproduction_height_fraction` (default 0.33), of the **local maximum
-height** $`H_{\max}`$, the height of a 100 cm tree on the run's height curve, capped at `hgt_max`
-(`meds_allometry::local_hmax`). Where the local allometry makes trees short, they mature short: this is
-the relative size at onset of maturity of Thomas (1996), whose 37 Malaysian species matured at 0.20–0.75
-of their asymptotic height, 0.42 on average. Under Chave et al. (2014)'s curve the stress index E scales
-every height by the same factor, so a given share of $`H_{\max}`$ falls at the same diameter at every site.
+Wood needs no explicit demand (it simply absorbs the remainder), and any cohort below its PFT's maturity
+height, `min_repro_height` [m], sets $`f_{\mathrm{repro}}=0`$. The height is set outside MEDS, one per
+PFT. Thomas (1996)'s relative size at onset of maturity is a guide: his 37 Malaysian species matured at
+0.20–0.75 of their asymptotic height, 0.42 on average, so a PFT's `min_repro_height` can be that share of
+the height it reaches on its own curve. The height is the same at every site: where Chave et al.
+(2014)'s stress index E makes trees short, a cohort reaches it at a larger diameter, or not at all.
 
 ### The size allometry
 
@@ -255,7 +254,7 @@ litter, from which the soil-carbon pools and $`R_h`$ follow (`soil_carbon.md`).
 | $`c_s`$ | `storage_cushion` | storage target as a multiple of the leaf + fine-root target |
 | $q$ | `root_to_leaf_ratio` | fine-root : leaf target ratio |
 | $`f_{\mathrm{repro}}`$ | `reproduction_investment_fraction` | fraction of the residual → reproduction (above maturity) |
-| — | `reproduction_height_fraction` (scalar, optional, default 0.33) | maturity height as a share of the local maximum height |
+| — | `min_repro_height` [m] | the height a cohort reproduces from |
 | $`k_s`$ | `storage_turnover_rate` (optional, default 0 = off) | storage maintenance, eq. (2) [yr⁻¹] |
 | $`f_r`$ | `retained_carbon_fraction` (optional, default 0.3) | share of leaf and fine-root loss resorbed to storage, eq. (3) |
 | $`r_{\max}`$ | `max_relative_growth_rate` (optional, default 0 = off) | sink limit on wood growth per unit wood carbon [yr⁻¹]; the residual above it is exuded |

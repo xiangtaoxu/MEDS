@@ -4,8 +4,7 @@ program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
                                 dbh_to_leaf_area, allometry_t,                                &
-                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM, HEIGHT_CHAVE, &
-                                local_hmax
+                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM, HEIGHT_CHAVE
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -135,18 +134,6 @@ program test_allometry
    !----- A PFT's own log-quadratic coefficients replace Chave's: a flatter curve is shorter. --!
    call check(dbh_to_height(allometry_t(height_form = HEIGHT_CHAVE, chave_b = 0.6_wp), 30.0_wp) <              &
               dbh_to_height(allometry_t(height_form = HEIGHT_CHAVE), 30.0_wp), 'a smaller chave_b gives shorter trees')
-
-   !=== The local maximum height is a 100 cm tree's height, capped at hgt_max. Chave's E scales it  !
-   !    like every other height, so a fixed share of it falls at the same diameter at any E. ======!
-   call check_close(local_hmax(allom), dbh_to_height(allom, 100.0_wp), 0.0_wp,                                    &
-                    'local_hmax is the height of a 100 cm tree')
-   call check_close(local_hmax(capped(allom, 20.0_wp)), 20.0_wp, 0.0_wp, 'local_hmax caps at hgt_max')
-   h        = local_hmax(allom)
-   dbh_back = height_to_dbh(allom, 0.4_wp * h)
-   allom%chave_e = 1.0_wp
-   call check_close(local_hmax(allom), h * exp(-0.8_wp), 1.0e-12_wp, 'local_hmax scales by exp(-dE)')
-   call check_close(height_to_dbh(allom, 0.4_wp * local_hmax(allom)), dbh_back, 1.0e-9_wp,                         &
-                    'a share of local_hmax falls at the same dbh at any E')
 
    !=== Each PFT has its own record: a short gMM understorey PFT and a power-law PFT keep their   !
    !    own heights and caps side by side (elemental over the records). =====================!

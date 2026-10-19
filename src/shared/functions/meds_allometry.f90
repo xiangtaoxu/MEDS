@@ -18,7 +18,7 @@ module meds_allometry
    private
 
    public :: allometry_t
-   public :: dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh, dbh_to_leaf_area, local_hmax
+   public :: dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh, dbh_to_leaf_area
    public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: storage_carbon_target
    public :: dbh_to_wai, sapwood_fraction
@@ -27,9 +27,6 @@ module meds_allometry
    !----- Height curves: a power law, a saturating gMM, or the log-quadratic of Chave et   !
    !      al. (2014) eq. 6a. -------------------------------------------------------------!
    integer(ik), parameter :: HEIGHT_POWER = 1_ik, HEIGHT_GMM = 2_ik, HEIGHT_CHAVE = 3_ik
-   !----- The local maximum height is the height of a tree this wide on the local curve:   !
-   !      one definition for every curve, saturating or not (Chave's has no asymptote). ---!
-   real(wp),    parameter :: HMAX_DBH  = 100.0_wp     !< [cm]
    !----- Newton's method for agb -> dbh under the gMM height (agb_to_dbh_gmm). -----------!
    integer,     parameter :: NEWTON_MAX_ITER = 50
    real(wp),    parameter :: NEWTON_TOL      = 1.0e-12_wp    !< [ln cm] change in ln(dbh)
@@ -82,14 +79,6 @@ contains
       end select
       h = min(h, allom%hgt_max)
    end function dbh_to_height
-
-   !----- The local maximum height [m]: the height of a HMAX_DBH-wide tree on the local    !
-   !      curve, capped at hgt_max (docs/science/plant_carbon_allocation.md §2). ----------!
-   elemental pure function local_hmax(allom) result(h)
-      type(allometry_t), intent(in) :: allom
-      real(wp)                      :: h
-      h = dbh_to_height(allom, HMAX_DBH)
-   end function local_hmax
 
    !----- Height [m] -> diameter [cm], the inverse of the uncapped curve. -----------------!
    elemental pure function height_to_dbh(allom, h) result(dbh)

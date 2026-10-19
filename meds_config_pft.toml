@@ -17,8 +17,8 @@ recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] share of re
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
 min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)
-# reproduction_height_fraction = 0.33        # [--] OPTIONAL (default 0.33): reproduce from this share of the
-#                                           #      local maximum height, the height of a 100 cm tree
+min_repro_height   = [13.912064431085485, 13.912064431085485, 13.912064431085485]   # [m] a cohort reproduces from this height:
+                                    #      0.33 of a 100 cm tree's height on the power curve (Thomas 1996: 0.2-0.75)
 # Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4; docs/science/leaf_gas_exchange.md).
 # pathway: 1 = C3, 2 = C4.
 photosynthetic_pathway = [1, 1, 2]                  # PFTs 1 and 2 C3, PFT 3 C4

@@ -18,9 +18,8 @@
 ! external `seed_rain_recruits` plus the recruits bought by the carbon diverted to         !
 ! reproduction (recruit_carbon_efficiency).                                                !
 !                                                                                          !
-! Two shared height thresholds: `min_cohort_height` (the smallest tracked cohort; recruits !
-! are born here) and `reproduction_height_fraction` (a cohort reproduces from that share   !
-! of the local maximum height, meds_allometry::local_hmax).                                !
+! Two height thresholds: `min_cohort_height`, shared, the smallest tracked cohort, where    !
+! recruits are born; and each PFT's `min_repro_height`, the height it reproduces from.      !
 !==========================================================================================!
 module meds_pft_params
    use meds_kinds,     only : wp, ik
@@ -48,6 +47,7 @@ module meds_pft_params
       !----- Reproductive allocation and recruitment (carbon path). An empirical growth law is     !
       !      not a trait here; it lives in the Python example. ------------------------------------!
       real(wp), allocatable :: reproduction_investment_fraction(:) !< [--] growth fraction diverted to reproduction
+      real(wp), allocatable :: min_repro_height(:)                 !< [m]  the height a cohort reproduces from
       real(wp), allocatable :: recruit_carbon_efficiency(:)        !< [--] share of reproduction carbon that becomes
                                                                    !<      recruits: seed set, germination and seedling
                                                                    !<      survival up to min_cohort_height together
@@ -71,7 +71,6 @@ module meds_pft_params
       integer(ik), allocatable :: include_pft(:)        !< 1 = PFT may recruit, 0 = excluded
       !----- Shared height thresholds. ----------------------------------------------------!
       real(wp) :: min_cohort_height          !< [m] smallest tracked cohort; recruits born here
-      real(wp) :: reproduction_height_fraction  !< [-] share of the local maximum height to reproduce
       !----- Leaf photosynthesis / stomatal traits (per PFT; docs/science/leaf_gas_exchange.md). -!
       integer(ik), allocatable :: photosynthetic_pathway(:) !< PATH_C3 | PATH_C4
       real(wp), allocatable :: vcmax25(:)            !< [umol/m2/s] max carboxylation at 25 degC
@@ -252,7 +251,7 @@ contains
       integer(ik),       intent(in)    :: n
       pft%n = n
       allocate(pft%allom(n), pft%dbh_critical(n), pft%wood_density(n))
-      allocate(pft%reproduction_investment_fraction(n), pft%recruit_carbon_efficiency(n))
+      allocate(pft%reproduction_investment_fraction(n), pft%min_repro_height(n), pft%recruit_carbon_efficiency(n))
       allocate(pft%recruit_shade_decay(n))
       pft%recruit_shade_decay = 0.0_wp      ! optional key; 0 = the same share under any canopy
       allocate(pft%nbg_init_density(n))
@@ -295,7 +294,6 @@ contains
       pft%max_absolute_growth_rate     = 0.0_wp
       pft%max_absolute_growth_exponent = 0.0_wp
       pft%retained_carbon_fraction = 0.3_wp ! optional key; 30% of leaf and root loss resorbed
-      pft%reproduction_height_fraction = 0.33_wp ! optional key; within Thomas (1996)'s 0.20-0.75
       !----- HYD_UNSET marks "no per-PFT value given"; the table builder then takes the            !
       !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here,       !
       !      because alloc_pft_table runs before the [hydraulics] block is read. ------------------!

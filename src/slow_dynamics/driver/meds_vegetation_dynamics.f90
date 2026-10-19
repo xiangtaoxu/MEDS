@@ -20,7 +20,7 @@ module meds_vegetation_dynamics
    use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential
    use meds_therm_lib,            only : internal_energy_liquid
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
-                                         storage_carbon_target, local_hmax
+                                         storage_carbon_target
    use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon, &
                                          hold_cohort_tissue_temps, cohort_water_enthalpy
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
@@ -644,12 +644,10 @@ contains
 
             store_demand = max(0.0_wp, storage_carbon_target(pft%storage_cushion(pf), leaf_target,      &
                                                              r2l * leaf_target) - store_post)
-            !----- Reproduction starts at a share of the local maximum height, so where the local   !
-            !      allometry makes trees short they mature short (Thomas 1996's relative size at     !
-            !      onset of maturity). --------------------------------------------------------------!
+            !----- Reproduction starts at the PFT's min_repro_height                                 !
+            !      (docs/science/plant_carbon_allocation.md §2). ------------------------------------!
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
-                                 cohort%height(j) >= pft%reproduction_height_fraction                &
-                                                     * local_hmax(cohort%pft_table%allom(pf)))
+                                 cohort%height(j) >= pft%min_repro_height(pf))
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
             !      capped growth demands (the single per-cohort "how much carbon, how much litter"  !
             !      computation, isolated from the surrounding orchestration). ----------------------!

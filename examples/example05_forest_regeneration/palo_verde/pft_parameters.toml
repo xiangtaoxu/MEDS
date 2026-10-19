@@ -54,8 +54,8 @@ stem_resp_sapwood25 = [31.25, 31.25, 31.25, 31.25]   # [umol CO2/m3 sapwood/s @2
 # Reproduction: about 0.5 MgC/ha/yr of flowers and fruit fall in BCI's litter traps, 9-10 % of the
 # litterfall (Chave et al. 2010, Table 1, Leigh 1999's traps), 2-5 % of a tropical forest's NPP
 # (Malhi et al. 2011: 5-15 % of canopy NPP).
-# A cohort reproduces from 0.33 of the local maximum height (reproduction_height_fraction, the default):
-# 11.7 m on Chave's curve here, about 12 cm dbh.
+# A cohort reproduces from 11.7 m, 0.33 of a 100 cm tree's height on Chave's curve here, about 12 cm dbh.
+min_repro_height   = [11.689991797367179, 11.689991797367179, 11.689991797367179, 11.689991797367179]   # [m]
 reproduction_investment_fraction = [0.10, 0.10, 0.10, 0.10]   # [--] growth fraction to reproduction
 
 #----- Sink limit on wood growth (docs/science/plant_carbon_allocation.md eq. (4)): a cohort's diameter
