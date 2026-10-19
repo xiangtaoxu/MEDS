@@ -44,7 +44,7 @@ module meds_polygon
    use meds_output_types,           only : output_files_t, output_buffers_t, MISSING_VALUE
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
    use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
-                                           manager_set_soil_params, manager_set_polygons,         &
+                                           manager_set_polygons,                                  &
                                            activate_site_diag, apply_variable_override,          &
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
@@ -478,51 +478,58 @@ contains
    end subroutine soil_carbon_steady
 
    !---------------------------------------------------------------------------------------!
-   ! open_output_files -- lay out one output file set: the registry from the config, the         !
-   ! per-variable overrides of [output].io_config, and the polygon axis with each polygon's cell. !
-   ! Each polygon that writes into the set then calls attach_output, which gives the files that   !
-   ! polygon's own layers and map inputs.                                                         !
+   ! open_output_files -- lay out one output file set: the registry from the config, the   !
+   ! per-variable overrides of [output].io_config, and the polygon axis with each          !
+   ! polygon's cell and site count. Each polygon that writes into the set then calls       !
+   ! attach_output, which gives the files that polygon's own sites.                        !
    !---------------------------------------------------------------------------------------!
-   subroutine open_output_files(cfg, files, verbose, cells, polygon_id)
+   subroutine open_output_files(cfg, files, verbose, cells, polygon_id, n_site)
       type(meds_config_t),  intent(in)    :: cfg
       type(output_files_t), intent(inout) :: files
       logical,              intent(in)    :: verbose
       type(met_cells_t),    intent(in)    :: cells          !< the run's cells, one per polygon ...
-      integer(ik),          intent(in)    :: polygon_id(:)  !< ... and their polygon ids
+      integer(ik),          intent(in)    :: polygon_id(:)  !< ... their polygon ids ...
+      integer(ik),          intent(in)    :: n_site(:)      !< ... and their site counts
       call manager_setup(files, cfg)
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
-      call manager_set_polygons(files, polygon_id, cells%lat, cells%lon, cells%row, cells%col,      &
+      call manager_set_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
                                 cfg%allom%height_form == HEIGHT_CHAVE)
       call manager_finalize(files)
    end subroutine open_output_files
 
-   !----- A polygon's share of an output file set: its buffers, which take its site's soil curve !
-   !      for the derived soil diagnostics, the diagnostic blocks it must accumulate for the set's !
-   !      variables, and its row of the per-polygon variables: its site's layers and surface, and  !
-   !      the height allometry's site index its cell's map gave it. ------------------------------!
+   !----- A polygon's share of an output file set: its buffers, which read the soil diagnostics   !
+   !      when its fast loop runs, the diagnostic blocks it must accumulate for the set's         !
+   !      variables, and its row of the per-polygon variables: each site's area, terrain, layers  !
+   !      and soil column, and the height allometry's site index its cell's map gave it. ---------!
    subroutine attach_output(cfg, files, bufs, poly, run)
       type(meds_config_t),    intent(in)    :: cfg
       type(output_files_t),   intent(inout) :: files
       type(output_buffers_t), intent(inout) :: bufs
       type(polygon_t),        intent(inout) :: poly
       type(polygon_run_t),    intent(in)    :: run
-      integer(ik) :: p
+      integer(ik) :: p, is
       call manager_alloc_buffers(files, bufs)
-      if (cfg%fast_biophysics_on) call manager_set_soil_params(bufs%diag, poly%site%surface(1)%soil)
+      bufs%diag%soil_ready = cfg%fast_biophysics_on
       call activate_site_diag(files, poly)
       p = run%cell
-      associate (surf => poly%site%surface(1))
-         files%polygon_n_soil(p)       = surf%soil%n_active
-         files%polygon_soil_z(:, p)    = surf%soil%z_node
-         files%polygon_soil_face(:, p) = surf%soil%soil_layer_z
-         files%polygon_soil_depth(p)   = surf%soil_column%depth
-         files%polygon_bottom_bc(p)    = surf%water_bottom_bc
-         files%polygon_drain_factor(p) = merge(MISSING_VALUE, surf%drain_factor,                  &
-                                               surf%water_bottom_bc == SOIL_BC_AQUIFER)
-         files%polygon_deep_temp(p)    = surf%deep_temp
-         if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = poly%cohort%allom%chave_e
-      end associate
+      do is = 1_ik, poly%site%n
+         associate (surf => poly%site%surface(is))
+            files%site_area(is, p)         = poly%site%area(is)
+            files%site_elevation(is, p)    = surf%elevation_m
+            files%site_slope(is, p)        = surf%slope_deg
+            files%site_aspect(is, p)       = surf%aspect_deg
+            files%site_n_soil(is, p)       = surf%soil%n_active
+            files%site_soil_z(:, is, p)    = surf%soil%z_node
+            files%site_soil_face(:, is, p) = surf%soil%soil_layer_z
+            files%site_soil_depth(is, p)   = surf%soil_column%depth
+            files%site_bottom_bc(is, p)    = surf%water_bottom_bc
+            files%site_drain_factor(is, p) = merge(MISSING_VALUE, surf%drain_factor,                &
+                                                   surf%water_bottom_bc == SOIL_BC_AQUIFER)
+            files%site_deep_temp(is, p)    = surf%deep_temp
+         end associate
+      end do
+      if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = poly%cohort%allom%chave_e
    end subroutine attach_output
 
    !----- Apply the optional meds_io_config.toml per-variable override table to the manager's   !

@@ -15,7 +15,6 @@ module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
    use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
-   use meds_soil_column_config, only : soil_params_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, alloc_cohort_diag, alloc_patch_diag
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
@@ -25,11 +24,10 @@ module meds_output_registry
                                    GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,      &
                                    GRP_FORCING
    use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
-                                   diag_params_t,                                                  &
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
-                                   XTYPE_DOUBLE, XTYPE_INT, ragged_dim
+                                   XTYPE_DOUBLE, XTYPE_INT, MISSING_VALUE, MISSING_INT, ragged_dim
    use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
    use meds_constants,         only : cm2_to_m2, n_soil_layer_max
    use meds_output_integrate, only : alloc_integ_buffer, src_class, SRCK_FAST,                                         &
@@ -40,7 +38,7 @@ module meds_output_registry
         FLD_C_OVERTOP_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP,   &
         FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED,               &
         FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT,         &
-        FLD_P_GLOBAL_ID, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH,                           &
+        FLD_P_GLOBAL_ID, FLD_P_SITE, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH,               &
         FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND,                   &
         FLD_P_SOILC_STRUCT_SOIL, FLD_P_SOILC_MICROBIAL, FLD_P_SOILC_SLOW,                        &
         FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH,                                        &
@@ -74,7 +72,7 @@ module meds_output_registry
    public :: build_output_registry, build_freq_index, find_var_index, parse_stream_mask
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
-   public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_buffers, manager_set_soil_params
+   public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_buffers
    public :: manager_set_polygons
    public :: activate_site_diag, dump_io_config
 
@@ -222,6 +220,8 @@ contains
                         DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_COHORT_COUNT, xt=XTYPE_INT)
       call add_variable(reg, 'global_patch_id', 'persistent patch id', '-',                      &
                         DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_GLOBAL_ID, xt=XTYPE_INT)
+      call add_variable(reg, 'patch_site', 'the patch''s site (1-based)', '-',                   &
+                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_SITE, xt=XTYPE_INT)
       !----- Cohort fields reduced onto the patch axis. EXTENSIVE (weighted SUM over nplant),   !
       !      so these are per m2 of THAT PATCH's ground -- the gap-vs-closed-canopy contrast the  !
       !      site scalars average away.  -------------------------------------------------------!
@@ -364,12 +364,12 @@ contains
                         DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_RUNOFF_SURF)
       call add_variable(reg, 'drainage_site', 'site drainage at the soil column''s bottom (period total)', 'kg/m2', &
                         DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_DRAINAGE)
-      !----- Area-weighted SITE soil columns (DIM_SOIL). --------------------------------------!
-      call add_variable(reg, 'soil_water_site', 'area-weighted volumetric soil moisture', 'm3/m3', &
+      !----- Each site's soil column, its patches area-weighted (DIM_SOIL). --------------------!
+      call add_variable(reg, 'soil_water_site', 'each site''s area-weighted volumetric soil moisture', 'm3/m3', &
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_L_SOIL_WATER)
-      call add_variable(reg, 'soil_psi_site', 'area-weighted soil matric potential', 'MPa',      &
+      call add_variable(reg, 'soil_psi_site', 'each site''s area-weighted soil matric potential', 'MPa', &
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_L_SOIL_PSI)
-      call add_variable(reg, 'soil_wetness_site', 'area-weighted relative saturation', '-',      &
+      call add_variable(reg, 'soil_wetness_site', 'each site''s area-weighted relative saturation', '-', &
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_L_SOIL_WETNESS)
       !----- Surface water stores. ------------------------------------------------------------!
       call add_variable(reg, 'w_surface_site', 'ponded surface water', 'kg/m2',                  &
@@ -414,9 +414,9 @@ contains
       !      the canopy. ------------------------------------------------------------------------------!
       call add_variable(reg, 'skin_temp_site', 'skin temperature: black-body temperature of the longwave up', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_SKIN_TEMP)
-      call add_variable(reg, 'soil_temp_site', 'area-weighted soil temperature', 'K',            &
+      call add_variable(reg, 'soil_temp_site', 'each site''s area-weighted soil temperature', 'K', &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_TEMP)
-      call add_variable(reg, 'soil_fliq_site', 'area-weighted soil liquid fraction', '-',        &
+      call add_variable(reg, 'soil_fliq_site', 'each site''s area-weighted soil liquid fraction', '-', &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_FLIQ)
 
       !----- Canopy temperatures, LEAF-AREA-weighted (the intensive rule: a bare sapling must    !
@@ -781,9 +781,9 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PA0 + PA_CAS_CO2)
       call add_variable(reg, 'atm_co2_fast', 'free-atmosphere CO2 (forcing)', 'umol/mol',         &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_CO2)
-      call add_variable(reg, 'soil_temp_site_fast', 'area-weighted soil temperature (sub-daily)', 'K', &
+      call add_variable(reg, 'soil_temp_site_fast', 'each site''s area-weighted soil temperature (sub-daily)', 'K', &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SOIL_TEMP)
-      call add_variable(reg, 'soil_water_site_fast', 'area-weighted soil moisture (sub-daily)', 'm3/m3', &
+      call add_variable(reg, 'soil_water_site_fast', 'each site''s area-weighted soil moisture (sub-daily)', 'm3/m3', &
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, FAST_ONLY, SRC_F_SOIL_WATER)
       call add_variable(reg, 'leaf_temp_cohort_fast', 'per-cohort leaf temperature (sub-daily)', 'K', &
                         DIM_COHORT, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_COH_LEAF_TEMP)
@@ -1160,7 +1160,6 @@ contains
       !      the serializer also writes a `pft` coordinate variable, so a file stays self-describing !
       !      when compared across runs with different PFT tables.                                    !
       files%diag%n_pft  = cfg%pft%n
-      files%diag%n_soil = n_soil_layer_max
       !----- DBH size classes: TOML edges if given, else the built-in inventory set. -----------!
       if (cfg%output%n_dbh_class > 0_ik) then
          files%diag%n_dbh_class = min(cfg%output%n_dbh_class, MAX_DBH_CLASS)
@@ -1171,11 +1170,8 @@ contains
          files%diag%dbh_edges(1:N_DBH_CLASS_DEFAULT + 1_ik) = DBH_EDGES_DEFAULT
       end if
       call check_dbh_edges(files%diag%dbh_edges, files%diag%n_dbh_class)
-      !----- The soil retention parameters are NOT set here: attach_output copies them from the  !
-      !      FAST CONTEXT the physics actually ran (manager_set_soil_params), so a reported psi and !
-      !      the psi the roots saw are the same curve by construction. Until that call, soil_ready  !
-      !      is .false. and the psi/wetness diagnostics emit _FillValue rather than a plausible     !
-      !      wrong number from an assumed texture.                                                  !
+      !----- attach_output sets soil_ready on a polygon's buffers when its fast loop runs; until !
+      !      then the psi/wetness diagnostics emit _FillValue. ----------------------------------!
       files%diag%soil_ready = .false.
    end subroutine manager_setup
 
@@ -1198,35 +1194,13 @@ contains
       select case (dm)
       case (DIM_COHORT)     ; cap = files%cohort_max
       case (DIM_PATCH)      ; cap = files%patch_max
-      case (DIM_SOIL)       ; cap = n_soil_layer_max
+      case (DIM_SOIL)       ; cap = files%site_max * n_soil_layer_max
       case (DIM_PFT)        ; cap = max(files%diag%n_pft, 1_ik)
       case (DIM_SIZE)       ; cap = max(files%diag%n_dbh_class, 1_ik)
       case (DIM_SOIL_PATCH) ; cap = files%patch_max * n_soil_layer_max
       case default          ; cap = 0_ik
       end select
    end function dim_capacity
-
-   !----- Install the soil retention parameters the psi/wetness diagnostics need, into a file set's    !
-   !      parameters (files%diag, whose layer depths the files carry) or a polygon's buffers' (bufs%diag, !
-   !      which its extraction reads), with the SAME soil_params_t the fast loop integrates on. --------!
-   subroutine manager_set_soil_params(dp, params)
-      type(diag_params_t),    intent(inout) :: dp
-      type(soil_params_t),    intent(in)    :: params
-      integer(ik) :: k
-      dp%retention = params%retention
-      do k = 1_ik, n_soil_layer_max
-         dp%theta_sat(k) = params%theta_sat(k)
-         dp%theta_res(k) = params%theta_res(k)
-         !----- The column's one (a, n) pair, (alpha, n) for van Genuchten and (psi_sat, b) for  !
-         !      Campbell: the pair the water network integrates, so the diagnostic psi comes     !
-         !      from the same curve. ------------------------------------------------------------!
-         dp%par_a(k)     = params%curve_par_a(k)
-         dp%par_n(k)     = params%curve_par_n(k)
-         dp%soil_z(k)    = params%z_node(k)
-      end do
-      dp%n_soil     = params%n_active
-      dp%soil_ready = .true.
-   end subroutine manager_set_soil_params
 
    !----- The size-class edges must be strictly ascending, or dbh_class_index silently mis-bins  !
    !      (and sum_class == site would quietly stop holding). Fail at start-up instead.          !
@@ -1310,33 +1284,38 @@ contains
       type(output_buffers_t), intent(out) :: bufs
       type(meds_config_t),   intent(in)  :: cfg
       call manager_setup(files, cfg)
-      call manager_set_polygons(files, [0_ik], [0.0_wp], [0.0_wp], [0_ik], [0_ik], .false.)
+      call manager_set_polygons(files, [0_ik], [1_ik], [0.0_wp], [0.0_wp], [0_ik], [0_ik], .false.)
       call manager_finalize(files)
       call manager_alloc_buffers(files, bufs)
    end subroutine manager_alloc
 
-   !----- The file set's polygon axis: one row per polygon, its id, location and grid indices. The !
-   !      rest of a row -- the polygon's layers and the inputs its cell's maps gave it -- is filled  !
-   !      when the polygon attaches to the set (attach_output). ----------------------------------!
-   subroutine manager_set_polygons(files, polygon_id, lat, lon, row, col, with_chave_e)
+   !----- The file set's polygon and site axes: one row per polygon, its id, location, grid indices !
+   !      and site count; the site axis is the largest polygon's. The rest of a row -- its sites'   !
+   !      areas, terrain and soil columns -- is filled when the polygon attaches to the set         !
+   !      (attach_output); a polygon's missing sites keep the fill value. --------------------------!
+   subroutine manager_set_polygons(files, polygon_id, n_site, lat, lon, row, col, with_chave_e)
       type(output_files_t), intent(inout) :: files
-      integer(ik),          intent(in)    :: polygon_id(:), row(:), col(:)
+      integer(ik),          intent(in)    :: polygon_id(:), n_site(:), row(:), col(:)
       real(wp),             intent(in)    :: lat(:), lon(:)
       logical,              intent(in)    :: with_chave_e   !< the Chave height allometry's site index
-      integer(ik) :: n
-      n = size(polygon_id, kind=ik)
-      files%n_polygon   = n
-      files%polygon_id  = polygon_id
-      files%polygon_row = row
-      files%polygon_col = col
-      files%polygon_lat = lat
-      files%polygon_lon = lon
-      allocate(files%polygon_n_soil(n), source=0_ik)
-      allocate(files%polygon_soil_z(n_soil_layer_max, n), source=0.0_wp)
-      allocate(files%polygon_soil_face(n_soil_layer_max + 1_ik, n), source=0.0_wp)
-      allocate(files%polygon_soil_depth(n), files%polygon_deep_temp(n), source=0.0_wp)
-      allocate(files%polygon_bottom_bc(n), source=0_ik)
-      allocate(files%polygon_drain_factor(n), source=0.0_wp)
+      integer(ik) :: n, ns
+      n  = size(polygon_id, kind=ik)
+      ns = max(maxval(n_site), 1_ik)
+      files%n_polygon      = n
+      files%site_max       = ns
+      files%polygon_id     = polygon_id
+      files%polygon_n_site = n_site
+      files%polygon_row    = row
+      files%polygon_col    = col
+      files%polygon_lat    = lat
+      files%polygon_lon    = lon
+      allocate(files%site_area(ns, n), files%site_elevation(ns, n), files%site_slope(ns, n),        &
+               files%site_aspect(ns, n), files%site_soil_depth(ns, n), files%site_drain_factor(ns, n), &
+               files%site_deep_temp(ns, n), source=MISSING_VALUE)
+      allocate(files%site_n_soil(ns, n), source=0_ik)
+      allocate(files%site_bottom_bc(ns, n), source=MISSING_INT)
+      allocate(files%site_soil_z(n_soil_layer_max, ns, n), source=0.0_wp)
+      allocate(files%site_soil_face(n_soil_layer_max + 1_ik, ns, n), source=0.0_wp)
       if (with_chave_e) allocate(files%polygon_chave_e(n), source=0.0_wp)
    end subroutine manager_set_polygons
 

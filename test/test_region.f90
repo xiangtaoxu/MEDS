@@ -606,7 +606,7 @@ contains
       case (DIM_SCALAR)     ; sh = [integer(ik) ::]
       case (DIM_COHORT)     ; sh = [dim_len(ncid, 'cohort')]
       case (DIM_PATCH)      ; sh = [dim_len(ncid, 'patch')]
-      case (DIM_SOIL)       ; sh = [dim_len(ncid, 'soil')]
+      case (DIM_SOIL)       ; sh = [dim_len(ncid, 'site'), dim_len(ncid, 'soil')]
       case (DIM_PFT)        ; sh = [dim_len(ncid, 'pft')]
       case (DIM_SIZE)       ; sh = [dim_len(ncid, 'dbh_class')]
       case (DIM_SOIL_PATCH) ; sh = [dim_len(ncid, 'patch'), dim_len(ncid, 'soil')]
@@ -917,10 +917,10 @@ contains
       call nc_check(nc_close(ncid), 'close')
    end subroutine check_polygon_axis
 
-   !----- Each polygon's own layers and map inputs. Its row of soil_z is its site run's              !
-   !      soil_z down to its own bottom layer, and the fill value below. Its soil_z_bnds run from the !
-   !      surface, layer to layer, down to its soil depth, with each node midway. Polygons 1 and 3     !
-   !      both have seven layers, ending at 1.95 and 2.25 m, so their bottom nodes differ. --------------!
+   !----- Each polygon's own layers and map inputs, on its one site. Its row of soil_z is its site     !
+   !      run's soil_z down to its own bottom layer, and the fill value below. Its soil_z_bnds run     !
+   !      from the surface, layer to layer, down to its soil depth, with each node midway. Polygons 1  !
+   !      and 3 both have seven layers, ending at 1.95 and 2.25 m, so their bottom nodes differ. ------!
    subroutine check_polygon_inputs(suffix)
       character(len=*), intent(in) :: suffix
       integer(c_int) :: ncid, sn, vid
@@ -931,12 +931,13 @@ contains
       character(len=24) :: id
       ncid = open_nc(trim(work)//'/out/region'//suffix)
       ns = dim_len(ncid, 'soil')
-      call read_var(ncid, 'soil_z', [NP, ns], z, fz)
-      call read_var(ncid, 'soil_z_bnds', [NP, ns, 2_ik], b, fb)
-      call read_var(ncid, 'soil_depth', [NP], depth, fd)
-      call read_var(ncid, 'bottom_bc', [NP], bc, fc)
-      call read_var(ncid, 'deep_temp', [NP], tdeep, ft)
-      call read_var(ncid, 'drain_factor', [NP], drain, fr)
+      call check_true('each polygon has one site', dim_len(ncid, 'site') == 1_ik)
+      call read_var(ncid, 'soil_z', [NP, 1_ik, ns], z, fz)
+      call read_var(ncid, 'soil_z_bnds', [NP, 1_ik, ns, 2_ik], b, fb)
+      call read_var(ncid, 'soil_depth', [NP, 1_ik], depth, fd)
+      call read_var(ncid, 'bottom_bc', [NP, 1_ik], bc, fc)
+      call read_var(ncid, 'deep_temp', [NP, 1_ik], tdeep, ft)
+      call read_var(ncid, 'drain_factor', [NP, 1_ik], drain, fr)
       same_z = fz .and. ns == n_soil_layer_max
       edges  = fb .and. fd .and. ns == n_soil_layer_max
       do p = 1_ik, NP
@@ -944,7 +945,7 @@ contains
          n = N_LAYER(p) ; base = (p - 1_ik) * ns
          write(id,'(i0)') IDS(p)
          sn = open_nc(trim(work)//'/out/site'//trim(id)//suffix)
-         call read_var(sn, 'soil_z', [1_ik, ns], zs, fs)
+         call read_var(sn, 'soil_z', [1_ik, 1_ik, ns], zs, fs)
          call nc_check(nc_close(sn), 'close')
          same_z = fs .and. all(z(base + 1_ik : base + n) == zs(1:n)) .and.                           &
                   all(z(base + n + 1_ik : base + ns) > 1.0e30_c_double)      ! the loop stops at a miss

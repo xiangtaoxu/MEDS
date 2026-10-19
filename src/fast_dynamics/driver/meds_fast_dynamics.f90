@@ -285,7 +285,7 @@ contains
       integer(ik), allocatable :: red_nfail(:)                     !< (patch) budget-failure counts
       real(wp)    :: f_ground, sw_ground
       type(met_forcing_t) :: met_ref                  !< the context's reference climate (no forcing)
-      integer(ik) :: ip, isub, npatch, ncoh_max, nsub, nl, n_thread
+      integer(ik) :: ip, isub, npatch, ncoh_max, nsub, nl, n_thread, is, ks
       logical     :: do_forcing, do_fast, do_cdiag, do_pdiag
       !----- Per-(cohort, sub-step) diagnostic scratch: filled by the pre-pass through cdiag, then   !
       !      folded (dt-weighted) into poly%cohort%diag. PER THREAD, because the patch loop is         !
@@ -409,12 +409,23 @@ contains
       end if
       nl = n_soil_layer_max
       if (do_fast) then
-         call size_fast_staging(out_bufs, nsub, npatch, poly%cohort%n, do_cdiag)
+         call size_fast_staging(out_bufs, nsub, npatch, poly%site%n, poly%cohort%n, do_cdiag)
          out_bufs%n_fast_sub    = nsub
-         !----- The slabs are sized to the ceiling, but only the ACTIVE layers are data: the layers !
-         !      past n_active stay unwritten and read back as the fill value, as on the coarse      !
-         !      tiers. -----------------------------------------------------------------------------!
-         out_bufs%fast_n_soil   = min(maxval(poly%site%surface(1:poly%site%n)%soil%n_active), nl)
+         !----- The slabs are sized to the ceiling, but only the ACTIVE layers are data: a site's  !
+         !      column and each patch's are its site's layers; the rest read back as the fill      !
+         !      value, as on the coarse tiers. ----------------------------------------------------!
+         out_bufs%fast_n_site = poly%site%n
+         out_bufs%fast_soil_live = .false.
+         out_bufs%fast_soil_patch_live = .false.
+         do is = 1_ik, poly%site%n
+            ks = (is - 1_ik) * nl
+            out_bufs%fast_soil_live(ks + 1_ik:ks + poly%site%surface(is)%soil%n_active) = .true.
+         end do
+         do ip = 1_ik, npatch
+            ks = (ip - 1_ik) * nl
+            out_bufs%fast_soil_patch_live(ks + 1_ik:ks + poly%site%surface(poly%patch%owner_site(ip))%soil%n_active) &
+               = .true.
+         end do
          out_bufs%fast_n_cohort = poly%cohort%n
          out_bufs%fast_n_patch  = npatch
          out_bufs%fast_site = 0.0_wp
@@ -821,18 +832,20 @@ contains
             poly%work_clamp_stage  = poly%work_clamp_stage  + red_site(RED_CLAMP_STAGE,   isub, ip)
          end do
       end do
-      !----- FAST-tier site means: each patch's staged row and soil column, area-weighted, folded over  !
-      !      the patches in increasing order for each sub-step. -------------------------------------!
+      !----- FAST-tier means, folded over the patches in increasing order for each sub-step: the       !
+      !      polygon's patch rows, each patch weighted by its share of the polygon, and each site's    !
+      !      soil column, each of its patches weighted by its area in the site. -----------------------!
       if (do_fast) then
          do isub = 1_ik, nsub
             do ip = 1_ik, npatch
                kb = (ip - 1_ik) * nl
+               ks = (poly%patch%owner_site(ip) - 1_ik) * nl
                out_bufs%fast_site(:, isub) = out_bufs%fast_site(:, isub)                                  &
                                              + patch_polygon_area(poly, ip) * out_bufs%fast_patch(:, ip, isub)
-               out_bufs%fast_soil_temp(1:nl, isub)  = out_bufs%fast_soil_temp(1:nl, isub)                 &
-                                             + patch_polygon_area(poly, ip) * out_bufs%fast_soil_temp_patch(kb+1_ik:kb+nl, isub)
-               out_bufs%fast_soil_water(1:nl, isub) = out_bufs%fast_soil_water(1:nl, isub)                &
-                                             + patch_polygon_area(poly, ip) * out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub)
+               out_bufs%fast_soil_temp(ks+1_ik:ks+nl, isub)  = out_bufs%fast_soil_temp(ks+1_ik:ks+nl, isub)  &
+                                             + poly%patch%area(ip) * out_bufs%fast_soil_temp_patch(kb+1_ik:kb+nl, isub)
+               out_bufs%fast_soil_water(ks+1_ik:ks+nl, isub) = out_bufs%fast_soil_water(ks+1_ik:ks+nl, isub) &
+                                             + poly%patch%area(ip) * out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub)
             end do
          end do
       end if
@@ -1228,29 +1241,31 @@ contains
       pd%w(ip)    = pd%w(ip)    + dt
    end subroutine accumulate_patch_diag
 
-   !----- Size the FAST tier's staging for this slow step. The sub-step count is run-constant; the  !
-   !      patch and cohort counts are this step's, and the buffers only grow (to at least twice    !
-   !      their size, so a growing stand reallocates rarely). The output layer checks the live      !
-   !      counts against output.patch_max and cohort_max, as it does for the coarse tiers. --------!
-   subroutine size_fast_staging(b, nsub, npatch, ncohort, with_cdiag)
+   !----- Size the FAST tier's staging for this slow step. The sub-step and site counts are         !
+   !      run-constant; the patch and cohort counts are this step's, and the buffers only grow (to  !
+   !      at least twice their size, so a growing stand reallocates rarely). The output layer       !
+   !      checks the live counts against output.patch_max and cohort_max, as it does for the coarse !
+   !      tiers. -----------------------------------------------------------------------------------!
+   subroutine size_fast_staging(b, nsub, npatch, nsite, ncohort, with_cdiag)
       type(output_buffers_t), intent(inout) :: b
-      integer(ik),            intent(in)    :: nsub, npatch, ncohort
+      integer(ik),            intent(in)    :: nsub, npatch, nsite, ncohort
       logical,                intent(in)    :: with_cdiag   !< the per-cohort diagnostic block is on
-      integer(ik) :: nl, np, nc
+      integer(ik) :: nl, np, nc, ns
       nl = n_soil_layer_max
+      ns = max(nsite, 1_ik)
       if (.not. allocated(b%fast_time))                                                            &
          allocate(b%fast_time(nsub), b%fast_forcing(N_PY_ROWS, nsub), b%fast_site(N_PA_ROWS, nsub),    &
-                  b%fast_soil_temp(nl, nsub), b%fast_soil_water(nl, nsub))
+                  b%fast_soil_temp(nl * ns, nsub), b%fast_soil_water(nl * ns, nsub), b%fast_soil_live(nl * ns))
       np = max(npatch, 1_ik)
       if (allocated(b%fast_patch)) then
          if (size(b%fast_patch, 2, kind=ik) < np) then
             np = max(np, 2_ik * size(b%fast_patch, 2, kind=ik))
-            deallocate(b%fast_patch, b%fast_soil_temp_patch, b%fast_soil_water_patch)
+            deallocate(b%fast_patch, b%fast_soil_temp_patch, b%fast_soil_water_patch, b%fast_soil_patch_live)
          end if
       end if
       if (.not. allocated(b%fast_patch))                                                           &
          allocate(b%fast_patch(N_PA_ROWS, np, nsub), b%fast_soil_temp_patch(nl * np, nsub),           &
-                  b%fast_soil_water_patch(nl * np, nsub))
+                  b%fast_soil_water_patch(nl * np, nsub), b%fast_soil_patch_live(nl * np))
       nc = max(ncohort, 1_ik)
       if (allocated(b%fast_coh_ltemp)) then
          if (size(b%fast_coh_ltemp, 1, kind=ik) < nc) then

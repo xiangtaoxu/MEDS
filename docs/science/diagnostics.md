@@ -77,6 +77,11 @@ Patch area `a_p` enters **only** at the patch → site step, never inside the we
 serves every scale. A patch-axis value therefore carries no area factor: it is per m² of *that
 patch's own* ground, which is what makes a gap-versus-closed-canopy comparison meaningful.
 
+**A `_site` scalar is the polygon's.** In a polygon of several sites, `a_p` in eq. (2) is the
+patch's share of the polygon: its site's area times its own area within the site. The soil columns
+are the exception: `soil_water_site` and its kin are each site's column, on that site's own layers,
+its patches weighted by their areas within the site.
+
 **Empty sets.** A patch with no cohorts, or a **mean** with nothing to average, emits
 `_FillValue` — never `0/0`, and never a bare 0 that a reader would take for a measurement. "Nothing
 to average" covers a PFT or size class with no members, and a whole site, as on bare ground. A
@@ -111,11 +116,12 @@ instead, and report their values.
 | `time` | UNLIMITED | period **start** stamp; `cell_methods` says how the period was reduced |
 | `cohort` | live count, trimmed per file | slot order; `global_cohort_id` tracks a cohort across files |
 | `patch` | live count, trimmed per file | ditto `global_patch_id` |
-| `soil` | `n_soil_layer_max` | area-weighted site column |
+| `soil` | `n_soil_layer_max` | behind `site`: each site's column on its own layers, its patches area-weighted |
 | `pft` | **run-time** PFT count | carries a `pft` coordinate variable, so the file stays self-describing |
 | `dbh_class` | from `[output].dbh_class_edges` | carries `dbh_lower` / `dbh_upper` coordinates |
 | `(patch, soil)` | 2-D | per-patch soil profiles; `axes_soil_patch = true` |
 | `polygon` | every file; length 1 in a site run | after `time`; coordinates `polygon_id`, `lat`, `lon`, `row`, `col` ([configuration](../configuration.md), Regional runs) |
+| `site` | every file; the largest polygon's site count | after `polygon`; `n_site`, `site_area`, the terrain and the soil column of each site; `patch_site` gives each patch's site |
 
 **DBH classes are a size class of *plants*, ED2-style.** A cohort is assigned whole to the bin
 containing its mean `dbh` — never split — and contributes with weight `area · nplant`. Bins are

@@ -155,9 +155,9 @@ contains
    end function cell_methods_of
 
    !=======================================================================================!
-   !  Create a file: dims, the polygon axis and coordinates (a region's), the tier's variables    !
-   !  and CF metadata. The cohort/patch axes are trimmed to the live counts of the record         !
-   !  that opens it, the largest among a region's polygons.                                       !
+   !  Create a file: dims, the polygon and site axes and their coordinates, the tier's     !
+   !  variables and CF metadata. The cohort/patch axes are trimmed to the live counts of   !
+   !  the record that opens it, the largest among a region's polygons.                     !
    !=======================================================================================!
    subroutine open_file(files, tier, pr, file_chunk, bucket, n_cohort, n_patch)
       type(output_files_t),   intent(inout) :: files
@@ -166,9 +166,11 @@ contains
       integer(ik),            intent(in)    :: n_cohort, n_patch   !< the opening record's live counts
       character(len=512) :: path
       character(len=16)  :: stamp
-      integer(c_int)     :: ncid, dt, dpo, dc, dp, ds, dpf, dsz, dnv, vid, dims1(1), dims2(2), dims3(3)
-      integer(c_int)     :: v_id, v_lat, v_lon, v_row, v_col, v_depth, v_bc, v_drain, v_tdeep, v_chave, v_bnds
-      integer(c_size_t)  :: st1(1), cn1(1)
+      integer(c_int)     :: ncid, dt, dpo, dsi, dc, dp, ds, dpf, dsz, dnv, vid, dims1(1), dims2(2), dims3(3)
+      integer(c_int)     :: dims4(4)
+      integer(c_int)     :: v_id, v_lat, v_lon, v_row, v_col, v_nsite, v_area, v_elev, v_slope, v_aspect
+      integer(c_int)     :: v_depth, v_bc, v_drain, v_tdeep, v_chave, v_bnds
+      integer(c_size_t)  :: st1(1), cn1(1), st2(2), cn2(2)
       integer(ik)        :: j, k, np, cohort_dim, patch_dim
       logical            :: hasc, hasp, hass, haspf, hassz
       associate (stream => files%stream(tier), reg => files%reg, dg => files%diag)
@@ -209,6 +211,7 @@ contains
       call nc_check(nc_def_dim_f(ncid, 'time', NC_UNLIMITED, dt), 'dim time')
       dpo = -1_c_int ; dc = -1_c_int ; dp = -1_c_int ; ds = -1_c_int ; dpf = -1_c_int ; dsz = -1_c_int
       call nc_check(nc_def_dim_f(ncid, 'polygon', int(np, c_size_t), dpo), 'dim polygon')
+      call nc_check(nc_def_dim_f(ncid, 'site', int(files%site_max, c_size_t), dsi), 'dim site')
       if (hasc) call nc_check(nc_def_dim_f(ncid, 'cohort', int(cohort_dim, c_size_t), dc), 'dim cohort')
       if (hasp) call nc_check(nc_def_dim_f(ncid, 'patch',  int(patch_dim,  c_size_t), dp), 'dim patch')
       if (hass) call nc_check(nc_def_dim_f(ncid, 'soil',   int(n_soil_layer_max, c_size_t), ds), 'dim soil')
@@ -261,23 +264,23 @@ contains
       call put_var_text(ncid, v_row, 'long_name', '0-based latitude index on the forcing grid')
       call nc_check(nc_def_var_f(ncid, 'col', NC_INT, 1_c_int, dims1, v_col), 'def col')
       call put_var_text(ncid, v_col, 'long_name', '0-based longitude index on the forcing grid')
-      !----- What each polygon's cell's maps gave it, as it runs them. --------------------------!
-      call nc_check(nc_def_var_f(ncid, 'soil_depth', NC_DOUBLE, 1_c_int, dims1, v_depth), 'def soil_depth')
-      call put_var_text(ncid, v_depth, 'units', 'm')
-      call put_var_text(ncid, v_depth, 'long_name', 'soil column depth, the bottom of the deepest layer')
-      call nc_check(nc_def_var_f(ncid, 'bottom_bc', NC_INT, 1_c_int, dims1, v_bc), 'def bottom_bc')
-      call put_var_text(ncid, v_bc, 'long_name', 'bottom water boundary as run: drainage at drain_factor, or aquifer')
+      call nc_check(nc_def_var_f(ncid, 'n_site', NC_INT, 1_c_int, dims1, v_nsite), 'def n_site')
+      call put_var_text(ncid, v_nsite, 'long_name', 'the polygon''s sites (the rest of the site axis is fill)')
+      !----- Each polygon's sites, as it runs them: area, terrain and soil column. ---------------!
+      dims2 = [dpo, dsi]
+      call def_site_var('site_area', NC_DOUBLE, '1', 'site area fraction of the polygon', v_area)
+      call def_site_var('site_elevation', NC_DOUBLE, 'm', 'site elevation', v_elev)
+      call def_site_var('site_slope', NC_DOUBLE, 'degree', 'site slope', v_slope)
+      call def_site_var('site_aspect', NC_DOUBLE, 'degree', 'site aspect, clockwise from north', v_aspect)
+      call def_site_var('soil_depth', NC_DOUBLE, 'm', 'soil column depth, the bottom of the deepest layer', v_depth)
+      call def_site_var('bottom_bc', NC_INT, '1', 'bottom water boundary as run: drainage at drain_factor, or aquifer', &
+                        v_bc)
       call put_var_ints(ncid, v_bc, 'flag_values', [SOIL_BC_DRAIN, SOIL_BC_AQUIFER])
       call put_var_text(ncid, v_bc, 'flag_meanings', 'drain aquifer')
-      call nc_check(nc_def_var_f(ncid, 'drain_factor', NC_DOUBLE, 1_c_int, dims1, v_drain), 'def drain_factor')
-      call put_var_text(ncid, v_drain, 'units', '1')
-      call put_var_text(ncid, v_drain, 'long_name', 'drainage factor f of the bottom flux q = f K: 1 free '// &
-                        'drainage, the map''s f_leak on a leaky base, 0 sealed (fill on an aquifer)')
-      call nc_check(nc_put_att_double_f(ncid, v_drain, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), &
-                    'fill')
-      call nc_check(nc_def_var_f(ncid, 'deep_temp', NC_DOUBLE, 1_c_int, dims1, v_tdeep), 'def deep_temp')
-      call put_var_text(ncid, v_tdeep, 'units', 'K')
-      call put_var_text(ncid, v_tdeep, 'long_name', 'deep soil temperature, the thermal anchor below the column')
+      call def_site_var('drain_factor', NC_DOUBLE, '1', 'drainage factor f of the bottom flux q = f K: 1 free '// &
+                        'drainage, the map''s f_leak on a leaky base, 0 sealed (fill on an aquifer)', v_drain)
+      call def_site_var('deep_temp', NC_DOUBLE, 'K', 'deep soil temperature, the thermal anchor below the column', &
+                        v_tdeep)
       if (allocated(files%polygon_chave_e)) then
          call nc_check(nc_def_var_f(ncid, 'chave_e', NC_DOUBLE, 1_c_int, dims1, v_chave), 'def chave_e')
          call put_var_text(ncid, v_chave, 'units', '1')
@@ -296,21 +299,21 @@ contains
          call put_var_text(ncid, vid, 'long_name', 'plant functional type index')
          stream%v_pft = int(vid, ik)
       end if
-      !----- Each polygon has its own layers: the coordinate is per polygon, with each layer's top and  !
-      !      bottom as its CF bounds, and the fill value below the polygon's bottom. -------------------!
+      !----- Each site has its own layers: the coordinate is per site, with each layer's top and        !
+      !      bottom as its CF bounds, and the fill value below the site's bottom. ----------------------!
       if (hass) then
          call nc_check(nc_def_dim_f(ncid, 'nv', 2_c_size_t, dnv), 'dim nv')
-         dims2 = [dpo, ds]
-         call nc_check(nc_def_var_f(ncid, 'soil_z', NC_DOUBLE, 2_c_int, dims2, vid), 'def soil_z')
+         dims3 = [dpo, dsi, ds]
+         call nc_check(nc_def_var_f(ncid, 'soil_z', NC_DOUBLE, 3_c_int, dims3, vid), 'def soil_z')
          call put_var_text(ncid, vid, 'units', 'm')
-         call put_var_text(ncid, vid, 'long_name', 'the polygon''s soil layer node depths (negative downward)')
+         call put_var_text(ncid, vid, 'long_name', 'the site''s soil layer node depths (negative downward)')
          call put_var_text(ncid, vid, 'bounds', 'soil_z_bnds')
          call nc_check(nc_put_att_double_f(ncid, vid, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), 'fill')
          stream%v_soil_z = int(vid, ik)
-         dims3 = [dpo, ds, dnv]
-         call nc_check(nc_def_var_f(ncid, 'soil_z_bnds', NC_DOUBLE, 3_c_int, dims3, v_bnds), 'def soil_z_bnds')
+         dims4 = [dpo, dsi, ds, dnv]
+         call nc_check(nc_def_var_f(ncid, 'soil_z_bnds', NC_DOUBLE, 4_c_int, dims4, v_bnds), 'def soil_z_bnds')
          call put_var_text(ncid, v_bnds, 'units', 'm')
-         call put_var_text(ncid, v_bnds, 'long_name', 'the polygon''s soil layer tops and bottoms (negative downward)')
+         call put_var_text(ncid, v_bnds, 'long_name', 'the site''s soil layer tops and bottoms (negative downward)')
          call nc_check(nc_put_att_double_f(ncid, v_bnds, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), &
                        'fill')
       end if
@@ -331,7 +334,8 @@ contains
       stream%vid = -1_ik
       do j = 1_ik, reg%nidx(tier)
          k = reg%idx_freq(j, tier)
-         vid = def_registry_var(ncid, dt, dpo, dc, dp, ds, dpf, dsz, reg%var(k), np, cohort_dim, patch_dim, dg)
+         vid = def_registry_var(ncid, dt, dpo, dsi, dc, dp, ds, dpf, dsz, reg%var(k), np, files%site_max,  &
+                                cohort_dim, patch_dim, dg)
          stream%vid(k) = int(vid, ik)
       end do
 
@@ -347,17 +351,26 @@ contains
       call nc_check(nc_put_vara_double(ncid, v_lon, st1, cn1, real(files%polygon_lon, c_double)), 'put lon')
       call nc_check(nc_put_vara_int(ncid, v_row, st1, cn1, int(files%polygon_row, c_int)), 'put row')
       call nc_check(nc_put_vara_int(ncid, v_col, st1, cn1, int(files%polygon_col, c_int)), 'put col')
-      call nc_check(nc_put_vara_double(ncid, v_depth, st1, cn1, real(files%polygon_soil_depth, c_double)), &
+      call nc_check(nc_put_vara_int(ncid, v_nsite, st1, cn1, int(files%polygon_n_site, c_int)), 'put n_site')
+      st2 = 0_c_size_t
+      cn2 = [int(np, c_size_t), int(files%site_max, c_size_t)]
+      call nc_check(nc_put_vara_double(ncid, v_area, st2, cn2, real(files%site_area, c_double)), 'put site_area')
+      call nc_check(nc_put_vara_double(ncid, v_elev, st2, cn2, real(files%site_elevation, c_double)),           &
+                    'put site_elevation')
+      call nc_check(nc_put_vara_double(ncid, v_slope, st2, cn2, real(files%site_slope, c_double)), 'put site_slope')
+      call nc_check(nc_put_vara_double(ncid, v_aspect, st2, cn2, real(files%site_aspect, c_double)),            &
+                    'put site_aspect')
+      call nc_check(nc_put_vara_double(ncid, v_depth, st2, cn2, real(files%site_soil_depth, c_double)),         &
                     'put soil_depth')
-      call nc_check(nc_put_vara_int(ncid, v_bc, st1, cn1, int(files%polygon_bottom_bc, c_int)), 'put bottom_bc')
-      call nc_check(nc_put_vara_double(ncid, v_drain, st1, cn1, real(files%polygon_drain_factor, c_double)), &
+      call nc_check(nc_put_vara_int(ncid, v_bc, st2, cn2, int(files%site_bottom_bc, c_int)), 'put bottom_bc')
+      call nc_check(nc_put_vara_double(ncid, v_drain, st2, cn2, real(files%site_drain_factor, c_double)),       &
                     'put drain_factor')
-      call nc_check(nc_put_vara_double(ncid, v_tdeep, st1, cn1, real(files%polygon_deep_temp, c_double)), &
+      call nc_check(nc_put_vara_double(ncid, v_tdeep, st2, cn2, real(files%site_deep_temp, c_double)),          &
                     'put deep_temp')
       if (allocated(files%polygon_chave_e))                                                       &
          call nc_check(nc_put_vara_double(ncid, v_chave, st1, cn1, real(files%polygon_chave_e, c_double)), &
                        'put chave_e')
-      if (hass) call write_polygon_soil_coord(ncid, int(stream%v_soil_z, c_int), v_bnds, files)
+      if (hass) call write_site_soil_coord(ncid, int(stream%v_soil_z, c_int), v_bnds, files)
       if (haspf) call write_pft_coord(ncid, stream%v_pft, dg%n_pft)
       if (hassz) call write_size_coord(ncid, stream%v_dbh_lower, stream%v_dbh_upper, dg)
 
@@ -368,33 +381,59 @@ contains
       stream%d_time = int(dt, ik) ; stream%d_polygon = int(dpo, ik) ; stream%d_cohort = int(dc, ik)
       stream%d_patch = int(dp, ik) ; stream%d_soil = int(ds, ik)
       stream%d_pft = int(dpf, ik) ; stream%d_size = int(dsz, ik)
+      stream%d_site = int(dsi, ik)
       write(*,'(2a)') ' output: ', trim(path)
       end associate
+
+   contains
+      !----- A static (polygon, site) variable, with its units, long_name and the fill value its   !
+      !      polygon's missing sites keep. --------------------------------------------------------!
+      subroutine def_site_var(name, xtype, units, lname, v)
+         character(len=*), intent(in)  :: name, units, lname
+         integer(c_int),   intent(in)  :: xtype
+         integer(c_int),   intent(out) :: v
+         call nc_check(nc_def_var_f(ncid, name, xtype, 2_c_int, dims2, v), 'def '//name)
+         call put_var_text(ncid, v, 'units', units)
+         call put_var_text(ncid, v, 'long_name', lname)
+         if (xtype == NC_INT) then
+            call nc_check(nc_put_att_int_f(ncid, v, '_FillValue', NC_INT, int(MISSING_INT, c_int)), 'fill')
+         else
+            call nc_check(nc_put_att_double_f(ncid, v, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), &
+                          'fill')
+         end if
+      end subroutine def_site_var
    end subroutine open_file
 
-   !----- The soil coordinate: each polygon's own layer node depths and, as their bounds,       !
-   !      each layer's top and bottom [m], negative downward, so its bottom layer ends at its own    !
-   !      soil depth. Below a polygon's bottom layer both are the fill value, as its data are. ------!
-   subroutine write_polygon_soil_coord(ncid, v_z, v_bnds, files)
+   !----- The soil coordinate: each site's own layer node depths and, as their bounds, each         !
+   !      layer's top and bottom [m], negative downward, so its bottom layer ends at its own soil   !
+   !      depth. Below a site's bottom layer, and for a polygon's missing sites, both are the fill  !
+   !      value, as its data are. ------------------------------------------------------------------!
+   subroutine write_site_soil_coord(ncid, v_z, v_bnds, files)
       integer(c_int),       intent(in) :: ncid, v_z, v_bnds
       type(output_files_t), intent(in) :: files
-      real(c_double), allocatable :: z(:,:), b(:,:,:)
-      integer(c_size_t) :: st2(2), cn2(2), st3(3), cn3(3)
-      integer(ik)       :: p, k
-      allocate(z(n_soil_layer_max, files%n_polygon), b(2, n_soil_layer_max, files%n_polygon))
-      z = real(MISSING_VALUE, c_double) ; b = real(MISSING_VALUE, c_double)
+      real(c_double), allocatable :: z(:,:,:), b(:,:,:,:)
+      integer(c_size_t) :: st3(3), cn3(3), st4(4), cn4(4)
+      integer(ik)       :: p, is, k, ns
+      ns = files%site_max
+      allocate(z(n_soil_layer_max, ns, files%n_polygon), b(2, n_soil_layer_max, ns, files%n_polygon))
+      z = real(MISSING_VALUE, c_double)
+      b = real(MISSING_VALUE, c_double)
       do p = 1_ik, files%n_polygon
-         do k = 1_ik, files%polygon_n_soil(p)
-            z(k, p)    = real(files%polygon_soil_z(k, p), c_double)
-            b(1, k, p) = real(files%polygon_soil_face(k, p), c_double)
-            b(2, k, p) = real(files%polygon_soil_face(k + 1_ik, p), c_double)
+         do is = 1_ik, files%polygon_n_site(p)
+            do k = 1_ik, files%site_n_soil(is, p)
+               z(k, is, p)    = real(files%site_soil_z(k, is, p), c_double)
+               b(1, k, is, p) = real(files%site_soil_face(k, is, p), c_double)
+               b(2, k, is, p) = real(files%site_soil_face(k + 1_ik, is, p), c_double)
+            end do
          end do
       end do
-      st2 = 0_c_size_t ; cn2 = [int(files%n_polygon, c_size_t), int(n_soil_layer_max, c_size_t)]
-      call nc_check(nc_put_vara_double(ncid, v_z, st2, cn2, z), 'put soil_z')
-      st3 = 0_c_size_t ; cn3 = [cn2(1), cn2(2), 2_c_size_t]
-      call nc_check(nc_put_vara_double(ncid, v_bnds, st3, cn3, b), 'put soil_z_bnds')
-   end subroutine write_polygon_soil_coord
+      st3 = 0_c_size_t
+      cn3 = [int(files%n_polygon, c_size_t), int(ns, c_size_t), int(n_soil_layer_max, c_size_t)]
+      call nc_check(nc_put_vara_double(ncid, v_z, st3, cn3, z), 'put soil_z')
+      st4 = 0_c_size_t
+      cn4 = [cn3(1), cn3(2), cn3(3), 2_c_size_t]
+      call nc_check(nc_put_vara_double(ncid, v_bnds, st4, cn4, b), 'put soil_z_bnds')
+   end subroutine write_site_soil_coord
 
    !----- The pft coordinate: the 1-based PFT indices this run carries. ----------------------!
    subroutine write_pft_coord(ncid, vid_ik, n_pft)
@@ -457,14 +496,17 @@ contains
    end function def_scalar_var
 
    !----- Define one registry variable: (time, polygon[, axis...]), chunked one record at a time  !
-   !      and deflated, with CF attrs + _FillValue. A soil-by-patch variable is (time, polygon,     !
-   !      patch, soil): the buffer side is a flat slab strided by n_soil_layer_max (DIM_SOIL_PATCH  !
-   !      in meds_output_types), patch-major and layer-minor, which is netCDF's row-major order.    !
-   integer(c_int) function def_registry_var(ncid, dt, dpo, dc, dp, ds, dpf, dsz, v, np, cohort_dim, &
-                                            patch_dim, dg) result(vid)
-      integer(c_int),      intent(in) :: ncid, dt, dpo, dc, dp, ds, dpf, dsz
+   !      and deflated, with CF attrs + _FillValue. A soil-by-patch variable is (time, polygon,   !
+   !      patch, soil) and a site soil column (time, polygon, site, soil): the buffer side is a   !
+   !      flat slab strided by n_soil_layer_max (DIM_SOIL_PATCH and DIM_SOIL in                   !
+   !      meds_output_types), patch- or site-major and layer-minor, which is netCDF's row-major   !
+   !      order.                                                                                  !
+   integer(c_int) function def_registry_var(ncid, dt, dpo, dsi, dc, dp, ds, dpf, dsz, v, np, ns,    &
+                                            cohort_dim, patch_dim, dg) result(vid)
+      integer(c_int),      intent(in) :: ncid, dt, dpo, dsi, dc, dp, ds, dpf, dsz
       type(var_desc_t),    intent(in) :: v
       integer(ik),         intent(in) :: np                     !< polygons
+      integer(ik),         intent(in) :: ns                     !< the site axis's length
       integer(ik),         intent(in) :: cohort_dim, patch_dim  !< the file's TRIMMED (live-count) axis lengths
       type(diag_params_t), intent(in) :: dg
       integer(c_int)    :: xt, dims(4), rank
@@ -480,6 +522,9 @@ contains
       case (DIM_PATCH)
          rank = rank + 1_c_int ; dims(rank) = dp  ; chunk(rank) = int(patch_dim, c_size_t)
       case (DIM_SOIL)
+         rank = rank + 1_c_int
+         dims(rank) = dsi
+         chunk(rank) = int(ns, c_size_t)
          rank = rank + 1_c_int ; dims(rank) = ds  ; chunk(rank) = int(n_soil_layer_max, c_size_t)
       case (DIM_PFT)
          rank = rank + 1_c_int ; dims(rank) = dpf ; chunk(rank) = int(max(dg%n_pft, 1_ik), c_size_t)
@@ -555,7 +600,7 @@ contains
          case (DIM_SCALAR)     ; n = 1_ik
          case (DIM_COHORT)     ; n = stream%cohort_dim
          case (DIM_PATCH)      ; n = stream%patch_dim
-         case (DIM_SOIL)       ; n = n_soil_layer_max
+         case (DIM_SOIL)       ; n = files%site_max * n_soil_layer_max
          case (DIM_PFT)        ; n = max(files%diag%n_pft, 1_ik)
          case (DIM_SIZE)       ; n = max(files%diag%n_dbh_class, 1_ik)
          case (DIM_SOIL_PATCH) ; n = stream%patch_dim * n_soil_layer_max
@@ -568,6 +613,10 @@ contains
             rank = rank + 2_c_int
             st(rank-1:rank) = 0_c_size_t
             cn(rank-1:rank) = [int(stream%patch_dim, c_size_t), int(n_soil_layer_max, c_size_t)]
+         else if (reg%var(k)%dim == DIM_SOIL) then
+            rank = rank + 2_c_int
+            st(rank-1:rank) = 0_c_size_t
+            cn(rank-1:rank) = [int(files%site_max, c_size_t), int(n_soil_layer_max, c_size_t)]
          else if (reg%var(k)%dim /= DIM_SCALAR) then
             rank = rank + 1_c_int ; st(rank) = 0_c_size_t ; cn(rank) = int(n, c_size_t)
          end if

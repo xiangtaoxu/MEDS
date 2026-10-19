@@ -41,11 +41,11 @@ module meds_diagnostic_reduce
    public :: W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
    public :: cohort_weight, reduce_cohort_to_site, reduce_cohort_to_patch
    public :: reduce_cohort_to_pft, reduce_cohort_to_size
-   public :: reduce_patch_to_site, reduce_patch_column_to_site, gather_patch_columns
+   public :: reduce_patch_to_site, reduce_patch_columns_to_sites, gather_patch_columns
    !----- Convenience site totals, thin wrappers for the callers that want one number (the    !
    !      driver's summaries, the C API, the tests).                                            !
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area, mean_dbh
-   public :: total_gpp, total_npp, site_soil_temp_column, site_soil_water_column
+   public :: total_gpp, total_npp
    public :: mean_can_temp, mean_soil_temp_top, total_et
    public :: total_soilc_fast_grnd, total_soilc_fast_soil, total_soilc_struct_grnd,               &
              total_soilc_struct_soil, total_soilc_microbial, total_soilc_slow,                    &
@@ -288,36 +288,46 @@ contains
       end if
    end subroutine reduce_patch_to_site
 
-   !----- Area-weight a per-patch COLUMN (soil / snow layers) into one site column. ---------!
-   pure subroutine reduce_patch_column_to_site(poly, col, nlayer, out, n_out)
+   !----- Area-weight each site's per-patch soil columns into the site's column, flattened at      !
+   !      (is-1)*n_soil_layer_max + k (DIM_SOIL). A site's layers are its own column's; the slots  !
+   !      below its bottom layer are not valid. ---------------------------------------------------!
+   pure subroutine reduce_patch_columns_to_sites(poly, col, out, valid, n_out)
       type(polygon_t), intent(in) :: poly
       real(wp),     intent(in)  :: col(:,:)   !< (layer, patch)
-      integer(ik),  intent(in)  :: nlayer
       real(wp),     intent(out) :: out(:)
+      logical,      intent(out) :: valid(:)
       integer(ik),  intent(out) :: n_out
-      real(wp)    :: share(max(poly%patch%n, 1_ik)), wsum
-      integer(ik) :: ip
+      real(wp)    :: share(max(poly%patch%n, 1_ik)), wsum, s(n_soil_layer_max)
+      integer(ik) :: is, ip, nl, base
       call patch_polygon_areas(poly, share)
-      n_out = nlayer
-      out(1:n_out) = 0.0_wp ; wsum = 0.0_wp
-      do ip = 1_ik, poly%patch%n
-         out(1:n_out) = out(1:n_out) + share(ip) * col(1:n_out, ip)
-         wsum = wsum + share(ip)
+      n_out = poly%site%n * n_soil_layer_max
+      out(1:n_out)   = 0.0_wp
+      valid(1:n_out) = .false.
+      do is = 1_ik, poly%site%n
+         nl   = poly%site%surface(is)%soil%n_active
+         base = (is - 1_ik) * n_soil_layer_max
+         s(1:nl) = 0.0_wp
+         wsum = 0.0_wp
+         do ip = poly%site%patch_offset(is), poly%site%patch_offset(is) + poly%site%patch_count(is) - 1_ik
+            s(1:nl) = s(1:nl) + share(ip) * col(1:nl, ip)
+            wsum = wsum + share(ip)
+         end do
+         if (wsum > tiny_num) s(1:nl) = s(1:nl) / wsum
+         out(base + 1_ik:base + nl)   = s(1:nl)
+         valid(base + 1_ik:base + nl) = .true.
       end do
-      if (wsum > tiny_num) out(1:n_out) = out(1:n_out) / wsum
-   end subroutine reduce_patch_column_to_site
+   end subroutine reduce_patch_columns_to_sites
 
    !----- FLATTEN per-patch columns into the 2-D (layer, patch) slab, no reduction at all      !
-   !      (DIM_SOIL_PATCH; docs/science/diagnostics.md §3).                                      !
+   !      (DIM_SOIL_PATCH; docs/science/diagnostics.md §3). Each patch's layers are its site's.   !
    !                                                                                          !
    !      The stride is the COMPILE-TIME n_soil_layer_max, never the live layer count. That is   !
    !      the load-bearing detail: striding by a live count would silently re-map every profile   !
    !      the moment the active layer count differed from the one the reader assumed, producing   !
    !      plausible shifted columns rather than an error.                                         !
-   pure subroutine gather_patch_columns(poly, col, nlayer, out, valid, n_out)
+   pure subroutine gather_patch_columns(poly, col, out, valid, n_out)
       type(polygon_t), intent(in) :: poly
       real(wp),     intent(in)  :: col(:,:)   !< (layer, patch)
-      integer(ik),  intent(in)  :: nlayer
       real(wp),     intent(out) :: out(:)
       logical,      intent(out) :: valid(:)
       integer(ik),  intent(out) :: n_out
@@ -327,7 +337,7 @@ contains
       valid(1:max(n_out,1_ik)) = .false.
       do ip = 1_ik, poly%patch%n
          base = (ip - 1_ik) * n_soil_layer_max
-         do k = 1_ik, nlayer
+         do k = 1_ik, poly%site%surface(poly%patch%owner_site(ip))%soil%n_active
             out(base + k)   = col(k, ip)
             valid(base + k) = .true.
          end do
@@ -505,32 +515,6 @@ contains
       do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%xi_accum(ip)%rh_fast_accum ; end do
       call reduce_patch_to_site(poly, x, .false., tot, ok)
    end function total_rh
-
-   !----- Area-weighted SITE soil temperature column [K]. ----------------------------------!
-   pure subroutine site_soil_temp_column(poly, out, n)
-      type(polygon_t), intent(in) :: poly
-      real(wp),     intent(out) :: out(:)
-      integer(ik),  intent(out) :: n
-      real(wp)    :: col(n_soil_layer_max, max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      do ip = 1_ik, poly%patch%n
-         col(1:n_soil_layer_max, ip) = poly%patch%soil_energy(ip)%soil_temp(1:n_soil_layer_max)
-      end do
-      call reduce_patch_column_to_site(poly, col, n_soil_layer_max, out, n)
-   end subroutine site_soil_temp_column
-
-   !----- Area-weighted SITE volumetric soil-moisture column [m3/m3]. ----------------------!
-   pure subroutine site_soil_water_column(poly, out, n)
-      type(polygon_t), intent(in) :: poly
-      real(wp),     intent(out) :: out(:)
-      integer(ik),  intent(out) :: n
-      real(wp)    :: col(n_soil_layer_max, max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      do ip = 1_ik, poly%patch%n
-         col(1:n_soil_layer_max, ip) = poly%patch%soil_water(ip)%theta(1:n_soil_layer_max)
-      end do
-      call reduce_patch_column_to_site(poly, col, n_soil_layer_max, out, n)
-   end subroutine site_soil_water_column
 
    !=======================================================================================!
    !  Health checks / reporting                                                              !

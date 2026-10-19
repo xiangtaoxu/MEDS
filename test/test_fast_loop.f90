@@ -268,8 +268,8 @@ program test_fast_loop
          !      fill value, as on the coarse tiers. The fixture needs such a tail. ------------------!
          call check(ctx%col_config%soil%n_active < n_soil_layer_max,                               &
                     'fixture has an inactive soil tail to be worth anything')
-         call check(ob%fast_n_soil == ctx%col_config%soil%n_active,                                &
-                    'the fast tier folds only the active soil layers')
+         call check(ob%fast_n_site == 1_ik .and. count(ob%fast_soil_live(1:n_soil_layer_max))       &
+                    == ctx%col_config%soil%n_active, 'the fast tier folds only the active soil layers')
          !----- The patch axis: each patch's staged row is its own, unweighted -- the last           !
          !      sub-step's is the state the step wrote back -- and the site mean is their area-      !
          !      weighted sum, in patch order (docs/science/diagnostics.md §4, The FAST tier by       !

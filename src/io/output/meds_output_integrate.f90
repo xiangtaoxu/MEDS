@@ -31,7 +31,7 @@ module meds_output_integrate
                                        soil_matric_potential
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,             &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,               &
-                                       reduce_patch_to_site, reduce_patch_column_to_site,         &
+                                       reduce_patch_to_site, reduce_patch_columns_to_sites,       &
                                        gather_patch_columns, total_et
    implicit none
    private
@@ -52,7 +52,7 @@ module meds_output_integrate
    public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_PY_DIAG0
    !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
-   public :: FLD_P_GLOBAL_ID, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH
+   public :: FLD_P_GLOBAL_ID, FLD_P_SITE, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH
    public :: FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND
    public :: FLD_P_SOILC_STRUCT_SOIL, FLD_P_SOILC_MICROBIAL, FLD_P_SOILC_SLOW
    public :: FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH
@@ -141,6 +141,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_COHORT_OFFSET   = 2004_ik
    integer(ik), parameter :: FLD_P_COHORT_COUNT    = 2005_ik
    integer(ik), parameter :: FLD_P_GLOBAL_ID       = 2006_ik
+   integer(ik), parameter :: FLD_P_SITE            = 2007_ik   !< the patch's site (owner_site)
    !----- The canopy-air, soil-top and surface-water STATES are not read here at the output tick:  !
    !      one sample per window, at the boundary's local hour, biases them. Their time means         !
    !      are rows of the patch block (FLD_P_DIAG0 + PA_*), accumulated through the step. ---------!
@@ -157,8 +158,8 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_SOILC_TOTAL       = 2027_ik
    integer(ik), parameter :: FLD_P_RH                = 2028_ik
 
-   !----- Soil LAYER fields (SRCK_LAYER): per (layer, patch); reduced to a site column for      !
-   !      DIM_SOIL, or flattened for DIM_SOIL_PATCH. ------------------------------------------!
+   !----- Soil LAYER fields (SRCK_LAYER): per (layer, patch); reduced to each site's column    !
+   !      for DIM_SOIL, or flattened for DIM_SOIL_PATCH. --------------------------------------!
    integer(ik), parameter :: FLD_L_SOIL_TEMP    = 3001_ik
    integer(ik), parameter :: FLD_L_SOIL_WATER   = 3002_ik
    integer(ik), parameter :: FLD_L_SOIL_PSI     = 3003_ik
@@ -486,6 +487,8 @@ contains
       case (FLD_P_COHORT_OFFSET) ; x(1:n) = real(poly%patch%cohort_offset(1:n), wp)
       case (FLD_P_COHORT_COUNT)  ; x(1:n) = real(poly%patch%cohort_count(1:n), wp)
       case (FLD_P_GLOBAL_ID)     ; x(1:n) = real(poly%patch%global_id(1:n), wp)
+      case (FLD_P_SITE)
+         x(1:n) = real(poly%patch%owner_site(1:n), wp)
       case (FLD_P_CAS_DEPTH)     ; do ip = 1_ik, n ; x(ip) = poly%patch%cas(ip)%can_depth    ; end do
       case (FLD_P_SWE)
          do ip = 1_ik, n ; x(ip) = sum(poly%patch%snow(ip)%swe(:))        ; end do
@@ -526,59 +529,52 @@ contains
       end select
    end subroutine patch_source_field
 
-   !----- Per-(soil layer, patch) field. `col` is (n_soil_layer_max, n_patch); nlayer is the   !
-   !      ACTIVE layer count. psi/wetness need the retention curve, so they emit MISSING when    !
-   !      the manager has no soil parameters wired (dp%soil_ready = .false.) rather than         !
-   !      inventing a texture -- a plausible wrong psi is worse than an honest fill value.        !
+   !----- Per-(soil layer, patch) field. `col` is (n_soil_layer_max, n_patch), each patch's   !
+   !      column filled on its site's ACTIVE layers. psi/wetness take the site's retention    !
+   !      curve, and emit MISSING when the fast loop does not run (dp%soil_ready = .false.):  !
+   !      a soil water nothing moves has no potential worth reporting.                        !
    !                                                                                          !
-   !      nlayer IS dp%n_soil, never the compile-time ceiling n_soil_layer_max. The DIM_SOIL      !
-   !      branch of extract_variable marks every slot it is handed as valid, so a padded count    !
-   !      would write the padding as data: a 10-layer column reduced over 20 slots reads as a     !
-   !      136 K column (ten real layers averaged with ten zeros), and soil_matric_potential on    !
-   !      padding whose theta_sat is 0 divides by zero -- a Debug build (-fpe0) aborts, a Release !
-   !      build writes NaN. Bounded here, the reducers below mark only live slots valid,          !
-   !      normalize_slab leaves the rest at MISSING_VALUE, and the serializer writes only the     !
-   !      live extent, as for the cohort and patch axes.  -------------------------------------!
-   pure subroutine layer_source_field(poly, dp, src, col, nlayer, ok)
+   !      Only the active layers are data. The reducers mark only those slots valid,          !
+   !      normalize_slab leaves the rest at MISSING_VALUE, and the serializer writes the fill !
+   !      there: a 10-layer column read over 20 slots would average ten zeros into it, and    !
+   !      soil_matric_potential on padding whose theta_sat is 0 divides by zero -- a Debug    !
+   !      build (-fpe0) aborts, a Release build writes NaN. ----------------------------------!
+   pure subroutine layer_source_field(poly, dp, src, col, ok)
       type(polygon_t),     intent(in)  :: poly
       type(diag_params_t), intent(in)  :: dp
       integer(ik),         intent(in)  :: src
       real(wp),            intent(out) :: col(:,:)
-      integer(ik),         intent(out) :: nlayer
       logical,             intent(out) :: ok
-      integer(ik) :: ip, np
+      integer(ik) :: ip, np, nl
       np = poly%patch%n
-      nlayer = min(max(dp%n_soil, 1_ik), n_soil_layer_max) ; ok = .true.
-      if (np <= 0_ik) then ; ok = .false. ; return ; end if
-      select case (src)
-      case (FLD_L_SOIL_TEMP)
-         do ip = 1_ik, np
-            col(1:nlayer, ip) = poly%patch%soil_energy(ip)%soil_temp(1:nlayer)
-         end do
-      case (FLD_L_SOIL_WATER)
-         do ip = 1_ik, np
-            col(1:nlayer, ip) = poly%patch%soil_water(ip)%theta(1:nlayer)
-         end do
-      case (FLD_L_SOIL_FLIQ)
-         do ip = 1_ik, np
-            col(1:nlayer, ip) = poly%patch%soil_energy(ip)%soil_fliq(1:nlayer)
-         end do
-      case (FLD_L_SOIL_PSI)
-         if (.not. dp%soil_ready) then ; ok = .false. ; return ; end if
-         do ip = 1_ik, np
-            col(1:nlayer, ip) = soil_matric_potential(dp%retention,                            &
-                                   poly%patch%soil_water(ip)%theta(1:nlayer),                      &
-                                   dp%theta_sat(1:nlayer), dp%theta_res(1:nlayer),             &
-                                   dp%par_a(1:nlayer), dp%par_n(1:nlayer))
-         end do
-      case (FLD_L_SOIL_WETNESS)
-         if (.not. dp%soil_ready) then ; ok = .false. ; return ; end if
-         do ip = 1_ik, np
-            col(1:nlayer, ip) = soil_wetness(poly%patch%soil_water(ip)%theta(1:nlayer),            &
-                                             dp%theta_res(1:nlayer), dp%theta_sat(1:nlayer))
-         end do
-      case default ; ok = .false.
-      end select
+      ok = np > 0_ik
+      if (.not. ok) return
+      if ((src == FLD_L_SOIL_PSI .or. src == FLD_L_SOIL_WETNESS) .and. .not. dp%soil_ready) then
+         ok = .false.
+         return
+      end if
+      do ip = 1_ik, np
+         associate (soil => poly%site%surface(poly%patch%owner_site(ip))%soil)
+            nl = soil%n_active
+            select case (src)
+            case (FLD_L_SOIL_TEMP)
+               col(1:nl, ip) = poly%patch%soil_energy(ip)%soil_temp(1:nl)
+            case (FLD_L_SOIL_WATER)
+               col(1:nl, ip) = poly%patch%soil_water(ip)%theta(1:nl)
+            case (FLD_L_SOIL_FLIQ)
+               col(1:nl, ip) = poly%patch%soil_energy(ip)%soil_fliq(1:nl)
+            case (FLD_L_SOIL_PSI)
+               col(1:nl, ip) = soil_matric_potential(soil%retention, poly%patch%soil_water(ip)%theta(1:nl), &
+                                                     soil%theta_sat(1:nl), soil%theta_res(1:nl),          &
+                                                     soil%curve_par_a(1:nl), soil%curve_par_n(1:nl))
+            case (FLD_L_SOIL_WETNESS)
+               col(1:nl, ip) = soil_wetness(poly%patch%soil_water(ip)%theta(1:nl),                    &
+                                            soil%theta_res(1:nl), soil%theta_sat(1:nl))
+            case default
+               ok = .false.
+            end select
+         end associate
+      end do
    end subroutine layer_source_field
 
    !=======================================================================================!
@@ -602,7 +598,7 @@ contains
       integer(ik),         intent(out) :: n_out
       real(wp)    :: x(max(poly%cohort%n, poly%patch%n, 1_ik))
       real(wp)    :: col(n_soil_layer_max, max(poly%patch%n, 1_ik))
-      integer(ik) :: nf, nlayer, kcls
+      integer(ik) :: nf, kcls
       logical     :: ok
       scalar_out = 0.0_wp ; n_out = 0_ik
       kcls = src_class(v%source_id)
@@ -643,21 +639,20 @@ contains
          call reduce_cohort_to_size(poly, x, v%weight, v%mean, dp%dbh_edges, dp%n_dbh_class,   &
                                     slab_out, valid_out, n_out, scale=v%scale)
 
-      !----- Area-weighted SITE soil column. ------------------------------------------------!
+      !----- Each site's column, its patches area-weighted, at (is-1)*n_soil_layer_max + k. -!
       case (DIM_SOIL)
-         call layer_source_field(poly, dp, v%source_id, col, nlayer, ok)
+         call layer_source_field(poly, dp, v%source_id, col, ok)
          if (ok) then
-            call reduce_patch_column_to_site(poly, col, nlayer, slab_out, n_out)
-            valid_out(1:max(n_out,1_ik)) = .true.
+            call reduce_patch_columns_to_sites(poly, col, slab_out, valid_out, n_out)
          else
             n_out = 0_ik
          end if
 
       !----- 2-D (soil layer x patch), flattened at (ip-1)*n_soil_layer_max + k. -------------!
       case (DIM_SOIL_PATCH)
-         call layer_source_field(poly, dp, v%source_id, col, nlayer, ok)
+         call layer_source_field(poly, dp, v%source_id, col, ok)
          if (ok) then
-            call gather_patch_columns(poly, col, nlayer, slab_out, valid_out, n_out)
+            call gather_patch_columns(poly, col, slab_out, valid_out, n_out)
          else
             n_out = 0_ik
          end if
@@ -911,7 +906,7 @@ contains
       type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: isub
       real(wp),               intent(in)    :: dt
-      integer(ik) :: j, k, src, np, nsp
+      integer(ik) :: j, k, src, np, nsp, nss
       if (.not. files%enabled) return
       if (files%reg%nidx(1) == 0_ik) return
       !----- The staging follows the stand; the slabs are output.cohort_max and patch_max long. The  !
@@ -922,6 +917,7 @@ contains
          call cap_exceeded('patch', bufs%fast_n_patch, files%patch_max)
       np  = bufs%fast_n_patch
       nsp = np * n_soil_layer_max
+      nss = bufs%fast_n_site * n_soil_layer_max
       if (.not. bufs%has_data(1)) bufs%t_open(1) = bufs%fast_time(isub)
       do j = 1_ik, files%reg%nidx(1)
          k   = files%reg%idx_freq(j, 1_ik)
@@ -934,17 +930,19 @@ contains
             call integrate_slab(bufs%buf(k,1), bufs%fast_patch(src - SRC_F_PA0, 1:np, isub), np, dt)
          case (DIM_SOIL)
             if (src == SRC_F_SOIL_WATER) then
-               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water(:,isub), bufs%fast_n_soil, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water(1:nss,isub), nss, dt,              &
+                                   bufs%fast_soil_live(1:nss))
             else
-               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp(:,isub), bufs%fast_n_soil, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp(1:nss,isub), nss, dt,               &
+                                   bufs%fast_soil_live(1:nss))
             end if
          case (DIM_SOIL_PATCH)
             if (src == SRC_F_SOIL_WATER) then
                call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water_patch(1:nsp,isub), nsp, dt,        &
-                                   active_layers(bufs%fast_n_soil, np))
+                                   bufs%fast_soil_patch_live(1:nsp))
             else
                call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp_patch(1:nsp,isub), nsp, dt,         &
-                                   active_layers(bufs%fast_n_soil, np))
+                                   bufs%fast_soil_patch_live(1:nsp))
             end if
          case (DIM_COHORT)
             select case (src)
@@ -964,17 +962,5 @@ contains
       end do
       bufs%has_data(1) = .true.
    end subroutine output_integrate_fast
-
-   !----- Which slots of a soil-by-patch slab hold a layer the column simulates: the first n_soil  !
-   !      of each patch's n_soil_layer_max. The rest read as the fill value, as on the coarse tiers. !
-   pure function active_layers(n_soil, n_patch) result(live)
-      integer(ik), intent(in) :: n_soil, n_patch
-      logical :: live(n_soil_layer_max * n_patch)
-      integer(ik) :: ip
-      live = .false.
-      do ip = 1_ik, n_patch
-         live((ip - 1_ik) * n_soil_layer_max + 1_ik : (ip - 1_ik) * n_soil_layer_max + n_soil) = .true.
-      end do
-   end function active_layers
 
 end module meds_output_integrate

@@ -322,7 +322,7 @@ contains
       !      rest of each axis empty; the files carry each polygon's own layer depths and inputs. -----!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
-         call open_output_files(cfg, reg%out_files, reg%verbose, cells, ids)
+         call open_output_files(cfg, reg%out_files, reg%verbose, cells, ids, reg%poly(:)%site%n)
          do p = 1_ik, n
             call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p))
          end do
@@ -584,7 +584,7 @@ contains
       end associate
    end subroutine step_polygons
 
-   !----- The state file: every polygon's row, at the current date (meds_io). The cohort, patch and  !
+   !----- The state file: every polygon's row, at the current date (meds_io). The cohort, patch and   !
    !      site axes are the largest polygon's. The polygons share the calendar, so they owe the same  !
    !      boundary restructuring. --------------------------------------------------------------------!
    subroutine region_write_state(reg)

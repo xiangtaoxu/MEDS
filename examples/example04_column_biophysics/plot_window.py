@@ -35,9 +35,13 @@ LAYERS = ["#a35d1c", "#d4661c", "#eda100", "#c9b98f"]   # shallow to deep
 
 
 def one_polygon(var):
-    """A variable of a site run's file, on its one polygon."""
-    x = var[:].astype(float)
-    return x.take(0, axis=var.dimensions.index("polygon")) if "polygon" in var.dimensions else x
+    """A variable of a site run's file, on its one polygon and its one site."""
+    x, dims = var[:].astype(float), list(var.dimensions)
+    for axis in ("polygon", "site"):
+        if axis in dims:
+            x = x.take(0, axis=dims.index(axis))
+            dims.remove(axis)
+    return x
 
 
 def read(pattern):
