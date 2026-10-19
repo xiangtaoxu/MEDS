@@ -100,6 +100,10 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 - **Fortran code that uses `meds_arrowhead_solve`, or `thomas_solve` or `matrix_exp` from
   `meds_numerics`, uses `meds_linear_algebra`** (#458). `matrix_exp_fixed` and `matmul_sq` are
   private to it.
+- **Fortran code that used one of `src/shared`'s unused names writes it out** (#458), as listed under
+  Removed. `HYDRO_TABLE_NTAB`, `HYDRO_TABLE_RMAX`, `UPTAKE_RAMP_WIDTH`, `TRANSP_CLOSE_WIDTH`
+  (`meds_hydr_lib`), `leaf_class_angle` (`meds_optics_lib`) and `pv_rwc_tlp` (`meds_water_retention`)
+  are private to their modules.
 
 ### Changed
 
@@ -336,6 +340,13 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 - **`mon_per_yr`, `day_per_mon`, `umols_per_kgCyr` and `k_air`** (#458), which nothing used, and
   `area_tol` from `meds_constants`: the end-of-run patch-area check in `meds_region`, its one user,
   holds it as `AREA_TOL`, so `meds_constants` holds no tolerance.
+- **Code in `src/shared` that nothing used** (#458): `budget_assert`, `budget_check`'s optional
+  `atol_extra` and `budget_t`'s `store0` and `store1`, which were written and never read
+  (`meds_budget_check`); `cp_moist` (`meds_therm_lib`); `days_between` and `time_le` (`meds_time`),
+  which only their unit test called; `ROUNDOFF_RTOL` (`meds_numerics`), which only the test of
+  `conserved` read; an unused zenith angle in `gfun_direct`; and in `soil_unknown_from_theta` a test
+  for Campbell layers that no Campbell layer reaches. `SE_START` repeated `SE_MIN` and is gone.
+  Outputs are unchanged bit for bit.
 
 ## [0.3.5] — 2026-10-17
 

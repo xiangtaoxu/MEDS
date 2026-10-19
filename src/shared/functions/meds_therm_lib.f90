@@ -23,7 +23,7 @@ module meds_therm_lib
 
    public :: sat_specific_humidity_temp_deriv
    public :: internal_energy_to_temp, temp_to_internal_energy
-   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density, cas_molar_density
+   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, air_density, cas_molar_density
    public :: temp_of_liquid_enthalpy, precip_enthalpy
    public :: cas_enthalpy_of_temp, cas_temp_of_enthalpy
    public :: soil_thermal_cond, soil_heat_cap_vol
@@ -203,13 +203,6 @@ contains
       real(wp)             :: h
       h = snow * internal_energy_ice(min(t_3ple, t_air)) + rain * internal_energy_liquid(t_air)
    end function precip_enthalpy
-
-   !----- Moist-air specific heat [J/kg/K]. -----------------------------------------------!
-   elemental function cp_moist(shv) result(cp)
-      real(wp), intent(in) :: shv
-      real(wp)             :: cp
-      cp = (1.0_wp - shv) * cp_air + shv * cp_vap
-   end function cp_moist
 
    !----- Moist-air density [kg/m3] via the virtual temperature. --------------------------!
    elemental function air_density(t_k, p_pa, shv) result(rho)

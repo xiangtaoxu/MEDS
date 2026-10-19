@@ -14,10 +14,10 @@ module meds_time
 
    public :: meds_time_t
    public :: is_leap_year, days_in_month, days_in_year, day_of_year
-   public :: time_advance_days, time_advance_months, days_between, years_between
+   public :: time_advance_days, time_advance_months, years_between
    public :: time_advance_years, whole_years_between
    public :: seconds_into_day, seconds_between, time_advance_seconds
-   public :: time_lt, time_le, time_eq, time_valid
+   public :: time_lt, time_eq, time_valid
    public :: time_from_string, time_units_base, time_to_string, time_to_stamp, time_to_decimal_year
    public :: solar_cosz, daylength, doy_effective, solar_declination
 
@@ -176,12 +176,6 @@ contains
       t2%day   = min(t%day, days_in_month(t2%year, t2%month))
    end function time_advance_months
 
-   !----- Whole days from a to b (positive if b is later). --------------------------------!
-   pure integer(ik) function days_between(a, b) result(d)
-      type(meds_time_t), intent(in) :: a, b
-      d = int(to_jdn(b) - to_jdn(a), ik)
-   end function days_between
-
    !----- b - a in decimal calendar years, for progress messages. -------------------------!
    pure real(wp) function years_between(a, b) result(y)
       type(meds_time_t), intent(in) :: a, b
@@ -242,11 +236,6 @@ contains
       type(meds_time_t), intent(in) :: a, b
       yes = to_jdn(a) == to_jdn(b) .and. sec_of_day(a) == sec_of_day(b)
    end function time_eq
-
-   pure logical function time_le(a, b) result(yes)
-      type(meds_time_t), intent(in) :: a, b
-      yes = time_lt(a, b) .or. time_eq(a, b)
-   end function time_le
 
    !----- Advance by n calendar years, keeping the month, day and time of day; 29 February !
    !      in a non-leap target year becomes 28 February, as in the forcing's recycling     !

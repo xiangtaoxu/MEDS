@@ -21,7 +21,7 @@ module meds_water_retention
 
    !----- Tissue pressure-volume curve. ---------------------------------------------------!
    public :: water_curve_t
-   public :: pv_psi_tlp, pv_rwc_tlp, rwc_from_psi, psi_from_rwc
+   public :: pv_psi_tlp, rwc_from_psi, psi_from_rwc
    public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity, shared_potential
    !----- Soil retention curve: theta(psi) and psi(theta) read-offs. ----------------------!
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
@@ -346,22 +346,21 @@ contains
 
    !----- The unknown tau of a layer holding theta [m3/m3], the inverse of                 !
    !      soil_water_relations's water. A layer at or below residual starts just inside    !
-   !      the curve, at SE_START; a Campbell layer at saturation sits at the branch point, !
+   !      the curve, at SE_MIN; a Campbell layer at saturation sits at the branch point, !
    !      its air-entry potential. --------------------------------------------------------!
    elemental function soil_unknown_from_theta(c, theta) result(tau)
       type(soil_layer_curve_t), intent(in) :: c
       real(wp),                 intent(in) :: theta
       real(wp) :: tau
-      real(wp), parameter :: SE_START = 1.0e-9_wp   ! the read-offs' lowest saturation, SE_MIN
       real(wp) :: se, head, dse_dhead
       se = (theta - c%theta_res) / max(c%theta_sat - c%theta_res, tiny_num)
       if (se <= c%se_switch) then
-         tau = max(se, SE_START)   ! clamp-ok: a state at residual starts just inside the curve
+         tau = max(se, SE_MIN)     ! clamp-ok: a state at residual starts just inside the curve
          return
       end if
       if (theta > c%theta_sat) then
          head = (theta - c%theta_sat) / SOIL_SPECIFIC_STORAGE
-      else if (se >= 1.0_wp .and. c%retention /= SOIL_RETENTION_CAMPBELL) then
+      else if (se >= 1.0_wp) then
          head = 0.0_wp
       else
          call head_of_saturation(c%retention, c%par_a, c%par_n, se, head, dse_dhead)

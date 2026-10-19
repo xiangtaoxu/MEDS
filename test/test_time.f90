@@ -4,7 +4,7 @@ program test_time
    use meds_kinds,        only : wp, ik
    use meds_time,         only : meds_time_t, is_leap_year, days_in_month, days_in_year,       &
                                  day_of_year, time_advance_days, time_advance_months,          &
-                                 days_between, time_lt, time_le, time_eq,                       &
+                                 time_lt, time_eq,                                              &
                                  time_from_string, time_to_string, time_to_stamp,              &
                                  time_to_decimal_year, solar_cosz, daylength,        &
                                  solar_declination
@@ -66,17 +66,17 @@ program test_time
    call check(cz_mid == 0.0_wp,                'midnight: cosz floored to 0')
    call check(cz_summer > cz_winter .and. cz_winter > 0.0_wp, '45N summer noon sun higher than winter')
 
-   !=== Days between counts leap days. ===================================================!
-   call check(days_between(meds_time_t(2000_ik,1_ik,1_ik), meds_time_t(2001_ik,1_ik,1_ik)) == 366_ik, &
+   !=== A year of days counts leap days. =================================================!
+   call check(time_eq(time_advance_days(meds_time_t(2000_ik,1_ik,1_ik), 366_ik), meds_time_t(2001_ik,1_ik,1_ik)), &
               '2000 spans 366 days')
-   call check(days_between(meds_time_t(2001_ik,1_ik,1_ik), meds_time_t(2002_ik,1_ik,1_ik)) == 365_ik, &
+   call check(time_eq(time_advance_days(meds_time_t(2001_ik,1_ik,1_ik), 365_ik), meds_time_t(2002_ik,1_ik,1_ik)), &
               '2001 spans 365 days')
 
    !=== Comparisons. =====================================================================!
    a = meds_time_t(2000_ik, 1_ik, 1_ik) ; b = meds_time_t(2000_ik, 1_ik, 2_ik)
    call check(time_lt(a, b),       'Jan 1 < Jan 2')
    call check(.not. time_lt(b, a), 'Jan 2 not < Jan 1')
-   call check(time_le(a, a),       'a <= a')
+   call check(.not. time_lt(a, a), 'a is not before itself')
    call check(time_eq(a, meds_time_t(2000_ik,1_ik,1_ik)), 'equal dates compare equal')
    a = meds_time_t(2000_ik,1_ik,1_ik,10_ik,0_ik,0_ik) ; b = meds_time_t(2000_ik,1_ik,1_ik,11_ik,0_ik,0_ik)
    call check(time_lt(a, b), 'same day, earlier hour is less')

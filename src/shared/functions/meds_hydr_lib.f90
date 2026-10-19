@@ -19,9 +19,8 @@ module meds_hydr_lib
    !      conductivity. -------------------------------------------------------------------!
    public :: plc_retained, flux_potential, wood_kmax_from_density
    public :: hydro_table_t, build_hydro_table, flux_potential_lin
-   public :: HYDRO_TABLE_NTAB, HYDRO_TABLE_RMAX
    !----- The conductances and flows: rhizosphere, xylem, transpiration supply. -----------!
-   public :: UPTAKE_RAMP_WIDTH, TRANSP_CLOSE_WIDTH, smooth_max0
+   public :: smooth_max0
    public :: rhizosphere_conductance, root_water_uptake, root_water_uptake_profile
    public :: xylem_max_conductance, xylem_sapflow, supply_limited_transpiration
    !----- The root profile. ---------------------------------------------------------------!

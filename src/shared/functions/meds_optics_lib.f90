@@ -13,7 +13,7 @@ module meds_optics_lib
    implicit none
    private
 
-   public :: N_LEAF_CLASS, leaf_class_angle
+   public :: N_LEAF_CLASS
    public :: beta_lidf, beta_params_from_mean, leaf_bf, gfun_direct
    public :: scatter_pair
 
@@ -106,9 +106,8 @@ contains
       real(wp), intent(in) :: lidf(:)
       real(wp), intent(in) :: cosz
       real(wp)             :: gee
-      real(wp)             :: tts, sinz, cs, ss, as, bts, chi_s
+      real(wp)             :: sinz, cs, ss, as, bts, chi_s
       integer(ik)          :: k
-      tts  = acos(min(max(cosz, -1.0_wp), 1.0_wp))       ! solar zenith [rad]
       sinz = sqrt(max(0.0_wp, 1.0_wp - cosz * cosz))
       gee  = 0.0_wp
       do k = 1_ik, N_LEAF_CLASS

@@ -15,11 +15,7 @@ module meds_numerics
    public :: quadratic_smaller_root, adaptive_step_update
    public :: logistic, clamp01, clamp, weighted_mean
    public :: ascending_order
-   public :: conserved, ROUNDOFF_RTOL, pair_mean
-
-   !----- The round-off that summing or rescaling a stored amount may leave, relative to it:  !
-   !      the tolerance of conserved() for operators that only move an amount. --------------!
-   real(wp), parameter :: ROUNDOFF_RTOL = 1.0e-12_wp
+   public :: conserved, pair_mean
 
 contains
 

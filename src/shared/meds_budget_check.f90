@@ -13,7 +13,7 @@ module meds_budget_check
    implicit none
    private
 
-   public :: budget_t, closure_ok, budget_imbalance, budget_accumulate, budget_assert, budget_check_stop
+   public :: budget_t, closure_ok, budget_imbalance, budget_accumulate, budget_check_stop
    public :: budget_check, budget_merge, budget_report, last_check_closed
    public :: budget_rtol_flux, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
 
@@ -25,8 +25,6 @@ module meds_budget_check
 
    !----- One store's ledger over a series of checks (fast steps, days, a run). -----------!
    type :: budget_t
-      real(wp)    :: store0  = 0.0_wp    !< [store-unit/m2] store at the start of the last check's window
-      real(wp)    :: store1  = 0.0_wp    !< [store-unit/m2] store at its end
       real(wp)    :: influx  = 0.0_wp    !< inflow of the last check (an amount, from budget_check)
       real(wp)    :: outflux = 0.0_wp    !< outflow of the last check
       real(wp)    :: resid   = 0.0_wp    !< [store-unit/m2] residual of the last check
@@ -57,14 +55,15 @@ contains
       resid = (store1 - store0) - dt * (influx - outflux)
    end function budget_imbalance
 
-   !----- Fold one check into b: the window's stores, fluxes and residual, the worst and   !
-   !      summed residuals, the gross flux and the counters. elapsed [s] lets              !
+   !----- Fold one check into b: the window's fluxes and residual, the worst and summed   !
+   !      residuals, the gross flux and the counters. elapsed [s] lets              !
    !      budget_report turn the summed residual into a mean leak rate. -------------------!
    pure subroutine budget_accumulate(b, store0, store1, influx, outflux, dt, scale, rtol, atol, elapsed)
       type(budget_t), intent(inout) :: b
       real(wp),       intent(in)    :: store0, store1, influx, outflux, dt, scale, rtol, atol
       real(wp), optional, intent(in) :: elapsed
-      b%store0  = store0 ; b%store1 = store1 ; b%influx = influx ; b%outflux = outflux
+      b%influx  = influx
+      b%outflux = outflux
       b%resid   = budget_imbalance(store0, store1, influx, outflux, dt)
       b%worst   = max(b%worst, abs(b%resid))
       b%resid_sum  = b%resid_sum  + b%resid
@@ -74,13 +73,6 @@ contains
       b%n_check = b%n_check + 1_ik
       if (.not. closure_ok(b%resid, scale, rtol, atol)) b%n_fail = b%n_fail + 1_ik
    end subroutine budget_accumulate
-
-   !----- ok is the closure test of one residual (elemental: a set of stores at once). ----!
-   elemental pure subroutine budget_assert(resid, scale, rtol, atol, ok)
-      real(wp), intent(in)  :: resid, scale, rtol, atol
-      logical,  intent(out) :: ok
-      ok = closure_ok(resid, scale, rtol, atol)
-   end subroutine budget_assert
 
    !----- With debug set, print the residual and stop the run when it breaches the         !
    !      tolerance; without, do nothing. -------------------------------------------------!
@@ -97,19 +89,16 @@ contains
 
    !----- One ledger check, the form every fast-loop ledger uses: accumulate, then stop on !
    !      a breach if halt is set. influx and outflux are amounts over dt_window. ---------!
-   subroutine budget_check(b, store0, store1, influx, outflux, dt_window, rate_floor, label, halt, &
-                           atol_extra)
+   subroutine budget_check(b, store0, store1, influx, outflux, dt_window, rate_floor, label, halt)
       type(budget_t),   intent(inout) :: b
       real(wp),         intent(in)    :: store0, store1, influx, outflux
       real(wp),         intent(in)    :: dt_window    !< [s] time the amounts span
       real(wp),         intent(in)    :: rate_floor   !< [store-unit/m2/s] absolute tolerance floor, as a rate
       character(len=*), intent(in)    :: label
       logical,          intent(in)    :: halt         !< stop the run on a breach (Debug)
-      real(wp), optional, intent(in)  :: atol_extra   !< [store-unit/m2] slack for a known non-closure; each use names it
       real(wp) :: scale, atol
       scale = abs(influx) + abs(outflux)
       atol  = rate_floor * dt_window
-      if (present(atol_extra)) atol = atol + atol_extra
       call budget_accumulate(b, store0, store1, influx, outflux, 1.0_wp, scale, budget_rtol_flux, atol, &
                              elapsed=dt_window)
       call budget_check_stop(b%resid, scale, budget_rtol_flux, atol, label, halt)
