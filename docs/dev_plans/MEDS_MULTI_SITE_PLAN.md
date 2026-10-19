@@ -1,6 +1,6 @@
 # Several sites per polygon — plan
 
-**Status:** revision 6, 2026-10-18. S0 (#449) and S1 (#450) merged; S2 implemented in PR #451 (§10); S3–S5 not started.
+**Status:** revision 6, 2026-10-19. S0–S2 merged (#449–#451); S3 implemented in PR #452 (§10); S4–S5 not started.
 **Base:** `beta` at `835458c` (the state hierarchy, PR #448).
 **Decided (owner, 2026-10-18):**
 - D1 — all patches of a polygon in one patch block; a site block records which patches are its own,
@@ -384,10 +384,10 @@ takes a site) and the simplest to verify; S3 holds the new behaviour.
 | D3 | Where each field lives | §4 |
 | D4 | Soil-layer grid | **Decided:** each site its own |
 | D5 | How sites are defined | `[[site]]` in a site run; a site map in a region, its product the owner's choice (§6) |
-| D6 | Output names | Keep `*_site` as the polygon totals; optional `site` dimension; `patch_site` |
+| D6 | Output names | **Taken (S3, on the recommendation):** keep `*_site` as the polygon totals; `patch_site`; the optional per-site stand output deferred |
 | D7 | Areas | **Decided:** patch area a fraction of its site, site area a fraction of the polygon |
-| D8 | Ids | Unique within the polygon |
-| D9 | Interaction between sites | None at first; lateral water and seed dispersal later |
+| D8 | Ids | **Taken (S3, on the recommendation):** unique within the polygon |
+| D9 | Interaction between sites | **Taken (S3, on the recommendation):** none at first; lateral water and seed dispersal later |
 | D10 | Ground albedo and emissivity | On the site's surface, or shared by the polygon |
 | D11 | Soil-layer output layout | **Decided:** state `(time, site, soil_layer)`; geometry and site properties without time |
 | D12 | Run paths | **Decided:** one; a run is a region of one polygon or many (S0) |
@@ -488,4 +488,45 @@ Notes:
   column of a fast context it never made).
 - **The restart does not store the surface yet:** it is made again from the configuration and maps
   (S3 adds the site axis).
+
+**S3, PR #452 (2026-10-19).** Five commits on `feat/several-sites`, each checked against the merged
+S2 build (`f8fd973`) on the eight cases: every variable of every output and state file matches bit
+for bit, the soil columns behind a site axis of length 1 (the comparison drops a length-1 `site`
+axis as it drops the `polygon` one).
+
+1. Several sites from an initial community, and the structural operations by site slice (§7.2):
+   `alloc_polygon` takes a site count, `init_bare_sites` builds bare sites with their own
+   configurations and areas, and `init_from_census` reads one site per listed `site_id`; fusion pairs
+   patches of one site, termination merges into the site's largest patch and renormalizes each
+   site, a disturbance cuts one gap per site, and `sort_patches` puts the gaps in their sites.
+   `test_several_sites`: two identical sites of areas 0.3 and 0.7 each evolve as a one-site polygon
+   over 60 days with two disturbances and four restructurings, to 1e-12; two soils give two stands,
+   each its one-site polygon's; four patch threads give one thread's polygon bit for bit.
+2. The restart's site axis (§7.3): `n_site`, each site's area and surface echo (soil layers and
+   depth, elevation, slope, aspect), `owner_site` per patch. `io_read_state` makes each site from
+   `site_cfg` (the run's configuration when absent) and stops on a site count or a site's layer
+   count that differs from the configuration's. A file without the axis is one site.
+3. Output (§7.4, D11): a `site` axis in every file; the soil columns `(time, polygon, site, soil)`,
+   each site's on its own layers, its patches weighted by their areas in the site; `soil_z`,
+   `soil_z_bnds` and the soil echoes per site; `site_area`, `site_elevation`, `site_slope`,
+   `site_aspect`, `n_site`; `patch_site`. The soil potential reads each patch's site's curve from its
+   surface, so the output's copy of one curve goes.
+4. Comment boxes.
+5. C API and Python (§7.5): `n_site`, the sites' areas, each patch's site and share of the polygon.
+
+Decisions taken on the plan's recommendations (the owner asked for S3–S5 without stopping):
+
+- **D6:** the `*_site` scalars keep their names and stay the polygon's (`docs/science/diagnostics.md`
+  §2 says so); the soil columns are per site, as D11 decided.
+- **D8:** ids stay unique within the polygon (`next_patch_id`, `next_cohort_id` are the polygon's).
+- **D9:** no interaction between sites.
+
+Notes:
+
+- **The fast tier's soil columns** weight a patch by its area in its site (the pre-S1 weight, bit
+  for bit); the polygon rows keep `patch_polygon_area`.
+- **Deferred:** the optional per-site stand output (§7.4: a `site` axis for the stand variables) has
+  no user until sites can be defined; the soil texture echo per layer (§7.4) waits for a site map
+  that varies it. Scripts that weight cohorts by a state file's `patch_area` treat it as the
+  polygon's share, right for one site.
 

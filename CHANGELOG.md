@@ -20,6 +20,7 @@ reorganized by model hierarchy, with no change to any result (#448). A run is a 
 or many, and every output and state file has a `polygon` dimension (#449). The polygon's state is
 `polygon_t`, with a site block beside its patch and cohort blocks, ready for several sites (#450).
 Each site owns its soil column and the column's bottom, and the run keeps one configuration (#451).
+A polygon can hold several sites, each on its own soil, and its files report each site's soil (#452).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -54,6 +55,19 @@ Each site owns its soil column and the column's bottom, and the run keeps one co
   `patch_physical_state` takes the patch's site's surface in place of a soil column, and
   `slow_site_store` no longer takes one. `polygon_run_t` has no config: `polygon_prepare`,
   `polygon_step`, `polygon_report` and `attach_output` take the run's.
+- **Every output file has a `site` axis behind `polygon`** (#452), of length 1 in every run until
+  sites can be defined. The soil columns (`soil_water_site` and its kin, daily and sub-daily) are
+  `(time, polygon, site, soil)`; `soil_z` is `(polygon, site, soil)` and `soil_z_bnds`
+  `(polygon, site, soil, nv)`; `soil_depth`, `bottom_bc`, `drain_factor` and `deep_temp` are
+  `(polygon, site)`. The values are unchanged. A script that reads them takes the site's row too
+  (`[:, 0, 0]` after `time` for a site run's soil column). State files gain the site axis as new
+  variables only.
+- **Fortran: the output and state writers take the site counts** (#452). `state_file_open` takes
+  `n_site`, and `open_output_files` and `manager_set_polygons` each polygon's site count.
+  `reduce_patch_column_to_site` is `reduce_patch_columns_to_sites` (each site's column, with a
+  validity mask), and `gather_patch_columns` reads each patch's layer count from its site.
+  `manager_set_soil_params` goes: a soil potential reads its site's retention curve, and
+  `diag_params_t%soil_ready` says the fast loop runs.
 
 ### Changed
 
@@ -170,6 +184,26 @@ Each site owns its soil column and the column's bottom, and the run keeps one co
   in the output's `soil_z` (it wrote an unbuilt column).
 
   Results are unchanged: the eight cases match the previous version bit for bit.
+- **Several sites per polygon** (#452; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S3). A polygon
+  can be made of several sites, each with its own area, soil column and patches:
+  - `init_bare_sites` builds one bare, and `init_from_census` reads a census by `site_id` into one
+    site per listed id, each site's patch areas normalized to the site;
+  - patch fusion pairs patches of one site only, termination merges a sliver into its own site's
+    largest patch and renormalizes each site, and a disturbance cuts one gap per site from that
+    site's patches;
+  - the state file stores each site's area and surface and each patch's site, and a restart checks
+    each site's soil layers against its configuration;
+  - the output reports each site's soil column on its own layers, its patches area-weighted, and
+    each site's area, terrain and soil (see Upgrading); `patch_site` gives each patch's site;
+  - Python's `Run` gains `n_site`, `sites("area")` and the patch fields `site` and `share` (the
+    patch's fraction of the polygon), with their C API getters.
+
+  A run cannot define sites yet (`[[site]]` and site maps come with S4), so every run has one site.
+  Results are unchanged: the eight cases match the previous version bit for bit, the soil columns
+  behind a site axis of length 1. `test_several_sites` checks that two identical sites of areas 0.3
+  and 0.7 each evolve as a one-site polygon through disturbance and fusion, that two soils give two
+  stands, each its one-site polygon's, that four patch threads give one thread's polygon bit for bit,
+  and that a state file keeps the sites.
 
 ### Removed
 
@@ -182,6 +216,7 @@ Each site owns its soil column and the column's bottom, and the run keeps one co
 - **`meds_driver`** (#449), the site run's driver (`meds_run_t`), and `state_write_state`, the site
   state writer: every run goes through `meds_region` and every state file through `state_file_open`,
   `state_file_put` and `state_file_close`.
+- **`site_soil_temp_column` and `site_soil_water_column`** (#452), which nothing called.
 
 ## [0.3.5] — 2026-10-17
 
