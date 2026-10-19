@@ -114,8 +114,9 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Patch fusion with geometric tolerance relaxation, from patch_light_tol to               !
    ! patch_light_tol_max over n_patch_fusion_iter passes. It stops at the first pass that    !
-   ! brings the count to max_patch. The ceiling is hard: patches more different than it      !
-   ! stay apart even when the count is still above max_patch (forced fusion aside).          !
+   ! brings every site's count to max_patch. The ceiling is hard: patches more different than !
+   ! it stay apart even when the count is still above max_patch (forced fusion aside). Two    !
+   ! patches fuse only within one site: their areas are fractions of it.                      !
    !---------------------------------------------------------------------------------------!
    subroutine new_fuse_patches(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
@@ -131,7 +132,7 @@ contains
 
       do it = 1_ik, cfg%n_patch_fusion_iter
          call patch_fuse_pass(poly, cfg, tol, force)
-         if (.not. force .and. poly%patch%n <= maxp) exit
+         if (.not. force .and. maxval(poly%site%patch_count(1:poly%site%n)) <= maxp) exit
          tol = tol * cfg%patch_light_tol_mult
       end do
    end subroutine new_fuse_patches
@@ -161,6 +162,7 @@ contains
          if (.not. alive(recp)) cycle
          do donp = recp + 1_ik, np
             if (.not. alive(donp)) cycle
+            if (poly%patch%owner_site(donp) /= poly%patch%owner_site(recp)) cycle
             if (poly%patch%dist_type(donp) /= poly%patch%dist_type(recp)) cycle
             both_empty = (poly%patch%cohort_count(recp) == 0_ik .and. poly%patch%cohort_count(donp) == 0_ik)
             if (both_empty) then
@@ -274,23 +276,30 @@ contains
    end subroutine fuse_2_patches
 
    !---------------------------------------------------------------------------------------!
-   ! Remove patches with area below the floor; renormalize remaining areas to sum to 1.     !
+   ! Remove patches with area below the floor, site by site; renormalize each site's areas  !
+   ! to sum to 1.                                                                           !
    !---------------------------------------------------------------------------------------!
    subroutine terminate_patches(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       logical, allocatable :: pkeep(:)
-      integer(ik)          :: np, ip, imax
+      integer(ik)          :: np, ip, imax, is, p0, p1
       real(wp)             :: s
 
       np = poly%patch%n
       if (np < 1_ik) return
       allocate(pkeep(np))
       pkeep = poly%patch%area(1:np) >= cfg%min_patch_area
-      if (.not. any(pkeep)) then
-         imax = maxloc(poly%patch%area(1:np), dim=1)
-         pkeep(imax) = .true.
-      end if
+      !----- Every site keeps at least its largest patch. -------------------------------------!
+      do is = 1_ik, poly%site%n
+         p0 = poly%site%patch_offset(is)
+         p1 = p0 + poly%site%patch_count(is) - 1_ik
+         if (p1 < p0) cycle
+         if (.not. any(pkeep(p0:p1))) then
+            imax = p0 - 1_ik + maxloc(poly%patch%area(p0:p1), dim=1)
+            pkeep(imax) = .true.
+         end if
+      end do
 
       if (.not. all(pkeep)) then
          !----- A patch too small to track is MERGED INTO the largest survivor, not deleted.    !
@@ -305,23 +314,36 @@ contains
          !      relies on, and says something defensible: a sliver of ground joins its biggest  !
          !      neighbour rather than evaporating. fuse_2_patches zeroes the donor's area, so   !
          !      the renormalisation below becomes a round-off no-op instead of a redistribution.!
-         imax = maxloc(poly%patch%area(1:np), dim=1)
-         if (.not. pkeep(imax)) imax = maxloc(poly%patch%area(1:np), dim=1, mask=pkeep)
-         do ip = 1_ik, np
-            if (pkeep(ip) .or. ip == imax) cycle
-            call fuse_2_patches(poly, imax, ip)
-            call rebuild_cohort_map(poly) ! the survivor's CSR slice now holds the merged cohorts,
-         end do                        ! and the NEXT fusion reads that slice -- as patch_fuse_pass does
+         !      The neighbour is in the sliver's own site: the areas are fractions of it.        !
+         do is = 1_ik, poly%site%n
+            p0 = poly%site%patch_offset(is)
+            p1 = p0 + poly%site%patch_count(is) - 1_ik
+            if (p1 < p0) cycle
+            if (all(pkeep(p0:p1))) cycle
+            imax = p0 - 1_ik + maxloc(poly%patch%area(p0:p1), dim=1)
+            if (.not. pkeep(imax)) imax = p0 - 1_ik + maxloc(poly%patch%area(p0:p1), dim=1, mask=pkeep(p0:p1))
+            do ip = p0, p1
+               if (pkeep(ip) .or. ip == imax) cycle
+               call fuse_2_patches(poly, imax, ip)
+               call rebuild_cohort_map(poly) ! the survivor's CSR slice now holds the merged cohorts,
+            end do                        ! and the NEXT fusion reads that slice -- as patch_fuse_pass does
+         end do
          call patch_compact(poly, pkeep)
       end if
 
-      !----- Renormalize areas to sum to 1. After the merge above this corrects round-off only. -!
-      s = sum(poly%patch%area(1:poly%patch%n))
-      if (s > tiny_num) then
-         do ip = 1_ik, poly%patch%n
-            poly%patch%area(ip) = poly%patch%area(ip) / s
-         end do
-      end if
+      !----- Renormalize each site's areas to sum to 1. After the merge above this corrects      !
+      !      round-off only. ---------------------------------------------------------------------!
+      do is = 1_ik, poly%site%n
+         p0 = poly%site%patch_offset(is)
+         p1 = p0 + poly%site%patch_count(is) - 1_ik
+         if (p1 < p0) cycle
+         s = sum(poly%patch%area(p0:p1))
+         if (s > tiny_num) then
+            do ip = p0, p1
+               poly%patch%area(ip) = poly%patch%area(ip) / s
+            end do
+         end if
+      end do
    end subroutine terminate_patches
 
    !---------------------------------------------------------------------------------------!
@@ -366,7 +388,8 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Treefall patch disturbance (ED2 analogue). A fraction f = 1 - exp(-rate*dt) of EVERY     !
-   ! patch's area is disturbed and aggregated into ONE new age-0 gap patch (DIST_TREEFALL).   !
+   ! patch's area is disturbed and aggregated into one new age-0 gap patch per site          !
+   ! (DIST_TREEFALL), cut from that site's patches: their areas are fractions of it.         !
    ! Survivorship follows ED2 treefall: tall canopy cohorts (height >= survive_height) die in !
    ! the gap; the short understory (height < threshold) survives into it. Each donor keeps    !
    ! area (1-f)*area with ALL its cohorts intact. Site area is conserved; plant number is     !
@@ -379,9 +402,10 @@ contains
       real(wp),            intent(in)    :: dt_yr
       !----- What the KILLED CANOPY handed on, for the caller to declare to the slow ledger. The   !
       !      engine applies and reports; the driver accounts. -------------------------------------!
-      real(wp), optional,  intent(out)   :: water_shed  !< [kg/m2 site] tissue + film water -> the gap's ground
-      integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf
+      real(wp), optional,  intent(out)   :: water_shed  !< [kg/m2 polygon] tissue + film water -> the gaps' ground
+      integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf, is, p0, p1
       real(wp)    :: frac, new_area, atot, wd
+      real(wp), allocatable :: donor_area(:)
       real(wp)    :: lost_density, lab_g, lab_s, str_g, str_s, lig_g, lig_s
       real(wp)    :: kill_frac, w_kill, w_tot
 
@@ -441,133 +465,150 @@ contains
          end if
       end do
 
-      call expand_patch_block(poly%patch, np0 + 1_ik, poly%n_pft)
+      call expand_patch_block(poly%patch, np0 + poly%site%n, poly%n_pft)
       call expand_cohort_block(poly%cohort, poly%cohort%n + nsurv)
-      newp = np0 + 1_ik
-      m0   = poly%cohort%n                       ! cohorts before the survivors are moved in
+      m0 = poly%cohort%n                         ! cohorts before the survivors are moved in
+      allocate(donor_area(np0))
 
-      associate (cohort => poly%cohort, patch => poly%patch)
-         !----- New age-0 gap patch (treefall). --------------------------------------------!
-         patch%area(newp)           = new_area
-         patch%age(newp)            = 0.0_wp
-         patch%dist_type(newp)      = DIST_TREEFALL
-         patch%owner_site(newp)     = 1_ik      ! the gap is cut from every patch, all in the one site
-         !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
-         !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
-         patch%shed_water_rate(newp) = 0.0_wp
-         patch%slow_co2_rate(newp)   = 0.0_wp   ! fresh gap: no cohort of its own respired today
-         patch%adapt_dt_last(newp)   = 0.0_wp   ! a fresh gap cold-starts the controller
-         patch%n = newp
+      !----- One gap per site, cut from that site's patches: their areas are fractions of it. The  !
+      !      gaps go at the end of the block, and sort_patches below puts each in its site. -------!
+      newp = np0
+      do is = 1_ik, poly%site%n
+         p0 = poly%site%patch_offset(is)
+         p1 = p0 + poly%site%patch_count(is) - 1_ik
+         if (p1 < p0) cycle
+         new_area = frac * sum(poly%patch%area(p0:p1))
+         if (new_area <= tiny_num) cycle
+         newp = newp + 1_ik
 
-         !----- Seed the gap's fast reservoirs = area-weighted donor mean (the soil column and !
-         !      canopy air are INHERITED from the disturbed area, not created bare). ----------!
-         atot = sum(patch%area(1:np0))                       ! donors still hold pre-disturbance area here
-         if (atot > tiny_num) then
-            !----- The SEED BANK is inherited material too. A treefall gap does not sterilise      !
-            !      the ground it opens: the carry-forward recruit pool sits in the soil with the   !
-            !      litter and the CENTURY carbon, both of which the gap inherits. Zeroing it would !
-            !      destroy the pool's carbon on the disturbed fraction. ---------------------------!
-            patch%recruit_pool(:,newp) = (patch%area(1)/atot) * patch%recruit_pool(:,1)
-            patch%cas(newp)    = blend_cas(   patch%area(1)/atot, patch%cas(1),    0.0_wp, patch%cas(1))
-            patch%snow(newp)   = blend_snow(  patch%area(1)/atot, patch%snow(1),   0.0_wp, patch%snow(1))
-            patch%soil_water(newp) = blend_soil_water(patch%area(1)/atot, patch%soil_water(1), 0.0_wp, patch%soil_water(1))
-            patch%soil_energy(newp) = blend_soil_energy(patch%area(1)/atot, patch%soil_energy(1), 0.0_wp, patch%soil_energy(1))
-            patch%soil_carbon(newp) = blend_soil_carbon(patch%area(1)/atot, patch%soil_carbon(1), &
-                                                        0.0_wp, patch%soil_carbon(1))
-            patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
-            patch%litter_in(newp) = blend_litter_input(patch%area(1)/atot, patch%litter_in(1),      &
-                                                       0.0_wp, patch%litter_in(1))
-            do d = 2_ik, np0
-               wd = patch%area(d) / atot
-               patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
-               patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
-               patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
-               patch%soil_water(newp) = blend_soil_water(1.0_wp, patch%soil_water(newp), wd, patch%soil_water(d))
-               patch%soil_energy(newp) = blend_soil_energy(1.0_wp, patch%soil_energy(newp), wd, patch%soil_energy(d))
-               patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
-               patch%xi_accum(newp)    = blend_xi_accum(1.0_wp, patch%xi_accum(newp), wd, patch%xi_accum(d))
-               patch%litter_in(newp)   = blend_litter_input(1.0_wp, patch%litter_in(newp), wd,        &
-                                                            patch%litter_in(d))
-            end do
-         end if
+         associate (cohort => poly%cohort, patch => poly%patch)
+            !----- New age-0 gap patch (treefall). --------------------------------------------!
+            patch%area(newp)           = new_area
+            patch%age(newp)            = 0.0_wp
+            patch%dist_type(newp)      = DIST_TREEFALL
+            patch%owner_site(newp)     = is
+            !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
+            !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
+            patch%shed_water_rate(newp) = 0.0_wp
+            patch%slow_co2_rate(newp)   = 0.0_wp   ! fresh gap: no cohort of its own respired today
+            patch%adapt_dt_last(newp)   = 0.0_wp   ! a fresh gap cold-starts the controller
+            patch%n = newp
 
-         !----- Move understorey survivors into the gap at area-weighted density; the killed           !
-         !      canopy's carbon becomes litter in the SAME gap patch when soil carbon is on            !
-         !      ([soil_carbon].soil_carbon_on, default on; docs/science/soil_carbon.md §5): the        !
-         !      density it would have carried into the gap had it survived (the conversion factor      !
-         !      the survivor branch below uses), times its per-plant carbon pools. Added directly onto !
-         !      soil_carbon(newp), since this module cannot link biogeochemistry (necromass_to_litter  !
-         !      takes plain scalars). -----------------------------------------------------------------!
-         m = cohort%n
-         do d = 1_ik, np0
-            i0 = patch%cohort_offset(d) ; i1 = i0 + patch%cohort_count(d) - 1_ik
-            do i = i0, i1
-               if (cohort%height(i) >= cfg%disturbance_survive_height) then   ! canopy dies in gap
-                  !----- The killed canopy's WATER goes to the gap's ground down the same channel   !
-                  !      turnover shedding uses; this is its largest single use -- a whole canopy   !
-                  !      dies at once. Its tissue HEAT is a thermal-mass change, declared with the  !
-                  !      rest of the phase's by the caller. `kill_frac` is the fraction of the      !
-                  !      cohort's area-density the gap takes -- the SAME factor the survivor branch !
-                  !      uses. ---------------------------------------------------------------------!
-                  kill_frac = frac * patch%area(d)
-                  w_kill = kill_frac * (cohort_tissue_water(cohort, i)                              &
-                                      + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
-                  patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
-                                              + w_kill / new_area / max(cfg%dt_slow, tiny_num)
-                  w_tot = w_tot + poly%site%area(patch%owner_site(d)) * w_kill   ! w_kill is per m2 of the site
-                  if (cfg%soil_carbon_on) then
-                     lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
-                     pf = cohort%pft(i)
-                     call necromass_to_litter(lost_density * cohort%leaf_carbon(i),                  &
-                              lost_density * cohort%fineroot_carbon(i),                               &
-                              lost_density * cohort%wood_carbon(i),                                   &
-                              lost_density * cohort%nonstructural_carbon(i),                          &
-                              cfg%pft%f_labile_leaf(pf), cfg%pft%f_labile_stem(pf),                   &
-                              cfg%pft%aboveground_frac(pf), cfg%pft%struct_lignin_frac(pf),           &
-                              lab_g, lab_s, str_g, str_s, lig_g, lig_s)
-                     patch%soil_carbon(newp)%fast_grnd_carbon   = patch%soil_carbon(newp)%fast_grnd_carbon   + lab_g
-                     patch%soil_carbon(newp)%fast_soil_carbon   = patch%soil_carbon(newp)%fast_soil_carbon   + lab_s
-                     patch%soil_carbon(newp)%struct_grnd_carbon = patch%soil_carbon(newp)%struct_grnd_carbon + str_g
-                     patch%soil_carbon(newp)%struct_soil_carbon = patch%soil_carbon(newp)%struct_soil_carbon + str_s
-                     patch%soil_carbon(newp)%struct_grnd_lignin  = patch%soil_carbon(newp)%struct_grnd_lignin  + lig_g
-                     patch%soil_carbon(newp)%struct_soil_lignin  = patch%soil_carbon(newp)%struct_soil_lignin  + lig_s
+            !----- Seed the gap's fast reservoirs = area-weighted donor mean (the soil column and !
+            !      canopy air are INHERITED from the disturbed area, not created bare). ----------!
+            atot = sum(patch%area(p0:p1))                       ! donors still hold pre-disturbance area here
+            if (atot > tiny_num) then
+               !----- The SEED BANK is inherited material too. A treefall gap does not sterilise      !
+               !      the ground it opens: the carry-forward recruit pool sits in the soil with the   !
+               !      litter and the CENTURY carbon, both of which the gap inherits. Zeroing it would !
+               !      destroy the pool's carbon on the disturbed fraction. ---------------------------!
+               patch%recruit_pool(:,newp) = (patch%area(p0)/atot) * patch%recruit_pool(:,p0)
+               patch%cas(newp)    = blend_cas(   patch%area(p0)/atot, patch%cas(p0),    0.0_wp, patch%cas(p0))
+               patch%snow(newp)   = blend_snow(  patch%area(p0)/atot, patch%snow(p0),   0.0_wp, patch%snow(p0))
+               patch%soil_water(newp) = blend_soil_water(patch%area(p0)/atot, patch%soil_water(p0), 0.0_wp,   &
+                                                         patch%soil_water(p0))
+               patch%soil_energy(newp) = blend_soil_energy(patch%area(p0)/atot, patch%soil_energy(p0), 0.0_wp, &
+                                                           patch%soil_energy(p0))
+               patch%soil_carbon(newp) = blend_soil_carbon(patch%area(p0)/atot, patch%soil_carbon(p0), &
+                                                           0.0_wp, patch%soil_carbon(p0))
+               patch%xi_accum(newp) = blend_xi_accum(patch%area(p0)/atot, patch%xi_accum(p0), 0.0_wp,       &
+                                                     patch%xi_accum(p0))
+               patch%litter_in(newp) = blend_litter_input(patch%area(p0)/atot, patch%litter_in(p0),     &
+                                                          0.0_wp, patch%litter_in(p0))
+               do d = p0 + 1_ik, p1
+                  wd = patch%area(d) / atot
+                  patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
+                  patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
+                  patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
+                  patch%soil_water(newp) = blend_soil_water(1.0_wp, patch%soil_water(newp), wd, patch%soil_water(d))
+                  patch%soil_energy(newp) = blend_soil_energy(1.0_wp, patch%soil_energy(newp), wd, patch%soil_energy(d))
+                  patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
+                  patch%xi_accum(newp)    = blend_xi_accum(1.0_wp, patch%xi_accum(newp), wd, patch%xi_accum(d))
+                  patch%litter_in(newp)   = blend_litter_input(1.0_wp, patch%litter_in(newp), wd,        &
+                                                               patch%litter_in(d))
+               end do
+            end if
+
+            !----- Move understorey survivors into the gap at area-weighted density; the killed           !
+            !      canopy's carbon becomes litter in the SAME gap patch when soil carbon is on            !
+            !      ([soil_carbon].soil_carbon_on, default on; docs/science/soil_carbon.md §5): the        !
+            !      density it would have carried into the gap had it survived (the conversion factor      !
+            !      the survivor branch below uses), times its per-plant carbon pools. Added directly onto !
+            !      soil_carbon(newp), since this module cannot link biogeochemistry (necromass_to_litter  !
+            !      takes plain scalars). -----------------------------------------------------------------!
+            m = cohort%n
+            do d = p0, p1
+               i0 = patch%cohort_offset(d) ; i1 = i0 + patch%cohort_count(d) - 1_ik
+               do i = i0, i1
+                  if (cohort%height(i) >= cfg%disturbance_survive_height) then   ! canopy dies in gap
+                     !----- The killed canopy's WATER goes to the gap's ground down the same channel   !
+                     !      turnover shedding uses; this is its largest single use -- a whole canopy   !
+                     !      dies at once. Its tissue HEAT is a thermal-mass change, declared with the  !
+                     !      rest of the phase's by the caller. `kill_frac` is the fraction of the      !
+                     !      cohort's area-density the gap takes -- the SAME factor the survivor branch !
+                     !      uses. ---------------------------------------------------------------------!
+                     kill_frac = frac * patch%area(d)
+                     w_kill = kill_frac * (cohort_tissue_water(cohort, i)                              &
+                                         + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
+                     patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
+                                                 + w_kill / new_area / max(cfg%dt_slow, tiny_num)
+                     w_tot = w_tot + poly%site%area(is) * w_kill   ! w_kill is per m2 of the site
+                     if (cfg%soil_carbon_on) then
+                        lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
+                        pf = cohort%pft(i)
+                        call necromass_to_litter(lost_density * cohort%leaf_carbon(i),                  &
+                                 lost_density * cohort%fineroot_carbon(i),                               &
+                                 lost_density * cohort%wood_carbon(i),                                   &
+                                 lost_density * cohort%nonstructural_carbon(i),                          &
+                                 cfg%pft%f_labile_leaf(pf), cfg%pft%f_labile_stem(pf),                   &
+                                 cfg%pft%aboveground_frac(pf), cfg%pft%struct_lignin_frac(pf),           &
+                                 lab_g, lab_s, str_g, str_s, lig_g, lig_s)
+                        patch%soil_carbon(newp)%fast_grnd_carbon   = patch%soil_carbon(newp)%fast_grnd_carbon   + lab_g
+                        patch%soil_carbon(newp)%fast_soil_carbon   = patch%soil_carbon(newp)%fast_soil_carbon   + lab_s
+                        patch%soil_carbon(newp)%struct_grnd_carbon = patch%soil_carbon(newp)%struct_grnd_carbon + str_g
+                        patch%soil_carbon(newp)%struct_soil_carbon = patch%soil_carbon(newp)%struct_soil_carbon + str_s
+                        patch%soil_carbon(newp)%struct_grnd_lignin  = patch%soil_carbon(newp)%struct_grnd_lignin  + lig_g
+                        patch%soil_carbon(newp)%struct_soil_lignin  = patch%soil_carbon(newp)%struct_soil_lignin  + lig_s
+                     end if
+                     cycle
                   end if
-                  cycle
-               end if
-               m = m + 1_ik
-               call copy_cohort(cohort, m, i)
-               cohort%nplant(m)      = cohort%nplant(i) * (frac * patch%area(d) / new_area)
-               call scale_cohort_ground_fields(cohort, m, frac * patch%area(d) / new_area)  ! films dilute like nplant
-               cohort%owner_patch(m) = newp
+                  m = m + 1_ik
+                  call copy_cohort(cohort, m, i)
+                  cohort%nplant(m)      = cohort%nplant(i) * (frac * patch%area(d) / new_area)
+                  call scale_cohort_ground_fields(cohort, m, frac * patch%area(d) / new_area)  ! films dilute like nplant
+                  cohort%owner_patch(m) = newp
+               end do
             end do
-         end do
-         cohort%n = m
+            cohort%n = m
 
-         !----- Donors keep the undisturbed remainder (all their cohorts intact). ----------!
-         do d = 1_ik, np0
-            patch%area(d) = (1.0_wp - frac) * patch%area(d)
-         end do
-      end associate
+            !----- Donors keep the undisturbed remainder (all their cohorts intact). ----------!
+            do d = p0, p1
+               patch%area(d) = (1.0_wp - frac) * patch%area(d)
+            end do
+         end associate
+
+         !----- Stamp the new gap patch with a fresh global id (the gap fragments are new        !
+         !      entities). Its diagnostics: it inherits its donors' slots blended by area, as its    !
+         !      reservoirs above inherit their state, so the stand total Sum(area * v) is unchanged   !
+         !      by the carving. At a calendar boundary the donors hold only that boundary's events   !
+         !      (the step's sums were read and reset), and the gap keeps its share of them; inside a !
+         !      step (the C API) they hold the step so far. Every donor lost the same fraction, so    !
+         !      their current areas give the same blend as their original ones. (expand_patch_block !
+         !      above grew the block with the patch arrays.) -------------------------------------!
+         call assign_patch_id(poly, newp)
+         donor_area = 0.0_wp
+         donor_area(p0:p1) = poly%patch%area(p0:p1)
+         call inherit_patch_diag(poly%patch%diag, newp, donor_area)
+      end do
 
       if (present(water_shed)) water_shed = w_tot
 
-      !----- Stamp the new gap patch and the moved-in survivor cohorts with fresh global ids !
-      !      (the gap fragments are new entities; their donor cohorts keep their own ids).    !
-      call assign_patch_id(poly, newp)
-      !----- The gap's diagnostics: it inherits the donors' slots blended by area, as its reservoirs !
-      !      above inherit their state, so the stand total Sum(area * v) is unchanged by the carving.  !
-      !      At a calendar boundary the donors hold only that boundary's events (the step's sums were !
-      !      read and reset), and the gap keeps its share of them; inside a step (the C API) they     !
-      !      hold the step so far. Every donor lost the same fraction, so their current areas give    !
-      !      the same blend as their original ones. (expand_patch_block above grew the block with      !
-      !      the patch arrays.)                                                                       !
-      call inherit_patch_diag(poly%patch%diag, newp, poly%patch%area(1:np0))
+      !----- The moved-in survivor cohorts take fresh global ids (their donor cohorts keep their own). !
       do i = m0 + 1_ik, poly%cohort%n
          call assign_cohort_id(poly, i)
       end do
 
-      call rebuild_patch_map(poly)
-      call rebuild_cohort_map(poly)
+      call sort_patches(poly)                    ! each gap into its site's slice; both maps rebuilt
       call sort_cohorts(poly)
    end subroutine apply_patch_disturbance
 
