@@ -34,7 +34,6 @@ module meds_io
    use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water
    use meds_site_state_vars,        only : make_site_surface
    use meds_polygon_state_vars,     only : alloc_polygon, rebuild_patch_map, rebuild_cohort_map
-   use meds_soil_column_config,     only : soil_params_t, soil_column_params
    use meds_demography_update,      only : update_overtopping_lai
    use meds_constants,     only : n_soil_layer_max, n_snow_layer_max
    use meds_water_retention, only : water_curve_t
@@ -848,14 +847,13 @@ contains
       !      init_fast_reservoirs then re-seeds the patch and its cohorts. -----------------------------!
       if (ncoh > 0_ik .and. npat > 0_ik .and. .not. (tissue_water_ok .and. tissue_temp_ok)) then
          block
-            type(soil_params_t) :: soil
             type(water_curve_t) :: leaf_curve, wood_curve
             real(wp) :: t_birth, psi_birth
             integer(ik) :: ip
-            call soil_column_params(cfg%soil_column, soil)
             do i = 1_ik, ncoh
                ip = poly%cohort%owner_patch(i)
-               call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg, soil, t_birth, psi_birth)
+               call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg,                &
+                                         poly%site%surface(poly%patch%owner_site(ip)), t_birth, psi_birth)
                if (.not. tissue_temp_ok) then
                   poly%cohort%leaf_temp(i) = t_birth ; poly%cohort%wood_temp(i) = t_birth
                end if

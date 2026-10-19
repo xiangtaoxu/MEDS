@@ -65,10 +65,11 @@ program test_fast_loop
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
-   ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 288.0_wp
+   ctx%soil_temp_init = 288.0_wp
 
    !----- Two patches: patch 1 vegetated, patch 2 BARE (zero cohorts). ---------------------!
    call init_bare_ground(poly, cfg, 2_ik)
+   call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)     ! patch 1: one tree cohort
    call finalize_init(poly)
    call init_fast_reservoirs(poly, ctx)
@@ -156,6 +157,7 @@ program test_fast_loop
 
    cfg%fast_biophysics_on = .false.                    ! stub GPP = 0; carbon change is pure turnover
    call init_bare_ground(poly, cfg, 1_ik)
+   call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(poly)
    call advance_one_step(poly, cfg, ctx)
@@ -164,6 +166,7 @@ program test_fast_loop
 
    cfg%fast_biophysics_on = .true.                     ! fast loop -> gpp_accum -> carbon growth
    call init_bare_ground(poly, cfg, 1_ik)
+   call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(poly)
    call init_fast_reservoirs(poly, ctx)
@@ -201,6 +204,8 @@ program test_fast_loop
       cfg%forcing%co2_const = 415.0_wp          ! CO2 comes from config, not the file (docs/science/forcing.md §12)
 
       call init_bare_ground(poly, cfg, 1_ik)
+
+      call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(poly)
       call met_open(drv, cfg%forcing)
@@ -328,6 +333,7 @@ program test_fast_loop
          type(met_cursor_t) :: cur3
          real(wp) :: g1, g2, g3
          call init_bare_ground(poly, cfg, 3_ik)
+         call use_test_column(poly)
          call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
          call add_cohort(poly, cfg, 2_ik, 1_ik, 0.3_wp, 16.0_wp)
          call add_cohort(poly, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
@@ -375,6 +381,7 @@ program test_fast_loop
          type(fast_context_t) :: ctx_mt
          real(wp) :: h1, h2, h3
          call init_bare_ground(poly, cfg, 3_ik)
+         call use_test_column(poly)
          call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
          call add_cohort(poly, cfg, 2_ik, 1_ik, 0.3_wp, 16.0_wp)
          call add_cohort(poly, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
@@ -434,6 +441,7 @@ program test_fast_loop
       cfg%pft%wstress_psi_open  = -50.0_wp                        ! neutralize hydraulic stress (beta==1),
       cfg%pft%wstress_psi_close = -100.0_wp                       !   so the LIGHT/gb ordering drives GPP
       call init_bare_ground(poly, cfg, 1_ik)
+      call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 1.0_wp, 45.0_wp)     ! tall overstory  (big dbh -> tall)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 1.0_wp,  6.0_wp)     ! short understory (shaded below it)
       call finalize_init(poly)
@@ -480,6 +488,7 @@ program test_fast_loop
       real(wp)           :: gpp_min
       call build_fast_context(cfg, ctx)                          ! ctx WITH the RT optics table
       call init_bare_ground(poly, cfg, 3_ik)                     ! THREE patches (patch3 stays bare)
+      call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.20_wp, 20.0_wp)   ! patch 1: 1 cohort (processed first)
       call add_cohort(poly, cfg, 2_ik, 1_ik, 0.20_wp, 25.0_wp)   ! patch 2: 3 cohorts (larger -> would overflow)
       call add_cohort(poly, cfg, 2_ik, 1_ik, 0.20_wp, 12.0_wp)
@@ -512,6 +521,7 @@ program test_fast_loop
 
       cfg%forcing%forcing_on = .false.     ! plain constant-forcing path (isolate from blocks 5-7)
       call init_bare_ground(poly, cfg, 1_ik)
+      call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(poly)
       call init_fast_reservoirs(poly, ctx)
@@ -601,6 +611,7 @@ program test_fast_loop
       call build_fast_context(cfg, ctx)
       do icase = 1_ik, 3_ik
          call init_bare_ground(poly, cfg, 1_ik)
+         call use_test_column(poly)
          if (icase == 2_ik) then
             call add_cohort(poly, cfg, 1_ik, 1_ik, 0.5_wp*NPLANT_THIN, DBH_THIN)
             call add_cohort(poly, cfg, 1_ik, 1_ik, 0.5_wp*NPLANT_THIN, DBH_THIN)
@@ -644,6 +655,15 @@ program test_fast_loop
    write(*,'(a,es10.3,a,es10.3,a)') '   (worst whole-column resid: energy=', we, ' J/m2  water=', ww, ' kg/m2)'
 
 contains
+
+   !----- The test's hand-built soil column is the site's, which the fast loop runs on, starting  !
+   !      at 0.30 in every layer. ------------------------------------------------------------!
+   subroutine use_test_column(p)
+      type(polygon_t), intent(inout) :: p
+      p%site%surface(1)%soil         = ctx%col_config%soil
+      p%site%surface(1)%soil_thermal = ctx%col_config%soil_thermal
+      p%site%surface(1)%theta_start  = 0.30_wp
+   end subroutine use_test_column
 
    !----- Write a 1-day hourly (time=25, grid=1) MEDS forcing NetCDF with a diurnal shortwave    !
    !      (peaks ~17 UTC at Ithaca) so the fast loop sees a real day/night cycle.                 !

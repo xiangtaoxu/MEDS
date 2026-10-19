@@ -128,9 +128,9 @@ program test_slow_ledger
               led%resid_sum(SLOW_PHASE_GROW)%energy == 0.0_wp, 'a step that changes nothing closes at exactly zero')
 
    !=== 3. The canopy-air OPEN-VOLUME terms must equal the store change they explain. ==========!
-   s0 = slow_site_store(poly, cfg, soil, RHO)
+   s0 = slow_site_store(poly, cfg, RHO)
    call cas_set_depth(poly%patch%cas(1), 8.0_wp, rho_air=RHO, de_open=de, dw_open=dw, dc_open=dc)
-   s1 = slow_site_store(poly, cfg, soil, RHO)
+   s1 = slow_site_store(poly, cfg, RHO)
    call check_close(s1%energy - s0%energy, de,             1.0e-6_wp, 'de_open explains the canopy energy change')
    call check_close(s1%water  - s0%water,  dw,             1.0e-12_wp, 'dw_open explains the canopy vapour change')
    call check_close(s1%carbon - s0%carbon, dc * 1.2e-8_wp, 1.0e-14_wp, 'dc_open explains the canopy CO2 change')
@@ -585,11 +585,11 @@ contains
       type(slow_store_t) :: a, b
       real(wp) :: e0, e1, de_store, de_tissue
       e0 = slow_tissue_heat(poly)
-      a  = slow_site_store(poly, cfg, soil, RHO)
+      a  = slow_site_store(poly, cfg, RHO)
       !----- Grow one cohort's wood: temperatures untouched, so ONLY the thermal mass changes. ----!
       poly%cohort%wood_carbon(1) = poly%cohort%wood_carbon(1) * 1.5_wp
       e1 = slow_tissue_heat(poly)
-      b  = slow_site_store(poly, cfg, soil, RHO)
+      b  = slow_site_store(poly, cfg, RHO)
       de_tissue = e1 - e0
       de_store  = b%energy - a%energy
       call check(de_tissue > 0.0_wp, 'thermal mass: growing biomass raises the tissue heat store')
@@ -742,14 +742,16 @@ contains
    !      starting state from [init]. ------------------------------------------------------------------!
    subroutine check_birth_temp()
       integer(ik) :: m
-      real(wp)    :: t_birth, psi_birth, t_save, theta_start(n_soil_layer_max)
+      real(wp)    :: t_birth, psi_birth, t_save
       type(water_curve_t) :: leaf_curve, wood_curve
       m = poly%cohort%n + 1_ik
       t_save = poly%patch%cas(1)%can_temp
       poly%patch%cas(1)%can_temp = 268.0_wp        ! a cold, seeded patch
-      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
+      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
+                                t_birth, psi_birth)
       call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
-      call check_close(psi_birth, top_soil_psi(soil, poly%patch%soil_water(1)%theta(1)), 1.0e-12_wp,   &
+      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil, poly%patch%soil_water(1)%theta(1)), &
+                       1.0e-12_wp,                                                                        &
                        'birth: a seeded patch gives its top soil layer''s potential')
       call init_cohort(poly%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics, t_birth, psi_birth)
       call check_close(poly%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
@@ -760,10 +762,11 @@ contains
                        'birth: the leaves hold the water of that potential')
       !----- A patch not seeded yet (its canopy air at the type's UNSET_POSITIVE) gives the starting state. !
       poly%patch%cas(1)%can_temp = UNSET_POSITIVE
-      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, soil, t_birth, psi_birth)
-      call soil_column_start_theta(cfg%soil_column, soil, cfg%init_soil_theta, theta_start)
+      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
+                                t_birth, psi_birth)
       call check_close(t_birth, cfg%init_soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
-      call check_close(psi_birth, top_soil_psi(soil, theta_start(1)), 1.0e-12_wp,                       &
+      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil, poly%site%surface(1)%theta_start(1)), &
+                       1.0e-12_wp,                                                                        &
                        'birth: unseeded, the starting soil water''s potential')
       poly%patch%cas(1)%can_temp = t_save
    end subroutine check_birth_temp
@@ -777,9 +780,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(poly, cfg, soil, RHO)
+      a = slow_site_store(poly, cfg, RHO)
       call perturb()
-      b = slow_site_store(poly, cfg, soil, RHO)
+      b = slow_site_store(poly, cfg, RHO)
       call check_close(b%water - a%water, amount, 1.0e-9_wp * max(1.0_wp, abs(amount)),            &
                        'store: '//name//' reaches the water total')
    end subroutine moves_water
@@ -792,9 +795,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(poly, cfg, soil, RHO)
+      a = slow_site_store(poly, cfg, RHO)
       call perturb()
-      b = slow_site_store(poly, cfg, soil, RHO)
+      b = slow_site_store(poly, cfg, RHO)
       call check_close(b%energy - a%energy, amount, 1.0e-6_wp * max(1.0_wp, abs(amount)),          &
                        'store: '//name//' reaches the energy total')
    end subroutine moves_energy
@@ -807,9 +810,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(poly, cfg, soil, RHO)
+      a = slow_site_store(poly, cfg, RHO)
       call perturb()
-      b = slow_site_store(poly, cfg, soil, RHO)
+      b = slow_site_store(poly, cfg, RHO)
       call check_close(b%carbon - a%carbon, amount, 1.0e-9_wp * max(1.0_wp, abs(amount)),          &
                        'store: '//name//' reaches the carbon total')
    end subroutine moves_carbon
@@ -822,9 +825,9 @@ contains
       end interface
       type(slow_store_t) :: a, b
       real(wp) :: d
-      a = slow_site_store(poly, cfg, soil, RHO)
+      a = slow_site_store(poly, cfg, RHO)
       call perturb()
-      b = slow_site_store(poly, cfg, soil, RHO)
+      b = slow_site_store(poly, cfg, RHO)
       select case (currency)
       case ('carbon') ; d = b%carbon - a%carbon
       case ('water')  ; d = b%water  - a%water

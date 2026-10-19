@@ -505,10 +505,10 @@ contains
       call manager_finalize(files)
    end subroutine open_output_files
 
-   !----- A polygon's share of an output file set: its buffers, which take the polygon's own soil !
-   !      curve for the derived soil diagnostics, the diagnostic blocks its site must accumulate   !
-   !      for the set's variables, and its row of the per-polygon variables: its layers and the    !
-   !      inputs its cell's maps gave it, as it runs them. ------------------------------------------!
+   !----- A polygon's share of an output file set: its buffers, which take its site's soil curve !
+   !      for the derived soil diagnostics, the diagnostic blocks it must accumulate for the set's !
+   !      variables, and its row of the per-polygon variables: its site's layers and surface, and  !
+   !      the height allometry's site index its cell's map gave it. ------------------------------!
    subroutine attach_output(files, bufs, poly, run)
       type(output_files_t),   intent(inout) :: files
       type(output_buffers_t), intent(inout) :: bufs
@@ -516,20 +516,19 @@ contains
       type(polygon_run_t),    intent(in)    :: run
       integer(ik) :: p
       call manager_alloc_buffers(files, bufs)
-      if (run%cfg%fast_biophysics_on)                                                           &
-         call manager_set_soil_params(bufs%diag, run%fast_ctx%col_config%soil)
+      if (run%cfg%fast_biophysics_on) call manager_set_soil_params(bufs%diag, poly%site%surface(1)%soil)
       call activate_site_diag(files, poly)
       p = run%cell
-      associate (soil => run%fast_ctx%col_config%soil, cfg => run%cfg)
-         files%polygon_n_soil(p)       = soil%n_active
-         files%polygon_soil_z(:, p)    = soil%z_node
-         files%polygon_soil_face(:, p) = soil%soil_layer_z
-         files%polygon_soil_depth(p)   = cfg%soil_column%depth
-         files%polygon_bottom_bc(p)    = cfg%soil%bottom_bc
-         files%polygon_drain_factor(p) = merge(MISSING_VALUE, cfg%soil%drain_factor,             &
-                                               cfg%soil%bottom_bc == SOIL_BC_AQUIFER)
-         files%polygon_deep_temp(p)    = cfg%energy%deep_temp
-         if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = cfg%allom%chave_e
+      associate (surf => poly%site%surface(1))
+         files%polygon_n_soil(p)       = surf%soil%n_active
+         files%polygon_soil_z(:, p)    = surf%soil%z_node
+         files%polygon_soil_face(:, p) = surf%soil%soil_layer_z
+         files%polygon_soil_depth(p)   = surf%soil_column%depth
+         files%polygon_bottom_bc(p)    = surf%water_bottom_bc
+         files%polygon_drain_factor(p) = merge(MISSING_VALUE, surf%drain_factor,                  &
+                                               surf%water_bottom_bc == SOIL_BC_AQUIFER)
+         files%polygon_deep_temp(p)    = surf%deep_temp
+         if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = poly%cohort%allom%chave_e
       end associate
    end subroutine attach_output
 

@@ -37,8 +37,8 @@ program test_init_soil_state
    cfg%init_soil_theta = 0.25_wp
    call build_fast_context(cfg, ctx)
    call check_close(ctx%soil_temp_init, 298.65_wp, 1.0e-14_wp, 'soil_temp did not reach the fast context')
-   call check_close(ctx%theta_init(1),  0.25_wp,   1.0e-14_wp, 'soil_theta did not reach the fast context')
    call init_bare_ground(poly, cfg, 3_ik)
+   call check_close(poly%site%surface(1)%theta_start(1), 0.25_wp, 1.0e-14_wp, 'soil_theta did not reach the site')
    call finalize_init(poly)
    call init_fast_reservoirs(poly, ctx)
    nsl = ctx%col_config%soil%n_active
@@ -70,10 +70,12 @@ program test_init_soil_state
                  'a layer did not take its own curve')
       call check(all(ctx%col_config%soil_thermal%soil_dry_heat_capacity(1:n) ==                             &
                      cfg%soil_column%layer_dry_heat_capacity(1:n)), 'a layer did not take its own heat capacity')
-      call check(all(ctx%theta_init(1:n) == soil%theta_fc(1:n)) .and. soil%theta_fc(1) /= soil%theta_fc(n),    &
-                 'a layer did not start at its own field capacity')
    end associate
    call init_bare_ground(poly, cfg, 3_ik)
+   associate (surf => poly%site%surface(1))
+      call check(all(surf%theta_start(1:n) == surf%soil%theta_fc(1:n)) .and.                                 &
+                 surf%soil%theta_fc(1) /= surf%soil%theta_fc(n), 'a layer did not start at its own field capacity')
+   end associate
    call finalize_init(poly)
    call init_fast_reservoirs(poly, ctx)
    call check(all(poly%patch%soil_water(2)%theta(1:n) == ctx%col_config%soil%theta_fc(1:n)),                    &
