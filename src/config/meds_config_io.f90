@@ -221,7 +221,6 @@ contains
       type(toml_table_t), intent(in)    :: tm
       type(soil_opts_t),  intent(inout) :: s
       call load_water_bottom_bc(tm, s%bottom_bc, s%drain_factor)
-      s%rtol           = toml_real   (tm, 'fast.water_rtol',      s%rtol)
       s%atol           = toml_real   (tm, 'fast.water_atol',      s%atol)
       s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
       s%intercept_alpha= toml_real   (tm, 'fast.intercept_alpha', s%intercept_alpha)
@@ -296,7 +295,6 @@ contains
       s%tiny_snow_mass      = toml_real(tm, 'snow.tiny_snow_mass',      s%tiny_snow_mass)
       s%ny07_a              = toml_real(tm, 'snow.ny07_a',              s%ny07_a)
       s%ny07_m              = toml_real(tm, 'snow.ny07_m',              s%ny07_m)
-      s%z0_snow             = toml_real(tm, 'snow.z0_snow',             s%z0_snow)
    end subroutine load_snow_params
 
    subroutine load_aero_cfg(tm, a)                      ! [aerodynamics] -> canopy-aero constants
@@ -1110,9 +1108,8 @@ contains
                     &("split" was retired -- see meds_fast_step)'
       end if
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
-      cfg%ark_rtol          = toml_real   (tm, 'fast.ark_rtol',          1.0e-3_wp)
+      cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
       !----- Error-control selectors (DEFAULTED). ---------------------------------------------!
-      cfg%rtol_all          = toml_real   (tm, 'fast.rtol_all',          0.0_wp)
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
       cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
       cfg%cas_condensation  = toml_logical(tm, 'fast.cas_condensation', .true.)

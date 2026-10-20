@@ -68,8 +68,8 @@ dt_fast             = "900s"   # fast biophysics timestep, an ACCURACY setting, 
 # ark_fixed_substep   = 4            # [-]  substeps per dt_fast when ark_adaptive = false
 # ark_dt_init         = 0.0          # [s]  first adaptive substep (0 = warm start: the substep the patch's
 #                                    #   previous dt_fast converged to, or dt_fast on its first)
-# ark_rtol            = 1.0e-3       # [-]  relative tolerance, for every tolerance group
-# rtol_all            = 0.0          # [-]  > 0: one accuracy target for every group (0 = unset)
+# rtol                = 1.0e-3       # [-]  relative tolerance of every error-controlled store: the march
+#                                    #   and the soil-plant water network
 # atol_scale          = 1.0          # [-]  multiplier on every group's absolute tolerance
 # error_level         = "adaptive"   # "fixed" | "adaptive" | "strict" (adaptive, and a substep that
 #                                    #   cannot meet the tolerance at the floor step is an error)
@@ -78,7 +78,6 @@ dt_fast             = "900s"   # fast biophysics timestep, an ACCURACY setting, 
 #                                    #   false = one uncoupled backward-Euler pass
 # ---- The soil-plant water network: soil and plant water are solved together as one network
 #      (implicit Euler with Newton and its own sub-steps; docs/science/soil_plant_water.md). ----
-# water_rtol          = 1.0e-3       # [-]  its sub-step relative tolerance
 # water_atol          = 1.0e-4       # [-]  its sub-step absolute tolerance: water content for soil layers
 #                                    #   and the pond, relative water content for plant tissues
 # ---- Budget checks. The soil-heat solve is ONE unconditionally stable backward-Euler step, and the
@@ -199,7 +198,6 @@ min_new_snow_mass  = 1.0e-3   # [kg/m2] first-flake creation threshold
 tiny_snow_mass     = 1.0e-6   # [kg/m2] melt-out threshold (dump residual to soil)
 ny07_a             = 2.5      # [-]     Niu-Yang07 snow-cover-fraction shape factor
 ny07_m             = 1.0      # [-]     Niu-Yang07 snow-cover-fraction exponent
-z0_snow            = 0.001    # [m]     snow surface roughness (aerodynamic burial floor)
 
 [aerodynamics]
 # Canopy-aerodynamics run constants (CLM5 Monin-Obukhov + ED2 boundary layers;
@@ -208,7 +206,7 @@ z0_snow            = 0.001    # [m]     snow surface roughness (aerodynamic buri
 # leaf/wood coefficient tables keep their literature defaults and are not exposed here.)
 z0m_ratio        = 0.13       # [-]   z0m / canopy height (ED2 vh2vr), eq. (1)
 d_ratio          = 0.63       # [-]   displacement / canopy height (ED2 vh2dh), eq. (1)
-snow_rough       = 0.001      # [m]   snow-surface roughness (blend floor)
+snow_rough       = 0.001      # [m]   snow-surface roughness: the z0m floor and the snow-cover scale
 zeta_m           = 1.574      # [-]   CLM5 momentum-range transition
 zeta_t           = 0.465      # [-]   CLM5 scalar-range transition
 zeta_max_stable  = 0.5        # [-]   CLM5 zetamaxstable (init-guess cap)

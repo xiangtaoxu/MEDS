@@ -748,7 +748,7 @@ contains
    !      reach.                                                                                         !
    !      This is a PLUMBING test on purpose: a whole-model A/B cannot see it (a tolerance change that   !
    !      does not flip a substep decision is silently byte-identical), so the wiring is asserted here   !
-   !      directly. It also pins the two accuracy dials, including the atol_scale companion -- rtol_all  !
+   !      directly. It also pins the two accuracy dials, including the atol_scale companion -- rtol      !
    !      alone saturates once atol dominates the atol + rtol*|y| denominator.                           !
    subroutine test_tolerance_unification()
       type(meds_config_t)   :: c
@@ -757,16 +757,14 @@ contains
       c = build_test_config()
       !----- (a) DEFAULT: each group is seeded from the config key that governs it. -------------------!
       t = build_tol_set(c)
-      call check_true('tol: theta group seeded from [soil].rtol', t%rtol(GRP_THETA)  == c%soil%rtol,                  &
-              t%rtol(GRP_THETA))
-      call check_true('tol: theta group seeded from [soil].atol', t%atol(GRP_THETA)  == c%soil%atol,                  &
+      call check_true('tol: every group takes [fast].rtol', all(t%rtol == c%rtol), maxval(abs(t%rtol - c%rtol)))
+      call check_true('tol: theta group seeded from [fast].water_atol', t%atol(GRP_THETA)  == c%soil%atol,           &
               t%atol(GRP_THETA))
-      call check_true('tol: ARK groups seeded from ark_rtol', t%rtol(GRP_ENTH)   == c%ark_rtol, t%rtol(GRP_ENTH))
-      !----- (b) MASTER DIALS: rtol_all overrides every group; atol_scale multiplies every atol. ------!
-      c%rtol_all   = 1.0e-7_wp
+      !----- (b) THE DIALS: rtol sets every group; atol_scale multiplies every atol. ------------------!
+      c%rtol       = 1.0e-7_wp
       c%atol_scale = 1.0e-2_wp
       t = build_tol_set(c)
-      call check_true('tol: rtol_all overrides ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
+      call check_true('tol: rtol sets ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
       call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, t%atol(GRP_THETA))
       !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ARK march: the     !
       !      soil-plant water network takes the GRP_THETA pair for soil and plant stores alike. -------!

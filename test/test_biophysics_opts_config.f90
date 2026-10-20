@@ -36,7 +36,7 @@ program test_biophysics_opts_config
    write(u,'(a)') 'deep_temp         = 283.24'
    write(u,'(a)') ''
    write(u,'(a)') '[fast]'
-   write(u,'(a)') 'water_rtol              = 2.5e-4'
+   write(u,'(a)') 'water_atol              = 2.5e-5'
    write(u,'(a)') 'soil_energy_budget_atol = 0.05'
    write(u,'(a)') ''
    write(u,'(a)') '[snow]'
@@ -62,13 +62,12 @@ program test_biophysics_opts_config
    !----- [soil] and [fast]: string selectors -> enums, scalar overrides, and absent-keeps-default. -!
    call check_true('soil.water_bottom_bc "aquifer" -> SOIL_BC_AQUIFER', s%bottom_bc == SOIL_BC_AQUIFER,   &
                    real(s%bottom_bc, wp))
-   call check('fast.water_rtol overridden', s%rtol,     2.5e-4_wp, 1.0e-12_wp)
+   call check('fast.water_atol overridden', s%atol,     2.5e-5_wp, 1.0e-12_wp)
    call check('soil.w_pond_max overridden', s%w_pond_max, 9.0_wp, 0.0_wp)
    call check('soil.ground_albedo_nir overridden', s%ground_albedo_nir, 0.25_wp, 1.0e-12_wp)
    call check('soil.ground_albedo_vis absent -> default 0.15', s%ground_albedo_vis, 0.15_wp, 0.0_wp)
    call check('soil.ground_emissivity absent -> default 0.95', s%ground_emissivity, 0.95_wp, 0.0_wp)
    call check('soil.dsl_dmax absent -> default 0.015', s%dsl_dmax, 0.015_wp, 0.0_wp)
-   call check('fast.water_atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
 
    !----- The soil heat's budget-closure threshold, for the debug halt. The soil-thermal solve is   !
    !      one backward-Euler step, so there are no substep keys. ---------------------------------------!
@@ -95,7 +94,7 @@ program test_biophysics_opts_config
       type(soil_opts_t) :: s0
       type(energy_opts_t) :: e0
       call load_soil_opts(tm, s0)     ! same table, fresh struct: same result as s (idempotent)
-      call check('reload fast.water_rtol matches', s0%rtol, s%rtol, 0.0_wp)
+      call check('reload fast.water_atol matches', s0%atol, s%atol, 0.0_wp)
       call load_energy_opts(tm, e0)
       call check_true('reload soil.thermal_bottom_bc matches', e0%bottom_bc == e%bottom_bc, real(e0%bottom_bc, wp))
    end block

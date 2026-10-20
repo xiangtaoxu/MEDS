@@ -66,7 +66,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | Block | What it sets |
 |---|---|
 | `[run]` | The slow timestep, and the run span as **calendar dates** (`start_time`, `end_time`, leap-year-aware Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`). Thread count. The run `mode`: one site, or a region. |
-| `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control; the soil-plant water network's tolerances (`water_rtol`, `water_atol`), the budget checks (`soil_energy_budget_atol`, `debug_error`) and the canopy interception (`intercept_alpha`, `intercept_k`). |
+| `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control; the relative tolerance `rtol` of every error-controlled store, the soil-plant water network's absolute tolerance `water_atol`, the budget checks (`soil_energy_budget_atol`, `debug_error`) and the canopy interception (`intercept_alpha`, `intercept_k`). |
 | `[init]` | How the run starts, and the path to the PFT file. |
 | `[demography]` | Cohort and patch fusion/fission, the cadence switches. |
 | `[disturbance]`, `[recruitment]` | Treefall rates; the seed-rain and reproduction settings. |

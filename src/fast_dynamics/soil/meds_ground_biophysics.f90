@@ -62,14 +62,15 @@ contains
    !      [0,1]; the (rho_snow/rho_fresh) normalization folds into the tuned scale. Used to RAMP    !
    !      the ground optics and the soil-top-BC blend, and to area-weight the pack's boundary       !
    !      exchange (docs/science/snow_biophysics.md).                                               !
-   pure function snow_cover_fraction(swe, snow_depth, params) result(snowfac)
+   pure function snow_cover_fraction(swe, snow_depth, params, snow_rough) result(snowfac)
       real(wp),            intent(in) :: swe, snow_depth
       type(snow_params_t), intent(in) :: params
+      real(wp),            intent(in) :: snow_rough   !< [m] the snow surface's roughness ([aerodynamics])
       real(wp) :: snowfac, scale
       if (swe <= params%tiny_snow_mass) then
          snowfac = 0.0_wp
       else
-         scale   = max(params%ny07_a * params%z0_snow * (params%rho_snow / 100.0_wp) ** params%ny07_m, tiny_num)
+         scale   = max(params%ny07_a * snow_rough * (params%rho_snow / 100.0_wp) ** params%ny07_m, tiny_num)
          snowfac = tanh(snow_depth / scale)
       end if
    end function snow_cover_fraction

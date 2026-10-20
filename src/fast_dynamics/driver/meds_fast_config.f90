@@ -194,33 +194,23 @@ contains
    !---------------------------------------------------------------------------------------!
    ! build_tol_set -- THE single tolerance source for the whole fast loop: the per-group   !
    ! tolerances of the grouped error norm (docs/science/numerical_scheme.md eq. (3)).      !
-   !   * ARK/RK45-integrated groups (enthalpy, shv, CO2, soil energy, leaf_w, wood_w)      !
-   !     <- [fast].ark_rtol and each group's default atol;                                 !
-   !   * GRP_THETA <- the [soil] (rtol, atol), the soil-plant water network's control;     !
+   !   * every group's rtol <- [fast].rtol, one relative accuracy for the whole loop;      !
+   !   * ARK/RK45-integrated groups (enthalpy, shv, CO2, soil energy, leaf_w, wood_w) keep !
+   !     each group's default atol;                                                        !
+   !   * GRP_THETA's atol <- [fast].water_atol, the soil-plant water network's control;    !
    !   * GRP_LEAF_W/GRP_WOOD_W: only RK45 integrates plant water mass in its stages; ARK   !
    !     advances it outside the ESDIRK tableau, so these terms are structurally zero      !
    !     there. Seeded regardless, so every group exists uniformly.                        !
    !                                                                                       !
-   ! ONE MASTER DIAL: when cfg%rtol_all > 0 it OVERRIDES every group's rtol, so a single   !
-   ! number sets the relative accuracy of the entire hierarchy. Left at its 0 default,     !
-   ! each group keeps its own per-sub-solver value, even for a config that customises the  !
-   ! [soil] tolerances.                                                                    !
    !---------------------------------------------------------------------------------------!
    pure function build_tol_set(cfg) result(tols)
       type(meds_config_t), intent(in) :: cfg
       type(tol_set_t)                 :: tols
-      !----- ARK/RK45-integrated groups: the single ark_rtol; each group keeps its default atol. -----!
-      tols%rtol(GRP_ENTH)   = cfg%ark_rtol
-      tols%rtol(GRP_SHV)    = cfg%ark_rtol
-      tols%rtol(GRP_CO2)    = cfg%ark_rtol
-      tols%rtol(GRP_SE)     = cfg%ark_rtol
-      tols%rtol(GRP_LEAF_W) = cfg%ark_rtol
-      tols%rtol(GRP_WOOD_W) = cfg%ark_rtol
-      !----- Sub-solver groups: seed from the opts that drive them. ----------------------------------!
-      tols%rtol(GRP_THETA)  = cfg%soil%rtol   ; tols%atol(GRP_THETA)  = cfg%soil%atol
-      !----- The one master accuracy dial (0 => unset => keep the per-group values above). ------------!
-      if (cfg%rtol_all > 0.0_wp) tols%rtol = cfg%rtol_all
-      !----- ...and its ABSOLUTE companion. The WRMS denominator is atol + rtol*|y|, so rtol_all      !
+      !----- One relative tolerance for every group; each group keeps its default atol, and the   !
+      !      water network's is [fast].water_atol. ----------------------------------------------------!
+      tols%rtol             = cfg%rtol
+      tols%atol(GRP_THETA)  = cfg%soil%atol
+      !----- ...and the ABSOLUTE companion. The WRMS denominator is atol + rtol*|y|, so rtol         !
       !      alone SATURATES once atol dominates (docs/science/numerical_scheme.md §6): tightening    !
       !      rtol from 1e-3 to 1e-6 raises the soil-water error estimate only ~4x (4e-4 -> 1e-4       !
       !      denominator) -- never enough to force a substep -- while scaling BOTH does. atol is      !

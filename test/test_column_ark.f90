@@ -164,7 +164,7 @@ program test_column_ark
 
    !=== D. ark_coupled reaches the inner solver (np<=1 baseline vs np>1 Newton must differ). ======!
    call reset_state()
-   cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true. ; cfg%ark_rtol = 1.0e-4_wp
+   cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true. ; cfg%rtol = 1.0e-4_wp
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call set_noon_forcing()
    cfg%ark_coupled = .false.
@@ -335,7 +335,7 @@ contains
       tag = merge('adapt ', 'fixed ', adaptive)
       call reset_state()                               ! theta0=0.30 (moist), budget zeroed
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = adaptive
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_coupled = .true.
+      cfg%rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)               ! rainfall==0 always (dry); diurnal SW
@@ -363,7 +363,7 @@ contains
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      cfg%rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       call march_dry_day(theta_dry)                       ! the same day without the rain
       call reset_state()
@@ -395,7 +395,7 @@ contains
       real(wp)    :: surf_water_peak
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      cfg%rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
@@ -429,7 +429,7 @@ contains
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      cfg%rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       call march_dry_day(theta_dry)                       ! the same day without the shed water
       call reset_state()

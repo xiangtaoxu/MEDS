@@ -65,7 +65,7 @@ contains
    ! On the ARK path theta and the plant water ride operator-split maps outside the ESDIRK tableau,   !
    ! so their embedded differences are STRUCTURALLY ZERO there, and summing them adds (nsl + 2n)      !
    ! exact zeros that still increment cnt and divide the norm down: the ARK march runs slightly       !
-   ! looser than its stated ark_rtol. That is the right trade, for two reasons. (1) A switch that     !
+   ! looser than its stated rtol. That is the right trade, for two reasons. (1) A switch that     !
    ! says "do not measure this state" is indistinguishable, at the call site, from a switch that      !
    ! says "this state cannot move": RK45 integrates theta inside its tableau, and such a switch       !
    ! would leave an integrated state with no error control at all. (2) Measured on a summer stand,    !

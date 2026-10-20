@@ -184,9 +184,8 @@ contains
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
 
-      !----- ONE tolerance source drives the whole fast-loop hierarchy (build_tol_set). By default      !
-      !      these pushes are the IDENTITY; when [fast].rtol_all > 0 the single master dial propagates  !
-      !      into every nested sub-solver as well as the ARK/RK45 march: the soil-plant water network   !
+      !----- ONE tolerance source drives the whole fast-loop hierarchy (build_tol_set): [fast].rtol    !
+      !      reaches every nested sub-solver as well as the ARK/RK45 march. The soil-plant water network !
       !      takes the GRP_THETA pair, in water content for soil and relative water content for plant   !
       !      tissues (docs/science/soil_plant_water.md §3). --------------------------------------------!
       ctx%col_config%integrator = build_integrator_opts(cfg)
@@ -670,7 +669,8 @@ contains
             if (do_forcing) call apply_rt_forcing(forc, ncoh, col_cohort%pft, col_cohort%lai, col_cohort%wai,  &
                                  col_cohort%height, biophys%leaf_temp, biophys%wood_temp,                      &
                                  biophys%soil_energy%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
-                                 ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, cfg%leaf_absorptance)
+                                 ctx%col_config%aero%snow_rough, ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, &
+                                 cfg%leaf_absorptance)
             call fill_aenv(aenv, biophys, met_top, z_top)
             !----- Slice to 1:ncoh (not the whole, possibly capacity-oversized backing array): the    !
             !      five per-cohort accumulators are assumed-shape dummies in column_fast_step, so the !
@@ -1091,8 +1091,8 @@ contains
    !      -- otherwise leaf absorptance would be applied twice. abs_sw stays true ABSORBED SW (the  !
    !      leaf energy balance wants absorbed).                                                      !
    subroutine apply_rt_forcing(forc, ncoh, pft, lai, wai, height, leaf_temp, wood_temp,                &
-                               soil_temp_top, snow, snow_params, soil_albedo, soil_emiss, rad_opt, met, &
-                               leaf_absorptance)
+                               soil_temp_top, snow, snow_params, snow_rough, soil_albedo, soil_emiss,   &
+                               rad_opt, met, leaf_absorptance)
       type(column_forcing_t),  intent(inout) :: forc
       integer(ik),             intent(in)    :: ncoh
       integer(ik),             intent(in)    :: pft(:)           !< per-cohort PFT (gather order, top first)
@@ -1102,6 +1102,7 @@ contains
       real(wp),                intent(in)    :: soil_temp_top    !< [K] top soil-node temperature (ground emission)
       type(snow_column_t),     intent(in)    :: snow             !< pack store (albedo / emissivity ramp)
       type(snow_params_t),     intent(in)    :: snow_params
+      real(wp),                intent(in)    :: snow_rough       !< [m] snow-surface roughness ([aerodynamics])
       real(wp),                intent(in)    :: soil_albedo(:)   !< [-] bare-soil albedo per band
       real(wp),                intent(in)    :: soil_emiss       !< [-] bare-soil emissivity
       type(rad_pft_optics_t),  intent(in)    :: rad_opt          !< per-PFT canopy optics (two-stream)
@@ -1158,7 +1159,7 @@ contains
       !      VIS/NIR fresh<->aged interpolated by the lagged surface liquid fraction. -----------------!
       if (snow%nlayer >= 1_ik .and. snow%swe(1) > snow_params%tiny_snow_mass) then
          associate (sp => snow_params)
-            snow_fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), sp)
+            snow_fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), sp, snow_rough)
             snow_fl = snow%snow_fliq(1)
             surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fc) * soil_albedo(RAD_VIS)                 &
                  + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged)

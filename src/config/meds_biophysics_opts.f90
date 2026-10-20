@@ -51,10 +51,10 @@ module meds_biophysics_opts
       !      realistic drainage" option. ---------------------------------------------------------!
       integer(ik) :: bottom_bc    = SOIL_BC_DRAIN
       real(wp)    :: drain_factor = 1.0_wp              !< [-] f in [0, 1] of q = f K(theta_N)
-      !----- The water network's sub-step tolerances ([fast].water_rtol and water_atol;            !
-      !      docs/science/soil_plant_water.md §3): a store's error is weighed against atol of its    !
-      !      scale -- water content for soil layers and the pond, relative water content for plant   !
-      !      tissues -- plus rtol of its water. ------------------------------------------------------!
+      !----- The water network's sub-step tolerances (docs/science/soil_plant_water.md §3): a      !
+      !      store's error is weighed against atol of its scale -- water content for soil layers and !
+      !      the pond, relative water content for plant tissues -- plus rtol of its water. rtol is  !
+      !      [fast].rtol, which the driver sets here; atol is [fast].water_atol. ---------------------!
       real(wp)    :: rtol   = 1.0e-3_wp
       real(wp)    :: atol   = 1.0e-4_wp
       real(wp)    :: w_pond_max = 5.0_wp                 !< [kg/m2] ponding capacity before surface runoff
@@ -117,7 +117,6 @@ module meds_biophysics_opts
       real(wp) :: tiny_snow_mass    = 1.0e-6_wp   !< [kg/m2] melt-out threshold (dump residual to soil)
       real(wp) :: ny07_a            = 2.5_wp      !< [-] Niu-Yang07 snow-cover-fraction shape factor
       real(wp) :: ny07_m            = 1.0_wp      !< [-] Niu-Yang07 snow-cover-fraction exponent
-      real(wp) :: z0_snow           = 0.001_wp    !< [m] snow surface roughness (aero burial floor)
    end type snow_params_t
 
    !----- Canopy-aerodynamics run constants, the [aerodynamics] block                       !

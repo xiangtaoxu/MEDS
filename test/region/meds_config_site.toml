@@ -16,7 +16,7 @@ fast_biophysics_on  = true
 dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
-ark_rtol            = 1.0e-3
+rtol                = 1.0e-3
 
 [demography]
 demography_on             = true

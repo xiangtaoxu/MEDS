@@ -348,7 +348,7 @@ contains
          if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)
          if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
          !----- The error-control bundle, built once per run by build_error_control (meds_fast_config):    !
-         !      every tolerance group's setting (or the [fast].rtol_all master dial), plus the             !
+         !      every tolerance group's setting ([fast].rtol, atol_scale and water_atol), plus the         !
          !      controller and its strictness (docs/science/numerical_scheme.md eqs. (3)-(4)). ------------!
          ec = col_config%integrator%error_control
          call adaptive_ark_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, ws, nsteps, nrej,         &

@@ -168,13 +168,8 @@ module meds_config
       !      docs/science/numerical_scheme.md §3, §6). ---------------------------------------------!
       integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK45
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
-      real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
-      !----- ONE master relative-accuracy dial for the WHOLE fast loop: when > 0 it overrides        !
-      !      every tolerance group's rtol -- the ARK march AND the nested soil-water / soil-         !
-      !      energy / plant-hydraulics sub-solvers. 0 (default) => each keeps its own per-sub-       !
-      !      solver value. --------------------------------------------------------------------------!
-      real(wp)    :: rtol_all             = 0.0_wp      !< [-] 0 = unset; > 0 = the single accuracy target
-      !----- The ABSOLUTE-tolerance companion to rtol_all. Every group's atol is physically scaled     !
+      real(wp)    :: rtol                 = 1.0e-3_wp   !< [-] relative tolerance of every error-controlled store
+      !----- The ABSOLUTE-tolerance companion to rtol. Every group's atol is physically scaled     !
       !      (J/kg, kg/kg, m3/m3, K, ...), so they cannot share one number the way rtol can;           !
       !      instead this is a dimensionless MULTIPLIER applied to the whole atol vector. It           !
       !      matters because the WRMS denominator is atol + rtol*|y|                                   !
@@ -726,7 +721,6 @@ contains
             error stop TAG//'dt_slow must be an integer multiple of dt_fast'
          if (cfg%time_integrator /= INTEG_ARK .and. cfg%time_integrator /= INTEG_RK45)          &
             error stop TAG//'time_integrator out of range'
-         if (cfg%rtol_all < 0.0_wp)           error stop TAG//'rtol_all < 0 (0 = unset)'
          if (cfg%atol_scale <= 0.0_wp)        error stop TAG//'atol_scale <= 0 (1 = unset)'
          if (cfg%forcing_sample_frac < 0.0_wp .or. cfg%forcing_sample_frac > 1.0_wp)                 &
             error stop TAG//'forcing_sample_frac outside [0,1]'
@@ -735,7 +729,7 @@ contains
          if (cfg%error_level /= CTRL_L0_FIXED .and. cfg%error_level /= CTRL_L1_ADAPTIVE .and.    &
              cfg%error_level /= CTRL_L2_STRICT)                                                 &
             error stop TAG//'error_level out of range (L0|L1|L2)'
-         if (cfg%ark_rtol <= 0.0_wp)          error stop TAG//'ark_rtol <= 0'
+         if (cfg%rtol <= 0.0_wp)              error stop TAG//'fast.rtol <= 0'
          if (cfg%ark_fixed_substep < 1_ik)    error stop TAG//'ark_fixed_substep < 1'
          !----- The sub-daily probe is the ONE fast-loop writer that is not thread-safe -- it        !
          !      holds a `save`d unit and appends to a shared file, so under threads its rows         !
