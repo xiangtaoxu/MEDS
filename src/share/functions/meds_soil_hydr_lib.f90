@@ -20,9 +20,9 @@ module meds_soil_hydr_lib
 
    !----- A layer's curve from the soil maps. ---------------------------------------------!
    public :: soil_texture_t, soil_texture_to_hydraulics
-   !----- Retention curve: theta(head) and head(theta) read-offs. -------------------------!
+   !----- Retention curve: theta(head), head(theta) and potential(theta) read-offs. -------!
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
-   public :: soil_head_to_theta, soil_theta_to_head
+   public :: soil_head_to_theta, soil_theta_to_head, soil_matric_potential
    !----- The water relations the soil-plant water solver uses, in the variable it solves  !
    !      for: a soil layer's saturation (dry) or potential (wet), the pond's head. -------!
    public :: SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH
@@ -188,6 +188,17 @@ contains
       end if
       call saturation_to_head(retention, par_a, par_n, se, head, dse_dhead)
    end function soil_theta_to_head
+
+   !----- Matric potential [MPa] of a layer holding theta [m3/m3]: its head through        !
+   !      grav_head, the constant plant hydraulics uses, so a soil potential and a root's  !
+   !      are on one scale. ---------------------------------------------------------------!
+   elemental function soil_matric_potential(retention, theta, theta_sat, theta_res, par_a, par_n) &
+                      result(psi_mpa)
+      integer(ik), intent(in) :: retention
+      real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n
+      real(wp)                :: psi_mpa
+      psi_mpa = grav_head * soil_theta_to_head(retention, theta, theta_sat, theta_res, par_a, par_n)
+   end function soil_matric_potential
 
    !=======================================================================================!
    !     Water relations for the soil-plant water solver: soil layers.                     !

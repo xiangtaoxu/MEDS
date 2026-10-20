@@ -16,7 +16,7 @@
 module meds_fast_prepass
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, r_gas, kgcday_2_umols
-   use meds_config,           only : meds_config_t
+   use meds_config,           only : meds_config_t, top_soil_psi
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM, CO_BETA_NONSTOM, &
                                      CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, &
                                      CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_GPP_RATE, CO_LEAF_PAR, CO_GB_MOL, CO_PSI_PREDAWN, &
@@ -25,7 +25,7 @@ module meds_fast_prepass
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_fast_types, only : patch_biophys_t
-   use meds_soil_column_config, only : soil_params_t, top_soil_psi
+   use meds_soil_column_config, only : soil_params_t
    use meds_state_defaults, only : is_unset_negative
    use meds_biophysics_opts, only : aero_cfg_t
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
@@ -375,7 +375,7 @@ contains
       type(column_budget_t), intent(inout) :: budget
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
-      if (cfg%soil_carbon_on) then
+      if (cfg%soil_carbon%soil_carbon_on) then
          call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_config%soil%theta_res(1),      &
                                   col_config%soil%theta_sat(1), soil_carbon, cfg%soil_carbon, xi)
          call assemble_transfer_matrix(soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)

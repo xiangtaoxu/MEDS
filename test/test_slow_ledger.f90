@@ -22,12 +22,12 @@
 !==========================================================================================!
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
-   use meds_config,             only : meds_config_t
+   use meds_config,             only : meds_config_t, build_soil_hydr_params, soil_column_layers,     &
+                                       soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
    use meds_state_defaults,     only : UNSET_POSITIVE
-   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
-                                       soil_column_params, soil_column_start_theta, top_soil_psi
+   use meds_soil_column_config, only : soil_params_t
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
@@ -226,17 +226,17 @@ contains
       leaf_curve = c%pft%hydro(2_ik)%leaf_curve
       wood_curve = c%pft%hydro(2_ik)%wood_curve
       call soil_column_params(c%soil_column, sp)
-      call soil_column_start_theta(c%soil_column, sp, c%init_soil_theta, theta_start)
+      call soil_column_start_theta(c%soil_column, sp, c%init%soil_theta, theta_start)
       call check_close(tissue_water_to_psi(st%cohort%leaf_water_mass(1), leaf_curve,            &
                        st%cohort%leaf_carbon(1)), top_soil_psi(sp, theta_start(1)), 1.0e-9_wp,     &
                        'tissue water (a): a recruit''s leaves are born at the starting top-soil potential')
-      call check_close(st%cohort%leaf_temp(1), c%init_soil_temp, 1.0e-12_wp,                       &
+      call check_close(st%cohort%leaf_temp(1), c%init%soil_temp, 1.0e-12_wp,                       &
                        'tissue water (a): a recruit is born at the starting temperature')
 
       !----- (b) A dormant canopy sheds every leaf in one step, its water with it. ------------------!
       c%fast_biophysics_on = .true.
       c%demography_on      = .false.
-      c%pft%pheno_shed_rate_max(:) = 1.0_wp          ! [1/day]: the whole canopy in one day
+      c%pft%pheno(:)%shed_rate_max = 1.0_wp          ! [1/day]: the whole canopy in one day
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
       call finalize_init(st)
@@ -421,7 +421,7 @@ contains
       c%fast_biophysics_on   = .true.
       c%demography_on        = .true.        ! the structural operators are the point here
       c%do_patch_disturbance = .true.
-      c%soil_carbon_on       = .true.        ! the only consumer of the accumulator
+      c%soil_carbon%soil_carbon_on       = .true.        ! the only consumer of the accumulator
       call init_bare_ground(st, c, 2_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
       call add_cohort(st, c, 2_ik, 1_ik, 0.3_wp, 35.0_wp)
@@ -475,7 +475,7 @@ contains
       c = build_test_config()
       c%fast_biophysics_on = .true.
       c%demography_on      = .false.        ! one step of growth, turnover and mortality, no restructuring
-      c%soil_carbon_on     = soil_carbon_on
+      c%soil_carbon%soil_carbon_on     = soil_carbon_on
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
       call finalize_init(st)
@@ -680,7 +680,7 @@ contains
       c = build_test_config()
       c%fast_biophysics_on = .true.
       c%demography_on      = .false.        ! isolate allocation from the structural operators
-      c%soil_carbon_on     = .true.
+      c%soil_carbon%soil_carbon_on     = .true.
       c%pft%growth_resp_factor(:)      = g_resp
       c%pft%recruit_carbon_efficiency(:) = repro_eff
       !----- A SLOW leaf turnover, so turnover does not eat the whole supply before reproduction !
@@ -782,7 +782,7 @@ contains
       poly%patch%cas(1)%can_temp = UNSET_POSITIVE
       call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
                                 t_birth, psi_birth)
-      call check_close(t_birth, cfg%init_soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
+      call check_close(t_birth, cfg%init%soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
       call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil, poly%site%surface(1)%theta_start(1)), &
                        1.0e-12_wp,                                                                        &
                        'birth: unseeded, the starting soil water''s potential')

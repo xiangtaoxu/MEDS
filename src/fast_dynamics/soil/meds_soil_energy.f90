@@ -105,7 +105,7 @@ contains
       real(wp),            intent(in) :: kappa_bot        !< [W/m/K] bottom-layer conductivity
       integer(ik),         intent(in) :: n
       real(wp) :: g_deep, l_deep
-      if (opts%bottom_bc == ENERGY_BC_DIRICHLET) then
+      if (opts%thermal_bottom_bc == ENERGY_BC_DIRICHLET) then
          l_deep = opts%deep_depth - abs(soil%z_node(n))
          g_deep = kappa_bot / l_deep
       else
@@ -126,7 +126,7 @@ contains
       real(wp),               intent(in) :: g_deep      !< [W/m2/K] from deep_conductance
       real(wp),               intent(in) :: t_bot       !< [K] bottom-layer temperature
       real(wp) :: hf_bot
-      if (opts%bottom_bc == ENERGY_BC_DIRICHLET) then
+      if (opts%thermal_bottom_bc == ENERGY_BC_DIRICHLET) then
          hf_bot = -g_deep * (t_bot - opts%deep_temp)
       else
          hf_bot = forcing%geothermal
@@ -208,7 +208,7 @@ contains
                           - sum(forcing%root_heat_sink(1:n)) + (qwf(n) - qwf(0)))
       flux%nsub      = 1_ik
       flux%converged = .true.
-      if (opts%debug_error .and. abs(flux%energy_resid) > opts%atol * sum(c_eff(1:n)*soil%dz(1:n))) then
+      if (opts%debug_error .and. abs(flux%energy_resid) > opts%soil_energy_budget_atol * sum(c_eff(1:n)*soil%dz(1:n))) then
          error stop 'soil_energy_step_implicit: energy budget did not close'
       end if
    end subroutine soil_energy_step_implicit

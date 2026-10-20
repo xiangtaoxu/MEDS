@@ -32,8 +32,10 @@ capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **
 retention curves (`meds_soil_hydr_lib`). In effective saturation
 $`S_e=(\theta-\theta_{res})/(\theta_{sat}-\theta_{res})`$ and matric head $h<0$ [m], van Genuchten's
 curve is $`S_e=[1+(\alpha|h|)^n]^{-m}`$ with $`m=1-1/n`$, and Campbell's is $`h=\psi_{sat}\,S_e^{-b}`$,
-saturated between its air-entry head $`\psi_{sat}<0`$ and zero, with $`K=K_{sat}\,S_e^{2b+3}`$. The van
-Genuchten conductivity is Mualem's,
+saturated between its air-entry head $`\psi_{sat}<0`$ and zero, with $`K=K_{sat}\,S_e^{2b+3}`$. Both
+keep their parameters in one pair, `[soil].curve_par_a` and `curve_par_n` (α [m⁻¹] and $n$, or
+$`\psi_{sat}`$ [m] and $b$), so every reader of a column (the water network, the predawn seed, the
+diagnostics) evaluates the curve the column was built with. The van Genuchten conductivity is Mualem's,
 
 ```math
 K = K_{sat}\,S_e^{L}\,\big[1-(1-S_e^{1/m})^m\big]^2, \qquad L = -1 \qquad(2)
@@ -394,8 +396,8 @@ and passes the resulting flux into the CO₂ source.
 |---|---|
 | soil water (the network) | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)); a layer's water relations: `meds_soil_hydr_lib`: `soil_water_relations` |
 | soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
-| soil layers | `meds_soil_column_config`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`, `soil_column_layers` |
-| retention curves (vG / Campbell) | `meds_soil_hydr_lib` |
+| soil layers | `meds_config`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`, `soil_column_layers`; the column's types in `meds_soil_column_config` |
+| retention curves (vG / Campbell) | `meds_soil_hydr_lib`, with the matric potential `soil_matric_potential` [MPa] |
 | hydraulic parameters from texture, eqs. (6)–(8) | `meds_soil_hydr_lib`: `soil_texture_to_hydraulics` |
 | thermal properties from texture, eq. (9) | `meds_therm_lib`: `soil_texture_to_thermal` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |

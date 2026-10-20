@@ -32,7 +32,7 @@ module meds_allometry_lib
    !      Python call) is usable. ---------------------------------------------------------!
    type :: allometry_t
       !----- Height: the curve, and the cap on every curve. -------------------------------!
-      integer(ik) :: height_form = HEIGHT_POWER   !< the height curve: power law or log-quadratic
+      integer(ik) :: height_allometry = HEIGHT_POWER   !< the height curve: power law or log-quadratic
       real(wp)    :: hgt_max     = 46.0_wp        !< [m]   the largest height
       real(wp)    :: b1Ht        = 1.139963_wp    !< [--]  power law: intercept of ln H on ln dbh
       real(wp)    :: b2Ht        = 0.564899_wp    !< [--]  power law: slope of ln H on ln dbh
@@ -64,7 +64,7 @@ contains
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: dbh
       real(wp)                      :: h, x
-      select case (allom%height_form)
+      select case (allom%height_allometry)
       case (HEIGHT_CHAVE)
          x  = log(max(dbh, tiny_num))
          h  = exp(chave_intercept(allom) + allom%chave_b * x + allom%chave_c * x * x)
@@ -79,7 +79,7 @@ contains
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: h
       real(wp)                      :: dbh
-      select case (allom%height_form)
+      select case (allom%height_allometry)
       case (HEIGHT_CHAVE)
          dbh = exp(chave_small_root(allom%chave_c, allom%chave_b, chave_intercept(allom) - log(max(h, tiny_num))))
       case default
@@ -122,7 +122,7 @@ contains
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: agb, rho
       real(wp)                      :: dbh, k_un, p_un, k_cap, p_cap, h
-      if (allom%height_form == HEIGHT_CHAVE) then
+      if (allom%height_allometry == HEIGHT_CHAVE) then
          dbh = agb_to_dbh_chave(allom, agb, rho)
          return
       end if

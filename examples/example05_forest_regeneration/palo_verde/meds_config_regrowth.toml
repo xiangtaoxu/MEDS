@@ -17,7 +17,7 @@ fast_biophysics_on  = true
 dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
-ark_rtol            = 1.0e-3
+rtol                = 1.0e-3
 canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
 # Each cohort's Vcmax25, Rd25, SLA and leaf turnover rate follow the leaf area above it.
@@ -46,10 +46,7 @@ n_patch_fusion_iter       = 6
 patch_light_tol           = 0.05
 patch_light_tol_max       = 0.10
 patch_light_maxdev_factor = 1.5
-patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
-patch_min_area_remain     = 0.99
-enable_patch_fission      = false
 conservation_tol          = 0.001
 growth_memory_days        = 365.0
 
@@ -64,7 +61,6 @@ min_recruit_size = 1.0e-2
 #----- Start: 3 recruits per m2 of each PFT at 1.5 m (data/pv_bare_start.csv, read as a census). -----
 [init]
 init_mode    = 1
-restart_file = "none"
 census_file  = "data/pv_bare_start.csv"
 pft_config   = "pft_parameters.toml"
 soil_temp    = 300.0              # [K]
@@ -104,9 +100,6 @@ file_chunk = "run"
 [output.annual]
 enabled    = true
 file_chunk = "run"
-
-[carbon]
-gpp_ref       = 0.3               # required by the loader; unused with the column on
 
 #----- Leaf physiology (example 04's calibrated configuration). ----------------------------------------
 [leaf_physiology]

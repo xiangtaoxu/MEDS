@@ -95,7 +95,7 @@ contains
       qbot = 0.0_wp
       if (present(dq_dpsi)) dq_dpsi = 0.0_wp
       if (present(dq_dk))   dq_dk   = 0.0_wp
-      if (opts%bottom_bc == SOIL_BC_AQUIFER) then
+      if (opts%water_bottom_bc == SOIL_BC_AQUIFER) then
          delta = 0.5_wp * params%dz(n)                                  ! z_node(n) - z_bottom > 0
          grad  = psi_n / delta + 1.0_wp
          if (grad >= 0.0_wp) then

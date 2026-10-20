@@ -27,10 +27,11 @@ module meds_surface_maps
    use meds_forcing_types,    only : met_cells_t
    use meds_era5land_reader,  only : era5land_same_grid, era5land_keep_cells, era5land_select_site,   &
                                      era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
-   use meds_config,           only : meds_config_t, validate_config
+   use meds_config,           only : meds_config_t, soil_column_layers, soil_column_params
+   use meds_config_check,     only : validate_config
    use meds_maps_opts,     only : maps_opts_t, soil_maps_on
    use meds_constants,        only : n_soil_layer_max
-   use meds_soil_column_config, only : soil_params_t, soil_column_layers, soil_column_params
+   use meds_soil_column_config, only : soil_params_t
    use meds_soil_hydr_lib,    only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,        only : soil_texture_to_thermal
    use meds_biophysics_opts,  only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
@@ -297,10 +298,10 @@ contains
             sc%n_layer_values = n
          end associate
          select case (nint(inp%bc_class(k), ik))
-         case (BC_AQUIFER) ; cfg%soil%bottom_bc = SOIL_BC_AQUIFER
-         case (BC_LEAKY)   ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
-         case (BC_SEALED)  ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
-         case default      ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 1.0_wp
+         case (BC_AQUIFER) ; cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
+         case (BC_LEAKY)   ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
+         case (BC_SEALED)  ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
+         case default      ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 1.0_wp
          end select
          call soil_column_params(cfg%soil_column, soil)
          cfg%energy%deep_temp  = inp%deep_temp(k)
@@ -358,7 +359,7 @@ contains
       real(wp)    :: distance_km
       integer(ik) :: st
       static = trim(era5land_static_file(cfg%forcing))
-      call era5land_select_site(static, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg,              &
+      call era5land_select_site(static, cfg%forcing%latitude, cfg%forcing%longitude,              &
                                 cfg%forcing%max_distance_km, cell, distance_km, st)
       if (st /= ERA_OK) then
          if (st == ERA_ERR_NO_CELL) then

@@ -409,6 +409,30 @@ pages; what they take from ED2 is listed here.
 - **Temperature response** (`meds_therm_lib`). The peaked form is Medlyn et al. (2002)'s, as FATES
   also uses it.
 
+### 4.8 Where the configuration defaults come from
+
+The reference config, `meds_config_main.toml`, gives each key's default and what it means; what the
+defaults take from ED2 and the models ED2 builds on is listed here.
+
+- **Snow** (`[snow]`). The aged-snow albedos, 0.518 visible and 0.435 near infrared, are ED2's, and
+  `min_new_snow_mass` is ED2's `tiny_sfcwater_mass`. The liquid-holding fraction 0.10 is LEAF-3's 1:9
+  ratio of liquid to ice.
+- **Canopy aerodynamics** (`[aerodynamics]`). The roughness and displacement ratios are ED2's `vh2vr` and
+  `vh2dh`; the Monin–Obukhov constants and the convective velocity scale `wc` are CLM5's, and the
+  dense-canopy ground conductance (`cs_dense`, `gamma_g`) CLM4's
+  ([canopy_aerodynamics](science/canopy_aerodynamics.md)). The flat-plate (leaf) and cylinder (wood)
+  Nusselt coefficients keep ED2's and CLM's values in `aero_cfg_t`, with no key.
+- **Soil carbon** (`[soil_carbon]`). Every default is ED2's (`decomp_coms.f90`, `ed_params.f90`), from
+  its schemes 0–4: the decay rates `k_fast` … `k_pass` are `decay_rate_fsc`, `_stsc`, `_msc`, `_ssc`
+  and `_psc` (ED2's `decay_rate_ssc` depends on the scheme; MEDS takes 0.2), the respired fractions
+  `er_*` are ED2's `r_fsc`, `r_stsc_o`, `r_stsc_l`, `r_ssc`, `r_psc` and `r_msc_int`/`_slp` (respired is
+  1 − transferred), and the capped temperature and water responses are ED2's. `"ed2"` and `"century5"`
+  carry ED2's `DECOMP_SCHEME` codes, 0 and 5, and the default `"euler"` step is ED2's forward Euler
+  ([soil_carbon](science/soil_carbon.md)).
+- **PFT traits** (`meds_config_pft.toml`). `root_to_leaf_ratio` is ED2's `q`, and `nbg_init_density`
+  ED2's `init_density`.
+- **The soil column.** Depths are negative downward, interface elevations ≤ 0, as ED2's `slz`.
+
 ---
 
 ## 5. Quick checklist: what an ED2 user will find missing

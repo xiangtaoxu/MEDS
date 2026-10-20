@@ -58,13 +58,14 @@ contains
 
    !=====================================================================================!
    subroutine test_snow_cover()
+      real(wp), parameter :: SNOW_ROUGH = 0.001_wp   !< [m] the [aerodynamics] default
       type(snow_params_t) :: p
       real(wp) :: f0, f1, f2
       print '(a)', 'test_snow_cover:'
       call default_params(p)
-      f0 = snow_cover_fraction(0.0_wp,  0.0_wp,  p)
-      f1 = snow_cover_fraction(1.0_wp,  1.0_wp/p%rho_snow,  p)
-      f2 = snow_cover_fraction(50.0_wp, 50.0_wp/p%rho_snow, p)
+      f0 = snow_cover_fraction(0.0_wp,  0.0_wp,  p, SNOW_ROUGH)
+      f1 = snow_cover_fraction(1.0_wp,  1.0_wp/p%rho_snow,  p, SNOW_ROUGH)
+      f2 = snow_cover_fraction(50.0_wp, 50.0_wp/p%rho_snow, p, SNOW_ROUGH)
       call check('snowfac(0)=0', f0, 0.0_wp, 1.0e-12_wp)
       call check_true('snowfac monotone 0<f1<f2<=1', f1 > 0.0_wp .and. f1 < f2 .and. f2 <= 1.0_wp, f2)
       call check_true('deep pack fully covered (~1)', f2 > 0.99_wp, f2)

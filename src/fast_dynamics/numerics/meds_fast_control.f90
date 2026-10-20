@@ -21,7 +21,7 @@ module meds_fast_control
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : tiny_num
    use meds_numerics,    only : adaptive_step_update, clamp
-   use meds_config,      only : CTRL_I, CTRL_PI
+   use meds_fast_opts,   only : CTRL_I, CTRL_PI
    use meds_column_state_ops, only : state_to_array, state_entry_rules
    use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, integrator_opts_t,     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, &
@@ -65,7 +65,7 @@ contains
    ! On the ARK path theta and the plant water ride operator-split maps outside the ESDIRK tableau,   !
    ! so their embedded differences are STRUCTURALLY ZERO there, and summing them adds (nsl + 2n)      !
    ! exact zeros that still increment cnt and divide the norm down: the ARK march runs slightly       !
-   ! looser than its stated ark_rtol. That is the right trade, for two reasons. (1) A switch that     !
+   ! looser than its stated rtol. That is the right trade, for two reasons. (1) A switch that     !
    ! says "do not measure this state" is indistinguishable, at the call site, from a switch that      !
    ! says "this state cannot move": RK45 integrates theta inside its tableau, and such a switch       !
    ! would leave an integrated state with no error control at all. (2) Measured on a summer stand,    !

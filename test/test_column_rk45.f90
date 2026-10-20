@@ -15,7 +15,9 @@
 program test_column_rk45
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o, grav_head, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
-   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
+   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
+                                        build_soil_therm_params
+   use meds_fast_opts,           only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,  &
                                            sat_specific_humidity, tissue_temp_to_energy,                         &
@@ -27,7 +29,7 @@ program test_column_rk45
    use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, build_soil_therm_params
+   use meds_soil_column_config, only : soil_params_t
    use meds_diag_vars,       only : N_CO_FAST_ROWS, CO_PSI_PREDAWN
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
@@ -249,7 +251,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 0.0_wp
+      col_config%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 0.0_wp
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
@@ -264,7 +266,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
+      col_config%soil_water_opts%water_bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_water%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_water%theta(col_config%soil%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
@@ -282,7 +284,7 @@ contains
       !      an explicit march may not, so report the substep cost rather than assume it. ------------!
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
             ' , rejects = ', budget%integ_nrej, ' , rescues = ', budget%rk45_rescue
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
+      col_config%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_rk45_bedrock_and_aquifer
 
    !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert the                     !

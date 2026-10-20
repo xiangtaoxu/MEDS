@@ -9,7 +9,7 @@ module meds_met_file_source
    use iso_c_binding, only : c_int, c_size_t
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_units_base, seconds_between
-   use meds_forcing_config, only : SWPART_PASSTHROUGH, GRIDMATCH_NEAREST, LW_SYNTHESIZE
+   use meds_forcing_opts, only : SWPART_PASSTHROUGH, GRIDMATCH_NEAREST, LW_SYNTHESIZE
    use meds_forcing_types, only : met_record_t, met_source_t, HUMIDITY_QAIR, HUMIDITY_RHAIR,      &
                                   HUMIDITY_TDEW, N_MEDS_FIELD, MEDS_FIELD, FLD_TAIR, FLD_RHAIR,   &
                                   FLD_PSURF, FLD_WIND, FLD_U10, FLD_V10, FLD_RAINF, FLD_LWDOWN,   &
@@ -201,9 +201,9 @@ contains
       st = nc_inq_varid_f(int(src%ncid, c_int), 'longitude', vlon) ; call nc_check(st, 'resolve_grid_index: longitude varid')
       st = nc_get_vara_double(int(src%ncid, c_int), vlon, start1, count1, lon_grid)
       call nc_check(st, 'resolve_grid_index: longitude values')
-      src%grid_index = nearest_grid_index(src%fcfg%longitude_deg, src%fcfg%latitude_deg, lon_grid, lat_grid)
+      src%grid_index = nearest_grid_index(src%fcfg%longitude, src%fcfg%latitude, lon_grid, lat_grid)
       write(*,'(a,i0,a,f8.3,a,f8.3,a)') 'met_open: grid_match=nearest resolved grid_index=', src%grid_index, &
-            ' (site lon=', src%fcfg%longitude_deg, ' lat=', src%fcfg%latitude_deg, ')'
+            ' (site lon=', src%fcfg%longitude, ' lat=', src%fcfg%latitude, ')'
       deallocate(lat_grid, lon_grid)
    end subroutine resolve_grid_index
 

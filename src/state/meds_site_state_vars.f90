@@ -16,9 +16,8 @@ module meds_site_state_vars
    use meds_constants,          only : n_soil_layer_max
    use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_diag_vars,          only : site_diag_block
-   use meds_config,             only : meds_config_t
-   use meds_soil_column_config, only : soil_column_config_t, soil_params_t, soil_thermal_params_t,     &
-                                       soil_column_params, soil_column_start_theta
+   use meds_config,             only : meds_config_t, soil_column_params, soil_column_start_theta
+   use meds_soil_column_config, only : soil_column_config_t, soil_params_t, soil_thermal_params_t
    implicit none
    private
 
@@ -144,8 +143,8 @@ contains
       type(meds_config_t),  intent(in)    :: cfg
       surf%soil_column = cfg%soil_column
       call soil_column_params(cfg%soil_column, surf%soil, surf%soil_thermal)
-      call soil_column_start_theta(cfg%soil_column, surf%soil, cfg%init_soil_theta, surf%theta_start)
-      surf%water_bottom_bc = cfg%soil%bottom_bc
+      call soil_column_start_theta(cfg%soil_column, surf%soil, cfg%init%soil_theta, surf%theta_start)
+      surf%water_bottom_bc = cfg%soil%water_bottom_bc
       surf%drain_factor    = cfg%soil%drain_factor
       surf%deep_temp       = cfg%energy%deep_temp
       surf%deep_depth      = cfg%energy%deep_depth

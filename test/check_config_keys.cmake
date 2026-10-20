@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Fails unless the two reference configs list exactly the keys the loader reads.
 #
-# Why: a run stops on any key its reference does not list (meds_config_keys), so a key the loader
+# Why: a run stops on any key its reference does not list (meds_config_check), so a key the loader
 # reads but the references omit could never be set, and a key the references list but nothing
 # reads would be accepted and do nothing. Both directions are checked, and the two files may not
 # share a section, so a key cannot be listed in the file the loader does not read it from.

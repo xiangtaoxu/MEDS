@@ -2,7 +2,7 @@
 # The keys of the two reference configs, meds_config_main.toml and meds_config_pft.toml.
 #
 # Every key MEDS reads is listed in one of them, set or commented out at its default. That list is
-# what a run checks its own config against: a key it does not hold stops the run (meds_config_keys).
+# what a run checks its own config against: a key it does not hold stops the run (meds_config_check).
 # The build turns the two files into a Fortran include (meds_write_config_keys), and the test
 # check_config_keys.cmake holds them equal to the keys the loader reads.
 

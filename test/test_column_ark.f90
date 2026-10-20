@@ -14,7 +14,9 @@
 program test_column_ark
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
-   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
+   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
+                                        build_soil_therm_params
+   use meds_fast_opts,           only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,   &
                                            sat_specific_humidity, internal_energy_liquid, tissue_temp_to_energy,  &
@@ -26,7 +28,6 @@ program test_column_ark
    use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
@@ -164,7 +165,7 @@ program test_column_ark
 
    !=== D. ark_coupled reaches the inner solver (np<=1 baseline vs np>1 Newton must differ). ======!
    call reset_state()
-   cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true. ; cfg%ark_rtol = 1.0e-4_wp
+   cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true. ; cfg%rtol = 1.0e-4_wp
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call set_noon_forcing()
    cfg%ark_coupled = .false.
@@ -309,7 +310,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
+      col_config%soil_water_opts%water_bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_water%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_water%theta(col_config%soil%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
@@ -323,7 +324,7 @@ contains
       call check_true('AQUIFER/ARK: dry column wets from below',                                                      &
               biophys%soil_water%theta(col_config%soil%n_active) > theta_bot0,                                            &
               biophys%soil_water%theta(col_config%soil%n_active) - theta_bot0)
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
+      col_config%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_ark_aquifer
 
    !----- march 24 h of INTEG_ARK over MOIST free-draining soil (rainfall==0) and                   !
@@ -335,7 +336,7 @@ contains
       tag = merge('adapt ', 'fixed ', adaptive)
       call reset_state()                               ! theta0=0.30 (moist), budget zeroed
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = adaptive
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_coupled = .true.
+      cfg%rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)               ! rainfall==0 always (dry); diurnal SW
@@ -363,7 +364,7 @@ contains
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      cfg%rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       call march_dry_day(theta_dry)                       ! the same day without the rain
       call reset_state()
@@ -395,7 +396,7 @@ contains
       real(wp)    :: surf_water_peak
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      cfg%rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
@@ -429,7 +430,7 @@ contains
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      cfg%rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       call march_dry_day(theta_dry)                       ! the same day without the shed water
       call reset_state()

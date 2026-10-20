@@ -24,8 +24,7 @@ module meds_fast_dynamics
                                      par_w_2_umol,                                                            &
                                      stefan_boltzmann
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t
-   use meds_soil_column_config, only : soil_column_params, top_soil_psi
+   use meds_config,           only : meds_config_t, soil_column_params, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy, specific_humidity_to_vpd
@@ -180,33 +179,24 @@ contains
       ctx%col_config%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
       !----- The initial soil temperature, from [init]; the initial water is each site's            !
       !      (site_surface_t%theta_start). ---------------------------------------------------------!
-      ctx%soil_temp_init = cfg%init_soil_temp
+      ctx%soil_temp_init = cfg%init%soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
 
-      !----- ONE tolerance source drives the whole fast-loop hierarchy (build_tol_set). By default      !
-      !      these pushes are the IDENTITY; when [fast].rtol_all > 0 the single master dial propagates  !
-      !      into every nested sub-solver as well as the ARK/RK45 march: the soil-plant water network   !
+      !----- ONE tolerance source drives the whole fast-loop hierarchy (build_tol_set): [fast].rtol    !
+      !      reaches every nested sub-solver as well as the ARK/RK45 march. The soil-plant water network !
       !      takes the GRP_THETA pair, in water content for soil and relative water content for plant   !
       !      tissues (docs/science/soil_plant_water.md §3). --------------------------------------------!
       ctx%col_config%integrator = build_integrator_opts(cfg)
       associate (tols => ctx%col_config%integrator%error_control%tols)
          ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
-         ctx%col_config%soil_water_opts%atol   = tols%atol(GRP_THETA)
+         ctx%col_config%soil_water_opts%water_atol   = tols%atol(GRP_THETA)
          !----- [fast].soil_energy_budget_atol is a budget-closure threshold, not an integrator   !
          !      tolerance, so atol_scale scales it DIRECTLY instead of through a tolerance group. ---!
-         ctx%col_config%energy%atol  = cfg%energy%atol * cfg%atol_scale
+         ctx%col_config%energy%soil_energy_budget_atol  = cfg%energy%soil_energy_budget_atol * cfg%atol_scale
       end associate
 
-      !----- Process mask (MEDS_NUMERICS_SCOPING.md §5.1): config logicals -> the mask the schemes    !
-      !      honor. All-on = full column. ------------------------------------------------------------!
-      ctx%col_config%mask%veg_energy = cfg%mask_veg_energy
-      ctx%col_config%mask%cas_energy = cfg%mask_cas_energy
-      ctx%col_config%mask%cas_vapour = cfg%mask_cas_vapour
-      ctx%col_config%mask%cas_co2    = cfg%mask_cas_co2
-      ctx%col_config%mask%soil_heat  = cfg%mask_soil_heat
-      ctx%col_config%mask%soil_water = cfg%mask_soil_water
-      ctx%col_config%mask%hydraulics = cfg%mask_hydraulics
+      ctx%col_config%mask   = cfg%mask        ! [fast].mask    -> the stores that evolve (all on: the column)
 
       !----- Canopy-RT optics table, built ONCE from the [pft] trait table and read-only           !
       !      downstream (meds_fast_config, which the calibration's canopy C API also calls). --------!
@@ -388,7 +378,7 @@ contains
       !----- Reset the daily fast->slow soil-carbon accumulator (opt-in                             !
       !      [soil_carbon].soil_carbon_on -- a harmless no-op accumulation when off, since          !
       !      column_prepass leaves budget%xi_step/rh_matrix_step at 0 in that case). ---------------!
-      if (cfg%soil_carbon_on) poly%patch%xi_accum(1:poly%patch%n) = xi_accum_t()
+      if (cfg%soil_carbon%soil_carbon_on) poly%patch%xi_accum(1:poly%patch%n) = xi_accum_t()
       !----- The site daily-mean air-temperature accumulator (which the slow-loop phenology driver !
       !      reads AFTER this fast window), site ET, and the integrator WORK counters are all      !
       !      reset and refilled by the patch-order fold AFTER the patch loop -- see the bottom of  !
@@ -670,7 +660,8 @@ contains
             if (do_forcing) call apply_rt_forcing(forc, ncoh, col_cohort%pft, col_cohort%lai, col_cohort%wai,  &
                                  col_cohort%height, biophys%leaf_temp, biophys%wood_temp,                      &
                                  biophys%soil_energy%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
-                                 ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, cfg%leaf_absorptance)
+                                 ctx%col_config%aero%snow_rough, ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, &
+                                 cfg%leaf_absorptance)
             call fill_aenv(aenv, biophys, met_top, z_top)
             !----- Slice to 1:ncoh (not the whole, possibly capacity-oversized backing array): the    !
             !      five per-cohort accumulators are assumed-shape dummies in column_fast_step, so the !
@@ -722,7 +713,7 @@ contains
             !      NOTE: dt_fast_days is declared at routine scope and listed `private`, not in a     !
             !      BLOCK. nvfortran 25.11 rejects a BLOCK construct anywhere inside a parallel region !
             !      ("Unimplemented feature"), and MEDS must build on all three back ends. ------------!
-            if (cfg%soil_carbon_on) then
+            if (cfg%soil_carbon%soil_carbon_on) then
                dt_fast_days = cfg%dt_fast / day_sec
                poly%patch%xi_accum(ip)%fast_grnd   = poly%patch%xi_accum(ip)%fast_grnd               &
                                                      + budget%xi_step(IP_FAST_GRND)   * dt_fast_days
@@ -816,7 +807,7 @@ contains
                !----- The hours of light at the cohort's top over the slow step, the phenology light   !
                !      cue's driver: this step counts when its PAR exceeds the PFT's par_min, so each      !
                !      cohort sees its own clouds and its own place in the canopy. ----------------------!
-               if (forc%par_top(j) * par_w_2_umol > cfg%pft%pheno_par_min(poly%cohort%pft(i)))           &
+               if (forc%par_top(j) * par_w_2_umol > cfg%pft%pheno(poly%cohort%pft(i))%par_min)           &
                   poly%cohort%light_hours_accum(i) = poly%cohort%light_hours_accum(i) + cfg%dt_fast / 3600.0_wp
                !----- Running daily MAX of psi_leaf. max(), not a sum: the daily maximum occurs near !
                !      dawn and IS the quantity that drives tomorrow's beta_stomata                   !
@@ -972,7 +963,7 @@ contains
          associate (col => site_col(is), surf => poly%site%surface(is))
             col%soil                         = surf%soil
             col%soil_thermal                 = surf%soil_thermal
-            col%soil_water_opts%bottom_bc    = surf%water_bottom_bc
+            col%soil_water_opts%water_bottom_bc    = surf%water_bottom_bc
             col%soil_water_opts%drain_factor = surf%drain_factor
             col%energy%deep_temp             = surf%deep_temp
             col%energy%deep_depth            = surf%deep_depth
@@ -1091,8 +1082,8 @@ contains
    !      -- otherwise leaf absorptance would be applied twice. abs_sw stays true ABSORBED SW (the  !
    !      leaf energy balance wants absorbed).                                                      !
    subroutine apply_rt_forcing(forc, ncoh, pft, lai, wai, height, leaf_temp, wood_temp,                &
-                               soil_temp_top, snow, snow_params, soil_albedo, soil_emiss, rad_opt, met, &
-                               leaf_absorptance)
+                               soil_temp_top, snow, snow_params, snow_rough, soil_albedo, soil_emiss,   &
+                               rad_opt, met, leaf_absorptance)
       type(column_forcing_t),  intent(inout) :: forc
       integer(ik),             intent(in)    :: ncoh
       integer(ik),             intent(in)    :: pft(:)           !< per-cohort PFT (gather order, top first)
@@ -1102,6 +1093,7 @@ contains
       real(wp),                intent(in)    :: soil_temp_top    !< [K] top soil-node temperature (ground emission)
       type(snow_column_t),     intent(in)    :: snow             !< pack store (albedo / emissivity ramp)
       type(snow_params_t),     intent(in)    :: snow_params
+      real(wp),                intent(in)    :: snow_rough       !< [m] snow-surface roughness ([aerodynamics])
       real(wp),                intent(in)    :: soil_albedo(:)   !< [-] bare-soil albedo per band
       real(wp),                intent(in)    :: soil_emiss       !< [-] bare-soil emissivity
       type(rad_pft_optics_t),  intent(in)    :: rad_opt          !< per-PFT canopy optics (two-stream)
@@ -1158,7 +1150,7 @@ contains
       !      VIS/NIR fresh<->aged interpolated by the lagged surface liquid fraction. -----------------!
       if (snow%nlayer >= 1_ik .and. snow%swe(1) > snow_params%tiny_snow_mass) then
          associate (sp => snow_params)
-            snow_fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), sp)
+            snow_fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), sp, snow_rough)
             snow_fl = snow%snow_fliq(1)
             surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fc) * soil_albedo(RAD_VIS)                 &
                  + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged)

@@ -79,13 +79,11 @@ wstress_lambda_exp = [1.0, 1.0, 1.0]
 wstress_sref_stomata = [2.02774, 2.02774, 2.02774]
 
 #----- Other carbon traits (example 04). -----------------------------------------------------------
-huber_value            = [1.5e-4, 1.5e-4, 1.5e-4]
 storage_cushion        = [0.5, 0.5, 0.5]  # [--] storage target, x (leaf + fine-root target):
                                           #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3, 0.3, 0.3]
 retained_carbon_fraction = [0.0, 0.0, 0.0]   # [--] no resorption, as the example's calibration assumes (default 0.3)
 fineroot_turnover_rate = [3.0, 2.143, 1.667]  # [1/yr] 1.5 x leaf_turnover_rate_toc
-wood_carbon_density    = [300.0, 300.0, 300.0]
 f_labile_leaf          = [0.70, 0.70, 0.70]
 f_labile_stem          = [0.05, 0.05, 0.05]
 struct_lignin_frac     = [0.25, 0.25, 0.25]

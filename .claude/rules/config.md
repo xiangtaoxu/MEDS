@@ -50,14 +50,23 @@ That is why there is no switch for snow, the water balance, soil advection, mult
 phase change. A flag whose off path is the cruder physics gets plumbed through every call site
 forever and eventually reads as "this cannot happen". Delete the branch instead.
 
-The corollary: a config value that parses but does nothing is worse than one that is absent. If a
-selector is unimplemented, reject it in `validate_config`.
+The corollary: a config value that parses but does nothing is worse than one that is absent. A
+selector is read with `req_choice` or `opt_choice`, which take only the names they list; a key that
+another setting leaves with nothing to do is refused in `check_key_use`. Both are in
+`meds_config_check` with the value checks (`validate_config`, one routine per block).
 
 ## Where a config type lives
 
-A per-domain `*_opts` leaf in `src/config/`, so `meds_config` — the root of the dependency graph —
+A per-block leaf in `src/config/opts/`, so `meds_config` — the root of the dependency graph —
 can carry it with no back-edge into a kernel library, and so the sealed kernels stay
 device-eligible. Never put a config type in a kernel module.
+
+## A field has its key's name
+
+`cfg%<record>%<key>` for a block with its own record, `cfg%<key>` otherwise; the header of
+`meds_config.f90` lists the few exceptions. A new key goes in its block's leaf under that name, in
+the reference config with a line or two on what it means (`config_keys_listed` holds the two equal),
+and in `meds_config_check` if a value of it can be wrong or a setting can make it inapplicable.
 
 ## Renaming
 

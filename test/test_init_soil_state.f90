@@ -11,10 +11,9 @@
 !==========================================================================================!
 program test_init_soil_state
    use meds_kinds,            only : wp, ik
-   use meds_config,           only : meds_config_t
+   use meds_config,           only : meds_config_t, soil_column_layers
    use meds_polygon_state_vars, only : polygon_t
    use meds_init,             only : init_bare_ground, seed_bare_ground, finalize_init
-   use meds_soil_column_config, only : soil_column_layers
    use meds_constants,        only : n_soil_layer_max
    use meds_fast_dynamics,    only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_test_support,     only : banner, build_test_config, check, check_close
@@ -29,12 +28,12 @@ program test_init_soil_state
    cfg = build_test_config()
 
    !=== 1. The defaults: 288 K and theta = 0.30. ===========================================!
-   call check_close(cfg%init_soil_temp,  288.0_wp, 1.0e-14_wp, 'default soil_temp changed (was 288 K)')
-   call check_close(cfg%init_soil_theta, 0.30_wp,  1.0e-14_wp, 'default soil_theta changed (was 0.30)')
+   call check_close(cfg%init%soil_temp,  288.0_wp, 1.0e-14_wp, 'default soil_temp changed (was 288 K)')
+   call check_close(cfg%init%soil_theta, 0.30_wp,  1.0e-14_wp, 'default soil_theta changed (was 0.30)')
 
    !=== 2. Set values reach the context, then every layer of every patch. ===================!
-   cfg%init_soil_temp  = 298.65_wp
-   cfg%init_soil_theta = 0.25_wp
+   cfg%init%soil_temp  = 298.65_wp
+   cfg%init%soil_theta = 0.25_wp
    call build_fast_context(cfg, ctx)
    call check_close(ctx%soil_temp_init, 298.65_wp, 1.0e-14_wp, 'soil_temp did not reach the fast context')
    call init_bare_ground(poly, cfg, 3_ik)

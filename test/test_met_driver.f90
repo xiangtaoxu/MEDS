@@ -12,8 +12,8 @@ program test_met_driver
    use meds_time,            only : meds_time_t, seconds_between, seconds_into_day,             &
                                     time_advance_seconds
    use meds_therm_lib,          only : sat_vapor_pressure, air_density
-   use meds_forcing_config,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
-   use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,    &
+   use meds_forcing_opts,    only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
+   use meds_forcing_opts,    only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,    &
                                     SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR,        &
                                     INTERP_STEP, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,  &
                                     CLAMP_HOLD, CLAMP_ERROR,                                   &
@@ -71,8 +71,8 @@ contains
       type(met_source_t),     intent(in)  :: src
       type(met_cursor_t),     intent(out) :: cur
       type(forcing_config_t), intent(in)  :: fc
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg,                   &
-                           fc%elevation_m)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude,                   &
+                           fc%elevation)
    end subroutine site_cursor
 
    !----- LONGWAVE SYNTHESIS (docs/science/forcing.md §11, eq. (17)). The clear-sky emissivities   !
@@ -250,7 +250,7 @@ contains
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: now
       print '(a)', '-- test 6: CONST backend --'
-      fc%backend = MET_BACKEND_CONST ; fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp
+      fc%format = MET_BACKEND_CONST ; fc%latitude = 42.44_wp ; fc%longitude = -76.50_wp
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       now = meds_time_t(year=2020_ik, month=7_ik, day=1_ik, hour=17_ik)   ! ~solar noon at Ithaca
       call met_advance(src, cur, now)
@@ -273,9 +273,9 @@ contains
       base = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
       call write_synthetic_forcing(NCFILE, base)
 
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
-      fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude = 42.44_wp ; fc%longitude = -76.50_wp
       fc%recycle = .false.
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       call check_true('opened file: nrec=25', src%nrec == 25_ik, real(src%nrec, wp))
@@ -352,9 +352,9 @@ contains
       end do search
       call check_true('a sunrise hour with a dark midpoint exists', hsun > 0, real(hsun, wp))
       call write_synthetic_forcing(NCFILE, base, sw_flat=SW)
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
-      fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = LAT ; fc%longitude_deg = lon ; fc%recycle = .false.
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude = LAT ; fc%longitude = lon ; fc%recycle = .false.
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       mean_sw = 0.0_wp
       do k = 1, 60                                                     ! one-minute mid-points
@@ -380,9 +380,9 @@ contains
       base = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
       call write_synthetic_forcing(NCFILE, base)
 
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
-      fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude = 42.44_wp ; fc%longitude = -76.50_wp
       fc%recycle = .false.
 
       !----- the honest config opens cleanly. A validator that rejects the good case is useless. --!
@@ -392,14 +392,14 @@ contains
 
       !----- dt_forcing lying about the cadence. It matters everywhere: dt_forcing places          !
       !      interval midpoints, disaggregates shortwave and brackets the recycle seam. -------------!
-      fc%dt_forcing = 1800.0_wp
+      fc%timestep = 1800.0_wp
       call met_open(src, fc, stat=st)
       call check_true('a half-hourly config against an hourly file is rejected',                   &
                       st == MET_ERR_DT_MISMATCH, real(st, wp))
       !----- A rejected open leaves nothing open: a caller's met_close must not close the file twice. !
       call check_true('a rejected open releases the file', src%ncid < 0_ik, real(src%ncid, wp))
       call met_close(src)
-      fc%dt_forcing = 3600.0_wp
+      fc%timestep = 3600.0_wp
 
       !----- the file says its flux means end at the stamp; the config says they begin there. ------!
       fc%avg_convention = METAVG_BEGIN
@@ -427,9 +427,9 @@ contains
       integer(ik) :: st
       real(wp) :: tair0, tair1, expect_hold
       print '(a)', '-- test 8: edge paths (start-hold + recycle) --'
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
-      fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude = 42.44_wp ; fc%longitude = -76.50_wp
       ! synthetic Tair(hh) = 288 + 8 sin(2 pi (hh-15)/24)  -- reproduce the file's values for the checks:
       tair0 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(0.0_wp-15.0_wp)/24.0_wp)
       tair1 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(1.0_wp-15.0_wp)/24.0_wp)
@@ -489,8 +489,8 @@ contains
       integer(ik) :: st
       print '(a)', '-- test: recycle anchor + sub-daily phase --'
       call write_yearfile(YF, 2021_ik)                       ! 365 daily records from 2021-01-01 00:00
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
-      fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
+      fc%timestep = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%recycle = .true.
 
       !----- A MID-YEAR window: 2021-03-01 .. 2022-03-01. Plain year substitution would map a
@@ -638,13 +638,13 @@ contains
       call check('great-circle 1 deg lat ~ 111 km', great_circle_distance(0.0_wp,0.0_wp,0.0_wp,1.0_wp), 111195.0_wp, 500.0_wp)
       !----- reader override: the 2-grid file has lon/lat cells (-76.6,42.5) and (-76.5,42.4). ---!
       call write_synthetic_forcing(NCFILE, meds_time_t(2020_ik,7_ik,1_ik))
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%dt_forcing = 3600.0_wp
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%timestep = 3600.0_wp
       fc%grid_match = GRIDMATCH_NEAREST ; fc%grid_index = 1_ik      ! grid_index deliberately WRONG for cell 2
-      fc%latitude_deg = 42.41_wp ; fc%longitude_deg = -76.49_wp     ! nearest to cell 2
+      fc%latitude = 42.41_wp ; fc%longitude = -76.49_wp     ! nearest to cell 2
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       call check('reader resolves nearest -> grid_index 2', real(src%grid_index,wp), 2.0_wp, 0.5_wp)
       call met_close(src)
-      fc%latitude_deg = 42.51_wp ; fc%longitude_deg = -76.61_wp     ! nearest to cell 1
+      fc%latitude = 42.51_wp ; fc%longitude = -76.61_wp     ! nearest to cell 1
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       call check('reader resolves nearest -> grid_index 1', real(src%grid_index,wp), 1.0_wp, 0.5_wp)
       call met_close(src)
@@ -754,8 +754,8 @@ contains
       type(met_forcing_t)    :: m_ref, m_map
       print '(a)', '-- test: multi-year cycling + Feb-29 --'
       call write_yearfile(YF, 2021_ik)                             ! 365 daily records, Jan-1 2021 aligned
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
-      fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
+      fc%timestep = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%recycle = .true.
       !----- The cycle is DECLARED, never inferred from the file. --------------------------------!
       fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik)
@@ -790,7 +790,7 @@ contains
       print '(a)', '-- test 15: prescribed CO2 --'
 
       !----- "const": co2_const, the CONST backend included (not the type's 420 default). -------!
-      fc%backend = MET_BACKEND_CONST ; fc%co2_const = 284.3_wp
+      fc%format = MET_BACKEND_CONST ; fc%co2_const = 284.3_wp
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       met = met_instant(src, cur, meds_time_t(2020_ik, 7_ik, 1_ik))
       call check('const: CO2 = co2_const on the CONST backend', met%co2, 284.3_wp, 1.0e-12_wp)
@@ -888,8 +888,8 @@ contains
       call write_text(CF, [character(len=48) :: 'timestep 1 year', 'units umol/mol', '2021 400',    &
                            '2022 410', '2023 420', '2024 430'])
       fc = forcing_config_t()
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
-      fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
+      fc%timestep = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%recycle = .true.
       fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik) ; fc%recycle_end = meds_time_t(2022_ik, 1_ik, 1_ik)
       fc%co2_source = CO2_SOURCE_FILE ; fc%co2_file = CF
@@ -911,8 +911,8 @@ contains
       !----- A met file that carries CO2air is rejected: nothing would read it. ---------------!
       call write_synthetic_forcing(NCFILE, meds_time_t(year=2020_ik, month=7_ik, day=1_ik), with_co2air=.true.)
       fc = forcing_config_t()
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
-      fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%recycle = .false.
       call met_open(src, fc, stat=st)
       call check_true('CO2air: a met file carrying it is rejected', st == MET_ERR_CO2_IN_MET_FILE, real(st, wp))
@@ -947,7 +947,7 @@ contains
       type(met_cursor_t), intent(out)   :: cur
       integer(ik),        intent(out)   :: st
       type(forcing_config_t) :: fc
-      fc%backend = MET_BACKEND_CONST ; fc%co2_source = CO2_SOURCE_FILE ; fc%co2_file = path
+      fc%format = MET_BACKEND_CONST ; fc%co2_source = CO2_SOURCE_FILE ; fc%co2_file = path
       call met_open(src, fc, stat=st, run_start=t0, run_end=t1)
       if (st == MET_OK) call site_cursor(src, cur, fc)
    end subroutine open_file_co2

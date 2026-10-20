@@ -66,7 +66,7 @@ program test_allometry_defaults
    !----- The height curve: the shipped config and the initializer are both the power law. ---!
    call check(trim(toml_string(t, 'allometry.height_allometry', '')) == 'power',                    &
               'meds_config_pft.toml sets [allometry].height_allometry = "power"')
-   call check(d%height_form == HEIGHT_POWER, 'the height-curve initializer is the power law')
+   call check(d%height_allometry == HEIGHT_POWER, 'the height-curve initializer is the power law')
 
    print '(a)', 'test_allometry_defaults: ALL PASSED'
 

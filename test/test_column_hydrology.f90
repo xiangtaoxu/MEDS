@@ -25,7 +25,8 @@ program test_column_hydrology
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav_head, n_soil_layer_max
    use meds_soil_types, only : chydro_forcing_t
-   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
+   use meds_soil_column_config, only : soil_params_t
+   use meds_config,             only : build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
                                     soil_theta_to_head
@@ -74,7 +75,7 @@ contains
       real(wp),              intent(in)    :: theta(:), w_pond, e_pond
       real(wp) :: dum(0)
       call spac_allocate(spac, params%n_active, 0_ik)
-      spac%rtol = opts%rtol ; spac%atol = opts%atol ; spac%w_pond_max = opts%w_pond_max
+      spac%rtol = opts%rtol ; spac%atol = opts%water_atol ; spac%w_pond_max = opts%w_pond_max
       spac%t_soil = 290.0_wp ; spac%t_rain = 290.0_wp
       call spac_set_state(spac, params, no_plants, theta, w_pond, e_pond, dum, dum)
    end subroutine soil_network
@@ -144,7 +145,7 @@ contains
       integer(ik) :: step
       print '(a)', 'test_bedrock_conserve:'
       call loam_params(params) ; theta = 0.30_wp ; theta(1:3) = 0.40_wp
-      opts%bottom_bc = SOIL_BC_DRAIN ; opts%drain_factor = 0.0_wp       ! sealed bedrock
+      opts%water_bottom_bc = SOIL_BC_DRAIN ; opts%drain_factor = 0.0_wp       ! sealed bedrock
       call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
       w_before = column_water(spac)
       do step = 1_ik, 10_ik
@@ -163,7 +164,7 @@ contains
       integer(ik) :: step
       print '(a)', 'test_free_drain:'
       call loam_params(params) ; theta = 0.40_wp
-      opts%bottom_bc = SOIL_BC_DRAIN ; opts%drain_factor = 1.0_wp       ! free drainage
+      opts%water_bottom_bc = SOIL_BC_DRAIN ; opts%drain_factor = 1.0_wp       ! free drainage
       call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
       drained = 0.0_wp ; w0 = column_water(spac)
       do step = 1_ik, 20_ik
@@ -186,7 +187,7 @@ contains
       integer(ik) :: step
       print '(a)', 'test_leaky_drain:'
       call loam_params(params)
-      opts%bottom_bc = SOIL_BC_DRAIN
+      opts%water_bottom_bc = SOIL_BC_DRAIN
       !----- At one state: the two ends of the factor are free drainage and bedrock, exactly. -----!
       opts%drain_factor = 1.0_wp
       call bottom_flux(params, opts, 10_ik, PSI_N, K_N, q, dq_dpsi, dq_dk)
@@ -335,7 +336,7 @@ contains
       print '(a)', 'test_aquifer_head_bc:'
       n = 10_ik
       call loam_params(params)
-      opts%bottom_bc = SOIL_BC_AQUIFER
+      opts%water_bottom_bc = SOIL_BC_AQUIFER
       f = humid_air() ; f%r_aero = 1.0e6_wp                       ! suppress soil evaporation
       theta = 0.12_wp
       call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)

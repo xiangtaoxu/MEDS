@@ -31,7 +31,7 @@ module meds_met_driver
    use meds_kinds, only : wp, ik
    use meds_therm_lib, only : air_density
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string
-   use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,   &
+   use meds_forcing_opts, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,     &
                                    MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN, METAVG_CENTER, &
                                    SWPART_PASSTHROUGH, CLAMP_ERROR, INTERP_LINEAR,                &
                                    LW_SYNTHESIZE, CO2_SOURCE_FILE
@@ -92,16 +92,16 @@ contains
       if (present(stat)) stat = MET_OK
 
       src%fcfg       = fcfg
-      src%backend    = fcfg%backend
+      src%backend    = fcfg%format
       src%grid_index = fcfg%grid_index
-      src%dt_forcing = fcfg%dt_forcing
+      src%dt_forcing = fcfg%timestep
       src%has_wind_vector = .false.
 
       !----- CO2 first, before the backends branch, so every backend takes it the same way. ------!
       call open_co2(src, run_start, run_end, vstat)
       why = 'met_open: the CO2 file cannot drive this run (see the message above)'
       if (vstat == MET_OK) then
-         select case (fcfg%backend)
+         select case (fcfg%format)
          case (MET_BACKEND_CONST)                                  ! the reference climate: no file
             src%ngrid = 1_ik ; src%nrec = 0_ik
          case (MET_BACKEND_ED_ERA5LAND)
@@ -167,7 +167,7 @@ contains
       cur%cell = cell
       cur%latitude_deg = latitude_deg ; cur%longitude_deg = longitude_deg
       cur%elevation_m  = elevation_m
-      cur%grid_elevation_m = src%fcfg%grid_elevation_m
+      cur%grid_elevation_m = src%fcfg%grid_elevation
       if (src%backend == MET_BACKEND_ED_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
       if (src%backend == MET_BACKEND_CONST) then
          cur%rec_prev = met_record_t() ; cur%rec_next = met_record_t()

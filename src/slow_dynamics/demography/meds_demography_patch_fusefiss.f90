@@ -18,7 +18,8 @@
 module meds_demography_patch_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one, yr_sec
-   use meds_config,     only : meds_config_t, DIST_TREEFALL
+   use meds_config,     only : meds_config_t
+   use meds_patch_state_vars, only : DIST_TREEFALL
    use meds_cohort_state_vars, only : compact_cohort_block, expand_cohort_block, copy_cohort,  &
                                       cohort_tissue_water, cohort_film_water, cohort_water_enthalpy
    use meds_polygon_state_vars, only : polygon_t, rebuild_patch_map, rebuild_cohort_map, assign_cohort_id,      &
@@ -540,7 +541,7 @@ contains
                                                  + kill_frac * cohort%nplant(i) * cohort_water_enthalpy(cohort, i) &
                                                    / new_area / max(cfg%dt_slow, tiny_num)
                      w_tot = w_tot + poly%site%area(is) * w_kill   ! w_kill is per m2 of the site
-                     if (cfg%soil_carbon_on) then
+                     if (cfg%soil_carbon%soil_carbon_on) then
                         lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
                         pf = cohort%pft(i)
                         call necromass_to_litter(lost_density * cohort%leaf_carbon(i),                  &

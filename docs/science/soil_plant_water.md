@@ -123,8 +123,8 @@ with $F_i$ the net inflow, by **Newton** in the unknowns $\tau$:
 inflows across it, filtered twice through $J^{-1}$ (two back-substitutions with the last
 factorisation). The filter leaves slow modes alone and divides a stiff, already-settled exchange's
 error by its stiffness squared — what step doubling would measure, at a third of the cost. Each
-store's error is weighed against $`\text{atol}\cdot\text{scale} + \text{rtol}\cdot|W|`$: `[soil]`
-`atol` and `rtol`, read as water content for soil layers and the pond and as relative water content
+store's error is weighed against $`\text{atol}\cdot\text{scale} + \text{rtol}\cdot|W|`$: `[fast]`
+`water_atol` and `rtol`, read as water content for soil layers and the pond and as relative water content
 for tissues. A sub-step that fails Newton is cut to a quarter; one over tolerance is cut by the usual
 order-one controller, which also grows the next one. Every step starts with one sub-step of
 `dt_fast`; most need no more (BCI: 1.07 sub-steps and 3.5 Newton iterations per step on average).

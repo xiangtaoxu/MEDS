@@ -13,11 +13,10 @@ module meds_met_source_common
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, is_leap_year,        &
                          time_to_string, whole_years_between
-   use meds_forcing_config, only : MET_BACKEND_ED_DEFAULT, METAVG_BEGIN, SWPART_PASSTHROUGH,      &
-                                   HEIGHT_ABOVE_GROUND
+   use meds_forcing_opts, only : MET_BACKEND_ED_DEFAULT, METAVG_BEGIN, SWPART_PASSTHROUGH,        &
+                                   HEIGHT_ABOVE_GROUND, MAX_RECYCLE_YEARS
    use meds_forcing_types, only : met_source_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, FLD_QAIR,          &
                                   FLD_RHAIR, FLD_TDEW
-   use meds_config, only : MAX_RECYCLE_YEARS   ! the config's bound: one definition
    use meds_netcdf_c, only : nc_inq_varid_f, nc_get_att_text_f, nc_get_att_double_f, NC_NOERR,    &
                              NC_GLOBAL
    implicit none

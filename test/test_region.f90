@@ -316,20 +316,18 @@ program test_region
    !      refused with its own message. The bad keys come first, so they win over the good region  !
    !      block. -------------------------------------------------------------------------------------!
    call refused('the [site] location is refused in a region', region_block(), .false., .false.,     &
-                'do not apply to [run].mode = "region"')
+                'does not apply to [run].mode = "region"')
    call refused('forcing.max_distance_km is refused in a region',                                  &
                 '[forcing]'//nl()//'max_distance_km = 50.0'//nl()//region_block(), .true., .false.,   &
-                'do not apply to [run].mode = "region"')
+                'does not apply to [run].mode = "region"')
    call refused('a region needs the archive', '[forcing]'//nl()//'format = "ED_default"'//nl()//region_block(), &
                 .true., .true., 'needs forcing.format = "ED_ERA5land"')
-   call refused('a region does not start from a census', '[init]'//nl()//'init_mode = 1'//nl()//region_block(), &
+   call refused('a region does not start from a census', '[init]'//nl()//'init_mode = 1'//nl()//           &
+                'census_file = "census.csv"'//nl()//region_block(),                                           &
                 .true., .false., 'not a census')
    call refused('a fast-tier window may not straddle two slow steps',                               &
                 '[output]'//nl()//'fast_interval_steps = 5'//nl()//site_block(1_ik), .false., .false., &
                 'output.fast_interval_steps must divide')
-   call refused('output.strict_caps is refused: the caps always stop the run',                     &
-                '[output]'//nl()//'strict_caps = true'//nl()//site_block(1_ik), .false., .false.,     &
-                'is retired: a run always stops at the step')
    !----- An io_config override is held to the FAST guard as the defaults are: a variable         !
    !      without a FAST-staged source on the F stream, and a FAST-staged one on a coarse tier. ------!
    call write_text(trim(work)//'/io_f_coarse.toml', '[variables]'//nl()//'anet_cohort = "F D"')
@@ -345,45 +343,15 @@ program test_region
                 .true., .false., 'is not on the forcing grid')
    call refused('a [region] block needs region mode', '[run]'//nl()//'mode = "site"'//nl()//          &
                 site_block(1_ik)//'[region]'//nl()//'land_fraction_min = 0.5'//nl(), .false., .false.,  &
-                'a [region] block needs [run].mode = "region"')
+                'needs [run].mode = "region"')
    call refused('the box must have S < N', '[region]'//nl()//'box_nwse = [20.0, 150.0, 40.0, -150.0]'//nl()// &
                 region_block(), .true., .false., 'region.box_nwse needs')
-   call refused('region.detail_polygons is retired: the region files hold every variable',           &
-                '[region]'//nl()//'detail_polygons = [18]'//nl()//region_block(), .true., .false.,      &
-                'is retired: the region files hold every variable and tier')
    call refused('the mode is "site" or "region"', '[run]'//nl()//'mode = "globe"'//nl()//region_block(), &
-                .true., .false., '[run].mode must be "site" or "region"')
-   call refused('the [io] block is refused, naming [state]', '[io]'//nl()//'write_state = false'//nl()// &
-                site_block(1_ik), .false., .false., 'the [io] block is now [state]')
-   !----- The root profile is a plant trait: [soil_column].root_beta is refused, naming [hydraulics]. -!
-   call refused('soil_column.root_beta is refused, naming [hydraulics]',                            &
-                '[soil_column]'//nl()//'root_beta = 2.0'//nl()//site_block(1_ik), .false., .false.,  &
-                'is retired: the root profile is a plant trait: set [hydraulics].root_beta')
-   !----- There is no whole-plant conductance key: k_plant_max is refused, naming the sapwood's. ---!
-   call refused('hydraulics.k_plant_max is refused, naming the sapwood conductance',                 &
-                '[hydraulics]'//nl()//'k_plant_max = 3.0e-4'//nl()//site_block(1_ik), .false., .false., &
-                'is retired: the plant''s conductance is its sapwood''s')
-   call refused('leaf_physiology.low_water_potential_control is retired',                           &
-                '[leaf_physiology]'//nl()//'low_water_potential_control = "linear_decline"'//nl()// &
-                site_block(1_ik), .false., .false., 'is retired: the linear decline of gs')
-   !----- The forcing-format rules (docs/configuration.md §The forcing file): a retired format name  !
-   !      stops the run, naming its replacement, every clock is UTC, and the terrain-lapse keys need  !
-   !      the lapse. ---------------------------------------------------------------------------------!
-   call refused('format = "netcdf" is refused, naming ED_default',                                  &
-                '[forcing]'//nl()//'format = "netcdf"'//nl()//site_block(1_ik), .false., .false.,     &
-                'is now "ED_default"')
-   call refused('format = "era5land" is refused, naming ED_ERA5land',                               &
-                '[forcing]'//nl()//'format = "era5land"'//nl()//site_block(1_ik), .false., .false.,   &
-                'is now "ED_ERA5land"')
-   call refused('site.utc_offset is refused: every clock is UTC',                                   &
-                '[site]'//nl()//'utc_offset = -5.0'//nl()//site_block(1_ik), .false., .false.,         &
-                'is retired: every forcing file is in UTC')
-   call refused('site.apply_solar_longitude is refused',                                            &
-                '[site]'//nl()//'apply_solar_longitude = true'//nl()//site_block(1_ik), .false., .false., &
-                'is retired: every forcing file is in UTC')
+                .true., .false., 'run.mode = "globe" is not one of site | region')
+   !----- The terrain-lapse keys need the lapse (docs/configuration.md §The forcing file). ------!
    call refused('the lapse keys are refused with the lapse off',                                    &
                 '[site]'//nl()//'apply_elevation_lapse = false'//nl()//site_block(1_ik), .false., .false., &
-                'apply only with site.apply_elevation_lapse = true')
+                'applies only with site.apply_elevation_lapse = true')
    !----- The [maps] files (docs/configuration.md §Input maps): a region needs the soil maps, a   !
    !      key they provide is refused, a run cell they leave empty is named, and Chave's E serves !
    !      only the Chave heights. ----------------------------------------------------------------!
@@ -391,9 +359,9 @@ program test_region
                 'soil_texture_map = ""'//nl()//'soil_chemistry_map = ""'//nl()//'[soil]'//nl()//         &
                 'deep_temp = 284.75'//nl()//region_block(), .true., .false., 'needs the soil maps')
    call refused('a soil key the maps provide is refused', '[soil]'//nl()//'theta_sat = 0.40'//nl()//    &
-                site_block(1_ik), .false., .false., 'soil.theta_sat comes from the [maps] soil maps')
+                site_block(1_ik), .false., .false., 'comes from the [maps] soil maps')
    call refused('a deep temperature beside the maps is refused', '[soil]'//nl()//'deep_temp = 290.0'//nl()// &
-                region_block(), .true., .false., 'soil.deep_temp comes from the [maps] soil maps')
+                region_block(), .true., .false., 'comes from the [maps] soil maps')
    call refused('a run cell the soil maps leave empty is named', '[maps]'//nl()//'soil_texture_map = "'// &
                 trim(work)//'/archive/gap/soil_texture.nc"'//nl()//region_block(), .true., .false.,         &
                 'sand has no value at the cell (35.00, -180.00)')
@@ -406,7 +374,7 @@ program test_region
                 region_block(), .true., .false., 'a region refuses [[sites]]')
    call refused('a [[sites]] soil key beside the maps is refused', '[[sites]]'//nl()//               &
                 'area_fraction = 1.0'//nl()//'depth = 1.0'//nl()//site_block(1_ik), .false., .false.,   &
-                'every [[sites]] table takes the cell''s soil')
+                'every site takes its cell''s soil')
    call refused('a region''s recycle window starts at 00:00 or 01:00 on the 1st',                   &
                 '[forcing]'//nl()//'recycle = true'//nl()//'recycle_start = "2021-01-01 06:00:00"'//nl()// &
                 'recycle_end = "2022-01-01 06:00:00"'//nl()//region_block(), .true., .false.,          &

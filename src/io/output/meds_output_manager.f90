@@ -9,7 +9,7 @@
 !==========================================================================================!
 module meds_output_manager
    use meds_kinds,            only : ik
-   use meds_output_config,    only : N_FREQ
+   use meds_output_opts,      only : N_FREQ
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_integrate, only : close_tier
    use meds_output_stream,    only : write_record, stream_close_file

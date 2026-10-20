@@ -7,13 +7,13 @@
 ! and month buffer met_month_t, and the prescribed CO2 series co2_series_t.                         !
 !                                                                                          !
 ! Lives in src/io/input/forcing (libmeds_forcing); uses meds_kinds, meds_time for the meds_time_t  !
-! timestamp and meds_forcing_config for the [forcing]/[site] config, nothing else. No physics        !
+! timestamp and meds_forcing_opts for the [forcing]/[site] config, nothing else. No physics          !
 ! library ever names these types; the reader (meds_met_driver) owns the only mutable forcing state. !
 !==========================================================================================!
 module meds_forcing_types
    use meds_kinds,          only : wp, sp, ik
    use meds_time,           only : meds_time_t
-   use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_PATH_LEN
+   use meds_forcing_opts, only : forcing_config_t, MET_BACKEND_CONST, MET_PATH_LEN
    implicit none
    private
 

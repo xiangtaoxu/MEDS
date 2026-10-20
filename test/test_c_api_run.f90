@@ -53,11 +53,11 @@ program test_c_api_run
    call load_meds_config(CFG_DEFAULT, cfg)
    call check(cfg%pft%n >= 1_c_int, 'the shipped default config loads and carries PFTs')
    call check(cfg%fast_biophysics_on, 'the default config requests fast biophysics')
-   call check(cfg%soil_carbon_on, 'the default config requests SOIL CARBON')
+   call check(cfg%soil_carbon%soil_carbon_on, 'the default config requests SOIL CARBON')
    call load_meds_config(CFG_CALIBRATED, cfg)
    call check(cfg%pft%n >= 1_c_int, 'the shipped calibrated config loads and carries PFTs')
    call check(cfg%fast_biophysics_on, 'the calibrated config requests fast biophysics')
-   call check(cfg%soil_carbon_on, 'the calibrated config requests SOIL CARBON')
+   call check(cfg%soil_carbon%soil_carbon_on, 'the calibrated config requests SOIL CARBON')
 
    !=== 2. The invalid-handle guard. ========================================================!
    !      Every accessor takes a bare integer from the caller. One that was never opened, or  !
@@ -167,6 +167,8 @@ contains
       write(uout,'(a)') 'write_state = false'
       write(uout,'(a)') '[output]'
       write(uout,'(a)') 'enabled = false'
+      write(uout,'(a)') '[carbon]'
+      write(uout,'(a)') 'gpp_ref = 0.3'
       open(newunit=uin, file=CFG_DEFAULT, status='old', action='read')
       do
          read(uin,'(a)',iostat=ios) line

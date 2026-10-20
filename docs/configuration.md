@@ -37,9 +37,13 @@ Two exceptions, both explicit:
 `meds_config_pft.toml`, set or commented out at its default. They are the complete list. A key that
 is not listed in its file's reference stops the run before it starts: the error names every such key
 at once, together with any missing required ones. Each line gives a suggestion:
-- a retired key gets what replaced it;
 - a key that moved section gets its new home (`state.cohort_max` → `output.cohort_max`);
 - a misspelling gets the key it most likely meant.
+
+Renamed and retired keys are listed in [`CHANGELOG.md`](../CHANGELOG.md). A listed key that the run's
+other settings give nothing to do is refused the same way, with the setting that makes it inapplicable:
+`forcing.path` with `format = "ED_ERA5land"`, a `[region]` block in a site run, a soil key the
+`[maps]` provide.
 
 A key that parses and does nothing is worse than one that is absent: `[forcing] dt_forcing = 7200`
 (the key is `timestep`) would otherwise run silently at the file's own spacing. The test
@@ -66,7 +70,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | Block | What it sets |
 |---|---|
 | `[run]` | The slow timestep, and the run span as **calendar dates** (`start_time`, `end_time`, leap-year-aware Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`). Thread count. The run `mode`: one site, or a region. |
-| `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control; the soil-plant water network's tolerances (`water_rtol`, `water_atol`), the budget checks (`soil_energy_budget_atol`, `debug_error`) and the canopy interception (`intercept_alpha`, `intercept_k`). |
+| `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control; the relative tolerance `rtol` of every error-controlled store, the soil-plant water network's absolute tolerance `water_atol`, the budget checks (`soil_energy_budget_atol`, `debug_error`) and the canopy interception (`intercept_alpha`, `intercept_k`). |
 | `[init]` | How the run starts, and the path to the PFT file. |
 | `[demography]` | Cohort and patch fusion/fission, the cadence switches. |
 | `[disturbance]`, `[recruitment]` | Treefall rates; the seed-rain and reproduction settings. |
@@ -77,7 +81,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[[sites]]` | A site run's polygon as several sites, one table each: its share, terrain and ground ([Several sites](#several-sites)). |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
-| `[state]` | Restart checkpointing: output directory, prefix, interval. *(The spelling `[io]` is refused.)* |
+| `[state]` | Restart checkpointing: output directory, prefix, interval. |
 
 **`[soil]` is the ground; `[fast]` holds the solvers' settings.** Every property of the ground is in
 one block, whichever solver reads it: the column, its surface and both bottom boundaries. The column
@@ -92,7 +96,6 @@ the residual, produce a silently wrong column rather than a crash.
   shares one depth axis.
 - **Override:** `layer_bottoms = [...]` [m] replaces the list for a measured profile, and the column
   ends at its last bottom unless `depth` cuts it.
-- **Refused keys:** `n_layer` and `grid_growth`.
 - **The science:** [`science/soil_biophysics.md`](science/soil_biophysics.md), "The soil layers".
 
 **The bottom water boundary — `[soil].water_bottom_bc`.** `free_drain` (default), `bedrock` or `aquifer`.
@@ -110,7 +113,7 @@ happens to it there.
 | key | values | meaning |
 |---|---|---|
 | `thermal_bottom_bc` | `geothermal` (default) \| `dirichlet` | prescribed bottom flux (held at zero — an adiabatic wall that **reflects** the annual wave) vs conduction to a fixed deep temperature |
-| `deep_temp` | [K] | the anchor temperature. **Required** when `bottom_bc = "dirichlet"`; there is no default |
+| `deep_temp` | [K] | the anchor temperature. **Required** when `thermal_bottom_bc = "dirichlet"`; there is no default |
 | `deep_depth` | [m], default 3.145 | depth of the anchor plane below the surface; must lie below the bottom soil node |
 
 `deep_temp` is the mean annual soil temperature below the damping depth — close to the mean annual
@@ -127,6 +130,26 @@ the anchor does and does not fix are in [`docs/science/soil_biophysics.md`](scie
 
 Deepening the column with `[soil].depth` remains available and is the other way out, at the
 cost of layers; it also moves the root profile and the drainage, so it is not a thermal-only change.
+
+### Threads and the slow tier — `[run]`
+
+- **Threads.** `[run].n_threads` (default 1) runs a site's patches, or a region's polygons, on that
+  many OpenMP threads. Patches and polygons are independent within a step and the site's sums are
+  folded in patch order, so the output is byte-identical at any thread count: it is a wall-clock
+  setting only, bounded by the patch count and by how unevenly the patches cost. The default of 1
+  keeps a build compiled with OpenMP serial until asked; a build without OpenMP ignores the key. MEDS
+  does not read `OMP_NUM_THREADS`, so a run's config records its thread count. The
+  sub-daily probe (`[fast].fast_probe`) writes one shared CSV in order, so it needs one thread
+  ([`science/numerical_scheme.md`](science/numerical_scheme.md) §6a).
+- **`[run].slow_on = false`** skips the whole slow tier every step: growth, mortality, phenology,
+  traits, demography and soil carbon. The stand stays as it is while the fast loop runs. It is broader
+  than `[demography].demography_on`, which freezes only the restructuring.
+- **The slow ledger** (`[run].slow_ledger_on`, default on) snapshots the site's carbon, water and
+  energy stores either side of every slow-step operator, and prints at the end of the run what each
+  operator could not account for, judged against the flux it declared
+  ([`science/order_of_processes.md`](science/order_of_processes.md) §4). It writes no state and changes
+  no result, and costs about 0.3 % of the wall clock. It is the one check that sees a store jump across
+  the slow step; the fast loop's ledgers sum per-sub-step residuals and cannot.
 
 ### Cohort and patch fusion — `[demography]`
 
@@ -173,8 +196,7 @@ every PFT, or an array with one value per PFT.
 pressure–volume curves, the xylem's vulnerability (`wood_psi50`, `wood_kexp`), its sapwood specific
 conductivity `wood_kmax` and path factor `vessel_curl`, and the roots (`root_beta`,
 `root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait,
-so `[soil_column].root_beta` is refused, and a main config's `[hydraulics]` key or a `[pft]`
-hydraulic key is refused, naming the PFT file's block.
+so these keys live in the PFT file only.
 
 Wood density is the primary PFT axis. The mortality hazard's parameters, `[pft].mort_gamma`,
 `mort_alpha` and `mort_beta`, ship as Camac et al. (2018)'s power laws in it, so low-density PFTs get a
@@ -184,12 +206,21 @@ hazard is a cohort with no leaves and no storage, which dies in the step it is f
 (`science/plant_carbon_allocation.md` §2). Growth, competition and reproduction parameters are per-PFT
 but ship uniform.
 
+**Recruitment.** A PFT's recruits are a baseline external seed rain, `[pft].seed_rain_recruits`
+[plants m⁻² yr⁻¹], plus those its reproduction buys. From `min_repro_height` up, a cohort diverts
+`reproduction_investment_fraction` of its growth carbon to reproduction
+([plant_carbon_allocation](science/plant_carbon_allocation.md) §2). `recruit_carbon_efficiency` of
+that carbon (seed set, germination and seedling survival together) becomes recruits at
+`min_cohort_height`, a share that falls as exp(−`recruit_shade_decay` × patch LAI). `include_pft = 0`
+keeps a PFT from recruiting.
+
 Each PFT's height follows the curve `[allometry].height_allometry` names for it (one name for every
 PFT, or one per PFT, `["chave2014", "power", "power"]`). `"power"`, the default, is the pan-tropical
 power law `exp(b1Ht + b2Ht ln dbh)`. `"chave2014"` is the log-quadratic ln H = `chave_a` − E +
 `chave_b` ln dbh + `chave_c` (ln dbh)² + `chave_rse`²/2, taken at its mean as BIOMASS's `retrieveH` does;
 its coefficients default to Chave et al. (2014)'s pantropical fit (0.893, 0.760, −0.0340, 0.243), and a
-site's own heights give a local fit (examples 03 and 05 use one for Barro Colorado Island). E
+site's own heights give a local fit (examples 03 and 05 use one for Barro Colorado Island); the
+`chave_*` keys are refused when no PFT uses `"chave2014"`. E
 (`[allometry].chave_e`, one value) is the site's stress index from its climate (Chave's eq. 6b), the same
 for every PFT: the drier, more seasonal or hotter the site, the larger E and the shorter its trees. With
 `[maps].chave_e_map`, each polygon takes E from its own cell instead, and `chave_e` is refused
@@ -204,15 +235,7 @@ of a top-of-canopy cohort's leaf carbon its background turnover replaces a year,
 `[trait_dynamics].trait_plasticity_on` it slows in shade (`docs/science/plant_traits.md` eq. (1)).
 The light-plasticity slopes, `[pft].kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and
 `kplastic_leaf_turnover`, ship as ED2's fits to Vcmax25 and the turnover rate (Lloyd et al. 2010), from
-`scripts/pft_traits`.
-Three keys named after a leaf lifespan are refused, each with its replacement:
-- `[pft].leaf_lifespan_toc` [yr]: set `leaf_turnover_rate_toc` to its reciprocal (a 2-yr lifespan is
-  a rate of 0.5);
-- `[derived].kplastic_llspan`: `[pft].kplastic_leaf_turnover` is its negative (≤ 0, the rate falls in
-  shade);
-- `[trait_dynamics].fineroot_lifespan_plastic`: `fineroot_turnover_plastic`.
-
-A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.
+`scripts/pft_traits`. A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.
 
 ## Several sites
 
@@ -260,8 +283,9 @@ hold both a table and an array of tables of one name.
 
 ## How a run starts
 
-`[init].init_mode` selects one of three, and the files for the unselected modes are ignored rather
-than removed:
+`[init].init_mode` selects one of three. The file a mode starts from is required by that mode and
+optional otherwise; the Python census start (`meds.demography.Site(census=True)`) reads `census_file`
+whatever the mode:
 
 | Mode | Start from | Needs |
 |---|---|---|
@@ -341,11 +365,6 @@ A checkpoint is raw prognostic state at an instant and a diagnostic record is a 
 two streams are deliberately separate because conflating them is how a restart silently starts from
 a mean.
 
-> **The block is `[state]`, not `[io]`.** It holds only the restart stream, so `io` would name the
-> one output path it does *not* cover. A config that spells it `[io]` is refused at load, with a
-> message naming the keys: the block is `[state]`, and `io.state_interval_years` is
-> `state.interval_years`.
-
 ## The forcing file
 
 `[forcing].forcing_on` turns the meteorological driver on; `[site]` says where the site is.
@@ -365,14 +384,12 @@ useless for science.
   `scripts/prepare_era5/make_forcing_file.py`, or built from flux-tower data by
   `scripts/prepare_flux_tower/make_tower_forcing.py`.
 
-The earlier names, `"netcdf"` and `"era5land"`, are refused with a message naming the new one.
 The file formats, the ERA5-Land and flux-tower preparation, and the recycling rules are documented in
 [`science/forcing.md`](science/forcing.md). Three things to know before writing a config:
 
 - **Every forcing clock is UTC.** A file must carry `time_zone = "UTC"`; the solar geometry takes
   local solar time from `[site].longitude`. Convert a local-time source when you build the file,
-  and shift the output to local time afterwards. There is no `[site].utc_offset` or
-  `apply_solar_longitude`, and both are refused.
+  and shift the output to local time afterwards.
 
 - **The recycle window is declared, never inferred.** If `recycle = true`, then `recycle_start` and
   `recycle_end` are required, and the span must be an exact whole number of calendar years. A
@@ -396,8 +413,6 @@ grows with the stand, and the aerodynamics runs from there ([`science/forcing.md
   with it off; a flux tower measures at the site and runs with it off.
 - **A file may state its heights.** When it carries `tq_height_m`, `wind_height_m` or
   `height_above`, they must agree with `[forcing]`, or the run stops at open.
-- The old `[site].reference_height`, `wind_meas_height`, `apply_wind_profile` and `wind_roughness_z0`
-  are rejected, with a message naming these keys.
 
 **CO₂ is set in `[forcing]`, never by the met file.**
 - **`co2_source = "const"`**, the default, holds `co2_const` for the whole run.
@@ -453,7 +468,7 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   them the volume. A cohort or patch variable is `(time, polygon, cohort)` or `(time, polygon,
   patch)`, its axis as long as the largest live count among the polygons when the file opens;
   `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own count, and the entries past it
-  are the fill value. `[region].detail_polygons` is retired. Once a polygon has failed, the end of
+  are the fill value. Once a polygon has failed, the end of
   the run writes nothing more, so a closed file is never rewritten.
 - **Each polygon's sites, their soils and map inputs in its files.** Every file has a `site` axis
   behind `polygon`, as long as the largest polygon's site count; `n_site (polygon)` gives each

@@ -18,12 +18,12 @@
 !==========================================================================================!
 program test_biogeochem_dynamics
    use meds_kinds,               only : wp, ik
-   use meds_config,              only : meds_config_t
+   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
+                                        build_soil_therm_params
    use meds_polygon_state_vars,  only : polygon_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,     only : n_soil_layer_max
-   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
    use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config
@@ -49,7 +49,7 @@ program test_biogeochem_dynamics
    cfg%fast_biophysics_on = .true.
    cfg%dt_fast            = 150.0_wp
    cfg%n_fast_per_slow    = 48_ik   ! 48 x 150 s = a 2 h fast window
-   cfg%soil_carbon_on     = .true.
+   cfg%soil_carbon%soil_carbon_on     = .true.
 
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
@@ -127,7 +127,7 @@ program test_biogeochem_dynamics
    block
       type(polygon_t) :: poly2
       real(wp)     :: totalA, totalB
-      cfg%soil_carbon_on = .false.
+      cfg%soil_carbon%soil_carbon_on = .false.
       call init_bare_ground(poly2, cfg, 1_ik)
       call use_test_column(poly2)
       call add_cohort(poly2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)

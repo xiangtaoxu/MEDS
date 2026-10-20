@@ -12,12 +12,12 @@
 !==========================================================================================!
 program test_fast_loop
    use meds_kinds,               only : wp, ik
-   use meds_config,              only : meds_config_t
+   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
+                                        build_soil_therm_params, top_soil_psi
    use meds_cohort_state_vars,   only : set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params, top_soil_psi
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
@@ -28,7 +28,7 @@ program test_fast_loop
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds
-   use meds_forcing_config,      only : MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX, METAVG_END
+   use meds_forcing_opts,        only : MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX, METAVG_END
    use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
@@ -198,11 +198,11 @@ program test_fast_loop
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
       cfg%forcing%forcing_on   = .true.
-      cfg%forcing%backend      = MET_BACKEND_ED_DEFAULT
+      cfg%forcing%format      = MET_BACKEND_ED_DEFAULT
       cfg%forcing%path         = 'test_fast_loop_forcing.nc'
-      cfg%forcing%grid_index   = 1_ik ; cfg%forcing%dt_forcing = 3600.0_wp
+      cfg%forcing%grid_index   = 1_ik ; cfg%forcing%timestep = 3600.0_wp
       cfg%forcing%avg_convention = METAVG_END ; cfg%forcing%sw_partition = SWPART_CLEARIDX
-      cfg%forcing%latitude_deg = 42.44_wp ; cfg%forcing%longitude_deg = -76.50_wp
+      cfg%forcing%latitude = 42.44_wp ; cfg%forcing%longitude = -76.50_wp
       cfg%forcing%recycle = .false.
       cfg%forcing%co2_const = 415.0_wp          ! CO2 comes from config, not the file (docs/science/forcing.md §12)
 
@@ -212,9 +212,9 @@ program test_fast_loop
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(poly)
       call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg,                            &
-                           cfg%forcing%elevation_m)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
+                           cfg%forcing%longitude,                            &
+                           cfg%forcing%elevation)
 
       call init_fast_reservoirs(poly, ctx)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
@@ -247,8 +247,8 @@ program test_fast_loop
          ob%fast_on = .true.
          call init_fast_reservoirs(poly, ctx)
          call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
-         call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg, &
-                              cfg%forcing%elevation_m)
+         call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude, &
+                              cfg%forcing%elevation)
          sum_t = 0.0_wp ; sum_q = 0.0_wp ; sum_pb = 0.0_wp ; sum_cz = 0.0_wp ; sum_sw = 0.0_wp
          exact = .true.
          do isub = 1_ik, cfg%n_fast_per_slow
@@ -342,9 +342,9 @@ program test_fast_loop
          call add_cohort(poly, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(poly)
          call met_open(drv3, cfg%forcing)
-         call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude_deg,      &
-                              cfg%forcing%longitude_deg,                            &
-                              cfg%forcing%elevation_m)
+         call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude,      &
+                              cfg%forcing%longitude,                            &
+                              cfg%forcing%elevation)
          call init_fast_reservoirs(poly, ctx)
          call fast_dynamics(poly, ctx, cfg, met_src=drv3, met_cur=cur3,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
@@ -390,9 +390,9 @@ program test_fast_loop
          call add_cohort(poly, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(poly)
          call met_open(drv4, cfg%forcing)
-         call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude_deg,      &
-                              cfg%forcing%longitude_deg,                            &
-                              cfg%forcing%elevation_m)
+         call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude,      &
+                              cfg%forcing%longitude,                            &
+                              cfg%forcing%elevation)
          call init_fast_reservoirs(poly, ctx)
          ctx_mt = ctx ; ctx_mt%patch_threads = 4_ik
          call fast_dynamics(poly, ctx_mt, cfg, met_src=drv4, met_cur=cur4,             &
@@ -454,9 +454,9 @@ program test_fast_loop
          poly%cohort%nplant(ii) = LAI_EACH / max(poly%cohort%leaf_area(ii), 1.0e-9_wp)
       end do
       call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg,                            &
-                           cfg%forcing%elevation_m)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
+                           cfg%forcing%longitude,                            &
+                           cfg%forcing%elevation)
 
       call init_fast_reservoirs(poly, ctx)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
@@ -498,9 +498,9 @@ program test_fast_loop
       call add_cohort(poly, cfg, 2_ik, 1_ik, 0.20_wp,  5.0_wp)
       call finalize_init(poly)                                   ! patch 3 keeps 0 cohorts (bare)
       call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg,                            &
-                           cfg%forcing%elevation_m)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
+                           cfg%forcing%longitude,                            &
+                           cfg%forcing%elevation)
       call init_fast_reservoirs(poly, ctx)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
@@ -596,7 +596,7 @@ program test_fast_loop
    !    density, through the whole fast loop (two-stream, aerodynamics, water network, ARK) over a     !
    !    forced day window: the tissue temperatures, the canopy air and the per-plant GPP must agree.   !
    !    A floor in ground units on a tissue's coupling or heat capacity, which only the half-density   !
-   !    pair would cross, fails this. The step controller is held off (rtol_all and atol_scale large)  !
+   !    pair would cross, fails this. The step controller is held off (rtol and atol_scale large)      !
    !    so both stands take the same steps: its error norm (docs/science/numerical_scheme.md eq. (3))  !
    !    counts the pair's states twice, each against the same atol, so under a stiff ground coupling   !
    !    the two sub-step differently, by ~1e-3 K -- the integrator's error, not the physics'. Then the !
@@ -609,10 +609,10 @@ program test_fast_loop
       real(wp)           :: t_leaf(3), t_wood(3), t_cas(3), gpp(3), d_split
       real(wp), parameter :: NPLANT_THIN = 0.002_wp, DBH_THIN = 20.0_wp
       real(wp), parameter :: HOLD_OFF = 1.0e6_wp     ! tolerances no step error reaches
-      real(wp)           :: rtol_all0, atol_scale0
+      real(wp)           :: rtol0, atol_scale0
       cfg%forcing%forcing_on = .true.
-      rtol_all0 = cfg%rtol_all ; atol_scale0 = cfg%atol_scale
-      cfg%rtol_all = HOLD_OFF ; cfg%atol_scale = HOLD_OFF
+      rtol0 = cfg%rtol ; atol_scale0 = cfg%atol_scale
+      cfg%rtol = HOLD_OFF ; cfg%atol_scale = HOLD_OFF
       call build_fast_context(cfg, ctx)
       do icase = 1_ik, 3_ik
          call init_bare_ground(poly, cfg, 1_ik)
@@ -631,8 +631,8 @@ program test_fast_loop
             call hold_cohort_tissue_temps(poly%cohort, 1_ik)
          end if
          call met_open(drv, cfg%forcing)
-         call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg,        &
-                              cfg%forcing%elevation_m)
+         call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude,        &
+                              cfg%forcing%elevation)
          call init_fast_reservoirs(poly, ctx)
          call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur, step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik), &
                             n_budget_fail=nfail(icase))
@@ -653,7 +653,7 @@ program test_fast_loop
       call check(poly%cohort%leaf_area(1) == 0.0_wp, 'leafless: the cohort has no leaf area')
       call check(t_leaf(3) == t_wood(3), 'leafless: the leaf takes its wood''s temperature')
       call check(abs(t_wood(3) - t_cas(3)) > 1.0e-3_wp, 'leafless: the wood is not at the canopy air''s temperature')
-      cfg%rtol_all = rtol_all0 ; cfg%atol_scale = atol_scale0
+      cfg%rtol = rtol0 ; cfg%atol_scale = atol_scale0
    end block
 
    write(*,'(a)')          '   PASS'

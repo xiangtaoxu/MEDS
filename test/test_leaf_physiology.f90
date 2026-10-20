@@ -188,14 +188,14 @@ program test_leaf_physiology
    !     (gs alone would overestimate the water flux). ===========================================!
    block
       real(wp) :: e_series
-      cfg%leaf_use_boundary_layer = .true.
+      cfg%use_boundary_layer = .true.
       env = std_env() ; env%gb = 0.6_wp                      ! finite water-vapour boundary conductance [mol/m2/s]
       call leaf_gas_exchange(env, cfg, 1_ik, flux)
       e_series = flux%gs * env%gb / (flux%gs + env%gb) * env%vpd / env%pressure
       call check_close(flux%transpiration, e_series, 1.0e-9_wp, 'transpiration uses the gs-gb series conductance')
       call check(flux%transpiration < flux%gs * env%vpd / env%pressure,                            &
                  'series transpiration is below the gs-only value (gb resistance applied)')
-      cfg%leaf_use_boundary_layer = .false.
+      cfg%use_boundary_layer = .false.
    end block
 
    !=== 7-. The fast limb is idle while the leaf holds turgor: psi_leaf above the turgor-loss   !

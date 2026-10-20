@@ -261,11 +261,14 @@ scored years per site do not constrain its year-to-year variation.
 | $`\psi_{\mathrm{tlp}}`$ | *(derived)* | turgor-loss point from `leaf_pi0` and `leaf_elastic_mod` |
 | $`k_{\mathrm{turn}}`$ | `leaf_turnover_rate_toc` ([pft]) | background turnover [yr⁻¹] at the canopy top |
 
-The `[phenology]` section is gated by its presence: absent, every PFT keeps the no-cue defaults;
-present, every key above is required except the optional water keys. A sharpness
-of 0 is rejected (the switch would be a constant 0.5). Retired keys (`k_flush_max`, `tau_flush`,
-`cue_sharpness`, `phen_a/b/c`, the cold-drop and chilling keys, `pft.evergreen`, …) are refused by
-name, with a pointer to the key or rule that replaces them.
+The `[phenology]` section is gated by its presence: absent, every PFT keeps the no-cue defaults (both
+masks 0, so it always flushes and never senesces, and `flush_rate_max` = 0.06667 day⁻¹, about 15 days
+to full leaf); present, every key above is required except the optional water keys. The gate is the
+section, not a key in it: gated on one key, a `[phenology]` block that misspelt that key would be
+skipped in silence, and every PFT would run with no cues whatever its leaf habit. A sharpness of 0 is
+rejected (the switch would be a constant 0.5). A key the PFT reference does not list stops the run,
+with the listed key it most likely meant; [`CHANGELOG.md`](../../CHANGELOG.md) lists the keys this
+scheme replaced.
 
 ### Drivers
 

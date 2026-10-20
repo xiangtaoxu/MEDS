@@ -113,7 +113,7 @@ contains
       integer(c_int), value, intent(in) :: sh, ch
       integer(c_int) :: ok
       logical :: found
-      call init_from_census(g_poly(sh), g_cfg(ch), trim(g_cfg(ch)%init_census_file), found)
+      call init_from_census(g_poly(sh), g_cfg(ch), trim(g_cfg(ch)%init%census_file), found)
       if (found) then
          call restructure_census_stand(g_poly(sh), g_cfg(ch))
          call update_overtopping_lai(g_poly(sh))

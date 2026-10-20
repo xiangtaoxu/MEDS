@@ -9,10 +9,11 @@ module meds_test_support
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : day_sec
    use meds_time,       only : meds_time_t
-   use meds_pft_params, only : pft_table_t, alloc_pft_table, PATH_C3, PATH_C4
+   use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4
    use meds_allometry_lib,  only : allometry_t
    use meds_plant_hydr_lib, only : plant_hydraulics_t, water_curve_t
-   use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE, INTEG_ARK
+   use meds_config,     only : meds_config_t, derive_parameters, INIT_BARE, alloc_pft_table
+   use meds_fast_opts,  only : INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_therm_lib,     only : TEMP_RESPONSE_PEAKED
    use meds_test_assert, only : check, check_close, check_true, check_int, banner,             &
@@ -40,7 +41,6 @@ contains
       cfg%fast_biophysics_on = .false.
       cfg%dt_fast            = 150.0_wp
       cfg%time_integrator    = INTEG_ARK
-      cfg%backend    = BK_SERIAL
       cfg%start_time = meds_time_t(2000_ik, 1_ik, 1_ik)
       cfg%end_time   = meds_time_t(2100_ik, 1_ik, 1_ik)
       cfg%demography_on = .true.
@@ -53,20 +53,19 @@ contains
 
       cfg%n_height_layers = 16_ik ; cfg%max_patch = 12_ik ; cfg%n_patch_fusion_iter = 6_ik
       cfg%patch_light_tol = 0.10_wp ; cfg%patch_light_tol_max = 0.15_wp ; cfg%patch_light_maxdev_factor = 1.5_wp
-      cfg%patch_diff_age_tol = 1.0_wp ; cfg%min_patch_area = 1.0e-4_wp
-      cfg%patch_min_area_remain = 0.99_wp ; cfg%enable_patch_fission = .false.
+      cfg%min_patch_area = 1.0e-4_wp
 
       cfg%patch_disturbance_rate = 0.014_wp ; cfg%disturbance_survive_height = 10.0_wp
       cfg%growth_memory_days = 90.0_wp ; cfg%min_recruit_size = 1.0e-2_wp ; cfg%conservation_tol = 0.001_wp
 
-      cfg%init_mode = INIT_BARE ; cfg%init_restart_file = '' ; cfg%init_census_file = '' ; cfg%pft_config = ''
-      cfg%state_output_dir = '.' ; cfg%state_output_prefix = 'test'
-      cfg%state_write_state = .false. ; cfg%state_interval_years_cfg = 50_ik
+      cfg%init%init_mode = INIT_BARE ; cfg%init%restart_file = '' ; cfg%init%census_file = '' ; cfg%init%pft_config = ''
+      cfg%state%output_dir = '.' ; cfg%state%output_prefix = 'test'
+      cfg%state%write_state = .false. ; cfg%state%interval_years = 50_ik
       cfg%gpp_ref = 0.3_wp
 
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
       cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TEMP_RESPONSE_PEAKED
-      cfg%colimitation = COLIM_QUADRATIC ; cfg%leaf_use_boundary_layer = .false.
+      cfg%colimitation = COLIM_QUADRATIC ; cfg%use_boundary_layer = .false.
       cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
       cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp
       cfg%ea_vcmax = 65330.0_wp ; cfg%ea_jmax = 43540.0_wp ; cfg%ea_rd = 46390.0_wp
@@ -116,7 +115,6 @@ contains
          p%leaf_width             = [ 0.04_wp, 0.04_wp, 0.04_wp ]
          p%branch_diameter        = [ 0.02_wp, 0.02_wp, 0.02_wp ]
          p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
-         p%huber_value            = [ 1.0e-4_wp, 1.5e-4_wp, 2.0e-4_wp ]
          !----- Non-leaf maintenance respiration. -----------------------------------------!
          p%is_woody               = [ .true., .true., .true. ]
          p%stem_resp_factor25     = [ 0.06_wp, 0.06_wp, 0.06_wp ]
@@ -140,7 +138,6 @@ contains
          p%growth_resp_factor     = [ 0.3_wp, 0.3_wp, 0.3_wp ]
          p%leaf_turnover_rate_toc = [ 1.0_wp, 0.5_wp, 0.33_wp ]          ! [1/yr]
          p%fineroot_turnover_rate = [ 1.0_wp, 0.8_wp, 0.6_wp ]
-         p%wood_carbon_density    = [ 200.0_wp, 300.0_wp, 425.0_wp ]
          p%f_labile_leaf          = [ 0.80_wp, 0.70_wp, 0.60_wp ]
          p%f_labile_stem          = [ 0.05_wp, 0.05_wp, 0.05_wp ]
          p%struct_lignin_frac     = [ 0.20_wp, 0.25_wp, 0.30_wp ]

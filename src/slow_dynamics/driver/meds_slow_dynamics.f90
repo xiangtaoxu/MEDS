@@ -66,7 +66,7 @@ contains
 
       !----- `seam` is intent(inout) and accumulates over the run, so when soil carbon is off it     !
       !      simply stays as it was. ----------------------------------------------------------------!
-      if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(poly, cfg, seam, ledger)
+      if (cfg%soil_carbon%soil_carbon_on) call advance_biogeochem_dynamics(poly, cfg, seam, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
 

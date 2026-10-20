@@ -152,7 +152,8 @@ contains
       !      earlier, it reads those undefined and yields a NaN pack. BEFORE the water network         !
       !      below, so this step's meltwater, with its enthalpy, reaches the pond this step. No-op     !
       !      without a pack (docs/science/snow_biophysics.md §The snow store). ------------------------!
-      call advance_snow_stage(biophys%snow, col_config%snow, max(-col_config%soil%z_node(1), tiny_num),    &
+      call advance_snow_stage(biophys%snow, col_config%snow, col_config%aero%snow_rough,                   &
+                              max(-col_config%soil%z_node(1), tiny_num),                                    &
                               forc%abs_sw_ground, forc%abs_lw_ground, forc%snowfall, forc%rainfall, forc%air_temp,  &
                               aero%ggnet, biophys%soil_energy%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
                               snow_st)
@@ -571,7 +572,7 @@ contains
       spac%t_soil(1:nsl) = biophys%soil_energy%soil_temp(1:nsl)
       spac%w_pond_max = col_config%soil_water_opts%w_pond_max
       spac%rtol       = col_config%soil_water_opts%rtol
-      spac%atol       = col_config%soil_water_opts%atol
+      spac%atol       = col_config%soil_water_opts%water_atol
       call spac_set_state(spac, col_config%soil, col_config%hydraulics_table, biophys%soil_water%theta(1:nsl),      &
                           biophys%soil_water%w_surface, biophys%soil_water%w_surface_energy,                              &
                           biophys%leaf_water_mass(1:n), biophys%wood_water_mass(1:n))
@@ -593,11 +594,12 @@ contains
    ! both halves. Pack and pond are both tracked stores, so the transfer telescopes out of the       !
    ! whole-column ledger rather than needing a boundary term.                                        !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_snow_stage(snow, snow_params, dz_soil_top, abs_sw_ground, abs_lw_ground,        &
+   subroutine advance_snow_stage(snow, snow_params, snow_rough, dz_soil_top, abs_sw_ground, abs_lw_ground, &
                                  snowfall, rainfall, t_air, ggnet, t_soil_top, dt_fast, tcas, qcas,    &
                                  rho, press, st)
       type(snow_column_t),  intent(inout) :: snow           !< the pack store (the ONLY state mutated here)
       type(snow_params_t),  intent(in)    :: snow_params
+      real(wp),             intent(in)    :: snow_rough     !< [m]       snow-surface roughness ([aerodynamics])
       real(wp),             intent(in)    :: dz_soil_top    !< [m]       top soil-node depth |z_node(1)|
       real(wp),             intent(in)    :: abs_sw_ground  !< [W/m2]    shortwave reaching the ground
       real(wp),             intent(in)    :: abs_lw_ground  !< [W/m2]    net longwave at the ground
@@ -635,7 +637,7 @@ contains
          !      is SCALED by snowfac inside snow_energy_step, so a thin/patchy pack barely exchanges  !
          !      -- continuous and stable, with no threshold cliff -- and its returned fluxes are      !
          !      already snowfac-weighted. The bare-soil share is blended by the consumer. -----------!
-         st%snowfac       = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), snow_params)
+         st%snowfac       = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), snow_params, snow_rough)
          senv%abs_sw      = abs_sw_ground ; senv%abs_lw = abs_lw_ground
          senv%can_temp    = tcas ; senv%can_shv = qcas ; senv%ggnet = ggnet
          senv%rho_air     = rho ; senv%press = press

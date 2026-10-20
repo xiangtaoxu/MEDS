@@ -86,9 +86,9 @@ constitutive relations by physical quantity rather than by caller:
   pressure-volume and vulnerability curves are the matching `meds_plant_hydr_lib`.
 - **Thermal properties** → `meds_therm_lib`: the ice-aware Johansen conductivity and the volumetric
   heat capacity — beside the moist-air psychrometrics, which are their thermal twin.
-- **Per-column parameter bundles and their `pure` builders** → `meds_soil_column_config` in
-  `src/config/`, with the soil-column block they are derived from. The builders are state-free: they
-  do not depend on water content or energy.
+- **Per-column parameter bundles** → `meds_soil_column_config` in `src/config/opts/`, and their
+  `pure` builders → `meds_config` in `src/config/`, with the soil-column block they are derived from.
+  The builders are state-free: they do not depend on water content or energy.
 
 ## Coupling
 

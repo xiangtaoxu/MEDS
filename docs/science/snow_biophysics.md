@@ -67,7 +67,8 @@ The same blend is used for ground evaporation from frozen soil, weighted by the 
 *defined* over liquid, so an ice branch there would mis-convert the forcing.
 
 The **Niu-Yang (2007) snow-cover fraction** $`\mathrm{snowfac}=\tanh(\text{depth}/\text{scale})`$
-(`snow_cover_fraction`) ramps the ground optics albedo and the soil-top-BC blend, and area-weights ("sub-column") all boundary exchange so a thin patchy pack barely exchanges
+(`snow_cover_fraction`), with scale = `ny07_a` × `[aerodynamics].snow_rough` ×
+($`\rho_{snow}`$/100 kg m⁻³)^`ny07_m`, the snow surface's one roughness length, ramps the ground optics albedo and the soil-top-BC blend, and area-weights ("sub-column") all boundary exchange so a thin patchy pack barely exchanges
 (stable and continuous through $`\mathrm{snowfac}\to0`$). Snow-off is bit-identical to no store. The
 aerodynamic roughness does not see the pack: the driver passes `snowfac = 0` to the aerodynamics
 ([canopy_aerodynamics](canopy_aerodynamics.md) §1; see `docs/ROADMAP.md`).

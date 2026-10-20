@@ -661,9 +661,9 @@ contains
                      cohort%gpp_accum(j), cohort%leaf_resp_accum(j), cohort%stem_resp_accum(j),    &
                      cohort%root_resp_accum(j), cfg%gpp_ref, cohort%leaf_area(j), dt_yr,           &
                      cohort%leaf_flush_tendency(j), cohort%leaf_shed_tendency(j),                  &
-                     pft%pheno_flush_rate_max(pf), pft%pheno_shed_rate_max(pf), leaf_turn,         &
+                     pft%pheno(pf)%flush_rate_max, pft%pheno(pf)%shed_rate_max, leaf_turn,         &
                      root_turn,                                                                    &
-                     pft%pheno_min_leaf_cover(pf), pft%pheno_bare_leaf_cover(pf),                  &
+                     pft%pheno(pf)%min_leaf_cover, pft%pheno(pf)%bare_leaf_cover,                  &
                      cohort%leaf_carbon(j), cohort%fineroot_carbon(j), leaf_target, dt_day, r2l,   &
                      gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand,             &
                      fineroot_demand, pft%retained_carbon_fraction(pf), leaf_retained_c,           &
@@ -1179,7 +1179,7 @@ contains
       do is = 1_ik, poly%site%n
          temp_day(is) = poly%site%pheno_tair_sum(is) / real(max(poly%site%pheno_tair_n(is), 1_ik), wp)
       end do
-      lat = cfg%forcing%latitude_deg
+      lat = cfg%forcing%latitude
       if (present(latitude_deg)) lat = latitude_deg
       north    = lat >= 0.0_wp
 
@@ -1325,28 +1325,28 @@ contains
       integer(ik),          intent(in)  :: ipft
       type(pheno_params_t), intent(out) :: p
       associate (t => cfg%pft)
-         p%flush_cue_mask        = t%pheno_flush_cue_mask(ipft)
-         p%shed_cue_mask         = t%pheno_shed_cue_mask(ipft)
-         p%flush_cue_timescale   = t%pheno_flush_cue_timescale(ipft)
-         p%shed_cue_timescale    = t%pheno_shed_cue_timescale(ipft)
-         p%flush_rate_max        = t%pheno_flush_rate_max(ipft)
-         p%shed_rate_max         = t%pheno_shed_rate_max(ipft)
-         p%flush_base_temp       = t%pheno_flush_base_temp(ipft)
-         p%flush_degree_days     = t%pheno_flush_degree_days(ipft)
-         p%flush_temp_sharpness  = t%pheno_flush_temp_sharpness(ipft)
-         p%shed_base_temp        = t%pheno_shed_base_temp(ipft)
-         p%shed_degree_days      = t%pheno_shed_degree_days(ipft)
-         p%shed_temp_sharpness   = t%pheno_shed_temp_sharpness(ipft)
-         p%par_min               = t%pheno_par_min(ipft)
-         p%flush_light_hours     = t%pheno_flush_light_hours(ipft)
-         p%flush_light_sharpness = t%pheno_flush_light_sharpness(ipft)
-         p%shed_light_hours      = t%pheno_shed_light_hours(ipft)
-         p%shed_light_sharpness  = t%pheno_shed_light_sharpness(ipft)
-         p%light_window          = t%pheno_light_window(ipft)
-         p%flush_water_sum       = t%pheno_flush_water_sum(ipft)
-         p%flush_water_sharpness = t%pheno_flush_water_sharpness(ipft)
-         p%shed_water_sum        = t%pheno_shed_water_sum(ipft)
-         p%shed_water_sharpness  = t%pheno_shed_water_sharpness(ipft)
+         p%flush_cue_mask        = t%pheno(ipft)%flush_cue_mask
+         p%shed_cue_mask         = t%pheno(ipft)%shed_cue_mask
+         p%flush_cue_timescale   = t%pheno(ipft)%flush_cue_timescale
+         p%shed_cue_timescale    = t%pheno(ipft)%shed_cue_timescale
+         p%flush_rate_max        = t%pheno(ipft)%flush_rate_max
+         p%shed_rate_max         = t%pheno(ipft)%shed_rate_max
+         p%flush_base_temp       = t%pheno(ipft)%flush_base_temp
+         p%flush_degree_days     = t%pheno(ipft)%flush_degree_days
+         p%flush_temp_sharpness  = t%pheno(ipft)%flush_temp_sharpness
+         p%shed_base_temp        = t%pheno(ipft)%shed_base_temp
+         p%shed_degree_days      = t%pheno(ipft)%shed_degree_days
+         p%shed_temp_sharpness   = t%pheno(ipft)%shed_temp_sharpness
+         p%par_min               = t%pheno(ipft)%par_min
+         p%flush_light_hours     = t%pheno(ipft)%flush_light_hours
+         p%flush_light_sharpness = t%pheno(ipft)%flush_light_sharpness
+         p%shed_light_hours      = t%pheno(ipft)%shed_light_hours
+         p%shed_light_sharpness  = t%pheno(ipft)%shed_light_sharpness
+         p%light_window          = t%pheno(ipft)%light_window
+         p%flush_water_sum       = t%pheno(ipft)%flush_water_sum
+         p%flush_water_sharpness = t%pheno(ipft)%flush_water_sharpness
+         p%shed_water_sum        = t%pheno(ipft)%shed_water_sum
+         p%shed_water_sharpness  = t%pheno(ipft)%shed_water_sharpness
       end associate
       !----- The turgor-loss point is DERIVED, not a phenology key: the water cue compares the       !
       !      predawn leaf psi against the same psi_tlp the leaf gas-exchange kernel builds from the  !

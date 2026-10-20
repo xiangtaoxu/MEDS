@@ -12,7 +12,7 @@ program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_time,            only : meds_time_t
-   use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END,          &
+   use meds_forcing_opts,    only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
    use meds_forcing_kernels, only : dewpoint_to_specific_humidity, clear_sky_emissivity
@@ -67,8 +67,8 @@ contains
       type(met_source_t),     intent(in)  :: src
       type(met_cursor_t),     intent(out) :: cur
       type(forcing_config_t), intent(in)  :: fc
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg,                   &
-                           fc%elevation_m)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude,                   &
+                           fc%elevation)
    end subroutine site_cursor
 
    !=======================================================================================!
@@ -200,9 +200,9 @@ contains
    !----- A reader config on the synthetic archive at the valid cell (1,3), 35 N 120 W. ----------!
    function archive_config() result(fc)
       type(forcing_config_t) :: fc
-      fc%backend = MET_BACKEND_ED_ERA5LAND ; fc%data_path = DIR ; fc%max_distance_km = 50.0_wp
-      fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 35.0_wp ; fc%longitude_deg = -120.0_wp
+      fc%format = MET_BACKEND_ED_ERA5LAND ; fc%data_path = DIR ; fc%max_distance_km = 50.0_wp
+      fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude = 35.0_wp ; fc%longitude = -120.0_wp
       fc%recycle = .false. ; fc%start_clamp = CLAMP_ERROR
    end function archive_config
 
@@ -273,7 +273,7 @@ contains
       fc%lapse_rate_tair = [(0.0040_wp + 0.0002_wp * real(k, wp), k = 1, 12)]   ! January: 0.0042 K/m
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),               &
                     run_end=meds_time_t(2021_ik, 3_ik, 1_ik))
-      fc%elevation_m = src%cells%elevation(1) + 500.0_wp
+      fc%elevation = src%cells%elevation(1) + 500.0_wp
       call site_cursor(src, cur, fc)
       t = meds_time_t(2021_ik, 1_ik, 20_ik, 6_ik) ; g = hour_index(t)
       met = step_sample(src, cur, t)
@@ -358,7 +358,7 @@ contains
                     run_end=meds_time_t(2021_ik, 4_ik, 1_ik))
       call check_true('passthrough against total shortwave is rejected', st == MET_ERR_ATTR_MISMATCH)
       fc = archive_config()
-      fc%latitude_deg = 45.0_wp ; fc%longitude_deg = -80.0_wp
+      fc%latitude = 45.0_wp ; fc%longitude = -80.0_wp
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik, 3_ik, 1_ik),                &
                     run_end=meds_time_t(2021_ik, 4_ik, 1_ik))
       call check_true('a site with no valid cell within max_distance_km is rejected', st == MET_ERR_ARCHIVE)
@@ -390,9 +390,9 @@ contains
       call check_true('a region opens on its cells (MET_OK)', st == MET_OK .and. region%cells%ncell == 5_ik)
       do k = 1_ik, 2_ik
          call met_cursor_init(region, cur(k), PICK(k), cells%lat(PICK(k)), cells%lon(PICK(k)),    &
-                              fc%elevation_m)
+                              fc%elevation)
          fc = archive_config()
-         fc%latitude_deg = cells%lat(PICK(k)) ; fc%longitude_deg = cells%lon(PICK(k))
+         fc%latitude = cells%lat(PICK(k)) ; fc%longitude = cells%lon(PICK(k))
          call met_open(site(k), fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),        &
                        run_end=meds_time_t(2021_ik, 3_ik, 1_ik))
          call site_cursor(site(k), cur_site(k), fc)
@@ -433,7 +433,7 @@ contains
       !      second cell, a fresh cursor's first bracket at 1 Feb 00:30 needs January's last record,  !
       !      which would be the first cell's if met_close left the carried record behind.  -------------!
       fc = archive_config()
-      fc%latitude_deg = cells%lat(PICK(2)) ; fc%longitude_deg = cells%lon(PICK(2))
+      fc%latitude = cells%lat(PICK(2)) ; fc%longitude = cells%lon(PICK(2))
       call met_open(site(1), fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),             &
                     run_end=meds_time_t(2021_ik, 3_ik, 1_ik))
       call site_cursor(site(1), cur_site(1), fc)

@@ -155,7 +155,7 @@ how far the group drifted apart on the last stretch.
   lets it carry the tissue heat store.
 - Adaptive: the step size is chosen from the difference between the second-order and first-order
   solutions, measured by **one weighted norm over the whole column state** with a per-variable-group
-  tolerance (`[fast].ark_rtol`, `rtol_all`, `atol_scale`). The ARK's soil-moisture and plant-water
+  tolerance (`[fast].rtol`, `atol_scale`). The ARK's soil-moisture and plant-water
   terms in that norm are structurally zero (both ride operator-split maps outside the tableau), so
   they dilute it slightly — accepted deliberately: one norm with no per-scheme opt-outs means no
   scheme can leave a state it *integrates* unmeasured.
@@ -188,8 +188,8 @@ Both schemes judge a sub-step by the same weighted root-mean-square of their err
 = \sqrt{\frac{1}{N}\sum_{i=1}^{N}\left(\frac{\varepsilon_i}{a_{g(i)} + r_{g(i)}\,|y_i|}\right)^{2}} \qquad(3)
 ```
 
-$`a_g`$ is the group's absolute tolerance, times `atol_scale`; $`r_g`$ is `ark_rtol` (soil moisture
-takes `[fast].water_rtol` and `water_atol`), or `rtol_all` for every group when it is set. The canopy films and the
+$`a_g`$ is the group's absolute tolerance, times `atol_scale` (soil moisture's is `[fast].water_atol`);
+$`r_g`$ is `[fast].rtol`, the same for every group. The canopy films and the
 pond carry no group. A sub-step with $`\lVert\varepsilon\rVert\le 1`$ is accepted, and the next one is
 scaled by the I controller or, with `step_controller = "pi"`, the PI controller:
 
@@ -433,7 +433,7 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 | sub-daily fidelity — flux-tower comparison, diel cycles, energy partitioning | `ark`, `dt_fast` ≤ 150 s |
 | anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
 | the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `ark`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
-| a reference solution to check anything else against | `rk45` with `rtol_all = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
+| a reference solution to check anything else against | `rk45` with `rtol = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
 | ED2 comparison at the algorithmic level | `rk45` (but check `work_rk45_rescue_site` first) |
 
 **What the `dt_fast = 900 s` row costs.** Little: canopy-air temperature within 0.16 K of a resolved
@@ -450,8 +450,7 @@ time_integrator     = "ark"      # "ark" (default, ESDIRK2) | "rk45" (accuracy b
 dt_fast             = "900s"     # ACCURACY-limited (sec 5a). Warned above 900 s, the measured
                                  # range; canopy-air temperature is not the constraint. 300 s for
                                  # the timing of dry-season leaf habits.
-ark_rtol            = 1.0e-3     # adaptive schemes only
-rtol_all            = 0.0        # master relative-accuracy dial; 0 = per-group defaults
+rtol                = 1.0e-3     # relative accuracy of every group (adaptive schemes only)
 atol_scale          = 1.0        # scales every absolute tolerance -- needed, rtol alone saturates
 step_controller     = "i"        # "pi" damps step oscillation on stiff transients
 forcing_sample_frac = 0.5        # where in the sub-step the meteorology is sampled
@@ -464,7 +463,7 @@ numerics = true                  # the work + health counters; turn this on for 
 
 **Three traps worth naming.**
 
-- `rtol_all` alone saturates. Accuracy is judged against `atol + rtol·|y|`; once `atol` dominates,
+- `rtol` alone saturates. Accuracy is judged against `atol + rtol·|y|`; once `atol` dominates,
   tightening `rtol` changes nothing. Scale both. (And per §5, tolerance is rarely the binding lever —
   the freeze is.)
 - Any comparison across schemes must be made at a *stable* cadence, or it measures the instability
@@ -472,6 +471,15 @@ numerics = true                  # the work + health counters; turn this on for 
 - **A closed budget is not a healthy run.** With the conductances frozen (§2) every ledger closes to
   ~10⁻⁶ J while canopy-air temperature oscillates 8 K step to step. If you change `dt_fast`, look at a
   consecutive-step trace of `cas_temp_site` and at daily GPP, not just the residuals.
+
+**The process mask.** `[fast].mask.<store>` switches one prognostic store off, to attribute a
+column's behaviour to a process or to isolate its stiffest mode (everything off but `hydraulics`). A
+store switched off is held at its start-of-step state while its kernel still runs, so its couplings
+to the other stores act as constants and no consumer reads an unset flux. Two things follow. A
+reduced column costs as much as the full one, so its work counters do not measure a cheaper system.
+And it does not conserve, because a held store's fluxes still act on its neighbours, so the budget
+halts are off unless every store is on (`mask_is_full`). Every scheme applies the mask at its one
+state-commit point (`apply_process_mask`).
 
 ---
 
@@ -562,7 +570,7 @@ than a convergence proof.
 
 3. **The ARK's error norm carries structurally-zero terms.** Soil moisture and plant water mass are
    operator-split out of its tableau, so their contributions to the norm are exactly zero and only
-   dilute it — the ARK therefore runs slightly looser than its stated `ark_rtol`. Measured cost on a
+   dilute it — the ARK therefore runs slightly looser than its stated `rtol`. Measured cost on a
    summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. Bringing soil water into the ARK
    tableau would remove the dilution, at a cost (see `docs/ROADMAP.md`).
 4. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of

@@ -239,7 +239,9 @@ Resolution order — later wins:
 5. `meds_io_config.toml` — per-variable, the finest granularity
 
 **Groups** (9): `structure`, `carbon`, `water`, `energy`, `biogeochem`, `numerics` and `forcing` on
-by default; `radiation` and `ecophys` off. `forcing` is the atmospheric boundary the run used, after
+by default; `radiation` and `ecophys` off. `biogeochem` keeps the soil-carbon pools apart from
+`carbon`, so a run can report the vegetation's carbon without the seven soil pools, which stay 0 with
+`soil_carbon_on = false`. `forcing` is the atmospheric boundary the run used, after
 the reader's shortwave partition, rain/snow split and optional corrections: site means at the daily,
 monthly and yearly tiers (`air_temp_site`, `qair_site`, `psurf_site`, `wind_site`, `lwdown_site`,
 the four shortwave streams `par_beam_site` … `nir_diffuse_site`, `precip_site`, `snowfall_site`,

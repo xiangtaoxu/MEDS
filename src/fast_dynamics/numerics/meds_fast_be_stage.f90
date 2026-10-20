@@ -19,7 +19,7 @@
 module meds_fast_be_stage
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
-   use meds_config, only : INTEG_ARK, CTRL_L2_STRICT
+   use meds_fast_opts, only : INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : step_control_factor
    use meds_soil_types, only : energy_forcing_t, energy_flux_t, snow_melt_t
    use meds_patch_state_vars,   only : soil_energy_column_t

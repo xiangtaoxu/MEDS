@@ -94,12 +94,10 @@ wstress_sref_stomata = [0.4, 0.4, 0.4, 0.4]   # [1/MPa] Sabot et al. (2022) fitt
 stomata_psi_onset    = [0.0, 0.0, 0.0, 0.0]   # [MPa] stress below field capacity (Sabot et al. 2022), not 1/2 TLP
 
 #----- Other carbon traits (example 04). -----------------------------------------------------------
-huber_value            = [1.5e-4, 1.5e-4, 1.5e-4, 1.5e-4]
 storage_cushion        = [3.0, 3.0, 3.0, 3.0]   # [--] storage target, x (leaf + fine-root target): three full
                                                 #      flushes, enough reserve to re-flush
 growth_resp_factor     = [0.3, 0.3, 0.3, 0.3]
 fineroot_turnover_rate = [1.5, 1.5, 1.5, 1.5]  # [1/yr] the same for every PFT
-wood_carbon_density    = [300.0, 300.0, 300.0, 300.0]
 f_labile_leaf          = [0.70, 0.70, 0.70, 0.70]
 f_labile_stem          = [0.05, 0.05, 0.05, 0.05]
 struct_lignin_frac     = [0.25, 0.25, 0.25, 0.25]

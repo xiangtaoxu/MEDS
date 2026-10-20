@@ -30,7 +30,8 @@ module meds_fast_ark
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
-   use meds_config, only : meds_config_t, INTEG_ARK, CTRL_L2_STRICT
+   use meds_config, only : meds_config_t
+   use meds_fast_opts, only : INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : state_wrms_grouped, step_control_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_soil_types, only : snow_melt_t
@@ -348,7 +349,7 @@ contains
          if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)
          if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
          !----- The error-control bundle, built once per run by build_error_control (meds_fast_config):    !
-         !      every tolerance group's setting (or the [fast].rtol_all master dial), plus the             !
+         !      every tolerance group's setting ([fast].rtol, atol_scale and water_atol), plus the         !
          !      controller and its strictness (docs/science/numerical_scheme.md eqs. (3)-(4)). ------------!
          ec = col_config%integrator%error_control
          call adaptive_ark_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, ws, nsteps, nrej,         &
@@ -380,7 +381,7 @@ contains
       y_out%w_surface      = frozen%hydrology%w_surface1
       y_out%w_surface_energy = frozen%hydrology%w_surface_energy1     ! paired with the mass
 
-      !----- PROCESS MASK (process_mask_t, meds_fast_types). The mask must mean the same thing under     !
+      !----- PROCESS MASK (process_mask_t, meds_fast_opts). The mask must mean the same thing under     !
       !      every scheme, so it is applied at the ARK's single state-commit point: a masked-off         !
       !      component is restored to state^n (y), leaving the ODE one dimension smaller while its       !
       !      couplings still acted during the march. mask%veg_energy is applied below, where the         !

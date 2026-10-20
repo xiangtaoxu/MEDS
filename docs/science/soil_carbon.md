@@ -288,6 +288,18 @@ See `docs/ROADMAP.md` for where these stand.
 | `rh_q10`, `rh_t_ref`, `resp_temp_increase`, `resp_temp_ref`, `resp_opt_water`, `resp_water_{below,above}_opt` | the $\xi$ responses, eqs. (3)–(4) |
 | `spinup_steady`, `spinup_xi`, `spinup_{labile,struct}_*` | SASU cold start, §8 |
 
+The defaults are the `"ed2"` scheme's. `decomp_scheme = "century5"` changes the topology and the
+temperature form but not the rates, so set them with it. Its reference values (ED2's scheme 5) are
+`k_fast` 12.0, `k_struct` 1.5, `k_micr` 6.0, `k_slow` 0.15 and `k_pass` 0.012 yr⁻¹; `er_fast` 0.55,
+`er_struct_nonlig` 0.50, `er_struct_lig` 0.20, `er_slow` 0.55 and `er_pass` 0.55; `er_micr_int` 0.60
+and `er_micr_slp` 0.17.
+
+**`soil_carbon_on = false` is no soil carbon, not a coarser one.** Litter is discarded at the slow
+step and heterotrophic respiration is zero, so ecosystem respiration carries only its autotrophic
+part. Over a year at Ithaca, annual-mean NEE then reads −4.657 µmol m⁻² s⁻¹ against −2.464 with soil
+carbon on, an 89 % stronger apparent sink (Rh 0 against 0.833 kgC m⁻² yr⁻¹), for no saving in wall
+clock.
+
 The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`, `f_labile_stem`,
 `aboveground_frac`, `struct_lignin_frac`.
 

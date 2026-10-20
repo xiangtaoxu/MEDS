@@ -5,7 +5,7 @@
 ! it into a per-(variable,tier) running reduction (integrate_scalar / integrate_slab), close a       !
 ! period (normalize_*), and re-seed for the next (reset_buffer).                                      !
 !                                                                                          !
-! Links meds_output_types + meds_output_config + the demographic state/reductions ONLY -- no C        !
+! Links meds_output_types + meds_output_opts + the demographic state/reductions ONLY -- no C          !
 ! bindings, so the stepper edge that calls these pulls no netCDF (src/README.md, The library graph).  !
 !                                                                                          !
 ! NO CHAINING: each ACTIVE tier integrates raw state independently every step; there is NO inter-tier  !
@@ -16,7 +16,7 @@
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
    use meds_time,           only : meds_time_t
-   use meds_output_config,  only : N_FREQ
+   use meds_output_opts,    only : N_FREQ
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,   &
                                    diag_params_t, pending_record_t, record_queue_t,                &
                                    slab_col,                                                     &
@@ -28,8 +28,8 @@ module meds_output_integrate
                                        patch_diag_slow_row, polygon_diag_value, N_SI_ROWS, site_diag_value
    use meds_state_defaults,     only : is_unset_positive
    use meds_constants,     only : n_soil_layer_max
-   use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
-                                       soil_matric_potential
+   use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness
+   use meds_soil_hydr_lib,      only : soil_matric_potential
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,             &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,               &
                                        reduce_patch_to_site, reduce_patch_columns_to_sites,       &

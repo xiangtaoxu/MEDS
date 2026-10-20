@@ -11,7 +11,7 @@ module meds_met_archive_source
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, seconds_into_day,    &
                          time_to_string
-   use meds_forcing_config, only : MET_PATH_LEN, ARCHIVE_DT_SEC, SWPART_PASSTHROUGH
+   use meds_forcing_opts, only : MET_PATH_LEN, ARCHIVE_DT_SEC, SWPART_PASSTHROUGH
    use meds_forcing_types, only : met_record_t, met_source_t, met_cursor_t, met_cells_t,          &
                                   HUMIDITY_TDEW
    use meds_era5land_reader, only : era5land_path, era5land_default_template,                     &
@@ -152,14 +152,14 @@ contains
       if (present(cells)) then
          src%cells = cells
       else
-         call era5land_select_site(src%static_file, f%latitude_deg, f%longitude_deg, f%max_distance_km, &
+         call era5land_select_site(src%static_file, f%latitude, f%longitude, f%max_distance_km, &
                                    src%cells, distance_km, est)
       end if
       if (est /= ERA_OK) then
          select case (est)
          case (ERA_ERR_NO_CELL)
             write(*,'(a,f0.1,a,f0.4,a,f0.4,a)') ' met_open: no valid ERA5-Land cell within ',          &
-                  f%max_distance_km, ' km of the site (', f%latitude_deg, ', ', f%longitude_deg, ')'
+                  f%max_distance_km, ' km of the site (', f%latitude, ', ', f%longitude, ')'
          case (ERA_ERR_OPEN)
             write(*,'(2a)') ' met_open: cannot open the ED_ERA5land static file ', trim(src%static_file)
          case default

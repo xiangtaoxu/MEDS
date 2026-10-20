@@ -16,7 +16,7 @@ fast_biophysics_on  = true
 dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
-ark_rtol            = 1.0e-3
+rtol                = 1.0e-3
 
 [demography]
 demography_on             = true
@@ -38,10 +38,7 @@ n_patch_fusion_iter       = 6
 patch_light_tol           = 0.10
 patch_light_tol_max       = 0.15
 patch_light_maxdev_factor = 1.5
-patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
-patch_min_area_remain     = 0.99
-enable_patch_fission      = false
 conservation_tol          = 0.001
 growth_memory_days        = 90.0
 
@@ -55,7 +52,6 @@ min_recruit_size = 1.0e-2
 [init]
 init_mode    = 2
 restart_file = "spinup-S-20740701000000.nc"
-census_file  = "none"
 pft_config   = "pft_parameters.toml"
 
 [state]
@@ -89,9 +85,6 @@ file_chunk = "year"
 [output.annual]
 enabled    = false
 file_chunk = "run"
-
-[carbon]
-gpp_ref       = 0.3
 
 [leaf_physiology]
 stomatal_model     = "medlyn"

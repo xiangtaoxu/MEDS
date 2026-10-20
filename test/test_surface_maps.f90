@@ -28,8 +28,7 @@ program test_surface_maps
    use meds_surface_maps,          only : map_values_at_cells, map_layers_at_cells, apply_cell_mask,  &
                                           MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
                                           map_inputs_t, read_map_inputs, apply_map_inputs
-   use meds_config,                only : meds_config_t
-   use meds_pft_params,            only : alloc_pft_table
+   use meds_config,                only : meds_config_t, alloc_pft_table
    use meds_maps_opts,          only : maps_opts_t
    use meds_soil_hydr_lib,         only : soil_texture_t, soil_texture_to_hydraulics
    use meds_therm_lib,             only : soil_texture_to_thermal
@@ -196,7 +195,7 @@ program test_surface_maps
                       .and. close(sc%layer_ksat(2), ks))
    end associate
    call check_true('a leaky bottom drains at its cell''s f_leak', bc_class_at(1_ik, 0_ik) == 2_ik .and. &
-                   cfg%soil%bottom_bc == SOIL_BC_DRAIN .and. cfg%soil%drain_factor == f_leak_at(1_ik, 0_ik) &
+                   cfg%soil%water_bottom_bc == SOIL_BC_DRAIN .and. cfg%soil%drain_factor == f_leak_at(1_ik, 0_ik) &
                    .and. f_leak_at(1_ik, 0_ik) < 1.0_wp)
    call check_true('the thermal anchor: the map''s temperature, d/sqrt(2) below the bottom node',          &
                    close(cfg%energy%deep_temp, deep_temp_at(1_ik, 0_ik)) .and.                            &
@@ -218,18 +217,18 @@ program test_surface_maps
                    cfg2%soil_column%n_layer_values == 8_ik .and. close(cfg2%soil_column%layer_theta_sat(8), ts) &
                    .and. close(cfg2%soil_column%layer_curve_par_n(8), vn))
    call check_true('a free-draining bottom drains at f = 1', bc_class_at(3_ik, 17_ik) == 1_ik .and.     &
-                   cfg2%soil%bottom_bc == SOIL_BC_DRAIN .and. cfg2%soil%drain_factor == 1.0_wp)
+                   cfg2%soil%water_bottom_bc == SOIL_BC_DRAIN .and. cfg2%soil%drain_factor == 1.0_wp)
    do k = 1_ik, cells%ncell
       if (bc_class_at(cells%row(k), cells%col(k)) == 3_ik) exit
    end do
    call apply_map_inputs(inp, k, cfg2)
    call check_true('a sealed bottom drains at f = 0, as bedrock',                                       &
-                   cfg2%soil%bottom_bc == SOIL_BC_DRAIN .and. cfg2%soil%drain_factor == 0.0_wp)
+                   cfg2%soil%water_bottom_bc == SOIL_BC_DRAIN .and. cfg2%soil%drain_factor == 0.0_wp)
    do k = 1_ik, cells%ncell
       if (bc_class_at(cells%row(k), cells%col(k)) == 4_ik) exit
    end do
    call apply_map_inputs(inp, k, cfg2)
-   call check_true('an aquifer bottom is an aquifer', cfg2%soil%bottom_bc == SOIL_BC_AQUIFER)
+   call check_true('an aquifer bottom is an aquifer', cfg2%soil%water_bottom_bc == SOIL_BC_AQUIFER)
 
    !----- A leaky base's factor must be a fraction of free drainage: f_leak = 0 is refused, naming   !
    !      the cell. ------------------------------------------------------------------------------------!

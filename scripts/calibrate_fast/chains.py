@@ -33,7 +33,7 @@ def run_chain(window, lead_days: int, base, keys, values, root: Path, workers, r
     cfg = with_keys(base, keys, values, overrides)
     threads = threads_for(lead_days, max_threads)
     for k, v in {"run.start_time": stamp(start), "run.end_time": stamp(window.start), "run.slow_on": False,
-                 "run.n_threads": threads, "init.init_mode": 1, "init.restart_file": "none",
+                 "run.n_threads": threads, "init.init_mode": 1,
                  "state.write_state": True, "state.output_dir": str(cdir / "out"),
                  "state.output_prefix": PREFIX, "state.interval_years": 1000,
                  "output.enabled": False}.items():

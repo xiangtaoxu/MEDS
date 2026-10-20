@@ -20,8 +20,7 @@ module meds_patch_state_vars
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, expand_patch_diag, reorder_patch_diag
    use meds_state_defaults,   only : UNSET_POSITIVE, is_unset_positive, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
-   use meds_config,           only : meds_config_t, DIST_PRIMARY
-   use meds_soil_column_config, only : top_soil_psi
+   use meds_config,           only : meds_config_t, top_soil_psi
    use meds_site_state_vars,    only : site_surface_t
    implicit none
    private
@@ -32,6 +31,11 @@ module meds_patch_state_vars
    public :: blend_xi_accum, blend_litter_input
    public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block
    public :: patch_physical_state
+   public :: DIST_PRIMARY, DIST_TREEFALL
+
+   !----- A patch's disturbance class (patch_block%dist_type). ------------------------------------!
+   integer(ik), parameter :: DIST_PRIMARY  = 1_ik   !< undisturbed / primary stand
+   integer(ik), parameter :: DIST_TREEFALL = 2_ik   !< treefall-gap (age-0) patch
 
    !----- The canopy air: three prognostic twins, and the depth that sizes the box         !
    !      (docs/science/canopy_air_space_biophysics.md). ----------------------------------!
@@ -526,7 +530,7 @@ contains
          temp = cas%can_temp
          psi  = top_soil_psi(surf%soil, soil_water%theta(1))
       else
-         temp = cfg%init_soil_temp
+         temp = cfg%init%soil_temp
          psi  = top_soil_psi(surf%soil, surf%theta_start(1))
       end if
    end subroutine patch_physical_state

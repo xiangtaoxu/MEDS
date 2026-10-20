@@ -28,8 +28,9 @@ module meds_region
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : day_sec, yr_day
    use meds_numerics,               only : ascending_order
-   use meds_config,                 only : meds_config_t, validate_config, INIT_CENSUS, INIT_RESTART,  &
+   use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART,                   &
                                            RUN_MODE_REGION, soil_maps_on, site_config
+   use meds_config_check,           only : validate_config
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
@@ -42,7 +43,7 @@ module meds_region
    use meds_init,                   only : init_bare_ground, init_bare_sites, seed_bare_ground,       &
                                            init_from_census, restructure_census_stand
    use meds_forcing_types,          only : met_source_t, met_cells_t
-   use meds_forcing_config,         only : MET_PATH_LEN, MET_BACKEND_ED_ERA5LAND
+   use meds_forcing_opts,           only : MET_PATH_LEN, MET_BACKEND_ED_ERA5LAND
    use meds_met_driver,             only : met_open, met_close, met_prefetch, MET_OK
    use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
                                            map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
@@ -137,7 +138,7 @@ contains
       call load_meds_config(trim(path), reg%cfg)
       if (reg%verbose) write(*,'(2a)') ' config: ', trim(path)
       associate (cfg => reg%cfg)
-      region = cfg%run_mode == RUN_MODE_REGION
+      region = cfg%mode == RUN_MODE_REGION
 
       if (region) then
          !----- A region steps each polygon on an OpenMP worker thread, whose stack is OMP_STACKSIZE   !
@@ -179,19 +180,19 @@ contains
       !      masked out. A one-polygon run also reads a state file without a polygon axis, as every   !
       !      site run wrote one before runs became regions. -----------------------------------------!
       allocate(slot(n), source=0_ik)
-      if (cfg%init_mode == INIT_RESTART) then
-         msg = state_file_refusal(trim(cfg%init_restart_file), n)
+      if (cfg%init%init_mode == INIT_RESTART) then
+         msg = state_file_refusal(trim(cfg%init%restart_file), n)
          if (len(msg) > 0) then
-            write(*,'(4a)') ' init  : restart (mode 2): the state file ', trim(cfg%init_restart_file), ' ', msg
+            write(*,'(4a)') ' init  : restart (mode 2): the state file ', trim(cfg%init%restart_file), ' ', msg
             return
          end if
-         call state_file_polygons(trim(cfg%init_restart_file), file_ids, found)
+         call state_file_polygons(trim(cfg%init%restart_file), file_ids, found)
          if (found) then
             do p = 1_ik, n
                slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
                if (slot(p) == 0_ik) then
                   write(*,'(a,i0,3a)') ' init  : restart (mode 2): polygon ', ids(p), ' is not in the state file ', &
-                                       trim(cfg%init_restart_file), ', which must hold every polygon of the run'
+                                       trim(cfg%init%restart_file), ', which must hold every polygon of the run'
                   return
                end if
             end do
@@ -209,7 +210,7 @@ contains
          end if
          if (st /= MET_OK) return
          if (reg%verbose) then
-            if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
+            if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
                write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(cfg%forcing%data_path), ')'
             else
                write(*,'(3a)') ' force : met forcing ON (', trim(cfg%forcing%path), ')'
@@ -236,37 +237,37 @@ contains
             !----- Its sites: [[sites]]'s, each with its configuration and share, or one site. ----------!
             if (allocated(site_cfg)) deallocate(site_cfg, site_area)
             if (allocated(pcfg%sites)) call polygon_sites(pcfg, site_cfg, site_area)
-            select case (cfg%init_mode)
+            select case (cfg%init%init_mode)
             case (INIT_RESTART)
                if (slot(p) > 0_ik) then
-                  call io_read_state(poly, pcfg, trim(cfg%init_restart_file), restart_time, found,      &
+                  call io_read_state(poly, pcfg, trim(cfg%init%restart_file), restart_time, found,      &
                                      fast_found=fast_found, polygon=slot(p), site_cfg=site_cfg)
                else
-                  call io_read_state(poly, pcfg, trim(cfg%init_restart_file), restart_time, found,      &
+                  call io_read_state(poly, pcfg, trim(cfg%init%restart_file), restart_time, found,      &
                                      fast_found=fast_found, site_cfg=site_cfg)
                end if
                if (.not. found) then
                   write(*,'(5a)') ' init  : restart (mode 2): cannot read ', trim(polygon_name(run)),      &
-                                  ' from the state file ', trim(cfg%init_restart_file)
+                                  ' from the state file ', trim(cfg%init%restart_file)
                   return
                end if
                reg%now = restart_time
                if (reg%verbose .and. n == 1_ik) call report_restart(cfg, reg%now, fast_found, poly%restructure_pending)
             case (INIT_CENSUS)
                if (allocated(site_cfg)) then
-                  call init_from_census(poly, pcfg, trim(cfg%init_census_file), found, why=msg,            &
+                  call init_from_census(poly, pcfg, trim(cfg%init%census_file), found, why=msg,            &
                                         site_ids=pcfg%sites%census_site_id, site_cfg=site_cfg,           &
                                         site_area=site_area)
                else
-                  call init_from_census(poly, pcfg, trim(cfg%init_census_file), found, why=msg)
+                  call init_from_census(poly, pcfg, trim(cfg%init%census_file), found, why=msg)
                end if
                if (.not. found) then
-                  write(*,'(4a)') ' init  : census (mode 1): the census file ', trim(cfg%init_census_file), &
+                  write(*,'(4a)') ' init  : census (mode 1): the census file ', trim(cfg%init%census_file), &
                                   ' ', msg
                   return
                end if
                if (reg%verbose) then
-                  write(*,'(2a)') ' init  : census (mode 1) ', trim(cfg%init_census_file)
+                  write(*,'(2a)') ' init  : census (mode 1) ', trim(cfg%init%census_file)
                   write(*,'(a,i0,a,i0,a)') '         read ', poly%patch%n, ' patches, ',                &
                                            poly%cohort%n, ' cohorts'
                end if
@@ -298,11 +299,11 @@ contains
             !      already read the plastic traits from file, unless [init].reacclimate_traits asks    !
             !      for this run's PFT file instead (a calibration trial that restarts from a shared    !
             !      state with changed traits).                                                           !
-            if (pcfg%trait_plasticity_on .and. cfg%init_mode == INIT_CENSUS) then
+            if (pcfg%trait_plasticity_on .and. cfg%init%init_mode == INIT_CENSUS) then
                call update_overtopping_lai(poly)
                call advance_plant_traits(poly, pcfg, pcfg%dt_years, instantaneous=.true.)
             end if
-            if (pcfg%init_reacclimate_traits .and. cfg%init_mode == INIT_RESTART) then
+            if (pcfg%init%reacclimate_traits .and. cfg%init%init_mode == INIT_RESTART) then
                call reacclimate_plant_traits(poly, pcfg)
                if (reg%verbose .and. n == 1_ik)                                                       &
                   write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
@@ -311,7 +312,7 @@ contains
             !----- The fast context and reservoirs, the forcing cursor, snow, soil-carbon spin-up. One  !
             !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
             call polygon_prepare(cfg, reg%met_src, poly, run, keep_fast_state=fast_found,              &
-                                 keep_soil_carbon=cfg%init_mode == INIT_RESTART,                     &
+                                 keep_soil_carbon=cfg%init%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)
          end associate
@@ -330,9 +331,9 @@ contains
       end if
 
       !----- The STATE stream and the run's PFT provenance table. ------------------------------------!
-      if (cfg%state_write_state) then
-         call ensure_output_dir(trim(cfg%state_output_dir))
-         call write_pft_params_csv(cfg, trim(cfg%state_output_dir)//'/'//trim(cfg%state_output_prefix)// &
+      if (cfg%state%write_state) then
+         call ensure_output_dir(trim(cfg%state%output_dir))
+         call write_pft_params_csv(cfg, trim(cfg%state%output_dir)//'/'//trim(cfg%state%output_prefix)// &
                                    '_pft_parameters.csv')
       end if
 
@@ -354,8 +355,8 @@ contains
       !      never read. ---------------------------------------------------------------------------------!
       if (cfg%output%enabled)                                                                      &
          call toml_write_record(trim(cfg%output%dir)//'/'//trim(cfg%output%prefix)//'_parameters.csv')
-      if (cfg%state_write_state)                                                                   &
-         call toml_write_record(trim(cfg%state_output_dir)//'/'//trim(cfg%state_output_prefix)//        &
+      if (cfg%state%write_state)                                                                   &
+         call toml_write_record(trim(cfg%state%output_dir)//'/'//trim(cfg%state%output_prefix)//        &
                                 '_parameters.csv')
 
       if (reg%verbose .and. n == 1_ik) then
@@ -390,9 +391,9 @@ contains
       if (.not. allocated(pcfg%sites)) return
       do is = 1_ik, poly%site%n
          associate (spec => pcfg%sites(is), surf => poly%site%surface(is))
-            if (spec%has_elevation) surf%elevation_m = spec%elevation_m
-            surf%slope_deg  = spec%slope_deg
-            surf%aspect_deg = spec%aspect_deg
+            if (spec%has_elevation) surf%elevation_m = spec%elevation
+            surf%slope_deg  = spec%slope
+            surf%aspect_deg = spec%aspect
          end associate
       end do
    end subroutine set_site_terrain
@@ -442,9 +443,9 @@ contains
       type(met_cells_t),   intent(out) :: cells
       cells%ncell = 1_ik
       allocate(cells%row(1), cells%col(1), source=0_ik)
-      allocate(cells%lat(1), source=cfg%forcing%latitude_deg)
-      allocate(cells%lon(1), source=cfg%forcing%longitude_deg)
-      allocate(cells%elevation(1), source=cfg%forcing%elevation_m)
+      allocate(cells%lat(1), source=cfg%forcing%latitude)
+      allocate(cells%lon(1), source=cfg%forcing%longitude)
+      allocate(cells%elevation(1), source=cfg%forcing%elevation)
       if (met_src%cells%ncell == 1_ik) then
          cells%nlat = met_src%cells%nlat
          cells%nlon = met_src%cells%nlon
@@ -469,7 +470,7 @@ contains
       type(meds_config_t), intent(in) :: cfg
       type(meds_time_t),   intent(in) :: now
       logical,             intent(in) :: fast_found, pending
-      write(*,'(4a)') ' init  : restart (mode 2) ', trim(cfg%init_restart_file), ' @ ', time_to_string(now)
+      write(*,'(4a)') ' init  : restart (mode 2) ', trim(cfg%init%restart_file), ' @ ', time_to_string(now)
       if (fast_found) then
          write(*,'(a)') '         (CAS/soil/snow fast reservoirs restored -- exact restart)'
       else
@@ -629,7 +630,7 @@ contains
       !      run's last step, and at a year's end every interval_years the state file. -----------------!
       if (cfg%output%enabled .and. (new_month(nstep) .or. status /= DRIVER_OK .or. region_done(reg)))  &
          call output_serialize(reg%out_files, reg%out_bufs)
-      if (new_year(nstep) .and. cfg%state_write_state .and. mod(reg%iyear, cfg%state_interval_years_cfg) == 0_ik) &
+      if (new_year(nstep) .and. cfg%state%write_state .and. mod(reg%iyear, cfg%state%interval_years) == 0_ik) &
          call region_write_state(reg)
       end associate
    end subroutine step_polygons
@@ -655,7 +656,7 @@ contains
          n_patch  = max(n_patch, reg%poly(p)%patch%n)
          n_site   = max(n_site, reg%poly(p)%site%n)
       end do
-      call state_file_open(sf, trim(reg%cfg%state_output_dir), trim(reg%cfg%state_output_prefix), reg%now, &
+      call state_file_open(sf, trim(reg%cfg%state%output_dir), trim(reg%cfg%state%output_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
                            n_patch, n_site, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,              &
                            restructure_pending=reg%poly(1)%restructure_pending,                            &
@@ -707,7 +708,7 @@ contains
       n_bad = 0_ik
       failed = any(reg%run(:)%status /= DRIVER_OK)
       !----- The true terminal state, so a restart resumes exactly here. -----------------------------!
-      if (reg%cfg%state_write_state .and. .not. failed) call region_write_state(reg)
+      if (reg%cfg%state%write_state .and. .not. failed) call region_write_state(reg)
       if (size(reg%poly) == 1) then
          associate (poly => reg%poly(1), run => reg%run(1))
             if (reg%verbose) call print_summary(poly, 'final')
