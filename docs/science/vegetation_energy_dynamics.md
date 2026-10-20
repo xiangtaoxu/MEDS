@@ -236,9 +236,10 @@ T = \frac{E + W\,c_{liq}\,T_{sc}}{D + W\,c_{liq}} \qquad(10)
 ```
 
 with $D$ the dry heat capacity and $W$ the water of eq. (8), per plant, and $`T_{sc}`$
-`tsupercool_liq`; $`dE/dT`$ at fixed water is eq. (8)'s capacity (`tissue_temp_to_energy`, `tissue_energy_to_temp`). The
-water stays liquid at any temperature: a live tissue is taken not to freeze, so a tissue below 0 °C is
-supercooled liquid. Water that comes or goes at the tissue's temperature carries
+`tsupercool_liq`; $`dE/dT`$ at fixed water is eq. (8)'s capacity (`tissue_temp_to_energy`,
+`tissue_energy_to_temp`). The water stays liquid at any temperature: a live tissue is taken not to
+freeze, so a tissue below 0 °C is supercooled liquid. Water that comes or goes at the tissue's
+temperature carries
 $`u_{liq}(T)=c_{liq}(T-T_{sc})`$ with it, which leaves the temperature where it was.
 
 **In the fast step.** The kernel relaxes each tissue in temperature, at the heat capacity held over the

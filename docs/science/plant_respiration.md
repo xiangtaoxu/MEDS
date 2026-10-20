@@ -126,9 +126,9 @@ PFT file is written**, never at runtime.
 Leaf $R_d$ reaches these functions through the dispatcher `temp_response(form, …)`, so its form follows the
 run's configured selection; stem and root call `peaked_arrhenius_scale` directly and are always peaked.
 Both routes end in the same code, and that is the point: the temperature response (`meds_therm_lib`) sits
-in the shared library at the root of the dependency DAG precisely so leaf, stem and root cannot drift into three near-copies of an
-Arrhenius — a change to the deactivation normalisation or to the clamped `safe_exp` reaches every tissue at
-once. $`E_a, H_d, \Delta S`$ live separately on `wood_params_t` and `root_params_t`, defaulted to the leaf
+in the shared library at the root of the dependency DAG precisely so leaf, stem and root cannot drift
+into three near-copies of an Arrhenius — a change to the deactivation normalisation or to the clamped
+`safe_exp` reaches every tissue at once. $`E_a, H_d, \Delta S`$ live separately on `wood_params_t` and `root_params_t`, defaulted to the leaf
 $R_d$ values (46390 / 200000 / 490), so the three tissues share one thermal shape but may diverge.
 
 ## 5. Growth respiration on realized growth

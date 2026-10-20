@@ -27,7 +27,8 @@ tissue state is its leaf and wood energy, with its temperatures derived from the
 sheds takes its enthalpy to the ground (#457). `meds_constants` is grouped by kind, and every name in it
 is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear solvers are one module,
 `meds_linear_algebra` (#458). Each PFT has its own size allometry, and reproduces from its own height
-(#459).
+(#459). `src/shared/functions` holds one library per domain, its conversions are named
+`<input>_to_<output>`, and the Newton solvers share their step safeguards (#460).
 
 **Upgrading from v0.3.5:**
 - **The PFT file's size allometry is per PFT** (#459). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
@@ -126,8 +127,60 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   Removed. `HYDRO_TABLE_NTAB`, `HYDRO_TABLE_RMAX`, `UPTAKE_RAMP_WIDTH`, `TRANSP_CLOSE_WIDTH`
   (`meds_hydr_lib`), `leaf_class_angle` (`meds_optics_lib`) and `pv_rwc_tlp` (`meds_water_retention`)
   are private to their modules.
+- **Fortran code that uses `src/shared/functions` uses its new modules** (#460):
+  - `meds_hydr_lib`, and the tissue half of `meds_water_retention`, are `meds_plant_hydr_lib`;
+  - the soil and pond half of `meds_water_retention`, and `meds_pedotransfer`, are
+    `meds_soil_hydr_lib`;
+  - `meds_temp_response` is part of `meds_therm_lib`, as is `soil_thermal_from_texture`;
+  - `meds_allometry` is `meds_allometry_lib`;
+  - `smooth_max0` is in `meds_numerics`.
+- **Fortran code that calls a renamed routine uses its new name** (#460). Conversions are named
+  `<input>_to_<output>`, and the pressure-volume routines carry `tissue_`:
+
+  | old | new |
+  |---|---|
+  | `psi_from_rwc`, `rwc_from_psi` | `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
+  | `water_content`, `psi_from_water_content` | `tissue_psi_to_water`, `tissue_water_to_psi` |
+  | `tissue_rwc_from_water`, `tissue_unknown_from_rwc` | `tissue_water_to_rwc`, `tissue_rwc_to_unknown` |
+  | `pv_psi_tlp`, `capacitance`, `shared_potential`, `clamp_water_to_capacity` | `tissue_psi_tlp`, `tissue_capacitance`, `tissue_shared_potential`, `tissue_capped_water` |
+  | `wood_kmax_from_density` | `wood_density_to_kmax` |
+  | `soil_theta_from_psi`, `soil_psi_from_theta` | `soil_head_to_theta`, `soil_theta_to_head` (the head is in metres) |
+  | `soil_unknown_from_theta`, `pond_head_from_water` | `soil_theta_to_unknown`, `pond_water_to_head` |
+  | `soil_hydraulics_from_texture` | `soil_texture_to_hydraulics` |
+  | `soil_layer_curve_t%psi_switch` | `soil_layer_curve_t%head_switch` |
+  | `cas_enthalpy_of_temp`, `cas_temp_of_enthalpy` | `cas_temp_to_enthalpy`, `cas_enthalpy_to_temp` |
+  | `temp_of_liquid_enthalpy` | `liquid_energy_to_temp` |
+  | `tissue_energy`, `tissue_temp` | `tissue_temp_to_energy`, `tissue_energy_to_temp` |
+  | `soil_thermal_cond`, `soil_heat_cap_vol` | `soil_thermal_conductivity`, `soil_volumetric_heat_capacity` |
+  | `size2leaf_carbon`, `size2wood_carbon` | `size_to_leaf_carbon`, `size_to_wood_carbon` |
+  | `beta_params_from_mean` | `moments_to_beta_params` |
+  | `time_from_string` | `string_to_time` |
+- **`soil_thermal_from_texture` is `soil_texture_to_thermal(sand, clay, theta_sat, ...)`** (#460): it
+  takes the sand and clay shares [%] in place of the soil texture record.
+- **`flux_potential` and `flux_potential_lin` are private** (#460): call
+  `kirchhoff_potential(psi, psi50, kexp, table)`, the potential the sapflow uses, which is psi above
+  zero potential.
+- **Ten constants of `src/shared/functions` are spelled in lower case** (#460), since other modules use
+  them: `soil_retention_vg`, `soil_retention_campbell`, `vg_pore_connectivity`,
+  `soil_specific_storage`, `pond_depression_depth`, `tresp_arrhenius`, `tresp_peaked`, `height_power`,
+  `height_chave` and `n_leaf_class`. Fortran ignores case, so the old spellings still compile.
 
 ### Changed
+
+- **`src/shared/functions` holds one library per domain** (#460): `meds_plant_hydr_lib` (a tissue's
+  pressure-volume curve and solver relations, the vulnerability curve and Kirchhoff potential, the
+  xylem, roots and leaves), `meds_soil_hydr_lib` (the pedotransfer function, the retention curve and
+  its solver relations, the pond), `meds_therm_lib` (the energy datum, moist air, plant tissue heat,
+  soil heat and the temperature response of enzyme rates), `meds_allometry_lib` and
+  `meds_optics_lib`. Each is ordered in sections, with a banner per section. Conversions are named
+  `<input>_to_<output>`, as the allometry's are, and constants follow one rule: UPPER case where only
+  their module uses them, lower case where other modules do.
+- **The Newton solvers share their step safeguards** (#460): `meds_numerics` holds `smooth_max0`,
+  `sufficient_decrease` (the Armijo test of a damped step, used by the soil-plant water solver and the
+  fast backward-Euler stage) and `fraction_to_boundary` (the step share that keeps a positive unknown
+  positive). Under gfortran every output is unchanged bit for bit. Under ifx's optimised build the
+  ledger residuals `resid_energy_site` and `resid_water_site` move at round-off (at most
+  7.5×10⁻¹¹ J m⁻² and 2.1×10⁻¹⁷ kg m⁻²); every other output is unchanged.
 
 - **Each PFT has its own size allometry** (#459). A PFT's record, `pft%allom(pf)` (`meds_allometry`),
   holds its height curve and cap, its gMM and log-quadratic coefficients (the latter default to Chave
@@ -364,6 +417,9 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 
 ### Removed
 
+- **The general-exponent Kirchhoff quadrature** (#460), `kirchhoff_integral` and its panel width
+  `KIRCH_PANEL`: the sapflow reads the PFT's table for every vulnerability exponent other than 1 and 2,
+  so only the tests called it. They check the table against their own Simpson reference.
 - **`pft.dbh_critical`** (#459), which only the C API's empirical growth read, as a cap on the diameter.
 - **The gMM height curve** (#459), `HEIGHT_GMM` with its coefficients and the Newton inverse of its
   biomass law.
