@@ -27,7 +27,7 @@ program test_c_api_leaf
                                  meds_rubisco_kinetics
    use meds_plant_types, only : PATH_C3
    use meds_leaf_opts,    only : SM_MEDLYN, COLIM_QUADRATIC
-   use meds_temp_response, only : TRESP_PEAKED
+   use meds_therm_lib,     only : temp_response_peaked
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -43,7 +43,7 @@ program test_c_api_leaf
 
    !=== 1. The shim solves at all -- i.e. to_env/to_params bound every component. ===========!
    env = make_env(0.0_c_double)
-   call meds_leaf_solve(env, p, int(SM_MEDLYN, c_int), int(TRESP_PEAKED, c_int),                 &
+   call meds_leaf_solve(env, p, int(SM_MEDLYN, c_int), int(temp_response_peaked, c_int),                 &
                         int(COLIM_QUADRATIC, c_int), 0_c_int, f0)
    call check(f0%converged /= 0_c_int, 'C-API solve converges on well-watered C3 defaults')
    call check(f0%A_net > 0.0_wp,  'C-API A_net > 0 in full light')
@@ -54,10 +54,10 @@ program test_c_api_leaf
    !      This is the ABI assertion a compile cannot make: if leaf_env_c's components were         !
    !      mis-bound, `psi` would land on some other field and gs would not respond.                !
    env = make_env(-1.0_c_double)
-   call meds_leaf_solve(env, p, int(SM_MEDLYN, c_int), int(TRESP_PEAKED, c_int),                 &
+   call meds_leaf_solve(env, p, int(SM_MEDLYN, c_int), int(temp_response_peaked, c_int),                 &
                         int(COLIM_QUADRATIC, c_int), 0_c_int, f1)
    env = make_env(-3.0_c_double)
-   call meds_leaf_solve(env, p, int(SM_MEDLYN, c_int), int(TRESP_PEAKED, c_int),                 &
+   call meds_leaf_solve(env, p, int(SM_MEDLYN, c_int), int(temp_response_peaked, c_int),                 &
                         int(COLIM_QUADRATIC, c_int), 0_c_int, f2)
    call check(f1%gs < f0%gs, 'C-API gs falls when psi drops 0 -> -1 MPa (beta_stomata is live)')
    call check(f2%gs < f1%gs, 'C-API gs falls further at psi = -3 MPa (monotone in psi)')
@@ -73,7 +73,7 @@ program test_c_api_leaf
 
    !=== 4. The boundary-layer switch is an int flag, not a logical -- assert it is honoured. =!
    env = make_env(0.0_c_double) ; env%gb = 0.5_c_double
-   call meds_leaf_solve(env, p, int(SM_MEDLYN, c_int), int(TRESP_PEAKED, c_int),                 &
+   call meds_leaf_solve(env, p, int(SM_MEDLYN, c_int), int(temp_response_peaked, c_int),                 &
                         int(COLIM_QUADRATIC, c_int), 1_c_int, fb)
    call check(fb%converged /= 0_c_int, 'C-API solve converges with the boundary layer ON')
    call check(fb%cs < 400.0_wp, 'C-API boundary layer draws cs below ca (flag reached the kernel)')

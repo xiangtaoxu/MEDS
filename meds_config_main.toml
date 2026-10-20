@@ -108,43 +108,6 @@ dt_fast             = "900s"   # fast biophysics timestep, an ACCURACY setting, 
 # mask.soil_water     = true         # soil water
 # mask.hydraulics     = true         # plant hydraulics
 
-[hydraulics]
-# Plant-hydraulics traits, consumed ONLY when [fast].fast_biophysics_on = true: pressure-volume curves
-# (Bartlett/Tyree-Hammel) per tissue, xylem vulnerability, the sapwood path and the roots
-# (docs/science/plant_hydraulics.md). Every key is OPTIONAL: it defaults to the value shown, so the
-# whole block may be omitted. Each is also a per-PFT trait: pft.<key> in the PFT file overrides it
-# for that PFT. wood_kexp = 1 or 2 keeps a closed form of the Kirchhoff integral (ln, atan); any
-# other value uses the lookup table build_hydro_table precomputes (plant_hydraulics.md eq. (8)).
-leaf_pi0       = -1.5      # [MPa]        leaf osmotic potential at full turgor (PV curve: eqs. (3)-(6))
-leaf_elastic_mod       = 12.0      # [MPa]        leaf bulk elastic modulus
-leaf_apoplast_frac        = 0.30      # [-]          leaf apoplastic fraction
-leaf_water_sat = 2.0       # [kg H2O/kgC] leaf saturated water content
-wood_pi0       = -1.0      # [MPa]        wood osmotic potential at full turgor
-wood_elastic_mod       = 8.0       # [MPa]        wood bulk elastic modulus
-wood_apoplast_frac        = 0.20      # [-]          wood apoplastic fraction
-wood_water_sat = 1.0       # [kg H2O/kgC] wood saturated water content
-wood_psi50     = -2.0      # [MPa,<0]     xylem potential at 50% loss of conductance (eq. (7))
-wood_kexp      = 2.0       # [-]          vulnerability shape (1 or 2: closed form; else lookup table)
-# ---- the plant's maximum internal conductance is its sapwood's, wood_kmax * sapwood area /
-#      (height * vessel_curl). wood_kmax is a PFT trait: by default exp(2.348 - 2.455 rho + 0.6186/2)
-#      [kg/m/s/MPa] from the PFT's wood density rho (Xu et al. 2016, tropical trees; ED2), which
-#      pft.wood_kmax overrides (plant_hydraulics.md eqs. (10)-(11)).
-vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
-# ---- roots, plant traits (pft.<key> overrides each per PFT). A cohort roots to root_depth_b1 *
-#      height^root_depth_b2 [m] (ED2's height allometry, IALLOM 1: 5 m at 35 m), capped at the soil
-#      column; its fine roots fall off within that depth as ED2's (1 - root_beta^(d/D)) / (1 - root_beta)
-#      above depth d. Its root length (fine-root carbon * specific_root_length) sets each layer's
-#      soil->root conductance, 2 pi K L / ln(r_half / fine_root_radius) (Gardner 1960)
-#      (plant_hydraulics.md eqs. (12)-(14)).
-root_beta            = 0.1        # [-]     share of the profile that would lie below the rooting depth (0,1)
-root_depth_b1        = 1.1140580  # [m]     rooting depth = b1 * height[m]^b2
-root_depth_b2        = 0.4223014  # [-]
-specific_root_length = 2.0e4      # [m/kgC] fine-root length per unit fine-root carbon: 10 m per g dry mass, the
-                                  #         tropical fine roots of Panama (Wurzburger & Wright 2015; Cordeiro et
-                                  #         al. 2024) and GRooT, times 2 g dry per g C. All fine-root carbon counts:
-                                  #         the 0-1 mm roots hold 92 % of the length.
-fine_root_radius     = 2.5e-4     # [m]     fine-root radius: tropical fine-root diameters are 0.4-0.6 mm
-
 [soil]
 # The ground: the soil column (its layers, hydraulic texture and thermal texture), its surface
 # (pond, dry surface layer, optics) and its two bottom boundaries, one for the water and one for
@@ -389,9 +352,6 @@ sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed 
   [output.annual]
   enabled = true
   file_chunk = "run"
-
-[options]
-override_derived = false   # if true, a [derived] block in the PFT file pins mort_gamma/alpha/beta
 
 [carbon]
 gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area, used when the fast loop is off

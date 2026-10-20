@@ -26,6 +26,13 @@ module meds_config_keys
 
    !----- Retired keys. Each is refused with what replaced it, so a config written against       !
    !      an older MEDS says what to change rather than only that something is wrong. -----------!
+   character(len=*), parameter :: HYDRO_MOVED = 'the plant hydraulics are PFT traits: moved to the '// &
+      'PFT file''s [hydraulics] block, one value for every PFT or one per PFT'
+   character(len=*), parameter :: CAMAC_MOVED = 'the mortality hazard''s parameters are PFT values: '//  &
+      'set pft.mort_gamma, pft.mort_alpha and pft.mort_beta (scripts/pft_traits computes them from '// &
+      'wood density, Camac et al. 2018)'
+   character(len=*), parameter :: DERIVED_MOVED = 'every PFT value is the PFT file''s: set '//           &
+      'pft.mort_gamma, mort_alpha, mort_beta and pft.kplastic_* directly (scripts/pft_traits)'
    character(len=*), parameter :: GROWTH_CURVE_GONE = 'growth is carbon-driven, by the NPP the '// &
                                                       'cohort allocates; the empirical growth curve is gone'
    character(len=*), parameter :: PHENO_SHARP = 'every phenology switch is sigma(s (x - x*)) with one '// &
@@ -99,21 +106,68 @@ module meds_config_keys
       retired_key_t('energy.atol', 'renamed fast.soil_energy_budget_atol'//GROUND),              &
       retired_key_t('energy.debug_error', 'moved to fast.debug_error'//GROUND),                  &
       retired_key_t('hydraulics.root_depth', 'each cohort roots to root_depth_b1 * height^'//     &
-                    'root_depth_b2, capped at the soil column: set [hydraulics].root_depth_b1 '// &
-                    'and root_depth_b2 (defaults 1.114 and 0.4223, ED2), or pft.root_depth_b1/b2'), &
+                    'root_depth_b2, capped at the soil column: set root_depth_b1 and '//         &
+                    'root_depth_b2 in the PFT file''s [hydraulics] block'),                      &
       retired_key_t('hydraulics.specific_root_area', 'the soil->root conductance takes root '//   &
-                    'length: set [hydraulics].specific_root_length [m/kgC] and fine_root_radius '// &
-                    '[m], or their pft.* values'),                                               &
+                    'length: set specific_root_length [m/kgC] and fine_root_radius [m] in the '// &
+                    'PFT file''s [hydraulics] block'),                                           &
       retired_key_t('hydraulics.k_plant_max', 'the plant''s conductance is its sapwood''s, '//      &
-                    'wood_kmax * sapwood area / (height * vessel_curl), with wood_kmax from the '// &
-                    'PFT''s wood density (Xu et al. 2016); set pft.wood_kmax to override it'),   &
+                    'wood_kmax * sapwood area / (height * vessel_curl): set wood_kmax in the '//  &
+                    'PFT file''s [hydraulics] block'),                                           &
       retired_key_t('pft.k_plant_max', 'the plant''s conductance is its sapwood''s, wood_kmax '//    &
-                    '* sapwood area / (height * vessel_curl): set pft.wood_kmax [kg/m/s/MPa], '// &
-                    'which defaults to the PFT''s wood density (Xu et al. 2016)'),             &
+                    '* sapwood area / (height * vessel_curl): set wood_kmax in the PFT file''s '// &
+                    '[hydraulics] block'),                                                       &
       retired_key_t('hydraulics.conductance', 'the sapwood (segment) conductance is the only '//   &
                     'form: wood_kmax * sapwood area / (height * vessel_curl)'),                  &
-      retired_key_t('hydraulics.wood_kmax', 'wood_kmax follows each PFT''s wood density (Xu et '// &
-                    'al. 2016: 3.3 kg/m/s/MPa at 0.6 g/cm3); set pft.wood_kmax to override it'), &
+      retired_key_t('hydraulics.leaf_pi0', HYDRO_MOVED),                                         &
+      retired_key_t('hydraulics.leaf_elastic_mod', HYDRO_MOVED),                                 &
+      retired_key_t('hydraulics.leaf_apoplast_frac', HYDRO_MOVED),                               &
+      retired_key_t('hydraulics.leaf_water_sat', HYDRO_MOVED),                                   &
+      retired_key_t('hydraulics.wood_pi0', HYDRO_MOVED),                                         &
+      retired_key_t('hydraulics.wood_elastic_mod', HYDRO_MOVED),                                 &
+      retired_key_t('hydraulics.wood_apoplast_frac', HYDRO_MOVED),                               &
+      retired_key_t('hydraulics.wood_water_sat', HYDRO_MOVED),                                   &
+      retired_key_t('hydraulics.wood_psi50', HYDRO_MOVED),                                       &
+      retired_key_t('hydraulics.wood_kexp', HYDRO_MOVED),                                        &
+      retired_key_t('hydraulics.wood_kmax', HYDRO_MOVED),                                        &
+      retired_key_t('hydraulics.vessel_curl', HYDRO_MOVED),                                      &
+      retired_key_t('hydraulics.root_beta', HYDRO_MOVED),                                        &
+      retired_key_t('hydraulics.root_depth_b1', HYDRO_MOVED),                                    &
+      retired_key_t('hydraulics.root_depth_b2', HYDRO_MOVED),                                    &
+      retired_key_t('hydraulics.specific_root_length', HYDRO_MOVED),                             &
+      retired_key_t('hydraulics.fine_root_radius', HYDRO_MOVED),                                 &
+      retired_key_t('pft.leaf_pi0', HYDRO_MOVED),                                                &
+      retired_key_t('pft.leaf_elastic_mod', HYDRO_MOVED),                                        &
+      retired_key_t('pft.leaf_apoplast_frac', HYDRO_MOVED),                                      &
+      retired_key_t('pft.leaf_water_sat', HYDRO_MOVED),                                          &
+      retired_key_t('pft.wood_pi0', HYDRO_MOVED),                                                &
+      retired_key_t('pft.wood_elastic_mod', HYDRO_MOVED),                                        &
+      retired_key_t('pft.wood_apoplast_frac', HYDRO_MOVED),                                      &
+      retired_key_t('pft.wood_water_sat', HYDRO_MOVED),                                          &
+      retired_key_t('pft.wood_psi50', HYDRO_MOVED),                                              &
+      retired_key_t('pft.wood_kexp', HYDRO_MOVED),                                               &
+      retired_key_t('pft.wood_kmax', HYDRO_MOVED),                                               &
+      retired_key_t('pft.vessel_curl', HYDRO_MOVED),                                             &
+      retired_key_t('pft.root_beta', HYDRO_MOVED),                                               &
+      retired_key_t('pft.root_depth_b1', HYDRO_MOVED),                                           &
+      retired_key_t('pft.root_depth_b2', HYDRO_MOVED),                                           &
+      retired_key_t('pft.specific_root_length', HYDRO_MOVED),                                    &
+      retired_key_t('pft.fine_root_radius', HYDRO_MOVED),                                        &
+      retired_key_t('camac.mort_rho_ref', CAMAC_MOVED),                                          &
+      retired_key_t('camac.mort_gamma_0', CAMAC_MOVED),                                          &
+      retired_key_t('camac.mort_gamma_exp', CAMAC_MOVED),                                        &
+      retired_key_t('camac.mort_alpha_0', CAMAC_MOVED),                                          &
+      retired_key_t('camac.mort_alpha_exp', CAMAC_MOVED),                                        &
+      retired_key_t('camac.mort_beta_0', CAMAC_MOVED),                                           &
+      retired_key_t('camac.mort_beta_exp', CAMAC_MOVED),                                         &
+      retired_key_t('options.override_derived', DERIVED_MOVED),                                  &
+      retired_key_t('derived.mort_gamma', 'moved to pft.mort_gamma'),                            &
+      retired_key_t('derived.mort_alpha', 'moved to pft.mort_alpha'),                            &
+      retired_key_t('derived.mort_beta', 'moved to pft.mort_beta'),                              &
+      retired_key_t('derived.kplastic_vcmax', 'moved to pft.kplastic_vcmax'),                    &
+      retired_key_t('derived.kplastic_rd', 'moved to pft.kplastic_rd'),                          &
+      retired_key_t('derived.kplastic_sla', 'moved to pft.kplastic_sla'),                        &
+      retired_key_t('derived.kplastic_leaf_turnover', 'moved to pft.kplastic_leaf_turnover'),    &
       retired_key_t('leaf_physiology.wstress_nonstomatal', 'the leaf-potential limb on '//      &
                     'Vcmax/Jmax/TPU is always on: it is the fast water-stress control, from the '// &
                     'turgor-loss point to twice it (pft.wstress_psi_open/_close override)'),     &
@@ -142,7 +196,7 @@ module meds_config_keys
                     'set pft.leaf_turnover_rate_toc [1/yr] = 1 / the lifespan [yr] (a 2-yr '//      &
                     'lifespan is 0.5)'),                                                         &
       retired_key_t('derived.kplastic_llspan', 'the leaf turnover rate is plastic in its place: '// &
-                    'set derived.kplastic_leaf_turnover = -kplastic_llspan (<= 0: rate = '//       &
+                    'set pft.kplastic_leaf_turnover = -kplastic_llspan (<= 0: rate = '//           &
                     'leaf_turnover_rate_toc * exp(k * LAI above), slower in shade)'),             &
       retired_key_t('trait_dynamics.fineroot_lifespan_plastic', 'renamed '//                  &
                     'trait_dynamics.fineroot_turnover_plastic: fine-root turnover x (the '//       &

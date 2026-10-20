@@ -31,8 +31,8 @@ program test_surface_maps
    use meds_config,                only : meds_config_t
    use meds_pft_params,            only : alloc_pft_table
    use meds_maps_opts,          only : maps_opts_t
-   use meds_pedotransfer,          only : soil_texture_t, soil_hydraulics_from_texture,               &
-                                          soil_thermal_from_texture
+   use meds_soil_hydr_lib,         only : soil_texture_t, soil_texture_to_hydraulics
+   use meds_therm_lib,             only : soil_texture_to_thermal
    use meds_biophysics_opts,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, annual_damping_depth
    implicit none
 
@@ -180,8 +180,8 @@ program test_surface_maps
    tex%cec = (0.4_wp*t5%cec + 0.1_wp*t6%cec) / 0.5_wp ; tex%ph = (0.4_wp*t5%ph + 0.1_wp*t6%ph) / 0.5_wp
    tex%bulk_density = (0.4_wp*t5%bulk_density + 0.1_wp*t6%bulk_density) / 0.5_wp
    tex%coarse_frag  = (0.4_wp*t5%coarse_frag + 0.1_wp*t6%coarse_frag) / 0.5_wp
-   call soil_hydraulics_from_texture(tex, ts, tr, al, vn, ks)
-   call soil_thermal_from_texture(tex, ts, kso, kd, cv)
+   call soil_texture_to_hydraulics(tex, ts, tr, al, vn, ks)
+   call soil_texture_to_thermal(tex%sand, tex%clay, ts, kso, kd, cv)
    associate (sc => cfg%soil_column)
       call check_true('the column ends at the map''s depth, on the default layers',                      &
                       close(sc%depth, soil_depth_at(1_ik, 0_ik)) .and. sc%n_layer_values == 5_ik)
@@ -191,7 +191,7 @@ program test_surface_maps
                       close(sc%layer_ksat(5), ks))
       call check_true('and its thermal properties from the same soil', close(sc%layer_solid_conductivity(5), kso) &
                       .and. close(sc%layer_dry_conductivity(5), kd) .and. close(sc%layer_dry_heat_capacity(5), cv))
-      call soil_hydraulics_from_texture(texture_at(2_ik, 1_ik, 0_ik), ts, tr, al, vn, ks)
+      call soil_texture_to_hydraulics(texture_at(2_ik, 1_ik, 0_ik), ts, tr, al, vn, ks)
       call check_true('a layer on one map layer takes that layer''s soil', close(sc%layer_theta_sat(2), ts) &
                       .and. close(sc%layer_ksat(2), ks))
    end associate
@@ -213,7 +213,7 @@ program test_surface_maps
    call check_true('the second box is read', len(msg) == 0 .and. k <= cells%ncell)
    call alloc_pft_table(cfg2%pft, 1_ik)
    call apply_map_inputs(inp, k, cfg2)
-   call soil_hydraulics_from_texture(texture_at(6_ik, 3_ik, 17_ik), ts, tr, al, vn, ks)
+   call soil_texture_to_hydraulics(texture_at(6_ik, 3_ik, 17_ik), ts, tr, al, vn, ks)
    call check_true('a layer below the maps'' 2 m takes the deepest map layer''s soil',                     &
                    cfg2%soil_column%n_layer_values == 8_ik .and. close(cfg2%soil_column%layer_theta_sat(8), ts) &
                    .and. close(cfg2%soil_column%layer_curve_par_n(8), vn))

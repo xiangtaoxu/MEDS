@@ -18,7 +18,8 @@ program test_fast_loop
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params, top_soil_psi
-   use meds_water_retention, only : SOIL_RETENTION_VG, water_content
+   use meds_soil_hydr_lib,   only : soil_retention_vg
+   use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
@@ -57,10 +58,10 @@ program test_fast_loop
 
    !----- Build the column config + reference met inside the fast context. -----------------!
    call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
+   call build_soil_hydr_params(nsl, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,            &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
-   call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
+   call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
    ctx%col_config%integrator = build_integrator_opts(cfg)
@@ -93,7 +94,7 @@ program test_fast_loop
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(poly%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
-   call check_close(mass0_leaf, water_content(top_soil_psi(ctx%col_config%soil, theta0_1),           &
+   call check_close(mass0_leaf, tissue_psi_to_water(top_soil_psi(ctx%col_config%soil, theta0_1),           &
                     ctx%col_config%hydraulics_table%pft(1)%leaf_curve, poly%cohort%leaf_carbon(1)),     &
                     1.0e-12_wp, 'a cohort starts with its leaf water at its patch''s top-soil potential')
    !----- To round-off: the temperatures are what the energies the cohort was born with give. ------!

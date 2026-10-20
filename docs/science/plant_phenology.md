@@ -86,7 +86,7 @@ Water has no calendar, so each sum restarts when the *other* side's switch cross
 sum when the wet switch turns on, the wet sum when the dry switch does. The crossing, not the level:
 a long wet season would otherwise hold the wet switch on and wipe every drought. A brief rain adds
 some wet credit without erasing the drought sum, unlike a consecutive-day counter. $`\psi_{\mathrm{tlp}}`$
-is not a phenology key: it is derived (`pv_psi_tlp`) from the same pressure–volume curve that anchors
+is not a phenology key: it is derived (`tissue_psi_tlp`) from the same pressure–volume curve that anchors
 the leaf's capacity ramp under water stress (`leaf_gas_exchange.md` §4.1), so the cue and the ramp
 share one threshold.
 

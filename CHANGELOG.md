@@ -27,7 +27,10 @@ tissue state is its leaf and wood energy, with its temperatures derived from the
 sheds takes its enthalpy to the ground (#457). `meds_constants` is grouped by kind, and every name in it
 is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear solvers are one module,
 `meds_linear_algebra` (#458). Each PFT has its own size allometry, and reproduces from its own height
-(#459).
+(#459). `src/shared/functions` holds one library per domain, its conversions are named
+`<input>_to_<output>`, and the Newton solvers share their step safeguards (#460). Every PFT trait is
+the PFT file's, its hydraulics among them, and the traits that follow a fitted relation are computed
+outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's potential (#461).
 
 **Upgrading from v0.3.5:**
 - **The PFT file's size allometry is per PFT** (#459). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
@@ -126,8 +129,105 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   Removed. `HYDRO_TABLE_NTAB`, `HYDRO_TABLE_RMAX`, `UPTAKE_RAMP_WIDTH`, `TRANSP_CLOSE_WIDTH`
   (`meds_hydr_lib`), `leaf_class_angle` (`meds_optics_lib`) and `pv_rwc_tlp` (`meds_water_retention`)
   are private to their modules.
+- **Fortran code that uses `src/shared/functions` uses its new modules** (#460):
+  - `meds_hydr_lib`, and the tissue half of `meds_water_retention`, are `meds_plant_hydr_lib`;
+  - the soil and pond half of `meds_water_retention`, and `meds_pedotransfer`, are
+    `meds_soil_hydr_lib`;
+  - `meds_temp_response` is part of `meds_therm_lib`, as is `soil_thermal_from_texture`;
+  - `meds_allometry` is `meds_allometry_lib`;
+  - `smooth_max0` is in `meds_numerics`, and `supply_limited_transpiration` in `meds_plant_hydraulics`,
+    beside the solver it keeps solvable.
+- **Fortran code that calls a renamed routine uses its new name** (#460). Conversions are named
+  `<input>_to_<output>`, and the pressure-volume routines carry `tissue_`:
+
+  | old | new |
+  |---|---|
+  | `psi_from_rwc`, `rwc_from_psi` | `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
+  | `water_content`, `psi_from_water_content` | `tissue_psi_to_water`, `tissue_water_to_psi` |
+  | `tissue_rwc_from_water`, `tissue_unknown_from_rwc` | `tissue_water_to_rwc`, `tissue_rwc_to_unknown` |
+  | `pv_psi_tlp`, `capacitance`, `shared_potential`, `clamp_water_to_capacity` | `tissue_psi_tlp`, `tissue_capacitance`, `tissue_shared_potential`, `tissue_capped_water` |
+  | `wood_kmax_from_density` | `wood_density_to_kmax` |
+  | `plc_retained` | `conductance_retained_fraction` |
+  | `soil_theta_from_psi`, `soil_psi_from_theta` | `soil_head_to_theta`, `soil_theta_to_head` (the head is in metres) |
+  | `soil_unknown_from_theta`, `pond_head_from_water` | `soil_theta_to_unknown`, `pond_water_to_head` |
+  | `soil_hydraulics_from_texture` | `soil_texture_to_hydraulics` |
+  | `soil_layer_curve_t%psi_switch` | `soil_layer_curve_t%head_switch` |
+  | `cas_enthalpy_of_temp`, `cas_temp_of_enthalpy` | `cas_temp_to_enthalpy`, `cas_enthalpy_to_temp` |
+  | `temp_of_liquid_enthalpy` | `liquid_energy_to_temp` |
+  | `tissue_energy`, `tissue_temp` | `tissue_temp_to_energy`, `tissue_energy_to_temp` |
+  | `soil_thermal_cond`, `soil_heat_cap_vol` | `soil_thermal_conductivity`, `soil_volumetric_heat_capacity` |
+  | `size2leaf_carbon`, `size2wood_carbon` | `size_to_leaf_carbon`, `size_to_wood_carbon` |
+  | `beta_params_from_mean` | `moments_to_beta_params` |
+  | `time_from_string` | `string_to_time` |
+  | `TRESP_ARRHENIUS`, `TRESP_PEAKED` | `temp_response_arrhenius`, `temp_response_peaked` |
+- **`soil_thermal_from_texture` is `soil_texture_to_thermal(sand, clay, theta_sat, ...)`** (#460): it
+  takes the sand and clay shares [%] in place of the soil texture record.
+- **`flux_potential` and `flux_potential_lin` are private** (#460): call
+  `kirchhoff_potential(psi, psi50, kexp, table)`, the potential the sapflow uses, which is psi above
+  zero potential.
+- **Eight constants of `src/shared/functions` are spelled in lower case** (#460), since other modules
+  use them: `soil_retention_vg`, `soil_retention_campbell`, `vg_pore_connectivity`,
+  `soil_specific_storage`, `pond_depression_depth`, `height_power`, `height_chave` and
+  `n_leaf_class`. Fortran ignores case, so the old spellings still compile. The temperature-response
+  selectors `TRESP_ARRHENIUS` and `TRESP_PEAKED` are renamed (see the table above).
+- **The plant hydraulics are the PFT file's `[hydraulics]` block** (#461). Every key of the main
+  config's `[hydraulics]`, and every per-PFT hydraulic key of `[pft]`, moves there; each is required,
+  and takes one value for every PFT or an array with one per PFT, as `[allometry]` keys do.
+  `wood_kmax` is required too: `scripts/pft_traits/pft_traits.py` gives Xu et al. (2016)'s value for a
+  wood density. A main-config `[hydraulics]` key or a `[pft]` hydraulic key stops the run, naming the
+  block.
+- **The mortality hazard and the light-plasticity slopes are per-PFT values** (#461): set
+  `[pft].mort_gamma`, `mort_alpha`, `mort_beta`, `kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and
+  `kplastic_leaf_turnover`. `[camac]`, `[derived]` and `[options].override_derived` stop the run.
+  `scripts/pft_traits` computes the values the model used to derive: Camac et al. (2018)'s power laws
+  in wood density, and ED2's fits (Lloyd et al. 2010) to `vcmax25` and `leaf_turnover_rate_toc`. A
+  calibration of `vcmax25` (`scripts/calibrate_fast`) no longer moves the slopes with it; recompute
+  them for the calibrated value if they should follow it.
+- **Fortran code that reads the hydraulics takes the PFT's record** (#461): `cfg%pft%hydro(pf)`
+  (`plant_hydraulics_t`, in `meds_plant_hydr_lib`) in place of `cfg%hydraulics` and
+  `pft_tissue_curves`. `apply_hydraulics_config` and `init_cohort` drop their hydraulics argument,
+  `hydro_params_t` extends `plant_hydraulics_t`, and `pft%kplastic_vm0` is `pft%kplastic_vcmax`.
+- **Python: `meds.config` reads and sets one PFT of a key given for every PFT** (#461):
+  `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
+  only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
+  `hydraulics.root_beta`.
 
 ### Changed
+
+- **Every PFT trait is the PFT file's** (#461). The model derives no PFT trait from another: the
+  sapwood conductivity from wood density (Xu et al. 2016), the mortality hazard from wood density
+  (Camac et al. 2018) and the light-plasticity slopes from Vcmax25 and the leaf turnover rate (ED2,
+  Lloyd et al. 2010) are computed by `scripts/pft_traits` and written into the PFT file. Each PFT's
+  hydraulic traits are one record, `pft%hydro(pf)`, read from the PFT file's `[hydraulics]` block, and
+  the PFT CSV lists them. The shipped PFT files carry the values the model computed before, to the last
+  digit, so ifx outputs are unchanged bit for bit. gfortran's math library rounds three of those
+  values (`wood_kmax`, one `mort_alpha` and one `kplastic_leaf_turnover` of the reference PFTs) one unit
+  differently from ifx's, so gfortran outputs move at the solvers' tolerance.
+- **New leaves fill to the wood's potential** (#461). A cohort's new leaf carbon takes water from its
+  wood store up to the wood's potential less the crown's gravity head, read once, in place of the
+  bisection for the potential the two would share at rest. The wood ends a little drier than the
+  leaves at rest, and the next fast step evens them out. On the 2-year census run of the reference
+  PFTs (evergreen), annual outputs move by at most 4×10⁻⁶ of their size; single values by up to 1.5 %
+  (a cohort's daily lowest leaf potential) and 0.1 % (GPP). A deciduous canopy re-flushing from bare
+  moves more on its flush days; examples 05 and 06 have not been rerun.
+
+- **`src/shared/functions` holds one library per domain** (#460): `meds_plant_hydr_lib` (a tissue's
+  pressure-volume curve and solver relations, the vulnerability curve and Kirchhoff potential, the
+  xylem, roots and leaves), `meds_soil_hydr_lib` (the pedotransfer function, the retention curve and
+  its solver relations, the pond), `meds_therm_lib` (the energy datum, moist air, plant tissue heat,
+  soil heat and the temperature response of enzyme rates), `meds_allometry_lib` and
+  `meds_optics_lib`. Each is ordered in sections, with a banner per section. Conversions are named
+  `<input>_to_<output>`, as the allometry's are, and constants follow one rule: UPPER case where only
+  their module uses them, lower case where other modules do.
+- **The Newton solvers share their step safeguards** (#460): `meds_numerics` holds `smooth_max0`,
+  `sufficient_decrease` (the Armijo test of a damped step, used by the soil-plant water solver and the
+  fast backward-Euler stage) and `fraction_to_boundary` (the step share that keeps a positive unknown
+  positive). Under gfortran every output is unchanged bit for bit. Under ifx's optimised build,
+  which fuses and orders the arithmetic differently once the tests are functions of their own, a
+  line-search step accepted at the margin can go the other way, and the solver then converges along
+  another path within its tolerance: on a 2-year census run annual outputs move by at most 10⁻⁷ of
+  their size, single sub-daily values (GPP, latent heat) by up to 10⁻³, the solvers' work counters by
+  up to 30 %, and the ledger residuals at round-off.
 
 - **Each PFT has its own size allometry** (#459). A PFT's record, `pft%allom(pf)` (`meds_allometry`),
   holds its height curve and cap, its gMM and log-quadratic coefficients (the latter default to Chave
@@ -364,6 +464,12 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 
 ### Removed
 
+- **`derive_pft_rates`, `wood_density_to_kmax`, `hydraulics_config_t` and `pft_tissue_curves`** (#461),
+  with `[camac]`, `[derived]` and `[options].override_derived` (see Changed). `tissue_shared_potential`
+  goes with the leaf fill's bisection.
+- **The general-exponent Kirchhoff quadrature** (#460), `kirchhoff_integral` and its panel width
+  `KIRCH_PANEL`: the sapflow reads the PFT's table for every vulnerability exponent other than 1 and 2,
+  so only the tests called it. They check the table against their own Simpson reference.
 - **`pft.dbh_critical`** (#459), which only the C API's empirical growth read, as a cap on the diameter.
 - **The gMM height curve** (#459), `HEIGHT_GMM` with its coefficients and the Newton inverse of its
   biomass law.

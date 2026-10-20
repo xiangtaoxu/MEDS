@@ -18,7 +18,7 @@ module meds_time
    public :: time_advance_years, whole_years_between
    public :: seconds_into_day, seconds_between, time_advance_seconds
    public :: time_lt, time_eq, time_valid
-   public :: time_from_string, time_units_base, time_to_string, time_to_stamp, time_to_decimal_year
+   public :: string_to_time, time_units_base, time_to_string, time_to_stamp, time_to_decimal_year
    public :: solar_cosz, daylength, doy_effective, solar_declination
 
    !----- A calendar instant; the defaults make meds_time_t() a valid date. ---------------!
@@ -31,7 +31,7 @@ module meds_time
       integer(ik) :: second = 0_ik
    end type meds_time_t
 
-   integer(ik), parameter :: month_len(12) = [31_ik, 28_ik, 31_ik, 30_ik, 31_ik, 30_ik,       &
+   integer(ik), parameter :: MONTH_LEN(12) = [31_ik, 28_ik, 31_ik, 30_ik, 31_ik, 30_ik,       &
                                                31_ik, 31_ik, 30_ik, 31_ik, 30_ik, 31_ik]
 
 contains
@@ -45,7 +45,7 @@ contains
 
    elemental integer(ik) function days_in_month(year, month) result(d)
       integer(ik), intent(in) :: year, month
-      d = month_len(month)
+      d = MONTH_LEN(month)
       if (month == 2_ik .and. is_leap_year(year)) d = 29_ik
    end function days_in_month
 
@@ -280,7 +280,7 @@ contains
    !----- Parse "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" ('/', 'T' and ',' also separate). A  !
    !      missing trailing field defaults (month and day to 1, time to 0). ok is false on  !
    !      an unreadable or out-of-range date, so the caller can use its default. ----------!
-   subroutine time_from_string(s, t, ok)
+   subroutine string_to_time(s, t, ok)
       character(len=*),  intent(in)  :: s
       type(meds_time_t), intent(out) :: t
       logical,           intent(out) :: ok
@@ -313,7 +313,7 @@ contains
 
       t = meds_time_t(year=y, month=mo, day=d, hour=h, minute=mi, second=se)
       ok = (ios == 0_ik) .and. time_valid(t)
-   end subroutine time_from_string
+   end subroutine string_to_time
 
    !----- The base date of a CF time-units string, "<unit> since YYYY-MM-DD[ HH:MM:SS]";   !
    !      the caller checks the unit. ok is false without "since" or with an unreadable    !
@@ -325,7 +325,7 @@ contains
       integer :: k
       k = index(units, 'since')
       if (k == 0) then ; ok = .false. ; return ; end if
-      call time_from_string(adjustl(units(k + 5:)), base, ok)
+      call string_to_time(adjustl(units(k + 5:)), base, ok)
    end subroutine time_units_base
 
    !----- "YYYY-MM-DD HH:MM:SS", for attributes and log lines. ----------------------------!

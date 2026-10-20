@@ -26,7 +26,7 @@ module meds_plant_respiration
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, tiny_num
    use meds_plant_types, only : wood_params_t, root_params_t
-   use meds_temp_response, only : peaked_arrhenius_scale
+   use meds_therm_lib,     only : peaked_arrhenius_scale
    implicit none
    private
 

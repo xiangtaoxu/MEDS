@@ -28,7 +28,7 @@ module meds_fast_dynamics
    use meds_soil_column_config, only : soil_column_params, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
+   use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy, specific_humidity_to_vpd
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_plant_types, only : leaf_photo_table_t
    use meds_column_view, only : copy_column_cohort
@@ -60,7 +60,7 @@ module meds_fast_dynamics
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t
-   use meds_water_retention, only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,   only : soil_retention_vg
    use meds_biophysics_opts, only : snow_params_t
    use meds_canopy_types, only : ground_optics_state_t
    use meds_canopy_radiation, only : canopy_radiation, ground_optics
@@ -71,7 +71,7 @@ module meds_fast_dynamics
                                      ensure_column_cohort_capacity, apply_hydraulics_config,      &
                                      apply_canopy_film_config
    use meds_fast_step,       only : column_fast_step
-   use meds_water_retention,  only : water_content, clamp_water_to_capacity
+   use meds_plant_hydr_lib,   only : tissue_psi_to_water, tissue_capped_water
    !$ use omp_lib,            only : omp_get_thread_num
    implicit none
    private
@@ -153,8 +153,8 @@ contains
    !  horizontally uniform -- the reference climate used when no forcing file is           !
    !  configured. The static column config `col_config` is assembled here FROM THE RUN     !
    !  CONFIG: the soil column comes from [soil], the respiration factors and canopy        !
-   !  optics are per-PFT traits, and the plant-hydraulics constants come from              !
-   !  [hydraulics]. Nothing in this routine is a hard-coded model parameter.               !
+   !  optics are per-PFT traits, and so are the plant hydraulics (the PFT file's           !
+   !  [hydraulics]). Nothing in this routine is a hard-coded model parameter.              !
    !=======================================================================================!
    subroutine build_fast_context(cfg, ctx)
       type(meds_config_t),  intent(in)  :: cfg
@@ -162,11 +162,10 @@ contains
       !----- The physical soil column, from [soil]: its layers, and each layer's texture,         !
       !      one for the whole column or one per layer from the soil maps (soil_column_params). -!
       call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
-      !----- Plant hydraulics: ONE seam builds the PER-PFT table. The shared [hydraulics] block is    !
-      !      the base (cfg defaults unless a [hydraulics] block overrides); whatever per-PFT traits   !
-      !      the [pft] table supplied are laid over it, and each entry gets its vulnerability lookup  !
-      !      table (consulted only when wood_kexp is not 1 or 2). ------------------------------------!
-      call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
+      !----- Plant hydraulics: ONE seam builds the PER-PFT table from each PFT's [hydraulics]       !
+      !      record, and each entry gets its vulnerability lookup table (consulted only when          !
+      !      wood_kexp is not 1 or 2). ---------------------------------------------------------------!
+      call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
       call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
@@ -236,7 +235,7 @@ contains
                se%soil_temp(k)   = ctx%soil_temp_init ; se%soil_fliq(k) = 1.0_wp
             end do
             cas%can_shv      = ctx%shv_atm ; cas%can_co2 = ctx%co2_atm
-            cas%can_enthalpy = cas_enthalpy_of_temp(ctx%air_temp, ctx%shv_atm)
+            cas%can_enthalpy = cas_temp_to_enthalpy(ctx%air_temp, ctx%shv_atm)
             cas%can_temp     = ctx%air_temp
             psi = top_soil_psi(surf%soil, sw%theta(1))
             do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
@@ -1041,7 +1040,7 @@ contains
       type(met_forcing_t),    intent(in)    :: met
       real(wp),               intent(in)    :: sw_ground, sum_lai
       integer(ik) :: j
-      forc%enthalpy_atm  = cas_enthalpy_of_temp(met%tair_k, met%qair)
+      forc%enthalpy_atm  = cas_temp_to_enthalpy(met%tair_k, met%qair)
       forc%shv_atm       = met%qair
       forc%co2_atm       = met%co2
       forc%abs_sw_ground = sw_ground

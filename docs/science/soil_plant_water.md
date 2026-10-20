@@ -70,10 +70,10 @@ Each store is solved in the unknown in which its curve is best behaved:
 - **Between slow steps** a tissue keeps its water **mass**, not its potential: a change in biomass leaves
   the water as it is, and the potential is read again on the new capacity (grown wood reads as a
   slightly lower $R$). **New leaves are the exception.** When a cohort's leaf carbon grows, the new
-  leaf tissue is filled with water moved from the cohort's wood store, at the potential the two then
-  share at rest, the leaf the crown's gravity head below the wood
-  ([plant_hydraulics](plant_hydraulics.md) eq. (2); `fill_new_leaf_water`). The plant's water is
-  unchanged, and a canopy that re-flushes from bare starts at its stem's potential, not at the dry end
+  leaf tissue is filled, with water moved from the cohort's wood store, to the wood's potential less
+  the crown's gravity head ([plant_hydraulics](plant_hydraulics.md) eq. (2); `fill_new_leaf_water`).
+  The wood ends a little drier than the leaves at rest, and the next fast step evens them out. The
+  plant's water is unchanged, and a canopy that re-flushes from bare starts at its stem's potential, not at the dry end
   of its pressure–volume curve (about −1.5×10⁴ MPa), which would close its stomata for the first
   step. A cohort is born in its patch's state (`patch_physical_state`): at the canopy-air temperature,
   holding the water its tissues hold at the potential of the patch's top soil layer, the one the
@@ -211,7 +211,7 @@ canopy air and +600 W m⁻² of sensible heat at zero net radiation.
 On bare ground it is the rain plus the snowfall too light to start a pack, both valued at the air
 temperature above the canopy (the forcing moved to the canopy-air top, [forcing](forcing.md) §8), as
 `snow_accumulate` values a pack's snowfall (`precip_enthalpy`). The mixture's enthalpy per kilogram
-becomes a temperature through `temp_of_liquid_enthalpy`, the exact inverse of
+becomes a temperature through `liquid_energy_to_temp`, the exact inverse of
 `internal_energy_liquid`; below $`T_{3ple}`$ that temperature stands for water that must still melt,
 which the pond and the soil melt with soil heat. Valuing the snow as liquid would create $L_f$ per
 kilogram at the boundary, and valuing the rain at the canopy air's temperature would hand the canopy
@@ -234,8 +234,8 @@ the pond takes the mixture; the canopy film keeps the rain's valuation, since it
 |---|---|
 | the solver: assembly, Newton, sub-steps, commit | `meds_spac_solver` (`numerics/`): `spac_allocate`, `spac_set_state`, `spac_advance` |
 | the linear solve (block arrowhead, Schur complement) | `meds_linear_algebra`: `arrowhead_allocate`, `arrowhead_factor`, `arrowhead_solve` |
-| the stores' water relations in their unknowns | `meds_water_retention`: `soil_water_relations`, `tissue_water_relations`, `pond_water_relations` and their inverses; `VG_PORE_CONNECTIVITY` |
-| plant flows | `meds_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`, `supply_limited_transpiration`, `smooth_max0` |
+| the stores' water relations in their unknowns | `meds_soil_hydr_lib`: `soil_water_relations`, `pond_water_relations` and their inverses, `vg_pore_connectivity`; `meds_plant_hydr_lib`: `tissue_water_relations` and its inverses |
+| plant flows | `meds_plant_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`; the leaves' supply limit `supply_limited_transpiration` (`meds_plant_hydraulics`); the flows' rounded corner `smooth_max0` (`meds_numerics`) |
 | soil flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
 | one patch's step | `meds_fast_frozen`: `run_spac_solver` (called from `build_column_frozen`) |
 | plant water over the step | `meds_fast_be_stage`: `advance_plant_water` (ARK; constant rates, RK45 integrates the same rates in its stages) |

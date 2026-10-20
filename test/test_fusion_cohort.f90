@@ -15,7 +15,7 @@ program test_fusion_cohort
                                          max_cohort_count
    use meds_diagnostic_reduce, only : total_nplant, total_agb
    use meds_diag_vars,        only : alloc_cohort_diag, cohort_diag_value, CO_LEAF_TEMP, CO_WOOD_TEMP
-   use meds_allometry,       only : storage_carbon_target
+   use meds_allometry_lib,   only : storage_carbon_target
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
@@ -324,8 +324,7 @@ program test_fusion_cohort
                  'a window of zero growth averages exactly zero after a large sample left it')
       call check(poly%cohort%growth_accum(1) == sum(poly%cohort%growth_hist(1:nwin, 1)),             &
                  'the window''s sum is the buffer''s')
-      call init_cohort(poly%cohort, 1_ik, cfg%pft, 1_ik, 1_ik, 0.1_wp, 1.0_wp, cfg%hydraulics,      &
-                       288.15_wp, -0.1_wp)                       ! any birth state: the window is the point
+      call init_cohort(poly%cohort, 1_ik, cfg%pft, 1_ik, 1_ik, 0.1_wp, 1.0_wp, 288.15_wp, -0.1_wp)                       ! any birth state: the window is the point
       call check(all(poly%cohort%growth_hist(1:nwin, 1) == 0.0_wp) .and.                             &
                  poly%cohort%growth_count(1) == 0_ik, 'a recruit in a reused slot starts with an empty window')
    end block

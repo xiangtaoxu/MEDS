@@ -36,9 +36,10 @@ module meds_fast_be_stage
    use meds_soil_energy, only : soil_energy_step_implicit
    use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_step_implicit
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
-   use meds_therm_lib, only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, &
-                              temp_of_liquid_enthalpy
+   use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp,  &
+                              internal_energy_ice, liquid_energy_to_temp
    use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
+   use meds_numerics,     only : sufficient_decrease
    implicit none
    private
 
@@ -176,7 +177,7 @@ contains
       !      + cross-substep accumulation happens in ark2_column_step / adaptive_ark_march. Every      !
       !      quantity is the committed-state flux, so the accumulated amounts telescope to closure.    !
       if (present(bf)) then
-         t_cas1 = cas_temp_of_enthalpy(enth1, shv1)         ! committed CAS temperature, for the reported H
+         t_cas1 = cas_enthalpy_to_temp(enth1, shv1)         ! committed CAS temperature, for the reported H
             bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enthalpy_atm    ; bf%cas_enth_out = g_atm_heat*enth1
             bf%cas_vap_in   = surf_tend%src_vap  + g_atm_vapour*frozen%cas%shv_atm     ; bf%cas_vap_out  = g_atm_vapour*shv1
             bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%co2_atm  ; bf%cas_co2_out  = g_atm_co2*y_out%cas_co2
@@ -279,7 +280,7 @@ contains
                t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
             RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enthalpy_atm - Ht)
             Rqt = cas_mass_capacity*(qt - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qt)
-            if (RHt*RHt + Rqt*Rqt <= (1.0_wp - 1.0e-4_wp*lam)*rn0) exit          ! Armijo
+            if (sufficient_decrease(RHt*RHt + Rqt*Rqt, rn0, lam)) exit
             lam = 0.5_wp*lam
          end do
          Hk = Ht ; qk = qt ; R_H = RHt ; R_q = Rqt

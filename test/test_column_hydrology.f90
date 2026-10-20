@@ -27,9 +27,9 @@ program test_column_hydrology
    use meds_soil_types, only : chydro_forcing_t
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell, soil_head_to_theta,  &
+                                    soil_theta_to_head
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
-   use meds_water_retention, only : soil_theta_from_psi, soil_psi_from_theta
    use meds_soil_water,       only : ground_evaporation_rate, bottom_flux
    use meds_spac_solver,    only : spac_solver_t, spac_allocate, spac_set_state,     &
                                      spac_advance, POND
@@ -61,7 +61,7 @@ contains
       type(soil_params_t), intent(out) :: params
       real(wp) :: bottoms(n_soil_layer_max)
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, bottoms)
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, bottoms, 0.43_wp, 0.078_wp,                 &
+      call build_soil_hydr_params(10_ik, soil_retention_vg, bottoms, 0.43_wp, 0.078_wp,                 &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
    end subroutine loam_params
 
@@ -95,13 +95,13 @@ contains
       print '(a)', 'test_constitutive:'
       !----- van Genuchten loam round-trip. -----!
       th    = 0.30_wp
-      ps    = soil_psi_from_theta(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
-      th_rt = soil_theta_from_psi(SOIL_RETENTION_VG, ps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      ps    = soil_theta_to_head(soil_retention_vg, th, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      th_rt = soil_head_to_theta(soil_retention_vg, ps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
       call check('vG theta round-trip', th_rt, th, 1.0e-9_wp)
       !----- Campbell loam round-trip. -----!
       th    = 0.30_wp
-      ps    = soil_psi_from_theta(SOIL_RETENTION_CAMPBELL, th, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
-      th_rt = soil_theta_from_psi(SOIL_RETENTION_CAMPBELL, ps, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
+      ps    = soil_theta_to_head(soil_retention_campbell, th, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
+      th_rt = soil_head_to_theta(soil_retention_campbell, ps, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
       call check('Campbell theta round-trip', th_rt, th, 1.0e-9_wp)
    end subroutine test_constitutive
 
@@ -236,7 +236,7 @@ contains
       integer(ik) :: step
       print '(a)', 'test_downpour:'
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, bottoms)
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, bottoms, 0.38_wp, 0.068_wp,            &
+      call build_soil_hydr_params(10_ik, soil_retention_vg, bottoms, 0.38_wp, 0.068_wp,            &
            5.6e-7_wp, 0.8_wp, 1.09_wp, -3.37_wp, params)
       theta = 0.36_wp
       call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
@@ -315,9 +315,9 @@ contains
    end subroutine test_pond_subfreezing_inflow
 
    real(wp) function temp_of_liquid(u)
-      use meds_therm_lib, only : temp_of_liquid_enthalpy
+      use meds_therm_lib, only : liquid_energy_to_temp
       real(wp), intent(in) :: u
-      temp_of_liquid = temp_of_liquid_enthalpy(u)
+      temp_of_liquid = liquid_energy_to_temp(u)
    end function temp_of_liquid
 
    !=======================================================================================!
@@ -382,7 +382,7 @@ contains
       print '(a)', 'test_snow_free_evap:'
       call loam_params(params)
       f%t_ground = 305.0_wp ; f%q_air = 0.001_wp ; f%rho_air = 1.2_wp ; f%r_aero = 50.0_wp
-      head = soil_psi_from_theta(SOIL_RETENTION_VG, 0.30_wp, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      head = soil_theta_to_head(soil_retention_vg, 0.30_wp, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
       f%snow_free_frac = 1.0_wp
       call ground_evaporation_rate(0.30_wp, head, params, f, opts, e_full, de1, de2)
       f%snow_free_frac = 0.5_wp
@@ -433,7 +433,7 @@ contains
       type(chydro_forcing_t), intent(in) :: f
       type(soil_opts_t),      intent(in) :: opts
       real(wp) :: de1, de2
-      call ground_evaporation_rate(th, soil_psi_from_theta(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp,     &
+      call ground_evaporation_rate(th, soil_theta_to_head(soil_retention_vg, th, 0.43_wp, 0.078_wp,     &
                                    3.6_wp, 1.56_wp), params, f, opts, e, de1, de2)
    end function loam_evap
 

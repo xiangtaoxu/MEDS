@@ -10,10 +10,11 @@ module meds_test_support
    use meds_constants,  only : day_sec
    use meds_time,       only : meds_time_t
    use meds_pft_params, only : pft_table_t, alloc_pft_table, PATH_C3, PATH_C4
-   use meds_allometry,  only : allometry_t
+   use meds_allometry_lib,  only : allometry_t
+   use meds_plant_hydr_lib, only : plant_hydraulics_t, water_curve_t
    use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE, INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
-   use meds_temp_response, only : TRESP_PEAKED
+   use meds_therm_lib,     only : temp_response_peaked
    use meds_test_assert, only : check, check_close, check_true, check_int, banner,             &
                                 test_report, test_reset, test_failures
    implicit none
@@ -61,11 +62,10 @@ contains
       cfg%init_mode = INIT_BARE ; cfg%init_restart_file = '' ; cfg%init_census_file = '' ; cfg%pft_config = ''
       cfg%state_output_dir = '.' ; cfg%state_output_prefix = 'test'
       cfg%state_write_state = .false. ; cfg%state_interval_years_cfg = 50_ik
-      cfg%override_derived = .false.
       cfg%gpp_ref = 0.3_wp
 
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
-      cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TRESP_PEAKED
+      cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = temp_response_peaked
       cfg%colimitation = COLIM_QUADRATIC ; cfg%leaf_use_boundary_layer = .false.
       cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
       cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp
@@ -83,10 +83,14 @@ contains
          p%include_pft = [ 1_ik, 1_ik, 1_ik ]
          p%min_cohort_height = 2.0_wp
          p%min_repro_height  = [ 20.0_wp, 20.0_wp, 20.0_wp ]
-         p%mort_rho_ref = 0.6_wp
-         p%mort_gamma_0 = 0.0094_wp ; p%mort_gamma_exp = -1.8392_wp
-         p%mort_alpha_0 = 0.05_wp   ; p%mort_alpha_exp = -1.1493_wp
-         p%mort_beta_0  = 18.72_wp  ; p%mort_beta_exp  =  0.2792_wp
+         !----- The mortality hazard and the plasticity slopes (mirrors meds_config_pft.toml). --!
+         p%mort_gamma = [ 0.019815037439806053_wp, 0.0094_wp, 0.004953547651645506_wp ]
+         p%mort_alpha = [ 0.07968043353213256_wp, 0.05_wp, 0.0335056513529311_wp ]
+         p%mort_beta  = [ 16.71633880800162_wp, 18.72_wp, 20.631926375047502_wp ]
+         p%kplastic_vcmax = [ -0.1459341188305866_wp, -0.11760191025318557_wp, -0.10943768264434321_wp ]
+         p%kplastic_rd    = p%kplastic_vcmax
+         p%kplastic_sla   = [ 0.15654750929099287_wp, 0.12615477645341722_wp, 0.11739678683665906_wp ]
+         p%kplastic_leaf_turnover = [ -0.058535787713143994_wp, -0.015560662518427415_wp, 0.0_wp ]
          !----- Leaf-photosynthesis per-PFT traits (PFT 3 is C4). ---------------------------!
          p%photosynthetic_pathway = [ PATH_C3, PATH_C3, PATH_C4 ]
          p%vcmax25          = [ 60.0_wp, 45.0_wp, 40.0_wp ]
@@ -148,6 +152,16 @@ contains
                                   lai_b2 = 0.6410495_wp, wai_b1 = 0.0096_wp, wai_b2 = 2.0947_wp,       &
                                   sapwood_area_b1 = 1.582_wp, sapwood_area_b2 = 1.764_wp,             &
                                   aboveground_frac = 0.7_wp)
+      !----- ... and on the shipped hydraulics (mirrors meds_config_pft.toml). ------------------!
+      cfg%pft%hydro = plant_hydraulics_t(                                                            &
+         leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp,   &
+                                    water_sat = 2.0_wp),                                             &
+         wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod = 8.0_wp, apoplast_frac = 0.20_wp,    &
+                                    water_sat = 1.0_wp),                                             &
+         wood_psi50 = -2.0_wp, wood_kexp = 2.0_wp, wood_kmax = 0.0_wp, vessel_curl = 1.5_wp,          &
+         root_beta = 0.1_wp, root_depth_b1 = 1.1140580_wp, root_depth_b2 = 0.4223014_wp,             &
+         specific_root_length = 2.0e4_wp, fine_root_radius = 2.5e-4_wp)
+      cfg%pft%hydro%wood_kmax = [ 5.340397027887704_wp, 3.2683981418222547_wp, 1.7692398658114543_wp ]
       cfg%light_ext_coeff_fusefiss = 0.5_wp
       call derive_parameters(cfg)
    end function build_test_config

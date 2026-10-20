@@ -4,7 +4,7 @@
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_therm_lib,              only : internal_energy_liquid
-   use meds_allometry, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
+   use meds_allometry_lib, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_cohort_state_vars, only : cohort_deriv_alloc, cohort_bad_field, cohort_field_name
    use meds_polygon_state_vars, only : polygon_t

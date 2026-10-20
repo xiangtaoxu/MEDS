@@ -13,9 +13,10 @@
 !   * boundaries: rain into the pond, ground evaporation from the top layer, drainage from       !
 !     the bottom one, and each cohort's transpiration, limited by what its leaves hold           !
 !     (docs/science/soil_plant_water.md eq. (3)).                                                !
-! How much each store holds is meds_water_retention's (the *_water_relations); how fast water    !
-! moves along each path is meds_hydr_lib's (rhizosphere, xylem, transpiration) and               !
-! meds_soil_water's (soil water flux, evaporation, drainage). This module only joins them.       !
+! How much each store holds is meds_soil_hydr_lib's and meds_plant_hydr_lib's (the               !
+! *_water_relations); how fast water moves along each path is meds_plant_hydr_lib's              !
+! (rhizosphere, xylem, transpiration) and meds_soil_water's (soil water flux, evaporation,       !
+! drainage). This module only joins them.                                                        !
 !                                                                                                !
 ! THE SOLVE (docs/science/soil_plant_water.md §3, eq. (2)). Implicit Euler on sub-steps. Each    !
 ! sub-step is a Newton solve of the water balance of every store at the sub-step's end,          !
@@ -37,18 +38,19 @@
 module meds_spac_solver
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : grav_head, rho_h2o, tiny_num
-   use meds_water_retention, only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,          &
-                                    soil_unknown_from_theta, tissue_water_relations, tissue_rwc_from_water,      &
-                                    tissue_unknown_from_rwc, pond_water_relations, pond_head_from_water,         &
-                                    rwc_from_psi
-   use meds_hydr_lib,        only : root_water_uptake_profile, xylem_sapflow, supply_limited_transpiration
+   use meds_soil_hydr_lib,   only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,  &
+                                    soil_theta_to_unknown, pond_water_relations, pond_water_to_head
+   use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, tissue_rwc_to_unknown,  &
+                                    tissue_psi_to_rwc, root_water_uptake_profile, xylem_sapflow
+   use meds_plant_hydraulics, only : supply_limited_transpiration
    use meds_soil_water,      only : soil_water_flux, ground_evaporation_rate, bottom_flux
    use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_soil_types,      only : chydro_forcing_t
    use meds_soil_column_config, only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t
    use meds_plant_types,     only : hydro_params_table_t
-   use meds_therm_lib,       only : internal_energy_liquid, temp_of_liquid_enthalpy
+   use meds_numerics,        only : sufficient_decrease, fraction_to_boundary
+   use meds_therm_lib,       only : internal_energy_liquid, liquid_energy_to_temp
    implicit none
    private
 
@@ -202,7 +204,7 @@ contains
             spac%dz_node(k)     = params%dz_node(k)
             spac%face_weight(k) = params%dz(k) / (params%dz(k) + params%dz(k+1))
          end if
-         spac%tau_soil(1_ik + k)   = soil_unknown_from_theta(spac%layer(k), theta(k))
+         spac%tau_soil(1_ik + k)   = soil_theta_to_unknown(spac%layer(k), theta(k))
          spac%water_soil(1_ik + k) = rho_h2o * params%dz(k) * theta(k)
       end do
       !----- The pond starts at its water's head, but no higher than the head at which it would     !
@@ -214,20 +216,20 @@ contains
       spac%e_pond = e_pond
       call soil_water_relations(spac%layer(1), spac%tau_soil(2), psi, dpsi, w, dw, kk, dk)
       head1 = psi / grav_head
-      spac%tau_soil(POND) = min(pond_head_from_water(w_pond), head1 + spac%z_node(1))
+      spac%tau_soil(POND) = min(pond_water_to_head(w_pond), head1 + spac%z_node(1))
       do i = 1_ik, spac%ncoh
          associate (hp => hyd%pft(spac%pft(i)))
-            spac%tau_coh(WOOD, i)   = tissue_unknown_from_rwc(                                               &
-                                         tissue_rwc_from_water(hp%wood_curve, spac%bwood(i), wood_water(i)))
+            spac%tau_coh(WOOD, i)   = tissue_rwc_to_unknown(                                               &
+                                         tissue_water_to_rwc(hp%wood_curve, spac%bwood(i), wood_water(i)))
             spac%water_coh(WOOD, i) = wood_water(i) * spac%nplant(i)
             if (hp%leaf_curve%water_sat * spac%bleaf(i) > tiny_num) then
-               spac%tau_coh(LEAF, i)   = tissue_unknown_from_rwc(                                            &
-                                            tissue_rwc_from_water(hp%leaf_curve, spac%bleaf(i), leaf_water(i)))
+               spac%tau_coh(LEAF, i)   = tissue_rwc_to_unknown(                                            &
+                                            tissue_water_to_rwc(hp%leaf_curve, spac%bleaf(i), leaf_water(i)))
                spac%water_coh(LEAF, i) = leaf_water(i) * spac%nplant(i)
             else
                call tissue_water_relations(hp%wood_curve, spac%bwood(i), spac%nplant(i), spac%tau_coh(WOOD, i), &
                                            psi, dpsi, w, dw)
-               spac%tau_coh(LEAF, i)   = tissue_unknown_from_rwc(rwc_from_psi(psi - spac%grav(i),             &
+               spac%tau_coh(LEAF, i)   = tissue_rwc_to_unknown(tissue_psi_to_rwc(psi - spac%grav(i),             &
                                             hp%leaf_curve%pi0, hp%leaf_curve%elastic_mod))
                spac%water_coh(LEAF, i) = 0.0_wp
             end if
@@ -401,7 +403,7 @@ contains
             call evaluate(spac, params, opts, forcing, hyd, try_soil, try_coh, spac%ev(i_try), .true.)
             call residual(spac, h, spac%ev(i_try), res2_soil, res2_coh)
             merit_try = residual_merit(spac, h, res2_soil, res2_coh, scale_soil, scale_coh)
-            if (merit_try == merit_try .and. merit_try <= (1.0_wp - 1.0e-4_wp * lam) * merit) exit
+            if (merit_try == merit_try .and. sufficient_decrease(merit_try, merit, lam)) exit
             lam = 0.5_wp * lam
          end do
          if (merit_try /= merit_try) return
@@ -459,22 +461,16 @@ contains
       integer(ik) :: k, i, j
       lam = 1.0_wp
       do k = 1_ik, spac%nsl
-         call keep_from_empty(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
+         lam = min(lam, fraction_to_boundary(tau_soil(1_ik + k), step_soil(1_ik + k), STEP_MAX_SHARE))
          if (tau_soil(1_ik + k) <= spac%layer(k)%se_switch) call cap_dry_change(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
       end do
       do i = 1_ik, spac%ncoh
          do j = 1_ik, COHORT_STORES
-            call keep_from_empty(tau_coh(j, i), step_coh(j, i), lam)
+            lam = min(lam, fraction_to_boundary(tau_coh(j, i), step_coh(j, i), STEP_MAX_SHARE))
             call cap_dry_change(tau_coh(j, i), step_coh(j, i), lam)
          end do
       end do
    contains
-      !----- Fraction to the boundary: every store's unknown is zero when it is empty. -------------!
-      pure subroutine keep_from_empty(tau, d, lam)
-         real(wp), intent(in)    :: tau, d
-         real(wp), intent(inout) :: lam
-         if (d < 0.0_wp) lam = min(lam, STEP_MAX_SHARE * tau / (-d))
-      end subroutine keep_from_empty
       !----- The cap on the change applies below full saturation (an RWC or Se of one), where the     !
       !      potential steepens towards empty; above it the curve is gentle and Newton moves freely. ---!
       pure subroutine cap_dry_change(tau, d, lam)
@@ -738,7 +734,7 @@ contains
       e_mix = spac%e_pond + h * spac%rain * internal_energy_liquid(spac%t_rain)
       spac%rain_enth = spac%rain_enth + h * spac%rain * internal_energy_liquid(spac%t_rain)
       t_mix = spac%t_rain
-      if (w_mix > POND_TINY) t_mix = temp_of_liquid_enthalpy(e_mix / w_mix)
+      if (w_mix > POND_TINY) t_mix = liquid_energy_to_temp(e_mix / w_mix)
       u_mix = internal_energy_liquid(t_mix)
       if (pond_flux >= 0.0_wp) then
          amount = h * pond_flux
@@ -770,12 +766,12 @@ contains
       spill = max(0.0_wp, spac%water_soil(POND) - spac%w_pond_max)
       spilled = spill > 0.0_wp
       if (spilled) then
-         t_pond = temp_of_liquid_enthalpy(spac%e_pond / spac%water_soil(POND))
+         t_pond = liquid_energy_to_temp(spac%e_pond / spac%water_soil(POND))
          spac%spill = spac%spill + spill
          spac%spill_enth = spac%spill_enth + spill * internal_energy_liquid(t_pond)
          spac%e_pond = spac%e_pond - spill * internal_energy_liquid(t_pond)
          spac%water_soil(POND) = spac%w_pond_max
-         spac%tau_soil(POND) = pond_head_from_water(spac%w_pond_max)
+         spac%tau_soil(POND) = pond_water_to_head(spac%w_pond_max)
       end if
       if (spac%water_soil(POND) <= POND_TINY) then
          spac%e_pond = 0.0_wp

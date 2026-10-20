@@ -51,8 +51,8 @@ so every symbol has exactly one legal spelling.
   processes stay with their owners: **`meds_soil_water`** has the soil water flux between layers,
   the dry-surface-layer ground evaporation and the bottom boundary (drainage at a factor of free
   drainage, from 1 to 0 for bedrock, or an aquifer);
-  `meds_hydr_lib` the rhizosphere, xylem and transpiration flows, and `meds_water_retention` the
-  stores' water relations (both in `src/shared/functions/`). Closes a machine-precision water
+  `meds_plant_hydr_lib` the plant's flows and tissue water relations, and `meds_soil_hydr_lib` the
+  soil layers' and the pond's (both in `src/shared/functions/`). Closes a machine-precision water
   budget.
 - **Soil thermal** — **`meds_soil_energy`**: the soil-heat store as prognostic **internal energy**,
   not temperature, so freeze/thaw is a read-off of the shared inverter. An implicit
@@ -80,10 +80,10 @@ seam in the model.
 The soil **material-property** kernels are stateless and `elemental`, grouped with the other
 constitutive relations by physical quantity rather than by caller:
 
-- **Retention curves** → `meds_hydr_lib`: the water content, potential, conductivity and moisture
-  capacity relations (van Genuchten by default, Campbell available) plus the `SOIL_RETENTION_*`
-  selectors — beside the plant pressure-volume and vulnerability curves, which are the same kind of
-  object.
+- **Retention curves** → `meds_soil_hydr_lib`: the water content, potential, conductivity and moisture
+  capacity relations (van Genuchten by default, Campbell available) plus the `soil_retention_*`
+  selectors, and the pedotransfer function that sets them from the soil maps; the plant's
+  pressure-volume and vulnerability curves are the matching `meds_plant_hydr_lib`.
 - **Thermal properties** → `meds_therm_lib`: the ice-aware Johansen conductivity and the volumetric
   heat capacity — beside the moist-air psychrometrics, which are their thermal twin.
 - **Per-column parameter bundles and their `pure` builders** → `meds_soil_column_config` in

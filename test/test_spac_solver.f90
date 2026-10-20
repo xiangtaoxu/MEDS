@@ -32,10 +32,10 @@ program test_spac_solver
    use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance,      &
                                 spac_jacobian_error, POND, WOOD, LEAF
-   use meds_hydr_lib,      only : xylem_max_conductance, rhizosphere_conductance, build_hydro_table
-   use meds_water_retention, only : tissue_water_relations, soil_water_relations, SOIL_RETENTION_VG,       &
-                                    SOIL_RETENTION_CAMPBELL, water_curve_t, rwc_from_psi, pv_psi_tlp,       &
-                                    soil_psi_from_theta
+   use meds_plant_hydr_lib, only : xylem_max_conductance, rhizosphere_conductance, build_hydro_table,  &
+                                   tissue_water_relations, water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
+   use meds_soil_hydr_lib,   only : soil_water_relations, soil_retention_vg, soil_retention_campbell,  &
+                                    soil_theta_to_head
    use meds_plant_types,   only : hydro_params_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
@@ -74,7 +74,7 @@ contains
    !     Fixtures.                                                                          !
    !=======================================================================================!
 
-   !----- One PFT with the shipped [hydraulics] defaults and a tropical wood conductivity. ----!
+   !----- One PFT with the shipped [hydraulics] values and a tropical wood conductivity. -----!
    subroutine make_pft(h)
       type(hydro_params_table_t), intent(out) :: h
       h%n_pft = 1_ik
@@ -83,6 +83,11 @@ contains
       h%pft(1)%wood_curve = water_curve_t(pi0=-1.0_wp, elastic_mod=8.0_wp,  apoplast_frac=0.20_wp, water_sat=1.0_wp)
       h%pft(1)%wood_psi50  = -2.0_wp ; h%pft(1)%wood_kexp = 2.0_wp
       h%pft(1)%wood_kmax   = 3.3_wp  ; h%pft(1)%vessel_curl = 1.5_wp
+      h%pft(1)%root_beta = 0.1_wp
+      h%pft(1)%root_depth_b1 = 1.1140580_wp
+      h%pft(1)%root_depth_b2 = 0.4223014_wp
+      h%pft(1)%specific_root_length = 2.0e4_wp
+      h%pft(1)%fine_root_radius = 2.5e-4_wp
       call build_hydro_table(h%pft(1)%vuln_table, h%pft(1)%wood_kexp)
    end subroutine make_pft
 
@@ -93,7 +98,7 @@ contains
       real(wp),            intent(in)  :: depth, growth
       real(wp) :: bottoms(n_soil_layer_max)
       call geometric_layer_bottoms(depth, nsl, growth, bottoms)
-      call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,          &
+      call build_soil_hydr_params(nsl, soil_retention_vg, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,          &
                                   0.7607_wp, 1.3554_wp, -3.37_wp, s)
    end subroutine make_soil
 
@@ -130,7 +135,7 @@ contains
          spac%k_xylem(i) = nplant(i) * xylem_max_conductance(hyd%pft(1)%wood_kmax, sap_area(i), height(i),     &
                                                             hyd%pft(1)%vessel_curl)
          spac%e_demand(i) = e_total * lai_share(i)
-         spac%r_close(i)  = rwc_from_psi(2.0_wp * pv_psi_tlp(hyd%pft(1)%leaf_curve%pi0,                        &
+         spac%r_close(i)  = tissue_psi_to_rwc(2.0_wp * tissue_psi_tlp(hyd%pft(1)%leaf_curve%pi0,                        &
                                         hyd%pft(1)%leaf_curve%elastic_mod), hyd%pft(1)%leaf_curve%pi0,         &
                                         hyd%pft(1)%leaf_curve%elastic_mod)
          call cohort_root_profile(height(i), hyd%pft(1), -soil%soil_layer_z(1:nsl), -soil%soil_layer_z(2:nsl+1), frac)
@@ -500,7 +505,7 @@ contains
       vg_soil = soil
       nsl = vg_soil%n_active
       call geometric_layer_bottoms(1.44_wp, nsl, 3.0_wp, bottoms)
-      call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, bottoms, theta_sat, theta_res, 4.54e-6_wp,      &
+      call build_soil_hydr_params(nsl, soil_retention_campbell, bottoms, theta_sat, theta_res, 4.54e-6_wp,      &
                                   psi_sat, b, -3.37_wp, soil)
       theta = 0.30_wp
       call make_stand(spac, 4_ik, theta, 0.0_wp, 0.95_wp, 0.9_wp, 0.0_wp)
@@ -521,7 +526,7 @@ contains
          !----- Each layer's potential against the Campbell curve at the water it holds, which the  !
          !      sub-step commits from its flows: the two agree to the Newton tolerance. ------------!
          theta = spac%water_soil(2:nsl+1) / (rho_h2o * soil%dz(1:nsl))
-         psi_curve = grav_head * soil_psi_from_theta(SOIL_RETENTION_CAMPBELL, theta, theta_sat, theta_res,    &
+         psi_curve = grav_head * soil_theta_to_head(soil_retention_campbell, theta, theta_sat, theta_res,    &
                                                      psi_sat, b)
          worst_psi = max(worst_psi, maxval(abs(spac%psi_soil(2:nsl+1) - psi_curve) / abs(psi_curve)))
          below_zero = below_zero .and. all(spac%psi_soil(2:nsl+1) < 0.0_wp)                                 &

@@ -10,7 +10,7 @@
 module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
-   use meds_allometry,  only : height_to_dbh
+   use meds_allometry_lib, only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
    use meds_site_state_vars,       only : make_site_surface
    use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map,      &
@@ -119,7 +119,7 @@ contains
       !      that is the run's starting state, and init_fast_reservoirs re-seeds it from the patch. -!
       call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg,                   &
                                 poly%site%surface(poly%patch%owner_site(ip)), t_birth, psi_birth)
-      call init_cohort(poly%cohort, m, cfg%pft, ipft, ip, nplant, dbh, cfg%hydraulics, t_birth, psi_birth)
+      call init_cohort(poly%cohort, m, cfg%pft, ipft, ip, nplant, dbh, t_birth, psi_birth)
       call assign_cohort_id(poly, m)
       poly%cohort%n = m
    end subroutine add_cohort

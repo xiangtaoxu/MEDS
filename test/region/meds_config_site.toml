@@ -90,9 +90,6 @@ file_chunk = "year"
 enabled    = false
 file_chunk = "run"
 
-[options]
-override_derived = false
-
 [carbon]
 gpp_ref       = 0.3
 

@@ -89,7 +89,7 @@ k(\psi)=\frac{1}{1+(\psi/\psi_{50})^{a}}=\frac{1}{1+r^{a}} \qquad(7)
 ```math
 \Phi(\psi)=\int_0^{\psi} k(s)\,ds=\psi_{50}\!\int_0^{r}\frac{du}{1+u^{a}}
 =\begin{cases}\psi_{50}\ln(1+r) & a=1\\ \psi_{50}\arctan(r) & a=2\\
-\psi_{50}\cdot\text{(7-pt Gauss–Legendre panels)} & \text{else}\end{cases} \qquad(8)
+\psi_{50}\,G(r)\ \text{(lookup table)} & \text{else}\end{cases} \qquad(8)
 ```
 
 The **edge conductance** over a finite drop is the $\psi$-averaged retained fraction — the
@@ -113,12 +113,12 @@ K_s=\exp\!\left(2.348-2.455\,\rho+\tfrac{1}{2}\,0.6186\right) \qquad(11)
 
 $A_{sap}$ is the sapwood area of the stem allometry, $H$ the plant's height, and `vessel_curl`
 (1.5, as in ED2) lengthens the path beyond the height. $K_s$ [kg m⁻¹ s⁻¹ MPa⁻¹], the sapwood
-specific conductivity, is a PFT trait: by default it follows the PFT's wood density $\rho$
-[g cm⁻³] through the fit of Xu et al. (2016, New Phytol 212:80) to 72 species of neotropical
-seasonally dry forests, as ED2 codes it (`plant_hydro_scheme` 2). The fit is lognormal, so the
-residual variance 0.6186 turns its median into the mean (×1.36); $\rho$ outside 0.35–0.95 takes
-the nearest edge. $K_s$ is 6.0 at $\rho$ = 0.35, 3.3 at 0.60 and 1.4 at 0.95; `pft.wood_kmax`
-overrides it. Wood density explains a fifth of the variance ($R^2$ 0.21): one species' $K_s$ can
+specific conductivity, is a PFT trait, `[hydraulics].wood_kmax`. The shipped PFTs take it from their
+wood density $\rho$ [g cm⁻³] through the fit of Xu et al. (2016, New Phytol 212:80) to 72 species of
+neotropical seasonally dry forests, as ED2 codes it (`plant_hydro_scheme` 2), eq. (11), which
+`scripts/pft_traits` computes outside the model. The fit is lognormal, so the residual variance
+0.6186 turns its median into the mean (×1.36); $\rho$ outside 0.35–0.95 takes the nearest edge.
+$K_s$ is 6.0 at $\rho$ = 0.35, 3.3 at 0.60 and 1.4 at 0.95. Wood density explains a fifth of the variance ($R^2$ 0.21): one species' $K_s$ can
 lie a factor of 2 either side. Branches of Panama canopy trees span about 1.6–12, and 2–4 at
 $\rho$ = 0.6 (Meinzer et al. 2008), and FATES's default is 3.0. For a 35 m BCI canopy
 tree (72 cm dbh, 0.30 m² of sapwood, 553 m² of leaf) the 0.60 value gives
@@ -131,8 +131,8 @@ uniform-grid **lookup table** $G(r)$ over $`0\le r\le 8`$ and read by linear int
 path (the closed forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$
 is a runtime scale. It is built panel by panel, so it rises monotonically, and past $r = 8$ the
 tail $`\int u^{-a}\,du`$ is added analytically, so the potential keeps approaching its asymptote even
-for a leaf dried far beyond the vulnerability curve. The quadrature sums 7-point Gauss–Legendre
-panels no wider than 0.25 in $r$: a single rule over a long range misses the integrand's fall near
+for a leaf dried far beyond the vulnerability curve. Each of the table's 512 intervals is one
+7-point Gauss–Legendre panel: a single rule over a long range misses the integrand's fall near
 $u = 1$ (at $r$ = 7800 and $a$ = 4 it gives about 10⁻⁶ instead of 1.11), which would hand the xylem
 of a desiccated leaf a negative conductance.
 
@@ -213,20 +213,15 @@ $R$: [soil_plant_water](soil_plant_water.md). Each cohort's transpiration is its
 limited by the water its leaves hold below the closing potential (§4 there). Water is advanced by the
 flows themselves, so the plant and soil water budgets close to round-off.
 
-## Parameters (config names, `[hydraulics]` / `hydraulics_config_t`)
+## Parameters (the PFT file's `[hydraulics]`; `plant_hydraulics_t`)
 
-> **These are per-PFT.** The `[hydraulics]` block is the shared base; any `[hydraulics]` trait
-> below can be given a per-PFT array in the `[pft]` table under the **same key name**, and that
-> value wins for that PFT. An absent key falls back to the `[hydraulics]` scalar, so a config can
-> make **one** trait per-PFT without restating the others, and a config that mentions none runs
-> every PFT on the `[hydraulics]` values. `wood_kmax` is a `[pft]` key only, and the sapwood
-> allometry is a required `[pft]` trait.
+> **These are per-PFT.** Each key of the PFT file's `[hydraulics]` block takes one value, for every
+> PFT, or an array with one value per PFT, and every key is required: the model holds no default
+> and derives no trait from another. Each PFT's traits are one record, `pft%hydro(pf)`.
 >
-> `apply_hydraulics_config` builds the per-PFT table and there is deliberately **no** PFT-uniform
-> companion struct: a second, easier-to-reach copy is how a caller ends up silently running every
-> PFT on the first one's hydraulics. Each entry carries its **own** Kirchhoff lookup, rebuilt from
-> that PFT's `wood_kexp` — sharing one would give every PFT the first one's vulnerability shape
-> while every budget still closes.
+> `apply_hydraulics_config` builds the fast loop's per-PFT table from those records. Each entry
+> carries its **own** Kirchhoff lookup, built from that PFT's `wood_kexp` — sharing one would give
+> every PFT the first one's vulnerability shape while every budget still closes.
 
 | Symbol | Config key | Meaning |
 |---|---|---|
@@ -236,7 +231,7 @@ flows themselves, so the plant and soil water budgets close to round-off.
 | $w_{sat}$ | `leaf_water_sat`, `wood_water_sat` | saturated water content [kg H₂O / kgC] |
 | $\psi_{50}$ | `wood_psi50` | xylem potential at 50 % loss of conductance [MPa] |
 | $a$ | `wood_kexp` | vulnerability-curve shape [–] |
-| $K_s$ | `pft.wood_kmax` | sapwood specific conductivity [kg m⁻¹ s⁻¹ MPa⁻¹]; default from wood density (Xu et al. 2016) |
+| $K_s$ | `wood_kmax` | sapwood specific conductivity [kg m⁻¹ s⁻¹ MPa⁻¹]; the shipped values from wood density, eq. (11) (`scripts/pft_traits`) |
 | — | `vessel_curl` | tortuosity / path-length factor [–] |
 | $\beta$ | `root_beta` | the root profile within the rooting depth [–], $0<\beta<1$ (ED2: 0.1) |
 | $`b_{1Rd}, b_{2Rd}`$ | `root_depth_b1`, `root_depth_b2` | rooting depth $`b_{1Rd}\,h^{b_{2Rd}}`$ [m], capped at the soil column (ED2 IALLOM 1) |
@@ -255,11 +250,11 @@ flows themselves, so the plant and soil water budgets close to round-off.
 
 | Concept | Routine |
 |---|---|
-| PV curves / capacitance | `meds_water_retention`: one `water_curve_t` record per tissue; `water_content`, `capacitance`, `psi_from_water_content`, `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi` |
-| a tissue's water relations in $R$ | `meds_water_retention`: `tissue_water_relations`, `tissue_rwc_from_water` |
-| vulnerability + Kirchhoff | `meds_hydr_lib`: `plc_retained`, `flux_potential` (+ table: `build_hydro_table`, `flux_potential_lin`); the Kirchhoff mean conductance inside `xylem_sapflow` |
-| Kirchhoff quadrature | `meds_hydr_lib`: `kirchhoff_integral` (7-point Gauss–Legendre panels, written out; `kirchhoff_tail` past the table) |
-| xylem and root flows | `meds_hydr_lib`: `xylem_max_conductance`, `xylem_sapflow`, `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `supply_limited_transpiration` |
+| PV curves / capacitance | `meds_plant_hydr_lib`: one `water_curve_t` record per tissue; `tissue_psi_to_water`, `tissue_capacitance`, `tissue_water_to_psi`, `tissue_psi_tlp`, `tissue_rwc_tlp`, `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
+| a tissue's water relations in $R$ | `meds_plant_hydr_lib`: `tissue_water_relations`, `tissue_water_to_rwc` |
+| vulnerability + Kirchhoff | `meds_plant_hydr_lib`: `conductance_retained_fraction`, `kirchhoff_potential` (closed forms, or the table from `build_hydro_table`); the Kirchhoff mean conductance inside `xylem_sapflow` |
+| Kirchhoff table | `meds_plant_hydr_lib`: `build_hydro_table` (one 7-point Gauss–Legendre panel per interval, written out in `kirchhoff_panel`; `kirchhoff_tail` past the table) |
+| xylem and root flows | `meds_plant_hydr_lib`: `xylem_max_conductance`, `xylem_sapflow`, `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`; the leaves' supply limit `supply_limited_transpiration` is in `meds_plant_hydraulics` |
 | rooting depth and profile | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`; `crown_gravity_head`, `leaf_node_psi` |
 | the solve | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)) |
 | config flatten | `meds_fast_types`: `apply_hydraulics_config` |

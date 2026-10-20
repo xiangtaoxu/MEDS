@@ -22,8 +22,8 @@ module meds_soil_energy
    use meds_soil_column_config, only : soil_thermal_params_t, soil_params_t
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
-   use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid,                        &
-                                     soil_thermal_cond, soil_heat_cap_vol
+   use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid, soil_thermal_conductivity,  &
+                                     soil_volumetric_heat_capacity
    use meds_linear_algebra,   only : thomas_solve
    implicit none
    private
@@ -160,9 +160,9 @@ contains
          !      energy, so internal_energy_to_temp inverts through the phase change on every call and  !
          !      temperature is a read-off of it; kappa and C are evaluated on the same liquid fraction !
          !      (no option to treat frozen water as liquid).                                           !
-         kappa(k) = soil_thermal_cond(forcing%soil_water(k), fl_n(k), soil%theta_sat(k),      &
+         kappa(k) = soil_thermal_conductivity(forcing%soil_water(k), fl_n(k), soil%theta_sat(k),      &
                                       therm%soil_solid_conductivity(k), therm%soil_dry_conductivity(k))
-         c_eff(k) = soil_heat_cap_vol(forcing%soil_water(k), fl_n(k), therm%soil_dry_heat_capacity(k))
+         c_eff(k) = soil_volumetric_heat_capacity(forcing%soil_water(k), fl_n(k), therm%soil_dry_heat_capacity(k))
          q_src(k) = -forcing%root_heat_sink(k) / soil%dz(k)               ! [W/m3] source (sink is negative)
       end do
 
@@ -244,7 +244,7 @@ contains
       do k = 1_ik, n
          wmass = forcing%soil_water(k) * rho_h2o
          call internal_energy_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
-         kappa(k) = soil_thermal_cond(forcing%soil_water(k), fl_n(k), soil%theta_sat(k),         &
+         kappa(k) = soil_thermal_conductivity(forcing%soil_water(k), fl_n(k), soil%theta_sat(k),         &
                                       therm%soil_solid_conductivity(k), therm%soil_dry_conductivity(k))
       end do
       do k = 1_ik, n - 1_ik

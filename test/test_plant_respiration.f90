@@ -19,7 +19,7 @@ program test_plant_respiration
    use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, t_ref_photo
-   use meds_temp_response, only : peaked_arrhenius_scale
+   use meds_therm_lib,     only : peaked_arrhenius_scale
    use meds_plant_types, only : wood_params_t, root_params_t
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,     &
                                      root_zone_temp_scale
@@ -32,7 +32,7 @@ program test_plant_respiration
 
    call test_grass_zero()
    call test_stem_identity_25c()
-   call test_tresponse()
+   call test_temp_response()
    call test_wai_branch()
    call test_aboveground_frac_scales()
    call test_root()
@@ -72,14 +72,14 @@ contains
    end subroutine test_stem_identity_25c
 
    !----- 3. Temperature response: at T /= 25C, R = factor25 * peaked_scale(T) * stem_area. -!
-   subroutine test_tresponse()
+   subroutine test_temp_response()
       type(wood_params_t) :: p
       real(wp) :: expect, tscale, stem_resp
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p, stem_resp)
       tscale = peaked_arrhenius_scale(1.0_wp, p%ea, p%hd, p%ds, 305.0_wp)
       expect = 0.06_wp * tscale * stem_area_ref(20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, 0.7_wp)
       call check_close('stem T-response = factor25 * peaked(T) * area', stem_resp, expect)
-   end subroutine test_tresponse
+   end subroutine test_temp_response
 
    !----- 4. The WAI branch term adds pi*wai/nplant/aboveground_frac to the per-plant stem area. ------!
    subroutine test_wai_branch()

@@ -114,23 +114,11 @@ wood_clumping      = [0.50, 0.50, 0.50]
 leaf_angle_mean    = [54.9255, 54.9255, 54.9255]   # [deg]
 leaf_angle_std     = [20.0, 20.0, 20.0]
 
-# Required by the loader; the [derived] table below sets the three PFTs' mortality instead.
-[camac]
-mort_rho_ref   = 0.6
-mort_gamma_0   = 0.0094
-mort_gamma_exp = -1.8392
-mort_alpha_0   = 0.05
-mort_alpha_exp = -1.1493
-mort_beta_0    = 18.72
-mort_beta_exp  = 0.2792
-
 # Mortality m = mort_gamma + mort_alpha * exp(-mort_beta * g), g a cohort's dbh growth [cm/yr] over
 # the growth window (growth_memory_days, a year): example 03's fit to the BCI censuses
 # (vital_rates.json), the same law on the same growth. Treefall (main config, 0.014/yr) kills the canopy
 # trees in each new gap on top of this, and the census's gamma already counts those deaths, so 0.014 is
 # taken off gamma.
-# Read because the main config sets [options].override_derived = true.
-[derived]
 mort_gamma = [0.011182, 0.006528, 0.005908]   # [1/yr] census gamma 0.025182, 0.020528, 0.019908 - 0.014
 mort_alpha = [0.247431, 0.086574, 0.152056]   # [1/yr]
 mort_beta  = [15.0890, 19.3890, 58.7932]      # [yr/cm]
@@ -169,5 +157,26 @@ chave_b    = 0.7908
 chave_c    = -0.04923
 chave_rse  = 0.0
 chave_e    = 0.0
+
+[hydraulics]
+# The PFT's plant-hydraulics traits (meds_config_pft.toml documents each key); one value for every PFT,
+# or one per PFT. wood_kmax is Xu et al. (2016)'s fit to each PFT's wood density (scripts/pft_traits).
+leaf_pi0             = -1.5                                                         # [MPa]
+leaf_elastic_mod     = 12.0                                                         # [MPa]
+leaf_apoplast_frac   = 0.3                                                          # [-]
+leaf_water_sat       = 2.0                                                          # [kg H2O/kgC]
+wood_pi0             = -1.0                                                         # [MPa]
+wood_elastic_mod     = 8.0                                                          # [MPa]
+wood_apoplast_frac   = 0.2                                                          # [-]
+wood_water_sat       = 1.0                                                          # [kg H2O/kgC]
+wood_psi50           = -2.0                                                         # [MPa]
+wood_kexp            = 2.0                                                          # [-]
+wood_kmax            = [5.8914373491131515, 4.177863535653273, 2.685588809977599]   # [kg/m/s/MPa]
+vessel_curl          = 1.5                                                          # [-]
+root_beta            = 0.1                                                          # [-]
+root_depth_b1        = 1.114058                                                     # [m]
+root_depth_b2        = 0.4223014                                                    # [-]
+specific_root_length = 20000.0                                                      # [m/kgC]
+fine_root_radius     = 0.00025                                                      # [m]
 
 # No [phenology] section: every PFT is evergreen, losing leaves to background turnover alone.

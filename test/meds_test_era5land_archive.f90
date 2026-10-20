@@ -17,7 +17,7 @@ module meds_test_era5land_archive
                                     ERA_NVAR, ERA_VAR_NAME, ERA_VAR_UNITS
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
-   use meds_pedotransfer,    only : soil_texture_t
+   use meds_soil_hydr_lib,   only : soil_texture_t
    implicit none
    private
 

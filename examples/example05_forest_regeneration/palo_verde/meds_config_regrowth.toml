@@ -61,10 +61,6 @@ disturbance_survive_height = 10.0
 [recruitment]
 min_recruit_size = 1.0e-2
 
-# The PFT file's [derived] table sets the light-plasticity slopes; mortality follows wood density ([camac]).
-[options]
-override_derived = true
-
 #----- Start: 3 recruits per m2 of each PFT at 1.5 m (data/pv_bare_start.csv, read as a census). -----
 [init]
 init_mode    = 1

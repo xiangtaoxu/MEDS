@@ -23,7 +23,7 @@ program test_plant_carbon_allocation
    use meds_kinds,           only : wp, ik
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
    use meds_sink_limitation,         only : growth_sink_limitation
-   use meds_allometry,               only : allometry_t, size2wood_carbon, wood_to_dbh, dbh_to_height
+   use meds_allometry_lib,           only : allometry_t, size_to_wood_carbon, wood_to_dbh, dbh_to_height
    implicit none
 
    !----- A stem for the sink-limit tests: wood density, height cap and aboveground share. -----!
@@ -133,7 +133,7 @@ contains
       !----- A sapling below the height cap and a big tree above it (35 m is reached near 60 cm). -!
       do k = 1, 2
          d   = merge(3.0_wp, 90.0_wp, k == 1)
-         w   = size2wood_carbon(allom, d, dbh_to_height(allom, d), RHO)
+         w   = size_to_wood_carbon(allom, d, dbh_to_height(allom, d), RHO)
          cap = limit(w, d, 0.0_wp, 0.4_wp, 0.5_wp)
          call check_close('sink limit: absolute => dbh grows by rate x dt',                          &
                           wood_to_dbh(allom, w + cap, RHO) - d, 0.2_wp, 1.0e-9_wp)
@@ -143,7 +143,7 @@ contains
                           wood_to_dbh(allom, w + cap, RHO) - d, 0.2_wp * sqrt(d), 1.0e-9_wp)
       end do
       !----- Both set: the tighter one. At 3 cm a 0.4 cm/yr cap is ~30 % of wood a year. -------!
-      d = 3.0_wp ; w = size2wood_carbon(allom, d, dbh_to_height(allom, d), RHO)
+      d = 3.0_wp ; w = size_to_wood_carbon(allom, d, dbh_to_height(allom, d), RHO)
       call check_close('sink limit: both => the tighter (relative)', limit(w, d, 0.05_wp, 0.4_wp, 1.0_wp), 0.05_wp * w)
       call check_close('sink limit: both => the tighter (absolute)', limit(w, d, 5.0_wp, 0.4_wp, 1.0_wp),  &
                        limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp))

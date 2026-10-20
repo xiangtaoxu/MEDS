@@ -21,14 +21,14 @@ module meds_fast_config
                                 CTRL_I, CTRL_PI
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
-   use meds_temp_response, only : kattge_knorr_entropy, kattge_knorr_jv_ratio
+   use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t,                     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W,        &
                                 GRP_THETA, N_TOL_GROUP
    use meds_fast_control, only : default_tol_set, default_error_control
    use meds_canopy_types,     only : rad_pft_optics_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_canopy_radiation, only : derive_rad_optics
-   use meds_optics_lib,       only : beta_params_from_mean
+   use meds_optics_lib,       only : moments_to_beta_params
    implicit none
    private
 
@@ -162,7 +162,7 @@ contains
          !      PFT rather than configured: the two shape parameters are not quantities anyone  !
          !      measures, and an inconsistent pair has no leaf-angle distribution behind it. ---!
          do ipf = 1_ik, np
-            call beta_params_from_mean(t%leaf_angle_mean(ipf), t%leaf_angle_std(ipf), bpp, bqq)
+            call moments_to_beta_params(t%leaf_angle_mean(ipf), t%leaf_angle_std(ipf), bpp, bqq)
             bp(ipf) = bpp ; bq(ipf) = bqq
          end do
       end associate

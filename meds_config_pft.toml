@@ -1,12 +1,16 @@
-# MEDS PFT configuration -- all PFT-specific parameters, each PFT's size allometry, and the
-# mortality-hazard (Camac) coefficients (one set for all PFTs). Named by [init].pft_config in the main config. A key
-# that is set is REQUIRED, and a missing one is a hard error; a commented-out key is OPTIONAL and
-# shows its default.
+# MEDS PFT configuration -- every PFT-specific parameter, each PFT's size allometry and hydraulics among
+# them. Named by [init].pft_config in the main config. A key that is set is REQUIRED, and a missing one is
+# a hard error; a commented-out key is OPTIONAL and shows its default.
 #
 # The number of PFTs is the length of [pft].wood_density; every per-PFT array must match it.
 
 [pft]
 wood_density       = [0.40, 0.60, 0.85]    # [g/cm3] the growth-mortality trade-off axis (pioneer/mid/climax)
+# The mortality hazard, mort_gamma + mort_alpha*exp(-mort_beta*growth_avg) (Camac et al. 2018). The values
+# are Camac's power laws in wood density at each PFT's, from scripts/pft_traits/pft_traits.py.
+mort_gamma         = [0.019815037439806053, 0.0094, 0.004953547651645506]  # [1/yr]  growth-independent hazard
+mort_alpha         = [0.07968043353213256, 0.05, 0.0335056513529311]     # [1/yr]  low-growth hazard
+mort_beta          = [16.71633880800162, 18.72, 20.631926375047502]        # [yr/cm] growth sensitivity
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] share of reproduction carbon that becomes
                                     #      recruits: seed set, germination and seedling survival together
@@ -110,6 +114,13 @@ growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost: th
 #                                                  #        with both, the tighter applies; the residual is exuded (0 = off)
 # max_absolute_growth_exponent = [0.0, 0.0, 0.0]   # [--] that limit scales as dbh[cm]^exponent (0 = size-independent)
 leaf_turnover_rate_toc = [1.0, 0.5, 0.33]          # [1/yr] top-of-canopy baseline leaf turnover (> 0)
+# Light plasticity: a cohort's trait is its PFT's top-of-canopy value times exp(k * LAI above it), k in
+# 1/(m2/m2), when [trait_dynamics].trait_plasticity_on (docs/science/plant_traits.md eqs. (1), (3)-(4)).
+# The values are ED2's fits to vcmax25 and leaf_turnover_rate_toc, from scripts/pft_traits/pft_traits.py.
+kplastic_vcmax         = [-0.1459341188305866, -0.11760191025318557, -0.10943768264434321]  # < 0: Vcmax25 falls in shade
+kplastic_rd            = [-0.1459341188305866, -0.11760191025318557, -0.10943768264434321]  # < 0: Rd25 falls in shade
+kplastic_sla           = [0.15654750929099287, 0.12615477645341722, 0.11739678683665906]    # > 0: SLA rises in shade
+kplastic_leaf_turnover = [-0.058535787713143994, -0.015560662518427415, 0.0]                # <= 0: turnover slows in shade
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
 # Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter). aboveground_frac
@@ -117,42 +128,9 @@ wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon densi
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05, 0.05, 0.05]         # [--] labile fraction of wood/CWD necromass
 struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of the structural-litter stream
-# OPTIONAL per-PFT plant hydraulics (docs/science/plant_hydraulics.md, "Parameters"). Each overrides
-# the [hydraulics] value of the main file for the
-# PFTs it lists, so one trait can be made per-PFT without restating the others; absent, every PFT
-# takes the [hydraulics] value (shown here).
-# leaf_pi0           = [-1.5, -1.5, -1.5]          # [MPa] leaf osmotic potential at full turgor
-# leaf_elastic_mod   = [12.0, 12.0, 12.0]          # [MPa] leaf bulk elastic modulus
-# leaf_apoplast_frac = [0.30, 0.30, 0.30]          # [--]  leaf apoplastic fraction
-# leaf_water_sat     = [2.0, 2.0, 2.0]             # [kg H2O/kgC] leaf saturated water content
-# wood_pi0           = [-1.0, -1.0, -1.0]          # [MPa] wood osmotic potential at full turgor
-# wood_elastic_mod   = [8.0, 8.0, 8.0]             # [MPa] wood bulk elastic modulus
-# wood_apoplast_frac = [0.20, 0.20, 0.20]          # [--]  wood apoplastic fraction
-# wood_water_sat     = [1.0, 1.0, 1.0]             # [kg H2O/kgC] wood saturated water content
-# wood_psi50         = [-2.0, -2.0, -2.0]          # [MPa] xylem potential at 50 % loss of conductance
-# wood_kexp          = [2.0, 2.0, 2.0]             # [--]  vulnerability-curve shape
-# wood_kmax          = [5.3, 3.3, 1.8]             # [kg/m/s/MPa] sapwood specific conductivity; absent,
-#                                                  #   it follows wood_density (Xu et al. 2016), shown here
-# vessel_curl        = [1.5, 1.5, 1.5]             # [--]  path-length factor
-# root_beta          = [0.1, 0.1, 0.1]             # [--]  root profile within the rooting depth
-# root_depth_b1      = [1.114058, 1.114058, 1.114058]   # [m] rooting depth = b1 * height^b2
-# root_depth_b2      = [0.4223014, 0.4223014, 0.4223014] # [--]
-# specific_root_length = [2.0e4, 2.0e4, 2.0e4]     # [m/kgC] fine-root length per unit fine-root carbon
-# fine_root_radius   = [2.5e-4, 2.5e-4, 2.5e-4]    # [m]  fine-root radius
-
-[camac]
-# Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
-# law in wood density: param = param_0 * (rho/mort_rho_ref)^exp (always positive).
-mort_rho_ref   = 0.6        # [g/cm3] wood-density reference
-mort_gamma_0   = 0.0094     # baseline (growth-independent) hazard scale [1/yr]
-mort_gamma_exp = -1.8392    # baseline hazard exponent on (rho/ref)
-mort_alpha_0   = 0.05       # low-growth hazard scale [1/yr]
-mort_alpha_exp = -1.1493    # low-growth hazard exponent
-mort_beta_0    = 18.72      # growth-sensitivity scale [yr/cm]
-mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 
 [allometry]
-# Each PFT's size allometry (meds_allometry; docs/science/plant_carbon_allocation.md §2). Every key takes
+# Each PFT's size allometry (meds_allometry_lib; docs/science/plant_carbon_allocation.md §2). Every key takes
 # one value, for every PFT, or an array with one value per PFT.
 height_allometry = "power"  # "power" or "chave2014", or one per PFT (["chave2014", "power", "power"])
 hgt_max    = [46.0, 46.0, 46.0]   # [m] the largest height: the cap on every curve
@@ -182,19 +160,40 @@ sapwood_area_b1  = [1.582, 1.582, 1.582]  # [cm2/cm^b2] sapwood area = sapwood_a
 sapwood_area_b2  = [1.764, 1.764, 1.764]  # [--] ED2 b2SA, tropical broadleaf
 aboveground_frac = [0.7, 0.7, 0.7]        # [--] share of the wood carbon above ground (ED2 agf_bs)
 
-# [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
-# mortality-hazard parameters instead of deriving them from wood density, and the light-plasticity
-# slopes instead of deriving them from vcmax25 and leaf_turnover_rate_toc (a cohort's trait is its PFT's
-# top-of-canopy value times exp(k * LAI above it), k in 1/(m2/m2); docs/science/plant_traits.md
-# eqs. (1), (3)-(4)). Each key is optional:
-# [derived]
-# mort_gamma = [...]   # length = number of PFTs
-# mort_alpha = [...]
-# mort_beta  = [...]
-# kplastic_vcmax  = [...]   # < 0: Vcmax25 falls in shade
-# kplastic_rd     = [...]   # < 0: Rd25 falls in shade (derived: the same as kplastic_vcmax)
-# kplastic_sla    = [...]   # > 0: SLA rises in shade
-# kplastic_leaf_turnover = [...]   # <= 0: leaf turnover slows in shade
+[hydraulics]
+# Each PFT's plant-hydraulics traits (docs/science/plant_hydraulics.md): the tissues' pressure-volume curves
+# (Bartlett/Tyree-Hammel, eqs. (3)-(6)), the xylem's vulnerability (eq. (7)) and conductivity, and the
+# roots. Read when [fast].fast_biophysics_on = true. Every key takes one value, for every PFT, or an array
+# with one value per PFT. wood_kexp = 1 or 2 keeps a closed form of the Kirchhoff integral (ln, atan); any
+# other value uses the lookup table build_hydro_table precomputes (eq. (8)).
+leaf_pi0           = -1.5    # [MPa]        leaf osmotic potential at full turgor
+leaf_elastic_mod   = 12.0    # [MPa]        leaf bulk elastic modulus
+leaf_apoplast_frac = 0.30    # [-]          leaf apoplastic fraction
+leaf_water_sat     = 2.0     # [kg H2O/kgC] leaf saturated water content
+wood_pi0           = -1.0    # [MPa]        wood osmotic potential at full turgor
+wood_elastic_mod   = 8.0     # [MPa]        wood bulk elastic modulus
+wood_apoplast_frac = 0.20    # [-]          wood apoplastic fraction
+wood_water_sat     = 1.0     # [kg H2O/kgC] wood saturated water content
+wood_psi50         = -2.0    # [MPa, < 0]   xylem potential at 50 % loss of conductance
+wood_kexp          = 2.0     # [-]          vulnerability shape (1 or 2: closed form; else lookup table)
+# The plant's maximum internal conductance is its sapwood's, wood_kmax * sapwood area / (height *
+# vessel_curl) (eq. (10)). These wood_kmax are Xu et al. (2016)'s fit to each PFT's wood density
+# (eq. (11)), from scripts/pft_traits/pft_traits.py.
+wood_kmax          = [5.340397027887704, 3.2683981418222547, 1.7692398658114543]  # [kg/m/s/MPa] sapwood specific conductivity
+vessel_curl        = 1.5     # [-]          xylem path length per unit height
+# Roots. A cohort roots to root_depth_b1 * height^root_depth_b2 [m] (ED2's height allometry, IALLOM 1:
+# 5 m at 35 m), capped at the soil column; its fine roots fall off within that depth as ED2's
+# (1 - root_beta^(d/D)) / (1 - root_beta) above depth d. Its root length (fine-root carbon *
+# specific_root_length) sets each layer's soil->root conductance, 2 pi K L / ln(r_half /
+# fine_root_radius) (Gardner 1960) (eqs. (12)-(14)).
+root_beta            = 0.1        # [-]     share of the profile that would lie below the rooting depth (0,1)
+root_depth_b1        = 1.1140580  # [m]     rooting depth = b1 * height[m]^b2
+root_depth_b2        = 0.4223014  # [-]
+specific_root_length = 2.0e4      # [m/kgC] fine-root length per unit fine-root carbon: 10 m per g dry mass, the
+                                  #         tropical fine roots of Panama (Wurzburger & Wright 2015; Cordeiro et
+                                  #         al. 2024) and GRooT, times 2 g dry per g C. All fine-root carbon counts:
+                                  #         the 0-1 mm roots hold 92 % of the length.
+fine_root_radius     = 2.5e-4     # [m]     fine-root radius: tropical fine-root diameters are 0.4-0.6 mm
 
 # ------------------------------------------------------------------------------------------
 # Leaf-phenology cue parameters (per PFT; docs/science/plant_phenology.md). The gate is the

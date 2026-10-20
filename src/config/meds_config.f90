@@ -10,14 +10,15 @@
 module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day, yr_sec, day_sec, n_soil_layer_max
-   use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
+   use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_leaf_params, HYD_UNSET
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
-   use meds_allometry,  only : HEIGHT_CHAVE
+   use meds_allometry_lib, only : height_chave
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
-   use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
+   use meds_therm_lib,     only : temp_response_arrhenius, temp_response_peaked
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp, water_curve_t
+   use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell
+   use meds_plant_hydr_lib,  only : tissue_psi_tlp
    use meds_soil_column_config, only : soil_column_config_t, soil_texture_layers_t, soil_params_t,       &
                                        soil_column_layers, soil_column_texture, soil_column_params,   &
                                        SOIL_LAYER_TEMPLATE
@@ -33,11 +34,11 @@ module meds_config
    implicit none
    private
 
-   public :: meds_config_t, hydraulics_config_t, site_spec_t, site_config
+   public :: meds_config_t, site_spec_t, site_config
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps
-   public :: pft_tissue_curves, pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
+   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -65,7 +66,7 @@ module meds_config
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
    !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the         !
-   !      temperature-response selectors (TRESP_*) by meds_temp_response. Imported above       !
+   !      temperature-response selectors (temp_response_*) by meds_therm_lib. Imported above   !
    !      for LOADING and VALIDATION only -- not re-exported, so a caller that switches on     !
    !      one imports it from the module that defines it. -------------------------------------!
 
@@ -104,41 +105,7 @@ module meds_config
    integer(ik), parameter :: CTRL_PI = 2_ik
 
    !----- A field with no in-type default is set by the config reader (presence-mapped) or     !
-   !      derived (derive_config / derive_pft_rates). DERIVED fields are noted. ---------------!
-
-   !----- Plant-hydraulics parameters ([hydraulics]; docs/science/plant_hydraulics.md): the        !
-   !      run-wide value of each hydraulic trait, which the PFT file's pft.<key> overrides per     !
-   !      PFT. Consumed only by the fast loop; flattened into the plant hydro_params_t by the      !
-   !      fast-context builder (apply_hydraulics_config). -----------------------------------------!
-   type :: hydraulics_config_t
-      !----- Pressure-volume (Bartlett/Tyree-Hammel), per tissue: docs/science/plant_hydraulics.md eqs. (3)-(6). -!
-      real(wp) :: leaf_pi0 = -1.5_wp, leaf_elastic_mod = 12.0_wp, leaf_apoplast_frac = 0.30_wp   !< [MPa],[MPa],[-]
-      real(wp) :: leaf_water_sat = 2.0_wp                                     !< [kg H2O/kgC] at saturation
-      real(wp) :: wood_pi0 = -1.0_wp, wood_elastic_mod =  8.0_wp, wood_apoplast_frac = 0.20_wp
-      real(wp) :: wood_water_sat = 1.0_wp
-      !----- Xylem vulnerability (docs/science/plant_hydraulics.md eq. (7)). ---------------!
-      real(wp) :: wood_psi50 = -2.0_wp   !< [MPa,<0] potential at 50% loss
-      real(wp) :: wood_kexp  =  2.0_wp   !< [-]  vulnerability shape (a)
-      !----- The plant's maximum internal conductance is the sapwood's: wood_kmax * sapwood area      !
-      !      / (height * vessel_curl) (docs/science/plant_hydraulics.md eqs. (10)-(11)).              !
-      !      wood_kmax is a PFT trait from wood density (Xu et al. 2016), which pft.wood_kmax         !
-      !      overrides; vessel_curl stretches the path beyond the plant's height. --------------------!
-      real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor (ED2)
-      !----- Roots, plant traits (each a default that pft.<key> overrides per PFT). A cohort         !
-      !      roots to root_depth_b1 * height^root_depth_b2 (ED2's height allometry, IALLOM 1),       !
-      !      capped at the soil column, and its fine roots fall off within that depth as ED2's       !
-      !      (1 - beta^(d/D)) / (1 - beta). Its root length, fine-root carbon *                      !
-      !      specific_root_length, sets the soil->root conductance of each layer (the single-        !
-      !      root form, Gardner 1960); docs/science/plant_hydraulics.md eqs. (12)-(14).              !
-      !      Hydraulic redistribution is off -- per-layer efflux is floored at zero in both the      !
-      !      plant solver and the soil sink (see docs/ROADMAP.md). ----------------------------------!
-      real(wp) :: root_beta            = 0.1_wp        !< [-] share of the profile left below the rooting depth (0,1)
-      real(wp) :: root_depth_b1        = 1.1140580_wp  !< [m] rooting depth = b1 * height[m]^b2 (ED2 IALLOM 1:
-      real(wp) :: root_depth_b2        = 0.4223014_wp  !< [-]   5 m at 35 m; Christoffersen 2013)
-      real(wp) :: specific_root_length = 2.0e4_wp      !< [m/kgC] fine-root length per unit fine-root carbon:
-                                                       !<   10 m/g dry for tropical fine roots (Panama, GRooT) * 2
-      real(wp) :: fine_root_radius     = 2.5e-4_wp     !< [m] fine-root radius: tropical diameters 0.4-0.6 mm
-   end type hydraulics_config_t
+   !      derived (derive_config / derive_leaf_params). DERIVED fields are noted. -------------!
 
    !----- One site of the polygon ([[sites]]; docs/configuration.md, Several sites): its share of !
    !      the polygon, its terrain, the census rows it reads and, when its table sets any of      !
@@ -311,11 +278,10 @@ module meds_config
 
       !----- Parameter-config controls. ---------------------------------------------------!
       character(len=256) :: pft_config        !< path to the PFT config file (named in the main file)
-      logical            :: override_derived  !< if .true., a [derived] block overwrites computed values
 
       !----- Leaf physiology: model selection (non-PFT). ----------------------------------!
       integer(ik) :: stomatal_model           !< SM_LEUNING | SM_MEDLYN | SM_KATUL
-      integer(ik) :: temp_response_form        !< TRESP_ARRHENIUS | TRESP_PEAKED
+      integer(ik) :: temp_response_form        !< temp_response_arrhenius | temp_response_peaked
       integer(ik) :: colimitation             !< COLIM_MIN | COLIM_QUADRATIC
       logical     :: leaf_use_boundary_layer  !< if .true., couple via the leaf boundary layer (gb)
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
@@ -373,9 +339,8 @@ module meds_config
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
 
-      !----- The physical soil column ([soil]) and the plant hydraulics ([hydraulics]). ---------!
+      !----- The physical soil column ([soil]). ------------------------------------------------!
       type(soil_column_config_t) :: soil_column  !< [soil] the column's layers and texture
-      type(hydraulics_config_t) :: hydraulics
       !----- The polygon's sites ([[sites]]); not allocated: one site, the polygon, on [soil]. ---!
       type(site_spec_t), allocatable :: sites(:)
 
@@ -420,8 +385,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Compute the DERIVED configuration from the (already-loaded) primary parameters: the      !
    ! timestep dt, the geometric cohort-fusion tolerance multiplier, and the evenly-spaced      !
-   ! height-layer edges (0 to the tallest PFT's hgt_max). The mortality-hazard parameters are   !
-   ! derived separately (derive_pft_rates).                                                     !
+   ! height-layer edges (0 to the tallest PFT's hgt_max).                                       !
    !---------------------------------------------------------------------------------------!
    subroutine derive_config(cfg)
       type(meds_config_t), intent(inout) :: cfg
@@ -463,17 +427,14 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Derive EVERY parameter that is a function of the primary (loaded) config: the derived run   !
-   ! scalars (derive_config), the wood-density mortality hazard (derive_pft_rates), and the       !
-   ! leaf-capacity ratios (derive_leaf_params). The single consolidation point for both the        !
-   ! production loader (load_meds_config) and the test builder (build_test_config), so the          !
-   ! derivation sequence lives in ONE place. The three calls are mutually order-independent (each    !
-   ! reads only primary loaded fields).                                                               !
-   ! Callers apply any [derived] override and validate AFTER this returns.                            !
+   ! scalars (derive_config) and the leaf capacities from their ratios to Vcmax25              !
+   ! (derive_leaf_params). The single consolidation point for both the production loader       !
+   ! (load_meds_config) and the test builder (build_test_config), so the derivation sequence   !
+   ! lives in ONE place. Callers validate AFTER this returns.                                  !
    !---------------------------------------------------------------------------------------!
    subroutine derive_parameters(cfg)
       type(meds_config_t), intent(inout) :: cfg
       call derive_config(cfg)
-      call derive_pft_rates(cfg%pft)
       call derive_leaf_params(cfg%pft)
    end subroutine derive_parameters
 
@@ -486,48 +447,15 @@ contains
       nw = max(1_ik, nint(cfg%growth_memory_days / (cfg%dt_years * yr_day), ik))
    end function growth_window_steps
 
-   !----- A PFT's leaf and wood pressure-volume curves (docs/science/plant_hydraulics.md eqs.       !
-   !      (3)-(6)): each trait the [pft] table gives (HYD_UNSET: not given), else the shared           !
-   !      [hydraulics] one. The one rule for the curves: the plant-water solver's table               !
-   !      (apply_hydraulics_config), a cohort's water at birth and the slow step's tissue water all    !
-   !      read them from here, so no two can store water on different curves. -------------------------!
-   pure subroutine pft_tissue_curves(hydraulics, pft, ipft, leaf_curve, wood_curve)
-      type(hydraulics_config_t), intent(in)  :: hydraulics
-      type(pft_table_t),         intent(in)  :: pft
-      integer(ik),               intent(in)  :: ipft
-      type(water_curve_t),       intent(out) :: leaf_curve, wood_curve
-      leaf_curve = water_curve_t(pi0 = hydraulics%leaf_pi0, elastic_mod = hydraulics%leaf_elastic_mod,      &
-                                 apoplast_frac = hydraulics%leaf_apoplast_frac,                             &
-                                 water_sat = hydraulics%leaf_water_sat)
-      wood_curve = water_curve_t(pi0 = hydraulics%wood_pi0, elastic_mod = hydraulics%wood_elastic_mod,      &
-                                 apoplast_frac = hydraulics%wood_apoplast_frac,                             &
-                                 water_sat = hydraulics%wood_water_sat)
-      call take(leaf_curve%pi0,           pft%hyd_leaf_pi0)
-      call take(leaf_curve%elastic_mod,   pft%hyd_leaf_elastic_mod)
-      call take(leaf_curve%apoplast_frac, pft%hyd_leaf_apoplast_frac)
-      call take(leaf_curve%water_sat,     pft%hyd_leaf_water_sat)
-      call take(wood_curve%pi0,           pft%hyd_wood_pi0)
-      call take(wood_curve%elastic_mod,   pft%hyd_wood_elastic_mod)
-      call take(wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac)
-      call take(wood_curve%water_sat,     pft%hyd_wood_water_sat)
-   contains
-      pure subroutine take(trait, per_pft)
-         real(wp),              intent(inout) :: trait
-         real(wp), allocatable, intent(in)    :: per_pft(:)
-         if (.not. allocated(per_pft)) return
-         if (per_pft(ipft) > HYD_UNSET) trait = per_pft(ipft)
-      end subroutine take
-   end subroutine pft_tissue_curves
-
    !----- A PFT's leaf turgor-loss point [MPa], from its own leaf pressure-volume curve, so the      !
    !      stomatal closure and the phenology's drought counter see the curve the solver stores leaf  !
    !      water on. -----------------------------------------------------------------------------------!
    pure real(wp) function pft_leaf_psi_tlp(cfg, ipft) result(psi_tlp)
       type(meds_config_t), intent(in) :: cfg
       integer(ik),         intent(in) :: ipft
-      type(water_curve_t) :: leaf_curve, wood_curve
-      call pft_tissue_curves(cfg%hydraulics, cfg%pft, ipft, leaf_curve, wood_curve)
-      psi_tlp = pv_psi_tlp(leaf_curve%pi0, leaf_curve%elastic_mod)
+      associate (leaf_curve => cfg%pft%hydro(ipft)%leaf_curve)
+         psi_tlp = tissue_psi_tlp(leaf_curve%pi0, leaf_curve%elastic_mod)
+      end associate
    end function pft_leaf_psi_tlp
 
    !----- Where a PFT's stomatal water stress begins [MPa of predawn leaf potential]: the [pft]       !
@@ -625,22 +553,18 @@ contains
       end if
 
       !----- [hydraulics]: the rooting traits set the root profile over the soil column, and the    !
-      !      sapwood conductance needs a positive conductivity and path factor, shared and per PFT. --!
-      call check_root_traits([cfg%hydraulics%root_beta], [cfg%hydraulics%root_depth_b1],            &
-                             [cfg%hydraulics%root_depth_b2], [cfg%hydraulics%specific_root_length],   &
-                             [cfg%hydraulics%fine_root_radius], 'hydraulics')
-      if (allocated(cfg%pft%hyd_root_beta))                                                       &
-         call check_root_traits(cfg%pft%hyd_root_beta, cfg%pft%hyd_root_depth_b1, cfg%pft%hyd_root_depth_b2, &
-                                cfg%pft%hyd_specific_root_length, cfg%pft%hyd_fine_root_radius, 'pft')
-      if (cfg%hydraulics%vessel_curl <= 0.0_wp) error stop tag//'hydraulics.vessel_curl must be > 0'
-      if (allocated(cfg%pft%hyd_wood_kmax)) then
-         if (any(cfg%pft%hyd_wood_kmax > HYD_UNSET .and. cfg%pft%hyd_wood_kmax <= 0.0_wp))          &
-            error stop tag//'pft.wood_kmax must be > 0'
-      end if
-      if (allocated(cfg%pft%hyd_vessel_curl)) then
-         if (any(cfg%pft%hyd_vessel_curl > HYD_UNSET .and. cfg%pft%hyd_vessel_curl <= 0.0_wp))      &
-            error stop tag//'pft.vessel_curl must be > 0'
-      end if
+      !      sapwood conductance needs a positive conductivity and path factor. ---------------------!
+      associate (hydro => cfg%pft%hydro(1:cfg%pft%n))
+         if (any(hydro%root_beta <= 0.0_wp .or. hydro%root_beta >= 1.0_wp))                         &
+            error stop tag//'hydraulics.root_beta must lie in (0, 1)'
+         if (any(hydro%root_depth_b1 <= 0.0_wp)) error stop tag//'hydraulics.root_depth_b1 must be > 0'
+         if (any(hydro%root_depth_b2 < 0.0_wp))  error stop tag//'hydraulics.root_depth_b2 must be >= 0'
+         if (any(hydro%specific_root_length <= 0.0_wp))                                             &
+            error stop tag//'hydraulics.specific_root_length must be > 0'
+         if (any(hydro%fine_root_radius <= 0.0_wp)) error stop tag//'hydraulics.fine_root_radius must be > 0'
+         if (any(hydro%vessel_curl <= 0.0_wp)) error stop tag//'hydraulics.vessel_curl must be > 0'
+         if (any(hydro%wood_kmax <= 0.0_wp))   error stop tag//'hydraulics.wood_kmax must be > 0'
+      end associate
       !----- [soil] ground optics. --------------------------------------------------------------!
       if (cfg%soil%ground_albedo_vis < 0.0_wp .or. cfg%soil%ground_albedo_vis >= 1.0_wp .or.       &
           cfg%soil%ground_albedo_nir < 0.0_wp .or. cfg%soil%ground_albedo_nir >= 1.0_wp)           &
@@ -685,7 +609,7 @@ contains
          !----- curve_par_a and curve_par_n mean different things per family: van Genuchten's alpha  !
          !      [1/m] > 0 and n > 1, Campbell's air-entry suction psi_sat [m] < 0 and exponent b > 0.  !
          !      The other family's pair makes the curve raise a negative base to a fractional power. -!
-         if (sc%retention == SOIL_RETENTION_VG) then
+         if (sc%retention == soil_retention_vg) then
             if (any(tex%par_a(1:n) <= 0.0_wp))                                                    &
                error stop tag//'soil.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
             if (any(tex%par_n(1:n) <= 1.0_wp))                                                    &
@@ -875,7 +799,7 @@ contains
          if (.not. soil_maps_on(cfg%maps))                                                       &
             error stop tag//'[run].mode = "region" needs the soil maps: maps.soil_depth_map, '//    &
                             'soil_texture_map and soil_chemistry_map'
-         if (any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)                          &
+         if (any(cfg%pft%allom(1:cfg%pft%n)%height_form == height_chave)                          &
              .and. len_trim(cfg%maps%chave_e_map) == 0)                                          &
             error stop tag//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//   &
                             'needs maps.chave_e_map'
@@ -896,7 +820,7 @@ contains
          if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND))     &
             error stop tag//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
       end if
-      if (len_trim(cfg%maps%chave_e_map) > 0 .and. .not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)) &
+      if (len_trim(cfg%maps%chave_e_map) > 0 .and. .not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == height_chave)) &
          error stop tag//'maps.chave_e_map needs a PFT with allometry.height_allometry = "chave2014"'
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !
@@ -1045,7 +969,7 @@ contains
       !      (docs/science/leaf_gas_exchange.md eq. (4)). The Arrhenius form has no dS, so the      !
       !      flag would be silently inert -- refuse rather than let a config believe                !
       !      acclimation is on when nothing acclimates. --------------------------------------------!
-      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= TRESP_PEAKED)              &
+      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= temp_response_peaked)              &
          error stop tag//'leaf_physiology.thermal_acclimation requires temp_response_form = '//    &
                     '"peaked" (the Arrhenius form has no entropy term to shift)'
       if (cfg%leaf_thermal_acclimation .and. cfg%acclim_window_days <= 0.0_wp)                    &
@@ -1099,20 +1023,5 @@ contains
               (cfg%pft%theta_ic_c4 <= 0.0_wp .or. cfg%pft%theta_ic_c4 >= 1.0_wp)))         &
          error stop tag//'C4 theta_ic_c4 must be in (0,1)'
    end subroutine validate_config
-
-   !----- The root traits, as the [hydraulics] defaults or the per-PFT values (HYD_UNSET: not given). !
-   subroutine check_root_traits(beta, b1, b2, srl, radius, block)
-      real(wp),         intent(in) :: beta(:), b1(:), b2(:), srl(:), radius(:)
-      character(len=*), intent(in) :: block
-      character(len=*), parameter  :: tag = 'meds_config: '
-      if (any(beta > HYD_UNSET .and. (beta <= 0.0_wp .or. beta >= 1.0_wp)))                     &
-         error stop tag//block//'.root_beta must lie in (0, 1)'
-      if (any(b1 > HYD_UNSET .and. b1 <= 0.0_wp)) error stop tag//block//'.root_depth_b1 must be > 0'
-      if (any(b2 > HYD_UNSET .and. b2 < 0.0_wp)) error stop tag//block//'.root_depth_b2 must be >= 0'
-      if (any(srl > HYD_UNSET .and. srl <= 0.0_wp))                                              &
-         error stop tag//block//'.specific_root_length must be > 0'
-      if (any(radius > HYD_UNSET .and. radius <= 0.0_wp))                                        &
-         error stop tag//block//'.fine_root_radius must be > 0'
-   end subroutine check_root_traits
 
 end module meds_config

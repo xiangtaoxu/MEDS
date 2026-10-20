@@ -35,7 +35,7 @@ module meds_slow_ledger
    use meds_cohort_state_vars,  only : cohort_film_water
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_therm_lib,          only : cas_molar_density
-   use meds_allometry,          only : min_cohort_carbon
+   use meds_allometry_lib,      only : min_cohort_carbon
    use meds_budget_check,       only : budget_rtol_flux
    use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name,          &
                                        pack_pool_vector

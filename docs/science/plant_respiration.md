@@ -108,7 +108,7 @@ kernel broadcasts it over the cohorts. A cohort with no fine roots respires noth
 ## 4. The shared temperature response
 
 Both maintenance limbs — and leaf $R_d$ — scale from a 25 °C baseline through the **same two functions**
-in `meds_temp_response`:
+in `meds_therm_lib`:
 
 ```math
 s_{\mathrm{arr}}(T) = \exp\!\Big[\frac{E_a}{R\,T_{25}}\Big(1 - \frac{T_{25}}{T}\Big)\Big],
@@ -125,10 +125,10 @@ PFT file is written**, never at runtime.
 
 Leaf $R_d$ reaches these functions through the dispatcher `temp_response(form, …)`, so its form follows the
 run's configured selection; stem and root call `peaked_arrhenius_scale` directly and are always peaked.
-Both routes end in the same code, and that is the point: `meds_temp_response` sits in the shared library at
-the root of the dependency DAG precisely so leaf, stem and root cannot drift into three near-copies of an
-Arrhenius — a change to the deactivation normalisation or to the clamped `safe_exp` reaches every tissue at
-once. $`E_a, H_d, \Delta S`$ live separately on `wood_params_t` and `root_params_t`, defaulted to the leaf
+Both routes end in the same code, and that is the point: the temperature response (`meds_therm_lib`) sits
+in the shared library at the root of the dependency DAG precisely so leaf, stem and root cannot drift
+into three near-copies of an Arrhenius — a change to the deactivation normalisation or to the clamped
+`safe_exp` reaches every tissue at once. $`E_a, H_d, \Delta S`$ live separately on `wood_params_t` and `root_params_t`, defaulted to the leaf
 $R_d$ values (46390 / 200000 / 490), so the three tissues share one thermal shape but may diverge.
 
 ## 5. Growth respiration on realized growth
@@ -211,7 +211,7 @@ See `docs/ROADMAP.md` §7 for the open items.
 |---|---|
 | stem maintenance respiration (eq. (3)) | `meds_plant_respiration`: `stem_maintenance_respiration` (`elemental pure`: scalar = one cohort, array = one patch) |
 | fine-root maintenance respiration (eq. (4)) | `meds_plant_respiration`: `fine_root_maintenance_respiration`, with the layer-summed temperature scale `root_zone_temp_scale` |
-| shared temperature response (eq. (5)) | `meds_temp_response`: `arrhenius_scale`, `peaked_arrhenius_scale`, `temp_response` |
+| shared temperature response (eq. (5)) | `meds_therm_lib`: `arrhenius_scale`, `peaked_arrhenius_scale`, `temp_response` |
 | leaf dark respiration $R_d$ | `meds_leaf_gas_exchange` (inside the Ci solve; see `leaf_gas_exchange.md`) |
 | per-sub-step call site + patch totals | `meds_fast_prepass`: `canopy_maintenance_respiration`, `column_prepass` (eq. (7)) |
 | sub-daily → daily integration | `meds_fast_dynamics` → `leaf_resp_accum` / `stem_resp_accum` / `root_resp_accum` on the cohort SoA |

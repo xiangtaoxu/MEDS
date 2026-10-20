@@ -22,7 +22,7 @@ module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num
    use meds_numerics,   only : conserved, pair_mean
-   use meds_allometry,  only : height_to_dbh, min_cohort_carbon
+   use meds_allometry_lib, only : height_to_dbh, min_cohort_carbon
    use meds_config,     only : meds_config_t
    use meds_diag_vars,        only : fuse_cohort_diag, PA_MORT_C_CULL
    use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &
@@ -477,7 +477,7 @@ contains
                call patch_physical_state(patch%cas(ip), patch%soil_water(ip), cfg,                     &
                                          poly%site%surface(patch%owner_site(ip)), t_birth, psi_birth)
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
-                                cfg%hydraulics, t_birth, psi_birth)
+                                t_birth, psi_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !
                !      carbon the pool actually paid for at `carbon_min` per plant. ---------------!
                c_min = min_cohort_carbon(cohort%pft_table%allom(pf), pft%min_cohort_height, pft%wood_density(pf))

@@ -29,7 +29,7 @@
 module meds_fast_ark
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o
-   use meds_water_retention, only : water_content
+   use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_config, only : meds_config_t, INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : state_wrms_grouped, step_control_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
@@ -50,7 +50,7 @@ module meds_fast_ark
                                stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full, &
                                ark_stages_t, fast_workspace_t
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
-   use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, temp_of_liquid_enthalpy
+   use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, liquid_energy_to_temp
    use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
    implicit none
    private

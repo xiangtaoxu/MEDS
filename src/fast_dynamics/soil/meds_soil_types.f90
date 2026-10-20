@@ -21,7 +21,7 @@ module meds_soil_types
    !=======================================================================================!
    !  Soil-column water: the boundary the water network's evaporation reads. The soil's       !
    !  parameters are soil_params_t (meds_soil_column_config), its options soil_opts_t         !
-   !  (meds_biophysics_opts), its retention curves meds_water_retention.                       !
+   !  (meds_biophysics_opts), its retention curves meds_soil_hydr_lib.                         !
    !=======================================================================================!
 
    !----- The soil column's surface boundary for the water network's evaporation (read-only). -----!

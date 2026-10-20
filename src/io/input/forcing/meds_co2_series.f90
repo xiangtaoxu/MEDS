@@ -23,9 +23,9 @@
 module meds_co2_series
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_kinds,           only : wp, ik
-   use meds_time,            only : meds_time_t, time_from_string, time_to_string, time_eq,      &
-                                    seconds_between, time_advance_seconds, time_advance_days,    &
-                                    time_advance_months, time_advance_years
+   use meds_time,            only : meds_time_t, string_to_time, time_to_string, time_eq, seconds_between,  &
+                                    time_advance_seconds, time_advance_days, time_advance_months,           &
+                                    time_advance_years
    use meds_forcing_config,  only : INTERP_LINEAR
    use meds_forcing_types,   only : co2_series_t
    use meds_forcing_kernels, only : interpolate_forcing
@@ -260,7 +260,7 @@ contains
          end select
       end do
       if (.not. prev_digit .or. seps /= START_SEPS(unit)) return
-      call time_from_string(label, t, ok)
+      call string_to_time(label, t, ok)
    end subroutine parse_start
 
    !----- Tabs to blanks, the '#' comment dropped, left-justified. --------------------------!

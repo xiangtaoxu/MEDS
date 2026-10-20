@@ -32,8 +32,8 @@ module meds_c_api_demography
    use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
-   use meds_allometry,              only : dbh_to_height, size2leaf_carbon, size2wood_carbon,    &
-                                          storage_carbon_target
+   use meds_allometry_lib,          only : dbh_to_height, size_to_leaf_carbon, size_to_wood_carbon,  &
+                                           storage_carbon_target
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    implicit none
@@ -184,12 +184,13 @@ contains
          associate (cohort => poly%cohort, pft => cfg%pft)
             do i = 1_ik, cohort%n
                pf = cohort%pft(i)
-               !----- Forward allometry from the supplied dbh growth. It CALLS meds_allometry rather   !
-               !      than inlining it, so a coefficient change reaches the model and this shim alike. !
+               !----- Forward allometry from the supplied dbh growth. It CALLS                      !
+               !      meds_allometry_lib rather than inlining it, so a coefficient change           !
+               !      reaches the model and this shim alike. ---------------------------------------!
                dbh_new    = cohort%dbh(i) + g(i) * cfg%dt_years
                height_new = dbh_to_height(cohort%pft_table%allom(pf), dbh_new)
-               lc_new     = size2leaf_carbon(cohort%pft_table%allom(pf), dbh_new, height_new, cohort%sla(i))
-               wc_new     = size2wood_carbon(cohort%pft_table%allom(pf), dbh_new, height_new, pft%wood_density(pf))
+               lc_new     = size_to_leaf_carbon(cohort%pft_table%allom(pf), dbh_new, height_new, cohort%sla(i))
+               wc_new     = size_to_wood_carbon(cohort%pft_table%allom(pf), dbh_new, height_new, pft%wood_density(pf))
                fc_new     = pft%root_to_leaf_ratio(pf) * lc_new
                nc_new     = storage_carbon_target(pft%storage_cushion(pf), lc_new, fc_new)
                !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth     !

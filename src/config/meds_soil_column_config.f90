@@ -14,7 +14,7 @@
 module meds_soil_column_config
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, grav_head
-   use meds_water_retention,  only : soil_theta_from_psi, soil_psi_from_theta, SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,    only : soil_head_to_theta, soil_theta_to_head, soil_retention_vg
    implicit none
    private
 
@@ -51,7 +51,7 @@ module meds_soil_column_config
       integer(ik) :: n_layer_bottoms = 0_ik      !< [-]  entries of layer_bottoms; 0 = the template
       real(wp)    :: layer_bottoms(n_soil_layer_max) = 0.0_wp   !< [m] layer bottoms, positive down
       !----- Hydraulic texture, one for the whole column (or per layer: n_layer_values below). ------!
-      integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
+      integer(ik) :: retention   = soil_retention_vg  !< van_genuchten | campbell
       real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
       real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
       real(wp)    :: ksat        = 2.89e-6_wp !< [m/s]   saturated hydraulic conductivity
@@ -89,7 +89,7 @@ module meds_soil_column_config
    !      size (n_soil_layer_max) so the hydrology kernel stays allocatable-free and GPU-eligible.!
    type :: soil_params_t
       integer(ik) :: n_active  = n_soil_layer_max            !< active layer count (<= n_soil_layer_max)
-      integer(ik) :: retention = SOIL_RETENTION_VG           !< curve family
+      integer(ik) :: retention = soil_retention_vg           !< curve family
       real(wp) :: soil_layer_z(n_soil_layer_max+1) = 0.0_wp  !< [m] interface elevations (<= 0, ED2 slz)
       real(wp) :: z_node(n_soil_layer_max)  = 0.0_wp         !< [m] node (mid) elevations (<= 0)
       real(wp) :: dz(n_soil_layer_max)      = 0.0_wp         !< [m] layer thickness (> 0)
@@ -194,7 +194,7 @@ contains
    pure real(wp) function top_soil_psi(soil, theta_top) result(psi)
       type(soil_params_t), intent(in) :: soil
       real(wp),            intent(in) :: theta_top   !< [m3/m3]
-      psi = grav_head * soil_psi_from_theta(soil%retention, theta_top, soil%theta_sat(1), soil%theta_res(1), &
+      psi = grav_head * soil_theta_to_head(soil%retention, theta_top, soil%theta_sat(1), soil%theta_res(1), &
                                             soil%curve_par_a(1), soil%curve_par_n(1))
    end function top_soil_psi
 
@@ -275,7 +275,7 @@ contains
       params%curve_par_n(1:n_active) = par_n(1:n_active)
 
       !----- Derived threshold (from each layer's retention curve). ----------------------!
-      params%theta_fc(1:n_active) = soil_theta_from_psi(retention, psi_fc_m, theta_sat(1:n_active),    &
+      params%theta_fc(1:n_active) = soil_head_to_theta(retention, psi_fc_m, theta_sat(1:n_active),    &
                                         theta_res(1:n_active), par_a(1:n_active), par_n(1:n_active))
    end subroutine build_soil_hydr_params_layers
 

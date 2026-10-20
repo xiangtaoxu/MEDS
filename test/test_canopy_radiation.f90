@@ -23,8 +23,7 @@ program test_canopy_radiation
    use meds_constants,      only : stefan_boltzmann
    use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_forcing, RAD_VIS, RAD_NIR, RAD_LW, &
                                  N_RAD_BAND_DEFAULT
-   use meds_optics_lib,     only : beta_lidf, leaf_bf, beta_params_from_mean, gfun_direct,    &
-                                   N_LEAF_CLASS
+   use meds_optics_lib,     only : beta_lidf, leaf_bf, moments_to_beta_params, gfun_direct, n_leaf_class
    use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics_state_t,    &
                                      ground_optics
    implicit none
@@ -53,7 +52,7 @@ contains
    subroutine test_lidf_delta()
       real(wp) :: p, q
       print '(a)', 'test_lidf_delta:'
-      call beta_params_from_mean(45.0_wp, 0.0_wp, p, q)     ! mean=45deg -> mt=0.5; std=0 -> vt floored
+      call moments_to_beta_params(45.0_wp, 0.0_wp, p, q)     ! mean=45deg -> mt=0.5; std=0 -> vt floored
       call check('delta LIDF p finite (variance floored)', p, 124999.5_wp, 1.0e-3_wp)
       call check('delta LIDF q finite (variance floored)', q, 124999.5_wp, 1.0e-3_wp)
    end subroutine test_lidf_delta
@@ -80,7 +79,7 @@ contains
       rw(RAD_LW,:)  = 1.0_wp - emiss_wood ; tw(RAD_LW,:) = 0.0_wp
       cl = [0.80_wp, 0.85_wp] ; cw = [0.50_wp, 0.50_wp]
       do p = 1_ik, NP
-         call beta_params_from_mean(mean_deg, 20.0_wp, bp(p), bq(p))
+         call moments_to_beta_params(mean_deg, 20.0_wp, bp(p), bq(p))
       end do
       hb = [.true.,  .true.,  .false.]        ! VIS/NIR have a beam; LW does not
       he = [.false., .false., .true. ]        ! only LW emits
@@ -109,13 +108,13 @@ contains
    !=======================================================================================!
    subroutine test_leaf_angle_limits()
       real(wp) :: p, q, bf
-      real(wp) :: lidf(N_LEAF_CLASS)
+      real(wp) :: lidf(n_leaf_class)
       print '(a)', '[1] leaf-angle distribution limits'
       !----- Uniform inclination (Beta(1,1)): <cos^2> = 0.5 exactly. ------------------------!
       lidf = beta_lidf(1.0_wp, 1.0_wp) ; bf = leaf_bf(lidf)
       call check('bf(uniform LAD)', bf, 0.5_wp, 2.0e-2_wp)
       !----- Strongly planophile (small mean angle): bf -> ~1 (near-horizontal). ------------!
-      call beta_params_from_mean(8.0_wp, 6.0_wp, p, q)
+      call moments_to_beta_params(8.0_wp, 6.0_wp, p, q)
       lidf = beta_lidf(p, q) ; bf = leaf_bf(lidf)
       if (bf > 0.90_wp) then
          print '(a,f7.4)', '  ok   : bf(planophile) > 0.90   got ', bf
@@ -123,7 +122,7 @@ contains
          call check_true('bf(planophile) > 0.90', .false., bf)
       end if
       !----- Strongly erectophile (near-vertical): bf -> ~0. --------------------------------!
-      call beta_params_from_mean(82.0_wp, 6.0_wp, p, q)
+      call moments_to_beta_params(82.0_wp, 6.0_wp, p, q)
       lidf = beta_lidf(p, q) ; bf = leaf_bf(lidf)
       if (bf < 0.10_wp) then
          print '(a,f7.4)', '  ok   : bf(erectophile) < 0.10  got ', bf

@@ -19,14 +19,13 @@ module meds_cohort_state_vars
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : tissue_c_leaf, tissue_c_wood_dry, cp_liq
-   use meds_therm_lib,       only : tissue_heat_capacity, tissue_dry_heat_capacity, tissue_energy, tissue_temp, &
-                                    internal_energy_liquid
-   use meds_water_retention, only : water_curve_t, water_content
+   use meds_therm_lib,       only : tissue_heat_capacity, tissue_dry_heat_capacity, tissue_temp_to_energy,  &
+                                    tissue_energy_to_temp, internal_energy_liquid
+   use meds_plant_hydr_lib,  only : water_curve_t, tissue_psi_to_water
    use meds_numerics,        only : pair_mean
-   use meds_allometry,       only : dbh_to_height, size2leaf_carbon, size2wood_carbon,                     &
+   use meds_allometry_lib,   only : dbh_to_height, size_to_leaf_carbon, size_to_wood_carbon,  &
                                     carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_pft_params,      only : pft_table_t
-   use meds_config,          only : hydraulics_config_t, pft_tissue_curves
    use meds_diag_vars,       only : cohort_diag_block, expand_cohort_diag, reorder_cohort_diag,              &
                                     copy_cohort_diag, clear_cohort_diag
    use meds_state_defaults,  only : UNSET_POSITIVE, UNSET_NEGATIVE, DMAX_PSI_LEAF_ACCUM_RESET,            &
@@ -589,8 +588,8 @@ contains
       pf = cohort%pft(i)
       associate (pft => cohort%pft_table)
          height = dbh_to_height(pft%allom(pf), cohort%dbh(i))
-         cohort%leaf_carbon(i)          = size2leaf_carbon(pft%allom(pf), cohort%dbh(i), height, cohort%sla(i))
-         cohort%wood_carbon(i)          = size2wood_carbon(pft%allom(pf), cohort%dbh(i), height,             &
+         cohort%leaf_carbon(i)          = size_to_leaf_carbon(pft%allom(pf), cohort%dbh(i), height, cohort%sla(i))
+         cohort%wood_carbon(i)          = size_to_wood_carbon(pft%allom(pf), cohort%dbh(i), height,             &
                                                            pft%wood_density(pf))
          cohort%fineroot_carbon(i)      = pft%root_to_leaf_ratio(pf) * cohort%leaf_carbon(i)
          cohort%nonstructural_carbon(i) = storage_carbon_target(pft%storage_cushion(pf), cohort%leaf_carbon(i), &
@@ -610,7 +609,7 @@ contains
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
       !----- The carbon->geometry flip is the single shared kernel carbon_to_structure             !
-      !       (meds_allometry); this per-slot wrapper just packs/unpacks the SoA fields.           !
+      !       (meds_allometry_lib); this per-slot wrapper just packs/unpacks the SoA fields.       !
       integer(ik) :: pf
       pf = cohort%pft(i)
       call carbon_to_structure(cohort%pft_table%allom(pf), cohort%wood_carbon(i), cohort%leaf_carbon(i), &
@@ -661,8 +660,8 @@ contains
       integer(ik),         intent(in)    :: i
       real(wp),            intent(in)    :: psi                    !< [MPa]
       type(water_curve_t), intent(in)    :: leaf_curve, wood_curve
-      cohort%leaf_water_mass(i) = water_content(psi, leaf_curve, cohort%leaf_carbon(i))
-      cohort%wood_water_mass(i) = water_content(psi, wood_curve,                                     &
+      cohort%leaf_water_mass(i) = tissue_psi_to_water(psi, leaf_curve, cohort%leaf_carbon(i))
+      cohort%wood_water_mass(i) = tissue_psi_to_water(psi, wood_curve,                                     &
                                      cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
    end subroutine set_cohort_tissue_water
 
@@ -734,9 +733,9 @@ contains
       real(wp) :: dry_leaf, w_leaf, dry_wood, w_wood
       call cohort_tissue_masses(cohort, i, dry_leaf, w_leaf, dry_wood, w_wood)
       t_wood = cohort%wood_temp(i)
-      if (dry_wood + w_wood * cp_liq > 0.0_wp) t_wood = tissue_temp(cohort%wood_energy(i), w_wood, dry_wood)
+      if (dry_wood + w_wood * cp_liq > 0.0_wp) t_wood = tissue_energy_to_temp(cohort%wood_energy(i), w_wood, dry_wood)
       t_leaf = t_wood
-      if (dry_leaf + w_leaf * cp_liq > 0.0_wp) t_leaf = tissue_temp(cohort%leaf_energy(i), w_leaf, dry_leaf)
+      if (dry_leaf + w_leaf * cp_liq > 0.0_wp) t_leaf = tissue_energy_to_temp(cohort%leaf_energy(i), w_leaf, dry_leaf)
    end subroutine cohort_tissue_temps
 
    !----- Set a cohort's tissue temperatures from its energies. The temperatures are derived state:   !
@@ -759,8 +758,8 @@ contains
       integer(ik),        intent(in)    :: i
       real(wp) :: dry_leaf, w_leaf, dry_wood, w_wood
       call cohort_tissue_masses(cohort, i, dry_leaf, w_leaf, dry_wood, w_wood)
-      cohort%leaf_energy(i) = tissue_energy(dry_leaf, w_leaf, cohort%leaf_temp(i))
-      cohort%wood_energy(i) = tissue_energy(dry_wood, w_wood, cohort%wood_temp(i))
+      cohort%leaf_energy(i) = tissue_temp_to_energy(dry_leaf, w_leaf, cohort%leaf_temp(i))
+      cohort%wood_energy(i) = tissue_temp_to_energy(dry_wood, w_wood, cohort%wood_temp(i))
       call set_cohort_tissue_temps(cohort, i)
    end subroutine hold_cohort_tissue_temps
 
@@ -777,19 +776,16 @@ contains
    ! hold a stale value; it is recomputed by update_overtopping_lai every slow step anyway).    !
    ! The caller ensures capacity, stamps the global id, and bumps cohort%n.                    !
    !---------------------------------------------------------------------------------------!
-   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, hydraulics, birth_temp, birth_psi)
+   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, birth_temp, birth_psi)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: m, ipft, owner_patch
       type(pft_table_t),  intent(in)    :: pft
       real(wp),           intent(in)    :: nplant, dbh
-      !----- The shared [hydraulics] traits, which with the PFT's own give its tissue curves. -------!
-      type(hydraulics_config_t), intent(in) :: hydraulics
       !----- The state the cohort is born in, its patch's (patch_physical_state): its leaves and wood !
       !      start at birth_temp, holding the water their tissues hold at birth_psi, and with the    !
       !      energy those tissues then hold. ------------------------------------------------------!
       real(wp),           intent(in)    :: birth_temp   !< [K]
       real(wp),           intent(in)    :: birth_psi    !< [MPa]
-      type(water_curve_t) :: leaf_curve, wood_curve
       cohort%pft(m)              = ipft
       cohort%owner_patch(m)      = owner_patch
       cohort%nplant(m)           = nplant
@@ -822,8 +818,7 @@ contains
       cohort%leaf_surf_water(m)  = 0.0_wp             ! a new cohort's canopy starts dry
       cohort%wood_surf_water(m)  = 0.0_wp
       call set_cohort_size(cohort, m)                 ! carbon pools from dbh, then the geometry from them
-      call pft_tissue_curves(hydraulics, pft, ipft, leaf_curve, wood_curve)
-      call set_cohort_tissue_water(cohort, m, birth_psi, leaf_curve, wood_curve)
+      call set_cohort_tissue_water(cohort, m, birth_psi, pft%hydro(ipft)%leaf_curve, pft%hydro(ipft)%wood_curve)
       call hold_cohort_tissue_temps(cohort, m)
    end subroutine init_cohort
 

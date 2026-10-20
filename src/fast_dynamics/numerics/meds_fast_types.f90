@@ -26,15 +26,15 @@ module meds_fast_types
    use meds_plant_types, only : veg_thermal_params_t
    use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
-   use meds_therm_lib, only : cas_enthalpy_of_temp
+   use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : n_soil_pool
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
-   use meds_config, only : hydraulics_config_t, pft_tissue_curves, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
-   use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
-   use meds_pft_params, only : pft_table_t, HYD_UNSET
+   use meds_config, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
+   use meds_plant_hydr_lib, only : build_hydro_table
+   use meds_pft_params, only : pft_table_t
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
    private
@@ -770,7 +770,7 @@ module meds_fast_types
       real(wp), allocatable      :: leaf_temp(:)      !< [K] derived from leaf_energy
       real(wp), allocatable      :: wood_temp(:)      !< [K] derived from wood_energy
       !----- Internal (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic state;      !
-      !      psi is diagnosed from it wherever needed (psi_from_water_content), never persisted      !
+      !      psi is diagnosed from it wherever needed (tissue_water_to_psi), never persisted         !
       !      (docs/science/soil_plant_water.md §2). -------------------------------------------------!
       real(wp), allocatable      :: leaf_water_mass(:) !< [kg/plant] internal leaf water
       real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
@@ -848,62 +848,20 @@ contains
       end if
    end subroutine ensure_column_cohort_capacity
 
-   !----- Flatten the shared [hydraulics] config into the plant hydro_params_t + rhizosphere      !
-   !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
-   !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
-   !       mirroring how the leaf seam flattens the PFT photosynthesis traits. The tissue curves    !
-   !       are the caller's: they come per PFT from pft_tissue_curves. --------------------------!
-   subroutine fill_hydro_params(hcfg, hydraulics_params)
-      type(hydraulics_config_t), intent(in)    :: hcfg
-      type(hydro_params_t),      intent(inout) :: hydraulics_params
-      hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
-      hydraulics_params%vessel_curl    = hcfg%vessel_curl
-      hydraulics_params%root_beta      = hcfg%root_beta      ; hydraulics_params%root_depth_b1  = hcfg%root_depth_b1
-      hydraulics_params%root_depth_b2  = hcfg%root_depth_b2
-      hydraulics_params%specific_root_length = hcfg%specific_root_length
-      hydraulics_params%fine_root_radius     = hcfg%fine_root_radius
-      call build_hydro_table(hydraulics_params%vuln_table, hydraulics_params%wood_kexp)
-   end subroutine fill_hydro_params
-
-   !----- PER-PFT hydraulics table. Each entry starts from the shared [hydraulics] block and the     !
-   !      sapwood conductivity of its wood density (docs/science/plant_hydraulics.md eq. (11)), and  !
-   !      then takes whichever traits the [pft] table actually supplied -- HYD_UNSET means "not      !
-   !      given", so a config can make ONE trait per-PFT without restating the others.               !
-   !                                                                                                 !
-   !      The Kirchhoff lookup (eq. (8)) is rebuilt PER ENTRY, from that PFT's own wood_kexp: the    !
-   !      table is what makes a non-integer vulnerability exponent affordable on the hot path, so    !
-   !      sharing one across PFTs would silently give every PFT the first one's vulnerability shape. !
-   subroutine apply_hydraulics_config(hcfg, pft, table)
-      type(hydraulics_config_t), intent(in)  :: hcfg
-      type(pft_table_t),         intent(in)  :: pft
+   !----- The per-PFT hydraulics table: each PFT's traits from the PFT file's [hydraulics]       !
+   !      block, and the Kirchhoff lookup (docs/science/plant_hydraulics.md eq. (8)) built from    !
+   !      its own wood_kexp. The table is what makes a non-integer vulnerability exponent          !
+   !      affordable on the hot path, so each PFT carries its own. --------------------------------!
+   subroutine apply_hydraulics_config(pft, table)
+      type(pft_table_t),          intent(in)  :: pft
       type(hydro_params_table_t), intent(out) :: table
       integer(ik) :: i
       table%n_pft = pft%n
       allocate(table%pft(max(pft%n, 1_ik)))
       do i = 1_ik, pft%n
-         call fill_hydro_params(hcfg, table%pft(i))                 ! the shared [hydraulics] defaults
-         call pft_tissue_curves(hcfg, pft, i, table%pft(i)%leaf_curve, table%pft(i)%wood_curve)   ! the curves
-         call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
-         table%pft(i)%wood_kmax = wood_kmax_from_density(pft%wood_density(i))   ! Xu et al. 2016
-         call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))
-         call ovr(table%pft(i)%vessel_curl,        pft%hyd_vessel_curl(i))
-         call ovr(table%pft(i)%root_beta,          pft%hyd_root_beta(i))
-         call ovr(table%pft(i)%root_depth_b1,      pft%hyd_root_depth_b1(i))
-         call ovr(table%pft(i)%root_depth_b2,      pft%hyd_root_depth_b2(i))
-         call ovr(table%pft(i)%specific_root_length, pft%hyd_specific_root_length(i))
-         call ovr(table%pft(i)%fine_root_radius,   pft%hyd_fine_root_radius(i))
-         !----- kexp LAST and separately: changing it invalidates the lookup built above. --------!
-         if (pft%hyd_wood_kexp(i) > HYD_UNSET) then
-            table%pft(i)%wood_kexp = pft%hyd_wood_kexp(i)
-            call build_hydro_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
-         end if
+         table%pft(i)%plant_hydraulics_t = pft%hydro(i)
+         call build_hydro_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
       end do
-   contains
-      pure subroutine ovr(dst, src)
-         real(wp), intent(inout) :: dst
-         real(wp), intent(in)    :: src
-         if (src > HYD_UNSET) dst = src
-      end subroutine ovr
    end subroutine apply_hydraulics_config
 
    !----- The canopy films' per-PFT capacities, from the PFT table (both default to 0.1). -------!
@@ -924,7 +882,7 @@ contains
       allocate(biophys%leaf_temp(n_coh), biophys%wood_temp(n_coh))
       allocate(biophys%leaf_water_mass(n_coh), biophys%wood_water_mass(n_coh))
       allocate(biophys%leaf_surf_water(n_coh), biophys%wood_surf_water(n_coh))
-      biophys%leaf_energy      = 0.0_wp    ! scratch seed: the gather sets it, a column fixture with tissue_energy
+      biophys%leaf_energy      = 0.0_wp    ! scratch seed: the gather sets it, a column fixture with tissue_temp_to_energy
       biophys%wood_energy      = 0.0_wp
       biophys%leaf_temp        = leaf_temp0
       biophys%wood_temp        = leaf_temp0
@@ -935,7 +893,7 @@ contains
       biophys%cas%can_temp     = can_temp0
       biophys%cas%can_shv      = can_shv0
       biophys%cas%can_co2      = can_co2
-      biophys%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
+      biophys%cas%can_enthalpy = cas_temp_to_enthalpy(can_temp0, can_shv0)
    end subroutine alloc_patch_biophys
 
    !---------------------------------------------------------------------------------------!
