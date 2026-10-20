@@ -48,6 +48,7 @@ module meds_spac_solver
    use meds_soil_column_config, only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t
    use meds_plant_types,     only : hydro_params_table_t
+   use meds_numerics,        only : sufficient_decrease, fraction_to_boundary
    use meds_therm_lib,       only : internal_energy_liquid, temp_of_liquid_enthalpy
    implicit none
    private
@@ -401,7 +402,7 @@ contains
             call evaluate(spac, params, opts, forcing, hyd, try_soil, try_coh, spac%ev(i_try), .true.)
             call residual(spac, h, spac%ev(i_try), res2_soil, res2_coh)
             merit_try = residual_merit(spac, h, res2_soil, res2_coh, scale_soil, scale_coh)
-            if (merit_try == merit_try .and. merit_try <= (1.0_wp - 1.0e-4_wp * lam) * merit) exit
+            if (merit_try == merit_try .and. sufficient_decrease(merit_try, merit, lam)) exit
             lam = 0.5_wp * lam
          end do
          if (merit_try /= merit_try) return
@@ -459,22 +460,16 @@ contains
       integer(ik) :: k, i, j
       lam = 1.0_wp
       do k = 1_ik, spac%nsl
-         call keep_from_empty(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
+         lam = min(lam, fraction_to_boundary(tau_soil(1_ik + k), step_soil(1_ik + k), STEP_MAX_SHARE))
          if (tau_soil(1_ik + k) <= spac%layer(k)%se_switch) call cap_dry_change(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
       end do
       do i = 1_ik, spac%ncoh
          do j = 1_ik, COHORT_STORES
-            call keep_from_empty(tau_coh(j, i), step_coh(j, i), lam)
+            lam = min(lam, fraction_to_boundary(tau_coh(j, i), step_coh(j, i), STEP_MAX_SHARE))
             call cap_dry_change(tau_coh(j, i), step_coh(j, i), lam)
          end do
       end do
    contains
-      !----- Fraction to the boundary: every store's unknown is zero when it is empty. -------------!
-      pure subroutine keep_from_empty(tau, d, lam)
-         real(wp), intent(in)    :: tau, d
-         real(wp), intent(inout) :: lam
-         if (d < 0.0_wp) lam = min(lam, STEP_MAX_SHARE * tau / (-d))
-      end subroutine keep_from_empty
       !----- The cap on the change applies below full saturation (an RWC or Se of one), where the     !
       !      potential steepens towards empty; above it the curve is gentle and Newton moves freely. ---!
       pure subroutine cap_dry_change(tau, d, lam)

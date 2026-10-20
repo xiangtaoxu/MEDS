@@ -11,6 +11,7 @@
 !==========================================================================================!
 module meds_hydr_lib
    use meds_kinds,     only : wp, ik
+   use meds_numerics,  only : smooth_max0
    use meds_constants, only : grav_head, rho_h2o, pi, tiny_num
    implicit none
    private
@@ -20,7 +21,6 @@ module meds_hydr_lib
    public :: plc_retained, flux_potential, wood_kmax_from_density
    public :: hydro_table_t, build_hydro_table, flux_potential_lin
    !----- The conductances and flows: rhizosphere, xylem, transpiration supply. -----------!
-   public :: smooth_max0
    public :: rhizosphere_conductance, root_water_uptake, root_water_uptake_profile
    public :: xylem_max_conductance, xylem_sapflow, supply_limited_transpiration
    !----- The root profile. ---------------------------------------------------------------!
@@ -229,25 +229,6 @@ contains
    !=======================================================================================!
    !     The conductances and flows.                                                       !
    !=======================================================================================!
-
-   !----- max(x, 0) with its corner rounded over [0, width] by the cubic 2x^2/w - x^3/w^2, !
-   !      which matches both sides in value and slope, so Newton never meets a corner.     !
-   !      Every one-way water flow uses it: root uptake, the leaves' supply limit and      !
-   !      ground evaporation (docs/science/soil_plant_water.md eq. (1)). ------------------!
-   elemental subroutine smooth_max0(x, width, f, df)
-      real(wp), intent(in)  :: x, width
-      real(wp), intent(out) :: f, df
-      real(wp) :: t
-      if (x <= 0.0_wp) then
-         f = 0.0_wp ; df = 0.0_wp
-      else if (x < width) then
-         t  = x / width
-         f  = x * t * (2.0_wp - t)
-         df = t * (4.0_wp - 3.0_wp * t)
-      else
-         f = x ; df = 1.0_wp
-      end if
-   end subroutine smooth_max0
 
    !----- A cohort's rhizosphere conductance in one soil layer per unit soil conductivity  !
    !      [kg/s/MPa per m2 of ground, per m/s]: steady radial flow to a single root        !

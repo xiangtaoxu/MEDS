@@ -22,7 +22,7 @@ module meds_soil_water
    use meds_soil_column_config, only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_AQUIFER
    use meds_water_retention,  only : soil_theta_from_psi
-   use meds_hydr_lib,         only : smooth_max0
+   use meds_numerics,         only : smooth_max0
    use meds_therm_lib,        only : sat_specific_humidity
    implicit none
    private

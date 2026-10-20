@@ -1,9 +1,9 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_numerics -- small numerical helpers every layer shares: clamps, a smooth step, the   !
-! smooth minimum of two limits, the step-size factor, weighted means, an ordering, and the   !
-! test that an operator kept what it only moves. The linear solvers are in                   !
-! meds_linear_algebra.                                                                      !
+! smooth minimum of two limits, a rounded max(x, 0), the step-size factor, the Newton       !
+! solvers' step safeguards, weighted means, an ordering, and the test that an operator kept  !
+! what it only moves. The linear solvers are in meds_linear_algebra.                        !
 !==========================================================================================!
 module meds_numerics
    use meds_kinds,     only : wp, ik
@@ -12,10 +12,15 @@ module meds_numerics
    implicit none
    private
 
-   public :: quadratic_smaller_root, adaptive_step_update
+   public :: quadratic_smaller_root, adaptive_step_update, smooth_max0
+   public :: sufficient_decrease, fraction_to_boundary
    public :: logistic, clamp01, clamp, weighted_mean
    public :: ascending_order
    public :: conserved, pair_mean
+
+   !----- A line-search step is accepted when the merit falls by at least this share of the  !
+   !      step taken (Armijo's sufficient-decrease condition). ------------------------------!
+   real(wp), parameter :: ARMIJO_C = 1.0e-4_wp
 
 contains
 
@@ -71,6 +76,47 @@ contains
       expo = -1.0_wp / real(p + 1_ik, wp)
       factor = min(fmax, max(fmin, safety * max(err, tiny(err)) ** expo))   ! err = 0 gives fmax
    end function adaptive_step_update
+
+   !----- max(x, 0) with its corner rounded over [0, width] by the cubic 2x^2/w - x^3/w^2,  !
+   !      which matches both sides in value and slope, so Newton never meets a corner. Every  !
+   !      one-way water flow uses it: root uptake, the leaves' supply limit and ground        !
+   !      evaporation (docs/science/soil_plant_water.md eq. (1)). -------------------------!
+   elemental subroutine smooth_max0(x, width, f, df)
+      real(wp), intent(in)  :: x, width
+      real(wp), intent(out) :: f, df    !< the rounded max and its slope
+      real(wp) :: t
+      if (x <= 0.0_wp) then
+         f = 0.0_wp
+         df = 0.0_wp
+      else if (x < width) then
+         t  = x / width
+         f  = x * t * (2.0_wp - t)
+         df = t * (4.0_wp - 3.0_wp * t)
+      else
+         f = x
+         df = 1.0_wp
+      end if
+   end subroutine smooth_max0
+
+   !----- Armijo's test for a backtracking line search: true when the merit at a trial step  !
+   !      of `step_share` of the Newton step has fallen to (1 - ARMIJO_C step_share) of the  !
+   !      merit at the start. ---------------------------------------------------------------!
+   elemental pure logical function sufficient_decrease(merit_trial, merit, step_share) result(ok)
+      real(wp), intent(in) :: merit_trial, merit, step_share
+      ok = merit_trial <= (1.0_wp - ARMIJO_C * step_share) * merit
+   end function sufficient_decrease
+
+   !----- The largest share of a Newton step dx that keeps x, a quantity that is zero at its  !
+   !      boundary, from covering more than `share` of its way there (the fraction-to-the-    !
+   !      boundary rule); a step away from the boundary is not limited. --------------------!
+   elemental pure real(wp) function fraction_to_boundary(x, dx, share) result(lam)
+      real(wp), intent(in) :: x, dx, share
+      if (dx < 0.0_wp) then
+         lam = share * x / (-dx)
+      else
+         lam = huge(x)
+      end if
+   end function fraction_to_boundary
 
    !----- The logistic 1 / (1 + exp(-z)), a smooth step from 0 to 1                            !
    !      (docs/science/plant_phenology.md eq. (2)). ---------------------------------------!

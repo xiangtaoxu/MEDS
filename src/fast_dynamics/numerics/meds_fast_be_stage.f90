@@ -39,6 +39,7 @@ module meds_fast_be_stage
    use meds_therm_lib, only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, &
                               temp_of_liquid_enthalpy
    use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
+   use meds_numerics,     only : sufficient_decrease
    implicit none
    private
 
@@ -279,7 +280,7 @@ contains
                t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
             RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enthalpy_atm - Ht)
             Rqt = cas_mass_capacity*(qt - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qt)
-            if (RHt*RHt + Rqt*Rqt <= (1.0_wp - 1.0e-4_wp*lam)*rn0) exit          ! Armijo
+            if (sufficient_decrease(RHt*RHt + Rqt*Rqt, rn0, lam)) exit
             lam = 0.5_wp*lam
          end do
          Hk = Ht ; qk = qt ; R_H = RHt ; R_q = Rqt

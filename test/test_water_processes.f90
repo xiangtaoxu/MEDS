@@ -26,7 +26,8 @@ program test_water_processes
                                     soil_unknown_from_theta, tissue_water_relations, tissue_rwc_from_water,      &
                                     pond_water_relations, pond_head_from_water, SOIL_SPECIFIC_STORAGE,          &
                                     POND_DEPRESSION_DEPTH
-   use meds_hydr_lib,    only : smooth_max0, rhizosphere_conductance, root_water_uptake, xylem_sapflow, xylem_max_conductance,  &
+   use meds_numerics,    only : smooth_max0
+   use meds_hydr_lib,    only : rhizosphere_conductance, root_water_uptake, xylem_sapflow, xylem_max_conductance,  &
                                 supply_limited_transpiration, hydro_table_t, build_hydro_table, flux_potential,   &
                                 flux_potential_lin, plc_retained
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_from_psi,       &
