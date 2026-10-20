@@ -257,7 +257,7 @@ bundle is its `*_args_t` (#465).
 
 ### Changed
 
-- **The ctest target `biophysics_opts_config` is `biophysics_params_config`** (#NNN), named for the
+- **The ctest target `biophysics_opts_config` is `biophysics_params_config`** (#466), named for the
   `meds_soil_params` and `meds_biophysics_params` records whose loaders it checks.
 - **`src/config` is the configuration and its checks** (#464): `meds_config` (the aggregate, one field
   per key, grouped by block in the reference's order, and the routines that derive what the parameters
