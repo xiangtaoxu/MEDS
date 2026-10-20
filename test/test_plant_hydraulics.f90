@@ -18,12 +18,12 @@ program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head, pi
-   use meds_plant_hydr_lib, only : plc_retained, flux_potential, hydro_table_t, build_hydro_table,             &
-                                   flux_potential_lin, wood_kmax_from_density, root_fraction_profile,          &
-                                   xylem_max_conductance, rhizosphere_conductance, xylem_sapflow, pv_psi_tlp,  &
-                                   rwc_from_psi, psi_from_rwc, water_content, capacitance,                     &
-                                   psi_from_water_content, clamp_water_to_capacity, water_curve_t,             &
-                                   shared_potential
+   use meds_plant_hydr_lib, only : plc_retained, kirchhoff_potential, hydro_table_t, build_hydro_table,        &
+                                   wood_density_to_kmax, root_fraction_profile, xylem_max_conductance,         &
+                                   rhizosphere_conductance, xylem_sapflow, tissue_psi_tlp, tissue_psi_to_rwc,  &
+                                   tissue_rwc_to_psi, tissue_psi_to_water, tissue_capacitance,                 &
+                                   tissue_water_to_psi, tissue_capped_water, water_curve_t,                    &
+                                   tissue_shared_potential
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_plant_hydraulics, only : cohort_root_depth, cohort_root_profile
@@ -31,7 +31,6 @@ program test_plant_hydraulics
 
    call test_pv_curve()
    call test_xylem_kirchhoff_mean()
-   call test_kirchhoff_quadrature()
    call test_hydro_table()
    call test_sapwood_conductance()
    call test_root_profile()
@@ -64,25 +63,25 @@ contains
       real(wp) :: psi_tlp, r, psi, cnum, cana, dp, w1, w2
       print '(a)', '-- PV curve --'
       !----- Turgor loss point (Bartlett eqn 1). --------------------------------------!
-      psi_tlp = pv_psi_tlp(pi0, eps)
+      psi_tlp = tissue_psi_tlp(pi0, eps)
       call check('psi_tlp = pi0*eps/(pi0+eps)', psi_tlp, pi0*eps/(pi0+eps), 1.0e-12_wp)
       !----- psi<->RWC round trip in the turgid region. -------------------------------!
       r   = 0.9_wp
-      psi = psi_from_rwc(r, pi0, eps)
-      call check('rwc round-trip (turgid)', rwc_from_psi(psi, pi0, eps), r, 1.0e-9_wp)
+      psi = tissue_rwc_to_psi(r, pi0, eps)
+      call check('rwc round-trip (turgid)', tissue_psi_to_rwc(psi, pi0, eps), r, 1.0e-9_wp)
       !----- ... and in the flaccid region. -------------------------------------------!
       r   = 0.5_wp*((pi0+eps)/eps)
-      psi = psi_from_rwc(r, pi0, eps)
-      call check('rwc round-trip (flaccid)', rwc_from_psi(psi, pi0, eps), r, 1.0e-9_wp)
+      psi = tissue_rwc_to_psi(r, pi0, eps)
+      call check('rwc round-trip (flaccid)', tissue_psi_to_rwc(psi, pi0, eps), r, 1.0e-9_wp)
       !----- Full-turgor water = saturated water. -------------------------------------!
-      call check('W(psi=0) = water_sat*biomass', water_content(0.0_wp, curve, bm),  &
+      call check('W(psi=0) = water_sat*biomass', tissue_psi_to_water(0.0_wp, curve, bm),  &
                  ws*bm, 1.0e-9_wp)
       !----- Capacitance = finite-difference dW/dpsi. ---------------------------------!
       psi  = -0.8_wp ; dp = 1.0e-5_wp
-      w1   = water_content(psi - dp, curve, bm)
-      w2   = water_content(psi + dp, curve, bm)
+      w1   = tissue_psi_to_water(psi - dp, curve, bm)
+      w2   = tissue_psi_to_water(psi + dp, curve, bm)
       cnum = (w2 - w1)/(2.0_wp*dp)
-      cana = capacitance(psi, curve, bm)
+      cana = tissue_capacitance(psi, curve, bm)
       call check('C(psi) ~ dW/dpsi (turgid)', cana, cnum, 1.0e-6_wp)
    end subroutine test_pv_curve
 
@@ -102,31 +101,13 @@ contains
            avg_plc > plc_retained(psi_l,psi50,kexp) .and. avg_plc < plc_retained(psi_w,psi50,kexp))
       !----- <plc> = (Phi(up)-Phi(down))/(up-down). -----------------------------------!
       call check('<plc> = DeltaPhi/Deltapsi', avg_plc,                                          &
-           (flux_potential(psi_w,psi50,kexp)-flux_potential(psi_l,psi50,kexp))/(psi_w-psi_l),  &
+           (kirchhoff_potential(psi_w,psi50,kexp,tab)-kirchhoff_potential(psi_l,psi50,kexp,tab))/(psi_w-psi_l),  &
            1.0e-11_wp)
       !----- |dpsi|->0 limit is the pointwise value at the mean. -----------------------!
       pmid  = -0.9_wp
       call xylem_sapflow(kcond, pmid, pmid - 1.0e-9_wp, 0.0_wp, psi50, kexp, tab, s0, dum1, dum2)
       call check('Kirchhoff dpsi->0 limit', s0 / (1.0e-9_wp * kcond), plc_retained(pmid,psi50,kexp), 1.0e-6_wp)
    end subroutine test_xylem_kirchhoff_mean
-
-   !=======================================================================================!
-   ! flux_potential's general-exponent branch (kexp not 1 or 2, a 7-point quadrature) matches a   !
-   ! fine composite-Simpson reference of the same integral, and at kexp = 2 the same quadrature    !
-   ! reproduces the closed form atan(r) it would otherwise replace.                                !
-   !=======================================================================================!
-   subroutine test_kirchhoff_quadrature()
-      real(wp), parameter :: psi50 = -2.0_wp
-      real(wp) :: psi, r, ref
-      print '(a)', '-- Kirchhoff potential quadrature --'
-      psi = -1.3_wp ; r = psi / psi50
-      ref = psi50 * simpson_reference(r, 3.0_wp)
-      call check('quadrature matches the Simpson reference (kexp=3)', flux_potential(psi, psi50, 3.0_wp), &
-                 ref, 1.0e-6_wp)
-      psi = -0.7_wp ; r = psi / psi50
-      call check('quadrature branch at kexp~2 reproduces atan (closed form)',                         &
-                 flux_potential(psi, psi50, 2.0_wp + 2.0e-9_wp), psi50 * atan(r), 1.0e-6_wp)
-   end subroutine test_kirchhoff_quadrature
 
    !----- integral_0^r du/(1+u^kexp) by composite Simpson on 2000 intervals: the reference. ---!
    pure real(wp) function simpson_reference(r, kexp) result(g)
@@ -143,11 +124,17 @@ contains
       g = g * h / 3.0_wp
    end function simpson_reference
 
+   !----- The Kirchhoff potential [MPa] from the Simpson reference, for r = psi/psi50 <= 8. -!
+   pure real(wp) function kirchhoff_reference(psi, psi50, kexp) result(phi)
+      real(wp), intent(in) :: psi, psi50, kexp
+      phi = psi50 * simpson_reference(psi / psi50, kexp)
+   end function kirchhoff_reference
+
    !=======================================================================================!
-   ! The precomputed lookup table (build_hydro_table + flux_potential_lin) reproduces the      !
-   ! exact 7-pt-quadrature Kirchhoff potential for a general (non-{1,2}) exponent, and the       !
-   ! table-backed xylem conductance matches the quadrature's. kexp is stamped for the staleness      !
-   ! guard, and psi50 is a runtime scale (one table serves any psi50).                             !
+   ! The precomputed lookup table (build_hydro_table, read through kirchhoff_potential)            !
+   ! reproduces a Simpson reference of the Kirchhoff potential for a general (non-{1,2})           !
+   ! exponent, and the table-backed xylem conductance matches the reference's. kexp is stamped for !
+   ! the staleness guard, and psi50 is a runtime scale (one table serves any psi50).               !
    !=======================================================================================!
    subroutine test_hydro_table()
       real(wp), parameter :: kexp = 3.0_wp, psi50 = -2.0_wp, kcond = 3.0e-3_wp
@@ -157,23 +144,23 @@ contains
       print '(a)', '-- Kirchhoff lookup table --'
       call build_hydro_table(tab, kexp)
       call check('table stamps kexp (staleness guard)', tab%kexp, kexp, 0.0_wp)
-      !----- flux_potential_lin(psi) matches the exact quadrature across the operating range. --!
+      !----- The table matches the reference across the operating range. -----------------------!
       emax = 0.0_wp
       do i = 0_ik, 80_ik
          psi = psi50 * (0.05_wp + real(i,wp)*0.05_wp)          ! r in [0.05, 4.05]
-         err = abs(flux_potential_lin(psi, psi50, tab) - flux_potential(psi, psi50, kexp))
+         err = abs(kirchhoff_potential(psi, psi50, kexp, tab) - kirchhoff_reference(psi, psi50, kexp))
          emax = max(emax, err)
       end do
-      call check_true('linear table within 1e-4 MPa of quadrature (kexp=3)', emax < 1.0e-4_wp)
-      !----- The table-backed xylem conductance matches the quadrature's Kirchhoff mean. -------!
+      call check_true('linear table within 1e-4 MPa of the reference (kexp=3)', emax < 1.0e-4_wp)
+      !----- The table-backed xylem conductance matches the reference's Kirchhoff mean. --------!
       psi_l = -1.7_wp ; psi_w = -0.6_wp
       call xylem_sapflow(kcond, psi_w, psi_l, 0.0_wp, psi50, kexp, tab, s, dum1, dum2)
-      call check('table-backed xylem conductance ~ quadrature (kexp=3)', s / (psi_w - psi_l),     &
-           kcond * (flux_potential(psi_w, psi50, kexp) - flux_potential(psi_l, psi50, kexp))       &
+      call check('table-backed xylem conductance ~ reference (kexp=3)', s / (psi_w - psi_l),      &
+           kcond * (kirchhoff_reference(psi_w, psi50, kexp) - kirchhoff_reference(psi_l, psi50, kexp)) &
            / (psi_w - psi_l), 1.0e-6_wp)
       !----- psi50 is a runtime scale: the SAME table serves a different psi50. ----------------!
       call check('table serves a different psi50 (r-normalized)',                                &
-           flux_potential_lin(-3.0_wp, -3.0_wp, tab), flux_potential(-3.0_wp, -3.0_wp, kexp),    &
+           kirchhoff_potential(-3.0_wp, -3.0_wp, kexp, tab), kirchhoff_reference(-3.0_wp, -3.0_wp, kexp), &
            1.0e-4_wp)
    end subroutine test_hydro_table
 
@@ -193,14 +180,14 @@ contains
                  2.0_wp * k0, 1.0e-15_wp)
       call check_true('a plant with no sapwood keeps a positive conductance',                         &
                       xylem_max_conductance(9.0_wp, 0.0_wp, 20.0_wp, 1.5_wp) > 0.0_wp)
-      call check('wood_kmax at 0.6 g/cm3 (Xu et al. 2016)', wood_kmax_from_density(0.6_wp),       &
+      call check('wood_kmax at 0.6 g/cm3 (Xu et al. 2016)', wood_density_to_kmax(0.6_wp),       &
                  exp(2.348_wp - 2.455_wp*0.6_wp + 0.5_wp*0.6186_wp), 1.0e-12_wp)
       call check_true('denser wood conducts less',                                               &
-                      wood_kmax_from_density(0.8_wp) < wood_kmax_from_density(0.4_wp))
-      call check('below the fitted range: the 0.35 value', wood_kmax_from_density(0.2_wp),        &
-                 wood_kmax_from_density(0.35_wp), 0.0_wp)
-      call check('above the fitted range: the 0.95 value', wood_kmax_from_density(1.1_wp),        &
-                 wood_kmax_from_density(0.95_wp), 0.0_wp)
+                      wood_density_to_kmax(0.8_wp) < wood_density_to_kmax(0.4_wp))
+      call check('below the fitted range: the 0.35 value', wood_density_to_kmax(0.2_wp),        &
+                 wood_density_to_kmax(0.35_wp), 0.0_wp)
+      call check('above the fitted range: the 0.95 value', wood_density_to_kmax(1.1_wp),        &
+                 wood_density_to_kmax(0.95_wp), 0.0_wp)
    end subroutine test_sapwood_conductance
 
    !=======================================================================================!
@@ -233,10 +220,10 @@ contains
       print '(a)', '-- Biomass fast/slow seam: mass-conserving growth --'
       call defaults(p, o)
       bwood0    = 7.0_wp
-      psi_wood0 = psi_from_rwc(0.90_wp, p%wood_curve%pi0, p%wood_curve%elastic_mod)
-      w0 = water_content(psi_wood0, p%wood_curve, bwood0)
+      psi_wood0 = tissue_rwc_to_psi(0.90_wp, p%wood_curve%pi0, p%wood_curve%elastic_mod)
+      w0 = tissue_psi_to_water(psi_wood0, p%wood_curve, bwood0)
       bwood1    = bwood0 * 1.05_wp
-      psi_wood1 = psi_from_water_content(w0, p%wood_curve, bwood1)
+      psi_wood1 = tissue_water_to_psi(w0, p%wood_curve, bwood1)
       call check_true('growth at conserved mass lowers psi_wood (drier)', psi_wood1 < psi_wood0)
    end subroutine test_growth_seam
 
@@ -280,7 +267,7 @@ contains
    !=======================================================================================!
    ! Saturation-CEILING clamp (the guard mass conservation needs): a persisted mass can only       !
    ! exceed the current capacity after biomass SHRINKS (e.g. the phenology dormant-canopy leaf       !
-   ! snap-to-bare), never after it grows. clamp_water_to_capacity must be an exact no-op on growth,   !
+   ! snap-to-bare), never after it grows. tissue_capped_water must be an exact no-op on growth,       !
    ! must cap exactly at the new ceiling on a shrink, and must reduce a fully-bare tissue to exactly  !
    ! 0 (no NaN/negative) -- see meds_plant_hydr_lib.f90.                                               !
    !=======================================================================================!
@@ -290,11 +277,11 @@ contains
       real(wp) :: biomass0, biomass_shrunk, biomass_grown, w0, ceiling_shrunk, w_capped
       print '(a)', '-- Biomass fast/slow seam: saturation-ceiling clamp --'
       biomass0 = 7.0_wp
-      w0 = water_content(psi_from_rwc(0.97_wp, pi0, eps), curve, biomass0)   ! near-saturated
+      w0 = tissue_psi_to_water(tissue_rwc_to_psi(0.97_wp, pi0, eps), curve, biomass0)   ! near-saturated
 
       !----- (a) GROWING biomass: the clamp must be a strict no-op. ---------------------------!
       biomass_grown = biomass0 * 1.05_wp
-      call check('clamp is a no-op when biomass grows', clamp_water_to_capacity(w0, curve, biomass_grown), &
+      call check('clamp is a no-op when biomass grows', tissue_capped_water(w0, curve, biomass_grown), &
                  w0, 1.0e-12_wp)
 
       !----- (b) SHRINKING biomass (a snap-to-bare-like 10x drop): the carried-forward mass would   !
@@ -302,17 +289,17 @@ contains
       biomass_shrunk = biomass0 * 0.10_wp
       ceiling_shrunk = ws * biomass_shrunk
       call check_true('unclamped carried-forward mass would exceed the new ceiling', w0 > ceiling_shrunk)
-      w_capped = clamp_water_to_capacity(w0, curve, biomass_shrunk)
+      w_capped = tissue_capped_water(w0, curve, biomass_shrunk)
       call check('clamp caps mass exactly at the new ceiling', w_capped, ceiling_shrunk, 1.0e-12_wp)
       call check_true('released excess is non-negative', (w0 - w_capped) >= 0.0_wp)
       !----- The clamped mass reads back at exactly rwc=1 (sane, bounded), not the pathological     !
       !      super-turgid extrapolation the unclamped mass would imply. ----------------------------!
       call check('clamped mass diagnoses psi at exactly rwc=1',                                      &
-                 psi_from_water_content(w_capped, curve, biomass_shrunk),                  &
-                 psi_from_rwc(1.0_wp, pi0, eps), 1.0e-9_wp)
+                 tissue_water_to_psi(w_capped, curve, biomass_shrunk),                  &
+                 tissue_rwc_to_psi(1.0_wp, pi0, eps), 1.0e-9_wp)
 
       !----- (c) Full snap-to-bare (biomass -> 0): clamps to exactly 0, not NaN/negative. ----------!
-      w_capped = clamp_water_to_capacity(w0, curve, 0.0_wp)
+      w_capped = tissue_capped_water(w0, curve, 0.0_wp)
       call check('fully-bare tissue clamps to exactly 0', w_capped, 0.0_wp, 0.0_wp)
    end subroutine test_seam_capacity_clamp
 
@@ -328,17 +315,17 @@ contains
       print '(a)', '-- Leafless cohort: leaf node at the wood potential less gravity --'
       call defaults(p, o)
       bwood  = 7.0_wp
-      w_wood = water_content(-1.2_wp, p%wood_curve, bwood)
-      psi_w  = psi_from_water_content(w_wood, p%wood_curve, bwood)
+      w_wood = tissue_psi_to_water(-1.2_wp, p%wood_curve, bwood)
+      psi_w  = tissue_water_to_psi(w_wood, p%wood_curve, bwood)
       psi_l  = leaf_node_psi(0.0_wp, 0.0_wp, w_wood, bwood, height, p, o)
       call check('leafless: wood psi less gravity', psi_l, psi_w - grav_head*height, 1.0e-12_wp)
       o%gravity_on = .false.
       psi_l  = leaf_node_psi(0.0_wp, 0.0_wp, w_wood, bwood, height, p, o)
       call check('leafless, gravity off: wood psi', psi_l, psi_w, 1.0e-12_wp)
       o%gravity_on = .true.
-      w_leaf = water_content(-0.8_wp, p%leaf_curve, bleaf)
+      w_leaf = tissue_psi_to_water(-0.8_wp, p%leaf_curve, bleaf)
       psi_l  = leaf_node_psi(w_leaf, bleaf, w_wood, bwood, height, p, o)
-      call check('with leaves: the leaf curve', psi_l, psi_from_water_content(w_leaf, p%leaf_curve, bleaf), 0.0_wp)
+      call check('with leaves: the leaf curve', psi_l, tissue_water_to_psi(w_leaf, p%leaf_curve, bleaf), 0.0_wp)
       call check('with leaves: -0.8 MPa recovered', psi_l, -0.8_wp, 1.0e-9_wp)
    end subroutine test_leafless_leaf_psi
 
@@ -356,24 +343,25 @@ contains
       call defaults(p, o)
       psi_set = [-0.3_wp, -2.5_wp, -40.0_wp]          ! turgid, flaccid, deep in the flaccid tail
       do k = 1, 3
-         w_total = water_content(psi_set(k), p%wood_curve, bwood)                                    &
-                 + water_content(psi_set(k) - head, p%leaf_curve, bleaf)
-         psi = shared_potential(w_total, p%wood_curve, bwood, p%leaf_curve, bleaf, head)
+         w_total = tissue_psi_to_water(psi_set(k), p%wood_curve, bwood)                                    &
+                 + tissue_psi_to_water(psi_set(k) - head, p%leaf_curve, bleaf)
+         psi = tissue_shared_potential(w_total, p%wood_curve, bwood, p%leaf_curve, bleaf, head)
          call check('at rest: the shared potential is recovered', psi, psi_set(k), 1.0e-9_wp * abs(psi_set(k)))
-         call check('at rest: the two hold the total', water_content(psi, p%wood_curve, bwood)          &
-                    + water_content(psi - head, p%leaf_curve, bleaf), w_total, 1.0e-12_wp * w_total)
+         call check('at rest: the two hold the total', tissue_psi_to_water(psi, p%wood_curve, bwood)          &
+                    + tissue_psi_to_water(psi - head, p%leaf_curve, bleaf), w_total, 1.0e-12_wp * w_total)
       end do
-      psi = shared_potential(10.0_wp * (p%wood_curve%water_sat * bwood + p%leaf_curve%water_sat * bleaf), &
+      psi = tissue_shared_potential(10.0_wp * (p%wood_curve%water_sat * bwood + p%leaf_curve%water_sat * bleaf), &
                              p%wood_curve, bwood, p%leaf_curve, bleaf, head)
       call check('at rest: more than saturation returns the wet end', psi, 0.0_wp, 0.0_wp)
-      psi = shared_potential(0.0_wp, p%wood_curve, bwood, p%leaf_curve, bleaf, head)
+      psi = tissue_shared_potential(0.0_wp, p%wood_curve, bwood, p%leaf_curve, bleaf, head)
       call check_true('at rest: nothing at all returns the dry end', psi < -1.0e3_wp)
    end subroutine test_shared_potential
 
    !=======================================================================================!
    ! Far beyond the table (a leaf dried to the apoplastic floor reads about pi0 * 1e4 MPa), the     !
    ! Kirchhoff potential approaches its asymptote psi50 * (pi/a)/sin(pi/a), and the wood-to-leaf    !
-   ! edge keeps a positive conductance, so the leaf can refill. The table and the quadrature agree. !
+   ! edge keeps a positive conductance, so the leaf can refill. At its edge the table equals the    !
+   ! Simpson reference.                                                                            !
    !=======================================================================================!
    subroutine test_kirchhoff_far_tail()
       real(wp), parameter :: kexp = 4.0_wp, psi50 = -3.209_wp, kcond = 5.0e-3_wp
@@ -383,14 +371,14 @@ contains
       call build_hydro_table(tab, kexp)
       g_inf   = (pi/kexp) / sin(pi/kexp)
       psi_far = -25040.0_wp
-      call check('quadrature reaches the asymptote', flux_potential(psi_far, psi50, kexp), psi50*g_inf, 1.0e-4_wp)
-      call check('table reaches the asymptote', flux_potential_lin(psi_far, psi50, tab), psi50*g_inf, 1.0e-4_wp)
-      call check('table at its edge = quadrature', flux_potential_lin(8.0_wp*psi50, psi50, tab),         &
-                 flux_potential(8.0_wp*psi50, psi50, kexp), 1.0e-9_wp)
+      call check('table reaches the asymptote', kirchhoff_potential(psi_far, psi50, kexp, tab), psi50*g_inf,   &
+                 1.0e-4_wp)
+      call check('table at its edge = reference', kirchhoff_potential(8.0_wp*psi50, psi50, kexp, tab),      &
+                 kirchhoff_reference(8.0_wp*psi50, psi50, kexp), 1.0e-9_wp)
       call xylem_sapflow(kcond, -1.33_wp, psi_far, 0.0_wp, psi50, kexp, tab, s, dum1, dum2)
       call check_true('desiccated-leaf sapflow is positive', s > 0.0_wp)
       call check('desiccated-leaf sapflow = k (Phi_wood - Phi_inf)', s,                                   &
-                 kcond * (flux_potential(-1.33_wp, psi50, kexp) - psi50*g_inf), 1.0e-6_wp)
+                 kcond * (kirchhoff_reference(-1.33_wp, psi50, kexp) - psi50*g_inf), 1.0e-6_wp)
    end subroutine test_kirchhoff_far_tail
 
 end program test_plant_hydraulics

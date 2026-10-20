@@ -79,7 +79,7 @@ $`f_r`$ raises storage, GPP and LAI and lowers soil carbon.
 
 ## 2. PARTEH-H1 allocation ladder
 
-Targets come from allometry: leaf $`L^{*}=`$ `size2leaf_carbon`, fine root $`q\,L^{*}`$ (with $q$ the
+Targets come from allometry: leaf $`L^{*}=`$ `size_to_leaf_carbon`, fine root $`q\,L^{*}`$ (with $q$ the
 root:leaf ratio), storage $`c_s\,(1+q)\,L^{*}`$, the carbon of $`c_s`$ full flushes. A **demand** is the deficit `target − pool`; the leaf and
 fine-root demands arrive already **flush-capped** ($`\Delta_{\mathrm{fl}} = r_{\mathrm{fl}} L^{*} dt`$),
 so a dormant canopy ($`r_{\mathrm{fl}}=0`$) presents zero growth demand. When $`C_{\mathrm{net}}\ge0`$ the
@@ -121,9 +121,9 @@ emergent can each have their own curve, cap and leaf display. With $D$ the diame
   $`n_{plant}\,A_{leaf}`$. The shipped $`l_1 = 0.4677/2`$ and $`l_2 = 0.641`$ are the pan-tropical BAAD
   fit, halved as ED2 applies it (`docs/ed2_comparison.md`).
 - **Pool targets** restate the same allometry in carbon, so the two descriptions of a plant cannot
-  disagree. The leaf target is $`A_{leaf}/\mathrm{SLA}`$ (`size2leaf_carbon`), so a cohort at its
+  disagree. The leaf target is $`A_{leaf}/\mathrm{SLA}`$ (`size_to_leaf_carbon`), so a cohort at its
   target shows exactly the allometric leaf area (`plant_traits.md` §4). The wood carbon is
-  $`\mathrm{AGB}/f_{ag}`$ (`size2wood_carbon`, $`f_{ag}`$ = `aboveground_frac`): the total woody carbon,
+  $`\mathrm{AGB}/f_{ag}`$ (`size_to_wood_carbon`, $`f_{ag}`$ = `aboveground_frac`): the total woody carbon,
   coarse roots included, whose aboveground share is exactly the Chave biomass.
 - **Carbon to diameter.** Wood carbon is the prognostic size, and the diameter follows from it
   (`wood_to_dbh`); `carbon_to_structure` derives a cohort's diameter, height, basal area, AGB and leaf
@@ -147,7 +147,7 @@ The first is **relative**: $`r_{\max}`$ is the PFT's `max_relative_growth_rate` 
 $`C_{\mathrm{wood}}`$ the cohort's wood carbon at the step's start. The second is **absolute**:
 $`g_{\max}`$ is the PFT's `max_absolute_growth_rate` [cm yr⁻¹], the most a 1 cm stem's diameter can grow,
 $c$ its `max_absolute_growth_exponent` (default 0) with $D$ in cm, and $`W(D)`$ the wood carbon of a stem of
-diameter $D$ on the model's allometry (`size2wood_carbon`). The absolute cap is a **rate over the growth
+diameter $D$ on the model's allometry (`size_to_wood_carbon`). The absolute cap is a **rate over the growth
 window** $T$ (`growth_memory_days`, 365 days in the shipped config, the window mortality averages growth over), not
 over each step: $`\Delta D_T`$ is the diameter the stem has already grown in the window, read from the
 cohort's ring buffer of realized growth, and $T$ includes this step (for a cohort younger than the window,
@@ -260,7 +260,7 @@ litter, from which the soil-carbon pools and $`R_h`$ follow (`soil_carbon.md`).
 | $`g_{\max}`$ | `max_absolute_growth_rate` (optional, default 0 = off) | sink limit on the diameter growth of a 1 cm stem [cm yr⁻¹], a budget over the growth window; the residual above it is exuded |
 | $T$ | `growth_memory_days` (`[demography]`) | the window the absolute limit (and mortality's growth average) runs over |
 | $c$ | `max_absolute_growth_exponent` (optional, default 0) | how that limit scales with diameter, $`g_{\max}D^{c}`$ |
-| $`L^{*}`$ inputs | `sla`, `hgt_max`, … | full-canopy leaf carbon via `size2leaf_carbon` |
+| $`L^{*}`$ inputs | `sla`, `hgt_max`, … | full-canopy leaf carbon via `size_to_leaf_carbon` |
 
 The flush and senescence rates, `min_leaf_cover` and `bare_leaf_cover` are phenology traits (see
 `plant_phenology.md` §"Parameters"); the allocation kernel consumes their *carbon amounts*.
@@ -278,7 +278,7 @@ This is the *only* plant-flux call on the slow carbon path.
 | input | source |
 |---|---|
 | `gpp`, `resp_maint` | fast-loop accumulators on the cohort SoA (`gpp_accum`, `*_resp_accum`) when `fast_biophysics_on`; otherwise the `gpp_ref·leaf_area` stub |
-| `leaf_demand`, `fineroot_demand` | allometric deficit (`meds_allometry_lib.size2leaf_carbon`, using the **plastic** `cohort%sla`) **flush-capped** by the phenology flush rate |
+| `leaf_demand`, `fineroot_demand` | allometric deficit (`meds_allometry_lib.size_to_leaf_carbon`, using the **plastic** `cohort%sla`) **flush-capped** by the phenology flush rate |
 | `storage_demand`, `storage`, `repro_frac` | cohort SoA (`nonstructural_carbon`) + PFT traits (`storage_cushion`, `reproduction_investment_fraction`) |
 | `growth_resp_frac` | PFT trait `growth_resp_factor` |
 | this step's **shed** (litter) | `cohort_carbon_demand` calls `meds_phenology.leaf_turnover_step` (background turnover at the cohort's `leaf_turnover_rate` while flushing and no leaves drop, plus senescence down to `min_leaf_cover`) and turns fine roots over on the same `turnover_gate`, for the carbon amounts it pre-subtracts from the pools |

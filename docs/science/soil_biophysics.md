@@ -151,7 +151,7 @@ then ends at its last bottom unless `depth` cuts it.
 
 ### Hydraulic parameters from soil texture
 
-`soil_hydraulics_from_texture` (`meds_soil_hydr_lib`) gives a layer's van Genuchten curve and saturated
+`soil_texture_to_hydraulics` (`meds_soil_hydr_lib`) gives a layer's van Genuchten curve and saturated
 conductivity from what soil maps report: sand $Sa$, silt $Si$ and clay $Cl$ (% of the fine earth,
 < 2 mm), organic carbon $OC$ (%), cation exchange capacity CEC (cmol(c) kg⁻¹), pH in water, the fine
 earth's bulk density $\rho_b$ (g cm⁻³) and the volume share of coarse fragments $f_v$ — the
@@ -262,7 +262,7 @@ $`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\appr
 `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
 RK45 integrator; ARK's implicit stages take the BE step.
 
-The conductivity is Johansen's, made ice-aware (`soil_thermal_cond`, `meds_therm_lib`). With the
+The conductivity is Johansen's, made ice-aware (`soil_thermal_conductivity`, `meds_therm_lib`). With the
 relative saturation $`S_r=\theta/\theta_{sat}`$, floored at 0.05 where the logarithm leaves its range of
 validity, the Kersten number blends Johansen's unfrozen form with the linear frozen one by the liquid
 fraction $`f_{liq}`$, and the saturated conductivity is the geometric mean of the solids, the liquid and
@@ -396,8 +396,8 @@ and passes the resulting flux into the CO₂ source.
 | soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
 | soil layers | `meds_soil_column_config`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`, `soil_column_layers` |
 | retention curves (vG / Campbell) | `meds_soil_hydr_lib` |
-| hydraulic parameters from texture, eqs. (6)–(8) | `meds_soil_hydr_lib`: `soil_hydraulics_from_texture` |
-| thermal properties from texture, eq. (9) | `meds_therm_lib`: `soil_thermal_from_texture` |
+| hydraulic parameters from texture, eqs. (6)–(8) | `meds_soil_hydr_lib`: `soil_texture_to_hydraulics` |
+| thermal properties from texture, eq. (9) | `meds_therm_lib`: `soil_texture_to_thermal` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | explicit thermal tendency (RK45) | `meds_soil_energy`: `soil_energy_time_deriv` |
 | bottom thermal boundary, eqs. (12)–(13) | `meds_soil_energy`: `bottom_heat_face`, `deep_conductance` |

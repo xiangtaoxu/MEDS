@@ -22,15 +22,15 @@ module meds_therm_lib
 
    !----- Energy datum: specific energies and the phase-change inverter. ------------------!
    public :: internal_energy_to_temp, temp_to_internal_energy
-   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, temp_of_liquid_enthalpy, precip_enthalpy
+   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, liquid_energy_to_temp, precip_enthalpy
    !----- Moist air. ----------------------------------------------------------------------!
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
    public :: sat_specific_humidity_temp_deriv, air_vpd, specific_humidity_to_vpd
-   public :: air_density, cas_enthalpy_of_temp, cas_temp_of_enthalpy, cas_molar_density
+   public :: air_density, cas_temp_to_enthalpy, cas_enthalpy_to_temp, cas_molar_density
    !----- Plant tissue heat. --------------------------------------------------------------!
-   public :: tissue_heat_capacity, tissue_dry_heat_capacity, tissue_energy, tissue_temp
+   public :: tissue_heat_capacity, tissue_dry_heat_capacity, tissue_temp_to_energy, tissue_energy_to_temp
    !----- Soil heat. ----------------------------------------------------------------------!
-   public :: soil_thermal_from_texture, soil_thermal_cond, soil_heat_cap_vol
+   public :: soil_texture_to_thermal, soil_thermal_conductivity, soil_volumetric_heat_capacity
    !----- Temperature response of enzyme rates. -------------------------------------------!
    public :: arrhenius_scale, peaked_arrhenius_scale, temp_response
    public :: kattge_knorr_entropy, kattge_knorr_jv_ratio
@@ -100,11 +100,11 @@ contains
 
    !----- The inverse of internal_energy_liquid, which turns a (mass, energy) transfer     !
    !      into the temperature a consumer takes (docs/science/soil_plant_water.md §5). ----!
-   elemental function temp_of_liquid_enthalpy(u) result(t_k)
+   elemental function liquid_energy_to_temp(u) result(t_k)
       real(wp), intent(in) :: u
       real(wp)             :: t_k
       t_k = tsupercool_liq + u / cp_liq
-   end function temp_of_liquid_enthalpy
+   end function liquid_energy_to_temp
 
    !----- Specific internal energy of ice [J/kg], zero at 0 K: the datum of the inverter's !
    !      all-ice branch, so ice melting at t_3ple costs exactly latent_heat_fusion. ------!
@@ -224,18 +224,18 @@ contains
    !----- Canopy-air specific enthalpy [J/kg] from temperature and specific humidity: dry  !
    !      air from 0 K, vapour in the common datum                                         !
    !      (docs/science/canopy_air_space_biophysics.md §The three CAS twins). -------------!
-   elemental function cas_enthalpy_of_temp(t_k, shv) result(enth)
+   elemental function cas_temp_to_enthalpy(t_k, shv) result(enth)
       real(wp), intent(in) :: t_k, shv
       real(wp)             :: enth
       enth = (1.0_wp - shv) * cp_air * t_k + shv * cp_vap * (t_k - tsupercool_vap)
-   end function cas_enthalpy_of_temp
+   end function cas_temp_to_enthalpy
 
    !----- The inverse: canopy-air temperature [K] from specific enthalpy and humidity. ----!
-   elemental function cas_temp_of_enthalpy(enth, shv) result(t_k)
+   elemental function cas_enthalpy_to_temp(enth, shv) result(t_k)
       real(wp), intent(in) :: enth, shv
       real(wp)             :: t_k
       t_k = (enth + shv * cp_vap * tsupercool_vap) / ((1.0_wp - shv) * cp_air + shv * cp_vap)
-   end function cas_temp_of_enthalpy
+   end function cas_enthalpy_to_temp
 
    !----- Molar density of dry air in moist air [mol/m3], rho (1 - q)/mmdry: the canopy    !
    !      air's CO2 capacity per metre of depth and the scale of its exchange with the     !
@@ -272,22 +272,22 @@ contains
    !----- A tissue's internal energy [J per plant, or per m2 with per-m2 inputs], with its !
    !      water liquid at any temperature, since a live tissue is taken not to freeze      !
    !      (docs/science/vegetation_energy_dynamics.md eq. (9)). ---------------------------!
-   elemental pure real(wp) function tissue_energy(dry_hcap, wmass, temp) result(e)
+   elemental pure real(wp) function tissue_temp_to_energy(dry_hcap, wmass, temp) result(e)
       real(wp), intent(in) :: dry_hcap   !< [J/K]  dry heat capacity
       real(wp), intent(in) :: wmass      !< [kg]   the water it holds
       real(wp), intent(in) :: temp       !< [K]
       e = dry_hcap * temp + wmass * cp_liq * (temp - tsupercool_liq)
-   end function tissue_energy
+   end function tissue_temp_to_energy
 
    !----- The inverse (eq. (10)): the temperature of a tissue holding energy e. A tissue   !
    !      with neither dry matter nor water has no temperature of its own, and the caller  !
    !      gives it its parent's. ----------------------------------------------------------!
-   elemental pure real(wp) function tissue_temp(e, wmass, dry_hcap) result(temp)
+   elemental pure real(wp) function tissue_energy_to_temp(e, wmass, dry_hcap) result(temp)
       real(wp), intent(in) :: e          !< [J]
       real(wp), intent(in) :: wmass      !< [kg]
       real(wp), intent(in) :: dry_hcap   !< [J/K]
       temp = (e + wmass * cp_liq * tsupercool_liq) / (dry_hcap + wmass * cp_liq)
-   end function tissue_temp
+   end function tissue_energy_to_temp
 
    !=======================================================================================!
    !     Soil heat (docs/science/soil_biophysics.md §The soil thermal column).             !
@@ -296,7 +296,7 @@ contains
    !----- The thermal properties of one soil layer by CLM5's mineral-soil formulas         !
    !      (docs/science/soil_biophysics.md eq. (9)). The heat capacity holds the solids    !
    !      only, since the model counts the water and ice itself. --------------------------!
-   elemental subroutine soil_thermal_from_texture(sand, clay, theta_sat, k_solid, k_dry, dry_cvol)
+   elemental subroutine soil_texture_to_thermal(sand, clay, theta_sat, k_solid, k_dry, dry_cvol)
       real(wp), intent(in)  :: sand       !< [%]      sand share of the fine earth
       real(wp), intent(in)  :: clay       !< [%]      clay share of the fine earth
       real(wp), intent(in)  :: theta_sat  !< [m3/m3]  porosity of the layer
@@ -308,11 +308,11 @@ contains
       bulk_density = clm_grain_density * (1.0_wp - theta_sat)
       k_dry        = (0.135_wp*bulk_density + 64.7_wp) / (clm_grain_density - 0.947_wp*bulk_density)
       dry_cvol     = (cv_sand*sand + cv_clay*clay) / (sand + clay) * (1.0_wp - theta_sat)
-   end subroutine soil_thermal_from_texture
+   end subroutine soil_texture_to_thermal
 
    !----- Soil thermal conductivity [W/m/K], Johansen's made ice-aware                     !
    !      (docs/science/soil_biophysics.md eq. (11)). -------------------------------------!
-   elemental function soil_thermal_cond(theta, fliq, theta_sat, k_solid, k_dry) result(kappa)
+   elemental function soil_thermal_conductivity(theta, fliq, theta_sat, k_solid, k_dry) result(kappa)
       real(wp), intent(in) :: theta, fliq, theta_sat, k_solid, k_dry
       real(wp)             :: kappa, s_r, k_e, kappa_sat
       s_r = min(max(theta / max(theta_sat, tiny_num), SR_FLOOR), 1.0_wp)      ! relative saturation
@@ -323,14 +323,14 @@ contains
       kappa_sat = k_solid ** (1.0_wp - theta_sat)                                            &
                   * k_water ** (theta_sat * fliq) * k_ice ** (theta_sat * (1.0_wp - fliq))
       kappa = k_e * kappa_sat + (1.0_wp - k_e) * k_dry
-   end function soil_thermal_cond
+   end function soil_thermal_conductivity
 
    !----- Soil volumetric heat capacity [J/m3/K]: the solids plus the water and ice. ------!
-   elemental function soil_heat_cap_vol(theta, fliq, dry_cvol) result(c_eff)
+   elemental function soil_volumetric_heat_capacity(theta, fliq, dry_cvol) result(c_eff)
       real(wp), intent(in) :: theta, fliq, dry_cvol
       real(wp)             :: c_eff
       c_eff = dry_cvol + theta * rho_h2o * (fliq * cp_liq + (1.0_wp - fliq) * cp_ice)
-   end function soil_heat_cap_vol
+   end function soil_volumetric_heat_capacity
 
    !=======================================================================================!
    !     Temperature response of enzyme rates: how a rate scales from its 25 degC value    !

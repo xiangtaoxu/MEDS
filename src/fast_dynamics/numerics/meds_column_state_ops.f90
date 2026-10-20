@@ -24,8 +24,8 @@
 module meds_column_state_ops
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num, mmh2o, cp_liq
-   use meds_therm_lib,        only : internal_energy_to_temp, cas_temp_of_enthalpy, cas_enthalpy_of_temp, &
-                                     tissue_temp
+   use meds_therm_lib,        only : internal_energy_to_temp, cas_enthalpy_to_temp, cas_temp_to_enthalpy,  &
+                                     tissue_energy_to_temp
    use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t, column_frozen_t,   &
                                      stage_bflux_t, column_bflux_t, process_mask_t,                    &
                                      GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W
@@ -317,7 +317,7 @@ contains
    end subroutine state_extrap
 
    !----- clamp the extrapolated CAS enthalpy + humidity into a wide PHYSICAL range so a BETA=2.414   !
-   !      overshoot cannot drive cas_temp_of_enthalpy to a wild T where qsat(T) overflows to NaN. Only  !
+   !      overshoot cannot drive cas_enthalpy_to_temp to a wild T where qsat(T) overflows to NaN. Only  !
    !      active on a pathological overshoot (then the step is rejected); an in-range base3 is untouched.!
    !      `nfire` (optional) counts this call as an activation when the clamp actually moved the      !
    !      state -- see column_budget_t's clamp_* fields for why activations are tracked at all.       !
@@ -328,11 +328,11 @@ contains
       real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp, SHV_LO = 1.0e-8_wp, SHV_HI = 0.06_wp
       enth_in = s%cas_enthalpy
       shv_c = min(max(s%cas_shv, SHV_LO), SHV_HI)
-      t     = cas_temp_of_enthalpy(s%cas_enthalpy, shv_c)
+      t     = cas_enthalpy_to_temp(s%cas_enthalpy, shv_c)
       t     = min(max(t, T_LO), T_HI)
       s%cas_shv      = shv_c
-      s%cas_enthalpy = cas_enthalpy_of_temp(t, shv_c)
-      !----- an in-range state round-trips through cas_temp_of_enthalpy/cas_enthalpy_of_temp, so    !
+      s%cas_enthalpy = cas_temp_to_enthalpy(t, shv_c)
+      !----- an in-range state round-trips through cas_enthalpy_to_temp/cas_temp_to_enthalpy, so    !
       !      compare against the INPUT rather than testing the bounds -- that also catches a         !
       !      shv-only clamp, which moves enthalpy through the humidity term. ------------------------!
       if (present(nfire)) then
@@ -472,7 +472,7 @@ contains
       integer(ik),           intent(in)    :: n, nsl
       type(patch_biophys_t), intent(inout) :: biophys
       biophys%cas%can_enthalpy = y_out%cas_enthalpy ; biophys%cas%can_shv = y_out%cas_shv ; biophys%cas%can_co2 = y_out%cas_co2
-      biophys%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
+      biophys%cas%can_temp = cas_enthalpy_to_temp(y_out%cas_enthalpy, y_out%cas_shv)
       biophys%soil_energy%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
       biophys%soil_water%theta(1:nsl)       = y_out%theta(1:nsl)
       biophys%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
@@ -545,10 +545,10 @@ contains
          w_leaf = max(biophys%leaf_water_mass(i), 0.0_wp) * nplant(i)
          w_wood = max(biophys%wood_water_mass(i), 0.0_wp) * nplant(i)
          if (tissue%wood_dry_hcap(i) + w_wood * cp_liq > 0.0_wp)                                        &
-            biophys%wood_temp(i) = tissue_temp(biophys%wood_energy(i), w_wood, tissue%wood_dry_hcap(i))
+            biophys%wood_temp(i) = tissue_energy_to_temp(biophys%wood_energy(i), w_wood, tissue%wood_dry_hcap(i))
          biophys%leaf_temp(i) = biophys%wood_temp(i)
          if (tissue%leaf_dry_hcap(i) + w_leaf * cp_liq > 0.0_wp)                                        &
-            biophys%leaf_temp(i) = tissue_temp(biophys%leaf_energy(i), w_leaf, tissue%leaf_dry_hcap(i))
+            biophys%leaf_temp(i) = tissue_energy_to_temp(biophys%leaf_energy(i), w_leaf, tissue%leaf_dry_hcap(i))
       end do
    end subroutine commit_tissue_energy
 

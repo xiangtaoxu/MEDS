@@ -27,7 +27,7 @@
 !==========================================================================================!
 module meds_sink_limitation
    use meds_kinds,         only : wp
-   use meds_allometry_lib, only : allometry_t, size2wood_carbon, dbh_to_height
+   use meds_allometry_lib, only : allometry_t, size_to_wood_carbon, dbh_to_height
    implicit none
    private
 
@@ -73,8 +73,8 @@ contains
          dbh_room   = max_absolute_growth_rate * max(dbh, DBH_FLOOR) ** max_absolute_growth_exponent       &
                     * max(window_yr, dt) - max(grown_in_window, 0.0_wp)
          dbh_max    = dbh + max(dbh_room, 0.0_wp)
-         wood_now   = size2wood_carbon(allom, dbh,     dbh_to_height(allom, dbh),     wood_density)
-         wood_max   = size2wood_carbon(allom, dbh_max, dbh_to_height(allom, dbh_max), wood_density)
+         wood_now   = size_to_wood_carbon(allom, dbh,     dbh_to_height(allom, dbh),     wood_density)
+         wood_max   = size_to_wood_carbon(allom, dbh_max, dbh_to_height(allom, dbh_max), wood_density)
          growth_max = min(growth_max, max(wood_max - wood_now, 0.0_wp))
       end if
    end function growth_sink_limitation

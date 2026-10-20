@@ -14,7 +14,7 @@ module meds_optics_lib
    private
 
    public :: N_LEAF_CLASS
-   public :: beta_lidf, beta_params_from_mean, leaf_bf, gfun_direct
+   public :: beta_lidf, moments_to_beta_params, leaf_bf, gfun_direct
    public :: scatter_pair
 
    !----- SCOPE's 13 inclination classes: 10 degrees wide to 80, then 2 degrees to 90. ----!
@@ -73,7 +73,7 @@ contains
 
    !----- Beta (p, q) from the mean and standard deviation of the leaf angle [deg], by     !
    !      moment matching on t = theta/90 (Goel & Strebel 1984). --------------------------!
-   pure subroutine beta_params_from_mean(mean_deg, std_deg, p, q)
+   pure subroutine moments_to_beta_params(mean_deg, std_deg, p, q)
       real(wp), intent(in)  :: mean_deg, std_deg
       real(wp), intent(out) :: p, q
       real(wp) :: mt, vt, kappa
@@ -85,7 +85,7 @@ contains
       kappa = mt * (1.0_wp - mt) / vt - 1.0_wp                            ! concentration, p + q
       p = mt * kappa
       q = (1.0_wp - mt) * kappa
-   end subroutine beta_params_from_mean
+   end subroutine moments_to_beta_params
 
    !----- bf = <cos^2 theta_leaf> over the LIDF (docs/science/canopy_radiation_transfer.md !
    !      eq. (2)). -----------------------------------------------------------------------!

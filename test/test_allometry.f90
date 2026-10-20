@@ -3,7 +3,8 @@
 program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry_lib, only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh, dbh_to_leaf_area,  &
-                                  allometry_t, size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_CHAVE
+                                  allometry_t, size_to_leaf_carbon, size_to_wood_carbon, wood_to_dbh,      &
+                                  HEIGHT_CHAVE
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -62,25 +63,25 @@ program test_allometry
       dbh = dvec(i)
       h   = dbh_to_height(allom, dbh)
       !----- leaf_carbon * SLA reproduces the leaf area exactly. -------------------------------!
-      call check_close(size2leaf_carbon(allom, dbh, h, sla) * sla, dbh_to_leaf_area(allom, dbh, h), 1.0e-12_wp, &
-                       'size2leaf_carbon * sla /= leaf_area')
+      call check_close(size_to_leaf_carbon(allom, dbh, h, sla) * sla, dbh_to_leaf_area(allom, dbh, h), 1.0e-12_wp, &
+                       'size_to_leaf_carbon * sla /= leaf_area')
       !----- aboveground_frac * wood_carbon reproduces the Chave AGB exactly. ------------------!
-      call check_close(size2wood_carbon(allom, dbh, h, rho) * agf, dbh_to_agb(allom, dbh, h, rho), 1.0e-12_wp, &
+      call check_close(size_to_wood_carbon(allom, dbh, h, rho) * agf, dbh_to_agb(allom, dbh, h, rho), 1.0e-12_wp, &
                        'aboveground_frac * wood_carbon /= agb')
    end do
 
    !=== Carbon targets increase with diameter. ==========================================!
-   call check(size2leaf_carbon(allom, 20.0_wp, dbh_to_height(allom, 20.0_wp), sla) >                         &
-              size2leaf_carbon(allom, 10.0_wp, dbh_to_height(allom, 10.0_wp), sla), 'leaf carbon not increasing')
-   call check(size2wood_carbon(allom, 20.0_wp, dbh_to_height(allom, 20.0_wp), rho) >                         &
-              size2wood_carbon(allom, 10.0_wp, dbh_to_height(allom, 10.0_wp), rho), 'wood carbon not increasing')
+   call check(size_to_leaf_carbon(allom, 20.0_wp, dbh_to_height(allom, 20.0_wp), sla) >                         &
+              size_to_leaf_carbon(allom, 10.0_wp, dbh_to_height(allom, 10.0_wp), sla), 'leaf carbon not increasing')
+   call check(size_to_wood_carbon(allom, 20.0_wp, dbh_to_height(allom, 20.0_wp), rho) >                         &
+              size_to_wood_carbon(allom, 10.0_wp, dbh_to_height(allom, 10.0_wp), rho), 'wood carbon not increasing')
 
-   !=== wood_to_dbh inverts size2wood_carbon in BOTH regimes (the carbon-prognostic anchor). ==!
+   !=== wood_to_dbh inverts size_to_wood_carbon in BOTH regimes (the carbon anchor). =============!
    dbh    = 30.0_wp                                        ! uncapped
-   wood_c = size2wood_carbon(allom, dbh, dbh_to_height(allom, dbh), rho)
+   wood_c = size_to_wood_carbon(allom, dbh, dbh_to_height(allom, dbh), rho)
    call check_close(wood_to_dbh(allom, wood_c, rho), dbh, 1.0e-8_wp, 'wood_to_dbh inverse failed (uncapped)')
    dbh    = 130.0_wp                                       ! capped
-   wood_c = size2wood_carbon(allom, dbh, dbh_to_height(allom, dbh), rho)
+   wood_c = size_to_wood_carbon(allom, dbh, dbh_to_height(allom, dbh), rho)
    call check_close(wood_to_dbh(allom, wood_c, rho), dbh, 1.0e-8_wp, 'wood_to_dbh inverse failed (capped)')
 
    !=== Chave et al. (2014) eq. 6a at E = 0.2 and its two inverses. The expected heights are     !
@@ -101,7 +102,7 @@ program test_allometry
    call check_close(dbh_to_height(capped(allom, 30.0_wp), dbh), 30.0_wp, 1.0e-12_wp, 'a 120 cm stem is at a 30 m cap')
    agb = dbh_to_agb(allom, dbh, dbh_to_height(capped(allom, 30.0_wp), dbh), rho)
    call check_close(agb_to_dbh(capped(allom, 30.0_wp), agb, rho), dbh, 1.0e-9_wp, 'Chave agb_to_dbh inverse (capped)')
-   wood_c = size2wood_carbon(allom, 80.0_wp, dbh_to_height(allom, 80.0_wp), rho)
+   wood_c = size_to_wood_carbon(allom, 80.0_wp, dbh_to_height(allom, 80.0_wp), rho)
    call check_close(wood_to_dbh(allom, wood_c, rho), 80.0_wp, 1.0e-9_wp, 'Chave wood_to_dbh inverse')
    !----- A PFT's own log-quadratic coefficients replace Chave's: a flatter curve is shorter. --!
    call check(dbh_to_height(allometry_t(height_form = HEIGHT_CHAVE, chave_b = 0.6_wp), 30.0_wp) <              &

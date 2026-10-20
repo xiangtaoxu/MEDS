@@ -236,7 +236,7 @@ T = \frac{E + W\,c_{liq}\,T_{sc}}{D + W\,c_{liq}} \qquad(10)
 ```
 
 with $D$ the dry heat capacity and $W$ the water of eq. (8), per plant, and $`T_{sc}`$
-`tsupercool_liq`; $`dE/dT`$ at fixed water is eq. (8)'s capacity (`tissue_energy`, `tissue_temp`). The
+`tsupercool_liq`; $`dE/dT`$ at fixed water is eq. (8)'s capacity (`tissue_temp_to_energy`, `tissue_energy_to_temp`). The
 water stays liquid at any temperature: a live tissue is taken not to freeze, so a tissue below 0 °C is
 supercooled liquid. Water that comes or goes at the tissue's temperature carries
 $`u_{liq}(T)=c_{liq}(T-T_{sc})`$ with it, which leaves the temperature where it was.
@@ -286,7 +286,7 @@ hour in which wet soil refills dry-season wood at a BCI storm front.
 | coefficients $h$, $g$, emission slope | `sensible_heat_coeff`, `leaf_transp_coeff`, `leaf_film_coeff`, `lw_emission_slope` |
 | latent terms, eq. (2); the per-cohort call | `meds_fast_time_derivs`: `surface_derivs` |
 | tissue heat capacity, eq. (8), and $`a_{\rm store}`$ | `meds_fast_frozen`: `build_column_frozen` |
-| tissue energy and temperature, eqs. (9)–(10) | `meds_therm_lib`: `tissue_energy`, `tissue_temp` |
+| tissue energy and temperature, eqs. (9)–(10) | `meds_therm_lib`: `tissue_temp_to_energy`, `tissue_energy_to_temp` |
 | the fast step's energy commit | `meds_column_state_ops`: `commit_tissue_energy` |
 | a cohort's temperatures from its energies; holding them through a change of mass | `meds_cohort_state_vars`: `cohort_tissue_temps`, `set_cohort_tissue_temps`, `hold_cohort_tissue_temps` |
 | ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |

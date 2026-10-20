@@ -26,14 +26,14 @@ module meds_fast_types
    use meds_plant_types, only : veg_thermal_params_t
    use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
-   use meds_therm_lib, only : cas_enthalpy_of_temp
+   use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : n_soil_pool
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
    use meds_config, only : hydraulics_config_t, pft_tissue_curves, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
-   use meds_plant_hydr_lib, only : build_hydro_table, wood_kmax_from_density
+   use meds_plant_hydr_lib, only : build_hydro_table, wood_density_to_kmax
    use meds_pft_params, only : pft_table_t, HYD_UNSET
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
@@ -770,7 +770,7 @@ module meds_fast_types
       real(wp), allocatable      :: leaf_temp(:)      !< [K] derived from leaf_energy
       real(wp), allocatable      :: wood_temp(:)      !< [K] derived from wood_energy
       !----- Internal (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic state;      !
-      !      psi is diagnosed from it wherever needed (psi_from_water_content), never persisted      !
+      !      psi is diagnosed from it wherever needed (tissue_water_to_psi), never persisted         !
       !      (docs/science/soil_plant_water.md §2). -------------------------------------------------!
       real(wp), allocatable      :: leaf_water_mass(:) !< [kg/plant] internal leaf water
       real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
@@ -884,7 +884,7 @@ contains
          call fill_hydro_params(hcfg, table%pft(i))                 ! the shared [hydraulics] defaults
          call pft_tissue_curves(hcfg, pft, i, table%pft(i)%leaf_curve, table%pft(i)%wood_curve)   ! the curves
          call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
-         table%pft(i)%wood_kmax = wood_kmax_from_density(pft%wood_density(i))   ! Xu et al. 2016
+         table%pft(i)%wood_kmax = wood_density_to_kmax(pft%wood_density(i))   ! Xu et al. 2016
          call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))
          call ovr(table%pft(i)%vessel_curl,        pft%hyd_vessel_curl(i))
          call ovr(table%pft(i)%root_beta,          pft%hyd_root_beta(i))
@@ -924,7 +924,7 @@ contains
       allocate(biophys%leaf_temp(n_coh), biophys%wood_temp(n_coh))
       allocate(biophys%leaf_water_mass(n_coh), biophys%wood_water_mass(n_coh))
       allocate(biophys%leaf_surf_water(n_coh), biophys%wood_surf_water(n_coh))
-      biophys%leaf_energy      = 0.0_wp    ! scratch seed: the gather sets it, a column fixture with tissue_energy
+      biophys%leaf_energy      = 0.0_wp    ! scratch seed: the gather sets it, a column fixture with tissue_temp_to_energy
       biophys%wood_energy      = 0.0_wp
       biophys%leaf_temp        = leaf_temp0
       biophys%wood_temp        = leaf_temp0
@@ -935,7 +935,7 @@ contains
       biophys%cas%can_temp     = can_temp0
       biophys%cas%can_shv      = can_shv0
       biophys%cas%can_co2      = can_co2
-      biophys%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
+      biophys%cas%can_enthalpy = cas_temp_to_enthalpy(can_temp0, can_shv0)
    end subroutine alloc_patch_biophys
 
    !---------------------------------------------------------------------------------------!

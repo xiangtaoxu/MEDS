@@ -13,7 +13,7 @@ module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : grav_head, tiny_num
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
-   use meds_plant_hydr_lib, only : root_fraction_profile, psi_from_water_content
+   use meds_plant_hydr_lib, only : root_fraction_profile, tissue_water_to_psi
    implicit none
    private
 
@@ -47,9 +47,9 @@ contains
       type(hydro_params_t), intent(in) :: p
       type(hydro_opts_t),   intent(in) :: o
       if (p%leaf_curve%water_sat*bleaf > tiny_num) then
-         psi_l = psi_from_water_content(leaf_water, p%leaf_curve, bleaf)
+         psi_l = tissue_water_to_psi(leaf_water, p%leaf_curve, bleaf)
       else
-         psi_l = psi_from_water_content(wood_water, p%wood_curve, bwood) - crown_gravity_head(height, o)
+         psi_l = tissue_water_to_psi(wood_water, p%wood_curve, bwood) - crown_gravity_head(height, o)
       end if
    end function leaf_node_psi
 

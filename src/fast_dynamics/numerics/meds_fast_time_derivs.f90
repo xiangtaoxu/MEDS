@@ -21,8 +21,8 @@
 module meds_fast_time_derivs
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o, n_soil_layer_max
-   use meds_therm_lib, only : cas_molar_density, cas_temp_of_enthalpy, sat_specific_humidity, &
-                              sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp, &
+   use meds_therm_lib, only : cas_molar_density, cas_enthalpy_to_temp, sat_specific_humidity,             &
+                              sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,  &
                               internal_energy_liquid
    use meds_soil_types, only : energy_forcing_t
    use meds_patch_state_vars,   only : soil_energy_column_t
@@ -71,7 +71,7 @@ contains
       real(wp),               intent(in)  :: cas_enthalpy, cas_shv
       real(wp),               intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp) :: tcas, ustar, temp1, zeta, rib, obu, can_dmol
-      tcas = cas_temp_of_enthalpy(cas_enthalpy, cas_shv)
+      tcas = cas_enthalpy_to_temp(cas_enthalpy, cas_shv)
       !----- column_prepass sets aenv%can_theta = tcas, so passing tcas here reproduces exactly    !
       !      what the frozen pre-pass fed this same kernel -- the ONLY difference is the state. ---!
       call mo_surface_layer(cas%aero_cfg, cas%mo_u_ref, cas%mo_zref, cas%mo_displace, cas%mo_rough, &
@@ -141,7 +141,7 @@ contains
 
       call ensure_surface_tend(f, n)
 
-      tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      tcas   = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
       qsat_c = sat_specific_humidity(tcas, cas%press)
       dqdt   = sat_specific_humidity_temp_deriv(tcas, cas%press)

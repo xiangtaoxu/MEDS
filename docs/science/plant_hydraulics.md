@@ -89,7 +89,7 @@ k(\psi)=\frac{1}{1+(\psi/\psi_{50})^{a}}=\frac{1}{1+r^{a}} \qquad(7)
 ```math
 \Phi(\psi)=\int_0^{\psi} k(s)\,ds=\psi_{50}\!\int_0^{r}\frac{du}{1+u^{a}}
 =\begin{cases}\psi_{50}\ln(1+r) & a=1\\ \psi_{50}\arctan(r) & a=2\\
-\psi_{50}\cdot\text{(7-pt Gauss–Legendre panels)} & \text{else}\end{cases} \qquad(8)
+\psi_{50}\,G(r)\ \text{(lookup table)} & \text{else}\end{cases} \qquad(8)
 ```
 
 The **edge conductance** over a finite drop is the $\psi$-averaged retained fraction — the
@@ -131,8 +131,8 @@ uniform-grid **lookup table** $G(r)$ over $`0\le r\le 8`$ and read by linear int
 path (the closed forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$
 is a runtime scale. It is built panel by panel, so it rises monotonically, and past $r = 8$ the
 tail $`\int u^{-a}\,du`$ is added analytically, so the potential keeps approaching its asymptote even
-for a leaf dried far beyond the vulnerability curve. The quadrature sums 7-point Gauss–Legendre
-panels no wider than 0.25 in $r$: a single rule over a long range misses the integrand's fall near
+for a leaf dried far beyond the vulnerability curve. Each of the table's 512 intervals is one
+7-point Gauss–Legendre panel: a single rule over a long range misses the integrand's fall near
 $u = 1$ (at $r$ = 7800 and $a$ = 4 it gives about 10⁻⁶ instead of 1.11), which would hand the xylem
 of a desiccated leaf a negative conductance.
 
@@ -255,10 +255,10 @@ flows themselves, so the plant and soil water budgets close to round-off.
 
 | Concept | Routine |
 |---|---|
-| PV curves / capacitance | `meds_plant_hydr_lib`: one `water_curve_t` record per tissue; `water_content`, `capacitance`, `psi_from_water_content`, `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi` |
-| a tissue's water relations in $R$ | `meds_plant_hydr_lib`: `tissue_water_relations`, `tissue_rwc_from_water` |
-| vulnerability + Kirchhoff | `meds_plant_hydr_lib`: `plc_retained`, `flux_potential` (+ table: `build_hydro_table`, `flux_potential_lin`); the Kirchhoff mean conductance inside `xylem_sapflow` |
-| Kirchhoff quadrature | `meds_plant_hydr_lib`: `kirchhoff_integral` (7-point Gauss–Legendre panels, written out; `kirchhoff_tail` past the table) |
+| PV curves / capacitance | `meds_plant_hydr_lib`: one `water_curve_t` record per tissue; `tissue_psi_to_water`, `tissue_capacitance`, `tissue_water_to_psi`, `tissue_psi_tlp`, `tissue_rwc_tlp`, `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
+| a tissue's water relations in $R$ | `meds_plant_hydr_lib`: `tissue_water_relations`, `tissue_water_to_rwc` |
+| vulnerability + Kirchhoff | `meds_plant_hydr_lib`: `plc_retained`, `kirchhoff_potential` (closed forms, or the table from `build_hydro_table`); the Kirchhoff mean conductance inside `xylem_sapflow` |
+| Kirchhoff table | `meds_plant_hydr_lib`: `build_hydro_table` (one 7-point Gauss–Legendre panel per interval, written out in `kirchhoff_panel`; `kirchhoff_tail` past the table) |
 | xylem and root flows | `meds_plant_hydr_lib`: `xylem_max_conductance`, `xylem_sapflow`, `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `supply_limited_transpiration` |
 | rooting depth and profile | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`; `crown_gravity_head`, `leaf_node_psi` |
 | the solve | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)) |

@@ -22,7 +22,7 @@ module meds_soil_water
    use meds_soil_types, only : chydro_forcing_t
    use meds_soil_column_config, only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_AQUIFER
-   use meds_soil_hydr_lib,    only : soil_theta_from_psi
+   use meds_soil_hydr_lib,    only : soil_head_to_theta
    use meds_numerics,         only : smooth_max0
    use meds_therm_lib,        only : sat_specific_humidity
    implicit none
@@ -151,7 +151,7 @@ contains
       q_sat      = sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)
       call smooth_max0(alpha_soil * q_sat - forcing%q_air, EVAP_HUMIDITY_WIDTH, drive, ddrive)
       !----- The dry surface layer, referenced to the air-dry water content. ---------------------!
-      theta_air  = soil_theta_from_psi(params%retention, PSI_AIR_DRY, params%theta_sat(1), params%theta_res(1),  &
+      theta_air  = soil_head_to_theta(params%retention, PSI_AIR_DRY, params%theta_sat(1), params%theta_res(1),  &
                                        params%curve_par_a(1), params%curve_par_n(1))
       theta_init = opts%dsl_theta_init * params%theta_sat(1)
       call smooth_max0(theta_init - theta1, DSL_THETA_WIDTH, dry, ddry)

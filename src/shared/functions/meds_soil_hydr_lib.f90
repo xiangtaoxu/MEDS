@@ -5,7 +5,7 @@
 ! §Hydraulic parameters from soil texture, eqs. (6)-(8)), its retention curve and          !
 ! conductivity (soil_biophysics.md eq. (2)), and the pond's depression store.              !
 !                                                                                          !
-! The read-offs (soil_theta_from_psi, soil_psi_from_theta) take a state and return a       !
+! The read-offs (soil_head_to_theta, soil_theta_to_head) take a state and return a         !
 ! potential or a water content, with floors that keep a diagnostic finite. The water       !
 ! relations (soil_water_relations, pond_water_relations) give the soil-plant water solver  !
 ! (meds_spac_solver) a store's potential, water and conductivity with their derivatives in !
@@ -19,16 +19,16 @@ module meds_soil_hydr_lib
    private
 
    !----- A layer's curve from the soil maps. ---------------------------------------------!
-   public :: soil_texture_t, soil_hydraulics_from_texture
-   !----- Retention curve: theta(psi) and psi(theta) read-offs. ---------------------------!
+   public :: soil_texture_t, soil_texture_to_hydraulics
+   !----- Retention curve: theta(head) and head(theta) read-offs. -------------------------!
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
-   public :: soil_theta_from_psi, soil_psi_from_theta
+   public :: soil_head_to_theta, soil_theta_to_head
    !----- The water relations the soil-plant water solver uses, in the variable it         !
    !      solves for: a soil layer's saturation (dry) or potential (wet), the pond's       !
    !      head. ---------------------------------------------------------------------------!
    public :: SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH
-   public :: soil_layer_curve_t, build_soil_layer_curve, soil_water_relations, soil_unknown_from_theta
-   public :: pond_water_relations, pond_head_from_water
+   public :: soil_layer_curve_t, build_soil_layer_curve, soil_water_relations, soil_theta_to_unknown
+   public :: pond_water_relations, pond_water_to_head
 
    !----- One soil layer as the soil maps describe it (SoilGrids 2.0's quantities). -------!
    type :: soil_texture_t
@@ -45,7 +45,7 @@ module meds_soil_hydr_lib
    real(wp), parameter :: kpa_per_mpa      = 1000.0_wp                !< [kPa/MPa]
 
    !----- Ottoni et al. (2019): Ks = a (theta_sat - theta(-33 kPa))^b, Ks in m/day. -------!
-   real(wp), parameter :: psi_33kpa        = -0.033_wp / grav_head   !< [m] -33 kPa as water head
+   real(wp), parameter :: head_33kpa       = -0.033_wp / grav_head   !< [m] -33 kPa as water head
    real(wp), parameter :: ottoni_ks_coef   = 19.31_wp                !< [m/day]
    real(wp), parameter :: ottoni_ks_exp    = 1.948_wp                !< [-]
    !----- Density of the mineral grains and of the fragments (Saxton & Rawls 2006). -------!
@@ -84,13 +84,13 @@ module meds_soil_hydr_lib
       integer(ik) :: retention = 1_ik   !< SOIL_RETENTION_VG or SOIL_RETENTION_CAMPBELL
       real(wp) :: theta_sat = 0.0_wp    !< [m3/m3]
       real(wp) :: theta_res = 0.0_wp    !< [m3/m3]
-      real(wp) :: par_a     = 0.0_wp    !< vG alpha [1/m], or Campbell's air-entry potential [m, < 0]
+      real(wp) :: par_a     = 0.0_wp    !< vG alpha [1/m], or Campbell's air-entry head [m, < 0]
       real(wp) :: par_n     = 0.0_wp    !< vG n [-], or Campbell's b [-]
       real(wp) :: ksat      = 0.0_wp    !< [m/s] saturated conductivity
       real(wp) :: dz        = 0.0_wp    !< [m] layer thickness
-      real(wp) :: se_switch  = 1.0_wp   !< [-] saturation where the unknown changes branch
-      real(wp) :: psi_switch = 0.0_wp   !< [m] the potential there
-      real(wp) :: slope_switch = 1.0_wp !< [1/m] dSe/dpsi there, the unknown's scale on the wet side
+      real(wp) :: se_switch    = 1.0_wp  !< [-] saturation where the unknown changes branch
+      real(wp) :: head_switch  = 0.0_wp  !< [m] the matric head there
+      real(wp) :: slope_switch = 1.0_wp  !< [1/m] dSe/dhead there, the unknown's scale on the wet side
    end type soil_layer_curve_t
 
 contains
@@ -105,7 +105,7 @@ contains
    !----- The van Genuchten curve and Ks of a soil layer (docs/science/soil_biophysics.md  !
    !      eqs. (6)-(8)). Alpha comes out per kPa and is turned into per metre of water     !
    !      head, the unit of the model's soil potential. -----------------------------------!
-   elemental subroutine soil_hydraulics_from_texture(texture, theta_sat, theta_res, vg_alpha, vg_n, ksat)
+   elemental subroutine soil_texture_to_hydraulics(texture, theta_sat, theta_res, vg_alpha, vg_n, ksat)
       type(soil_texture_t), intent(in)  :: texture
       real(wp),             intent(out) :: theta_sat   !< [m3/m3] water content at saturation, per layer volume
       real(wp),             intent(out) :: theta_res   !< [m3/m3] residual water content, per layer volume
@@ -131,8 +131,8 @@ contains
                           + 0.0026_wp*sand*clay) / 100.0_wp, 0.0_wp)
 
          !----- Ks of the fine earth from the water that drains between saturation, at     !
-         !      psi = 0 on this curve, and -33 kPa (Ottoni et al. 2019). ------------------!
-         theta_33  = soil_theta_from_psi(SOIL_RETENTION_VG, psi_33kpa, theta_sat, theta_res, vg_alpha, vg_n)
+         !      zero head on this curve, and -33 kPa (Ottoni et al. 2019). ----------------!
+         theta_33  = soil_head_to_theta(SOIL_RETENTION_VG, head_33kpa, theta_sat, theta_res, vg_alpha, vg_n)
          drainable = max(theta_sat - theta_33, tiny_num)
          ksat      = ottoni_ks_coef / day_sec * drainable**ottoni_ks_exp
 
@@ -146,54 +146,55 @@ contains
          theta_res = theta_res * (1.0_wp - rock_volume)
          ksat      = ksat * (1.0_wp - rock_mass) / (1.0_wp - rock_mass*(1.0_wp - 1.5_wp*matrix_density_ratio))
       end associate
-   end subroutine soil_hydraulics_from_texture
+   end subroutine soil_texture_to_hydraulics
 
    !=======================================================================================!
    !     Soil retention curves: van Genuchten-Mualem (default) or Campbell                 !
    !     (docs/science/soil_biophysics.md eq. (2)). par_a and par_n are alpha [1/m] and n  !
-   !     for van Genuchten, psi_sat [m, < 0] and b for Campbell; heads are in metres of    !
-   !     water, below zero when unsaturated. Every soil-water routine evaluates the curve  !
-   !     through the four kernels below, so a diagnostic potential is the solver's own.    !
+   !     for van Genuchten, the air-entry head [m, < 0] and b for Campbell; heads are in   !
+   !     metres of water, below zero when unsaturated. Every soil-water routine evaluates  !
+   !     the curve through the four kernels below, so a diagnostic potential is the        !
+   !     solver's own.                                                                     !
    !=======================================================================================!
 
-   !----- Volumetric water content [m3/m3] at matric head psi [m]: theta_sat at or above   !
-   !      zero, and the saturation floored at SE_MIN. -------------------------------------!
-   elemental function soil_theta_from_psi(retention, psi, theta_sat, theta_res, par_a, par_n)  &
+   !----- Volumetric water content [m3/m3] at matric head [m]: theta_sat at or above zero, !
+   !      and the saturation floored at SE_MIN. -------------------------------------------!
+   elemental function soil_head_to_theta(retention, head, theta_sat, theta_res, par_a, par_n)  &
                       result(theta)
       integer(ik), intent(in) :: retention
-      real(wp),    intent(in) :: psi, theta_sat, theta_res, par_a, par_n
+      real(wp),    intent(in) :: head, theta_sat, theta_res, par_a, par_n
       real(wp)                :: theta, se, dse_dhead
-      if (psi >= 0.0_wp) then
+      if (head >= 0.0_wp) then
          theta = theta_sat
          return
       end if
-      call saturation_of_head(retention, par_a, par_n, psi, se, dse_dhead)
+      call head_to_saturation(retention, par_a, par_n, head, se, dse_dhead)
       se    = min(max(se, SE_MIN), 1.0_wp)
       theta = theta_res + (theta_sat - theta_res) * se
-   end function soil_theta_from_psi
+   end function soil_head_to_theta
 
    !----- Matric head [m, <= 0] of a layer holding theta [m3/m3], its saturation floored   !
    !      at SE_MIN; zero at saturation. --------------------------------------------------!
-   elemental function soil_psi_from_theta(retention, theta, theta_sat, theta_res, par_a, par_n) &
-                      result(psi)
+   elemental function soil_theta_to_head(retention, theta, theta_sat, theta_res, par_a, par_n) &
+                      result(head)
       integer(ik), intent(in) :: retention
       real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n
-      real(wp)                :: psi, se, dse_dhead
+      real(wp)                :: head, se, dse_dhead
       se = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
       se = min(max(se, SE_MIN), 1.0_wp)
       if (se >= 1.0_wp) then
-         psi = 0.0_wp
+         head = 0.0_wp
          return
       end if
-      call head_of_saturation(retention, par_a, par_n, se, psi, dse_dhead)
-   end function soil_psi_from_theta
+      call saturation_to_head(retention, par_a, par_n, se, head, dse_dhead)
+   end function soil_theta_to_head
 
    !=======================================================================================!
    !     Water relations for the soil-plant water solver: soil layers.                     !
    !=======================================================================================!
 
    !----- Set up one layer's curve and its branch point, where the curve holds the most    !
-   !      water per unit potential: (alpha |psi|)^n = m, Se = (1+m)^-m, for van Genuchten; !
+   !      water per unit head: (alpha |head|)^n = m, Se = (1+m)^-m, for van Genuchten;     !
    !      the air-entry point for Campbell (docs/science/soil_plant_water.md §2). ---------!
    pure subroutine build_soil_layer_curve(retention, theta_sat, theta_res, par_a, par_n, ksat, dz, c)
       integer(ik),              intent(in)  :: retention
@@ -204,13 +205,13 @@ contains
       c%par_a = par_a ; c%par_n = par_n ; c%ksat = ksat ; c%dz = dz
       if (retention == SOIL_RETENTION_CAMPBELL) then
          c%se_switch    = 1.0_wp
-         c%psi_switch   = par_a
+         c%head_switch   = par_a
          c%slope_switch = -1.0_wp / (par_n * par_a)
       else
          m = 1.0_wp - 1.0_wp / par_n
          x = m ** (1.0_wp / par_n)
          c%se_switch    = (1.0_wp + m) ** (-m)
-         c%psi_switch   = -x / par_a
+         c%head_switch   = -x / par_a
          c%slope_switch = par_a * m * par_n * c%se_switch * (m / (1.0_wp + m)) / x
       end if
    end subroutine build_soil_layer_curve
@@ -232,8 +233,8 @@ contains
       if (tau <= c%se_switch) then
          !----- Dry branch: tau is the saturation itself. ---------------------------------!
          se = tau
-         call head_of_saturation(c%retention, c%par_a, c%par_n, se, head, dse_dhead)
-         call conductivity_of_saturation(c%retention, c%par_n, c%ksat, se, kcond, dk_dse)
+         call saturation_to_head(c%retention, c%par_a, c%par_n, se, head, dse_dhead)
+         call saturation_to_conductivity(c%retention, c%par_n, c%ksat, se, kcond, dk_dse)
          psi    = grav_head * head
          dpsi   = grav_head / max(dse_dhead, tiny_num)   ! clamp-ok: a slope underflowed in extreme dry soil
          w      = rho_h2o * c%dz * (c%theta_res + dtheta * se)
@@ -241,13 +242,13 @@ contains
          dkcond = dk_dse
       else
          !----- Wet branch: tau measures the potential. -----------------------------------!
-         head  = c%psi_switch + (tau - c%se_switch) / c%slope_switch
+         head  = c%head_switch + (tau - c%se_switch) / c%slope_switch
          dhead = 1.0_wp / c%slope_switch
          psi   = grav_head * head
          dpsi  = grav_head * dhead
          if (head < 0.0_wp) then
-            call saturation_of_head(c%retention, c%par_a, c%par_n, head, se, dse_dhead)
-            call conductivity_of_head(c%retention, c%par_a, c%par_n, c%ksat, head, kcond, dk_dhead)
+            call head_to_saturation(c%retention, c%par_a, c%par_n, head, se, dse_dhead)
+            call head_to_conductivity(c%retention, c%par_a, c%par_n, c%ksat, head, kcond, dk_dhead)
             w      = rho_h2o * c%dz * (c%theta_res + dtheta * se)
             dw     = rho_h2o * c%dz * dtheta * dse_dhead * dhead
             dkcond = dk_dhead * dhead
@@ -264,7 +265,7 @@ contains
    !      soil_water_relations's water. A layer at or below residual starts just inside    !
    !      the curve, at SE_MIN; a Campbell layer at saturation sits at the branch point, !
    !      its air-entry potential. --------------------------------------------------------!
-   elemental function soil_unknown_from_theta(c, theta) result(tau)
+   elemental function soil_theta_to_unknown(c, theta) result(tau)
       type(soil_layer_curve_t), intent(in) :: c
       real(wp),                 intent(in) :: theta
       real(wp) :: tau
@@ -279,10 +280,10 @@ contains
       else if (se >= 1.0_wp) then
          head = 0.0_wp
       else
-         call head_of_saturation(c%retention, c%par_a, c%par_n, se, head, dse_dhead)
+         call saturation_to_head(c%retention, c%par_a, c%par_n, se, head, dse_dhead)
       end if
-      tau = c%se_switch + c%slope_switch * (head - c%psi_switch)
-   end function soil_unknown_from_theta
+      tau = c%se_switch + c%slope_switch * (head - c%head_switch)
+   end function soil_theta_to_unknown
 
    !=======================================================================================!
    !     The curve's kernels.                                                              !
@@ -292,7 +293,7 @@ contains
    !      Genuchten head is evaluated through its logarithm, so a very dry layer gives a   !
    !      large but finite number, and its slope Se (1 - Se^(1/m)) / x is written without  !
    !      a cancellation. -----------------------------------------------------------------!
-   elemental subroutine head_of_saturation(retention, par_a, par_n, se, head, dse_dhead)
+   elemental subroutine saturation_to_head(retention, par_a, par_n, se, head, dse_dhead)
       integer(ik), intent(in)  :: retention
       real(wp),    intent(in)  :: par_a, par_n, se
       real(wp),    intent(out) :: head, dse_dhead
@@ -308,12 +309,12 @@ contains
          head = -x / par_a
          dse_dhead = par_a * m * par_n * se * u / x
       end if
-   end subroutine head_of_saturation
+   end subroutine saturation_to_head
 
    !----- Saturation and dSe/dhead [1/m] at a head below zero, written in x = alpha |head| !
    !      so that 1 - Se^(1/m) = x^n / (1 + x^n) stays exact near saturation. A Campbell   !
    !      layer between its air-entry point and zero is saturated. ------------------------!
-   elemental subroutine saturation_of_head(retention, par_a, par_n, head, se, dse_dhead)
+   elemental subroutine head_to_saturation(retention, par_a, par_n, head, se, dse_dhead)
       integer(ik), intent(in)  :: retention
       real(wp),    intent(in)  :: par_a, par_n, head
       real(wp),    intent(out) :: se, dse_dhead
@@ -333,14 +334,14 @@ contains
       se = (1.0_wp + xn) ** (-m)
       u  = xn / (1.0_wp + xn)                      ! 1 - Se^(1/m)
       dse_dhead = par_a * m * par_n * se * u / max(x, tiny_num)
-   end subroutine saturation_of_head
+   end subroutine head_to_saturation
 
    !----- Conductivity [m/s] and dK/dSe at saturation se: van Genuchten-Mualem with        !
    !      L = VG_PORE_CONNECTIVITY (docs/science/soil_biophysics.md eq. (2)), or           !
    !      Campbell's Ks Se^(2b+3). No floor: K goes to zero with Se. The van Genuchten     !
    !      slope is unbounded at Se = 1; the solver calls this only dry of the branch       !
    !      point. --------------------------------------------------------------------------!
-   elemental subroutine conductivity_of_saturation(retention, par_n, ksat, se, kcond, dk_dse)
+   elemental subroutine saturation_to_conductivity(retention, par_n, ksat, se, kcond, dk_dse)
       integer(ik), intent(in)  :: retention
       real(wp),    intent(in)  :: par_n, ksat, se
       real(wp),    intent(out) :: kcond, dk_dse
@@ -356,20 +357,20 @@ contains
          dk_dse = ksat * (VG_PORE_CONNECTIVITY * se ** (VG_PORE_CONNECTIVITY - 1.0_wp) * t * t                  &
                   + 2.0_wp * se ** VG_PORE_CONNECTIVITY * t * u ** (m - 1.0_wp) * se ** (1.0_wp / m - 1.0_wp))
       end if
-   end subroutine conductivity_of_saturation
+   end subroutine saturation_to_conductivity
 
    !----- Conductivity [m/s] and dK/dhead [1/s] at a head below zero, in x = alpha |head|  !
-   !      like saturation_of_head. The slope is taken in the head directly: near           !
+   !      like head_to_saturation. The slope is taken in the head directly: near           !
    !      saturation dK/dSe grows without bound while dSe/dhead goes to zero. -------------!
-   elemental subroutine conductivity_of_head(retention, par_a, par_n, ksat, head, kcond, dk_dhead)
+   elemental subroutine head_to_conductivity(retention, par_a, par_n, ksat, head, kcond, dk_dhead)
       integer(ik), intent(in)  :: retention
       real(wp),    intent(in)  :: par_a, par_n, ksat, head
       real(wp),    intent(out) :: kcond, dk_dhead
       real(wp) :: m, x, xn, u, t, se, dse_dhead, dk_dse
       if (retention == SOIL_RETENTION_CAMPBELL) then
-         call saturation_of_head(retention, par_a, par_n, head, se, dse_dhead)
+         call head_to_saturation(retention, par_a, par_n, head, se, dse_dhead)
          if (head < par_a) then
-            call conductivity_of_saturation(retention, par_n, ksat, se, kcond, dk_dse)
+            call saturation_to_conductivity(retention, par_n, ksat, se, kcond, dk_dse)
             dk_dhead = dk_dse * dse_dhead
          else
             kcond = ksat ; dk_dhead = 0.0_wp
@@ -388,7 +389,7 @@ contains
       dk_dhead = ksat * (VG_PORE_CONNECTIVITY * t * t * se ** (VG_PORE_CONNECTIVITY - 1.0_wp) * dse_dhead          &
                  + 2.0_wp * par_a * m * par_n * t * se ** (VG_PORE_CONNECTIVITY + 1.0_wp / m) * u ** m             &
                    / max(x, tiny_num))
-   end subroutine conductivity_of_head
+   end subroutine head_to_conductivity
 
    !=======================================================================================!
    !     The pond.                                                                         !
@@ -415,7 +416,7 @@ contains
 
    !----- The head [m] of a pond holding w [kg/m2]. An empty pond has no head to name; it  !
    !      returns zero, and the solver finds the head from the soil below. ----------------!
-   elemental function pond_head_from_water(w) result(h)
+   elemental function pond_water_to_head(w) result(h)
       real(wp), intent(in) :: w
       real(wp) :: h, depth
       depth = w / rho_h2o
@@ -426,6 +427,6 @@ contains
       else
          h = depth + 0.5_wp * POND_DEPRESSION_DEPTH
       end if
-   end function pond_head_from_water
+   end function pond_water_to_head
 
 end module meds_soil_hydr_lib

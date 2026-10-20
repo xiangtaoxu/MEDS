@@ -40,7 +40,7 @@ module meds_fast_prepass
                                      root_zone_temp_scale
    use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, &
                                      assemble_env_scalar, assemble_transfer_matrix
-   use meds_therm_lib,        only : cas_molar_density, cas_temp_of_enthalpy, sat_vapor_pressure
+   use meds_therm_lib,        only : cas_molar_density, cas_enthalpy_to_temp, sat_vapor_pressure
    use meds_numerics,         only : weighted_mean, ascending_order
    implicit none
    private
@@ -147,7 +147,7 @@ contains
       real(wp),              intent(in)    :: wood_temp(:)     !< [K] per-cohort wood temperature
       type(aero_out_t),      intent(inout) :: aero
       real(wp),              intent(out)   :: tcas, qcas, press, rho, t_ground
-      tcas = cas_temp_of_enthalpy(cas%can_enthalpy, cas%can_shv)
+      tcas = cas_enthalpy_to_temp(cas%can_enthalpy, cas%can_shv)
       qcas = cas%can_shv ; press = aenv%press ; rho = aenv%rho_air ; t_ground = soil_temp_top
       aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = cas%can_co2
       aenv%t_ground = t_ground

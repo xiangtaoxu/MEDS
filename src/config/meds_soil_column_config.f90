@@ -14,7 +14,7 @@
 module meds_soil_column_config
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, grav_head
-   use meds_soil_hydr_lib,    only : soil_theta_from_psi, soil_psi_from_theta, SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,    only : soil_head_to_theta, soil_theta_to_head, SOIL_RETENTION_VG
    implicit none
    private
 
@@ -194,7 +194,7 @@ contains
    pure real(wp) function top_soil_psi(soil, theta_top) result(psi)
       type(soil_params_t), intent(in) :: soil
       real(wp),            intent(in) :: theta_top   !< [m3/m3]
-      psi = grav_head * soil_psi_from_theta(soil%retention, theta_top, soil%theta_sat(1), soil%theta_res(1), &
+      psi = grav_head * soil_theta_to_head(soil%retention, theta_top, soil%theta_sat(1), soil%theta_res(1), &
                                             soil%curve_par_a(1), soil%curve_par_n(1))
    end function top_soil_psi
 
@@ -275,7 +275,7 @@ contains
       params%curve_par_n(1:n_active) = par_n(1:n_active)
 
       !----- Derived threshold (from each layer's retention curve). ----------------------!
-      params%theta_fc(1:n_active) = soil_theta_from_psi(retention, psi_fc_m, theta_sat(1:n_active),    &
+      params%theta_fc(1:n_active) = soil_head_to_theta(retention, psi_fc_m, theta_sat(1:n_active),    &
                                         theta_res(1:n_active), par_a(1:n_active), par_n(1:n_active))
    end subroutine build_soil_hydr_params_layers
 

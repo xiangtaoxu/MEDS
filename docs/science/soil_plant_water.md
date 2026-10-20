@@ -211,7 +211,7 @@ canopy air and +600 W m⁻² of sensible heat at zero net radiation.
 On bare ground it is the rain plus the snowfall too light to start a pack, both valued at the air
 temperature above the canopy (the forcing moved to the canopy-air top, [forcing](forcing.md) §8), as
 `snow_accumulate` values a pack's snowfall (`precip_enthalpy`). The mixture's enthalpy per kilogram
-becomes a temperature through `temp_of_liquid_enthalpy`, the exact inverse of
+becomes a temperature through `liquid_energy_to_temp`, the exact inverse of
 `internal_energy_liquid`; below $`T_{3ple}`$ that temperature stands for water that must still melt,
 which the pond and the soil melt with soil heat. Valuing the snow as liquid would create $L_f$ per
 kilogram at the boundary, and valuing the rain at the canopy air's temperature would hand the canopy

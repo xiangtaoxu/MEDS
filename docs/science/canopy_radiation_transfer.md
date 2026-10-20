@@ -41,7 +41,7 @@ w_c \;\propto\; \int_{t_{c-1}}^{t_c} t^{\,p-1}(1-t)^{\,q-1}\,dt , \qquad \sum_c 
 evaluated by a 64-panel midpoint rule (`beta_lidf` over `beta_pdf_kernel`) — compiler-robust, no
 special function, and it never touches the integrable endpoint singularities at $t=0,1$. An
 interpretable $`(\overline{\theta},\,\sigma_\theta)`$ maps to $(p,q)$ by moment matching
-(`beta_params_from_mean`).
+(`moments_to_beta_params`).
 
 Two quantities feed the two-stream optics. The **second moment** (mutually $\mu$-independent, driving
 the back/forward scattering split) is
@@ -220,7 +220,7 @@ albedo is the ground's alone.
 | Symbol | Source | Meaning |
 |---|---|---|
 | $`\overline{\theta}, \sigma_\theta`$ | `[pft].leaf_angle_mean`, `leaf_angle_std` | mean / std leaf inclination [deg] |
-| $p, q$ | derived from $`\overline{\theta}, \sigma_\theta`$ (`beta_params_from_mean`) | Beta-LIDF shape parameters |
+| $p, q$ | derived from $`\overline{\theta}, \sigma_\theta`$ (`moments_to_beta_params`) | Beta-LIDF shape parameters |
 | $`\rho_{leaf},\tau_{leaf}`$ | `[pft].leaf_reflect_*`, `leaf_transmit_*` (`_vis`, `_nir`) | leaf reflectance / transmittance |
 | $`\rho_{wood},\tau_{wood}`$ | `[pft].wood_reflect_*`, `wood_transmit_*` (`_vis`, `_nir`) | wood reflectance / transmittance |
 | $`\varepsilon_{leaf},\varepsilon_{wood}`$ | `[pft].leaf_emissivity`, `wood_emissivity` | LW: $`\rho=1-\varepsilon,\ \tau=0`$ |
@@ -270,7 +270,7 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 
 | Concept | Routine |
 |---|---|
-| Beta LIDF + params | `meds_optics_lib`: `beta_lidf`, `beta_pdf_kernel`, `beta_params_from_mean` |
+| Beta LIDF + params | `meds_optics_lib`: `beta_lidf`, `beta_pdf_kernel`, `moments_to_beta_params` |
 | moments $`\mathrm{bf}`$, $G(\mu)$ | `meds_optics_lib`: `leaf_bf`, `gfun_direct` |
 | $\omega, g$ single-scatter pair (per PFT) | `meds_optics_lib`: `scatter_pair` |
 | per-PFT optics table ($\omega, g$), eq. (4) | `meds_canopy_radiation`: `derive_rad_optics` |

@@ -71,7 +71,7 @@ stem/root maintenance respiration ($`\times n_{plant}`$), the growth respiration
 once a day on the growth it built (handed down as the rate `slow_co2_rate`), and the heterotrophic soil
 flux (see [soil_biophysics](soil_biophysics.md#soil-heterotrophic-respiration)).
 CAS temperature is re-diagnosed from $(H^{n+1},q^{n+1})$ each step by inverting the specific enthalpy
-$`H = (1-q)\,c_{p,d}\,T + q\,c_{p,v}\,(T - T_{sc,v})`$ (`cas_enthalpy_of_temp`, `cas_temp_of_enthalpy`):
+$`H = (1-q)\,c_{p,d}\,T + q\,c_{p,v}\,(T - T_{sc,v})`$ (`cas_temp_to_enthalpy`, `cas_enthalpy_to_temp`):
 dry air is counted from 0 K, and vapour in the energy datum every store shares, in which ice at 0 K
 holds no energy, so a vapour flux carries its latent heat with it. Sharing $`u_*`$ **and** the profile
 factor across all three twins keeps them on one turbulence basis; a CO₂ twin without the profile factor

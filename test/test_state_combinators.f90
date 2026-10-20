@@ -21,7 +21,7 @@ program test_state_combinators
    use meds_column_state_ops, only : state_init, state_axpy, state_sub, state_err_diff, zero_like,  &
                                      state_accum, state_extrap, unpack_column_state,                  &
                                      state_size, state_to_array, array_to_state, state_entry_rules
-   use meds_therm_lib,        only : cas_temp_of_enthalpy
+   use meds_therm_lib,        only : cas_enthalpy_to_temp
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -178,7 +178,7 @@ program test_state_combinators
       !----- can_temp is a DERIVED commit: it must be consistent with the enthalpy/humidity that   !
       !      were just committed, whatever value that is. Asserting a positive temperature instead   !
       !      would be asserting that the synthetic fill happens to be physical, which it is not.  ---!
-      call check_close(bio%cas%can_temp, cas_temp_of_enthalpy(a%cas_enthalpy, a%cas_shv),          &
+      call check_close(bio%cas%can_temp, cas_enthalpy_to_temp(a%cas_enthalpy, a%cas_shv),          &
                        1.0e-12_wp, 'unpack: can_temp re-diagnosed from the COMMITTED enthalpy')
    end block
 

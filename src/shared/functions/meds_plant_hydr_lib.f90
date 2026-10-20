@@ -7,7 +7,7 @@
 ! limit on transpiration (plant_hydraulics.md §3-§4, docs/science/soil_plant_water.md §1   !
 ! and §4).                                                                                 !
 !                                                                                          !
-! The read-offs (rwc_from_psi, psi_from_water_content, ...) carry floors that keep a       !
+! The read-offs (tissue_psi_to_rwc, tissue_water_to_psi, ...) carry floors that keep a     !
 ! diagnostic finite. The solver's relations (tissue_water_relations and the flows) have    !
 ! none and come with their derivatives in the solver's unknowns, so meds_spac_solver       !
 ! builds its Jacobian from the numbers it moves water with (soil_plant_water.md §2). The   !
@@ -22,13 +22,13 @@ module meds_plant_hydr_lib
 
    !----- Tissue pressure-volume curve: read-offs and the solver's relations. -------------!
    public :: water_curve_t
-   public :: pv_psi_tlp, rwc_from_psi, psi_from_rwc
-   public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity, shared_potential
-   public :: tissue_water_relations, tissue_unknown_from_rwc, tissue_rwc_from_water
+   public :: tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi
+   public :: tissue_psi_to_water, tissue_capacitance, tissue_water_to_psi, tissue_capped_water, tissue_shared_potential
+   public :: tissue_water_relations, tissue_rwc_to_unknown, tissue_water_to_rwc
    !----- Vulnerability curve and Kirchhoff potential. ------------------------------------!
-   public :: plc_retained, flux_potential, hydro_table_t, build_hydro_table, flux_potential_lin
+   public :: plc_retained, kirchhoff_potential, hydro_table_t, build_hydro_table
    !----- Xylem, roots and leaves: the conductances and the flows they carry. -------------!
-   public :: wood_kmax_from_density, xylem_max_conductance, xylem_sapflow
+   public :: wood_density_to_kmax, xylem_max_conductance, xylem_sapflow
    public :: root_fraction_profile, rhizosphere_conductance, root_water_uptake, root_water_uptake_profile
    public :: supply_limited_transpiration
 
@@ -44,9 +44,9 @@ module meds_plant_hydr_lib
    !----- [-] Floor on the symplastic relative water content in the read-offs; the         !
    !      solver's relations have none. ---------------------------------------------------!
    real(wp), parameter :: rwc_floor = 1.0e-4_wp
-   !----- Cap on shared_potential's halvings. The loop stops when its bracket is as narrow !
-   !      as the arithmetic resolves, about 70 halvings for a root near -1 MPa; only a     !
-   !      root at 0, where that width has no floor, reaches the cap. ----------------------!
+   !----- Cap on tissue_shared_potential's halvings. The loop stops when its bracket is    !
+   !      as narrow as the arithmetic resolves, about 70 halvings for a root near -1       !
+   !      MPa; only a root at 0, where that width has no floor, reaches the cap. ----------!
    integer(ik), parameter :: BISECTION_STEPS_MAX = 200_ik
 
    !----- The Kirchhoff lookup table for a general vulnerability exponent: G(r) on a       !
@@ -54,7 +54,6 @@ module meds_plant_hydr_lib
    !      PFT's parameters copy as plain data. --------------------------------------------!
    integer,  parameter :: HYDRO_TABLE_NTAB = 512        !< intervals over [0, HYDRO_TABLE_RMAX]
    real(wp), parameter :: HYDRO_TABLE_RMAX = 8.0_wp     !< [-] table domain in r = psi/psi50
-   real(wp), parameter :: KIRCH_PANEL      = 0.25_wp    !< [-] widest quadrature panel in r
    type :: hydro_table_t
       real(wp)    :: kexp  = 0.0_wp                       !< [-] vulnerability exponent the table holds; its tail uses it too
       real(wp)    :: r_max = HYDRO_TABLE_RMAX             !< [-] table domain [0, r_max]
@@ -97,35 +96,35 @@ contains
 
    !----- Turgor loss point [MPa] (Bartlett et al. 2012 eq. 1;                             !
    !      docs/science/plant_hydraulics.md eq. (3)). --------------------------------------!
-   elemental real(wp) function pv_psi_tlp(pi0, elastic_mod) result(psi_tlp)
+   elemental real(wp) function tissue_psi_tlp(pi0, elastic_mod) result(psi_tlp)
       real(wp), intent(in) :: pi0, elastic_mod
       psi_tlp = pi0*elastic_mod / (pi0 + elastic_mod)
-   end function pv_psi_tlp
+   end function tissue_psi_tlp
 
    !----- Symplastic relative water content at turgor loss (Bartlett et al. 2012 eq. 2;    !
    !      docs/science/plant_hydraulics.md eq. (3)). --------------------------------------!
-   elemental real(wp) function pv_rwc_tlp(pi0, elastic_mod) result(rwc_tlp)
+   elemental real(wp) function tissue_rwc_tlp(pi0, elastic_mod) result(rwc_tlp)
       real(wp), intent(in) :: pi0, elastic_mod
       rwc_tlp = (pi0 + elastic_mod) / elastic_mod
-   end function pv_rwc_tlp
+   end function tissue_rwc_tlp
 
    !----- Water potential [MPa] at symplastic relative water content rwc, floored at       !
    !      rwc_floor (docs/science/plant_hydraulics.md eq. (4)). ---------------------------!
-   elemental real(wp) function psi_from_rwc(rwc, pi0, elastic_mod) result(psi)
+   elemental real(wp) function tissue_rwc_to_psi(rwc, pi0, elastic_mod) result(psi)
       real(wp), intent(in) :: rwc, pi0, elastic_mod
       real(wp) :: rwc_tlp, r
-      rwc_tlp = pv_rwc_tlp(pi0, elastic_mod)
+      rwc_tlp = tissue_rwc_tlp(pi0, elastic_mod)
       r       = max(rwc, rwc_floor)
       if (r >= rwc_tlp) then
          psi = elastic_mod*(r - rwc_tlp) + pi0/r      ! turgor + osmotic
       else
          psi = pi0/r                          ! turgor lost
       end if
-   end function psi_from_rwc
+   end function tissue_rwc_to_psi
 
    !----- Symplastic relative water content at water potential psi, floored at rwc_floor   !
    !      (docs/science/plant_hydraulics.md eq. (4)). -------------------------------------!
-   elemental real(wp) function rwc_from_psi(psi, pi0, elastic_mod) result(rwc)
+   elemental real(wp) function tissue_psi_to_rwc(psi, pi0, elastic_mod) result(rwc)
       real(wp), intent(in) :: psi, pi0, elastic_mod
       real(wp) :: psi_tlp, b, disc
       psi_tlp = pi0*elastic_mod / (pi0 + elastic_mod)
@@ -138,30 +137,30 @@ contains
          rwc  = pi0/psi
       end if
       rwc = max(rwc, rwc_floor)
-   end function rwc_from_psi
+   end function tissue_psi_to_rwc
 
    !----- Total tissue water [kg per plant] at potential psi: the symplast's saturated     !
    !      water times R, plus the apoplast's, a constant reservoir                         !
    !      (docs/science/plant_hydraulics.md eq. (5)). -------------------------------------!
-   elemental real(wp) function water_content(psi, curve, biomass) result(w)
+   elemental real(wp) function tissue_psi_to_water(psi, curve, biomass) result(w)
       real(wp),            intent(in) :: psi, biomass
       type(water_curve_t), intent(in) :: curve
       real(wp) :: w_sat, r
       w_sat = curve%water_sat*biomass
-      r     = rwc_from_psi(psi, curve%pi0, curve%elastic_mod)
+      r     = tissue_psi_to_rwc(psi, curve%pi0, curve%elastic_mod)
       w     = (1.0_wp - curve%apoplast_frac)*w_sat*r + curve%apoplast_frac*w_sat
-   end function water_content
+   end function tissue_psi_to_water
 
    !----- Capacitance dW/dpsi [kg/MPa per plant] at potential psi                          !
    !      (docs/science/plant_hydraulics.md eqs. (5)-(6)). --------------------------------!
-   elemental real(wp) function capacitance(psi, curve, biomass) result(c)
+   elemental real(wp) function tissue_capacitance(psi, curve, biomass) result(c)
       real(wp),            intent(in) :: psi, biomass
       type(water_curve_t), intent(in) :: curve
       real(wp) :: psi_tlp, w_sat_sym, r, cr
       associate (pi0 => curve%pi0, elastic_mod => curve%elastic_mod)
          psi_tlp   = pi0*elastic_mod / (pi0 + elastic_mod)
          w_sat_sym = (1.0_wp - curve%apoplast_frac)*curve%water_sat*biomass
-         r         = rwc_from_psi(psi, pi0, elastic_mod)
+         r         = tissue_psi_to_rwc(psi, pi0, elastic_mod)
          if (psi >= psi_tlp) then
             cr = 1.0_wp / (elastic_mod - pi0/(r*r))      ! dR/dpsi, turgid
          else
@@ -169,25 +168,25 @@ contains
          end if
       end associate
       c = w_sat_sym*cr
-   end function capacitance
+   end function tissue_capacitance
 
    !----- Water potential [MPa] of a tissue holding w [kg per plant], the exact inverse of !
-   !      water_content (docs/science/plant_hydraulics.md eq. (5)). -----------------------!
-   elemental real(wp) function psi_from_water_content(w, curve, biomass) result(psi)
+   !      tissue_psi_to_water (docs/science/plant_hydraulics.md eq. (5)). -----------------!
+   elemental real(wp) function tissue_water_to_psi(w, curve, biomass) result(psi)
       real(wp),            intent(in) :: w, biomass
       type(water_curve_t), intent(in) :: curve
       real(wp) :: w_sat, rwc
       w_sat = curve%water_sat*biomass
       rwc   = (w - curve%apoplast_frac*w_sat) / max((1.0_wp - curve%apoplast_frac)*w_sat, tiny_num)
-      psi   = psi_from_rwc(rwc, curve%pi0, curve%elastic_mod)
-   end function psi_from_water_content
+      psi   = tissue_rwc_to_psi(rwc, curve%pi0, curve%elastic_mod)
+   end function tissue_water_to_psi
 
    !----- The potential [MPa] at which two tissues holding w_total [kg] between them are   !
    !      at rest, a at psi and b at psi - head_b (docs/science/plant_hydraulics.md        !
    !      eq. (2) with no flow), by bisection between the curves' dry floor and a's        !
    !      saturation; a total outside returns the nearer end. The caller moves water by    !
    !      the curves at the result, so what it moves is exact whatever the residual. ------!
-   elemental real(wp) function shared_potential(w_total, curve_a, biomass_a, curve_b, biomass_b, head_b)  &
+   elemental real(wp) function tissue_shared_potential(w_total, curve_a, biomass_a, curve_b, biomass_b, head_b)  &
                                                 result(psi)
       real(wp),            intent(in) :: w_total               !< [kg] the water the two hold together
       type(water_curve_t), intent(in) :: curve_a, curve_b
@@ -218,18 +217,18 @@ contains
    contains
       pure real(wp) function held(p)
          real(wp), intent(in) :: p
-         held = water_content(p, curve_a, biomass_a) + water_content(p - head_b, curve_b, biomass_b)
+         held = tissue_psi_to_water(p, curve_a, biomass_a) + tissue_psi_to_water(p - head_b, curve_b, biomass_b)
       end function held
-   end function shared_potential
+   end function tissue_shared_potential
 
    !----- Tissue water [kg per plant] capped at saturation, water_sat * biomass, for a     !
    !      store that lost biomass without its water; the caller sheds the excess           !
    !      (w - result) to the ground (docs/science/soil_plant_water.md §2). ---------------!
-   elemental real(wp) function clamp_water_to_capacity(w, curve, biomass) result(w_capped)
+   elemental real(wp) function tissue_capped_water(w, curve, biomass) result(w_capped)
       real(wp),            intent(in) :: w, biomass
       type(water_curve_t), intent(in) :: curve
       w_capped = min(w, curve%water_sat*biomass)
-   end function clamp_water_to_capacity
+   end function tissue_capped_water
 
    !=======================================================================================!
    !     Tissue water relations for the soil-plant water solver, without the read-offs'    !
@@ -237,9 +236,9 @@ contains
    !=======================================================================================!
 
    !----- A tissue at symplastic relative water content r: potential [MPa] and water       !
-   !      [kg/m2 of ground] for nplant plants of `biomass` each, with their derivatives in !
-   !      r. The pressure-volume curve without psi_from_rwc's floor: the solver keeps r    !
-   !      above zero (docs/science/plant_hydraulics.md eqs. (4)-(5)). ---------------------!
+   !      [kg/m2 of ground] for nplant plants of `biomass` each, with their derivatives    !
+   !      in r. The pressure-volume curve without tissue_rwc_to_psi's floor: the solver    !
+   !      keeps r above zero (docs/science/plant_hydraulics.md eqs. (4)-(5)). -------------!
    elemental subroutine tissue_water_relations(curve, biomass, nplant, r, psi, dpsi, w, dw)
       type(water_curve_t), intent(in)  :: curve
       real(wp),            intent(in)  :: biomass   !< [kgC per plant]
@@ -248,7 +247,7 @@ contains
       real(wp),            intent(out) :: psi, dpsi, w, dw
       real(wp) :: r_tlp, w_sat
       associate (pi0 => curve%pi0, emod => curve%elastic_mod, apo => curve%apoplast_frac)
-         r_tlp = pv_rwc_tlp(pi0, emod)
+         r_tlp = tissue_rwc_tlp(pi0, emod)
          if (r >= r_tlp) then
             psi  = emod * (r - r_tlp) + pi0 / r
             dpsi = emod - pi0 / (r * r)
@@ -264,28 +263,28 @@ contains
 
    !----- Symplastic relative water content of a tissue holding w [kg per plant], the      !
    !      inverse of tissue_water_relations's water. Undefined with no biomass: the caller !
-   !      then starts the tissue from a potential instead (rwc_from_psi). -----------------!
-   elemental function tissue_rwc_from_water(curve, biomass, w) result(r)
+   !      then starts the tissue from a potential instead (tissue_psi_to_rwc). ------------!
+   elemental function tissue_water_to_rwc(curve, biomass, w) result(r)
       type(water_curve_t), intent(in) :: curve
       real(wp),            intent(in) :: biomass, w
       real(wp) :: r, w_sat
       w_sat = curve%water_sat * biomass
       r = (w / w_sat - curve%apoplast_frac) / (1.0_wp - curve%apoplast_frac)
-   end function tissue_rwc_from_water
+   end function tissue_water_to_rwc
 
    !----- A tissue's unknown is its relative water content, kept strictly positive: zero   !
    !      is an infinitely dry tissue. ----------------------------------------------------!
-   elemental function tissue_unknown_from_rwc(r) result(tau)
+   elemental function tissue_rwc_to_unknown(r) result(tau)
       real(wp), intent(in) :: r
       real(wp) :: tau
       real(wp), parameter :: R_START = 1.0e-6_wp
       tau = max(r, R_START)   ! clamp-ok: an emptied store starts just inside the curve
-   end function tissue_unknown_from_rwc
+   end function tissue_rwc_to_unknown
 
    !=======================================================================================!
    !     Vulnerability curve and Kirchhoff potential (docs/science/plant_hydraulics.md §3, !
-   !     eqs. (7)-(8)): closed forms for vulnerability exponents 1 and 2, panel quadrature !
-   !     or the PFT's lookup table otherwise.                                              !
+   !     eqs. (7)-(8)): closed forms for vulnerability exponents 1 and 2, otherwise the    !
+   !     PFT's lookup table, filled by 7-point Gauss-Legendre panels.                      !
    !=======================================================================================!
 
    !----- Retained fraction of xylem conductance, 1 - PLC = 1 / (1 + r^kexp),              !
@@ -304,39 +303,78 @@ contains
    end function plc_retained
 
    !----- Kirchhoff (matric flux) potential [MPa], Phi(psi) = integral of the retained     !
-   !      fraction from 0 to psi: closed form for kexp 1 and 2, panel quadrature           !
-   !      otherwise; zero at and above zero potential (docs/science/plant_hydraulics.md    !
-   !      eq. (8)). -----------------------------------------------------------------------!
-   pure real(wp) function flux_potential(psi, psi50, kexp) result(phi)
+   !      fraction from 0 to psi (docs/science/plant_hydraulics.md eq. (8)): closed form  !
+   !      for kexp 1 and 2, the PFT's table otherwise. Above zero potential nothing is     !
+   !      embolised, so Phi = psi there; a flat Phi would read a supersaturated tissue's   !
+   !      xylem as blocked. ---------------------------------------------------------------!
+   pure real(wp) function kirchhoff_potential(psi, psi50, kexp, table) result(phi)
+      real(wp),            intent(in) :: psi, psi50, kexp
+      type(hydro_table_t), intent(in) :: table
+      if (psi > 0.0_wp) then
+         phi = psi
+      else if (has_closed_form(kexp)) then
+         phi = kirchhoff_potential_closed(psi, psi50, kexp)
+      else
+         phi = kirchhoff_potential_table(psi, psi50, table)
+      end if
+   end function kirchhoff_potential
+
+   !----- Whether the vulnerability exponent is 1 or 2, where Phi has a closed form. ------!
+   pure logical function has_closed_form(kexp)
+      real(wp), intent(in) :: kexp
+      has_closed_form = abs(kexp - 1.0_wp) < 1.0e-9_wp .or. abs(kexp - 2.0_wp) < 1.0e-9_wp
+   end function has_closed_form
+
+   !----- The closed forms: psi50 ln(1 + r) for kexp 1, psi50 atan(r) for kexp 2. ---------!
+   pure real(wp) function kirchhoff_potential_closed(psi, psi50, kexp) result(phi)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
       r = max(psi/psi50, 0.0_wp)
       if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
          phi = psi50 * log(1.0_wp + r)
-      else if (abs(kexp - 2.0_wp) < 1.0e-9_wp) then
-         phi = psi50 * atan(r)
       else
-         phi = psi50 * kirchhoff_integral(r, kexp)
+         phi = psi50 * atan(r)
       end if
-   end function flux_potential
+   end function kirchhoff_potential_closed
 
-   !----- integral_0^r du/(1+u^kexp): 7-point panels no wider than KIRCH_PANEL up to the   !
-   !      table's edge, and the analytic tail beyond it. One rule over a long range would  !
-   !      miss the integrand's fall near u = 1 and could give a dried leaf's xylem a       !
-   !      negative conductance (docs/science/plant_hydraulics.md §3). ---------------------!
-   pure real(wp) function kirchhoff_integral(r, kexp) result(g)
-      real(wp), intent(in) :: r, kexp
-      real(wp)    :: rc, w
-      integer(ik) :: k, npan
-      rc   = min(max(r, 0.0_wp), HYDRO_TABLE_RMAX)
-      npan = max(1_ik, int(ceiling(rc / KIRCH_PANEL), ik))
-      w    = rc / real(npan, wp)
-      g    = 0.0_wp
-      do k = 1_ik, npan
-         g = g + kirchhoff_panel(real(k - 1_ik, wp)*w, real(k, wp)*w, kexp)
+   !----- Fill the table, one 7-point panel per interval added to the node below, so it    !
+   !      rises monotonically. A subroutine, not an array-valued function                  !
+   !      (docs/building.md, Compilers). --------------------------------------------------!
+   pure subroutine build_hydro_table(tab, kexp)
+      type(hydro_table_t), intent(out) :: tab
+      real(wp),            intent(in)  :: kexp
+      real(wp) :: h
+      integer  :: j
+      tab%kexp  = kexp
+      tab%r_max = HYDRO_TABLE_RMAX
+      tab%n     = int(HYDRO_TABLE_NTAB, ik)
+      h         = HYDRO_TABLE_RMAX / real(HYDRO_TABLE_NTAB, wp)
+      tab%inv_h = 1.0_wp / h
+      tab%g(0) = 0.0_wp
+      do j = 1, HYDRO_TABLE_NTAB
+         tab%g(j) = tab%g(j-1) + kirchhoff_panel(real(j-1, wp)*h, real(j, wp)*h, kexp)
       end do
-      if (r > HYDRO_TABLE_RMAX) g = g + kirchhoff_tail(HYDRO_TABLE_RMAX, r, kexp)
-   end function kirchhoff_integral
+   end subroutine build_hydro_table
+
+   !----- Kirchhoff potential [MPa] read from the table by linear interpolation; psi50 is  !
+   !      a run-time scale, so only kexp sets the table. Beyond the table the analytic     !
+   !      tail is added to its last node: extrapolating the last interval could turn a     !
+   !      dried leaf's potential positive. ------------------------------------------------!
+   pure real(wp) function kirchhoff_potential_table(psi, psi50, tab) result(phi)
+      real(wp),            intent(in) :: psi, psi50
+      type(hydro_table_t), intent(in) :: tab
+      real(wp) :: r, x, t
+      integer  :: idx
+      r   = max(psi/psi50, 0.0_wp)
+      if (r >= tab%r_max) then
+         phi = psi50 * ( tab%g(HYDRO_TABLE_NTAB) + kirchhoff_tail(tab%r_max, r, tab%kexp) )
+         return
+      end if
+      x   = r * tab%inv_h
+      idx = min(int(x), HYDRO_TABLE_NTAB - 1)
+      t   = x - real(idx, wp)
+      phi = psi50 * ( tab%g(idx)*(1.0_wp - t) + tab%g(idx+1)*t )
+   end function kirchhoff_potential_table
 
    !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre, !
    !      exact for polynomials up to degree 13. The sum is written out rather than handed !
@@ -380,61 +418,6 @@ contains
       end if
    end function kirchhoff_tail
 
-   !----- Fill the table, one 7-point panel per interval added to the node below, so it    !
-   !      rises monotonically. A subroutine, not an array-valued function                  !
-   !      (docs/building.md, Compilers). --------------------------------------------------!
-   pure subroutine build_hydro_table(tab, kexp)
-      type(hydro_table_t), intent(out) :: tab
-      real(wp),            intent(in)  :: kexp
-      real(wp) :: h
-      integer  :: j
-      tab%kexp  = kexp
-      tab%r_max = HYDRO_TABLE_RMAX
-      tab%n     = int(HYDRO_TABLE_NTAB, ik)
-      h         = HYDRO_TABLE_RMAX / real(HYDRO_TABLE_NTAB, wp)
-      tab%inv_h = 1.0_wp / h
-      tab%g(0) = 0.0_wp
-      do j = 1, HYDRO_TABLE_NTAB
-         tab%g(j) = tab%g(j-1) + kirchhoff_panel(real(j-1, wp)*h, real(j, wp)*h, kexp)
-      end do
-   end subroutine build_hydro_table
-
-   !----- Kirchhoff potential [MPa] read from the table by linear interpolation; psi50 is  !
-   !      a run-time scale, so only kexp sets the table. Beyond the table the analytic     !
-   !      tail is added to its last node: extrapolating the last interval could turn a     !
-   !      dried leaf's potential positive. ------------------------------------------------!
-   pure real(wp) function flux_potential_lin(psi, psi50, tab) result(phi)
-      real(wp),            intent(in) :: psi, psi50
-      type(hydro_table_t), intent(in) :: tab
-      real(wp) :: r, x, t
-      integer  :: idx
-      r   = max(psi/psi50, 0.0_wp)
-      if (r >= tab%r_max) then
-         phi = psi50 * ( tab%g(HYDRO_TABLE_NTAB) + kirchhoff_tail(tab%r_max, r, tab%kexp) )
-         return
-      end if
-      x   = r * tab%inv_h
-      idx = min(int(x), HYDRO_TABLE_NTAB - 1)
-      t   = x - real(idx, wp)
-      phi = psi50 * ( tab%g(idx)*(1.0_wp - t) + tab%g(idx+1)*t )
-   end function flux_potential_lin
-
-   !----- The Kirchhoff potential [MPa] xylem_sapflow uses: closed form for kexp 1 and 2,  !
-   !      the PFT's table otherwise. Above zero potential nothing is embolised, so         !
-   !      Phi = psi there, where flux_potential's flat Phi would read a supersaturated     !
-   !      tissue's xylem as blocked. ------------------------------------------------------!
-   pure real(wp) function kirchhoff_potential(psi, psi50, kexp, table) result(phi)
-      real(wp),            intent(in) :: psi, psi50, kexp
-      type(hydro_table_t), intent(in) :: table
-      if (psi > 0.0_wp) then
-         phi = psi
-      else if (abs(kexp - 1.0_wp) < 1.0e-9_wp .or. abs(kexp - 2.0_wp) < 1.0e-9_wp) then
-         phi = flux_potential(psi, psi50, kexp)
-      else
-         phi = flux_potential_lin(psi, psi50, table)
-      end if
-   end function kirchhoff_potential
-
    !----- dPhi/dpsi of exactly the potential kirchhoff_potential computes (the retained    !
    !      fraction, the slope of the table's linear piece, or the tail's), so the solver's !
    !      Jacobian is the derivative of the flow it moves. --------------------------------!
@@ -445,7 +428,7 @@ contains
       integer  :: idx
       if (psi > 0.0_wp) then
          dphi = 1.0_wp
-      else if (abs(kexp - 1.0_wp) < 1.0e-9_wp .or. abs(kexp - 2.0_wp) < 1.0e-9_wp) then
+      else if (has_closed_form(kexp)) then
          dphi = plc_retained(psi, psi50, kexp)
       else
          r = psi / psi50
@@ -468,7 +451,7 @@ contains
       r = psi / psi50
       if (r <= 0.0_wp) then
          d2phi = 0.0_wp
-      else if (abs(kexp - 1.0_wp) < 1.0e-9_wp .or. abs(kexp - 2.0_wp) < 1.0e-9_wp) then
+      else if (has_closed_form(kexp)) then
          d2phi = -kexp * r ** (kexp - 1.0_wp) / (psi50 * (1.0_wp + r ** kexp) ** 2)
       else if (r >= table%r_max) then
          d2phi = -table%kexp * r ** (-table%kexp - 1.0_wp) / psi50
@@ -484,10 +467,10 @@ contains
    !----- Sapwood specific conductivity [kg/m/s/MPa] of a wood density rho [g/cm3]: the    !
    !      mean of the lognormal fit, exp(a + b rho + s2/2)                                 !
    !      (docs/science/plant_hydraulics.md eq. (11)). ------------------------------------!
-   elemental real(wp) function wood_kmax_from_density(rho) result(kmax)
+   elemental real(wp) function wood_density_to_kmax(rho) result(kmax)
       real(wp), intent(in) :: rho
       kmax = exp(kmax_ln_a + kmax_ln_b*min(max(rho, kmax_rho_min), kmax_rho_max) + 0.5_wp*kmax_ln_var)
-   end function wood_kmax_from_density
+   end function wood_density_to_kmax
 
    !----- One plant's intact-xylem conductance [kg/s/MPa]: the sapwood's specific          !
    !      conductivity over its cross-section and its path, height x vessel_curl, floored  !

@@ -20,7 +20,7 @@ module meds_fast_frozen
                               tissue_c_leaf, tissue_c_wood_dry
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
-   use meds_plant_hydr_lib,  only : rwc_from_psi, plc_retained, xylem_max_conductance, rhizosphere_conductance
+   use meds_plant_hydr_lib,  only : tissue_psi_to_rwc, plc_retained, xylem_max_conductance, rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
    use meds_config, only : meds_config_t, pft_wstress_psi_close
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
@@ -36,7 +36,7 @@ module meds_fast_frozen
                                column_bflux_t, error_control_t, column_tend_t, mask_is_full
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
-   use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy, tissue_dry_heat_capacity
+   use meds_therm_lib, only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy, tissue_dry_heat_capacity
    use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_opts, only : snow_params_t
    use meds_patch_state_vars,   only : snow_column_t
@@ -343,18 +343,18 @@ contains
       !      effective liquid temperature of the rain + sub-threshold-snowfall mixture, both valued at !
       !      the air temperature above the canopy (forc%air_temp), not at the canopy air's             !
       !      (docs/science/soil_plant_water.md §5). The shed water brings the enthalpy it left its     !
-      !      tissues with, and the pond takes the mixture. temp_of_liquid_enthalpy is the exact inverse!
+      !      tissues with, and the pond takes the mixture. liquid_energy_to_temp is the exact inverse  !
       !      of internal_energy_liquid; below t_3ple it stands for water that must still melt. --------!
       t_water_base = tcas
       if (snow_st%exists) then
          t_water_base = snow_st%t_melt
       else if (forc%rainfall + forc%snowfall > tiny_num) then
-         t_water_base = temp_of_liquid_enthalpy(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
+         t_water_base = liquid_energy_to_temp(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
                                                 / (forc%rainfall + forc%snowfall))
       end if
       inflow_enth = water_base * internal_energy_liquid(t_water_base) + biophys%shed_water_enth
       hforc%t_pond_inflow = t_water_base
-      if (biophys%shed_water_rate > 0.0_wp) hforc%t_pond_inflow = temp_of_liquid_enthalpy(inflow_enth / hforc%precip_ground)
+      if (biophys%shed_water_rate > 0.0_wp) hforc%t_pond_inflow = liquid_energy_to_temp(inflow_enth / hforc%precip_ground)
       !----- ...and the enthalpy it brings across the column's boundary: all of it on bare ground; under a  !
       !      pack the meltwater's is the pack's, inside the column, so only the shed water's. -----------!
       frozen%hydrology%ground_inflow_enth = inflow_enth
@@ -395,7 +395,7 @@ contains
       !      temperature that carries exactly the enthalpy the pond gave up                             !
       !      (docs/science/numerical_scheme.md §5b, "The pond holds heat"). ----------------------------!
       frozen%hydrology%t_infil = hforc%t_pond_inflow
-      if (spac%infil > tiny_num) frozen%hydrology%t_infil = temp_of_liquid_enthalpy(spac%infil_enth / spac%infil)
+      if (spac%infil > tiny_num) frozen%hydrology%t_infil = liquid_energy_to_temp(spac%infil_enth / spac%infil)
       !----- The canopy film's valuation temperature. It is a reference: the film store, its               !
       !      interception input and its evaporation (surface_derivs) all use this one value, so the        !
       !      film ledger closes within a step at any choice. On bare ground it is the rain's, the rain     !
@@ -549,7 +549,7 @@ contains
             spac%k_xylem(i)  = col_cohort%nplant(i) * xylem_max_conductance(hp%wood_kmax, col_cohort%sap_area(i), &
                                                                            col_cohort%height(i), hp%vessel_curl)
             spac%e_demand(i) = e_demand(i)
-            spac%r_close(i)  = rwc_from_psi(pft_wstress_psi_close(cfg, col_cohort%pft(i)), hp%leaf_curve%pi0,      &
+            spac%r_close(i)  = tissue_psi_to_rwc(pft_wstress_psi_close(cfg, col_cohort%pft(i)), hp%leaf_curve%pi0,      &
                                            hp%leaf_curve%elastic_mod)
             root_len(1:nsl, i) = col_cohort%broot(i) * root_frac(1:nsl, i) * hp%specific_root_length
          end associate
@@ -658,7 +658,7 @@ contains
          st%melt_enth = smelt%melt_enth + smelt%dump_enth
          st%t_melt    = t_3ple
          if (smelt%melt_mass + smelt%dump_mass > 0.0_wp)                                            &
-            st%t_melt = temp_of_liquid_enthalpy(st%melt_enth / (smelt%melt_mass + smelt%dump_mass))
+            st%t_melt = liquid_energy_to_temp(st%melt_enth / (smelt%melt_mass + smelt%dump_mass))
       end if
       st%swe1  = snow%swe(1)
       st%enth1 = snow%snow_energy(1)

@@ -19,7 +19,7 @@ program test_fast_loop
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params, top_soil_psi
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
-   use meds_plant_hydr_lib,  only : water_content
+   use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
@@ -94,7 +94,7 @@ program test_fast_loop
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(poly%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
-   call check_close(mass0_leaf, water_content(top_soil_psi(ctx%col_config%soil, theta0_1),           &
+   call check_close(mass0_leaf, tissue_psi_to_water(top_soil_psi(ctx%col_config%soil, theta0_1),           &
                     ctx%col_config%hydraulics_table%pft(1)%leaf_curve, poly%cohort%leaf_carbon(1)),     &
                     1.0e-12_wp, 'a cohort starts with its leaf water at its patch''s top-soil potential')
    !----- To round-off: the temperatures are what the energies the cohort was born with give. ------!

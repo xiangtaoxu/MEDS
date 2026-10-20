@@ -19,9 +19,8 @@ program test_column_dynamics
                                         tissue_c_wood_dry
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
-   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, tissue_energy,       &
-                                        internal_energy_liquid,                                           &
-                                        tissue_dry_heat_capacity
+   use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, tissue_temp_to_energy,  &
+                                           internal_energy_liquid, tissue_dry_heat_capacity
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
@@ -38,7 +37,7 @@ program test_column_dynamics
    use meds_fast_prepass,        only : aero_bottom_to_top, cohort_leaf_par
    use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
-   use meds_plant_hydr_lib,      only : psi_from_water_content, water_content
+   use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water
    use meds_test_support, only : build_test_config, check_true, test_report
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
@@ -549,17 +548,17 @@ contains
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
       !----- alloc_patch_biophys starts leaf_water_mass/wood_water_mass at a scratch 0, which the    !
       !      production gather overwrites from the cohort block -- give them a physical store at a  !
-      !      mild tension, water_content(PSI_FIXTURE,...), or psi_from_water_content would          !
+      !      mild tension, tissue_psi_to_water(PSI_FIXTURE,...), or tissue_water_to_psi would       !
       !      diagnose an unphysical psi from an empty pool. -----------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%leaf_curve, &
+      biophys%leaf_water_mass(1:n) = tissue_psi_to_water(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%leaf_curve, &
             col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
+      biophys%wood_water_mass(1:n) = tissue_psi_to_water(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
             col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       !----- ...and the tissues' energy at t0, the state the column advances. ----------------------!
-      biophys%leaf_energy(1:n) = tissue_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
+      biophys%leaf_energy(1:n) = tissue_temp_to_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
                                     col_cohort%bleaf(1:n), tissue_c_leaf),                                    &
                                     max(biophys%leaf_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
-      biophys%wood_energy(1:n) = tissue_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
+      biophys%wood_energy(1:n) = tissue_temp_to_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
                                     col_cohort%bwood(1:n), tissue_c_wood_dry),                                &
                                     max(biophys%wood_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
       budget = column_budget_t()
@@ -611,7 +610,7 @@ contains
             forc%rainfall = 0.0_wp
          end if
          forc%air_temp         = t_air                                    ! values frozen precipitation as ice at this T
-         forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
+         forc%enthalpy_atm = cas_temp_to_enthalpy(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
          forc%co2_atm      = 400.0_wp
          !----- `theta_atm` is the reference MO measures the canopy against, and it has a            !
@@ -649,12 +648,12 @@ contains
             gpp_noon = budget%gpp_last ; nee_noon = budget%nee_last
             !----- psi is not persisted state: diagnose it from the persisted leaf_water_mass      !
             !      (docs/science/plant_hydraulics.md §2, eqs. (4)-(5)). ---------------------------!
-            psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_curve, &
+            psileaf_noon = tissue_water_to_psi(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_curve, &
                   col_cohort%bleaf(1))
          end if
          if (istep == steps_per_hour / 2_ik) then                             ! 00:30
             ct_night = biophys%cas%can_temp ; tleaf_night = biophys%leaf_temp(1) ; co2_night = biophys%cas%can_co2
-            psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), &
+            psileaf_night = tissue_water_to_psi(biophys%leaf_water_mass(1), &
                   col_config%hydraulics_table%pft(1)%leaf_curve, col_cohort%bleaf(1))
          end if
       end do

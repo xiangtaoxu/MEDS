@@ -19,7 +19,7 @@ module meds_allometry_lib
 
    public :: allometry_t
    public :: dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh, dbh_to_leaf_area
-   public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
+   public :: size_to_leaf_carbon, size_to_wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: storage_carbon_target
    public :: dbh_to_wai, sapwood_fraction
    public :: HEIGHT_POWER, HEIGHT_CHAVE
@@ -164,12 +164,12 @@ contains
    !----- The leaf carbon target [kgC/plant]: the allometric leaf area over SLA, so a      !
    !      cohort at its target shows exactly that leaf area                                !
    !      (docs/science/plant_carbon_allocation.md §2). -----------------------------------!
-   elemental pure function size2leaf_carbon(allom, dbh, h, sla) result(leaf_carbon)
+   elemental pure function size_to_leaf_carbon(allom, dbh, h, sla) result(leaf_carbon)
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: dbh, h, sla        !< [cm],[m],[m2/kgC]
       real(wp)                      :: leaf_carbon         !< [kgC/plant]
       leaf_carbon = dbh_to_leaf_area(allom, dbh, h) / max(sla, tiny_num)
-   end function size2leaf_carbon
+   end function size_to_leaf_carbon
 
    !----- A cohort's storage target: storage_cushion times the carbon one full flush       !
    !      rebuilds, its leaves plus its fine roots. It is also the starting storage of a   !
@@ -183,14 +183,14 @@ contains
 
    !----- A stem's total wood carbon [kgC/plant], coarse roots included: its AGB over the  !
    !      aboveground fraction, so the aboveground share is exactly the AGB. --------------!
-   elemental pure function size2wood_carbon(allom, dbh, h, rho) result(wood_carbon)
+   elemental pure function size_to_wood_carbon(allom, dbh, h, rho) result(wood_carbon)
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: dbh, h, rho
       real(wp)                      :: wood_carbon         !< [kgC/plant] total woody (above + belowground)
       wood_carbon = dbh_to_agb(allom, dbh, h, rho) / max(allom%aboveground_frac, tiny_num)
-   end function size2wood_carbon
+   end function size_to_wood_carbon
 
-   !----- The inverse of size2wood_carbon: wood carbon is the prognostic size, and the     !
+   !----- The inverse of size_to_wood_carbon: wood carbon is the prognostic size, and the  !
    !      diameter follows from it. -------------------------------------------------------!
    elemental pure function wood_to_dbh(allom, wood_carbon, rho) result(dbh)
       type(allometry_t), intent(in) :: allom

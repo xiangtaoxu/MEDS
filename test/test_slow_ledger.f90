@@ -40,7 +40,7 @@ program test_slow_ledger
                                        SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
    use meds_slow_dynamics,      only : settle_tissue_water
    use meds_config,             only : pft_tissue_curves
-   use meds_plant_hydr_lib,     only : water_curve_t, psi_from_water_content
+   use meds_plant_hydr_lib,     only : water_curve_t, tissue_water_to_psi
    use meds_constants,          only : grav_head, n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
@@ -227,7 +227,7 @@ contains
       call pft_tissue_curves(c%hydraulics, c%pft, 2_ik, leaf_curve, wood_curve)
       call soil_column_params(c%soil_column, sp)
       call soil_column_start_theta(c%soil_column, sp, c%init_soil_theta, theta_start)
-      call check_close(psi_from_water_content(st%cohort%leaf_water_mass(1), leaf_curve,            &
+      call check_close(tissue_water_to_psi(st%cohort%leaf_water_mass(1), leaf_curve,            &
                        st%cohort%leaf_carbon(1)), top_soil_psi(sp, theta_start(1)), 1.0e-9_wp,     &
                        'tissue water (a): a recruit''s leaves are born at the starting top-soil potential')
       call check_close(st%cohort%leaf_temp(1), c%init_soil_temp, 1.0e-12_wp,                       &
@@ -320,8 +320,8 @@ contains
       call check(st%cohort%leaf_carbon(1) > 0.0_wp, 'reflush: the bare cohort grew leaves')
       w_plant1 = st%cohort%leaf_water_mass(1) + st%cohort%wood_water_mass(1)
       call check_close(w_plant1, w_plant0, 1.0e-14_wp, 'reflush: the plant''s water is unchanged')
-      psi_leaf = psi_from_water_content(st%cohort%leaf_water_mass(1), leaf_curve, st%cohort%leaf_carbon(1))
-      psi_wood = psi_from_water_content(st%cohort%wood_water_mass(1), wood_curve,                   &
+      psi_leaf = tissue_water_to_psi(st%cohort%leaf_water_mass(1), leaf_curve, st%cohort%leaf_carbon(1))
+      psi_wood = tissue_water_to_psi(st%cohort%wood_water_mass(1), wood_curve,                   &
                                         st%cohort%sapwood_carbon(1) + st%cohort%fineroot_carbon(1))
       call check(psi_wood < -0.1_wp, 'reflush: the fixture''s stem is drier than the birth potential')
       call check(abs(psi_leaf - (psi_wood - grav_head * st%cohort%height(1))) <= 1.0e-9_wp,        &
@@ -772,7 +772,7 @@ contains
       call check_close(poly%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
       call check_close(poly%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
       call pft_tissue_curves(cfg%hydraulics, cfg%pft, 1_ik, leaf_curve, wood_curve)
-      call check_close(psi_from_water_content(poly%cohort%leaf_water_mass(m), leaf_curve,                &
+      call check_close(tissue_water_to_psi(poly%cohort%leaf_water_mass(m), leaf_curve,                &
                        poly%cohort%leaf_carbon(m)), psi_birth, 1.0e-9_wp,                               &
                        'birth: the leaves hold the water of that potential')
       !----- A patch not seeded yet (its canopy air at the type's UNSET_POSITIVE) gives the starting state. !

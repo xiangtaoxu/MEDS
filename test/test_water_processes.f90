@@ -8,7 +8,8 @@
 !   1. SOIL LAYERS  : two van Genuchten soils and a Campbell soil; the two branches of the      !
 !                     unknown meet with equal value and slope; theta and K match the            !
 !                     read-offs; theta -> unknown -> theta round-trips.                         !
-!   2. TISSUES      : the pressure-volume curve matches psi_from_rwc / water_content.           !
+!   2. TISSUES      : the pressure-volume curve matches tissue_rwc_to_psi and                  !
+!                     tissue_psi_to_water.                                                     !
 !   3. POND         : smooth at empty and at the depression depth; water -> head round-trips.  !
 !   4. SOIL FLUX    : the pond face at zero head is the infiltration capacity.                  !
 !   5. ROOT UPTAKE  : equals Gardner's conductance x driving force; nothing flows backwards.    !
@@ -22,15 +23,15 @@ program test_water_processes
    use meds_test_assert, only : check_true, check_close, test_report
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : grav_head, rho_h2o
-   use meds_soil_hydr_lib,   only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,     &
-                                    soil_unknown_from_theta, pond_water_relations, pond_head_from_water,  &
-                                    SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH, SOIL_RETENTION_VG,      &
-                                    SOIL_RETENTION_CAMPBELL, soil_theta_from_psi, VG_PORE_CONNECTIVITY
-   use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_rwc_from_water, rhizosphere_conductance,  &
-                                    root_water_uptake, xylem_sapflow, xylem_max_conductance,                 &
-                                    supply_limited_transpiration, hydro_table_t, build_hydro_table,          &
-                                    flux_potential, flux_potential_lin, plc_retained, water_curve_t,         &
-                                    psi_from_rwc, water_content
+   use meds_soil_hydr_lib,   only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,  &
+                                    soil_theta_to_unknown, pond_water_relations, pond_water_to_head,   &
+                                    SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH, SOIL_RETENTION_VG,   &
+                                    SOIL_RETENTION_CAMPBELL, soil_head_to_theta, VG_PORE_CONNECTIVITY
+   use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, rhizosphere_conductance,  &
+                                    root_water_uptake, xylem_sapflow, xylem_max_conductance,               &
+                                    supply_limited_transpiration, hydro_table_t, build_hydro_table,        &
+                                    kirchhoff_potential, plc_retained, water_curve_t, tissue_rwc_to_psi,   &
+                                    tissue_psi_to_water
    use meds_numerics,    only : smooth_max0
    use meds_soil_water, only : ground_evaporation_rate, soil_water_flux
    use meds_constants,  only : pi, grav, r_wv, p_std
@@ -94,9 +95,9 @@ contains
          do i = 0, 400
             tau = 1.0e-4_wp * (c(ic)%se_switch / 1.0e-4_wp) ** (real(i, wp) / 300.0_wp)
             if (i > 300) tau = c(ic)%se_switch + real(i - 300, wp) / 100.0_wp                       &
-                               * c(ic)%slope_switch * (2.0_wp - c(ic)%psi_switch)
+                               * c(ic)%slope_switch * (2.0_wp - c(ic)%head_switch)
             if (abs(tau - c(ic)%se_switch) < 1.0e-6_wp) cycle            ! straddles the join
-            if (abs(tau - (c(ic)%se_switch - c(ic)%slope_switch * c(ic)%psi_switch)) < 1.0e-6_wp) cycle
+            if (abs(tau - (c(ic)%se_switch - c(ic)%slope_switch * c(ic)%head_switch)) < 1.0e-6_wp) cycle
             h = 1.0e-7_wp * max(abs(tau), 1.0e-3_wp)
             call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
             call soil_water_relations(c(ic), tau + h, psip, dum1, wp_, dum2, kp, dum1)
@@ -128,11 +129,11 @@ contains
          ok_val = .true. ; ok_k_val = .true. ; ok_round = .true.
          do i = 1, 60
             head = -10.0_wp ** (-2.0_wp + 5.0_wp * real(i, wp) / 60.0_wp)          ! -1 cm .. -1 km
-            theta_ref = soil_theta_from_psi(c(ic)%retention, head, c(ic)%theta_sat, c(ic)%theta_res,   &
+            theta_ref = soil_head_to_theta(c(ic)%retention, head, c(ic)%theta_sat, c(ic)%theta_res,   &
                                             c(ic)%par_a, c(ic)%par_n)
             k_ref = conductivity_ref(c(ic), (theta_ref - c(ic)%theta_res) / (c(ic)%theta_sat - c(ic)%theta_res))
             if ((theta_ref - c(ic)%theta_res) / (c(ic)%theta_sat - c(ic)%theta_res) < 1.0e-8_wp) cycle
-            tau = soil_unknown_from_theta(c(ic), theta_ref)
+            tau = soil_theta_to_unknown(c(ic), theta_ref)
             call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
             theta = w / (rho_h2o * c(ic)%dz)
             if (abs(theta - theta_ref) > 1.0e-10_wp) ok_val = .false.
@@ -144,11 +145,11 @@ contains
          call check_true(trim(label(ic))//': K(theta) matches the closed form', ok_k_val)
          call check_true(trim(label(ic))//': theta -> unknown -> potential round-trips', ok_round)
          !----- Above saturation the layer holds theta_sat + S_s * head. ---------------------!
-         tau = soil_unknown_from_theta(c(ic), c(ic)%theta_sat + SOIL_SPECIFIC_STORAGE * 0.5_wp)
+         tau = soil_theta_to_unknown(c(ic), c(ic)%theta_sat + SOIL_SPECIFIC_STORAGE * 0.5_wp)
          call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
          call check_close(trim(label(ic))//': head above saturation', psi / grav_head, 0.5_wp, 1.0e-9_wp)
          call check_close(trim(label(ic))//': conductivity above saturation', k, c(ic)%ksat, 0.0_wp)
-         tau_back = soil_unknown_from_theta(c(ic), w / (rho_h2o * c(ic)%dz))
+         tau_back = soil_theta_to_unknown(c(ic), w / (rho_h2o * c(ic)%dz))
          call check_close(trim(label(ic))//': supersaturated round trip', tau_back, tau, 1.0e-9_wp)
       end do
    end subroutine test_soil_water_relations
@@ -171,10 +172,10 @@ contains
             if (.not. fd_agrees(dpsi, (psip - psim) / (2*h), 1.0e-5_wp, 1.0e-10_wp)) ok_d = .false.
          end if
          if (.not. fd_agrees(dw, (wpl - wm) / (2*h), 1.0e-6_wp, 1.0e-12_wp)) ok_d = .false.
-         if (r >= 1.0e-4_wp .and. abs(psi - psi_from_rwc(r, leaf%pi0, leaf%elastic_mod)) > 1.0e-10_wp)    &
+         if (r >= 1.0e-4_wp .and. abs(psi - tissue_rwc_to_psi(r, leaf%pi0, leaf%elastic_mod)) > 1.0e-10_wp)    &
             ok_v = .false.
-         if (abs(w - 0.05_wp * water_content(psi, leaf, 0.3_wp)) > 1.0e-10_wp) ok_v = .false.
-         if (abs(tissue_rwc_from_water(leaf, 0.3_wp, w / 0.05_wp) - r) > 1.0e-10_wp) ok_v = .false.
+         if (abs(w - 0.05_wp * tissue_psi_to_water(psi, leaf, 0.3_wp)) > 1.0e-10_wp) ok_v = .false.
+         if (abs(tissue_water_to_rwc(leaf, 0.3_wp, w / 0.05_wp) - r) > 1.0e-10_wp) ok_v = .false.
       end do
       call check_true('tissue: derivatives match finite differences', ok_d)
       call check_true('tissue: potential and water match the pressure-volume curve', ok_v)
@@ -193,7 +194,7 @@ contains
          call pond_water_relations(h + hh, dum, dum, wpl, dum)
          call pond_water_relations(h - hh, dum, dum, wm, dum)
          if (.not. fd_agrees(dw, (wpl - wm) / (2*hh), 1.0e-5_wp, 1.0e-6_wp)) ok_d = .false.
-         if (h > 0.0_wp .and. abs(pond_head_from_water(w) - h) > 1.0e-12_wp) ok_r = .false.
+         if (h > 0.0_wp .and. abs(pond_water_to_head(w) - h) > 1.0e-12_wp) ok_r = .false.
       end do
       call check_true('pond: dW/dh matches finite differences, smooth at empty and full', ok_d)
       call check_true('pond: water -> head round-trips', ok_r)
@@ -312,17 +313,16 @@ contains
    end subroutine test_xylem
 
    !----- The reference Kirchhoff mean conductance, written independently of xylem_sapflow:        !
-   !      k (Phi(up) - Phi(down)) / (up - down) from the closed form (exponent 2) or the table,      !
-   !      and the retained fraction at the midpoint for near-equal ends. -------------------------!
+   !      k (Phi(up) - Phi(down)) / (up - down) from kirchhoff_potential (the closed form for        !
+   !      exponent 2, the table for 3), and the retained fraction at the midpoint for near-equal    !
+   !      ends. ----------------------------------------------------------------------------------!
    pure real(wp) function kirchhoff_mean(psi_up, psi_down, k, psi50, kexp, tab) result(keff)
       real(wp),            intent(in) :: psi_up, psi_down, k, psi50, kexp
       type(hydro_table_t), intent(in) :: tab
       if (abs(psi_up - psi_down) <= 1.0e-6_wp) then
          keff = k * plc_retained(0.5_wp * (psi_up + psi_down), psi50, kexp)
-      else if (abs(kexp - 2.0_wp) < 1.0e-9_wp) then
-         keff = k * (flux_potential(psi_up, psi50, kexp) - flux_potential(psi_down, psi50, kexp)) / (psi_up - psi_down)
       else
-         keff = k * (flux_potential_lin(psi_up, psi50, tab) - flux_potential_lin(psi_down, psi50, tab))           &
+         keff = k * (kirchhoff_potential(psi_up, psi50, kexp, tab) - kirchhoff_potential(psi_down, psi50, kexp, tab)) &
                 / (psi_up - psi_down)
       end if
    end function kirchhoff_mean

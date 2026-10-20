@@ -18,7 +18,7 @@ module meds_config
    use meds_therm_lib,     only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   use meds_plant_hydr_lib,  only : pv_psi_tlp, water_curve_t
+   use meds_plant_hydr_lib,  only : tissue_psi_tlp, water_curve_t
    use meds_soil_column_config, only : soil_column_config_t, soil_texture_layers_t, soil_params_t,       &
                                        soil_column_layers, soil_column_texture, soil_column_params,   &
                                        SOIL_LAYER_TEMPLATE
@@ -528,7 +528,7 @@ contains
       integer(ik),         intent(in) :: ipft
       type(water_curve_t) :: leaf_curve, wood_curve
       call pft_tissue_curves(cfg%hydraulics, cfg%pft, ipft, leaf_curve, wood_curve)
-      psi_tlp = pv_psi_tlp(leaf_curve%pi0, leaf_curve%elastic_mod)
+      psi_tlp = tissue_psi_tlp(leaf_curve%pi0, leaf_curve%elastic_mod)
    end function pft_leaf_psi_tlp
 
    !----- Where a PFT's stomatal water stress begins [MPa of predawn leaf potential]: the [pft]       !

@@ -3,8 +3,9 @@
 ! test_tissue_energy -- a cohort's tissue energy is its state, and its temperatures are    !
 ! derived from it (docs/science/vegetation_energy_dynamics.md eqs. (9)-(10)).              !
 !                                                                                          !
-! 1. The datum: tissue_energy is temp_to_internal_energy with liquid water, tissue_temp is !
-!    its inverse, and water that comes or goes at the tissue's temperature leaves it there. !
+! 1. The datum: tissue_temp_to_energy is temp_to_internal_energy with liquid water,        !
+!    tissue_energy_to_temp is its inverse, and water that comes or goes at the tissue's    !
+!    temperature leaves it there.                                                          !
 ! 2. Holding: wood that grows at its temperature keeps it, its energy rising by the new    !
 !    dry matter's heat; a leafless crown has no energy and takes its wood's temperature.   !
 ! 3. A split keeps the parent's temperatures in both daughters and its energy in total.    !
@@ -17,8 +18,9 @@ program test_tissue_energy
    use meds_test_assert,                only : check_true, test_report
    use meds_kinds,                      only : wp, ik
    use meds_constants,                  only : cp_liq, tsupercool_liq, tissue_c_wood_dry
-   use meds_therm_lib,                  only : tissue_energy, tissue_temp, temp_to_internal_energy,          &
-                                               internal_energy_liquid, tissue_dry_heat_capacity
+   use meds_therm_lib,                  only : tissue_temp_to_energy, tissue_energy_to_temp,     &
+                                               temp_to_internal_energy, internal_energy_liquid,  &
+                                               tissue_dry_heat_capacity
    use meds_config,                     only : meds_config_t
    use meds_polygon_state_vars,         only : polygon_t
    use meds_init,                       only : init_bare_ground, add_cohort, finalize_init
@@ -38,16 +40,17 @@ program test_tissue_energy
    cfg = build_test_config()
 
    !=== 1. The datum. ===========================================================================!
-   e  = tissue_energy(5.0e4_wp, 12.0_wp, 297.3_wp)
+   e  = tissue_temp_to_energy(5.0e4_wp, 12.0_wp, 297.3_wp)
    dw = 0.7_wp
    call check_true('the datum is the soil''s: temp_to_internal_energy with liquid water',           &
                    abs(e - temp_to_internal_energy(5.0e4_wp, 12.0_wp, 297.3_wp, 1.0_wp)) <= 1.0e-12_wp * abs(e))
-   call check_true('tissue_temp inverts tissue_energy', abs(tissue_temp(e, 12.0_wp, 5.0e4_wp) - 297.3_wp) < 1.0e-10_wp)
+   call check_true('tissue_energy_to_temp inverts tissue_temp_to_energy',                           &
+                   abs(tissue_energy_to_temp(e, 12.0_wp, 5.0e4_wp) - 297.3_wp) < 1.0e-10_wp)
    call check_true('water that arrives at the tissue''s temperature leaves it there',               &
-                   abs(tissue_temp(e + dw * internal_energy_liquid(297.3_wp), 12.0_wp + dw, 5.0e4_wp)  &
+                   abs(tissue_energy_to_temp(e + dw * internal_energy_liquid(297.3_wp), 12.0_wp + dw, 5.0e4_wp)  &
                        - 297.3_wp) < 1.0e-10_wp)
    call check_true('and so does water that leaves at it',                                           &
-                   abs(tissue_temp(e - dw * internal_energy_liquid(297.3_wp), 12.0_wp - dw, 5.0e4_wp)  &
+                   abs(tissue_energy_to_temp(e - dw * internal_energy_liquid(297.3_wp), 12.0_wp - dw, 5.0e4_wp)  &
                        - 297.3_wp) < 1.0e-10_wp)
 
    !=== 2. Holding the temperatures through a change of mass. ==================================!
@@ -134,8 +137,8 @@ contains
       tissue%leaf_water_enth  = DWL / DT * internal_energy_liquid(TL0)
       tissue%wood_water_enth  = DWW / DT * internal_energy_liquid(TW0)
       call alloc_patch_biophys(biophys, 1_ik, 295.0_wp, 0.008_wp, 400.0_wp, TL0)
-      biophys%leaf_energy     = tissue_energy(DL, WL0, TL0)
-      biophys%wood_energy     = tissue_energy(DW, WW0, TW0)
+      biophys%leaf_energy     = tissue_temp_to_energy(DL, WL0, TL0)
+      biophys%wood_energy     = tissue_temp_to_energy(DW, WW0, TW0)
       biophys%leaf_water_mass = WL0 + DWL                          ! the network's end-of-step water
       biophys%wood_water_mass = WW0 + DWW
       call commit_tissue_energy(tissue, [1.0_wp], veg_energy_on, .true., DT, [TL_AVG], [TW_AVG], 1_ik, biophys, &
@@ -156,9 +159,9 @@ contains
                       abs(biophys%wood_temp(1) - tw_expect) < 1.0e-9_wp)
       call check_true(tag//': the committed temperatures give back the energies, so the next step '//      &
                       'starts where this one ended',                                                      &
-                      abs(tissue_energy(DL, WL0 + DWL, biophys%leaf_temp(1)) - biophys%leaf_energy(1))    &
+                      abs(tissue_temp_to_energy(DL, WL0 + DWL, biophys%leaf_temp(1)) - biophys%leaf_energy(1))    &
                       <= 1.0e-12_wp * abs(biophys%leaf_energy(1)) .and.                                   &
-                      abs(tissue_energy(DW, WW0 + DWW, biophys%wood_temp(1)) - biophys%wood_energy(1))    &
+                      abs(tissue_temp_to_energy(DW, WW0 + DWW, biophys%wood_temp(1)) - biophys%wood_energy(1))    &
                       <= 1.0e-12_wp * abs(biophys%wood_energy(1)))
       !----- What heat capacity x temperature, valued with the water at its liquid enthalpy, would  !
       !      re-value between the two steps: dW*c_liq*(T1 - T0 + T_sc). --------------------------!

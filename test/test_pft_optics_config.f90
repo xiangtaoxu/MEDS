@@ -18,7 +18,7 @@ program test_pft_optics_config
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_params_table_t
    use meds_fast_types,     only : apply_hydraulics_config
-   use meds_plant_hydr_lib, only : plc_retained, wood_kmax_from_density, pv_psi_tlp, water_content
+   use meds_plant_hydr_lib, only : plc_retained, wood_density_to_kmax, tissue_psi_tlp, tissue_psi_to_water
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
    use meds_soil_column_config, only : soil_params_t, soil_column_params
@@ -103,7 +103,7 @@ program test_pft_optics_config
       call check_close(tab%pft(2)%wood_psi50, -0.8_wp,   1.0e-12_wp, 'PFT 2 takes its own psi50')
       call check_close(tab%pft(2)%leaf_curve%pi0, -2.5_wp,   1.0e-12_wp, 'PFT 2 takes its own leaf pi0')
       call check_close(tab%pft(2)%wood_kmax, 2.0_wp, 1.0e-12_wp, 'PFT 2 takes its own conductivity')
-      call check_close(tab%pft(1)%wood_kmax, wood_kmax_from_density(cfg%pft%wood_density(1)),     &
+      call check_close(tab%pft(1)%wood_kmax, wood_density_to_kmax(cfg%pft%wood_density(1)),     &
                        1.0e-12_wp, 'PFT 1 with no override takes the conductivity of its wood density')
       !----- One override must not require restating the others. -------------------------------!
       call check_close(tab%pft(2)%vessel_curl, cfg%hydraulics%vessel_curl, 1.0e-12_wp,            &
@@ -116,13 +116,13 @@ program test_pft_optics_config
       !      pressure-volume curve, the one the plant-water solver stores its leaf water on. -------!
       call build_fast_context(cfg, ctx)
       call check_close(ctx%col_config%leaf_photo%pft(2)%psi_open,                                 &
-                       pv_psi_tlp(-2.5_wp, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp,           &
+                       tissue_psi_tlp(-2.5_wp, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp,           &
                        'PFT 2 loses capacity from its own turgor-loss point')
       call check_close(ctx%col_config%leaf_photo%pft(2)%psi_close,                                &
-                       2.0_wp * pv_psi_tlp(-2.5_wp, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp,  &
+                       2.0_wp * tissue_psi_tlp(-2.5_wp, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp,  &
                        'PFT 2 has lost it at twice its turgor-loss point')
       call check_close(ctx%col_config%leaf_photo%pft(1)%psi_open,                                 &
-                       pv_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp, &
+                       tissue_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp, &
                        'PFT 1 with no override keeps the shared turgor-loss point')
       call check_close(pft_leaf_psi_tlp(cfg, 2_ik), ctx%col_config%leaf_photo%pft(2)%psi_open, 0.0_wp, &
                        'the phenology reads the same per-PFT turgor-loss point')
@@ -146,10 +146,10 @@ program test_pft_optics_config
       i2 = merge(1_ik, 2_ik, poly%cohort%pft(1) == 2_ik)        ! the PFT-2 cohort, after the sort
       call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),     &
                                 t_birth, psi_birth)
-      w_expect = water_content(psi_birth, tab%pft(2)%leaf_curve, poly%cohort%leaf_carbon(i2))
+      w_expect = tissue_psi_to_water(psi_birth, tab%pft(2)%leaf_curve, poly%cohort%leaf_carbon(i2))
       call check_close(poly%cohort%leaf_water_mass(i2), w_expect, 1.0e-12_wp,                      &
                        'PFT 2 leaf water at birth is on its own curve')
-      call check(abs(w_expect - water_content(psi_birth, tab%pft(1)%leaf_curve, poly%cohort%leaf_carbon(i2))) &
+      call check(abs(w_expect - tissue_psi_to_water(psi_birth, tab%pft(1)%leaf_curve, poly%cohort%leaf_carbon(i2))) &
                  > 1.0e-6_wp * w_expect, 'the two PFTs'' curves give different birth water (the fixture bites)')
       !----- Capped on its own ceiling too: a supersaturated store falls to 3.0 x leaf carbon. ---!
       poly%cohort%leaf_water_mass(i2) = 10.0_wp * poly%cohort%leaf_carbon(i2)

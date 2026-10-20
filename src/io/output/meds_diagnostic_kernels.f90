@@ -7,7 +7,7 @@
 ! only -- no polygon_t, no config aggregator -- so every routine here is directly unit-testable.   !
 !                                                                                          !
 ! CONTENT RULE. Anything a physics library already owns is CALLED, never re-implemented:   !
-! soil_psi_from_theta lives in meds_soil_hydr_lib, psi_from_water_content in               !
+! soil_theta_to_head lives in meds_soil_hydr_lib, tissue_water_to_psi in                   !
 ! meds_plant_hydr_lib, internal_energy_to_temp and the moist-air thermodynamics in         !
 ! meds_therm_lib, the allometry in meds_allometry_lib. This module holds only diagnostics  !
 ! that no physics kernel owns. Where a thin re-export is more readable than making every   !
@@ -24,7 +24,7 @@ module meds_diagnostic_kernels
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : tiny_num, gsw_2_gsc, grav_head
    use meds_therm_lib,     only : sat_vapor_pressure, air_vpd, specific_humidity_to_vpd
-   use meds_soil_hydr_lib, only : soil_psi_from_theta
+   use meds_soil_hydr_lib, only : soil_theta_to_head
    implicit none
    private
 
@@ -105,7 +105,7 @@ contains
                                     theta_res, par_a, par_n) result(psi_mpa)
       integer(ik), intent(in) :: retention
       real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n
-      psi_mpa = grav_head * soil_psi_from_theta(retention, theta, theta_sat, theta_res,       &
+      psi_mpa = grav_head * soil_theta_to_head(retention, theta, theta_sat, theta_res,       &
                                                 par_a, par_n)
    end function soil_matric_potential
 

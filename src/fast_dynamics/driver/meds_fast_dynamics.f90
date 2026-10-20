@@ -28,7 +28,7 @@ module meds_fast_dynamics
    use meds_soil_column_config, only : soil_column_params, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
+   use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy, specific_humidity_to_vpd
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_plant_types, only : leaf_photo_table_t
    use meds_column_view, only : copy_column_cohort
@@ -71,7 +71,7 @@ module meds_fast_dynamics
                                      ensure_column_cohort_capacity, apply_hydraulics_config,      &
                                      apply_canopy_film_config
    use meds_fast_step,       only : column_fast_step
-   use meds_plant_hydr_lib,   only : water_content, clamp_water_to_capacity
+   use meds_plant_hydr_lib,   only : tissue_psi_to_water, tissue_capped_water
    !$ use omp_lib,            only : omp_get_thread_num
    implicit none
    private
@@ -236,7 +236,7 @@ contains
                se%soil_temp(k)   = ctx%soil_temp_init ; se%soil_fliq(k) = 1.0_wp
             end do
             cas%can_shv      = ctx%shv_atm ; cas%can_co2 = ctx%co2_atm
-            cas%can_enthalpy = cas_enthalpy_of_temp(ctx%air_temp, ctx%shv_atm)
+            cas%can_enthalpy = cas_temp_to_enthalpy(ctx%air_temp, ctx%shv_atm)
             cas%can_temp     = ctx%air_temp
             psi = top_soil_psi(surf%soil, sw%theta(1))
             do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
@@ -1041,7 +1041,7 @@ contains
       type(met_forcing_t),    intent(in)    :: met
       real(wp),               intent(in)    :: sw_ground, sum_lai
       integer(ik) :: j
-      forc%enthalpy_atm  = cas_enthalpy_of_temp(met%tair_k, met%qair)
+      forc%enthalpy_atm  = cas_temp_to_enthalpy(met%tair_k, met%qair)
       forc%shv_atm       = met%qair
       forc%co2_atm       = met%co2
       forc%abs_sw_ground = sw_ground

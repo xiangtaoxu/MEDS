@@ -16,7 +16,7 @@ program test_column_derivs
    use meds_test_assert, only : check, check_true, check_close, test_report
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : latent_heat_vap, stefan_boltzmann, cp_air, tiny_num, rho_h2o, n_soil_layer_max
-   use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, sat_specific_humidity,  &
+   use meds_therm_lib,         only : cas_temp_to_enthalpy, cas_enthalpy_to_temp, sat_specific_humidity,  &
                                       sat_vapor_pressure, sat_vapor_pressure_temp_deriv, enthalpy_vapor,  &
                                       temp_to_internal_energy, internal_energy_to_temp, internal_energy_liquid
    use meds_budget_check,   only : budget_t, budget_accumulate
@@ -28,7 +28,7 @@ program test_column_derivs
    use meds_biophysics_opts, only : energy_opts_t, soil_opts_t
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
-   use meds_plant_hydr_lib,   only : water_content, water_curve_t
+   use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_fast_types,       only : surface_state_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t, column_config_t
@@ -121,7 +121,7 @@ contains
       frozen%cas%g_atm_heat           = frozen%cas%rho * 0.3_wp * 0.02_wp                       ! rho * ustar * temp1
       frozen%cas%g_atm_vapour           = frozen%cas%rho * 0.3_wp * 0.02_wp
       frozen%cas%g_atm_co2           = (frozen%cas%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 0.3_wp * 0.02_wp
-      frozen%cas%enthalpy_atm      = cas_enthalpy_of_temp(300.0_wp, 0.011_wp)
+      frozen%cas%enthalpy_atm      = cas_temp_to_enthalpy(300.0_wp, 0.011_wp)
       frozen%cas%shv_atm       = 0.011_wp
       frozen%cas%co2_atm       = 400.0_wp
       frozen%cas%nee_biotic    = -5.0_wp                                          ! net CO2 uptake [umol/m2/s]
@@ -141,12 +141,12 @@ contains
       n = 3_ik
       print '(a)', 'test_leaf_closure:'
       call make_frozen(frozen, n)
-      y%cas_enthalpy = cas_enthalpy_of_temp(298.0_wp, 0.012_wp)
+      y%cas_enthalpy = cas_temp_to_enthalpy(298.0_wp, 0.012_wp)
       y%cas_shv      = 0.012_wp
       y%cas_co2      = 410.0_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
 
-      tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      tcas   = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
       qsat_c = sat_specific_humidity(tcas, frozen%cas%press)
       esat   = sat_vapor_pressure(tcas)
@@ -182,10 +182,10 @@ contains
       frozen%tissue%g_transp_leaf(1) = 0.0_wp ; frozen%tissue%abs_lw(1) = 0.0_wp ; frozen%tissue%abs_sw(1) = 200.0_wp
       frozen%tissue%lai(1) = 1.5_wp
       frozen%tissue%h_coeff_leaf(1) = 2.0_wp * frozen%tissue%lai(1) * 0.03_wp * 1.2_wp * cp_air
-      y%cas_enthalpy = cas_enthalpy_of_temp(299.0_wp, 0.010_wp)
+      y%cas_enthalpy = cas_temp_to_enthalpy(299.0_wp, 0.010_wp)
       y%cas_shv      = 0.010_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, 1_ik, f)
-      tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      tcas     = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
       lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan_boltzmann * tcas ** 3 * frozen%tissue%lai(1)
       expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
       call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
@@ -202,7 +202,7 @@ contains
       n = 3_ik ; dt = 900.0_wp
       print '(a)', 'test_cas_be_consistency:'
       call make_frozen(frozen, n)
-      y%cas_enthalpy = cas_enthalpy_of_temp(296.0_wp, 0.013_wp)
+      y%cas_enthalpy = cas_temp_to_enthalpy(296.0_wp, 0.013_wp)
       y%cas_shv      = 0.013_wp
       y%cas_co2      = 415.0_wp
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
@@ -246,10 +246,10 @@ contains
       n = 3_ik ; dt = 120.0_wp
       print '(a)', 'test_conservation_march:'
       call make_frozen(frozen, n)
-      y%cas_enthalpy = cas_enthalpy_of_temp(294.0_wp, 0.010_wp)     ! CAS starts cool + dry
+      y%cas_enthalpy = cas_temp_to_enthalpy(294.0_wp, 0.010_wp)     ! CAS starts cool + dry
       y%cas_shv      = 0.010_wp
       y%cas_co2      = 400.0_wp
-      t0 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      t0 = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
       do step = 1_ik, 60_ik
          call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
@@ -269,7 +269,7 @@ contains
                                      1.0e-8_wp, 1.0e-10_wp)
          y%cas_enthalpy = enth1 ; y%cas_shv = shv1
       end do
-      t1 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      t1 = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
       call check_true('CAS energy budget closes over the march', be%n_fail == 0_ik, real(be%worst, wp))
       call check_true('CAS water  budget closes over the march', bw%n_fail == 0_ik, real(bw%worst, wp))
       call check_true('CAS warms toward the warm atmosphere + sunlit canopy', t1 > t0, t1 - t0)
@@ -362,7 +362,7 @@ contains
       !      twice, once through the proxy and once through qloss. -------------------------------------!
       block
          real(wp) :: canopy_to_cas, tcas_chk
-         tcas_chk = cas_temp_of_enthalpy(y_stage%cas_enthalpy, y_stage%cas_shv)
+         tcas_chk = cas_enthalpy_to_temp(y_stage%cas_enthalpy, y_stage%cas_shv)
          canopy_to_cas = surf_tend%src_enth - surf_tend%h_ground - surf_tend%le_ground + surf_tend%cond * &
                internal_energy_liquid(tcas_chk)
          call check_true('canopy transpires at all in this fixture (test is live)',                          &
@@ -413,7 +413,7 @@ contains
       do step = 1_ik, nstep
          call rk4_column_step(y1, frozen, col_config, n, nsl, dt, ytmp)
          call copy_state(ytmp, y1, n)
-         tcas = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
+         tcas = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
          physical = physical .and. tcas > 260.0_wp .and. tcas < 330.0_wp .and. y1%cas_shv > 0.0_wp
          do k = 1_ik, nsl
             physical = physical .and. y1%theta(k) > 0.0_wp .and. y1%theta(k) < 0.6_wp
@@ -432,8 +432,8 @@ contains
       do step = 1_ik, 120_ik                   ! 120 * 4 s = 8 min
          call rk4_column_step(y2, frozen, col_config, n, nsl, 4.0_wp, ytmp) ; call copy_state(ytmp, y2, n)
       end do
-      tcas  = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
-      tsoil = cas_temp_of_enthalpy(y2%cas_enthalpy, y2%cas_shv)
+      tcas  = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
+      tsoil = cas_enthalpy_to_temp(y2%cas_enthalpy, y2%cas_shv)
       dcas  = abs(tcas - tsoil)
       dmass = max(maxval(abs(y1%leaf_water_mass(1:n) - y2%leaf_water_mass(1:n))),                 &
                   maxval(abs(y1%wood_water_mass(1:n) - y2%wood_water_mass(1:n))))
@@ -465,7 +465,7 @@ contains
       do step = 1_ik, 24_ik                    ! 24 * 900 s = 6 h
          call be_euler_step(yi, frozen, n, nsl, 900.0_wp, ytmp)
          call copy_state(ytmp, yi, n)
-         tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
+         tcas = cas_enthalpy_to_temp(yi%cas_enthalpy, yi%cas_shv)
          physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp .and. yi%cas_shv > 0.0_wp
          do k = 1_ik, nsl
             physical = physical .and. yi%theta(k) > 0.0_wp .and. yi%theta(k) < 0.6_wp
@@ -488,7 +488,7 @@ contains
          call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
          call rk4_column_step(yr, frozen, col_config, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.); call copy_state(ytmp, yr, n)
       end do
-      dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
+      dcas   = abs(cas_enthalpy_to_temp(yi%cas_enthalpy, yi%cas_shv) - cas_enthalpy_to_temp(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
       dmass  = max(maxval(abs(yi%leaf_water_mass(1:n) - yr%leaf_water_mass(1:n))),                &
                   maxval(abs(yi%wood_water_mass(1:n) - yr%wood_water_mass(1:n))))
@@ -530,14 +530,14 @@ contains
          if (.not. base_diverged) then
             call be_euler_step(yb, frozen, n, nsl, 900.0_wp, ytmp)                     ! niter=1 (baseline)
             call copy_state(ytmp, yb, n)
-            tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
+            tcas_base = cas_enthalpy_to_temp(yb%cas_enthalpy, yb%cas_shv)
             base_diverged = .not. (tcas_base > 270.0_wp .and. tcas_base < 325.0_wp)
          end if
          call be_euler_step(yc, frozen, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
          call copy_state(ytmp, yc, n)
       end do
-      tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
-      tcas_coup = cas_temp_of_enthalpy(yc%cas_enthalpy, yc%cas_shv)
+      tcas_base = cas_enthalpy_to_temp(yb%cas_enthalpy, yb%cas_shv)
+      tcas_coup = cas_enthalpy_to_temp(yc%cas_enthalpy, yc%cas_shv)
       qsat_base = sat_specific_humidity(tcas_base, frozen%cas%press)
       qsat_coup = sat_specific_humidity(tcas_coup, frozen%cas%press)
       !----- coupled stays physical (sub-saturated, physical temperature); baseline collapses. ------!
@@ -574,13 +574,13 @@ contains
       !          clamp + line search. Newton (niter>1) must keep it physical + sub-saturated at 900 s. !
       call make_column(y, frozen, n, nsl)
       tcas = 297.0_wp ; qsat = sat_specific_humidity(tcas, frozen%cas%press)
-      y%cas_enthalpy = cas_enthalpy_of_temp(tcas, 0.99_wp*qsat) ; y%cas_shv = 0.99_wp*qsat
+      y%cas_enthalpy = cas_temp_to_enthalpy(tcas, 0.99_wp*qsat) ; y%cas_shv = 0.99_wp*qsat
       call copy_state(y, yi, n)
       physical = .true. ; worst_super = -1.0_wp
       do step = 1_ik, 12_ik
          call be_euler_step(yi, frozen, n, nsl, 900.0_wp, ytmp, niter=8_ik)
          call copy_state(ytmp, yi, n)
-         tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
+         tcas = cas_enthalpy_to_temp(yi%cas_enthalpy, yi%cas_shv)
          qsat = sat_specific_humidity(tcas, frozen%cas%press)
          worst_super = max(worst_super, yi%cas_shv - qsat)          ! must stay <= 0 (sub-saturated)
          physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp
@@ -597,7 +597,7 @@ contains
          call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp, niter=8_ik)   ; call copy_state(ytmp, yi, n)
          call rk4_column_step(yr, frozen, col_config, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.) ; call copy_state(ytmp, yr, n)
       end do
-      dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
+      dcas   = abs(cas_enthalpy_to_temp(yi%cas_enthalpy, yi%cas_shv) - cas_enthalpy_to_temp(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
       call check_true('Newton (niter=8) ~ RK4 oracle (core, theta frozen): CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
       call check_true('Newton (niter=8) ~ RK4 oracle: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, dtheta)
@@ -618,7 +618,7 @@ contains
       frozen%cas%g_atm_vapour = frozen%cas%g_atm_vapour * 4.0_wp
       frozen%cas%g_atm_co2    = frozen%cas%g_atm_co2    * 4.0_wp
       !----- start the CAS cool + dry so there is a real transient to resolve adaptively. -----------!
-      y%cas_enthalpy = cas_enthalpy_of_temp(290.0_wp, 0.009_wp) ; y%cas_shv = 0.009_wp
+      y%cas_enthalpy = cas_temp_to_enthalpy(290.0_wp, 0.009_wp) ; y%cas_shv = 0.009_wp
 
       !----- The controller under test is the PRODUCTION one, so the test fails for the reasons a
       !      real run would hit.
@@ -628,9 +628,9 @@ contains
       call adaptive_ark_march(y, frozen, col_config, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
       !----- fine fixed reference: ARK2 at dt = 2 s, 900 steps. -------------------------------------!
       call march_ark2(y, frozen, n, nsl, 2.0_wp, 900_ik, yr)
-      tc1 = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
-      tc2 = cas_temp_of_enthalpy(y2%cas_enthalpy, y2%cas_shv)
-      tcr = cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv)
+      tc1 = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
+      tc2 = cas_enthalpy_to_temp(y2%cas_enthalpy, y2%cas_shv)
+      tcr = cas_enthalpy_to_temp(yr%cas_enthalpy, yr%cas_shv)
       print '(a,i0,a,i0,a)', '   adaptive-ARK steps: rtol=1e-3 -> ', ns1, ' , rtol=1e-6 -> ', ns2, ' ; fixed dt=2s -> 900'
       call check_true('adaptive-ARK rtol=1e-3 agrees with the fine ARK2 reference (< 0.5 K)', abs(tc1 - tcr) < 0.5_wp, tc1 - tcr)
       call check_true('adaptive-ARK rtol=1e-6 agrees with the fine ARK2 reference (< 0.5 K)', abs(tc2 - tcr) < 0.5_wp, tc2 - tcr)
@@ -781,7 +781,7 @@ contains
       !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
       ec = default_error_control(1.0e-3_wp)
       call adaptive_ark_march(y, frozen, col_config, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
-      tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
+      tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
       call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
 
@@ -790,7 +790,7 @@ contains
       !      march it takes a different (typically smoother) step sequence than the I-controller.       !
       ec%controller = CTRL_PI
       call adaptive_ark_march(y, frozen, col_config, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
-      tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
+      tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
       call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
    end subroutine test_ark2
@@ -945,12 +945,13 @@ contains
       !----- (c) the soil-ENERGY tendency is domain-safe too, but for a DIFFERENT reason worth        !
       !      recording, because it is easy to get wrong: soil_energy is prognostic INTERNAL ENERGY,   !
       !      so its tendency is a pure flux divergence -- heat capacity never divides it, and         !
-      !      soil_heat_cap_vol is not called on this path at all (only the implicit sibling uses it). !
+      !      soil_volumetric_heat_capacity is not called on this path at all (only the implicit       !
+      !      sibling uses it).                                                                        !
       !      theta reaches dedt through exactly two places, both safe:                                !
       !        * the temperature diagnosis internal_energy_to_temp(uext, theta*rho_w, ...) -- more water means    !
       !          more heat capacity means a lower T for the same internal energy, which is correct    !
       !          and is what SHOULD respond to the excess water;                                     !
-      !        * soil_thermal_cond's Kersten number, which self-clamps at s_r = 1.                    !
+      !        * soil_thermal_conductivity's Kersten number, which self-clamps at s_r = 1.            !
       !                                                                                              !
       !      make_column happens to sit on the mixed-phase MELT PLATEAU, where internal_energy_to_temp returns   !
       !      t_3ple regardless of water mass, so dedt there is bit-identical as well. That is a       !
@@ -1057,11 +1058,11 @@ contains
       frozen%cas%cas_molar_capacity = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
       frozen%cas%g_atm_heat = 1.2_wp*0.3_wp*0.02_wp ; frozen%cas%g_atm_vapour = frozen%cas%g_atm_heat
       frozen%cas%g_atm_co2 = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
-      frozen%cas%enthalpy_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; frozen%cas%shv_atm = 0.011_wp
+      frozen%cas%enthalpy_atm = cas_temp_to_enthalpy(300.0_wp, 0.011_wp) ; frozen%cas%shv_atm = 0.011_wp
       frozen%cas%co2_atm = 400.0_wp ; frozen%cas%nee_biotic = -5.0_wp
       frozen%ground%abs_sw_ground = 60.0_wp ; frozen%ground%abs_lw_ground = -10.0_wp
       frozen%ground%ggnet = 0.02_wp ; frozen%ground%soil_evap = 2.0e-5_wp
-      y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
+      y%cas_enthalpy = cas_temp_to_enthalpy(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water = 0.0_wp ; y%wood_surf_water = 0.0_wp   ! canopy water: no-op unless populated
@@ -1071,10 +1072,10 @@ contains
          y%theta(k) = 0.30_wp
       end do
       !----- seed mass at a representative point (leaf psi=-1.0, wood psi=-0.5 MPa), via the forward !
-      !      water_content map (hp above). ----------------------------------------------------------!
+      !      tissue_psi_to_water map (hp above). ----------------------------------------------------!
       do i = 1_ik, n
-         y%leaf_water_mass(i) = water_content(-1.0_wp, hp%leaf_curve, 0.5_wp)          ! 0.5 kgC of leaf
-         y%wood_water_mass(i) = water_content(-0.5_wp, hp%wood_curve, 7.0_wp)          ! 5 sapwood + 2 fine root
+         y%leaf_water_mass(i) = tissue_psi_to_water(-1.0_wp, hp%leaf_curve, 0.5_wp)          ! 0.5 kgC of leaf
+         y%wood_water_mass(i) = tissue_psi_to_water(-0.5_wp, hp%wood_curve, 7.0_wp)          ! 5 sapwood + 2 fine root
       end do
    end subroutine make_column
 

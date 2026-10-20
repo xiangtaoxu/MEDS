@@ -17,8 +17,8 @@ program test_surface_energy
    use meds_constants,        only : cp_air, latent_heat_vap, stefan_boltzmann, pi, cp_liq, tissue_c_wood_dry
    use meds_allometry_lib,    only : allometry_t, dbh_to_wai, sapwood_fraction
    use meds_plant_types, only : veg_thermal_params_t
-   use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_enthalpy_of_temp, &
-                                        cas_temp_of_enthalpy
+   use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_temp_to_enthalpy,  &
+                                        cas_enthalpy_to_temp
    use meds_plant_biophysics, only : veg_energy_balance
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
@@ -237,9 +237,9 @@ contains
       integer(ik) :: step
       print '(a)', 'test_cas:'
       shv  = 0.012_wp
-      enth = cas_enthalpy_of_temp(295.0_wp, shv)                  ! CAS starts at 295 K
+      enth = cas_temp_to_enthalpy(295.0_wp, shv)                  ! CAS starts at 295 K
       temp = 295.0_wp
-      enthalpy_atm = cas_enthalpy_of_temp(300.0_wp, shv)              ! warmer atmosphere
+      enthalpy_atm = cas_temp_to_enthalpy(300.0_wp, shv)              ! warmer atmosphere
       column%air_mass_capacity        = cas_mass_capacity
       column%air_molar_capacity       = 1.0_wp                    ! inert CO2 twin (avoid 0/0)
       column%atm_conductance_enthalpy = gatm
@@ -259,7 +259,7 @@ contains
                               + column%atm_conductance_enthalpy * (column%atm_enthalpy - enth_new))
          worst = max(worst, abs(resid))
          enth = enth_new ; shv = shv_new
-         temp = cas_temp_of_enthalpy(enth, shv)
+         temp = cas_enthalpy_to_temp(enth, shv)
       end do
       call check_true('CAS energy residual ~ 0 (30 steps)', worst < 1.0e-6_wp, worst)
       call check_true('CAS warms toward atmosphere + surfaces', temp > 295.0_wp, temp)

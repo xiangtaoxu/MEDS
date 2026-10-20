@@ -2,11 +2,9 @@
 !----- Calendar arithmetic: leap years, month/day roll-over, day-of-year, parse/format. ------!
 program test_time
    use meds_kinds,        only : wp, ik
-   use meds_time,         only : meds_time_t, is_leap_year, days_in_month, days_in_year,       &
-                                 day_of_year, time_advance_days, time_advance_months,          &
-                                 time_lt, time_eq,                                              &
-                                 time_from_string, time_to_string, time_to_stamp,              &
-                                 time_to_decimal_year, solar_cosz, daylength,        &
+   use meds_time,         only : meds_time_t, is_leap_year, days_in_month, days_in_year, day_of_year,         &
+                                 time_advance_days, time_advance_months, time_lt, time_eq, string_to_time,    &
+                                 time_to_string, time_to_stamp, time_to_decimal_year, solar_cosz, daylength,  &
                                  solar_declination
    use meds_test_support, only : banner, check, check_close
    implicit none
@@ -88,19 +86,19 @@ program test_time
                     'DOY 184 of 366 -> year + 0.5')
 
    !=== String round-trips and validation. ===============================================!
-   call time_from_string('2000-01-01', a, ok)
+   call string_to_time('2000-01-01', a, ok)
    call check(ok .and. a%year==2000_ik .and. a%month==1_ik .and. a%day==1_ik, 'parse YYYY-MM-DD')
-   call time_from_string('1999-12-31 23:59:59', a, ok)
+   call string_to_time('1999-12-31 23:59:59', a, ok)
    call check(ok .and. a%hour==23_ik .and. a%minute==59_ik .and. a%second==59_ik, 'parse date + time')
-   call time_from_string('2000/06/15', a, ok)
+   call string_to_time('2000/06/15', a, ok)
    call check(ok .and. a%month==6_ik .and. a%day==15_ik, 'parse with / separators')
-   call time_from_string('2000-02-29', a, ok)
+   call string_to_time('2000-02-29', a, ok)
    call check(ok, '2000-02-29 is a valid (leap) date')
-   call time_from_string('2001-02-29', a, ok)
+   call string_to_time('2001-02-29', a, ok)
    call check(.not. ok, '2001-02-29 is rejected (non-leap)')
-   call time_from_string('2000-13-01', a, ok)
+   call string_to_time('2000-13-01', a, ok)
    call check(.not. ok, 'month 13 is rejected')
-   call time_from_string('not-a-date', a, ok)
+   call string_to_time('not-a-date', a, ok)
    call check(.not. ok, 'garbage is rejected')
 
    call check(time_to_stamp(meds_time_t(2050_ik,1_ik,1_ik)) == '20500101000000', '14-char stamp')

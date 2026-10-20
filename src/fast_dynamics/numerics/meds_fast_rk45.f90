@@ -23,7 +23,7 @@
 module meds_fast_rk45
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air, n_soil_layer_max
-   use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp
+   use meds_therm_lib,           only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t, &
                                      surface_state_t, surface_tend_t,          &
@@ -110,7 +110,7 @@ contains
       call cas_conductances(frozen%cas, y_stage%cas_enthalpy, y_stage%cas_shv, gah_i, gaw_i, gac_i)
       atm_enth_i  = gah_i * (y_stage%cas_enthalpy - frozen%cas%enthalpy_atm)
       atm_vap_i   = gaw_i * (y_stage%cas_shv      - frozen%cas%shv_atm)
-      atm_heat_i  = gah_i * cp_air * (cas_temp_of_enthalpy(y_stage%cas_enthalpy, y_stage%cas_shv)          &
+      atm_heat_i  = gah_i * cp_air * (cas_enthalpy_to_temp(y_stage%cas_enthalpy, y_stage%cas_shv)          &
                                        - frozen%cas%mo_theta_atm)
       cond_i      = surf_tend%cond
       cond_enth_i = surf_tend%cond_enth   ! exactly what surface_derivs debited from the CAS
@@ -129,7 +129,7 @@ contains
    ! STAGE CLAMPING (the explicit counterpart of ark2_column_step's base3 clamp_cas): every             !
    ! y_stage is explicit-only here (no ESDIRK stabilization), so a stiff leaf<->canopy-air coupling     !
    ! under a too-large trial dt can drive the canopy-air enthalpy or humidity far outside its           !
-   ! physical domain WITHIN a single stage evaluation, where cas_temp_of_enthalpy diagnoses a wild      !
+   ! physical domain WITHIN a single stage evaluation, where cas_enthalpy_to_temp diagnoses a wild      !
    ! temperature and qsat overflows rather than returning a large-but-finite value the controller      !
    ! could reject. clamp_cas bounds each y_stage's canopy air before its column_derivs call; the        !
    ! resulting k_i is then a legitimate derivative at a physical (if boundary-pinned) state, and the    !

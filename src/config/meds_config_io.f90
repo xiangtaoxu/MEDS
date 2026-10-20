@@ -45,7 +45,7 @@ module meds_config_io
                                  MAX_DBH_EDGE,                                                   &
                                    GRP_ENERGY, GRP_NUMERICS, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
                                    FC_RUN
-   use meds_time,       only : meds_time_t, time_from_string
+   use meds_time,       only : meds_time_t, string_to_time
    use meds_pft_params, only : alloc_pft_table
    use meds_biophysics_opts, only : ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
@@ -939,7 +939,7 @@ contains
       out = meds_time_t()
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
       sval = toml_string(t, key, '')
-      call time_from_string(trim(sval), out, ok)
+      call string_to_time(trim(sval), out, ok)
       if (.not. ok) call note_missing(m, key)         ! present but unparseable
    end subroutine req_date
 
