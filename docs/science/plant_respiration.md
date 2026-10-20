@@ -20,7 +20,7 @@ R_a \;=\; \underbrace{R_d}_{\text{leaf, sub-daily}} \;+\; \underbrace{R_{\mathrm
 - **Growth respiration** $R_g$ is charged once per slow step by the allocator, on realized growth (§5).
 
 The fast loop integrates the three sub-daily limbs onto the cohort as `leaf_resp_accum`,
-`stem_resp_accum` and `root_resp_accum` $`[\mathrm{kgC\,plant^{-1}}]`$ (converting with `umol_2_kgC` at
+`stem_resp_accum` and `root_resp_accum` $`[\mathrm{kgC\,plant^{-1}}]`$ (converting with `umol_2_kgc` at
 each sub-step), and the daily step sums exactly those three into the allocator's `resp_maint`, so
 
 ```math

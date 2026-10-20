@@ -29,7 +29,11 @@ C(\psi_k)\,\frac{\partial\psi_k}{\partial t}
 
 with matric potential $`\psi(\theta)`$, hydraulic conductivity $`K(\theta)`$, and specific moisture
 capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **Campbell / Clapp-Hornberger**
-retention curves (`meds_water_retention`). The van Genuchten conductivity is Mualem's,
+retention curves (`meds_water_retention`). In effective saturation
+$`S_e=(\theta-\theta_{res})/(\theta_{sat}-\theta_{res})`$ and matric head $h<0$ [m], van Genuchten's
+curve is $`S_e=[1+(\alpha|h|)^n]^{-m}`$ with $`m=1-1/n`$, and Campbell's is $`h=\psi_{sat}\,S_e^{-b}`$,
+saturated between its air-entry head $`\psi_{sat}<0`$ and zero, with $`K=K_{sat}\,S_e^{2b+3}`$. The van
+Genuchten conductivity is Mualem's,
 
 ```math
 K = K_{sat}\,S_e^{L}\,\big[1-(1-S_e^{1/m})^m\big]^2, \qquad L = -1 \qquad(2)
@@ -237,7 +241,7 @@ column: its top layers hold the surface's organic, high-CEC soil and its deep la
 ## The soil thermal column
 
 `soil_energy_step_implicit` (`meds_soil_energy`) advances the prognostic volumetric internal energy
-$`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve, a Thomas sweep (`meds_numerics`: `thomas_solve`)
+$`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve, a Thomas sweep (`meds_linear_algebra`: `thomas_solve`)
 on **the same negative-$z$ geometry** as the water column. At each state it inverts
 $`E_k\to(T_k,\text{fliq}_k)`$, forms the ice-aware thermal conductivity $`\kappa(\theta,\text{fliq})`$
 and effective volumetric heat capacity $`C_{eff}(\theta,\text{fliq})`$, solves for $`T^{n+1}`$ with a

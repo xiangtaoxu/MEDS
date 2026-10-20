@@ -1,17 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_time -- calendar date tracking with real (leap-year-aware) Gregorian dates.         !
-!                                                                                          !
-! MEDS advances on a real calendar: the run is bounded by a start and end DATE (not a count !
-! of "years"), and both output streams stamp the simulated calendar date. This module owns   !
-! the date arithmetic so the driver/IO never re-derive leap years by hand.                    !
-!                                                                                          !
-! The atom is meds_time_t (year/month/day + hour/minute/second). All date stepping goes        !
-! through the proleptic-Gregorian Julian Day Number (to_jdn/from_jdn), which makes leap years  !
-! exact and month/year roll-over trivial; the JDN arithmetic uses 64-bit (lk) intermediates    !
-! because the inverse formula multiplies by ~4000 (overflows int32 for JDN ~ 2.45e6). Helpers: !
-! parse/format ISO-ish strings, a 14-char YYYYMMDDHHMMSS stamp for filenames, decimal calendar !
-! year for plotting, and lexicographic comparisons for the run-loop bound.                      !
+! meds_time -- the calendar. A run goes from a start date to an end date on the proleptic  !
+! Gregorian calendar, leap years included, and every output record carries its date. This  !
+! module does the date arithmetic, through the Julian Day Number, and the solar geometry   !
+! that follows from the date: the declination, the zenith cosine and the daylength         !
+! (docs/science/forcing.md §4).                                                            !
 !==========================================================================================!
 module meds_time
    use meds_kinds,     only : wp, ik, lk
@@ -21,14 +14,14 @@ module meds_time
 
    public :: meds_time_t
    public :: is_leap_year, days_in_month, days_in_year, day_of_year
-   public :: time_advance_days, time_advance_months, days_between, years_between
+   public :: time_advance_days, time_advance_months, years_between
    public :: time_advance_years, whole_years_between
    public :: seconds_into_day, seconds_between, time_advance_seconds
-   public :: time_lt, time_le, time_eq, time_valid
+   public :: time_lt, time_eq, time_valid
    public :: time_from_string, time_units_base, time_to_string, time_to_stamp, time_to_decimal_year
    public :: solar_cosz, daylength, doy_effective, solar_declination
 
-   !----- A calendar instant. Defaults give a valid date so meds_time_t() is usable. ------!
+   !----- A calendar instant; the defaults make meds_time_t() a valid date. ---------------!
    type :: meds_time_t
       integer(ik) :: year   = 2000_ik
       integer(ik) :: month  = 1_ik
@@ -43,9 +36,7 @@ module meds_time
 
 contains
 
-   !---------------------------------------------------------------------------------------!
-   ! Proleptic-Gregorian leap-year rule.                                                     !
-   !---------------------------------------------------------------------------------------!
+   !----- The proleptic-Gregorian leap-year rule. -----------------------------------------!
    elemental logical function is_leap_year(year) result(leap)
       integer(ik), intent(in) :: year
       leap = (mod(year, 4_ik) == 0_ik .and. mod(year, 100_ik) /= 0_ik) .or.                   &
@@ -64,37 +55,25 @@ contains
       if (is_leap_year(year)) d = 366_ik
    end function days_in_year
 
-   !----- 1-based day of the year (1 = Jan 1; 365 or 366 = Dec 31). ------------------------!
+   !----- The day of the year, 1 on 1 January. --------------------------------------------!
    pure integer(ik) function day_of_year(t) result(doy)
       type(meds_time_t), intent(in) :: t
       type(meds_time_t) :: jan1
-      jan1 = meds_time_t(year = t%year)        ! Jan 1, 00:00 of the same year
+      jan1 = meds_time_t(year = t%year)        ! 1 January, 00:00, of the same year
       doy  = int(to_jdn(t) - to_jdn(jan1), ik) + 1_ik
    end function day_of_year
 
-   !---------------------------------------------------------------------------------------!
-   ! solar_declination -- the sun's declination [rad] on a given day of year, Cooper (1969):    !
-   !                                                                                          !
-   !     delta = 23.45 deg * sin( 2 pi (284 + n) / 365 )                                        !
-   !                                                                                          !
-   ! ONE FORMULA, EVERY CONSUMER: solar_cosz and daylength both use it. White (1997)'s          !
-   ! -23.44 cos(2 pi (n + 9)/365) is the same function with a 1.25-day phase offset, and        !
-   ! Cooper's ascending zero crossing (n = 81) is the closer to the true vernal equinox         !
-   ! (n ~ 79-80); docs/science/forcing.md §4, eq. (4). The eccentricity correction is left out. !
-   !---------------------------------------------------------------------------------------!
+   !----- The solar declination [rad], Cooper (1969): 23.45 deg sin(2 pi (284 + doy)/365)  !
+   !      (docs/science/forcing.md eq. (4)). It is the model's only declination:           !
+   !      solar_cosz and daylength both use it. -------------------------------------------!
    elemental real(wp) function solar_declination(doy) result(decl)
       integer(ik), intent(in) :: doy          !< day of year (1 = 1 January)
       decl = 23.45_wp * pi / 180.0_wp * sin(2.0_wp * pi * (284.0_wp + real(doy, wp)) / 365.0_wp)
    end function solar_declination
 
-   !---------------------------------------------------------------------------------------!
-   ! Cosine of the solar zenith angle from the TIME DIMENSION (date -> declination, sub-daily !
-   ! cursor -> hour angle) + site latitude. cosz is a DERIVED quantity, not a met forcing:     !
-   ! the forcing calls it every sub-step (met_solar_cosz) with `t_sec` = local APPARENT solar   !
-   ! seconds into the day, made from UTC, the longitude and the equation of time                !
-   ! (docs/science/forcing.md eqs. (2)-(4)). Declination from the shared solar_declination.     !
-   ! Floored at 0 (night).                                                                      !
-   !---------------------------------------------------------------------------------------!
+   !----- The cosine of the solar zenith angle, 0 at night (docs/science/forcing.md        !
+   !      eq. (4)). t_sec is local apparent solar time, which the forcing makes from UTC,  !
+   !      the longitude and the equation of time (eqs. (2)-(3)). --------------------------!
    pure real(wp) function solar_cosz(t, t_sec, latitude_deg) result(cosz)
       type(meds_time_t), intent(in) :: t
       real(wp),          intent(in) :: t_sec          !< [s] local solar seconds into the day (0 = midnight)
@@ -109,12 +88,8 @@ contains
       cosz      = max(cosz, 0.0_wp)
    end function solar_cosz
 
-   !---------------------------------------------------------------------------------------!
-   ! Daylength [h] from latitude [deg] + day-of-year. It lives here so any seasonal             !
-   ! process can call it without a plant-library edge. Polar DAY is arg <= -1 (ED2's            !
-   ! polar branch reads arg <= 1, a bug). Declination comes from the SHARED                     !
-   ! solar_declination.                                                                         !
-   !---------------------------------------------------------------------------------------!
+   !----- Daylength [h], 24/pi acos(-tan(lat) tan(decl)): 0 in the polar night, 24 in the  !
+   !      polar day. ----------------------------------------------------------------------!
    elemental real(wp) function daylength(lat_deg, doy) result(dl)
       real(wp),    intent(in) :: lat_deg
       integer(ik), intent(in) :: doy
@@ -125,14 +100,14 @@ contains
       if (arg >= 1.0_wp) then
          dl = 0.0_wp                 ! polar night
       else if (arg <= -1.0_wp) then
-         dl = 24.0_wp                ! polar day (ED2's branch reads arg <= 1)
+         dl = 24.0_wp                ! polar day
       else
          dl = 24.0_wp / pi * acos(arg)
       end if
    end function daylength
 
-   !----- Effective (northern-hemisphere-equivalent) day-of-year: shift SH by half a year, so   !
-   !      season-gated accumulators (GDD/chilling) can share one hemisphere-agnostic calendar. --!
+   !----- The day of year, shifted by half a year in the southern hemisphere, so a         !
+   !      seasonal cue written for the north serves both hemispheres. ---------------------!
    elemental integer(ik) function doy_effective(doy, hemis_north) result(de)
       integer(ik), intent(in) :: doy
       logical,     intent(in) :: hemis_north
@@ -144,7 +119,9 @@ contains
    end function doy_effective
 
    !=======================================================================================!
-   ! Julian Day Number conversions (Fliegel & Van Flandern; 64-bit intermediates).          !
+   ! Julian Day Number conversions (Fliegel & Van Flandern 1968). Day numbers are          !
+   ! 64-bit, so a span in seconds stays exact over centuries: 32-bit seconds overflow      !
+   ! after 68 years.                                                                       !
    !=======================================================================================!
    pure integer(lk) function to_jdn(t) result(jdn)
       type(meds_time_t), intent(in) :: t
@@ -174,9 +151,9 @@ contains
    end subroutine from_jdn
 
    !=======================================================================================!
-   ! Date stepping.                                                                         !
+   ! Date stepping.                                                                        !
    !=======================================================================================!
-   !----- Advance by a whole number of days (leap years exact); time-of-day unchanged. -----!
+   !----- Advance by ndays whole days; the time of day is kept. ---------------------------!
    pure function time_advance_days(t, ndays) result(t2)
       type(meds_time_t), intent(in) :: t
       integer(ik),       intent(in) :: ndays
@@ -185,8 +162,8 @@ contains
       call from_jdn(to_jdn(t) + int(ndays, lk), t2%year, t2%month, t2%day)
    end function time_advance_days
 
-   !----- Advance by whole months; the day is clamped into the target month (e.g. Jan 31 ---!
-   !      + 1 month -> Feb 28/29), as in ED2's monthly stepping.                             !
+   !----- Advance by whole months; a day past the end of the target month becomes its last !
+   !      day (31 January + 1 month is 28 or 29 February). --------------------------------!
    pure function time_advance_months(t, nmonths) result(t2)
       type(meds_time_t), intent(in) :: t
       integer(ik),       intent(in) :: nmonths
@@ -199,43 +176,34 @@ contains
       t2%day   = min(t%day, days_in_month(t2%year, t2%month))
    end function time_advance_months
 
-   !----- Whole days from a to b (positive if b is later). ---------------------------------!
-   pure integer(ik) function days_between(a, b) result(d)
-      type(meds_time_t), intent(in) :: a, b
-      d = int(to_jdn(b) - to_jdn(a), ik)
-   end function days_between
-
-   !----- Difference in decimal calendar years (b - a); for progress reporting/labels. -----!
+   !----- b - a in decimal calendar years, for progress messages. -------------------------!
    pure real(wp) function years_between(a, b) result(y)
       type(meds_time_t), intent(in) :: a, b
       y = time_to_decimal_year(b) - time_to_decimal_year(a)
    end function years_between
 
    !=======================================================================================!
-   ! Comparisons (lexicographic on the full instant).                                       !
+   ! Arithmetic to the second, across day boundaries (the forcing's interpolation window). !
    !=======================================================================================!
    pure integer(lk) function sec_of_day(t) result(s)
       type(meds_time_t), intent(in) :: t
       s = int(t%hour, lk) * 3600_lk + int(t%minute, lk) * 60_lk + int(t%second, lk)
    end function sec_of_day
 
-   !=======================================================================================!
-   ! Second-level helpers (the met-forcing interpolation / window slide needs sub-daily,      !
-   ! second-accurate arithmetic across day boundaries -- meds_forcing / meds_met_driver).      !
-   !=======================================================================================!
-   !----- Seconds elapsed since midnight of the instant's own day (0 .. 86399). -------------!
+   !----- Seconds since midnight of the instant's own day (0 .. 86399). -------------------!
    pure real(wp) function seconds_into_day(t) result(s)
       type(meds_time_t), intent(in) :: t
       s = real(sec_of_day(t), wp)
    end function seconds_into_day
 
-   !----- Total seconds from a to b (positive if b is later); exact across days via the JDN. -!
+   !----- Seconds from a to b (positive if b is later). -----------------------------------!
    pure real(wp) function seconds_between(a, b) result(s)
       type(meds_time_t), intent(in) :: a, b
       s = real((to_jdn(b) - to_jdn(a)) * 86400_lk + sec_of_day(b) - sec_of_day(a), wp)
    end function seconds_between
 
-   !----- Advance by dsec seconds (may be negative or many days); rolls date + time-of-day. --!
+   !----- Advance by dsec seconds, rounded to the nearest second; dsec may be negative or  !
+   !      span many days. -----------------------------------------------------------------!
    pure function time_advance_seconds(t, dsec) result(t2)
       type(meds_time_t), intent(in) :: t
       real(wp),          intent(in) :: dsec
@@ -243,13 +211,16 @@ contains
       integer(lk) :: total, ndays, rem
       total = sec_of_day(t) + nint(dsec, lk)             ! seconds from midnight of t's day
       ndays = int(floor(real(total, wp) / 86400.0_wp), lk)
-      rem   = total - ndays * 86400_lk                   ! guaranteed 0 .. 86399
+      rem   = total - ndays * 86400_lk                   ! 0 .. 86399, also when total < 0
       t2 = time_advance_days(t, int(ndays, ik))
       t2%hour   = int(rem / 3600_lk, ik)
       t2%minute = int(mod(rem, 3600_lk) / 60_lk, ik)
       t2%second = int(mod(rem, 60_lk), ik)
    end function time_advance_seconds
 
+   !=======================================================================================!
+   ! Comparisons, on the full instant.                                                     !
+   !=======================================================================================!
    pure logical function time_lt(a, b) result(yes)
       type(meds_time_t), intent(in) :: a, b
       integer(lk) :: ja, jb
@@ -266,14 +237,9 @@ contains
       yes = to_jdn(a) == to_jdn(b) .and. sec_of_day(a) == sec_of_day(b)
    end function time_eq
 
-   pure logical function time_le(a, b) result(yes)
-      type(meds_time_t), intent(in) :: a, b
-      yes = time_lt(a, b) .or. time_eq(a, b)
-   end function time_le
-
-   !----- Advance by n WHOLE calendar years, keeping month/day/time-of-day exact. Feb-29 in a    !
-   !      non-leap target becomes Feb-28 (the same substitution the met driver's cycle mapping    !
-   !      uses), so the result is always a valid date. --------------------------------------------!
+   !----- Advance by n calendar years, keeping the month, day and time of day; 29 February !
+   !      in a non-leap target year becomes 28 February, as in the forcing's recycling     !
+   !      (docs/science/forcing.md §9). ---------------------------------------------------!
    pure function time_advance_years(t, n) result(out)
       type(meds_time_t), intent(in) :: t
       integer(ik),       intent(in) :: n
@@ -283,13 +249,9 @@ contains
       if (t%month == 2_ik .and. t%day == 29_ik .and. .not. is_leap_year(out%year)) out%day = 28_ik
    end function time_advance_years
 
-   !----- How many WHOLE calendar years separate a and b, anchored on a's month/day/time-of-day?  !
-   !      Returns 0 unless b is EXACTLY n >= 1 such years after a -- i.e. a partial year, a        !
-   !      sub-year span, or b <= a all report 0. This is the whole-year test for the forcing        !
-   !      recycle window: a cycle whose length is not an integer number of calendar years cannot    !
-   !      preserve hour-of-day (or day-of-year) across wraps, so it must be rejected rather than     !
-   !      silently drifted. `nmax` bounds the search (a recycle window longer than that is far        !
-   !      outside any real forcing record). ---------------------------------------------------------!
+   !----- n when b is exactly n calendar years after a (1 <= n <= nmax), else 0. The       !
+   !      forcing's recycle window must span whole years, or every wrap shifts the hour of !
+   !      day and the season (docs/science/forcing.md §9). --------------------------------!
    pure function whole_years_between(a, b, nmax) result(n)
       type(meds_time_t), intent(in) :: a, b
       integer(ik),       intent(in) :: nmax
@@ -297,11 +259,12 @@ contains
       n = 0_ik
       do k = 1_ik, nmax
          if (time_eq(time_advance_years(a, k), b)) then ; n = k ; return ; end if
-         if (time_lt(b, time_advance_years(a, k))) return       ! overshot -> not a whole-year span
+         if (time_lt(b, time_advance_years(a, k))) return       ! past b: not a whole number of years
       end do
    end function whole_years_between
 
-   !----- Range check on the fields (it validates parsed configuration). -------------------!
+   !----- True when the month, day, hour, minute and second are in range (a parsed config  !
+   !      date); any year passes. ---------------------------------------------------------!
    pure logical function time_valid(t) result(ok)
       type(meds_time_t), intent(in) :: t
       ok = t%month >= 1_ik  .and. t%month <= 12_ik                                           &
@@ -312,11 +275,11 @@ contains
    end function time_valid
 
    !=======================================================================================!
-   ! String <-> time.                                                                       !
+   ! String <-> time.                                                                      !
    !=======================================================================================!
-   !----- Parse "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" (also accepts '/', 'T' separators).    !
-   !      Missing trailing fields default (month/day -> 1, time -> 0). ok reports a clean,    !
-   !      in-range parse so the caller can fall back to the default date.                    !
+   !----- Parse "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" ('/', 'T' and ',' also separate). A  !
+   !      missing trailing field defaults (month and day to 1, time to 0). ok is false on  !
+   !      an unreadable or out-of-range date, so the caller can use its default. ----------!
    subroutine time_from_string(s, t, ok)
       character(len=*),  intent(in)  :: s
       type(meds_time_t), intent(out) :: t
@@ -328,7 +291,7 @@ contains
       t = meds_time_t()
       y = 2000_ik ; mo = 1_ik ; d = 1_ik ; h = 0_ik ; mi = 0_ik ; se = 0_ik
 
-      !----- Turn every separator into a blank, then read with list-directed input. --------!
+      !----- Separators become blanks; a list-directed read then takes the numbers. -------!
       buf = s
       do i = 1_ik, int(len_trim(buf), ik)
          select case (buf(i:i))
@@ -352,8 +315,9 @@ contains
       ok = (ios == 0_ik) .and. time_valid(t)
    end subroutine time_from_string
 
-   !----- The base date of a CF time-units string, "<unit> since YYYY-MM-DD[ HH:MM:SS]". The unit   !
-   !      itself is the caller's to check. ok = .false. without a "since" or with an unreadable date. !
+   !----- The base date of a CF time-units string, "<unit> since YYYY-MM-DD[ HH:MM:SS]";   !
+   !      the caller checks the unit. ok is false without "since" or with an unreadable    !
+   !      date. ---------------------------------------------------------------------------!
    subroutine time_units_base(units, base, ok)
       character(len=*),  intent(in)  :: units
       type(meds_time_t), intent(out) :: base
@@ -364,7 +328,7 @@ contains
       call time_from_string(adjustl(units(k + 5:)), base, ok)
    end subroutine time_units_base
 
-   !----- "YYYY-MM-DD HH:MM:SS" (human-readable, e.g. for attributes/log lines). -----------!
+   !----- "YYYY-MM-DD HH:MM:SS", for attributes and log lines. ----------------------------!
    pure function time_to_string(t) result(s)
       type(meds_time_t), intent(in) :: t
       character(len=19) :: s
@@ -372,14 +336,14 @@ contains
             t%year, t%month, t%day, t%hour, t%minute, t%second
    end function time_to_string
 
-   !----- "YYYYMMDDHHMMSS" (14 chars; the state-file timestamp <prefix>-S-<stamp>.nc). ------!
+   !----- "YYYYMMDDHHMMSS", the stamp in a state file's name (<prefix>-S-<stamp>.nc). -----!
    pure function time_to_stamp(t) result(s)
       type(meds_time_t), intent(in) :: t
       character(len=14) :: s
       write(s, '(i4.4,5i2.2)') t%year, t%month, t%day, t%hour, t%minute, t%second
    end function time_to_stamp
 
-   !----- Decimal calendar year (year + elapsed fraction); the continuous plotting axis. ---!
+   !----- The year plus the elapsed fraction of it: a continuous time axis for plots. -----!
    pure real(wp) function time_to_decimal_year(t) result(yr)
       type(meds_time_t), intent(in) :: t
       real(wp) :: frac
@@ -388,7 +352,7 @@ contains
       yr = real(t%year, wp) + frac
    end function time_to_decimal_year
 
-   !----- Count whitespace-separated tokens. -----------------------------------------------!
+   !----- The number of blank-separated tokens in s. --------------------------------------!
    pure integer(ik) function count_tokens(s) result(nt)
       character(len=*), intent(in) :: s
       integer(ik) :: i

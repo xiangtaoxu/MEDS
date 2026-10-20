@@ -98,6 +98,41 @@ the relative size at onset of maturity of Thomas (1996), whose 37 Malaysian spec
 of their asymptotic height, 0.42 on average. Under Chave et al. (2014)'s curve the stress index E scales
 every height by the same factor, so a given share of $`H_{\max}`$ falls at the same diameter at every site.
 
+### The size allometry
+
+The targets and every cohort's geometry come from one size allometry (`meds_allometry`), whose
+coefficients (`[allometry]` in the PFT file; `docs/configuration.md`, "The PFT file") are the same for
+every PFT. With $D$ the diameter [cm], $H$ the height [m] and $\rho$ the wood density [g cm⁻³]:
+
+- **Height** follows one of three curves, each capped at the PFT's `hgt_max`: the pan-tropical power
+  law $`\ln H = b_1 + b_2 \ln D`$; the saturating generalized Michaelis–Menten curve
+  $`H = a D^{b}/(k + D^{b})`$, fitted by Cano et al. (2019) in the Barro Colorado Nature Monument; or
+  Chave et al. (2014) eq. 6a, $`\ln H = 0.893 - E + 0.760 \ln D - 0.0340 (\ln D)^2 + s^2/2`$, with $E$
+  the site's stress index and $`s = 0.243`$ the fit's residual standard error. The $`s^2/2`$ turns the
+  fit's log-scale median into its mean, as BIOMASS's `retrieveH` does. Height to diameter inverts the
+  uncapped curve; on Chave's curve that is the smaller root of the quadratic in $`\ln D`$, the rising
+  branch, which holds up to a diameter of about 7×10⁴ cm.
+- **Biomass** is Chave et al. (2014) eq. 4 in carbon, $`\mathrm{AGB} = c_1\,\rho^{c_2}\,(D^2 H)^{c_2}`$
+  [kgC plant⁻¹], with $`c_2 = 0.976`$ and $`c_1 = 0.0673/2`$: Chave's coefficient for dry mass, halved
+  at the carbon fraction 0.5. Without the halving, the biomass would be dry mass labelled as carbon.
+- **Leaf area** of one stem, one-sided, is $`A_{leaf} = l_1\,(D^2 H)^{l_2}`$ [m²], so a cohort's LAI is
+  $`n_{plant}\,A_{leaf}`$. The shipped $`l_1 = 0.4677/2`$ and $`l_2 = 0.641`$ are the pan-tropical BAAD
+  fit, halved as ED2 applies it (`docs/ed2_comparison.md`).
+- **Pool targets** restate the same allometry in carbon, so the two descriptions of a plant cannot
+  disagree. The leaf target is $`A_{leaf}/\mathrm{SLA}`$ (`size2leaf_carbon`), so a cohort at its
+  target shows exactly the allometric leaf area (`plant_traits.md` §4). The wood carbon is
+  $`\mathrm{AGB}/f_{ag}`$ (`size2wood_carbon`, $`f_{ag}`$ = `aboveground_frac`): the total woody carbon,
+  coarse roots included, whose aboveground share is exactly the Chave biomass.
+- **Carbon to diameter.** Wood carbon is the prognostic size, and the diameter follows from it
+  (`wood_to_dbh`); `carbon_to_structure` derives a cohort's diameter, height, basal area, AGB and leaf
+  area from its wood and leaf carbon. Under the power law the inverse is closed form,
+  $`\mathrm{AGB} \propto D^{P}`$ with $`P = c_2(2 + b_2)`$ below the height cap and $`P = 2c_2`$ above it,
+  the two meeting at the cap; under Chave's curve it is the smaller root of a quadratic in $`\ln D`$.
+  The gMM curve has no closed-form inverse, so Newton's method solves
+  $`2x + \ln H(x) = \ln\!\big(\mathrm{AGB}/(c_1\rho^{c_2})\big)/c_2`$ for $`x = \ln D`$. The left side
+  rises with a slope between 2 and $`2 + b`$ and is concave (the cap only flattens it), so after its
+  first step the iteration lands at or below the root and climbs to it without overshooting.
+
 ### Sink limitation of wood growth
 
 Carbon supply is not the only limit on growth: cambial cell division and expansion run at a bounded

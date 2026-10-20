@@ -369,6 +369,19 @@ present and with condensation active. This holds with the tissue heat store acti
 tissue's energy gains is taken from a b-weighted time integral of its temperature, so it is exactly
 the complement of the flux the canopy air received.
 
+**How a ledger is judged.** A ledger's residual $r$ is the change in its store minus the net amount
+that crossed its boundary over the window, and the ledger closes when
+$`|r| \le 10^{-6}\,F + f\,\Delta t`$, with $F$ the gross boundary flux (inflow plus outflow) and $f$
+a rate floor: 10⁻³ W m⁻² for energy, 10⁻⁹ kg m⁻² s⁻¹ for water (about 10⁻⁴ mm a day) and
+10⁻⁶ µmol m⁻² s⁻¹ for CO₂ (`meds_budget_check`). The tolerance follows the flux, never the store: a
+soil column holds ~10⁹ J m⁻², and 10⁻⁶ of that would let a sustained leak of ~1 W m⁻² through every
+step. The energy floor, 0.9 J m⁻² over a 900 s step, sits far above the round-off of the column's
+energy stores and far below any flux the column resolves, and it matches the water floor: 10⁻⁹
+kg m⁻² s⁻¹ of evaporation carries 2.5×10⁻³ W m⁻² of latent heat. Each ledger also keeps the signed
+sum of its residuals, because a one-signed bias below the per-step tolerance never shows in the
+worst residual, only as a drift over a season. The end-of-run report gives that sum, the mean leak
+rate it implies, the worst single check and the number of failed checks.
+
 **Read 5a and 5b together.** They are the same run. A ledger that closes to 10⁻⁶ J tells you the
 bookkeeping is right; it tells you nothing about whether the trajectory is physical.
 
@@ -584,3 +597,59 @@ than a convergence proof.
 | error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/numerics/meds_fast_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set from config: `src/fast_dynamics/driver/meds_fast_config.f90` (`build_tol_set`) |
 | shared snow stage | `meds_fast_frozen.f90` (`advance_snow_stage`) |
 | patch loop, per-thread scratch pool, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
+| the linear solvers and the conservation test (§9) | `src/shared/meds_linear_algebra.f90`, `src/shared/meds_numerics.f90` (`conserved`) |
+
+## 9. The shared numerical tools
+
+Every layer of the model uses the linear solvers in `meds_linear_algebra` and the small helpers in
+`meds_numerics`. Their sizes are passed as arguments rather than read from the arrays, so a caller
+keeps fixed-size storage (the soil column holds `n_soil_layer_max` layers) and passes the size it
+uses. None of them passes an array-valued function result straight into a call, which nvfortran
+miscompiles (`docs/building.md`).
+
+**The Thomas sweep** (`thomas_solve`) solves the tridiagonal backward-Euler system of the soil heat
+column. It does not pivot: the storage term $`C\,\Delta z/\Delta t`$ makes that matrix diagonally
+dominant. Each pivot is kept at least `tiny_num` from zero with its sign, so a degenerate input gives a
+finite answer instead of a division by zero. For the matrices the model builds this never binds.
+
+**The dense LU** (`lu_factor`, `lu_solve`) is Gaussian elimination with partial pivoting, the
+multipliers stored below the diagonal. `lu_factor` reports a zero or NaN pivot instead of dividing by
+it. The soil-carbon steady state ([soil_carbon](soil_carbon.md) eq. (7)) solves its active block with
+it and stops on a singular block; the arrowhead solve factors its core with it.
+
+**The block arrowhead solve** (`arrowhead_*`) is the linear step of the soil–plant water Newton
+iteration ([soil_plant_water](soil_plant_water.md) §3). The unknowns are a core $`x_0`$ (the pond and
+the soil layers) and $B$ blocks $`x_j`$ (one per cohort), and each block meets the core only through
+its first unknown:
+
+```math
+\begin{bmatrix} A & b_1 e_1^{\mathsf{T}} & \cdots & b_B e_1^{\mathsf{T}}\\
+e_1 c_1^{\mathsf{T}} & D_1 & & \\ \vdots & & \ddots & \\ e_1 c_B^{\mathsf{T}} & & & D_B \end{bmatrix}
+\begin{bmatrix} x_0\\ x_1\\ \vdots\\ x_B\end{bmatrix} =
+\begin{bmatrix} r_0\\ r_1\\ \vdots\\ r_B\end{bmatrix} \qquad(5)
+```
+
+with $`b_j`$ the core's column for block $j$'s first unknown, $`c_j`$ that unknown's row over the core,
+and $`e_1`$ the selector of a block's first unknown. Each block is inverted (in closed form for the
+2×2 cohort blocks) and eliminated onto the core by the rank-one update $`(D_j^{-1})_{11}\,b_j c_j^{\mathsf{T}}`$;
+the core that remains is LU-factored, and the blocks are recovered from the core's solution. The cost
+grows as blocks × core² + core³ rather than (core + blocks)³. The factorisation leaves $A$ and the
+$`D_j`$ as they were and takes additions to their diagonals separately, so the Newton iteration can
+refactor the same matrix with a new storage term; one factorisation serves every right-hand side,
+which is how the solver's error estimate reuses it.
+
+**The matrix exponential** (`matrix_exp`) advances the soil-carbon pools exactly over a day
+([soil_carbon](soil_carbon.md) eq. (6)). It halves $A$ $s$ times until its largest absolute row sum is
+at most 1/2, sums 12 terms of the Taylor series of $`A/2^s`$, and squares the result $s$ times. More
+squarings than needed only shrink the Taylor argument, so the evaluation also accepts a fixed $s$,
+which a batched device kernel needs so every lane runs the same number of steps.
+
+**The conservation test** (`conserved`) is how an operator that only moves an amount between stores
+(a fusion, a split, a rescaling) checks that it kept it:
+$`|\text{after} - \text{before}| \le r_{tol}\,M + \text{tiny}/\varepsilon`$, with $M$ the sum of the
+absolute values of the terms. The tolerance is relative to $M$, not to the net total, because round-off scales with the terms: a total
+near zero, or one whose terms differ in sign, would fail on round-off alone. Below
+$`\text{tiny}/\varepsilon`$ (about $`10^{-292}`$ in double precision) even $\varepsilon M$ is a subnormal
+number, which an optimised build flushes to zero, so that is the floor: two leafless cohorts' leaf
+areas of $`10^{-307}`$ can fuse to exactly zero. A NaN on either side fails, and is tested for before
+the comparison, which a NaN would make raise an invalid-operation trap in the debug build.

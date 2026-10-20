@@ -16,13 +16,13 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 src/                                    35.5 k lines · 91 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_shared
-├── shared/        uses nothing outside itself; every layer may use it
-│   ├── base/      kinds, physical and calendar constants                      107
-│   ├── functions/ stateless constitutive laws: allometry, thermodynamics,
-│   │              retention and pressure-volume curves, soil pedotransfer,
-│   │              canopy optics, temperature response                       1 207
-│   └── util/      calendar time, numerics (matrix exponential, Thomas sweep,
-│                  root finders), budget checks                                904
+├── shared/        uses nothing outside itself; every layer may use it: kinds,
+│   │              constants, numerics (clamps, means, the conservation test),
+│   │              linear algebra (Thomas sweep, dense LU, arrowhead solve,
+│   │              matrix exponential), calendar time, budget checks         1 148
+│   └── functions/ stateless constitutive laws: allometry, thermodynamics,
+│                  retention and pressure-volume curves, soil pedotransfer,
+│                  canopy optics, temperature response                       1 916
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        TOML reader and loader, PFT trait table, meds_config_t,
@@ -163,8 +163,8 @@ One edge is worth knowing because it is easy to get wrong:
 | a per-patch store the kernels and the patch block share | `state/meds_patch_state_vars.f90`: its type, its blend, and its section of `patch_block` |
 | a per-cohort field | `state/meds_cohort_state_vars.f90`: its section of `cohort_block` and of each lockstep list — and every creation site, and the fusion policy |
 | a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_2_patches` and the new gap in `apply_patch_disturbance` |
-| a stateless constitutive curve | `shared/functions/` |
-| a numerical, calendar or checking helper every layer needs | `shared/util/`, if it uses nothing outside `shared/` |
+| a stateless constitutive curve: a physical or biological law with parameters | `shared/functions/` |
+| a model-independent tool every layer needs (numerics, calendar, checks) | `shared/`, if it uses nothing outside `shared/` |
 | a TOML block | `config/`, as an `*_opts` leaf so `meds_config` can carry it with no back-edge |
 | a prescribed time-varying input (weather, CO2) | `io/input/forcing/` |
 | a static per-cell input map (soil, a cell mask) | `io/input/maps/meds_surface_maps.f90` |

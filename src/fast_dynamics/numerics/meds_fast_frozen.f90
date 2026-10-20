@@ -17,7 +17,7 @@
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple,        &
-                              TISSUE_C_LEAF, TISSUE_C_WOOD_DRY
+                              tissue_c_leaf, tissue_c_wood_dry
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
    use meds_water_retention, only : rwc_from_psi
@@ -219,7 +219,7 @@ contains
          !      the network moves at the wood's temperature, so a drought-emptied store holds less heat;  !
          !      heartwood holds none. --------------------------------------------------------------------!
          frozen%tissue%wood_dry_hcap(i) = tissue_dry_heat_capacity(col_cohort%nplant(i), col_cohort%bwood(i),     &
-                                                                   TISSUE_C_WOOD_DRY)
+                                                                   tissue_c_wood_dry)
          frozen%tissue%wood_wmass(i)    = max(biophys%wood_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
          !----- LEAF capacity, same two-part construction: dry leaf tissue + the INTERNAL (symplast)     !
          !      water the hydraulics carries, biophys%leaf_water_mass [kg/plant] -> per m2 ground.       !
@@ -229,7 +229,7 @@ contains
          !      is a separate store with its own phase, and folding it into a temperature-based          !
          !      capacity would commit to a film that can never freeze. ----------------------------------!
          frozen%tissue%leaf_dry_hcap(i) = tissue_dry_heat_capacity(col_cohort%nplant(i), col_cohort%bleaf(i),     &
-                                                                   TISSUE_C_LEAF)
+                                                                   tissue_c_leaf)
          frozen%tissue%leaf_wmass(i)    = max(biophys%leaf_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
          !----- The wood's radiation and sensible coefficient are always filled: there is ONE wood       !
          !      energy balance (surface_derivs), relaxed by the wood's own heat capacity, so these       !

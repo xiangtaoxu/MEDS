@@ -14,7 +14,7 @@
 program test_surface_energy
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi, cp_liq, TISSUE_C_WOOD_DRY
+   use meds_constants,        only : cp_air, latent_heat_vap, stefan_boltzmann, pi, cp_liq, tissue_c_wood_dry
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_plant_types, only : veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_enthalpy_of_temp, &
@@ -88,9 +88,9 @@ contains
          !      mean two wood temperatures and is deliberately not taken. --------------------!
          dbio_w   = wc(i) * npl(i) * C2B                                ! [kg dry/m2] all wood
          dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
-         cap    = dbio_w * TISSUE_C_WOOD_DRY                                                    &
+         cap    = dbio_w * tissue_c_wood_dry                                                    &
                 + WOOD_WATER_SAT * dbio_sap / C2B * cp_liq
-         drdt   = 8.0_wp * WOOD_EMISS * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
+         drdt   = 8.0_wp * WOOD_EMISS * stefan_boltzmann * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
          tau    = cap / drdt
          !----- the EXACT endpoint memory the kernel uses (eq. (4)), not backward Euler's 1/(1+x) !
          w_end  = exp(-DT_FAST / tau)
@@ -382,7 +382,7 @@ contains
       real(wp), parameter   :: T_CAS = 298.0_wp, T0 = T_CAS - 0.5_wp, T_PARENT = 301.0_wp
       real(wp) :: hc, lws, les, ler
       hc  = merge(2.0_wp, pi, leaf) * a * GBH * RHO * cp_air
-      lws = 4.0_wp * EMISS * stefan * T_CAS**3 * a
+      lws = 4.0_wp * EMISS * stefan_boltzmann * T_CAS**3 * a
       les = merge( 8.0_wp * a, 0.0_wp, leaf)    ! stomatal (wood does not transpire)
       ler = merge(15.0_wp * a, 0.0_wp, leaf)
       call veg_energy_balance(400.0_wp*a, -50.0_wp*a, hc, les, lws, ler, T_CAS, T_PARENT, a_store, T0,    &

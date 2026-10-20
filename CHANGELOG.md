@@ -24,7 +24,9 @@ A polygon can hold several sites, each on its own soil, and its files report eac
 A site run divides its polygon into sites with `[[sites]]` tables (#453). Each site's forcing follows
 its elevation and slope, and its phenology and leaf acclimation its own air (#454). A cohort's
 tissue state is its leaf and wood energy, with its temperatures derived from them, and the water it
-sheds takes its enthalpy to the ground (#457).
+sheds takes its enthalpy to the ground (#457). `meds_constants` is grouped by kind, and every name in it
+is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear solvers are one module,
+`meds_linear_algebra` (#458).
 
 **Upgrading from v0.3.5:**
 - **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
@@ -91,9 +93,42 @@ sheds takes its enthalpy to the ground (#457).
   `slow_tissue_heat` is `slow_tissue_energy`; `tissue_coefficients_t%water_store_enth` is the
   per-cohort `leaf_water_enth` and `wood_water_enth`; `veg_thermal_params_t` loses `c_leaf` and
   `c_wood_dry`, and `tissue_dry_heat_capacity` (`meds_therm_lib`) gives the dry capacities.
+- **Fortran code that names three constants uses their new names** (#458): `halfpi` is `pio2`,
+  `stefan` is `stefan_boltzmann` and `vonkarman` is `von_karman`. `C2B_WOOD`, `TISSUE_C_LEAF`,
+  `TISSUE_C_WOOD_DRY`, `umol_2_kgC` and `kgCday_2_umols` are spelled in lower case; Fortran ignores
+  case, so the old spellings still compile.
+- **Fortran code that uses `meds_arrowhead_solve`, or `thomas_solve` or `matrix_exp` from
+  `meds_numerics`, uses `meds_linear_algebra`** (#458). `matrix_exp_fixed` and `matmul_sq` are
+  private to it.
+- **Fortran code that used one of `src/shared`'s unused names writes it out** (#458), as listed under
+  Removed. `HYDRO_TABLE_NTAB`, `HYDRO_TABLE_RMAX`, `UPTAKE_RAMP_WIDTH`, `TRANSP_CLOSE_WIDTH`
+  (`meds_hydr_lib`), `leaf_class_angle` (`meds_optics_lib`) and `pv_rwc_tlp` (`meds_water_retention`)
+  are private to their modules.
 
 ### Changed
 
+- **`meds_constants` is grouped by kind** (#458): mathematical constants, physical constants
+  (universal; dry air and water vapour; liquid water and ice; leaf diffusion; plant tissue heat),
+  reference conditions, conversions (time, units), array sizes and floating-point guards. Every name
+  is lower case. Outputs are unchanged bit for bit.
+- **`src/shared/base/` and `src/shared/util/` are folded into `src/shared/`** (#458). The kinds,
+  constants, numerics, calendar and budget checks sit at the top of the folder, and the constitutive
+  laws stay in `src/shared/functions/`. No module is renamed, so no `use` line changes.
+- **The linear solvers are one module, `meds_linear_algebra`** (#458): the Thomas sweep and the
+  matrix exponential from `meds_numerics`, the block arrowhead solve (`meds_arrowhead_solve` is gone),
+  and its dense LU, now public. The soil-carbon steady state solves its active block with that LU in
+  place of its own copy of Gaussian elimination, and stops if the block is singular. `meds_numerics`
+  keeps the small helpers. The solvers' details are in `docs/science/numerical_scheme.md` §9. Outputs
+  are unchanged bit for bit, a run that starts from the soil-carbon steady state included.
+- **`src/shared`'s comments say what each routine does and why, and the details are on the science
+  pages** (#458). Whole-line comments fall from 1,066 to 663. New or extended passages:
+  `numerical_scheme.md` §5b (how a ledger is judged) and §9 (the shared numerical tools, eq. (5));
+  `plant_carbon_allocation.md` §2 (the size allometry); `plant_hydraulics.md` §3 (the quadrature and
+  the flow's guards); `soil_biophysics.md` (the two retention curves); `vegetation_energy_dynamics.md`
+  (wood area and sapwood); `leaf_gas_exchange.md` §2 (temperature); `canopy_air_space_biophysics.md`
+  (the enthalpy datum); `forcing.md` §4; `soil_plant_water.md` §2. The ED2 provenance notes move from
+  the code to `docs/ed2_comparison.md` §4.7. Comments that were wrong are corrected (the reason for
+  64-bit day numbers, what `sp` and `lk` are for, `hydro_table_t%kexp`, the leaf-angle range).
 - **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
   restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
   temperature, holding the water their tissues hold at the potential of the patch's top soil layer
@@ -302,6 +337,19 @@ sheds takes its enthalpy to the ground (#457).
 - **`scale_cohort_ground_fields`** (#457) and the film-conservation stops in a split and a patch
   fusion: the films are per plant.
 - **`wood_thermal_water`** (#457), the sapwood share of the wood store's water (see Changed).
+- **`mon_per_yr`, `day_per_mon`, `umols_per_kgCyr` and `k_air`** (#458), which nothing used, and
+  `area_tol` from `meds_constants`: the end-of-run patch-area check in `meds_region`, its one user,
+  holds it as `AREA_TOL`, so `meds_constants` holds no tolerance.
+- **Code in `src/shared` that nothing used** (#458): `budget_assert`, `budget_check`'s optional
+  `atol_extra` and `budget_t`'s `store0` and `store1`, which were written and never read
+  (`meds_budget_check`); `cp_moist` (`meds_therm_lib`); `days_between` and `time_le` (`meds_time`),
+  which only their unit test called; `ROUNDOFF_RTOL` (`meds_numerics`), which only the test of
+  `conserved` read; an unused zenith angle in `gfun_direct`; and in `soil_unknown_from_theta` a test
+  for Campbell layers that no Campbell layer reaches. `SE_START` repeated `SE_MIN` and is gone.
+  Every output but two is unchanged bit for bit. The ledger residuals `resid_energy_site` and
+  `resid_water_site` move at round-off (at most 2.1×10⁻¹² J m⁻² and 1.3×10⁻¹⁷ kg m⁻², against closures
+  of ~10⁻⁷ J m⁻² and ~10⁻¹³ kg m⁻²): with `store0` and `store1` no longer written, the optimised build
+  adds the residual's terms in another order. Restoring the two writes alone restores the old bits.
 
 ## [0.3.5] — 2026-10-17
 

@@ -15,8 +15,9 @@
 program test_numerics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
-   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update, ascending_order, &
-                                 conserved, ROUNDOFF_RTOL, pair_mean
+   use meds_numerics,     only : quadratic_smaller_root, adaptive_step_update, ascending_order, conserved, &
+                                 pair_mean
+   use meds_linear_algebra, only : thomas_solve
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
                                  budget_rtol_flux, last_check_closed
@@ -169,6 +170,7 @@ contains
 
    !----- conserved: the tolerance scales with the terms' absolute sum, not the net total. -------!
    subroutine test_conserved()
+      real(wp), parameter :: ROUNDOFF_RTOL = 1.0e-12_wp   ! the round-off of summing a stored amount
       real(wp) :: nan_v
       !----- A dry canopy whose film total is a tiny NEGATIVE number, reordered. Relative to the  !
       !      net total floored at 1e-30 this round-off (3.7e-40) would fail.                     !

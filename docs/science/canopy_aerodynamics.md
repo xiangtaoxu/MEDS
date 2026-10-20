@@ -217,7 +217,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 
 | Symbol | Config key | Meaning |
 |---|---|---|
-| $`\kappa`$ | — (`vonkarman`, `meds_constants`) | von Karman constant (0.4) |
+| $`\kappa`$ | — (`von_karman`, `meds_constants`) | von Karman constant (0.4) |
 | $`c_{z0}`$ | `z0m_ratio` | roughness / canopy height (0.13) |
 | $`c_d`$ | `d_ratio` | displacement / canopy height (0.63) |
 | $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, also the $`z_{0m}`$ floor [m] |

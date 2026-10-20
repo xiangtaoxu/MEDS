@@ -18,7 +18,7 @@
 program test_column_co2
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, kgCday_2_umols
+   use meds_constants,        only : mmdry, kgcday_2_umols
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    implicit none
 

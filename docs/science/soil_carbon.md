@@ -193,7 +193,7 @@ Heterotrophic respiration must reach the canopy air **sub-daily**, but the pools
 object: once per day the fast driver copies the patch's pools into the fast state, and that **frozen**
 copy is what every sub-step respires, through the very kernel the daily step's bookkeeping uses. Each
 sub-step, `heterotrophic_respiration_matrix` evaluates eq. (2) on it and converts $`R_h`$ to
-$`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgCday_2_umols` for the canopy-air CO₂ twin; the driver
+$`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the canopy-air CO₂ twin; the driver
 integrates $`\xi_j`$ into the per-patch `xi_accum` (the $`\xi^{\mathrm{int}}`$ of eq. (5)) and $`R_h`$
 into `rh_fast_accum`, both reset once per slow step; and the daily `soil_carbon_step` is the **sole
 writer** of the real pools, debiting them with exactly that $`\xi^{\mathrm{int}}`$.

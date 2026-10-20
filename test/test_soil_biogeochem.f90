@@ -23,7 +23,7 @@ program test_soil_biogeochem
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : yr_day, kgCday_2_umols
+   use meds_constants,        only : yr_day, kgcday_2_umols
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_patch_state_vars,   only : soil_carbon_t

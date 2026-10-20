@@ -24,13 +24,13 @@
 !                                                                                          !
 ! All compute kernels take bare scalars/arrays + small derived types and link only the shared,             !
 ! state and config libraries; they are `pure` where the arithmetic allows and                              !
-! allocation/LAPACK-free (the active-block solve is a hand-rolled small dense Gaussian                     !
-! elimination), so they are GPU-eligible.                                                                  !
+! allocation/LAPACK-free (the active-block solve is meds_linear_algebra's dense LU), so they are            !
+! GPU-eligible.                                                                                            !
 !==========================================================================================!
 module meds_soil_biogeochem
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : yr_day, tiny_num, kgCday_2_umols
-   use meds_numerics,         only : matrix_exp
+   use meds_constants,        only : yr_day, tiny_num, kgcday_2_umols
+   use meds_linear_algebra,   only : matrix_exp, lu_factor, lu_solve
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_patch_state_vars,   only : soil_carbon_t
@@ -262,7 +262,7 @@ contains
    !  This is ALSO what the fast loop respires into the canopy air, per sub-step, against the frozen    !
    !  daily pool -- which is what makes the day's atmospheric Rh equal the daily step's pool debit by    !
    !  construction (the rh_seam_gap contract). Callers crossing into the CAS must convert with           !
-   !  kgCday_2_umols; patch_heterotrophic_respiration is where that happens.                             !
+   !  kgcday_2_umols; patch_heterotrophic_respiration is where that happens.                             !
    !  docs/science/soil_carbon.md eq. (2) and §7.                                                        !
    !=======================================================================================!
    pure function heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools) result(rh)
@@ -394,8 +394,8 @@ contains
    !  solve, X_ss = -(A*xi_bar*K)^{-1} * B*I_bar, over the ACTIVE sub-block {j: K_j>0} ONLY -- the full !
    !  n_soil_pool system is SINGULAR (inert pools have K=0). Inert pools are held at their conserved      !
    !  value (0: no litter input, no transfer into them in the default scheme). The reduced block is       !
-   !  solved by a small dense Gaussian elimination with partial pivoting (subsumes the triangular          !
-   !  default-block back-substitution; handles the non-triangular scheme-5 back-transfers). LAPACK-free.    !
+   !  solved by LU factorisation with partial pivoting (meds_linear_algebra), which handles the            !
+   !  non-triangular scheme-5 back-transfers as well as the default block.                                 !
    !=======================================================================================!
    pure subroutine solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, opts, pools_ss)
       real(wp),            intent(in)  :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool)
@@ -418,10 +418,11 @@ contains
       real(wp), intent(out) :: x_ss(n_soil_pool)
       real(wp)    :: xik(n_soil_pool), m_red(n_soil_pool, n_soil_pool), b_red(n_soil_pool)
       real(wp)    :: x_red(n_soil_pool)
-      integer(ik) :: idx(n_soil_pool), na, i, j
+      integer(ik) :: idx(n_soil_pool), piv(n_soil_pool), na, i, j
+      logical     :: ok
 
       xik   = xi_bar * k_diag                             ! diag(xi*K)
-      m_red = 0.0_wp                                      ! zero the full store (unused tail read by gaussian_solve)
+      m_red = 0.0_wp
       b_red = 0.0_wp
       idx   = 0_ik
       !----- active index set {j: K_j > 0}. -------------------------------------------------------!
@@ -439,7 +440,10 @@ contains
             m_red(i, j) = a_mat(idx(i), idx(j)) * xik(idx(j))
          end do
       end do
-      call gaussian_solve(m_red, b_red, x_red, na)
+      x_red = b_red
+      call lu_factor(m_red(1:na, 1:na), piv(1:na), na, ok)
+      if (.not. ok) error stop 'meds_soil_biogeochem: the steady-state soil carbon system is singular'
+      call lu_solve(m_red(1:na, 1:na), piv(1:na), na, x_red(1:na))
       !----- scatter back (inert pools stay 0). ---------------------------------------------------!
       x_ss = 0.0_wp
       do j = 1_ik, na
@@ -474,66 +478,12 @@ contains
       diag%rh = heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools)
    end subroutine soil_carbon_diagnostics
 
-   !=======================================================================================!
-   !  SMALL DENSE LINEAR SOLVE  M*x = b  (n <= n_soil_pool) by Gaussian elimination with partial      !
-   !  pivoting. Allocation-free, LAPACK-free, branch-light -> GPU-safe. Subsumes the triangular         !
-   !  default-block (back-substitution is the pivot-free special case) and the non-triangular scheme-5   !
-   !  block. Diagonal dominance of -xi*K over the weak transfers keeps it well-conditioned.               !
-   !=======================================================================================!
-   pure subroutine gaussian_solve(m_in, b_in, x, n)
-      integer(ik), intent(in)  :: n
-      real(wp),    intent(in)  :: m_in(n_soil_pool, n_soil_pool), b_in(n_soil_pool)
-      real(wp),    intent(out) :: x(n_soil_pool)
-      real(wp)    :: a(n_soil_pool, n_soil_pool), b(n_soil_pool), factor, piv, tmp
-      integer(ik) :: i, j, k, prow
-
-      x = 0.0_wp
-      a = m_in
-      b = b_in
-      do k = 1_ik, n
-         !----- partial pivot: largest |a(:,k)| on/below the diagonal. -----------------------------!
-         prow = k
-         piv  = abs(a(k, k))
-         do i = k + 1_ik, n
-            if (abs(a(i, k)) > piv) then
-               piv  = abs(a(i, k))
-               prow = i
-            end if
-         end do
-         if (prow /= k) then
-            do j = 1_ik, n
-               tmp        = a(k, j)
-               a(k, j)    = a(prow, j)
-               a(prow, j) = tmp
-            end do
-            tmp     = b(k)
-            b(k)    = b(prow)
-            b(prow) = tmp
-         end if
-         !----- eliminate below the pivot. --------------------------------------------------------!
-         do i = k + 1_ik, n
-            factor = a(i, k) / sign(max(abs(a(k, k)), tiny_num), a(k, k))
-            do j = k, n
-               a(i, j) = a(i, j) - factor * a(k, j)
-            end do
-            b(i) = b(i) - factor * b(k)
-         end do
-      end do
-      !----- back substitution. -------------------------------------------------------------------!
-      do i = n, 1_ik, -1_ik
-         tmp = b(i)
-         do j = i + 1_ik, n
-            tmp = tmp - a(i, j) * x(j)
-         end do
-         x(i) = tmp / sign(max(abs(a(i, i)), tiny_num), a(i, i))
-      end do
-   end subroutine gaussian_solve
 
    !=======================================================================================!
    !  EXPM daily step via an AUGMENTED matrix exponential. For constant operator M = A*diag(xi_int*K)  !
    !  and constant day-input u, the exact evolution of [X;1] is exp(Aug)*[X0;1] with                    !
    !  Aug = [[M, u],[0, 0]] -- this handles the constant input WITHOUT inverting M (safe for the         !
-   !  singular inert-pool rows). exp is the shared meds_numerics::matrix_exp (scaling-and-squaring +      !
+   !  singular inert-pool rows). exp is meds_linear_algebra's matrix_exp (scaling and squaring +           !
    !  Taylor series) on the (n+1)x(n+1) augmented matrix (fixed size, allocation-free, GPU-safe).         !
    !  Mass closes by construction since rh_today is reported as litter_in - dC_pool.                      !
    !  docs/science/soil_carbon.md eq. (6).                                                                !

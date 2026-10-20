@@ -24,7 +24,7 @@ module meds_soil_energy
    use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
    use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid,                        &
                                      soil_thermal_cond, soil_heat_cap_vol
-   use meds_numerics,         only : thomas_solve
+   use meds_linear_algebra,   only : thomas_solve
    implicit none
    private
 

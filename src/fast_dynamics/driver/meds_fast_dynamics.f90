@@ -20,9 +20,9 @@
 !==========================================================================================!
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std, &
+   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgc, grav, cp_air, latent_heat_vap, day_sec, p_std, &
                                      par_w_2_umol,                                                            &
-                                     stefan
+                                     stefan_boltzmann
    use meds_numerics,         only : ascending_order
    use meds_config,           only : meds_config_t
    use meds_soil_column_config, only : soil_column_params, top_soil_psi
@@ -810,10 +810,10 @@ contains
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
             do j = 1_ik, ncoh
                i = i0 + j - 1_ik
-               poly%cohort%gpp_accum(i)       = poly%cohort%gpp_accum(i)       + gpp_coh(j)       * cfg%dt_fast * umol_2_kgC
-               poly%cohort%leaf_resp_accum(i) = poly%cohort%leaf_resp_accum(i) + leaf_resp_coh(j) * cfg%dt_fast * umol_2_kgC
-               poly%cohort%stem_resp_accum(i) = poly%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgC
-               poly%cohort%root_resp_accum(i) = poly%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
+               poly%cohort%gpp_accum(i)       = poly%cohort%gpp_accum(i)       + gpp_coh(j)       * cfg%dt_fast * umol_2_kgc
+               poly%cohort%leaf_resp_accum(i) = poly%cohort%leaf_resp_accum(i) + leaf_resp_coh(j) * cfg%dt_fast * umol_2_kgc
+               poly%cohort%stem_resp_accum(i) = poly%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgc
+               poly%cohort%root_resp_accum(i) = poly%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgc
                !----- The hours of light at the cohort's top over the slow step, the phenology light   !
                !      cue's driver: this step counts when its PAR exceeds the PFT's par_min, so each      !
                !      cohort sees its own clouds and its own place in the canopy. ----------------------!
@@ -1256,7 +1256,7 @@ contains
       row(PA_SW_UP_NIR)    = sw_up_nir
       row(PA_SW_UP)        = sw_up_vis + sw_up_nir
       row(PA_LW_UP)        = lw_up
-      row(PA_SKIN_TEMP)    = sqrt(sqrt(max(lw_up, 0.0_wp) / stefan))
+      row(PA_SKIN_TEMP)    = sqrt(sqrt(max(lw_up, 0.0_wp) / stefan_boltzmann))
       row(PA_USTAR)        = ustar
       row(PA_GGNET)        = ggnet
       row(PA_ROUGH)        = rough

@@ -29,7 +29,7 @@ program test_spac_solver
    use, intrinsic :: iso_fortran_env, only : int64
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : grav_head, rho_h2o, pi, tiny_num, n_soil_layer_max
-   use meds_arrowhead_solve, only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
+   use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance,      &
                                 spac_jacobian_error, POND, WOOD, LEAF
    use meds_hydr_lib,      only : xylem_max_conductance, rhizosphere_conductance, build_hydro_table

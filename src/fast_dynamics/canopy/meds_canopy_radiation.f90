@@ -20,7 +20,7 @@
 !==========================================================================================!
 module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
-   use meds_constants,    only : stefan, tiny_num, lnexp_max
+   use meds_constants,    only : stefan_boltzmann, tiny_num, lnexp_max
    use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_flux, alloc_rad_pft_optics, &
                                  ground_optics_state_t
    use meds_optics_lib,   only : N_LEAF_CLASS, beta_lidf, leaf_bf, gfun_direct, scatter_pair
@@ -150,7 +150,7 @@ contains
       do b = 1_ik, n_band
          if (has_emission(b)) then
             grnd_refl(b)  = 1.0_wp - surf%soil_emiss
-            grnd_emiss(b) = surf%soil_emiss * stefan * surf%soil_temp ** 4
+            grnd_emiss(b) = surf%soil_emiss * stefan_boltzmann * surf%soil_temp ** 4
          else
             grnd_refl(b)  = surf%soil_albedo(b)
             grnd_emiss(b) = 0.0_wp
@@ -364,7 +364,7 @@ contains
                                   leaf_frac(1:ncoh))
 
          if (optics%has_emission(b)) then
-            emission(1:ncoh) = stefan * canopy_temp(1:ncoh) ** 4     ! blackbody source sigma*T^4
+            emission(1:ncoh) = stefan_boltzmann * canopy_temp(1:ncoh) ** 4     ! blackbody source sigma*T^4
          else
             emission(1:ncoh) = 0.0_wp
          end if

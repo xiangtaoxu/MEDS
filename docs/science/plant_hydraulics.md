@@ -131,7 +131,19 @@ uniform-grid **lookup table** $G(r)$ over $`0\le r\le 8`$ and read by linear int
 path (the closed forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$
 is a runtime scale. It is built panel by panel, so it rises monotonically, and past $r = 8$ the
 tail $`\int u^{-a}\,du`$ is added analytically, so the potential keeps approaching its asymptote even
-for a leaf dried far beyond the vulnerability curve.
+for a leaf dried far beyond the vulnerability curve. The quadrature sums 7-point Gauss–Legendre
+panels no wider than 0.25 in $r$: a single rule over a long range misses the integrand's fall near
+$u = 1$ (at $r$ = 7800 and $a$ = 4 it gives about 10⁻⁶ instead of 1.11), which would hand the xylem
+of a desiccated leaf a negative conductance.
+
+**In the flow.** Above zero potential nothing is embolised, so the sapflow takes $\Phi(\psi) = \psi$
+there. When the two ends of eq. (9) are within 10⁻⁶ MPa, the conductance and its slopes are taken at
+their midpoint, where the difference quotient loses its digits. The slopes in the solver's Jacobian
+are those of exactly the $\Phi$ computed (the retained fraction for the closed forms, the slope of
+the table's linear piece inside the table, the tail's beyond it), so the Jacobian is the derivative
+of the flow that moves the water. A fully embolised cohort keeps a 10⁻¹² share of $k_{\text{cond}}$,
+and a plant with no sapwood yet a $k_{\text{cond}}$ of 10⁻¹⁵ kg s⁻¹ MPa⁻¹, so the leaves of every
+cohort stay joined to its wood and its equations stay solvable.
 
 ## 4. Root water uptake
 

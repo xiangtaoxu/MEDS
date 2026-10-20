@@ -1,26 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_pedotransfer -- a soil layer's water-retention curve and saturated conductivity     !
-! from what soil maps report: texture, organic carbon, CEC, pH, bulk density and coarse    !
-! fragments. One pedotransfer function, closed-form and elemental:                         !
-!                                                                                          !
-!   * the retention curve of the fine earth (< 2 mm) is Hodnett & Tomasella (2002,         !
-!     Geoderma 108:155) Table 8: van Genuchten theta_sat, theta_res, alpha and n, fitted   !
-!     to tropical soils -- ED2's soil_hydro_scheme 2;                                      !
-!   * the saturated conductivity of the fine earth is Ottoni et al. (2019, J. Hydrol.      !
-!     575:1345): a power of the water that drains between saturation and -33 kPa, as ED2   !
-!     uses it with that curve;                                                             !
-!   * coarse fragments (> 2 mm) hold no water, so the layer's curve is the fine earth's    !
-!     scaled to the fine earth's share of the volume; they slow the flow by Saxton & Rawls !
-!     (2006, SSSA J. 70:1569) eq. 22.                                                      !
-!                                                                                          !
-! The result is the van Genuchten-Mualem curve meds_water_retention evaluates. The science !
-! page has the equations and the tests behind the choice: docs/science/soil_biophysics.md  !
-! §Hydraulic parameters from soil texture.                                                 !
-!                                                                                          !
-! The layer's thermal properties come from the same texture, by CLM5's mineral-soil        !
-! formulas (soil_thermal_from_texture; docs/science/soil_biophysics.md §The column from   !
-! the soil maps).                                                                          !
+! meds_pedotransfer -- a soil layer's hydraulic and thermal properties from what soil maps !
+! report: texture, organic carbon, CEC, pH, bulk density and coarse fragments. The fine    !
+! earth's van Genuchten curve is Hodnett & Tomasella (2002) and its saturated conductivity !
+! Ottoni et al. (2019); coarse fragments hold no water and slow the flow (Saxton & Rawls   !
+! 2006). The thermal properties are CLM5's mineral-soil formulas. The equations, and the   !
+! tests behind the choice, are docs/science/soil_biophysics.md §Hydraulic parameters from  !
+! soil texture and §The column from the soil maps, eqs. (6)-(9).                           !
 !==========================================================================================!
 module meds_pedotransfer
    use meds_kinds,           only : wp
@@ -43,7 +29,7 @@ module meds_pedotransfer
       real(wp) :: coarse_frag  = 0.0_wp   !< [% volume]    coarse fragments (> 2 mm) in the layer
    end type soil_texture_t
 
-   real(wp), parameter :: kpa_per_mpa      = 1000.0_wp
+   real(wp), parameter :: kpa_per_mpa      = 1000.0_wp                !< [kPa/MPa]
 
    !----- Ottoni et al. (2019): Ks = a (theta_sat - theta(-33 kPa))^b, Ks in m/day. -------!
    real(wp), parameter :: psi_33kpa        = -0.033_wp / grav_head   !< [m] -33 kPa as water head
@@ -52,9 +38,9 @@ module meds_pedotransfer
    !----- Density of the mineral grains and of the fragments (Saxton & Rawls 2006). -------!
    real(wp), parameter :: particle_density = 2.65_wp                 !< [g/cm3]
 
-   !----- CLM5 mineral soil (Lawrence & Slater 2008; CLM5 technote 2.7.2): the solids'    !
-   !      conductivity and heat capacity per sand and clay, and the dry soil's conductivity !
-   !      from its bulk density (Johansen 1975), with grains of 2700 kg/m3. ------------------!
+   !----- CLM5 mineral soil (Lawrence & Slater 2008; CLM5 technote 2.7.2): the solids'     !
+   !      conductivity and heat capacity per sand and clay, and the dry soil's             !
+   !      conductivity from its bulk density (Johansen 1975); grains are 2700 kg/m3. ------!
    real(wp), parameter :: k_quartz         = 8.80_wp     !< [W/m/K]    sand grains
    real(wp), parameter :: k_clay_mineral   = 2.92_wp     !< [W/m/K]    clay grains
    real(wp), parameter :: cv_sand          = 2.128e6_wp  !< [J/m3/K]   sand grains
@@ -63,13 +49,9 @@ module meds_pedotransfer
 
 contains
 
-   !---------------------------------------------------------------------------------------!
-   ! The van Genuchten curve and Ks of one soil layer (docs/science/soil_biophysics.md     !
-   ! eqs. (6)-(8)). Hodnett & Tomasella fit every parameter as a polynomial in percent,    !
-   ! with sand, silt, clay and organic carbon in %, CEC in cmol(c)/kg and bulk density in  !
-   ! g/cm3. Alpha comes out per kPa and is turned into per metre of water head, the unit   !
-   ! of MEDS's soil potential.                                                             !
-   !---------------------------------------------------------------------------------------!
+   !----- The van Genuchten curve and Ks of a soil layer (docs/science/soil_biophysics.md  !
+   !      eqs. (6)-(8)). Alpha comes out per kPa and is turned into per metre of water     !
+   !      head, the unit of the model's soil potential. -----------------------------------!
    elemental subroutine soil_hydraulics_from_texture(texture, theta_sat, theta_res, vg_alpha, vg_n, ksat)
       type(soil_texture_t), intent(in)  :: texture
       real(wp),             intent(out) :: theta_sat   !< [m3/m3] water content at saturation, per layer volume
@@ -90,22 +72,20 @@ contains
                           + 0.007_wp*clay**2 - 0.014_wp*sand*silt) / 100.0_wp)
          theta_sat = (81.799_wp + 0.099_wp*clay - 31.42_wp*bulk_density + 0.018_wp*cec + 0.451_wp*ph     &
                       - 0.0005_wp*sand*clay) / 100.0_wp
-         !----- The regression dips below zero on sandy, alkaline soils of little CEC,     !
-         !      which hold no residual water; ED2 floors it the same way. -----------------!
+         !----- The regression dips below zero on sandy, alkaline, low-CEC soils, which    !
+         !      hold no residual water. ---------------------------------------------------!
          theta_res = max((22.733_wp - 0.164_wp*sand + 0.235_wp*cec - 0.831_wp*ph + 0.0018_wp*clay**2  &
                           + 0.0026_wp*sand*clay) / 100.0_wp, 0.0_wp)
 
-         !----- Ks of the fine earth from the water that drains between saturation and     !
-         !      -33 kPa (Ottoni et al. 2019). MEDS's curve saturates at psi = 0, so        !
-         !      that is where the drainable water starts. ---------------------------------!
+         !----- Ks of the fine earth from the water that drains between saturation, at     !
+         !      psi = 0 on this curve, and -33 kPa (Ottoni et al. 2019). ------------------!
          theta_33  = soil_theta_from_psi(SOIL_RETENTION_VG, psi_33kpa, theta_sat, theta_res, vg_alpha, vg_n)
          drainable = max(theta_sat - theta_33, tiny_num)
          ksat      = ottoni_ks_coef / day_sec * drainable**ottoni_ks_exp
 
-         !----- Coarse fragments: the layer holds the fine earth's water in the fine       !
-         !      earth's share of its volume. Ks follows Saxton & Rawls (2006) eq. 22,      !
-         !      written for the fragments' share of the mass, which eq. 19 gives from      !
-         !      their share of the volume. ------------------------------------------------!
+         !----- Coarse fragments hold no water and slow the flow: Saxton & Rawls (2006)    !
+         !      eq. 22, on the fragments' share of the mass, which eq. 19 gives from their !
+         !      share of the volume. ------------------------------------------------------!
          rock_volume          = texture%coarse_frag / 100.0_wp
          matrix_density_ratio = bulk_density / particle_density
          rock_mass = rock_volume / max(matrix_density_ratio*(1.0_wp - rock_volume) + rock_volume, tiny_num)
@@ -115,14 +95,9 @@ contains
       end associate
    end subroutine soil_hydraulics_from_texture
 
-   !---------------------------------------------------------------------------------------!
-   ! The thermal properties of one soil layer, by CLM5's mineral-soil formulas             !
-   ! (docs/science/soil_biophysics.md eq. (9)): the solids' conductivity and heat capacity !
-   ! weight sand and clay (silt is left out, as in CLM5), and the dry soil's conductivity  !
-   ! follows the bulk density the porosity implies. The heat capacity is per m3 of layer   !
-   ! and holds the solids only: MEDS counts the water and ice itself. theta_sat is the     !
-   ! layer's porosity, as soil_hydraulics_from_texture gives it.                           !
-   !---------------------------------------------------------------------------------------!
+   !----- The thermal properties of one soil layer by CLM5's mineral-soil formulas         !
+   !      (docs/science/soil_biophysics.md eq. (9)). The heat capacity holds the solids    !
+   !      only, since the model counts the water and ice itself. --------------------------!
    elemental subroutine soil_thermal_from_texture(texture, theta_sat, k_solid, k_dry, dry_cvol)
       type(soil_texture_t), intent(in)  :: texture
       real(wp),             intent(in)  :: theta_sat  !< [m3/m3] porosity of the layer

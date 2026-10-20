@@ -33,7 +33,7 @@ program test_fast_loop
    use meds_output_types,        only : output_buffers_t
    use meds_diag_vars,           only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, PY_PAR_DIFFUSE, PY_RHO_AIR, &
                                         PY_WIND, PA_CAS_TEMP, PA_SKIN_TEMP, PA_LW_UP
-   use meds_constants,           only : stefan, n_soil_layer_max
+   use meds_constants,           only : stefan_boltzmann, n_soil_layer_max
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -290,7 +290,7 @@ program test_fast_loop
                site_cas = site_cas + poly%patch%area(ip) * ob%fast_patch(PA_CAS_TEMP, ip, nsub)
                !----- The skin temperature is the black-body temperature of the longwave up        !
                !      (docs/science/diagnostics.md §4, The skin temperature). ---------------------!
-               skin = skin .and. abs(stefan * ob%fast_patch(PA_SKIN_TEMP, ip, nsub)**4                  &
+               skin = skin .and. abs(stefan_boltzmann * ob%fast_patch(PA_SKIN_TEMP, ip, nsub)**4        &
                                      - ob%fast_patch(PA_LW_UP, ip, nsub)) <= 1.0e-9_wp * ob%fast_patch(PA_LW_UP, ip, nsub)
             end do
             call check(skin, 'the skin temperature radiates the patch''s longwave up as a black body')

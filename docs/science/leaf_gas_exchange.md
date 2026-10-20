@@ -85,6 +85,11 @@ The three rates are combined into $A_g$ either as a sharp $\min(A_c,A_j,A_p)$ (`
 two nested smoothing quadratics (`COLIM_QUADRATIC`, the same `quadratic_smaller_root` used for $J$).
 Then $A = A_g - R_d$.
 
+**Temperature.** $`K_c`$, $`K_o`$ and $`\Gamma^*`$ scale from 25 °C by the plain Arrhenius form, with
+Bernacchi et al. (2001)'s activation energies ($`f_{\mathrm{Arr}}`$ in eq. (3)). $`V_{cmax}`$,
+$`J_{max}`$, TPU, $`R_d`$ and the C4 $`k_p`$ take the form `[leaf_physiology].temp_response_form`
+selects, plain or peaked (`meds_temp_response`; `plant_respiration.md` eq. (5)).
+
 ### The co-limitation curvatures are not $`\theta_J`$
 
 Each pathway has **its own pair** of co-limitation curvatures, and neither is `theta_j`:

@@ -94,6 +94,10 @@ Each store is solved in the unknown in which its curve is best behaved:
   for $0<h<\delta$, $h-\delta/2$ above. An empty pond holds nothing and its head follows the soil
   below.
 
+The read-offs that report a store's potential from its water, for output and at setup, floor a soil
+layer's $S_e$ at 10⁻⁹ and a tissue's $R$ at 10⁻⁴, so a reported potential stays finite. The
+solver's curves have no floor; it keeps every $S_e$ and $R$ above zero itself.
+
 ## 3. The solve
 
 Over one `dt_fast`, **implicit Euler on sub-steps**. A sub-step of length $h$ solves the water
@@ -106,7 +110,7 @@ balance of every store at its end,
 with $F_i$ the net inflow, by **Newton** in the unknowns $\tau$:
 
 - The Newton matrix $`J = \partial W/\partial\tau\,/h - \partial F/\partial\tau`$ is solved by eliminating
-  each cohort onto the core (`meds_arrowhead_solve`, a block arrowhead system): each cohort's 2×2 block is inverted in closed
+  each cohort onto the core (`meds_linear_algebra`, a block arrowhead system): each cohort's 2×2 block is inverted in closed
   form, its rank-one Schur update folded into the core, and the core (pond + layers) LU-factored. The
   cost grows as cohorts × layers, not as (cohorts + layers)³.
 - A Newton step takes no soil layer or tissue more than 90 % of the way to empty, and moves no dry
@@ -229,7 +233,7 @@ the pond takes the mixture; the canopy film keeps the rain's valuation, since it
 | Concept | Routine |
 |---|---|
 | the solver: assembly, Newton, sub-steps, commit | `meds_spac_solver` (`numerics/`): `spac_allocate`, `spac_set_state`, `spac_advance` |
-| the linear solve (block arrowhead, Schur complement) | `meds_arrowhead_solve`: `arrowhead_allocate`, `arrowhead_factor`, `arrowhead_solve` |
+| the linear solve (block arrowhead, Schur complement) | `meds_linear_algebra`: `arrowhead_allocate`, `arrowhead_factor`, `arrowhead_solve` |
 | the stores' water relations in their unknowns | `meds_water_retention`: `soil_water_relations`, `tissue_water_relations`, `pond_water_relations` and their inverses; `VG_PORE_CONNECTIVITY` |
 | plant flows | `meds_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`, `supply_limited_transpiration`, `smooth_max0` |
 | soil flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |

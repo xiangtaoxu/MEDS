@@ -23,7 +23,7 @@
 ! in each store's own unknown tau: a soil layer's saturation (dry) or potential (wet), a         !
 ! tissue's relative water content, the pond's head. Its linear systems are block arrowheads --   !
 ! the soil nodes bordered by the cohorts -- solved by eliminating each cohort onto the soil      !
-! (meds_arrowhead_solve). Newton steps are bounded so no store is driven past empty, and         !
+! (meds_linear_algebra). Newton steps are bounded so no store is driven past empty, and         !
 ! backtracked until the balance improves. A sub-step's error is the implicit-Euler local         !
 ! error, estimated from the change in the inflows across the sub-step and filtered twice         !
 ! through the Newton matrix so a stiff exchange that has already settled does not read as        !
@@ -43,7 +43,7 @@ module meds_spac_solver
                                     rwc_from_psi
    use meds_hydr_lib,        only : root_water_uptake_profile, xylem_sapflow, supply_limited_transpiration
    use meds_soil_water,      only : soil_water_flux, ground_evaporation_rate, bottom_flux
-   use meds_arrowhead_solve, only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
+   use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_soil_types,      only : chydro_forcing_t
    use meds_soil_column_config, only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t
