@@ -155,7 +155,7 @@ meds_fortran_flags(meds_share)
 #      model state or a kernel.                                                                    #
 file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
-#      The keys a config may hold are the ones the two reference configs list (meds_config_keys):  #
+#      The keys a config may hold are the ones the two reference configs list (meds_config_check): #
 #      written into an include at configure time, and re-written when either reference changes.   #
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/meds_config_keys.cmake)
 meds_write_config_keys(${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml

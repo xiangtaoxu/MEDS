@@ -17,7 +17,7 @@
 module meds_config_io
    use meds_kinds,      only : wp, ik
    use meds_allometry_lib, only : HEIGHT_POWER, HEIGHT_CHAVE
-   use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
+   use meds_config,     only : meds_config_t, derive_parameters,                                &
                                INIT_CENSUS, INIT_RESTART, INTEG_ARK, INTEG_RK45,                &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_config,     only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
@@ -32,7 +32,7 @@ module meds_config_io
                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, &
-                                   METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
+                                   METAVG_END, METAVG_BEGIN,                                     &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
@@ -53,7 +53,8 @@ module meds_config_io
                               toml_int, toml_real, toml_table_count,                        &
                                toml_logical, toml_string, toml_real_array, toml_record_reset,  &
                                toml_is_array, toml_string_array
-   use meds_config_keys, only : key_report_t, check_config_keys, MAIN_KEYS, PFT_KEYS, SITE_GROUND_KEYS
+   use meds_config_check, only : key_report_t, check_config_keys, check_key_use, validate_config,     &
+                                 MAIN_KEYS, PFT_KEYS, SITE_GROUND_KEYS
    implicit none
    private
 
@@ -62,11 +63,12 @@ module meds_config_io
 
    integer(ik), parameter :: MAXPFT  = 64_ik    !< largest PFT count the array buffers handle
    integer,     parameter :: MAXMISS = 256       !< largest missing-key list
+   integer,     parameter :: NAME_LEN = 16       !< longest selector name
 
-   !----- Accumulator of required keys that were absent (the presence map). ----------------!
+   !----- Accumulator of required keys that were absent or unreadable (the presence map). -----!
    type :: keymiss_t
-      integer(ik)       :: n = 0_ik
-      character(len=72) :: key(MAXMISS) = ''
+      integer(ik)        :: n = 0_ik
+      character(len=200) :: key(MAXMISS) = ''
    end type keymiss_t
 
 contains
@@ -152,22 +154,65 @@ contains
       end if
    end subroutine req_dur
 
-   subroutine req_stomatal_model(t, key, mode, m)   ! stomatal-model string -> SM_* mode
+   !----- A selector: a string key naming one of `names`, read into the matching code of `codes`.  !
+   !      Absent, a required one is recorded missing and an optional one keeps `out`. A name not in   !
+   !      the list is recorded with the names it may take, or, with no presence map to record it in   !
+   !      (the stand-alone block readers), stops the run. ------------------------------------------!
+   subroutine req_choice(t, key, names, codes, out, m)
       type(toml_table_t), intent(in)    :: t
-      character(len=*),   intent(in)    :: key
-      integer(ik),        intent(out)   :: mode
+      character(len=*),   intent(in)    :: key, names(:)
+      integer(ik),        intent(in)    :: codes(:)
+      integer(ik),        intent(inout) :: out
       type(keymiss_t),    intent(inout) :: m
-      character(len=64) :: s
-      mode = SM_MEDLYN
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'medlyn')
-      select case (trim(s))
-      case ('leuning') ; mode = SM_LEUNING
-      case ('medlyn')  ; mode = SM_MEDLYN
-      case ('katul')   ; mode = SM_KATUL
-      case default     ; call note_missing(m, key)   ! present but unrecognized -> hard error
-      end select
-   end subroutine req_stomatal_model
+      if (.not. toml_has(t, key)) then
+         call note_missing(m, key)
+         return
+      end if
+      call read_choice(t, key, names, codes, out, m)
+   end subroutine req_choice
+
+   subroutine opt_choice(t, key, names, codes, out, m)
+      type(toml_table_t),        intent(in)    :: t
+      character(len=*),          intent(in)    :: key, names(:)
+      integer(ik),               intent(in)    :: codes(:)
+      integer(ik),               intent(inout) :: out
+      type(keymiss_t), optional, intent(inout) :: m
+      character(len=:), allocatable :: kept
+      integer :: i
+      if (.not. toml_has(t, key)) then
+         !----- Absent: `out` stands, and the parameter record lists its name as the default. -----!
+         kept = ''
+         do i = 1, size(codes)
+            if (codes(i) == out) kept = trim(names(i))
+         end do
+         kept = toml_string(t, key, kept)
+         return
+      end if
+      call read_choice(t, key, names, codes, out, m)
+   end subroutine opt_choice
+
+   subroutine read_choice(t, key, names, codes, out, m)
+      type(toml_table_t),        intent(in)    :: t
+      character(len=*),          intent(in)    :: key, names(:)
+      integer(ik),               intent(in)    :: codes(:)
+      integer(ik),               intent(inout) :: out
+      type(keymiss_t), optional, intent(inout) :: m
+      character(len=:), allocatable :: s, allowed
+      integer :: i
+      s = trim(toml_string(t, key, ''))
+      do i = 1, size(names)
+         if (s == trim(names(i))) then
+            out = codes(i)
+            return
+         end if
+      end do
+      allowed = trim(names(1))
+      do i = 2, size(names)
+         allowed = allowed//' | '//trim(names(i))
+      end do
+      if (.not. present(m)) error stop 'load_meds_config: '//key//' = "'//s//'" is not one of '//allowed
+      call note_missing(m, key//' = "'//s//'" is not one of '//allowed)
+   end subroutine read_choice
 
 
    !=======================================================================================!
@@ -191,19 +236,12 @@ contains
    subroutine load_soil_column(tm, c)
       type(toml_table_t),         intent(in)    :: tm
       type(soil_column_config_t), intent(inout) :: c
-      character(len=64) :: str
       !----- A layer_bottoms list without a depth sets the column to end at its last bottom. ---!
       call toml_real_array(tm, 'soil.layer_bottoms', c%layer_bottoms, c%n_layer_bottoms)
       if (c%n_layer_bottoms > 0_ik) c%depth = c%layer_bottoms(c%n_layer_bottoms)
       c%depth       = toml_real(tm, 'soil.depth',       c%depth)
-      if (toml_has(tm, 'soil.retention')) then
-         str = toml_string(tm, 'soil.retention', '')
-         select case (trim(str))
-         case ('van_genuchten') ; c%retention = SOIL_RETENTION_VG
-         case ('campbell')      ; c%retention = SOIL_RETENTION_CAMPBELL
-         case default ; error stop 'load_meds_config: soil.retention must be van_genuchten|campbell'
-         end select
-      end if
+      call opt_choice(tm, 'soil.retention', [character(len=NAME_LEN) :: 'van_genuchten', 'campbell'],   &
+                      [SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL], c%retention)
       c%theta_sat   = toml_real(tm, 'soil.theta_sat',   c%theta_sat)
       c%theta_res   = toml_real(tm, 'soil.theta_res',   c%theta_res)
       c%ksat        = toml_real(tm, 'soil.ksat',        c%ksat)
@@ -238,17 +276,17 @@ contains
       type(toml_table_t), intent(in)    :: tm
       integer(ik),        intent(inout) :: bc
       real(wp),           intent(inout) :: drain_factor
-      character(len=64) :: str
+      integer(ik), parameter :: FREE_DRAIN = 1_ik, BEDROCK = 2_ik, AQUIFER = 3_ik
+      integer(ik) :: choice
       if (.not. toml_has(tm, 'soil.water_bottom_bc')) return
-      str = toml_string(tm, 'soil.water_bottom_bc', '')
+      choice = FREE_DRAIN
+      call opt_choice(tm, 'soil.water_bottom_bc', [character(len=NAME_LEN) :: 'free_drain', 'bedrock', 'aquifer'], &
+                      [FREE_DRAIN, BEDROCK, AQUIFER], choice)
       !----- free_drain and bedrock are the drainage boundary's two ends, f = 1 and f = 0 !
       !      (docs/science/soil_biophysics.md §Boundary conditions). ---------------------!
-      select case (trim(str))
-      case ('free_drain') ; bc = SOIL_BC_DRAIN ; drain_factor = 1.0_wp
-      case ('bedrock')    ; bc = SOIL_BC_DRAIN ; drain_factor = 0.0_wp
-      case ('aquifer')    ; bc = SOIL_BC_AQUIFER
-      case default ; error stop 'load_meds_config: soil.water_bottom_bc must be free_drain|aquifer|bedrock'
-      end select
+      bc = merge(SOIL_BC_AQUIFER, SOIL_BC_DRAIN, choice == AQUIFER)
+      if (choice == FREE_DRAIN) drain_factor = 1.0_wp
+      if (choice == BEDROCK)    drain_factor = 0.0_wp
    end subroutine load_water_bottom_bc
 
    !----- The soil heat's options: the ground's thermal bottom boundary from [soil], the budget  !
@@ -256,15 +294,8 @@ contains
    subroutine load_energy_opts(tm, e)
       type(toml_table_t),  intent(in)    :: tm
       type(energy_opts_t), intent(inout) :: e
-      character(len=64) :: str
-      if (toml_has(tm, 'soil.thermal_bottom_bc')) then
-         str = toml_string(tm, 'soil.thermal_bottom_bc', '')
-         select case (trim(str))
-         case ('geothermal') ; e%bottom_bc = ENERGY_BC_GEOTHERMAL
-         case ('dirichlet')  ; e%bottom_bc = ENERGY_BC_DIRICHLET
-         case default ; error stop 'load_meds_config: soil.thermal_bottom_bc must be geothermal|dirichlet'
-         end select
-      end if
+      call opt_choice(tm, 'soil.thermal_bottom_bc', [character(len=NAME_LEN) :: 'geothermal', 'dirichlet'], &
+                      [ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET], e%bottom_bc)
       e%deep_temp   = toml_real(tm, 'soil.deep_temp',   e%deep_temp)
       e%deep_depth  = toml_real(tm, 'soil.deep_depth',  e%deep_depth)
       e%atol        = toml_real(tm, 'fast.soil_energy_budget_atol', e%atol)
@@ -324,13 +355,14 @@ contains
       a%t_ref_air        = toml_real(tm, 'aerodynamics.t_ref_air',        a%t_ref_air)
    end subroutine load_aero_cfg
 
-   subroutine load_soil_carbon_opts(tm, s)              ! [soil_carbon] -> decomposition selectors + rates
+   subroutine load_soil_carbon_opts(tm, s, m)           ! [soil_carbon] -> decomposition selectors + rates
       type(toml_table_t),  intent(in)    :: tm
       type(decomp_opts_t), intent(inout) :: s
-      s%decomp_scheme = merge(DECOMP_SCHEME_CENTURY5, DECOMP_SCHEME_ED2,                           &
-                          trim(toml_string(tm, 'soil_carbon.decomp_scheme', 'ed2')) == 'century5')
-      s%step_solver   = merge(DECOMP_STEP_EXPM, DECOMP_STEP_EULER,                                 &
-                          trim(toml_string(tm, 'soil_carbon.step_solver', 'euler')) == 'expm')
+      type(keymiss_t),     intent(inout) :: m
+      call opt_choice(tm, 'soil_carbon.decomp_scheme', [character(len=NAME_LEN) :: 'ed2', 'century5'],     &
+                      [DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5], s%decomp_scheme, m)
+      call opt_choice(tm, 'soil_carbon.step_solver', [character(len=NAME_LEN) :: 'euler', 'expm'],          &
+                      [DECOMP_STEP_EULER, DECOMP_STEP_EXPM], s%step_solver, m)
       s%k_fast   = toml_real(tm, 'soil_carbon.k_fast',   s%k_fast)
       s%k_struct = toml_real(tm, 'soil_carbon.k_struct', s%k_struct)
       s%k_micr   = toml_real(tm, 'soil_carbon.k_micr',   s%k_micr)
@@ -359,91 +391,6 @@ contains
       s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
    end subroutine load_soil_carbon_opts
 
-   subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TEMP_RESPONSE_* mode
-      type(toml_table_t), intent(in)    :: t
-      character(len=*),   intent(in)    :: key
-      integer(ik),        intent(out)   :: mode
-      type(keymiss_t),    intent(inout) :: m
-      character(len=64) :: s
-      mode = TEMP_RESPONSE_PEAKED
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'peaked')
-      select case (trim(s))
-      case ('arrhenius') ; mode = TEMP_RESPONSE_ARRHENIUS
-      case ('peaked')    ; mode = TEMP_RESPONSE_PEAKED
-      case default       ; call note_missing(m, key)   ! present but unrecognized -> hard error
-      end select
-   end subroutine req_temp_response
-
-   subroutine req_colimitation(t, key, mode, m)     ! co-limitation string -> COLIM_* mode
-      type(toml_table_t), intent(in)    :: t
-      character(len=*),   intent(in)    :: key
-      integer(ik),        intent(out)   :: mode
-      type(keymiss_t),    intent(inout) :: m
-      character(len=64) :: s
-      mode = COLIM_QUADRATIC
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'quadratic')
-      select case (trim(s))
-      case ('min')       ; mode = COLIM_MIN
-      case ('quadratic') ; mode = COLIM_QUADRATIC
-      case default       ; call note_missing(m, key)   ! present but unrecognized -> hard error
-      end select
-   end subroutine req_colimitation
-
-   !----- [forcing] string-enum mappers. ----------------------------------------------------!
-   !----- The two file formats are named after their families, matched exactly. A retired           !
-   !      spelling stops with the name that replaced it, so an old config gets the fix rather       !
-   !      than a list of missing keys. -------------------------------------------------------------!
-   subroutine req_met_backend(t, key, mode, m)      ! "ED_default" | "ED_ERA5land" | "const"
-      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
-      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
-      character(len=64) :: s
-      mode = MET_BACKEND_ED_DEFAULT
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'ED_default')
-      select case (trim(s))
-      case ('ED_default')  ; mode = MET_BACKEND_ED_DEFAULT
-      case ('ED_ERA5land') ; mode = MET_BACKEND_ED_ERA5LAND
-      case ('const')       ; mode = MET_BACKEND_CONST
-      case ('netcdf')
-         error stop 'load_meds_config: forcing.format = "netcdf" is now "ED_default"; rename it'
-      case ('era5land')
-         error stop 'load_meds_config: forcing.format = "era5land" is now "ED_ERA5land"; rename it'
-      case default         ; call note_missing(m, key)
-      end select
-   end subroutine req_met_backend
-
-   subroutine req_avg_convention(t, key, mode, m)   ! "instant" | "end" | "begin" | "center"
-      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
-      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
-      character(len=64) :: s
-      mode = METAVG_END
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'end')
-      select case (trim(s))
-      case ('instant') ; mode = METAVG_INSTANT
-      case ('end')     ; mode = METAVG_END
-      case ('begin')   ; mode = METAVG_BEGIN
-      case ('center')  ; mode = METAVG_CENTER
-      case default     ; call note_missing(m, key)
-      end select
-   end subroutine req_avg_convention
-
-   subroutine req_sw_partition(t, key, mode, m)     ! "passthrough" | "clearidx" | "weiss_norman"
-      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
-      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
-      character(len=64) :: s
-      mode = SWPART_CLEARIDX
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'clearidx')
-      select case (trim(s))
-      case ('passthrough')  ; mode = SWPART_PASSTHROUGH
-      case ('clearidx')     ; mode = SWPART_CLEARIDX
-      case ('weiss_norman') ; mode = SWPART_WEISS_NORMAN
-      case default          ; call note_missing(m, key)
-      end select
-   end subroutine req_sw_partition
 
    !----- [allometry].height_allometry, one for every PFT or one per PFT: "power" (the        !
    !      default) or "chave2014", the log-quadratic, whose PFTs take Chave's coefficients        !
@@ -452,7 +399,7 @@ contains
       type(toml_table_t), intent(in) :: t ; type(meds_config_t), intent(inout) :: cfg
       integer(ik), intent(in) :: npft ; type(keymiss_t), intent(inout) :: m
       character(len=16) :: forms(MAXPFT)
-      integer(ik) :: nform, pf
+      integer(ik) :: nform, pf, k
       real(wp)    :: chave_e
       forms = 'power'
       if (toml_has(t, 'allometry.height_allometry')) then
@@ -465,14 +412,13 @@ contains
       end if
       associate (allom => cfg%pft%allom)
          do pf = 1_ik, npft
-            select case (trim(forms(pf)))
-            case ('power')     ; allom(pf)%height_form = HEIGHT_POWER
-            case ('chave2014') ; allom(pf)%height_form = HEIGHT_CHAVE
-            case ('gmm')
-               error stop 'load_meds_config: allometry.height_allometry = "gmm" is gone: fit the '// &
-                          'log-quadratic, "chave2014" with chave_a, chave_b and chave_c, to the heights'
-            case default       ; call note_missing(m, 'allometry.height_allometry')
-            end select
+            k = int(findloc([character(len=16) :: 'power', 'chave2014'], forms(pf), dim=1), ik)
+            if (k == 0_ik) then
+               call note_missing(m, 'allometry.height_allometry = "'//trim(forms(pf))//                 &
+                                    '" is not one of power | chave2014')
+               return
+            end if
+            allom(pf)%height_form = merge(HEIGHT_POWER, HEIGHT_CHAVE, k == 1_ik)
          end do
          if (any(allom(1:npft)%height_form == HEIGHT_CHAVE)) then
             call opt_pa_bcast(t, 'allometry.chave_a',   allom%chave_a,   npft, m)
@@ -481,11 +427,7 @@ contains
             call opt_pa_bcast(t, 'allometry.chave_rse', allom%chave_rse, npft, m)
             !----- E is the site's, the same for every PFT: from [maps].chave_e_map at each       !
             !      polygon's cell, or set here. ------------------------------------------------!
-            if (len_trim(cfg%maps%chave_e_map) > 0) then
-               if (toml_has(t, 'allometry.chave_e'))                                               &
-                  error stop 'load_meds_config: allometry.chave_e comes from maps.chave_e_map; '// &
-                             'remove it from the PFT file'
-            else
+            if (len_trim(cfg%maps%chave_e_map) == 0) then
                call req_r(t, 'allometry.chave_e', chave_e, m)
                allom(1:npft)%chave_e = chave_e
             end if
@@ -493,207 +435,112 @@ contains
       end associate
    end subroutine opt_height_allometry
 
-   subroutine req_lwdown_source(t, key, mode, m)    ! "file" | "synthesize"
-      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
-      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
-      character(len=64) :: s
-      mode = LW_FILE
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'file')
-      select case (trim(s))
-      case ('file')       ; mode = LW_FILE
-      case ('synthesize') ; mode = LW_SYNTHESIZE
-      case default        ; call note_missing(m, key)
-      end select
-   end subroutine req_lwdown_source
-
-   subroutine req_start_clamp(t, key, mode, m)      ! "error" | "hold"
-      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
-      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
-      character(len=64) :: s
-      mode = CLAMP_ERROR
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'error')
-      select case (trim(s))
-      case ('error') ; mode = CLAMP_ERROR
-      case ('hold')  ; mode = CLAMP_HOLD
-      case default   ; call note_missing(m, key)
-      end select
-   end subroutine req_start_clamp
-
-   subroutine req_grid_match(t, key, mode, m)       ! "explicit" | "nearest"
-      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
-      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
-      character(len=64) :: s
-      mode = GRIDMATCH_EXPLICIT
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'explicit')
-      select case (trim(s))
-      case ('explicit') ; mode = GRIDMATCH_EXPLICIT
-      case ('nearest')  ; mode = GRIDMATCH_NEAREST
-      case default      ; call note_missing(m, key)
-      end select
-   end subroutine req_grid_match
 
    !----- Load the [forcing]/[site] block (docs/science/forcing.md). GATED on                     !
    !      forcing.forcing_on (a DEFAULTED read, so a config with no [forcing] block runs on       !
-   !      constant forcing). When ON, the rest are REQUIRED (the no-silent-defaults rule). -------!
+   !      constant forcing). When ON, the rest are REQUIRED (the no-silent-defaults rule). The     !
+   !      source, the location and the switches pick which keys apply; check_key_use refuses the   !
+   !      rest. ------------------------------------------------------------------------------------!
    subroutine load_forcing_config(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t),     intent(inout) :: m
+      real(wp)    :: gamma_month(12)
+      integer(ik) :: nout
       cfg%forcing = forcing_config_t()                                  ! Ithaca/ERA5-Land defaults
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! opt-in gate (defaulted)
       if (.not. cfg%forcing%forcing_on) return
-      call req_met_backend  (t, 'forcing.format',         cfg%forcing%backend,               m)
-      !----- The source picks its own keys. The archive (format = "ED_ERA5land";                  !
-      !      docs/science/forcing.md §1) finds the site's cell itself and takes its orography     !
-      !      from the static file, so the keys that name a file, a grid slot or a grid            !
-      !      elevation would parse and do nothing there: they are rejected rather than            !
-      !      ignored. ----------------------------------------------------------------------------!
+      call req_choice(t, 'forcing.format', [character(len=NAME_LEN) :: 'ED_default', 'ED_ERA5land', 'const'],    &
+                      [MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, MET_BACKEND_CONST], cfg%forcing%backend, m)
+      !----- The archive (format = "ED_ERA5land"; docs/science/forcing.md §1) finds the site's cell  !
+      !      and its orography itself; a forcing file is named, with its grid slot. -----------------!
       if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
-         call req_s         (t, 'forcing.data_path',       cfg%forcing%data_path,             m)
+         call req_s(t, 'forcing.data_path', cfg%forcing%data_path, m)
          !----- A region's polygons sit on their cells, so no site-to-cell distance exists. ------!
          if (cfg%run_mode /= RUN_MODE_REGION)                                                     &
-            call req_r      (t, 'forcing.max_distance_km', cfg%forcing%max_distance_km,       m)
+            call req_r(t, 'forcing.max_distance_km', cfg%forcing%max_distance_km, m)
          cfg%forcing%file_template = toml_string(t, 'forcing.file_template', '')
          cfg%forcing%static_file   = toml_string(t, 'forcing.static_file',   '')
-         if (toml_has(t, 'forcing.path') .or. toml_has(t, 'forcing.grid_index') .or.               &
-             toml_has(t, 'forcing.grid_match') .or. toml_has(t, 'site.grid_elevation'))            &
-            error stop 'load_meds_config: forcing.path, forcing.grid_index, forcing.grid_match and '// &
-                       'site.grid_elevation do not apply to forcing.format = "ED_ERA5land" (the archive '// &
-                       'finds the site cell and its elevation itself); remove them'
       else
-         call req_s         (t, 'forcing.path',           cfg%forcing%path,                  m)
-         call req_i         (t, 'forcing.grid_index',     cfg%forcing%grid_index,            m)
-         call req_grid_match(t, 'forcing.grid_match',     cfg%forcing%grid_match,            m)
+         call req_s(t, 'forcing.path',       cfg%forcing%path,       m)
+         call req_i(t, 'forcing.grid_index', cfg%forcing%grid_index, m)
+         call req_choice(t, 'forcing.grid_match', [character(len=NAME_LEN) :: 'explicit', 'nearest'],           &
+                         [GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST], cfg%forcing%grid_match, m)
       end if
-      call req_dur          (t, 'forcing.timestep',       cfg%forcing%dt_forcing,            m)
-      call req_avg_convention(t, 'forcing.avg_convention', cfg%forcing%avg_convention,       m)
-      call req_sw_partition (t, 'forcing.sw_partition',   cfg%forcing%sw_partition,          m)
-      call req_lwdown_source(t, 'forcing.lwdown_source',  cfg%forcing%lwdown_source,         m)
-      !----- Longwave-synthesis parameters (docs/science/forcing.md §11), OPTIONAL: they only     !
-      !      bite when lwdown_source is "synthesize", so a file-longwave config is not made       !
-      !      to supply them. ---------------------------------------------------------------------!
-      if (toml_has(t, 'forcing.lw_clear_form')) then
-         select case (trim(toml_string(t, 'forcing.lw_clear_form', '')))
-         case ('brutsaert') ; cfg%forcing%lw_clear_form = LW_CLEAR_BRUTSAERT
-         case ('idso')      ; cfg%forcing%lw_clear_form = LW_CLEAR_IDSO
-         case default ; error stop 'load_meds_config: forcing.lw_clear_form must be brutsaert|idso'
-         end select
-      end if
+      call req_dur(t, 'forcing.timestep', cfg%forcing%dt_forcing, m)
+      !----- Only the end- and begin-stamped conventions have a disaggregation (forcing.md §5). ----!
+      call req_choice(t, 'forcing.avg_convention', [character(len=NAME_LEN) :: 'end', 'begin'],                &
+                      [METAVG_END, METAVG_BEGIN], cfg%forcing%avg_convention, m)
+      call req_choice(t, 'forcing.sw_partition',                                                     &
+                      [character(len=NAME_LEN) :: 'passthrough', 'clearidx', 'weiss_norman'],         &
+                      [SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN], cfg%forcing%sw_partition, m)
+      call req_choice(t, 'forcing.lwdown_source', [character(len=NAME_LEN) :: 'file', 'synthesize'],           &
+                      [LW_FILE, LW_SYNTHESIZE], cfg%forcing%lwdown_source, m)
+      !----- Longwave-synthesis parameters (docs/science/forcing.md §11), optional. ---------------!
+      call opt_choice(t, 'forcing.lw_clear_form', [character(len=NAME_LEN) :: 'brutsaert', 'idso'],            &
+                      [LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO], cfg%forcing%lw_clear_form, m)
       cfg%forcing%lw_cloud_a = toml_real(t, 'forcing.lw_cloud_a', cfg%forcing%lw_cloud_a)
-      call req_start_clamp  (t, 'forcing.start_clamp',    cfg%forcing%start_clamp,           m)
-      call req_l            (t, 'forcing.recycle',        cfg%forcing%recycle,               m)
-      !----- The recycle WINDOW is declared, not inferred (see forcing_config_t). Required only    !
-      !      when recycling is on, so a single-pass run needs neither key. -------------------------!
+      call req_choice(t, 'forcing.start_clamp', [character(len=NAME_LEN) :: 'error', 'hold'],                  &
+                      [CLAMP_ERROR, CLAMP_HOLD], cfg%forcing%start_clamp, m)
+      call req_l(t, 'forcing.recycle', cfg%forcing%recycle, m)
+      !----- The recycle WINDOW is declared, not inferred (docs/science/forcing.md §9). -----------!
       if (cfg%forcing%recycle) then
-         call req_date      (t, 'forcing.recycle_start',  cfg%forcing%recycle_start,         m)
-         call req_date      (t, 'forcing.recycle_end',    cfg%forcing%recycle_end,           m)
+         call req_date(t, 'forcing.recycle_start', cfg%forcing%recycle_start, m)
+         call req_date(t, 'forcing.recycle_end',   cfg%forcing%recycle_end,   m)
       end if
-      !----- CO2 (docs/science/forcing.md §12): one source for every backend, never the met      !
-      !      file. A DEFAULTED read ("const"). The key of the other mode would parse and do      !
-      !      nothing, so it is rejected. --------------------------------------------------------!
-      select case (trim(toml_string(t, 'forcing.co2_source', 'const')))
-      case ('const')
-         cfg%forcing%co2_source = CO2_SOURCE_CONST
-         call req_r         (t, 'forcing.co2_const',      cfg%forcing%co2_const,             m)
-         if (toml_has(t, 'forcing.co2_file'))                                                     &
-            error stop 'load_meds_config: forcing.co2_file needs forcing.co2_source = "file"; remove it'
-      case ('file')
-         cfg%forcing%co2_source = CO2_SOURCE_FILE
-         call req_s         (t, 'forcing.co2_file',       cfg%forcing%co2_file,              m)
-         if (toml_has(t, 'forcing.co2_const'))                                                    &
-            error stop 'load_meds_config: forcing.co2_const does not apply to forcing.co2_source = '// &
-                       '"file" (the file gives the CO2); remove it'
-      case default
-         error stop 'load_meds_config: forcing.co2_source must be "const" or "file"'
-      end select
-      !----- The location. A region's polygons each take theirs from their cell (the centre,        !
-      !      the static orography), so the [site] location keys would parse and do nothing          !
-      !      there: they are rejected, like forcing.max_distance_km. -------------------------------!
-      if (cfg%run_mode == RUN_MODE_REGION) then
-         if (toml_has(t, 'site.latitude') .or. toml_has(t, 'site.longitude') .or.                  &
-             toml_has(t, 'site.elevation') .or. toml_has(t, 'forcing.max_distance_km'))            &
-            error stop 'load_meds_config: site.latitude, site.longitude, site.elevation and '//     &
-                       'forcing.max_distance_km do not apply to [run].mode = "region" (each '//     &
-                       'polygon sits at its cell centre, at the cell''s orography); remove them'
+      !----- CO2 (docs/science/forcing.md §12): one source for every backend, never the met file. ---!
+      call opt_choice(t, 'forcing.co2_source', [character(len=NAME_LEN) :: 'const', 'file'],                   &
+                      [CO2_SOURCE_CONST, CO2_SOURCE_FILE], cfg%forcing%co2_source, m)
+      if (cfg%forcing%co2_source == CO2_SOURCE_CONST) then
+         call req_r(t, 'forcing.co2_const', cfg%forcing%co2_const, m)
       else
-         call req_r         (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
-         call req_r         (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
-         call req_r         (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
+         call req_s(t, 'forcing.co2_file', cfg%forcing%co2_file, m)
+      end if
+      !----- The location: a region's polygons each take theirs from their cell. -----------------!
+      if (cfg%run_mode /= RUN_MODE_REGION) then
+         call req_r(t, 'site.latitude',  cfg%forcing%latitude_deg,  m)
+         call req_r(t, 'site.longitude', cfg%forcing%longitude_deg, m)
+         call req_r(t, 'site.elevation', cfg%forcing%elevation_m,   m)
       end if
       !----- The forcing's own vertical frame (docs/science/forcing.md §8). ---------------------!
-      call req_r            (t, 'forcing.tq_height',      cfg%forcing%tq_height,             m)
-      call req_r            (t, 'forcing.wind_height',    cfg%forcing%wind_height,           m)
-      if (toml_has(t, 'forcing.height_above')) then
-         select case (trim(toml_string(t, 'forcing.height_above', '')))
-         case ('zero_plane') ; cfg%forcing%height_above = HEIGHT_ABOVE_ZERO_PLANE
-         case ('ground')     ; cfg%forcing%height_above = HEIGHT_ABOVE_GROUND
-         case default ; error stop 'load_meds_config: forcing.height_above must be "zero_plane" or "ground"'
-         end select
-      else
-         call note_missing(m, 'forcing.height_above')
-      end if
-      if (toml_has(t, 'forcing.wind_exposure')) then
-         select case (trim(toml_string(t, 'forcing.wind_exposure', '')))
-         case ('open_terrain')
-            cfg%forcing%wind_exposure = WIND_EXPOSURE_OPEN_TERRAIN
-            call req_r      (t, 'forcing.wind_exposure_z0',     cfg%forcing%wind_exposure_z0,     m)
-            call req_r      (t, 'forcing.wind_blending_height', cfg%forcing%wind_blending_height, m)
-         case ('local')
-            cfg%forcing%wind_exposure = WIND_EXPOSURE_LOCAL
-            if (toml_has(t, 'forcing.wind_exposure_z0') .or. toml_has(t, 'forcing.wind_blending_height')) &
-               error stop 'load_meds_config: forcing.wind_exposure_z0 and wind_blending_height apply '// &
-                          'only to forcing.wind_exposure = "open_terrain"; remove them'
-         case default ; error stop 'load_meds_config: forcing.wind_exposure must be "open_terrain" or "local"'
-         end select
-      else
-         call note_missing(m, 'forcing.wind_exposure')
+      call req_r(t, 'forcing.tq_height',   cfg%forcing%tq_height,   m)
+      call req_r(t, 'forcing.wind_height', cfg%forcing%wind_height, m)
+      call req_choice(t, 'forcing.height_above', [character(len=NAME_LEN) :: 'zero_plane', 'ground'],          &
+                      [HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND], cfg%forcing%height_above, m)
+      call req_choice(t, 'forcing.wind_exposure', [character(len=NAME_LEN) :: 'open_terrain', 'local'],        &
+                      [WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL], cfg%forcing%wind_exposure, m)
+      if (cfg%forcing%wind_exposure == WIND_EXPOSURE_OPEN_TERRAIN) then
+         call req_r(t, 'forcing.wind_exposure_z0',     cfg%forcing%wind_exposure_z0,     m)
+         call req_r(t, 'forcing.wind_blending_height', cfg%forcing%wind_blending_height, m)
       end if
       !----- The terrain lapse (docs/science/forcing.md §8, eqs. (13)-(14)): one lapse rate for     !
-      !      the year, or twelve (January .. December). Its two keys are read only when the         !
-      !      lapse is on; with it off they would parse and do nothing, so they are refused. --------!
-      call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
-      if (.not. cfg%forcing%apply_elevation_lapse) then
-         if (toml_has(t, 'site.lapse_rate_tair') .or. toml_has(t, 'site.grid_elevation'))          &
-            error stop 'load_meds_config: site.lapse_rate_tair and site.grid_elevation apply only '// &
-                       'with site.apply_elevation_lapse = true; remove them'
-         return
-      end if
-      if (toml_has(t, 'site.lapse_rate_tair')) then
-         if (index(toml_string(t, 'site.lapse_rate_tair', ''), '[') > 0) then
-            block
-               real(wp)    :: gamma_month(12)
-               integer(ik) :: nout
-               call toml_real_array(t, 'site.lapse_rate_tair', gamma_month, nout)
-               if (nout /= 12_ik) error stop 'load_meds_config: site.lapse_rate_tair takes one value, '// &
-                                             'or a list of twelve (January .. December)'
-               cfg%forcing%lapse_rate_tair = gamma_month
-            end block
+      !      the year, or twelve (January .. December), read only when the lapse is on. -----------!
+      call req_l(t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
+      if (.not. cfg%forcing%apply_elevation_lapse) return
+      if (toml_is_array(t, 'site.lapse_rate_tair')) then
+         call toml_real_array(t, 'site.lapse_rate_tair', gamma_month, nout)
+         if (nout == 12_ik) then
+            cfg%forcing%lapse_rate_tair = gamma_month
          else
-            cfg%forcing%lapse_rate_tair = toml_real(t, 'site.lapse_rate_tair', 0.0_wp)
+            call note_missing(m, 'site.lapse_rate_tair takes one value, or a list of twelve (January .. December)')
          end if
+      else if (toml_has(t, 'site.lapse_rate_tair')) then
+         cfg%forcing%lapse_rate_tair = toml_real(t, 'site.lapse_rate_tair', 0.0_wp)
       else
          call note_missing(m, 'site.lapse_rate_tair')
       end if
       if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                        &
-         call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
+         call req_r(t, 'site.grid_elevation', cfg%forcing%grid_elevation_m, m)
    end subroutine load_forcing_config
 
    !----- [maps] (docs/configuration.md, "Input maps"): the paths of the static maps. The three     !
    !      soil maps go together: the depth map gives the column, the texture and chemistry maps     !
-   !      its layers. Each key the soil maps provide is refused when they are set, so a run         !
-   !      never holds two values for one quantity. -------------------------------------------------!
+   !      its layers. Each key the soil maps provide is refused when they are set (check_key_use),  !
+   !      so a run never holds two values for one quantity. --------------------------------------!
    subroutine load_maps_config(t, cfg)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
-      character(len=*), parameter :: SOIL_MAP_KEYS(15) = [character(len=32) ::                       &
-         'soil.depth', 'soil.layer_bottoms', 'soil.theta_sat', 'soil.theta_res', 'soil.ksat',          &
-         'soil.curve_par_a', 'soil.curve_par_n', 'soil.solid_conductivity', 'soil.dry_conductivity',    &
-         'soil.dry_heat_capacity', 'soil.retention', 'soil.water_bottom_bc', 'soil.deep_temp',          &
-         'soil.deep_depth', 'init.soil_theta']
-      integer(ik) :: i, n_set
+      integer(ik) :: n_set
       cfg%maps%soil_depth_map     = toml_string(t, 'maps.soil_depth_map',     '')
       cfg%maps%soil_texture_map   = toml_string(t, 'maps.soil_texture_map',   '')
       cfg%maps%soil_chemistry_map = toml_string(t, 'maps.soil_chemistry_map', '')
@@ -703,18 +550,12 @@ contains
       if (n_set /= 0_ik .and. n_set /= 3_ik)                                                         &
          error stop 'load_meds_config: [maps] needs soil_depth_map, soil_texture_map and '//       &
                     'soil_chemistry_map together'
-      if (.not. soil_maps_on(cfg%maps)) return
-      do i = 1_ik, size(SOIL_MAP_KEYS, kind=ik)
-         if (toml_has(t, trim(SOIL_MAP_KEYS(i))))                                                     &
-            error stop 'load_meds_config: '//trim(SOIL_MAP_KEYS(i))//' comes from the [maps] '//   &
-                       'soil maps; remove it'
-      end do
    end subroutine load_maps_config
 
    !----- [[sites]] (docs/configuration.md, "Several sites"): the polygon's sites, one table each,   !
    !      after [soil] and [maps]. A table that sets any of [soil]'s column keys gives its site its  !
    !      own ground, [soil]'s values for each key it leaves out; with the soil maps every site      !
-   !      takes the cell's soil, and those keys are refused. Each table is read through a view under !
+   !      takes the cell's soil (check_key_use). Each table is read through a view under            !
    !      [soil]'s names (site_view), so the [soil] readers serve it and the parameter record lists  !
    !      its values with the table as their source. ------------------------------------------------!
    subroutine load_sites(t, cfg, m)
@@ -736,9 +577,6 @@ contains
             s%aspect_deg     = toml_real(v, 'sites.aspect', s%aspect_deg)
             s%census_site_id = toml_int (v, 'sites.census_site_id', s%census_site_id)
             s%own_ground     = toml_has_section(v, 'soil')
-            if (s%own_ground .and. soil_maps_on(cfg%maps))                                          &
-               error stop 'load_meds_config: with the soil maps every [[sites]] table takes the '// &
-                          'cell''s soil; remove its [soil] keys'
             if (s%own_ground) then
                s%soil_column = cfg%soil_column
                call load_soil_column(v, s%soil_column)
@@ -780,24 +618,16 @@ contains
 
    !----- [run].mode and the [region] block (docs/configuration.md, "Regional runs"). The mode      !
    !      is a DEFAULTED read ("site"). In region mode the box is required; the selection rule      !
-   !      and the cell mask default. In site mode a [region] key would parse and do nothing, so     !
-   !      it is rejected. --------------------------------------------------------------------------!
+   !      and the cell mask default. ----------------------------------------------------------------!
    subroutine load_region_config(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t),     intent(inout) :: m
       real(wp)    :: buf(5)
       integer(ik) :: nout
-      select case (trim(toml_string(t, 'run.mode', 'site')))
-      case ('site')   ; cfg%run_mode = RUN_MODE_SITE
-      case ('region') ; cfg%run_mode = RUN_MODE_REGION
-      case default    ; error stop 'load_meds_config: [run].mode must be "site" or "region"'
-      end select
-      if (cfg%run_mode /= RUN_MODE_REGION) then
-         if (toml_has_section(t, 'region'))                                                        &
-            error stop 'load_meds_config: a [region] block needs [run].mode = "region"'
-         return
-      end if
+      call opt_choice(t, 'run.mode', [character(len=NAME_LEN) :: 'site', 'region'],                       &
+                      [RUN_MODE_SITE, RUN_MODE_REGION], cfg%run_mode, m)
+      if (cfg%run_mode /= RUN_MODE_REGION) return
       call toml_real_array(t, 'region.box_nwse', buf, nout)
       if (nout == 4_ik) then
          cfg%region%box_nwse = buf(1:4)
@@ -815,9 +645,11 @@ contains
    !      block writes no diagnostic stream). ALL keys are optional-with-default, so no           !
    !      keymiss is recorded. Per-variable overrides live in the optional                        !
    !      meds_io_config.toml, applied by the driver against the built registry. -----------------!
-   subroutine load_output_config(t, cfg)
+   subroutine load_output_config(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
+      type(keymiss_t),     intent(inout) :: m
+      character(len=NAME_LEN), parameter :: CHUNKS(4) = [character(len=NAME_LEN) :: 'day', 'month', 'year', 'run']
       cfg%output = output_config_t()                                     ! defaults
       cfg%output%enabled = toml_logical(t, 'output.enabled', .false.)    ! opt-in gate (defaulted)
       if (.not. cfg%output%enabled) return
@@ -827,8 +659,8 @@ contains
       cfg%output%cohort_max          = toml_int    (t, 'output.cohort_max',          4096_ik)
       cfg%output%patch_max           = toml_int    (t, 'output.patch_max',           256_ik)
       cfg%output%fast_interval_steps = toml_int    (t, 'output.fast_interval_steps', 4_ik)
-      cfg%output%sync_every = merge(SYNC_NEVER, SYNC_FLUSH,                                        &
-                                    trim(toml_string(t, 'output.sync_every', 'flush')) == 'never')
+      call opt_choice(t, 'output.sync_every', [character(len=NAME_LEN) :: 'flush', 'never'],               &
+                      [SYNC_FLUSH, SYNC_NEVER], cfg%output%sync_every, m)
       !----- Variable-GROUP toggles: the groups that make a run judgeable are on, and the two      !
       !      heavy evaluation groups (radiation, ecophys) off. ------------------------------------!
       cfg%output%grp_on(GRP_STRUCTURE)  = toml_logical(t, 'output.structure',  .true.)
@@ -856,10 +688,14 @@ contains
       cfg%output%freq_on(2) = toml_logical(t, 'output.daily.enabled',   .true.)
       cfg%output%freq_on(3) = toml_logical(t, 'output.monthly.enabled', .true.)
       cfg%output%freq_on(4) = toml_logical(t, 'output.annual.enabled',  .true.)
-      cfg%output%file_chunk(1) = parse_file_chunk(toml_string(t, 'output.fast.file_chunk',    'day'))
-      cfg%output%file_chunk(2) = parse_file_chunk(toml_string(t, 'output.daily.file_chunk',   'month'))
-      cfg%output%file_chunk(3) = parse_file_chunk(toml_string(t, 'output.monthly.file_chunk', 'year'))
-      cfg%output%file_chunk(4) = parse_file_chunk(toml_string(t, 'output.annual.file_chunk',  'run'))
+      call opt_choice(t, 'output.fast.file_chunk',    CHUNKS, [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN],              &
+                      cfg%output%file_chunk(1), m)
+      call opt_choice(t, 'output.daily.file_chunk',   CHUNKS, [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN],              &
+                      cfg%output%file_chunk(2), m)
+      call opt_choice(t, 'output.monthly.file_chunk', CHUNKS, [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN],              &
+                      cfg%output%file_chunk(3), m)
+      call opt_choice(t, 'output.annual.file_chunk',  CHUNKS, [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN],              &
+                      cfg%output%file_chunk(4), m)
    end subroutine load_output_config
 
    !----- Load the per-PFT [phenology] cue params from the PFT file                               !
@@ -910,18 +746,6 @@ contains
       call opt_pa(t, 'phenology.shed_water_sum',          cfg%pft%pheno_shed_water_sum,        npft, m)
       call opt_pa(t, 'phenology.shed_water_sharpness',    cfg%pft%pheno_shed_water_sharpness,  npft, m)
    end subroutine load_phenology_pft
-
-   !----- "day" | "month" | "year" | "run" -> FC_* (unknown -> error stop naming the offender). ---!
-   pure integer(ik) function parse_file_chunk(s) result(fc)
-      character(len=*), intent(in) :: s
-      select case (trim(adjustl(s)))
-      case ('day')   ; fc = FC_DAY
-      case ('month') ; fc = FC_MONTH
-      case ('year')  ; fc = FC_YEAR
-      case ('run')   ; fc = FC_RUN
-      case default   ; error stop 'meds_config_io: unknown output file_chunk (expected day|month|year|run)'
-      end select
-   end function parse_file_chunk
 
    subroutine req_date(t, key, out, m)
       type(toml_table_t), intent(in)  :: t
@@ -1060,7 +884,6 @@ contains
       logical            :: found
       integer(ik)        :: npft, nout, i
       real(wp)           :: buf(MAXPFT)
-      character(len=64)  :: integrator_str
 
       !----- The parameter record is this config's alone: rows from a config loaded earlier in    !
       !      the same process (the Python API runs one after another) would otherwise stay in it. !
@@ -1093,20 +916,9 @@ contains
       cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
       cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
-      !----- Fast-loop TIME integrator: DEFAULTED read, ARK (ESDIRK2) when absent. "split" is        !
-      !      not a scheme (docs/science/numerical_scheme.md §3); a config asking for it is a         !
-      !      HARD ERROR rather than a silent downgrade, because silently running a different         !
-      !      integrator than the file asks for is exactly the kind of thing that invalidates a       !
-      !      long run without anyone noticing. ------------------------------------------------------!
-      integrator_str = trim(toml_string(tm, 'fast.time_integrator', 'ark'))
-      if (integrator_str == 'ark') then
-         cfg%time_integrator = INTEG_ARK
-      else if (integrator_str == 'rk45' .or. integrator_str == 'rk4') then
-         cfg%time_integrator = INTEG_RK45
-      else
-         error stop 'load_meds_config: [fast].time_integrator must be "ark" or "rk45" &
-                    &("split" was retired -- see meds_fast_step)'
-      end if
+      !----- Fast-loop TIME integrator: ARK (ESDIRK2) when absent (docs/science/numerical_scheme.md §3). !
+      call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'ark', 'rk45'],              &
+                      [INTEG_ARK, INTEG_RK45], cfg%time_integrator, miss)
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
       cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
       !----- Error-control selectors (DEFAULTED). ---------------------------------------------!
@@ -1121,13 +933,10 @@ contains
       cfg%mask_soil_heat    = toml_logical(tm, 'fast.mask.soil_heat',  .true.)
       cfg%mask_soil_water   = toml_logical(tm, 'fast.mask.soil_water', .true.)
       cfg%mask_hydraulics   = toml_logical(tm, 'fast.mask.hydraulics', .true.)
-      cfg%step_controller   = merge(CTRL_PI, CTRL_I,                                                  &
-                              trim(toml_string(tm, 'fast.step_controller', 'i')) == 'pi')
-      select case (trim(toml_string(tm, 'fast.error_level', 'adaptive')))
-      case ('fixed', 'l0', 'L0')  ; cfg%error_level = CTRL_L0_FIXED
-      case ('strict', 'l2', 'L2') ; cfg%error_level = CTRL_L2_STRICT
-      case default                ; cfg%error_level = CTRL_L1_ADAPTIVE
-      end select
+      call opt_choice(tm, 'fast.step_controller', [character(len=NAME_LEN) :: 'i', 'pi'],                  &
+                      [CTRL_I, CTRL_PI], cfg%step_controller, miss)
+      call opt_choice(tm, 'fast.error_level', [character(len=NAME_LEN) :: 'fixed', 'adaptive', 'strict'],  &
+                      [CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT], cfg%error_level, miss)
       cfg%ark_dt_init       = toml_real   (tm, 'fast.ark_dt_init',       0.0_wp)
       cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
       cfg%ark_coupled       = toml_logical(tm, 'fast.ark_coupled',       .true.)
@@ -1164,7 +973,7 @@ contains
       cfg%soil_carbon_spinup_labile_soil = toml_real(tm, 'soil_carbon.spinup_labile_soil', 0.0_wp)
       cfg%soil_carbon_spinup_struct_grnd = toml_real(tm, 'soil_carbon.spinup_struct_grnd', 0.0_wp)
       cfg%soil_carbon_spinup_struct_soil = toml_real(tm, 'soil_carbon.spinup_struct_soil', 0.0_wp)
-      call load_soil_carbon_opts(tm, cfg%soil_carbon)
+      call load_soil_carbon_opts(tm, cfg%soil_carbon, miss)
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)
@@ -1218,14 +1027,7 @@ contains
       cfg%init_soil_theta = toml_real(tm, 'init.soil_theta', cfg%init_soil_theta)
       cfg%init_reacclimate_traits = toml_logical(tm, 'init.reacclimate_traits', cfg%init_reacclimate_traits)
 
-      !----- [state]: the restart stream; every diagnostic is [output]'s. A config that spells      !
-      !      the block [io] would parse and do nothing, so it is refused, naming the keys that      !
-      !      replaced it. --------------------------------------------------------------------------!
-      do i = 1_ik, tm%n
-         if (index(tm%key(i), 'io.') == 1)                                                          &
-            error stop 'load_meds_config: the [io] block is now [state]: rename the block, and '//  &
-                       'io.state_interval_years to state.interval_years'
-      end do
+      !----- [state]: the restart stream; every diagnostic is [output]'s. ------------------------!
       call req_s(tm, 'state.output_dir',     cfg%state_output_dir,         miss)
       call req_s(tm, 'state.output_prefix',  cfg%state_output_prefix,      miss)
       call req_l(tm, 'state.write_state',    cfg%state_write_state,        miss)
@@ -1254,12 +1056,15 @@ contains
 
       !----- Diagnostic-aggregation output (opt-in; gated on output.enabled, defaulted false; !
       !      a config with no [output] block emits no diagnostic stream).  ------------------!
-      call load_output_config(tm, cfg)
+      call load_output_config(tm, cfg, miss)
 
       !----- Leaf physiology: model selectors + shared biochemistry (non-PFT). ------------!
-      call req_stomatal_model(tm, 'leaf_physiology.stomatal_model',     cfg%stomatal_model,     miss)
-      call req_temp_response (tm, 'leaf_physiology.temp_response_form', cfg%temp_response_form, miss)
-      call req_colimitation  (tm, 'leaf_physiology.colimitation',       cfg%colimitation,       miss)
+      call req_choice(tm, 'leaf_physiology.stomatal_model', [character(len=NAME_LEN) :: 'leuning', 'medlyn', 'katul'], &
+                      [SM_LEUNING, SM_MEDLYN, SM_KATUL], cfg%stomatal_model, miss)
+      call req_choice(tm, 'leaf_physiology.temp_response_form', [character(len=NAME_LEN) :: 'arrhenius', 'peaked'],   &
+                      [TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED], cfg%temp_response_form, miss)
+      call req_choice(tm, 'leaf_physiology.colimitation', [character(len=NAME_LEN) :: 'min', 'quadratic'],            &
+                      [COLIM_MIN, COLIM_QUADRATIC], cfg%colimitation, miss)
       call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%leaf_use_boundary_layer, miss)
       call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
       call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
@@ -1433,20 +1238,22 @@ contains
       !----- Key check: abort with the full list of the missing required keys and of the keys    !
       !      MEDS does not read (unknown or retired), from both files at once. -----------------!
       if (miss%n > 0_ik) then
-         write(*,'(a,i0,a)') ' meds_config: ', miss%n, ' required parameter(s) missing:'
+         write(*,'(a,i0,a)') ' meds_config: ', miss%n, ' required parameter(s) missing or unreadable:'
          do i = 1_ik, miss%n
             write(*,'(3a)') '   - ', trim(miss%key(i)), ''
          end do
       end if
+      call check_key_use(tm, tp, cfg, unknown)
       if (unknown%n > 0_ik) then
-         write(*,'(a,i0,a)') ' meds_config: ', unknown%n, ' key(s) MEDS does not read:'
+         write(*,'(a,i0,a)') ' meds_config: ', unknown%n, ' key(s) MEDS does not read here:'
          do i = 1_ik, unknown%n
             write(*,'(2a)') '   - ', trim(unknown%line(i))
          end do
-         write(*,'(a)') '   Every key MEDS reads is listed in meds_config_main.toml and meds_config_pft.toml.'
+         write(*,'(a)') '   Every key MEDS reads is listed in meds_config_main.toml and meds_config_pft.toml;'
+         write(*,'(a)') '   CHANGELOG.md lists the keys that were renamed or retired.'
       end if
       if (miss%n > 0_ik .or. unknown%n > 0_ik)                                                     &
-         error stop 'meds_config: the configuration has missing, unknown or retired keys (see above)'
+         error stop 'meds_config: the configuration has missing, unknown or inapplicable keys (see above)'
 
       !----- Install allometry + compute every derived quantity (one consolidation point). -----!
       call derive_parameters(cfg)

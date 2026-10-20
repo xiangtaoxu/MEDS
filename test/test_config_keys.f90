@@ -1,19 +1,25 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_config_keys -- a config may hold only the keys its reference lists.                  !
+! test_config_keys -- a config may hold only the keys its reference lists, and only the    !
+! keys its settings use.                                                                   !
 !                                                                                          !
-! The check (meds_config_keys) reports a retired key with what replaced it, and any other     !
-! unknown key with the listed key it most likely meant: a misspelling, or a key that moved     !
-! section. A key the reference lists only commented out, at its default, is a listed key.     !
+! check_config_keys reports an unknown key with the listed key it most likely meant: a     !
+! misspelling, or a key that moved section. A key the reference lists only commented out,  !
+! at its default, is a listed key. check_key_use reports a listed key the loaded settings  !
+! give nothing to do.                                                                      !
 !==========================================================================================!
 program test_config_keys
-   use meds_kinds,        only : ik
-   use meds_toml,         only : toml_table_t, toml_parse_file
-   use meds_config_keys,  only : key_report_t, check_config_keys, nearest_key, MAIN_KEYS, PFT_KEYS
-   use meds_test_support, only : banner, check
+   use meds_kinds,          only : ik
+   use meds_toml,           only : toml_table_t, toml_parse_file
+   use meds_config,         only : meds_config_t
+   use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
+   use meds_config_check,   only : key_report_t, check_config_keys, check_key_use, nearest_key,     &
+                                   MAIN_KEYS, PFT_KEYS
+   use meds_test_support,   only : banner, check, build_test_config
    implicit none
-   type(toml_table_t) :: t
-   type(key_report_t) :: report
+   type(toml_table_t)  :: t, tp
+   type(key_report_t)  :: report
+   type(meds_config_t) :: cfg
    logical :: ok
    integer :: u
 
@@ -37,7 +43,7 @@ program test_config_keys
    write(u,'(a)') '[state]'
    write(u,'(a)') 'cohort_max = 2048'               ! moved to [output]
    write(u,'(a)') '[output]'
-   write(u,'(a)') 'strict_caps = true'              ! retired
+   write(u,'(a)') 'strict_caps = true'              ! not a key
    close(u)
    call toml_parse_file('test_config_keys.toml', t, ok)
    call check(ok, 'the test config parses')
@@ -46,80 +52,41 @@ program test_config_keys
    call check(index(report%line(1), 'forcing.timestpe') > 0 .and.                                  &
               index(report%line(1), 'did you mean forcing.timestep?') > 0, 'the misspelling is named')
    call check(index(report%line(2), 'did you mean output.cohort_max?') > 0, 'the moved key is named')
-   call check(index(report%line(3), 'output.strict_caps') > 0 .and. index(report%line(3), 'retired') > 0 &
-              .and. index(report%line(3), 'raise the cap') > 0, 'the retired key says what replaced it')
+   call check(index(report%line(3), 'output.strict_caps') > 0 .and.                                &
+              index(report%line(3), 'is not a key MEDS reads') > 0, 'an unknown key is named')
 
    !----- The PFT file is checked against its own list: a main-file key is unknown there. -----!
    report = key_report_t()
    call check_config_keys(t, PFT_KEYS, report)
    call check(report%n == 5_ik, 'every main-file key is unknown to the PFT reference')
 
-   !----- Keys whose feature is gone are refused with what replaced it: the inert above-ground  !
-   !      litter shares and the nitrogen keys of a cycle that is not built. -------------------!
+   !----- A listed key the settings give nothing to do: the forcing file's name with the archive, !
+   !      and a [region] block in a site run. --------------------------------------------------!
    open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
-   write(u,'(a)') '[soil_carbon]'
-   write(u,'(a)') 'n_cycle_on = true'
-   write(u,'(a)') 'agf_fast   = 0.5'
+   write(u,'(a)') '[forcing]'
+   write(u,'(a)') 'path = "met.nc"'
+   write(u,'(a)') '[region]'
+   write(u,'(a)') 'land_fraction_min = 0.5'
    close(u)
    call toml_parse_file('test_config_keys.toml', t, ok)
-   call check(ok, 'the retired-key config parses')
-   report = key_report_t()
-   call check_config_keys(t, MAIN_KEYS, report)
-   call check(report%n == 2_ik, 'both retired soil-carbon keys are reported')
-   call check(index(report%line(1), 'soil_carbon.n_cycle_on') > 0 .and. index(report%line(1), 'retired') > 0 &
-              .and. index(report%line(1), 'ED-MORE') > 0, 'the nitrogen key says the cycle is not built')
-   call check(index(report%line(2), 'soil_carbon.agf_fast') > 0 .and. index(report%line(2), 'retired') > 0 &
-              .and. index(report%line(2), 'f_labile_leaf') > 0, 'the litter share says the litter splits by tissue')
-
-   !----- In the PFT file: the crown-area allometry and the crown fraction, gone with the       !
-   !      closed crown. ----------------------------------------------------------------------!
-   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
+   open(newunit=u, file='test_config_keys_pft.toml', status='replace', action='write')
    write(u,'(a)') '[pft]'
-   write(u,'(a)') 'crown_area_frac = [1.0]'
-   write(u,'(a)') '[allometry]'
-   write(u,'(a)') 'ca_b1 = 0.370'
    close(u)
-   call toml_parse_file('test_config_keys.toml', t, ok)
-   call check(ok, 'the retired PFT-key config parses')
+   call toml_parse_file('test_config_keys_pft.toml', tp, ok)
+   cfg = build_test_config()
+   cfg%forcing%forcing_on = .true.
+   cfg%forcing%backend    = MET_BACKEND_ED_ERA5LAND
    report = key_report_t()
-   call check_config_keys(t, PFT_KEYS, report)
-   call check(report%n == 2_ik, 'both retired crown-area keys are reported')
-   call check(index(report%line(1), 'pft.crown_area_frac') > 0 .and. index(report%line(1), 'retired') > 0 &
-              .and. index(report%line(1), 'closed-crown') > 0, 'the crown fraction says the crowns close')
-   call check(index(report%line(2), 'allometry.ca_b1') > 0 .and. index(report%line(2), 'retired') > 0  &
-              .and. index(report%line(2), 'closed-crown') > 0, 'the crown-area allometry says the crowns close')
-
-   !----- Leaves are parameterized by their turnover rate: the lifespan key, its plasticity slope  !
-   !      and the fine-root switch named after it are refused, each with its conversion. ---------!
-   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
-   write(u,'(a)') '[pft]'
-   write(u,'(a)') 'leaf_lifespan_toc = [2.0]'
-   write(u,'(a)') '[derived]'
-   write(u,'(a)') 'kplastic_llspan = [0.12]'
-   close(u)
-   call toml_parse_file('test_config_keys.toml', t, ok)
-   call check(ok, 'the lifespan-key config parses')
-   report = key_report_t()
-   call check_config_keys(t, PFT_KEYS, report)
-   call check(report%n == 2_ik, 'both retired lifespan keys are reported')
-   call check(index(report%line(1), 'pft.leaf_lifespan_toc') > 0 .and. index(report%line(1), 'retired') > 0 &
-              .and. index(report%line(1), 'leaf_turnover_rate_toc [1/yr] = 1 / the lifespan') > 0,          &
-              'the lifespan key gives the rate as its reciprocal')
-   call check(index(report%line(2), 'derived.kplastic_llspan') > 0 .and. index(report%line(2), 'retired') > 0 &
-              .and. index(report%line(2), 'kplastic_leaf_turnover = -kplastic_llspan') > 0,                 &
-              'the lifespan slope gives the rate''s slope with its sign')
-   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
-   write(u,'(a)') '[trait_dynamics]'
-   write(u,'(a)') 'fineroot_lifespan_plastic = true'
-   close(u)
-   call toml_parse_file('test_config_keys.toml', t, ok)
-   report = key_report_t()
-   call check_config_keys(t, MAIN_KEYS, report)
-   call check(report%n == 1_ik .and. index(report%line(1), 'retired') > 0 .and.                        &
-              index(report%line(1), 'trait_dynamics.fineroot_turnover_plastic') > 0,                   &
-              'the fine-root switch names its new key')
+   call check_key_use(t, tp, cfg, report)
+   call check(report%n == 2_ik, 'both inapplicable keys are reported')
+   call check(index(report%line(1), '[region]') > 0 .and. index(report%line(1), 'mode = "region"') > 0, &
+              'a [region] block in a site run is named')
+   call check(index(report%line(2), 'forcing.path') > 0 .and. index(report%line(2), 'ED_ERA5land') > 0, &
+              'the file key under the archive is named')
 
    open(newunit=u, file='test_config_keys.toml', status='old')
+   close(u, status='delete')
+   open(newunit=u, file='test_config_keys_pft.toml', status='old')
    close(u, status='delete')
    write(*,'(a)') 'test_config_keys: ALL PASSED'
 end program test_config_keys

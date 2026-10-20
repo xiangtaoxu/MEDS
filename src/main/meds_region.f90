@@ -28,8 +28,9 @@ module meds_region
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : day_sec, yr_day
    use meds_numerics,               only : ascending_order
-   use meds_config,                 only : meds_config_t, validate_config, INIT_CENSUS, INIT_RESTART,  &
+   use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART,                   &
                                            RUN_MODE_REGION, soil_maps_on, site_config
+   use meds_config_check,           only : validate_config
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between

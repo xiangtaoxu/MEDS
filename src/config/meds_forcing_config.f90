@@ -17,8 +17,8 @@ module meds_forcing_config
 
    public :: forcing_config_t
    public :: MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND
-   public :: MET_PATH_LEN, ARCHIVE_DT_SEC
-   public :: METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER
+   public :: MET_PATH_LEN, ARCHIVE_DT_SEC, MAX_RECYCLE_YEARS
+   public :: METAVG_END, METAVG_BEGIN, METAVG_CENTER
    public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_CLEARIDX
    public :: LW_FILE, LW_SYNTHESIZE, LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    public :: CLAMP_ERROR, CLAMP_HOLD
@@ -31,6 +31,9 @@ module meds_forcing_config
    !      archive, or a no-file reference-climate box. ------------------------------------------!
    !----- The ED_ERA5land archive's record spacing: hourly, end-stamped. -----------------------!
    real(wp), parameter :: ARCHIVE_DT_SEC = 3600.0_wp        !< [s]
+   !----- Upper bound on the declared forcing recycle window, in whole calendar years: the search  !
+   !      bound of the whole-year test (no met record spans centuries). -------------------------------!
+   integer(ik), parameter :: MAX_RECYCLE_YEARS = 200_ik
    integer(ik), parameter :: MET_BACKEND_CONST       = 0_ik  !< no file: met_forcing_t defaults (reference climate)
    integer(ik), parameter :: MET_BACKEND_ED_DEFAULT  = 1_ik  !< the multi-grid forcing NetCDF (format = "ED_default")
    integer(ik), parameter :: MET_BACKEND_ED_ERA5LAND = 2_ik  !< the monthly ED_ERA5land archive (format = "ED_ERA5land")
@@ -38,7 +41,6 @@ module meds_forcing_config
    integer, parameter :: MET_PATH_LEN = 1024                !< length of every forcing path field
 
    !----- Timestamp semantics of a forcing record (avg_convention; docs/science/forcing.md §5). -!
-   integer(ik), parameter :: METAVG_INSTANT = 0_ik   !< value is instantaneous AT the stamp
    integer(ik), parameter :: METAVG_END     = 1_ik   !< flux mean over the interval ENDING at the stamp (ERA5-Land)
    integer(ik), parameter :: METAVG_BEGIN   = 2_ik   !< mean over the interval BEGINNING at the stamp
    integer(ik), parameter :: METAVG_CENTER  = 3_ik   !< mean over the interval CENTERED on the stamp

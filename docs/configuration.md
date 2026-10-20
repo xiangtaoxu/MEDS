@@ -37,9 +37,13 @@ Two exceptions, both explicit:
 `meds_config_pft.toml`, set or commented out at its default. They are the complete list. A key that
 is not listed in its file's reference stops the run before it starts: the error names every such key
 at once, together with any missing required ones. Each line gives a suggestion:
-- a retired key gets what replaced it;
 - a key that moved section gets its new home (`state.cohort_max` → `output.cohort_max`);
 - a misspelling gets the key it most likely meant.
+
+Renamed and retired keys are listed in [`CHANGELOG.md`](../CHANGELOG.md). A listed key that the run's
+other settings give nothing to do is refused the same way, with the setting that makes it inapplicable:
+`forcing.path` with `format = "ED_ERA5land"`, a `[region]` block in a site run, a soil key the
+`[maps]` provide.
 
 A key that parses and does nothing is worse than one that is absent: `[forcing] dt_forcing = 7200`
 (the key is `timestep`) would otherwise run silently at the file's own spacing. The test
@@ -77,7 +81,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[[sites]]` | A site run's polygon as several sites, one table each: its share, terrain and ground ([Several sites](#several-sites)). |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
-| `[state]` | Restart checkpointing: output directory, prefix, interval. *(The spelling `[io]` is refused.)* |
+| `[state]` | Restart checkpointing: output directory, prefix, interval. |
 
 **`[soil]` is the ground; `[fast]` holds the solvers' settings.** Every property of the ground is in
 one block, whichever solver reads it: the column, its surface and both bottom boundaries. The column
@@ -92,7 +96,6 @@ the residual, produce a silently wrong column rather than a crash.
   shares one depth axis.
 - **Override:** `layer_bottoms = [...]` [m] replaces the list for a measured profile, and the column
   ends at its last bottom unless `depth` cuts it.
-- **Refused keys:** `n_layer` and `grid_growth`.
 - **The science:** [`science/soil_biophysics.md`](science/soil_biophysics.md), "The soil layers".
 
 **The bottom water boundary — `[soil].water_bottom_bc`.** `free_drain` (default), `bedrock` or `aquifer`.
@@ -173,8 +176,7 @@ every PFT, or an array with one value per PFT.
 pressure–volume curves, the xylem's vulnerability (`wood_psi50`, `wood_kexp`), its sapwood specific
 conductivity `wood_kmax` and path factor `vessel_curl`, and the roots (`root_beta`,
 `root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait,
-so `[soil_column].root_beta` is refused, and a main config's `[hydraulics]` key or a `[pft]`
-hydraulic key is refused, naming the PFT file's block.
+so these keys live in the PFT file only.
 
 Wood density is the primary PFT axis. The mortality hazard's parameters, `[pft].mort_gamma`,
 `mort_alpha` and `mort_beta`, ship as Camac et al. (2018)'s power laws in it, so low-density PFTs get a
@@ -189,7 +191,8 @@ PFT, or one per PFT, `["chave2014", "power", "power"]`). `"power"`, the default,
 power law `exp(b1Ht + b2Ht ln dbh)`. `"chave2014"` is the log-quadratic ln H = `chave_a` − E +
 `chave_b` ln dbh + `chave_c` (ln dbh)² + `chave_rse`²/2, taken at its mean as BIOMASS's `retrieveH` does;
 its coefficients default to Chave et al. (2014)'s pantropical fit (0.893, 0.760, −0.0340, 0.243), and a
-site's own heights give a local fit (examples 03 and 05 use one for Barro Colorado Island). E
+site's own heights give a local fit (examples 03 and 05 use one for Barro Colorado Island); the
+`chave_*` keys are refused when no PFT uses `"chave2014"`. E
 (`[allometry].chave_e`, one value) is the site's stress index from its climate (Chave's eq. 6b), the same
 for every PFT: the drier, more seasonal or hotter the site, the larger E and the shorter its trees. With
 `[maps].chave_e_map`, each polygon takes E from its own cell instead, and `chave_e` is refused
@@ -204,15 +207,7 @@ of a top-of-canopy cohort's leaf carbon its background turnover replaces a year,
 `[trait_dynamics].trait_plasticity_on` it slows in shade (`docs/science/plant_traits.md` eq. (1)).
 The light-plasticity slopes, `[pft].kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and
 `kplastic_leaf_turnover`, ship as ED2's fits to Vcmax25 and the turnover rate (Lloyd et al. 2010), from
-`scripts/pft_traits`.
-Three keys named after a leaf lifespan are refused, each with its replacement:
-- `[pft].leaf_lifespan_toc` [yr]: set `leaf_turnover_rate_toc` to its reciprocal (a 2-yr lifespan is
-  a rate of 0.5);
-- `[derived].kplastic_llspan`: `[pft].kplastic_leaf_turnover` is its negative (≤ 0, the rate falls in
-  shade);
-- `[trait_dynamics].fineroot_lifespan_plastic`: `fineroot_turnover_plastic`.
-
-A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.
+`scripts/pft_traits`. A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.
 
 ## Several sites
 
@@ -342,11 +337,6 @@ A checkpoint is raw prognostic state at an instant and a diagnostic record is a 
 two streams are deliberately separate because conflating them is how a restart silently starts from
 a mean.
 
-> **The block is `[state]`, not `[io]`.** It holds only the restart stream, so `io` would name the
-> one output path it does *not* cover. A config that spells it `[io]` is refused at load, with a
-> message naming the keys: the block is `[state]`, and `io.state_interval_years` is
-> `state.interval_years`.
-
 ## The forcing file
 
 `[forcing].forcing_on` turns the meteorological driver on; `[site]` says where the site is.
@@ -366,14 +356,12 @@ useless for science.
   `scripts/prepare_era5/make_forcing_file.py`, or built from flux-tower data by
   `scripts/prepare_flux_tower/make_tower_forcing.py`.
 
-The earlier names, `"netcdf"` and `"era5land"`, are refused with a message naming the new one.
 The file formats, the ERA5-Land and flux-tower preparation, and the recycling rules are documented in
 [`science/forcing.md`](science/forcing.md). Three things to know before writing a config:
 
 - **Every forcing clock is UTC.** A file must carry `time_zone = "UTC"`; the solar geometry takes
   local solar time from `[site].longitude`. Convert a local-time source when you build the file,
-  and shift the output to local time afterwards. There is no `[site].utc_offset` or
-  `apply_solar_longitude`, and both are refused.
+  and shift the output to local time afterwards.
 
 - **The recycle window is declared, never inferred.** If `recycle = true`, then `recycle_start` and
   `recycle_end` are required, and the span must be an exact whole number of calendar years. A
@@ -397,8 +385,6 @@ grows with the stand, and the aerodynamics runs from there ([`science/forcing.md
   with it off; a flux tower measures at the site and runs with it off.
 - **A file may state its heights.** When it carries `tq_height_m`, `wind_height_m` or
   `height_above`, they must agree with `[forcing]`, or the run stops at open.
-- The old `[site].reference_height`, `wind_meas_height`, `apply_wind_profile` and `wind_roughness_z0`
-  are rejected, with a message naming these keys.
 
 **CO₂ is set in `[forcing]`, never by the met file.**
 - **`co2_source = "const"`**, the default, holds `co2_const` for the whole run.
@@ -454,7 +440,7 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   them the volume. A cohort or patch variable is `(time, polygon, cohort)` or `(time, polygon,
   patch)`, its axis as long as the largest live count among the polygons when the file opens;
   `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own count, and the entries past it
-  are the fill value. `[region].detail_polygons` is retired. Once a polygon has failed, the end of
+  are the fill value. Once a polygon has failed, the end of
   the run writes nothing more, so a closed file is never rewritten.
 - **Each polygon's sites, their soils and map inputs in its files.** Every file has a `site` axis
   behind `polygon`, as long as the largest polygon's site count; `n_site (polygon)` gives each
