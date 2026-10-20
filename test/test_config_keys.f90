@@ -12,7 +12,7 @@ program test_config_keys
    use meds_kinds,          only : ik
    use meds_toml,           only : toml_table_t, toml_parse_file
    use meds_config,         only : meds_config_t
-   use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
+   use meds_forcing_opts, only : MET_BACKEND_ED_ERA5LAND
    use meds_config_check,   only : key_report_t, check_config_keys, check_key_use, nearest_key,     &
                                    MAIN_KEYS, PFT_KEYS
    use meds_test_support,   only : banner, check, build_test_config

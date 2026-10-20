@@ -75,8 +75,10 @@ holds one module per block, and the reference config describes each key in a lin
 - **Fortran: the configuration's modules** (#464). `validate_config`, `check_config_keys`,
   `nearest_key` and the key lists are in `meds_config_check`, and `meds_config_keys` is gone.
   `INTEG_*`, `CTRL_*` and `process_mask_t` come from `meds_fast_opts`, `site_spec_t` from
-  `meds_sites_opts`, `MAX_RECYCLE_YEARS` from `meds_forcing_config`, and `DIST_PRIMARY` and
-  `DIST_TREEFALL` from `meds_patch_state_vars`. `snow_cover_fraction` takes the snow roughness.
+  `meds_sites_opts`, `MAX_RECYCLE_YEARS` from `meds_forcing_opts`, and `DIST_PRIMARY` and
+  `DIST_TREEFALL` from `meds_patch_state_vars`. `meds_forcing_config` and `meds_output_config` are
+  `meds_forcing_opts` and `meds_output_opts`, named like the other leaves; their types keep their
+  names. `snow_cover_fraction` takes the snow roughness.
   `BK_*`, `cfg%backend` and `INTERP_COSZ` are gone. The per-block modules are in `src/config/opts/`.
 - **The PFT file's size allometry is per PFT** (#459). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
   `sapwood_area_b1`, `sapwood_area_b2` and `aboveground_frac` move to `[allometry]`, and every

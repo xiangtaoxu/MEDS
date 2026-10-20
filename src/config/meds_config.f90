@@ -20,8 +20,8 @@ module meds_config
    use meds_soil_column_config, only : soil_column_config_t
    use meds_biophysics_opts,    only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    use meds_biogeochem_opts,    only : decomp_opts_t
-   use meds_forcing_config,     only : forcing_config_t
-   use meds_output_config,      only : output_config_t
+   use meds_forcing_opts,       only : forcing_config_t
+   use meds_output_opts,        only : output_config_t
    use meds_region_opts,        only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
    use meds_maps_opts,          only : maps_opts_t, soil_maps_on
    use meds_sites_opts,         only : site_spec_t

@@ -37,7 +37,7 @@ program test_output_roundtrip
    use meds_config,           only : meds_config_t
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
-   use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
+   use meds_output_opts,      only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_registry,  only : manager_alloc
    use meds_output_integrate, only : output_integrate

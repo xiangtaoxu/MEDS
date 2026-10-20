@@ -57,7 +57,7 @@ demography or state layer — so a prescribed driver stays low in the library gr
   testable; the reader turns them into hard errors.
 
 The `[forcing]` and `[site]` config type and all its selector codes live in
-`src/config/opts/meds_forcing_config.f90`, so `meds_config` — the root of the dependency graph — can carry
+`src/config/opts/meds_forcing_opts.f90`, so `meds_config` — the root of the dependency graph — can carry
 them with no back-edge into this library.
 
 ## Two rules worth knowing before you use it

@@ -1,12 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_output_config -- the [output] block (docs/science/diagnostics.md) and the codes it  !
+! meds_output_opts -- the [output] block (docs/science/diagnostics.md) and the codes it    !
 ! uses: temporal tiers (FREQ_*), variable groups (GRP_*), axes (AXIS_*), file chunks       !
 ! (FC_*) and sync (SYNC_*). A config leaf (meds_kinds only), so meds_config carries        !
 ! output_config_t with no edge back to the io layer; the io-only codes (AGG_*, DIM_*) are  !
 ! in meds_output_types.                                                                    !
 !==========================================================================================!
-module meds_output_config
+module meds_output_opts
    use meds_kinds, only : wp, ik
    implicit none
    private
@@ -133,4 +133,4 @@ contains
       end select
    end function freq_letter
 
-end module meds_output_config
+end module meds_output_opts

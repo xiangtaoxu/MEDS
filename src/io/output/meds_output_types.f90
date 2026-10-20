@@ -7,14 +7,14 @@
 ! netCDF-FREE by construction (no meds_netcdf_c): so the stepper edge that references the         !
 ! integrate kernels over these types pulls no C dependency (src/README.md, The library graph).    !
 ! The io-only reduction/axis codes AGG_*/DIM_* live here; the config-shared FREQ_*/GRP_*/FC_*     !
-! live in src/config/meds_output_config. Because the C bindings are NOT visible here, xtype and    !
+! live in src/config/opts/meds_output_opts. Because the C bindings are NOT visible here, xtype and !
 ! the fill/missing sentinels are declared LOCALLY (XTYPE_*, MISSING_*) and mapped to NC_* only in  !
 ! the serializer. The descriptor's design record: MEDS_IO_DESIGN.md §3.                           !
 !==========================================================================================!
 module meds_output_types
    use meds_kinds,         only : wp, ik
    use meds_time,          only : meds_time_t
-   use meds_output_config,      only : N_FREQ
+   use meds_output_opts,        only : N_FREQ
    implicit none
    private
 

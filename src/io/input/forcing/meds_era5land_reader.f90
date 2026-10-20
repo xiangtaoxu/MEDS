@@ -15,7 +15,7 @@ module meds_era5land_reader
    use meds_kinds,           only : wp, sp, ik
    use meds_constants,       only : day_sec
    use meds_time,            only : meds_time_t, days_in_month, seconds_between, time_units_base
-   use meds_forcing_config,  only : MET_PATH_LEN, ARCHIVE_DT_SEC, forcing_config_t
+   use meds_forcing_opts,    only : MET_PATH_LEN, ARCHIVE_DT_SEC, forcing_config_t
    use meds_forcing_types,   only : met_cells_t, met_month_t
    use meds_forcing_kernels, only : great_circle_distance
    use meds_netcdf_c,        only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f, &

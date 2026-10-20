@@ -21,7 +21,7 @@ module meds_config_check
    use meds_pft_params,         only : PATH_C3, PATH_C4
    use meds_soil_column_config, only : soil_texture_layers_t, soil_params_t, soil_column_layers,     &
                                        soil_column_texture, soil_column_params, SOIL_LAYER_TEMPLATE
-   use meds_forcing_config,     only : LW_SYNTHESIZE, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,   &
+   use meds_forcing_opts,       only : LW_SYNTHESIZE, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,   &
                                        WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL, ARCHIVE_DT_SEC, &
                                        CO2_SOURCE_CONST, CO2_SOURCE_FILE, METAVG_END, MAX_RECYCLE_YEARS
    use meds_biophysics_opts,    only : ENERGY_BC_DIRICHLET
