@@ -381,7 +381,7 @@ contains
       y_out%w_surface      = frozen%hydrology%w_surface1
       y_out%w_surface_energy = frozen%hydrology%w_surface_energy1     ! paired with the mass
 
-      !----- PROCESS MASK (process_mask_t, meds_fast_types). The mask must mean the same thing under     !
+      !----- PROCESS MASK (process_mask_t, meds_fast_opts). The mask must mean the same thing under     !
       !      every scheme, so it is applied at the ARK's single state-commit point: a masked-off         !
       !      component is restored to state^n (y), leaving the ODE one dimension smaller while its       !
       !      couplings still acted during the march. mask%veg_energy is applied below, where the         !

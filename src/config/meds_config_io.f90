@@ -258,8 +258,8 @@ contains
    subroutine load_soil_opts(tm, s)
       type(toml_table_t), intent(in)    :: tm
       type(soil_opts_t),  intent(inout) :: s
-      call load_water_bottom_bc(tm, s%bottom_bc, s%drain_factor)
-      s%atol           = toml_real   (tm, 'fast.water_atol',      s%atol)
+      call load_water_bottom_bc(tm, s%water_bottom_bc, s%drain_factor)
+      s%water_atol           = toml_real   (tm, 'fast.water_atol',      s%water_atol)
       s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
       s%intercept_alpha= toml_real   (tm, 'fast.intercept_alpha', s%intercept_alpha)
       s%intercept_k    = toml_real   (tm, 'fast.intercept_k',     s%intercept_k)
@@ -295,10 +295,10 @@ contains
       type(toml_table_t),  intent(in)    :: tm
       type(energy_opts_t), intent(inout) :: e
       call opt_choice(tm, 'soil.thermal_bottom_bc', [character(len=NAME_LEN) :: 'geothermal', 'dirichlet'], &
-                      [ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET], e%bottom_bc)
+                      [ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET], e%thermal_bottom_bc)
       e%deep_temp   = toml_real(tm, 'soil.deep_temp',   e%deep_temp)
       e%deep_depth  = toml_real(tm, 'soil.deep_depth',  e%deep_depth)
-      e%atol        = toml_real(tm, 'fast.soil_energy_budget_atol', e%atol)
+      e%soil_energy_budget_atol        = toml_real(tm, 'fast.soil_energy_budget_atol', e%soil_energy_budget_atol)
       !----- HARD-STOP on a non-closing budget. Gates the stop on the fast loop's budget checks      !
       !      (meds_fast_ark, meds_fast_rk45) and the kernels' own closure checks. Default            !
       !      .false., so a production run reports a breach rather than halting on it; set it to      !
@@ -355,10 +355,19 @@ contains
       a%t_ref_air        = toml_real(tm, 'aerodynamics.t_ref_air',        a%t_ref_air)
    end subroutine load_aero_cfg
 
-   subroutine load_soil_carbon_opts(tm, s, m)           ! [soil_carbon] -> decomposition selectors + rates
+   !----- [soil_carbon]: the switch, the decomposition selectors and rates, and the cold start. Each   !
+   !      absent key keeps the record's default, so the record, not the reader, decides it. ----------!
+   subroutine load_soil_carbon_opts(tm, s, m)
       type(toml_table_t),  intent(in)    :: tm
       type(decomp_opts_t), intent(inout) :: s
       type(keymiss_t),     intent(inout) :: m
+      s%soil_carbon_on     = toml_logical(tm, 'soil_carbon.soil_carbon_on',     s%soil_carbon_on)
+      s%spinup_steady      = toml_logical(tm, 'soil_carbon.spinup_steady',      s%spinup_steady)
+      s%spinup_xi          = toml_real   (tm, 'soil_carbon.spinup_xi',          s%spinup_xi)
+      s%spinup_labile_grnd = toml_real   (tm, 'soil_carbon.spinup_labile_grnd', s%spinup_labile_grnd)
+      s%spinup_labile_soil = toml_real   (tm, 'soil_carbon.spinup_labile_soil', s%spinup_labile_soil)
+      s%spinup_struct_grnd = toml_real   (tm, 'soil_carbon.spinup_struct_grnd', s%spinup_struct_grnd)
+      s%spinup_struct_soil = toml_real   (tm, 'soil_carbon.spinup_struct_soil', s%spinup_struct_soil)
       call opt_choice(tm, 'soil_carbon.decomp_scheme', [character(len=NAME_LEN) :: 'ed2', 'century5'],     &
                       [DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5], s%decomp_scheme, m)
       call opt_choice(tm, 'soil_carbon.step_solver', [character(len=NAME_LEN) :: 'euler', 'expm'],          &
@@ -418,9 +427,9 @@ contains
                                     '" is not one of power | chave2014')
                return
             end if
-            allom(pf)%height_form = merge(HEIGHT_POWER, HEIGHT_CHAVE, k == 1_ik)
+            allom(pf)%height_allometry = merge(HEIGHT_POWER, HEIGHT_CHAVE, k == 1_ik)
          end do
-         if (any(allom(1:npft)%height_form == HEIGHT_CHAVE)) then
+         if (any(allom(1:npft)%height_allometry == HEIGHT_CHAVE)) then
             call opt_pa_bcast(t, 'allometry.chave_a',   allom%chave_a,   npft, m)
             call opt_pa_bcast(t, 'allometry.chave_b',   allom%chave_b,   npft, m)
             call opt_pa_bcast(t, 'allometry.chave_c',   allom%chave_c,   npft, m)
@@ -451,13 +460,13 @@ contains
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! opt-in gate (defaulted)
       if (.not. cfg%forcing%forcing_on) return
       call req_choice(t, 'forcing.format', [character(len=NAME_LEN) :: 'ED_default', 'ED_ERA5land', 'const'],    &
-                      [MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, MET_BACKEND_CONST], cfg%forcing%backend, m)
+                      [MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, MET_BACKEND_CONST], cfg%forcing%format, m)
       !----- The archive (format = "ED_ERA5land"; docs/science/forcing.md §1) finds the site's cell  !
       !      and its orography itself; a forcing file is named, with its grid slot. -----------------!
-      if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
+      if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
          call req_s(t, 'forcing.data_path', cfg%forcing%data_path, m)
          !----- A region's polygons sit on their cells, so no site-to-cell distance exists. ------!
-         if (cfg%run_mode /= RUN_MODE_REGION)                                                     &
+         if (cfg%mode /= RUN_MODE_REGION)                                                     &
             call req_r(t, 'forcing.max_distance_km', cfg%forcing%max_distance_km, m)
          cfg%forcing%file_template = toml_string(t, 'forcing.file_template', '')
          cfg%forcing%static_file   = toml_string(t, 'forcing.static_file',   '')
@@ -467,7 +476,7 @@ contains
          call req_choice(t, 'forcing.grid_match', [character(len=NAME_LEN) :: 'explicit', 'nearest'],           &
                          [GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST], cfg%forcing%grid_match, m)
       end if
-      call req_dur(t, 'forcing.timestep', cfg%forcing%dt_forcing, m)
+      call req_dur(t, 'forcing.timestep', cfg%forcing%timestep, m)
       !----- Only the end- and begin-stamped conventions have a disaggregation (forcing.md §5). ----!
       call req_choice(t, 'forcing.avg_convention', [character(len=NAME_LEN) :: 'end', 'begin'],                &
                       [METAVG_END, METAVG_BEGIN], cfg%forcing%avg_convention, m)
@@ -497,10 +506,10 @@ contains
          call req_s(t, 'forcing.co2_file', cfg%forcing%co2_file, m)
       end if
       !----- The location: a region's polygons each take theirs from their cell. -----------------!
-      if (cfg%run_mode /= RUN_MODE_REGION) then
-         call req_r(t, 'site.latitude',  cfg%forcing%latitude_deg,  m)
-         call req_r(t, 'site.longitude', cfg%forcing%longitude_deg, m)
-         call req_r(t, 'site.elevation', cfg%forcing%elevation_m,   m)
+      if (cfg%mode /= RUN_MODE_REGION) then
+         call req_r(t, 'site.latitude',  cfg%forcing%latitude,  m)
+         call req_r(t, 'site.longitude', cfg%forcing%longitude, m)
+         call req_r(t, 'site.elevation', cfg%forcing%elevation,   m)
       end if
       !----- The forcing's own vertical frame (docs/science/forcing.md §8). ---------------------!
       call req_r(t, 'forcing.tq_height',   cfg%forcing%tq_height,   m)
@@ -529,8 +538,8 @@ contains
       else
          call note_missing(m, 'site.lapse_rate_tair')
       end if
-      if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                        &
-         call req_r(t, 'site.grid_elevation', cfg%forcing%grid_elevation_m, m)
+      if (cfg%forcing%format /= MET_BACKEND_ED_ERA5LAND)                                        &
+         call req_r(t, 'site.grid_elevation', cfg%forcing%grid_elevation, m)
    end subroutine load_forcing_config
 
    !----- [maps] (docs/configuration.md, "Input maps"): the paths of the static maps. The three     !
@@ -572,15 +581,15 @@ contains
          associate (s => cfg%sites(is))
             call req_r(v, 'sites.area_fraction', s%area_fraction, m)
             s%has_elevation  = toml_has(v, 'sites.elevation')
-            s%elevation_m    = toml_real(v, 'sites.elevation', cfg%forcing%elevation_m)
-            s%slope_deg      = toml_real(v, 'sites.slope',  s%slope_deg)
-            s%aspect_deg     = toml_real(v, 'sites.aspect', s%aspect_deg)
+            s%elevation    = toml_real(v, 'sites.elevation', cfg%forcing%elevation)
+            s%slope      = toml_real(v, 'sites.slope',  s%slope)
+            s%aspect     = toml_real(v, 'sites.aspect', s%aspect)
             s%census_site_id = toml_int (v, 'sites.census_site_id', s%census_site_id)
             s%own_ground     = toml_has_section(v, 'soil')
             if (s%own_ground) then
                s%soil_column = cfg%soil_column
                call load_soil_column(v, s%soil_column)
-               s%water_bottom_bc = cfg%soil%bottom_bc
+               s%water_bottom_bc = cfg%soil%water_bottom_bc
                s%drain_factor    = cfg%soil%drain_factor
                call load_water_bottom_bc(v, s%water_bottom_bc, s%drain_factor)
                s%deep_temp  = toml_real(v, 'soil.deep_temp',  cfg%energy%deep_temp)
@@ -626,8 +635,8 @@ contains
       real(wp)    :: buf(5)
       integer(ik) :: nout
       call opt_choice(t, 'run.mode', [character(len=NAME_LEN) :: 'site', 'region'],                       &
-                      [RUN_MODE_SITE, RUN_MODE_REGION], cfg%run_mode, m)
-      if (cfg%run_mode /= RUN_MODE_REGION) return
+                      [RUN_MODE_SITE, RUN_MODE_REGION], cfg%mode, m)
+      if (cfg%mode /= RUN_MODE_REGION) return
       call toml_real_array(t, 'region.box_nwse', buf, nout)
       if (nout == 4_ik) then
          cfg%region%box_nwse = buf(1:4)
@@ -719,32 +728,32 @@ contains
       integer(ik),         intent(in)    :: npft
       type(keymiss_t),     intent(inout) :: m
       if (.not. toml_has_section(t, 'phenology')) return
-      call req_pa_int(t, 'phenology.flush_cue_mask',      cfg%pft%pheno_flush_cue_mask,        npft, m)
-      call req_pa_int(t, 'phenology.shed_cue_mask',       cfg%pft%pheno_shed_cue_mask,         npft, m)
-      call req_pa(t, 'phenology.flush_cue_timescale',     cfg%pft%pheno_flush_cue_timescale,   npft, m)
-      call req_pa(t, 'phenology.shed_cue_timescale',      cfg%pft%pheno_shed_cue_timescale,    npft, m)
-      call req_pa(t, 'phenology.flush_rate_max',          cfg%pft%pheno_flush_rate_max,        npft, m)
-      call req_pa(t, 'phenology.shed_rate_max',           cfg%pft%pheno_shed_rate_max,         npft, m)
-      call req_pa(t, 'phenology.min_leaf_cover',          cfg%pft%pheno_min_leaf_cover,        npft, m)
-      call req_pa(t, 'phenology.bare_leaf_cover',         cfg%pft%pheno_bare_leaf_cover,       npft, m)
-      call req_pa(t, 'phenology.flush_base_temp',         cfg%pft%pheno_flush_base_temp,       npft, m)
-      call req_pa(t, 'phenology.flush_degree_days',       cfg%pft%pheno_flush_degree_days,     npft, m)
-      call req_pa(t, 'phenology.flush_temp_sharpness',    cfg%pft%pheno_flush_temp_sharpness,  npft, m)
-      call req_pa(t, 'phenology.shed_base_temp',          cfg%pft%pheno_shed_base_temp,        npft, m)
-      call req_pa(t, 'phenology.shed_degree_days',        cfg%pft%pheno_shed_degree_days,      npft, m)
-      call req_pa(t, 'phenology.shed_temp_sharpness',     cfg%pft%pheno_shed_temp_sharpness,   npft, m)
-      call req_pa(t, 'phenology.par_min',                 cfg%pft%pheno_par_min,               npft, m)
-      call req_pa(t, 'phenology.flush_light_hours',       cfg%pft%pheno_flush_light_hours,     npft, m)
-      call req_pa(t, 'phenology.flush_light_sharpness',   cfg%pft%pheno_flush_light_sharpness, npft, m)
-      call req_pa(t, 'phenology.shed_light_hours',        cfg%pft%pheno_shed_light_hours,      npft, m)
-      call req_pa(t, 'phenology.shed_light_sharpness',    cfg%pft%pheno_shed_light_sharpness,  npft, m)
-      call req_pa(t, 'phenology.light_window',            cfg%pft%pheno_light_window,          npft, m)
+      call req_pa_int(t, 'phenology.flush_cue_mask',      cfg%pft%pheno%flush_cue_mask,        npft, m)
+      call req_pa_int(t, 'phenology.shed_cue_mask',       cfg%pft%pheno%shed_cue_mask,         npft, m)
+      call req_pa(t, 'phenology.flush_cue_timescale',     cfg%pft%pheno%flush_cue_timescale,   npft, m)
+      call req_pa(t, 'phenology.shed_cue_timescale',      cfg%pft%pheno%shed_cue_timescale,    npft, m)
+      call req_pa(t, 'phenology.flush_rate_max',          cfg%pft%pheno%flush_rate_max,        npft, m)
+      call req_pa(t, 'phenology.shed_rate_max',           cfg%pft%pheno%shed_rate_max,         npft, m)
+      call req_pa(t, 'phenology.min_leaf_cover',          cfg%pft%pheno%min_leaf_cover,        npft, m)
+      call req_pa(t, 'phenology.bare_leaf_cover',         cfg%pft%pheno%bare_leaf_cover,       npft, m)
+      call req_pa(t, 'phenology.flush_base_temp',         cfg%pft%pheno%flush_base_temp,       npft, m)
+      call req_pa(t, 'phenology.flush_degree_days',       cfg%pft%pheno%flush_degree_days,     npft, m)
+      call req_pa(t, 'phenology.flush_temp_sharpness',    cfg%pft%pheno%flush_temp_sharpness,  npft, m)
+      call req_pa(t, 'phenology.shed_base_temp',          cfg%pft%pheno%shed_base_temp,        npft, m)
+      call req_pa(t, 'phenology.shed_degree_days',        cfg%pft%pheno%shed_degree_days,      npft, m)
+      call req_pa(t, 'phenology.shed_temp_sharpness',     cfg%pft%pheno%shed_temp_sharpness,   npft, m)
+      call req_pa(t, 'phenology.par_min',                 cfg%pft%pheno%par_min,               npft, m)
+      call req_pa(t, 'phenology.flush_light_hours',       cfg%pft%pheno%flush_light_hours,     npft, m)
+      call req_pa(t, 'phenology.flush_light_sharpness',   cfg%pft%pheno%flush_light_sharpness, npft, m)
+      call req_pa(t, 'phenology.shed_light_hours',        cfg%pft%pheno%shed_light_hours,      npft, m)
+      call req_pa(t, 'phenology.shed_light_sharpness',    cfg%pft%pheno%shed_light_sharpness,  npft, m)
+      call req_pa(t, 'phenology.light_window',            cfg%pft%pheno%light_window,          npft, m)
       !----- OPTIONAL: the water cue, which a PFT turns on through its masks. An absent key keeps  !
       !      the alloc_pft_table default, which equals the pheno_params_t default. --------------!
-      call opt_pa(t, 'phenology.flush_water_sum',         cfg%pft%pheno_flush_water_sum,       npft, m)
-      call opt_pa(t, 'phenology.flush_water_sharpness',   cfg%pft%pheno_flush_water_sharpness, npft, m)
-      call opt_pa(t, 'phenology.shed_water_sum',          cfg%pft%pheno_shed_water_sum,        npft, m)
-      call opt_pa(t, 'phenology.shed_water_sharpness',    cfg%pft%pheno_shed_water_sharpness,  npft, m)
+      call opt_pa(t, 'phenology.flush_water_sum',         cfg%pft%pheno%flush_water_sum,       npft, m)
+      call opt_pa(t, 'phenology.flush_water_sharpness',   cfg%pft%pheno%flush_water_sharpness, npft, m)
+      call opt_pa(t, 'phenology.shed_water_sum',          cfg%pft%pheno%shed_water_sum,        npft, m)
+      call opt_pa(t, 'phenology.shed_water_sharpness',    cfg%pft%pheno%shed_water_sharpness,  npft, m)
    end subroutine load_phenology_pft
 
    subroutine req_date(t, key, out, m)
@@ -926,13 +935,13 @@ contains
       cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
       cfg%cas_condensation  = toml_logical(tm, 'fast.cas_condensation', .true.)
       !----- Process mask: all-on default => the full column. -----------------------------------!
-      cfg%mask_veg_energy   = toml_logical(tm, 'fast.mask.veg_energy', .true.)
-      cfg%mask_cas_energy   = toml_logical(tm, 'fast.mask.cas_energy', .true.)
-      cfg%mask_cas_vapour   = toml_logical(tm, 'fast.mask.cas_vapour', .true.)
-      cfg%mask_cas_co2      = toml_logical(tm, 'fast.mask.cas_co2',    .true.)
-      cfg%mask_soil_heat    = toml_logical(tm, 'fast.mask.soil_heat',  .true.)
-      cfg%mask_soil_water   = toml_logical(tm, 'fast.mask.soil_water', .true.)
-      cfg%mask_hydraulics   = toml_logical(tm, 'fast.mask.hydraulics', .true.)
+      cfg%mask%veg_energy   = toml_logical(tm, 'fast.mask.veg_energy', .true.)
+      cfg%mask%cas_energy   = toml_logical(tm, 'fast.mask.cas_energy', .true.)
+      cfg%mask%cas_vapour   = toml_logical(tm, 'fast.mask.cas_vapour', .true.)
+      cfg%mask%cas_co2      = toml_logical(tm, 'fast.mask.cas_co2',    .true.)
+      cfg%mask%soil_heat    = toml_logical(tm, 'fast.mask.soil_heat',  .true.)
+      cfg%mask%soil_water   = toml_logical(tm, 'fast.mask.soil_water', .true.)
+      cfg%mask%hydraulics   = toml_logical(tm, 'fast.mask.hydraulics', .true.)
       call opt_choice(tm, 'fast.step_controller', [character(len=NAME_LEN) :: 'i', 'pi'],                  &
                       [CTRL_I, CTRL_PI], cfg%step_controller, miss)
       call opt_choice(tm, 'fast.error_level', [character(len=NAME_LEN) :: 'fixed', 'adaptive', 'strict'],  &
@@ -956,23 +965,7 @@ contains
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)
 
-      !----- [soil_carbon] slow soil-carbon matrix (docs/science/soil_carbon.md).                 !
-      !      soil_carbon_on gates the FEATURE only -- every key below (incl. this                 !
-      !      subroutine's) is a DEFAULTED read falling back to its ED2 in-type default, so        !
-      !      the feature needs no TOML edits at all.                                              !
-      !                                                                                           !
-      !      The absent-key default here MUST match the in-type default in meds_config            !
-      !      (.true.): toml_logical returns the supplied default whenever the key is absent,      !
-      !      so THIS line, not the type, decides for every config that omits the key --           !
-      !      including the shipped meds_config_main.toml. Off is not a coarser soil-carbon        !
-      !      model, it is NO soil carbon (see meds_config for the measured cost). ----------------!
-      cfg%soil_carbon_on             = toml_logical(tm, 'soil_carbon.soil_carbon_on', .true.)
-      cfg%soil_carbon_spinup_steady  = toml_logical(tm, 'soil_carbon.spinup_steady',       .false.)
-      cfg%soil_carbon_spinup_xi      = toml_real   (tm, 'soil_carbon.spinup_xi',           1.0_wp)
-      cfg%soil_carbon_spinup_labile_grnd = toml_real(tm, 'soil_carbon.spinup_labile_grnd', 0.0_wp)
-      cfg%soil_carbon_spinup_labile_soil = toml_real(tm, 'soil_carbon.spinup_labile_soil', 0.0_wp)
-      cfg%soil_carbon_spinup_struct_grnd = toml_real(tm, 'soil_carbon.spinup_struct_grnd', 0.0_wp)
-      cfg%soil_carbon_spinup_struct_soil = toml_real(tm, 'soil_carbon.spinup_struct_soil', 0.0_wp)
+      !----- [soil_carbon] (docs/science/soil_carbon.md): every key optional, at its record default. -!
       call load_soil_carbon_opts(tm, cfg%soil_carbon, miss)
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
@@ -1009,29 +1002,29 @@ contains
 
       call req_r(tm, 'recruitment.min_recruit_size',      cfg%min_recruit_size,       miss)
 
-      call req_i(tm, 'init.init_mode',     cfg%init_mode,         miss)
+      call req_i(tm, 'init.init_mode',     cfg%init%init_mode,         miss)
       !----- The state file and the census file are required by the mode that starts from them,     !
       !      and optional otherwise: the Python census start reads census_file in any mode. ---------!
-      if (cfg%init_mode == INIT_RESTART) then
-         call req_s(tm, 'init.restart_file', cfg%init_restart_file, miss)
+      if (cfg%init%init_mode == INIT_RESTART) then
+         call req_s(tm, 'init.restart_file', cfg%init%restart_file, miss)
       else
-         cfg%init_restart_file = toml_string(tm, 'init.restart_file', '')
+         cfg%init%restart_file = toml_string(tm, 'init.restart_file', '')
       end if
-      if (cfg%init_mode == INIT_CENSUS) then
-         call req_s(tm, 'init.census_file', cfg%init_census_file, miss)
+      if (cfg%init%init_mode == INIT_CENSUS) then
+         call req_s(tm, 'init.census_file', cfg%init%census_file, miss)
       else
-         cfg%init_census_file = toml_string(tm, 'init.census_file', '')
+         cfg%init%census_file = toml_string(tm, 'init.census_file', '')
       end if
-      call req_s(tm, 'init.pft_config',    cfg%pft_config,        miss)
-      cfg%init_soil_temp  = toml_real(tm, 'init.soil_temp',  cfg%init_soil_temp)
-      cfg%init_soil_theta = toml_real(tm, 'init.soil_theta', cfg%init_soil_theta)
-      cfg%init_reacclimate_traits = toml_logical(tm, 'init.reacclimate_traits', cfg%init_reacclimate_traits)
+      call req_s(tm, 'init.pft_config',    cfg%init%pft_config,        miss)
+      cfg%init%soil_temp  = toml_real(tm, 'init.soil_temp',  cfg%init%soil_temp)
+      cfg%init%soil_theta = toml_real(tm, 'init.soil_theta', cfg%init%soil_theta)
+      cfg%init%reacclimate_traits = toml_logical(tm, 'init.reacclimate_traits', cfg%init%reacclimate_traits)
 
       !----- [state]: the restart stream; every diagnostic is [output]'s. ------------------------!
-      call req_s(tm, 'state.output_dir',     cfg%state_output_dir,         miss)
-      call req_s(tm, 'state.output_prefix',  cfg%state_output_prefix,      miss)
-      call req_l(tm, 'state.write_state',    cfg%state_write_state,        miss)
-      call req_i(tm, 'state.interval_years', cfg%state_interval_years_cfg, miss)
+      call req_s(tm, 'state.output_dir',     cfg%state%output_dir,         miss)
+      call req_s(tm, 'state.output_prefix',  cfg%state%output_prefix,      miss)
+      call req_l(tm, 'state.write_state',    cfg%state%write_state,        miss)
+      call req_i(tm, 'state.interval_years', cfg%state%interval_years, miss)
 
 
       !----- Carbon growth: the stub GPP of a run without the fast loop, required there only. ---!
@@ -1065,7 +1058,7 @@ contains
                       [TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED], cfg%temp_response_form, miss)
       call req_choice(tm, 'leaf_physiology.colimitation', [character(len=NAME_LEN) :: 'min', 'quadratic'],            &
                       [COLIM_MIN, COLIM_QUADRATIC], cfg%colimitation, miss)
-      call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%leaf_use_boundary_layer, miss)
+      call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%use_boundary_layer, miss)
       call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
       call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
       call req_r(tm, 'leaf_physiology.gstar25',  cfg%gstar25,  miss)
@@ -1081,8 +1074,8 @@ contains
       !----- Thermal acclimation (docs/science/leaf_gas_exchange.md eq. (4)): OPT-IN, every       !
       !      key optional, the six Kattge & Knorr coefficients defaulting to their published      !
       !      values. -----------------------------------------------------------------------------!
-      cfg%leaf_thermal_acclimation = toml_logical(tm, 'leaf_physiology.thermal_acclimation',      &
-                                                  cfg%leaf_thermal_acclimation)
+      cfg%thermal_acclimation = toml_logical(tm, 'leaf_physiology.thermal_acclimation',      &
+                                                  cfg%thermal_acclimation)
       cfg%acclim_ds_vcmax_a  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_a',  cfg%acclim_ds_vcmax_a)
       cfg%acclim_ds_vcmax_b  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_b',  cfg%acclim_ds_vcmax_b)
       cfg%acclim_ds_jmax_a   = toml_real(tm, 'leaf_physiology.acclim_ds_jmax_a',   cfg%acclim_ds_jmax_a)
@@ -1099,14 +1092,14 @@ contains
       cfg%medlyn_vpd_min = toml_real(tm, 'leaf_physiology.medlyn_vpd_min', cfg%medlyn_vpd_min)
 
       !----- PFT file (named in the main file). -------------------------------------------!
-      call toml_parse_file(trim(cfg%pft_config), tp, found)
-      if (.not. found) error stop 'meds_config: PFT config file not found: '//trim(cfg%pft_config)
+      call toml_parse_file(trim(cfg%init%pft_config), tp, found)
+      if (.not. found) error stop 'meds_config: PFT config file not found: '//trim(cfg%init%pft_config)
       call check_config_keys(tp, PFT_KEYS, unknown)
 
       !----- PFT count comes from the length of the wood_density array. -------------------!
       call toml_real_array(tp, 'pft.wood_density', buf, nout)
-      if (nout < 1_ik) error stop 'meds_config: pft.wood_density missing/empty in '//trim(cfg%pft_config)
-      if (nout > MAXPFT) error stop 'meds_config: pft.wood_density lists more than MAXPFT PFTs in '//trim(cfg%pft_config)
+      if (nout < 1_ik) error stop 'meds_config: pft.wood_density missing/empty in '//trim(cfg%init%pft_config)
+      if (nout > MAXPFT) error stop 'meds_config: pft.wood_density lists more than MAXPFT PFTs in '//trim(cfg%init%pft_config)
       npft = nout
       call alloc_pft_table(cfg%pft, npft)
       cfg%pft%wood_density = buf(1:npft)
@@ -1292,7 +1285,7 @@ contains
            //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_leaf_turnover,'                        &
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
            //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density,'                &
-           //'height_form,b1Ht,b2Ht,chave_a,chave_b,chave_c,chave_rse,chave_e,'                          &
+           //'height_allometry,b1Ht,b2Ht,chave_a,chave_b,chave_c,chave_rse,chave_e,'                          &
            //'agb_c1,agb_c2,lai_b1,lai_b2,wai_b1,wai_b2,sapwood_area_b1,sapwood_area_b2,'            &
            //'leaf_pi0,leaf_elastic_mod,leaf_apoplast_frac,leaf_water_sat,wood_pi0,wood_elastic_mod,'   &
            //'wood_apoplast_frac,wood_water_sat,wood_psi50,wood_kexp,wood_kmax,vessel_curl,root_beta,'  &
@@ -1326,7 +1319,7 @@ contains
                  p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
                  p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
                  p%max_absolute_growth_exponent(pf), p%nbg_init_density(pf),                        &
-                 p%allom(pf)%height_form, p%allom(pf)%b1Ht, p%allom(pf)%b2Ht,                         &
+                 p%allom(pf)%height_allometry, p%allom(pf)%b1Ht, p%allom(pf)%b2Ht,                         &
                  p%allom(pf)%chave_a, p%allom(pf)%chave_b, p%allom(pf)%chave_c,                       &
                  p%allom(pf)%chave_rse, p%allom(pf)%chave_e,                                          &
                  p%allom(pf)%agb_c1, p%allom(pf)%agb_c2, p%allom(pf)%lai_b1, p%allom(pf)%lai_b2,      &
@@ -1360,7 +1353,7 @@ contains
       if (nout < 2_ik)                                                                           &
          error stop 'meds_config_io: [output].dbh_class_edges needs at least 2 edges (1 class)'
       out_cfg%n_dbh_class        = nout - 1_ik
-      out_cfg%dbh_edges(1:nout)  = tmp(1:nout)
+      out_cfg%dbh_class_edges(1:nout)  = tmp(1:nout)
    end subroutine load_dbh_edges
 
 end module meds_config_io

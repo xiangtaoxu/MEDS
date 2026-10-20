@@ -375,7 +375,7 @@ contains
       type(column_budget_t), intent(inout) :: budget
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
-      if (cfg%soil_carbon_on) then
+      if (cfg%soil_carbon%soil_carbon_on) then
          call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_config%soil%theta_res(1),      &
                                   col_config%soil%theta_sat(1), soil_carbon, cfg%soil_carbon, xi)
          call assemble_transfer_matrix(soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)

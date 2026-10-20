@@ -49,7 +49,7 @@ program test_biogeochem_dynamics
    cfg%fast_biophysics_on = .true.
    cfg%dt_fast            = 150.0_wp
    cfg%n_fast_per_slow    = 48_ik   ! 48 x 150 s = a 2 h fast window
-   cfg%soil_carbon_on     = .true.
+   cfg%soil_carbon%soil_carbon_on     = .true.
 
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
@@ -127,7 +127,7 @@ program test_biogeochem_dynamics
    block
       type(polygon_t) :: poly2
       real(wp)     :: totalA, totalB
-      cfg%soil_carbon_on = .false.
+      cfg%soil_carbon%soil_carbon_on = .false.
       call init_bare_ground(poly2, cfg, 1_ik)
       call use_test_column(poly2)
       call add_cohort(poly2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)

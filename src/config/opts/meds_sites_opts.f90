@@ -18,9 +18,9 @@ module meds_sites_opts
    type :: site_spec_t
       real(wp)    :: area_fraction  = 0.0_wp      !< [-] its share of the polygon
       logical     :: has_elevation  = .false.     !< .false.: the polygon's elevation
-      real(wp)    :: elevation_m    = 0.0_wp      !< [m]
-      real(wp)    :: slope_deg      = 0.0_wp      !< [degrees] from horizontal
-      real(wp)    :: aspect_deg     = 0.0_wp      !< [degrees] clockwise from north
+      real(wp)    :: elevation      = 0.0_wp      !< [m]
+      real(wp)    :: slope          = 0.0_wp      !< [degrees] from horizontal
+      real(wp)    :: aspect         = 0.0_wp      !< [degrees] clockwise from north
       integer(ik) :: census_site_id = 0_ik        !< the census rows it reads; 0: not given
       logical     :: own_ground     = .false.     !< .false.: the polygon's ground
       type(soil_column_config_t) :: soil_column

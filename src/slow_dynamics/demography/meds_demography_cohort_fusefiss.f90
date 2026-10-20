@@ -381,7 +381,7 @@ contains
                   + (cohort%nplant(i) * (cohort%leaf_carbon(i) + cohort%fineroot_carbon(i)         &
                                        + cohort%wood_carbon(i) + cohort%nonstructural_carbon(i))   &
                      / cfg%dt_years) * cfg%dt_slow
-            if (.not. cfg%soil_carbon_on) cycle
+            if (.not. cfg%soil_carbon%soil_carbon_on) cycle
             pf = cohort%pft(i)
             call necromass_to_litter(cohort%nplant(i) * cohort%leaf_carbon(i),                    &
                      cohort%nplant(i) * cohort%fineroot_carbon(i),                                 &

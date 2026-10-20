@@ -96,7 +96,7 @@ contains
       table%stomatal_model     = cfg%stomatal_model
       table%temp_response_form = cfg%temp_response_form
       table%colimitation       = cfg%colimitation
-      table%use_boundary_layer = cfg%leaf_use_boundary_layer
+      table%use_boundary_layer = cfg%use_boundary_layer
    end subroutine build_leaf_photo_table
 
    !=======================================================================================!
@@ -121,7 +121,7 @@ contains
       real(wp),                 intent(in)    :: t_growth     !< [K] running-mean growth temperature
       type(leaf_photo_table_t), intent(inout) :: table
       integer(ik) :: ipft
-      if (.not. cfg%leaf_thermal_acclimation) return
+      if (.not. cfg%thermal_acclimation) return
       if (t_growth <= 0.0_wp) return                          ! not yet seeded: leave the fixed values
       do ipft = 1_ik, table%n_pft
          table%pft(ipft)%ds_vcmax = kattge_knorr_entropy(cfg%acclim_ds_vcmax_a, cfg%acclim_ds_vcmax_b, t_growth)
@@ -186,7 +186,7 @@ contains
       end if
       if (present(rd25)) p%rd25 = rd25
       call solve_leaf_gas_exchange(env, p, cfg%stomatal_model, cfg%temp_response_form,         &
-                                   cfg%colimitation, cfg%leaf_use_boundary_layer, flux)
+                                   cfg%colimitation, cfg%use_boundary_layer, flux)
    end subroutine leaf_gas_exchange
 
 
@@ -208,7 +208,7 @@ contains
       !----- One relative tolerance for every group; each group keeps its default atol, and the   !
       !      water network's is [fast].water_atol. ----------------------------------------------------!
       tols%rtol             = cfg%rtol
-      tols%atol(GRP_THETA)  = cfg%soil%atol
+      tols%atol(GRP_THETA)  = cfg%soil%water_atol
       !----- ...and the ABSOLUTE companion. The WRMS denominator is atol + rtol*|y|, so rtol         !
       !      alone SATURATES once atol dominates (docs/science/numerical_scheme.md §6): tightening    !
       !      rtol from 1e-3 to 1e-6 raises the soil-water error estimate only ~4x (4e-4 -> 1e-4       !

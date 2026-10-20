@@ -298,10 +298,10 @@ contains
             sc%n_layer_values = n
          end associate
          select case (nint(inp%bc_class(k), ik))
-         case (BC_AQUIFER) ; cfg%soil%bottom_bc = SOIL_BC_AQUIFER
-         case (BC_LEAKY)   ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
-         case (BC_SEALED)  ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
-         case default      ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 1.0_wp
+         case (BC_AQUIFER) ; cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
+         case (BC_LEAKY)   ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
+         case (BC_SEALED)  ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
+         case default      ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 1.0_wp
          end select
          call soil_column_params(cfg%soil_column, soil)
          cfg%energy%deep_temp  = inp%deep_temp(k)
@@ -359,7 +359,7 @@ contains
       real(wp)    :: distance_km
       integer(ik) :: st
       static = trim(era5land_static_file(cfg%forcing))
-      call era5land_select_site(static, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg,              &
+      call era5land_select_site(static, cfg%forcing%latitude, cfg%forcing%longitude,              &
                                 cfg%forcing%max_distance_km, cell, distance_km, st)
       if (st /= ERA_OK) then
          if (st == ERA_ERR_NO_CELL) then

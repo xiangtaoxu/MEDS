@@ -95,7 +95,7 @@ contains
       !      pathway's sit behind that switch, and the diagnostic must not: how much biomass died   !
       !      is demography. With the default (.true.) this part would pass even with the write on   !
       !      the wrong side of the guard, which is the one placement error it exists to catch.      !
-      cfg%soil_carbon_on    = .false.
+      cfg%soil_carbon%soil_carbon_on    = .false.
       !----- Raise the density floor so a NORMAL cohort is culled: the alternative is a cohort so  !
       !      small its carbon is at the rounding floor, which would make the assertion vacuous.    !
       cfg%negligible_nplant = 0.30_wp
@@ -126,7 +126,7 @@ contains
       real(wp)            :: frac, expect
 
       cfg = build_test_config()
-      cfg%soil_carbon_on = .false.          ! the split is demography -- see check_cull
+      cfg%soil_carbon%soil_carbon_on = .false.          ! the split is demography -- see check_cull
       call init_bare_ground(poly, cfg, 1_ik)
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.20_wp, 40.0_wp)   ! tall  -> dies in the gap
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.50_wp,  3.0_wp)   ! short -> survives into it
@@ -165,7 +165,7 @@ contains
 
       cfg = build_test_config()
       cfg%fast_biophysics_on = .false.       ! the hazard is a state question, not a GPP one
-      cfg%soil_carbon_on     = .false.       ! and the split is emitted whatever the soil pools do
+      cfg%soil_carbon%soil_carbon_on     = .false.       ! and the split is emitted whatever the soil pools do
 
       !----- ONE cohort, so the per-step sort_cohorts cannot permute the axis between the density  !
       !      captured before the step and the pools read after it.  -------------------------!
@@ -209,7 +209,7 @@ contains
 
       cfg = build_test_config()
       cfg%fast_biophysics_on = .true.        ! the allocator reads the accumulators set below
-      cfg%soil_carbon_on     = .false.
+      cfg%soil_carbon%soil_carbon_on     = .false.
 
       !----- No storage: dead on the first step, at the floor, its carbon down the background path. -!
       call leafless_stand(poly, cfg, 0.0_wp)

@@ -49,14 +49,14 @@ module meds_biophysics_opts
       !      without limit.  Right for riparian, floodplain and wetland stands; WRONG for a typical  !
       !      upland one, where free drainage is the correct choice.  It is not a drop-in "more        !
       !      realistic drainage" option. ---------------------------------------------------------!
-      integer(ik) :: bottom_bc    = SOIL_BC_DRAIN
+      integer(ik) :: water_bottom_bc = SOIL_BC_DRAIN
       real(wp)    :: drain_factor = 1.0_wp              !< [-] f in [0, 1] of q = f K(theta_N)
       !----- The water network's sub-step tolerances (docs/science/soil_plant_water.md §3): a      !
       !      store's error is weighed against atol of its scale -- water content for soil layers and !
       !      the pond, relative water content for plant tissues -- plus rtol of its water. rtol is  !
       !      [fast].rtol, which the driver sets here; atol is [fast].water_atol. ---------------------!
       real(wp)    :: rtol   = 1.0e-3_wp
-      real(wp)    :: atol   = 1.0e-4_wp
+      real(wp)    :: water_atol = 1.0e-4_wp
       real(wp)    :: w_pond_max = 5.0_wp                 !< [kg/m2] ponding capacity before surface runoff
       real(wp)    :: intercept_alpha = 1.0_wp            !< Beer interception efficiency ([fast])
       real(wp)    :: intercept_k     = 0.5_wp            !< [1/PAI] Beer extinction ([fast])
@@ -81,7 +81,7 @@ module meds_biophysics_opts
       !      prescribes the bottom FLUX (held at zero), which makes the base adiabatic and           !
       !      REFLECTS the annual temperature wave; `dirichlet` conducts to a fixed deep              !
       !      temperature `deep_temp` at depth `deep_depth`, which absorbs most of it. ---------------!
-      integer(ik) :: bottom_bc    = ENERGY_BC_GEOTHERMAL
+      integer(ik) :: thermal_bottom_bc = ENERGY_BC_GEOTHERMAL
       !----- Dirichlet anchor (read only when bottom_bc == ENERGY_BC_DIRICHLET).  `deep_temp` is a     !
       !      SITE property -- the mean annual soil temperature below the annual damping depth, close    !
       !      to the mean annual air temperature -- so it has no defensible default and the loader        !
@@ -97,7 +97,7 @@ module meds_biophysics_opts
       real(wp)    :: deep_depth  = 3.145_wp       !< [m] depth (positive) of the anchor plane
       !----- [K] budget-closure threshold for the debug halt, NOT an integrator tolerance              !
       !      ([fast].soil_energy_budget_atol). ---------------------------------------------------------!
-      real(wp)    :: atol        = 1.0e-2_wp
+      real(wp)    :: soil_energy_budget_atol = 1.0e-2_wp
       logical     :: debug_error = .false.
    end type energy_opts_t
 

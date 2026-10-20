@@ -58,14 +58,14 @@ contains
       cfg%patch_disturbance_rate = 0.014_wp ; cfg%disturbance_survive_height = 10.0_wp
       cfg%growth_memory_days = 90.0_wp ; cfg%min_recruit_size = 1.0e-2_wp ; cfg%conservation_tol = 0.001_wp
 
-      cfg%init_mode = INIT_BARE ; cfg%init_restart_file = '' ; cfg%init_census_file = '' ; cfg%pft_config = ''
-      cfg%state_output_dir = '.' ; cfg%state_output_prefix = 'test'
-      cfg%state_write_state = .false. ; cfg%state_interval_years_cfg = 50_ik
+      cfg%init%init_mode = INIT_BARE ; cfg%init%restart_file = '' ; cfg%init%census_file = '' ; cfg%init%pft_config = ''
+      cfg%state%output_dir = '.' ; cfg%state%output_prefix = 'test'
+      cfg%state%write_state = .false. ; cfg%state%interval_years = 50_ik
       cfg%gpp_ref = 0.3_wp
 
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
       cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TEMP_RESPONSE_PEAKED
-      cfg%colimitation = COLIM_QUADRATIC ; cfg%leaf_use_boundary_layer = .false.
+      cfg%colimitation = COLIM_QUADRATIC ; cfg%use_boundary_layer = .false.
       cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
       cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp
       cfg%ea_vcmax = 65330.0_wp ; cfg%ea_jmax = 43540.0_wp ; cfg%ea_rd = 46390.0_wp

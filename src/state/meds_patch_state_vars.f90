@@ -531,7 +531,7 @@ contains
          temp = cas%can_temp
          psi  = top_soil_psi(surf%soil, soil_water%theta(1))
       else
-         temp = cfg%init_soil_temp
+         temp = cfg%init%soil_temp
          psi  = top_soil_psi(surf%soil, surf%theta_start(1))
       end if
    end subroutine patch_physical_state

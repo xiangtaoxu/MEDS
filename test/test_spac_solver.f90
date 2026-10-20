@@ -152,7 +152,7 @@ contains
                                                          hyd%pft(1)%fine_root_radius)
          end do
       end do
-      spac%rtol = sopts%rtol ; spac%atol = sopts%atol ; spac%w_pond_max = sopts%w_pond_max
+      spac%rtol = sopts%rtol ; spac%atol = sopts%water_atol ; spac%w_pond_max = sopts%w_pond_max
       spac%t_soil = 299.0_wp ; spac%t_rain = 297.0_wp
       call spac_set_state(spac, soil, hyd, theta, w_pond, 0.0_wp, leaf_w, wood_w)
    end subroutine make_stand
@@ -306,7 +306,7 @@ contains
       integer(ik) :: step, nsl
       nsl = soil%n_active
       theta = 0.40_wp ; theta(1:3) = 0.425_wp          ! wet: BCI's clay settles in days, not years
-      sealed = sopts ; sealed%bottom_bc = SOIL_BC_DRAIN ; sealed%drain_factor = 0.0_wp
+      sealed = sopts ; sealed%water_bottom_bc = SOIL_BC_DRAIN ; sealed%drain_factor = 0.0_wp
       still = forc ; still%q_air = 0.05_wp                 ! air wetter than any surface: no evaporation
       call make_stand(spac, 0_ik, theta, 0.0_wp, 0.9_wp, 0.9_wp, 0.0_wp)
       w0 = total_water(spac)
@@ -448,7 +448,7 @@ contains
       end do
       worst_theta = maxval(abs(spac%water_soil(2:nsl+1) - ref%water_soil(2:nsl+1)) / (rho_h2o * soil%dz(1:nsl)))
       worst_rwc   = maxval(abs(spac%tau_coh - ref%tau_coh))
-      call check_true('accuracy: soil water within 10 atol of the tight run', worst_theta < 10.0_wp * sopts%atol,  &
+      call check_true('accuracy: soil water within 10 atol of the tight run', worst_theta < 10.0_wp * sopts%water_atol,  &
                       worst_theta)
       call check_true('accuracy: tissue water within 1e-2 RWC of the tight run', worst_rwc < 1.0e-2_wp, worst_rwc)
       print '(a,i6)', '  info : sub-steps over the day at the default tolerances: ', isub

@@ -185,17 +185,17 @@ contains
                                                'its cell''s centre, at the cell''s orography'
       character(len=*), parameter :: CHAVE   = 'applies only to a PFT with height_allometry = "chave2014"'
       integer(ik) :: i
-      if (cfg%run_mode /= RUN_MODE_REGION .and. toml_has_section(tm, 'region'))                       &
+      if (cfg%mode /= RUN_MODE_REGION .and. toml_has_section(tm, 'region'))                       &
          call add_line(report, '[region] (in '//trim(tm%source)//') needs [run].mode = "region"')
       !----- [forcing]/[site]: the keys of the other source, location or mode. ---------------------!
       if (cfg%forcing%forcing_on) then
-         if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
+         if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
             call refuse(report, tm, 'forcing.path', ARCHIVE)
             call refuse(report, tm, 'forcing.grid_index', ARCHIVE)
             call refuse(report, tm, 'forcing.grid_match', ARCHIVE)
             call refuse(report, tm, 'site.grid_elevation', ARCHIVE)
          end if
-         if (cfg%run_mode == RUN_MODE_REGION) then
+         if (cfg%mode == RUN_MODE_REGION) then
             call refuse(report, tm, 'site.latitude', CELL)
             call refuse(report, tm, 'site.longitude', CELL)
             call refuse(report, tm, 'site.elevation', CELL)
@@ -212,7 +212,7 @@ contains
          end if
          if (.not. cfg%forcing%apply_elevation_lapse) then
             call refuse(report, tm, 'site.lapse_rate_tair', 'applies only with site.apply_elevation_lapse = true')
-            if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                       &
+            if (cfg%forcing%format /= MET_BACKEND_ED_ERA5LAND)                                       &
                call refuse(report, tm, 'site.grid_elevation',                                         &
                            'applies only with site.apply_elevation_lapse = true')
          end if
@@ -229,7 +229,7 @@ contains
          end if
       end if
       !----- [allometry]: the log-quadratic's keys need a PFT on it; its E comes from a map when set. -!
-      if (.not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)) then
+      if (.not. any(cfg%pft%allom(1:cfg%pft%n)%height_allometry == HEIGHT_CHAVE)) then
          call refuse(report, tp, 'allometry.chave_a', CHAVE)
          call refuse(report, tp, 'allometry.chave_b', CHAVE)
          call refuse(report, tp, 'allometry.chave_c', CHAVE)
@@ -350,7 +350,7 @@ contains
          !----- With a texture per layer each layer starts at its field capacity, so init.soil_theta !
          !      does not apply. ----------------------------------------------------------------------!
          if (sc%n_layer_values == 0_ik) then
-            if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)            &
+            if (cfg%init%soil_theta <= sc%theta_res .or. cfg%init%soil_theta > sc%theta_sat)            &
                error stop TAG//'init.soil_theta must lie in (soil.theta_res, theta_sat]'
          end if
          if (any(tex%ksat(1:n) <= 0.0_wp)) error stop TAG//'soil.ksat <= 0'
@@ -376,7 +376,7 @@ contains
       !      bottom node (docs/science/soil_biophysics.md, "The bottom thermal boundary"). With the    !
       !      soil maps a polygon's anchor comes from its cell, so a configuration the maps have not   !
       !      filled yet has none to check. ----------------------------------------------------------!
-      if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET .and.                                            &
+      if (cfg%energy%thermal_bottom_bc == ENERGY_BC_DIRICHLET .and.                                            &
           .not. (soil_maps_on(cfg%maps) .and. cfg%soil_column%n_layer_values == 0_ik)) then
          if (cfg%energy%deep_temp <= 0.0_wp)                                                           &
             error stop TAG//'soil.thermal_bottom_bc = "dirichlet" requires soil.deep_temp [K] -- '//     &
@@ -415,9 +415,9 @@ contains
    !----- [init]. --------------------------------------------------------------------------------!
    subroutine check_init(cfg)
       type(meds_config_t), intent(in) :: cfg
-      if (cfg%init_soil_temp < 233.0_wp .or. cfg%init_soil_temp > 333.0_wp)                           &
+      if (cfg%init%soil_temp < 233.0_wp .or. cfg%init%soil_temp > 333.0_wp)                           &
          error stop TAG//'init.soil_temp outside 233-333 K'
-      if (cfg%init_reacclimate_traits .and. cfg%init_mode /= INIT_RESTART)                            &
+      if (cfg%init%reacclimate_traits .and. cfg%init%init_mode /= INIT_RESTART)                            &
          error stop TAG//'init.reacclimate_traits applies to a restart (init.init_mode = 2) only'
    end subroutine check_init
 
@@ -451,10 +451,10 @@ contains
       if (cfg%leaf_absorptance <= 0.0_wp) error stop TAG//'leaf_absorptance <= 0'
       if (cfg%phi_psii <= 0.0_wp)         error stop TAG//'phi_psii <= 0'
       if (cfg%medlyn_vpd_min <= 0.0_wp)   error stop TAG//'medlyn_vpd_min <= 0 [kPa]'
-      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= TEMP_RESPONSE_PEAKED)          &
+      if (cfg%thermal_acclimation .and. cfg%temp_response_form /= TEMP_RESPONSE_PEAKED)          &
          error stop TAG//'leaf_physiology.thermal_acclimation requires temp_response_form = '//        &
                     '"peaked" (the Arrhenius form has no entropy term to shift)'
-      if (cfg%leaf_thermal_acclimation .and. cfg%acclim_window_days <= 0.0_wp)                        &
+      if (cfg%thermal_acclimation .and. cfg%acclim_window_days <= 0.0_wp)                        &
          error stop TAG//'leaf_physiology.acclim_window_days must be > 0'
    end subroutine check_leaf_physiology
 
@@ -477,11 +477,11 @@ contains
          error stop TAG//'site.lapse_rate_tair must lie in [0, 0.01] K/m'
       if (cfg%forcing%lwdown_source == LW_SYNTHESIZE .and. cfg%forcing%lw_cloud_a < 0.0_wp)             &
          error stop TAG//'forcing.lw_cloud_a must be >= 0 (a cloudy sky emits MORE, not less)'
-      if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
+      if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
          if (len_trim(cfg%forcing%data_path) == 0) error stop TAG//'forcing.data_path is empty'
-         if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)               &
+         if (cfg%mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)               &
             error stop TAG//'forcing.max_distance_km must be > 0'
-         if (abs(cfg%forcing%dt_forcing - ARCHIVE_DT_SEC) > 0.5_wp)                                      &
+         if (abs(cfg%forcing%timestep - ARCHIVE_DT_SEC) > 0.5_wp)                                      &
             error stop TAG//'forcing.timestep must be 1 hour for format = "ED_ERA5land"'
          if (cfg%forcing%avg_convention /= METAVG_END)                                                   &
             error stop TAG//'forcing.avg_convention must be "end" for format = "ED_ERA5land"'
@@ -519,14 +519,14 @@ contains
    !      forcing once, so a recycle seam falls on a month boundary. ------------------------------------!
    subroutine check_region(cfg)
       type(meds_config_t), intent(in) :: cfg
-      if (cfg%run_mode /= RUN_MODE_REGION) return
+      if (cfg%mode /= RUN_MODE_REGION) return
       if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                                 &
          error stop TAG//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
-      if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                               &
+      if (cfg%forcing%format /= MET_BACKEND_ED_ERA5LAND)                                               &
          error stop TAG//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
       if (cfg%fast_probe)                                                                               &
          error stop TAG//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
-      if (cfg%init_mode == INIT_CENSUS)                                                                 &
+      if (cfg%init%init_mode == INIT_CENSUS)                                                                 &
          error stop TAG//'[run].mode = "region" starts from bare ground or a region state file '//      &
                          '(init.init_mode = 0 or 2), not a census'
       associate (b => cfg%region%box_nwse)
@@ -544,7 +544,7 @@ contains
       if (.not. soil_maps_on(cfg%maps))                                                                 &
          error stop TAG//'[run].mode = "region" needs the soil maps: maps.soil_depth_map, '//          &
                          'soil_texture_map and soil_chemistry_map'
-      if (any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)                                   &
+      if (any(cfg%pft%allom(1:cfg%pft%n)%height_allometry == HEIGHT_CHAVE)                                   &
           .and. len_trim(cfg%maps%chave_e_map) == 0)                                                    &
          error stop TAG//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//       &
                          'needs maps.chave_e_map'
@@ -562,11 +562,11 @@ contains
    subroutine check_maps(cfg)
       type(meds_config_t), intent(in) :: cfg
       if (soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0) then
-         if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND))        &
+         if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%format == MET_BACKEND_ED_ERA5LAND))        &
             error stop TAG//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
       end if
       if (len_trim(cfg%maps%chave_e_map) > 0 .and.                                                      &
-          .not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE))                            &
+          .not. any(cfg%pft%allom(1:cfg%pft%n)%height_allometry == HEIGHT_CHAVE))                            &
          error stop TAG//'maps.chave_e_map needs a PFT with allometry.height_allometry = "chave2014"'
    end subroutine check_maps
 
@@ -579,16 +579,16 @@ contains
       integer(ik) :: is, ns
       if (.not. allocated(cfg%sites)) return
       ns = size(cfg%sites, kind=ik)
-      if (cfg%run_mode == RUN_MODE_REGION)                                                              &
+      if (cfg%mode == RUN_MODE_REGION)                                                              &
          error stop TAG//'a region refuses [[sites]]: each cell is one site until a site map gives its sites'
       if (any(cfg%sites%area_fraction <= 0.0_wp)) error stop TAG//'[[sites]].area_fraction must be > 0'
       if (abs(sum(cfg%sites%area_fraction) - 1.0_wp) > 1.0e-6_wp)                                       &
          error stop TAG//'the [[sites]] area_fraction values must sum to 1'
-      if (any(cfg%sites%slope_deg < 0.0_wp .or. cfg%sites%slope_deg >= 90.0_wp))                        &
+      if (any(cfg%sites%slope < 0.0_wp .or. cfg%sites%slope >= 90.0_wp))                        &
          error stop TAG//'[[sites]].slope must lie in [0, 90) degrees'
-      if (any(cfg%sites%aspect_deg < 0.0_wp .or. cfg%sites%aspect_deg > 360.0_wp))                      &
+      if (any(cfg%sites%aspect < 0.0_wp .or. cfg%sites%aspect > 360.0_wp))                      &
          error stop TAG//'[[sites]].aspect must lie in [0, 360] degrees'
-      if (cfg%init_mode == INIT_CENSUS) then
+      if (cfg%init%init_mode == INIT_CENSUS) then
          if (any(cfg%sites%census_site_id <= 0_ik))                                                     &
             error stop TAG//'a census run needs [[sites]].census_site_id > 0 for every site'
          do is = 2_ik, ns
@@ -691,25 +691,25 @@ contains
    subroutine check_phenology(cfg)
       type(meds_config_t), intent(in) :: cfg
       associate (p => cfg%pft, n => cfg%pft%n)
-         if (any(p%pheno_flush_cue_mask(1:n) < 0_ik .or. p%pheno_flush_cue_mask(1:n) > 7_ik) .or.        &
-             any(p%pheno_shed_cue_mask(1:n)  < 0_ik .or. p%pheno_shed_cue_mask(1:n)  > 7_ik))            &
+         if (any(p%pheno(1:n)%flush_cue_mask < 0_ik .or. p%pheno(1:n)%flush_cue_mask > 7_ik) .or.        &
+             any(p%pheno(1:n)%shed_cue_mask  < 0_ik .or. p%pheno(1:n)%shed_cue_mask  > 7_ik))            &
             error stop TAG//'phenology flush_cue_mask / shed_cue_mask out of range [0,7]'
-         if (any(p%pheno_flush_cue_timescale(1:n) <= 0.0_wp) .or.                                       &
-             any(p%pheno_shed_cue_timescale(1:n)  <= 0.0_wp) .or.                                       &
-             any(p%pheno_light_window(1:n)        <= 0.0_wp))                                           &
+         if (any(p%pheno(1:n)%flush_cue_timescale <= 0.0_wp) .or.                                       &
+             any(p%pheno(1:n)%shed_cue_timescale  <= 0.0_wp) .or.                                       &
+             any(p%pheno(1:n)%light_window        <= 0.0_wp))                                           &
             error stop TAG//'phenology cue timescales and light_window must be > 0'
-         if (any(p%pheno_par_min(1:n) < 0.0_wp))        error stop TAG//'phenology.par_min must be >= 0'
-         if (any(p%pheno_flush_rate_max(1:n) <= 0.0_wp)) error stop TAG//'phenology.flush_rate_max must be > 0'
-         if (any(p%pheno_shed_rate_max(1:n) < 0.0_wp))   error stop TAG//'phenology.shed_rate_max must be >= 0'
-         if (any(p%pheno_min_leaf_cover(1:n) < 0.0_wp .or. p%pheno_min_leaf_cover(1:n) >= 1.0_wp) .or.   &
-             any(p%pheno_bare_leaf_cover(1:n) < 0.0_wp .or. p%pheno_bare_leaf_cover(1:n) >= 1.0_wp))     &
+         if (any(p%pheno(1:n)%par_min < 0.0_wp))        error stop TAG//'phenology.par_min must be >= 0'
+         if (any(p%pheno(1:n)%flush_rate_max <= 0.0_wp)) error stop TAG//'phenology.flush_rate_max must be > 0'
+         if (any(p%pheno(1:n)%shed_rate_max < 0.0_wp))   error stop TAG//'phenology.shed_rate_max must be >= 0'
+         if (any(p%pheno(1:n)%min_leaf_cover < 0.0_wp .or. p%pheno(1:n)%min_leaf_cover >= 1.0_wp) .or.   &
+             any(p%pheno(1:n)%bare_leaf_cover < 0.0_wp .or. p%pheno(1:n)%bare_leaf_cover >= 1.0_wp))     &
             error stop TAG//'phenology min_leaf_cover / bare_leaf_cover must be in [0,1)'
-         if (any(p%pheno_flush_temp_sharpness(1:n) == 0.0_wp) .or.                                     &
-             any(p%pheno_shed_temp_sharpness(1:n)  == 0.0_wp) .or.                                     &
-             any(p%pheno_flush_light_sharpness(1:n) == 0.0_wp) .or.                                    &
-             any(p%pheno_shed_light_sharpness(1:n)  == 0.0_wp) .or.                                    &
-             any(p%pheno_flush_water_sharpness(1:n) == 0.0_wp) .or.                                    &
-             any(p%pheno_shed_water_sharpness(1:n)  == 0.0_wp))                                        &
+         if (any(p%pheno(1:n)%flush_temp_sharpness == 0.0_wp) .or.                                     &
+             any(p%pheno(1:n)%shed_temp_sharpness  == 0.0_wp) .or.                                     &
+             any(p%pheno(1:n)%flush_light_sharpness == 0.0_wp) .or.                                    &
+             any(p%pheno(1:n)%shed_light_sharpness  == 0.0_wp) .or.                                    &
+             any(p%pheno(1:n)%flush_water_sharpness == 0.0_wp) .or.                                    &
+             any(p%pheno(1:n)%shed_water_sharpness  == 0.0_wp))                                        &
             error stop TAG//'a phenology sharpness is 0: its switch would be a constant 0.5'
       end associate
    end subroutine check_phenology

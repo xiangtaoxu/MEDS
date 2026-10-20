@@ -32,7 +32,7 @@ module meds_fast_types
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
-   use meds_fast_opts, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
+   use meds_fast_opts, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I, process_mask_t
    use meds_plant_hydr_lib, only : build_hydro_table
    use meds_pft_params, only : pft_table_t
    use meds_state_defaults,    only : UNSET_NEGATIVE
@@ -42,7 +42,7 @@ module meds_fast_types
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
    public :: tol_set_t, error_control_t, integrator_opts_t
-   public :: process_mask_t, mask_is_full
+   public :: mask_is_full
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config, apply_canopy_film_config
    public :: surface_state_t, surface_tend_t
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
@@ -53,31 +53,6 @@ module meds_fast_types
    public :: stage_bflux_t, column_bflux_t
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
-   !----- The uniform PROCESS MASK (MEDS_NUMERICS_SCOPING.md §5.1). One switch set that every scheme     !
-   !      honors, so the SAME driver can run a REDUCED column ODE: turning off energy leaves a water +   !
-   !      CO2 column, turning off all but hydraulics isolates the stiffest mode. It is the process-      !
-   !      complexity axis of a numerics sweep, and it is scientifically useful on its own (attribute     !
-   !      column behaviour to a process).                                                                !
-   !                                                                                                     !
-   !      SEMANTICS: a masked-OFF process is FROZEN -- its store does not evolve, so the ODE loses that  !
-   !      dimension while the process still supplies its couplings to the others as a CONSTANT. The      !
-   !      kernel is still invoked and its store restored afterwards (rather than the call being skipped) !
-   !      so no downstream consumer is ever handed an unset flux; the cost of a reduced system is        !
-   !      therefore NOT lower, which matters when reading harness WORK metrics.                          !
-   !                                                                                                     !
-   !      CONSERVATION: a reduced column is deliberately NOT closed -- freezing a store while its fluxes !
-   !      still act on its neighbours breaks the ledger by construction. mask_is_full() reports whether  !
-   !      the budget halts are meaningful, and the driver suppresses them when they are not.             !
-   !      All-true (the default) is the full column.                                                     !
-   type :: process_mask_t
-      logical :: veg_energy = .true.   !< leaf + wood energy stores (prognostic modes)
-      logical :: cas_energy = .true.   !< canopy-air-space enthalpy (temperature)
-      logical :: cas_vapour = .true.   !< canopy-air-space specific humidity
-      logical :: cas_co2    = .true.   !< canopy-air-space CO2 twin
-      logical :: soil_heat  = .true.   !< soil thermal column
-      logical :: soil_water = .true.   !< soil water column (the water network's soil stores)
-      logical :: hydraulics = .true.   !< plant hydraulics (psi)
-   end type process_mask_t
 
    !----- The tolerance GROUPS -- one per physical field class in the fast-loop state, each scaling    !
    !      its entries in the embedded-error WRMS (docs/science/numerical_scheme.md eq. (3)). GRP_THETA !

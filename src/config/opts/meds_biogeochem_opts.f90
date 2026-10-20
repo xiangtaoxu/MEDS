@@ -39,6 +39,7 @@ module meds_biogeochem_opts
    !  §4, §7).                                                                                !
    !==========================================================================================!
    type :: decomp_opts_t
+      logical     :: soil_carbon_on = .true.              !< .false.: no soil carbon at all
       integer(ik) :: decomp_scheme = DECOMP_SCHEME_ED2    !< DECOMP_SCHEME_ED2 (3-active) or DECOMP_SCHEME_CENTURY5 (5-active)
       integer(ik) :: step_solver   = DECOMP_STEP_EULER    !< {EULER, EXPM}
       !----- Baseline decay rates [1/yr] (ED2 ed_params.f90 decay_rate_*). ------------------------!
@@ -68,6 +69,15 @@ module meds_biogeochem_opts
       real(wp)    :: resp_opt_water       = 0.8938_wp
       real(wp)    :: resp_water_below_opt = 5.0786_wp
       real(wp)    :: resp_water_above_opt = 4.5139_wp
+      !----- The cold start: from zero (default), or from the semi-analytic steady state of a        !
+      !      climatological environmental scalar and a constant litter input to the four litter    !
+      !      pools (docs/science/soil_carbon.md eq. (7)). ------------------------------------------!
+      logical     :: spinup_steady      = .false.
+      real(wp)    :: spinup_xi          = 1.0_wp          !< [-] its environmental scalar, every pool
+      real(wp)    :: spinup_labile_grnd = 0.0_wp          !< [kgC/m2/day] its litter input, per pool
+      real(wp)    :: spinup_labile_soil = 0.0_wp
+      real(wp)    :: spinup_struct_grnd = 0.0_wp
+      real(wp)    :: spinup_struct_soil = 0.0_wp
    end type decomp_opts_t
 
 end module meds_biogeochem_opts

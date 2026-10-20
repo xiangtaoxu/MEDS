@@ -41,14 +41,14 @@ program test_phenology_driver
    !----- Config: PFT 1 temperate deciduous (warmth x light, cold x short days), the rest   !
    !       with no cues. This test calls advance_leaf_phenology directly. ------------------!
    cfg = build_test_config()
-   cfg%forcing%latitude_deg               = 42.44_wp           ! Ithaca NY (northern hemisphere)
-   cfg%pft%pheno_flush_cue_mask(1)        = CUE_TEMP + CUE_LIGHT
-   cfg%pft%pheno_shed_cue_mask(1)         = CUE_TEMP + CUE_LIGHT
-   cfg%pft%pheno_flush_degree_days(1)     = 92.0_wp
-   cfg%pft%pheno_shed_base_temp(1)        = 290.37_wp
-   cfg%pft%pheno_shed_degree_days(1)      = 48.0_wp
-   cfg%pft%pheno_flush_light_hours(1)     = 10.35_wp
-   cfg%pft%pheno_shed_light_hours(1)      = 9.83_wp
+   cfg%forcing%latitude               = 42.44_wp           ! Ithaca NY (northern hemisphere)
+   cfg%pft%pheno(1)%flush_cue_mask        = CUE_TEMP + CUE_LIGHT
+   cfg%pft%pheno(1)%shed_cue_mask         = CUE_TEMP + CUE_LIGHT
+   cfg%pft%pheno(1)%flush_degree_days     = 92.0_wp
+   cfg%pft%pheno(1)%shed_base_temp        = 290.37_wp
+   cfg%pft%pheno(1)%shed_degree_days      = 48.0_wp
+   cfg%pft%pheno(1)%flush_light_hours     = 10.35_wp
+   cfg%pft%pheno(1)%shed_light_hours      = 9.83_wp
 
    !----- A site with two cohorts: cohort 1 = PFT 1 (deciduous), cohort 2 = PFT 2 (no cues). -!
    call init_bare_ground(poly, cfg, 1_ik)
@@ -60,7 +60,7 @@ program test_phenology_driver
 
    !----- Drive one synthetic year (dt_slow = 1 day). ------------------------------------!
    do doy = 1_ik, 365_ik
-      call set_daily_drivers(poly, daily_tair(doy), daylength(cfg%forcing%latitude_deg, doy))
+      call set_daily_drivers(poly, daily_tair(doy), daylength(cfg%forcing%latitude, doy))
       call advance_leaf_phenology(poly, cfg, doy)
       if (doy == 200_ik) then
          fl_decid_200 = poly%cohort%leaf_flush_tendency(1) ; sh_decid_200 = poly%cohort%leaf_shed_tendency(1)
@@ -130,8 +130,8 @@ program test_phenology_driver
    !          turgor-loss point; one wet day adds wet credit without wiping it. -------------!
    block
       real(wp) :: tlp, dry7
-      cfg%pft%pheno_flush_cue_mask(1) = CUE_NONE
-      cfg%pft%pheno_shed_cue_mask(1)  = CUE_WATER
+      cfg%pft%pheno(1)%flush_cue_mask = CUE_NONE
+      cfg%pft%pheno(1)%shed_cue_mask  = CUE_WATER
       tlp = pft_leaf_psi_tlp(cfg, 1_ik)
       call reset_pheno_memory(poly)
       poly%cohort%dmax_psi_leaf(1) = tlp - 1.0_wp           ! 1 MPa below the TLP
@@ -154,8 +154,8 @@ program test_phenology_driver
    !          stays lower. A cohort with no light memory starts from its first day's hours. ----!
    block
       real(wp) :: expect
-      cfg%pft%pheno_shed_cue_mask(1:2) = CUE_LIGHT
-      cfg%pft%pheno_light_window(1:2)  = 10.0_wp
+      cfg%pft%pheno(1:2)%shed_cue_mask = CUE_LIGHT
+      cfg%pft%pheno(1:2)%light_window  = 10.0_wp
       call reset_pheno_memory(poly)
       call set_daily_drivers(poly, 290.0_wp, 9.0_wp)
       call advance_leaf_phenology(poly, cfg, 200_ik)
@@ -172,7 +172,7 @@ program test_phenology_driver
                        poly%cohort%light_hours_mean(1), expect, 1.0e-9_wp)
       call check_close('a shaded cohort reads its own hours of light (3 h)',                     &
                        poly%cohort%light_hours_mean(2), expect / 4.0_wp, 1.0e-9_wp)
-      cfg%pft%pheno_shed_cue_mask(2) = CUE_NONE
+      cfg%pft%pheno(2)%shed_cue_mask = CUE_NONE
    end block
 
    !=== 5. ACCEPTANCE: the drought-deciduous and light-exchanging habits, end to end. =======!
@@ -182,8 +182,8 @@ program test_phenology_driver
    block
       real(wp) :: shed_wet, shed_dry, flush_dry, flush_rewet, tlp
       integer(ik) :: d
-      cfg%pft%pheno_flush_cue_mask(1) = CUE_WATER
-      cfg%pft%pheno_shed_cue_mask(1)  = CUE_WATER
+      cfg%pft%pheno(1)%flush_cue_mask = CUE_WATER
+      cfg%pft%pheno(1)%shed_cue_mask  = CUE_WATER
       tlp = pft_leaf_psi_tlp(cfg, 1_ik)
       call reset_pheno_memory(poly)
       poly%cohort%dmax_psi_leaf(1) = 0.5_wp * tlp               ! well watered
@@ -215,10 +215,10 @@ program test_phenology_driver
    block
       real(wp) :: shed_dim, shed_bright, flush_bright
       integer(ik) :: d
-      cfg%pft%pheno_flush_cue_mask(1)       = CUE_NONE
-      cfg%pft%pheno_shed_cue_mask(1)        = CUE_LIGHT
-      cfg%pft%pheno_shed_light_hours(1)     = 6.0_wp
-      cfg%pft%pheno_shed_light_sharpness(1) = 2.0_wp         ! > 0: many bright hours trigger
+      cfg%pft%pheno(1)%flush_cue_mask       = CUE_NONE
+      cfg%pft%pheno(1)%shed_cue_mask        = CUE_LIGHT
+      cfg%pft%pheno(1)%shed_light_hours     = 6.0_wp
+      cfg%pft%pheno(1)%shed_light_sharpness = 2.0_wp         ! > 0: many bright hours trigger
       call reset_pheno_memory(poly)
       do d = 1_ik, 60_ik
          call set_daily_drivers(poly, 295.0_wp, 2.0_wp)       ! few bright hours

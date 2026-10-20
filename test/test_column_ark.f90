@@ -310,7 +310,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
+      col_config%soil_water_opts%water_bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_water%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_water%theta(col_config%soil%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
@@ -324,7 +324,7 @@ contains
       call check_true('AQUIFER/ARK: dry column wets from below',                                                      &
               biophys%soil_water%theta(col_config%soil%n_active) > theta_bot0,                                            &
               biophys%soil_water%theta(col_config%soil%n_active) - theta_bot0)
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
+      col_config%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_ark_aquifer
 
    !----- march 24 h of INTEG_ARK over MOIST free-draining soil (rainfall==0) and                   !

@@ -152,14 +152,14 @@ contains
       if (present(cells)) then
          src%cells = cells
       else
-         call era5land_select_site(src%static_file, f%latitude_deg, f%longitude_deg, f%max_distance_km, &
+         call era5land_select_site(src%static_file, f%latitude, f%longitude, f%max_distance_km, &
                                    src%cells, distance_km, est)
       end if
       if (est /= ERA_OK) then
          select case (est)
          case (ERA_ERR_NO_CELL)
             write(*,'(a,f0.1,a,f0.4,a,f0.4,a)') ' met_open: no valid ERA5-Land cell within ',          &
-                  f%max_distance_km, ' km of the site (', f%latitude_deg, ', ', f%longitude_deg, ')'
+                  f%max_distance_km, ' km of the site (', f%latitude, ', ', f%longitude, ')'
          case (ERA_ERR_OPEN)
             write(*,'(2a)') ' met_open: cannot open the ED_ERA5land static file ', trim(src%static_file)
          case default

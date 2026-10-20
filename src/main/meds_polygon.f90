@@ -154,7 +154,7 @@ contains
       !----- Slow soil-carbon spin-up (opt-in): a successful STATE restart already carries the real !
       !      persisted pools; otherwise the pools start at the allocation-time zero unless          !
       !      spinup_steady requests the SASU steady-state solve.  ---------------------------------!
-      if (cfg%soil_carbon_on .and. cfg%soil_carbon_spinup_steady .and. .not. keep_soil_carbon)    &
+      if (cfg%soil_carbon%soil_carbon_on .and. cfg%soil_carbon%spinup_steady .and. .not. keep_soil_carbon)    &
          call soil_carbon_steady(poly, cfg, verbose)
 
       run%slow_ledger%active = cfg%slow_on .and. cfg%slow_ledger_on
@@ -207,7 +207,7 @@ contains
       !      not a lag to apologise for: the quantity being tracked IS the preceding weeks'         !
       !      temperature, and one slow step is a thirtieth of the window. A no-op when the flag is  !
       !      off. -----------------------------------------------------------------------------------!
-      if (cfg%leaf_thermal_acclimation) call advance_growth_temperature(cfg, step_days, poly, run)
+      if (cfg%thermal_acclimation) call advance_growth_temperature(cfg, step_days, poly, run)
 
       !----- The fast loop stages sub-daily samples into the polygon's share of the run's files. --!
       call stepper(out_bufs)
@@ -275,7 +275,7 @@ contains
                return
             end if
          end do
-         if (cfg%soil_carbon_on) then
+         if (cfg%soil_carbon%soil_carbon_on) then
             do ii = 1_ik, poly%patch%n
                kk = soil_carbon_bad_pool(poly%patch%soil_carbon(ii))
                if (kk /= 0_ik) then
@@ -370,7 +370,7 @@ contains
       end if
       !----- The soil-carbon seam, in the same place and spirit as the two budgets above: a number  !
       !      that should be machine-zero, reported whether or not it ever breached.  ----------------!
-      if (cfg%soil_carbon_on) then
+      if (cfg%soil_carbon%soil_carbon_on) then
          write(*,'(a,es12.3,a)') ' seam[soil_carbon_rh]  worst |pool debit - fast Rh| = ',        &
                run%seam%worst_rh_gap, ' kgC/m2'
          if (run%seam%worst_rh_gap > 0.0_wp)                                                      &
@@ -468,11 +468,11 @@ contains
       integer(ik) :: ipp
       pools0 = soil_carbon_t()                          ! zero-carbon reference (f_lignin=0)
       call assemble_transfer_matrix(pools0, cfg%soil_carbon, a_mat, k_diag, er)
-      xi_bar = cfg%soil_carbon_spinup_xi
-      lit%labile_grnd = cfg%soil_carbon_spinup_labile_grnd
-      lit%labile_soil = cfg%soil_carbon_spinup_labile_soil
-      lit%struct_grnd = cfg%soil_carbon_spinup_struct_grnd
-      lit%struct_soil = cfg%soil_carbon_spinup_struct_soil
+      xi_bar = cfg%soil_carbon%spinup_xi
+      lit%labile_grnd = cfg%soil_carbon%spinup_labile_grnd
+      lit%labile_soil = cfg%soil_carbon%spinup_labile_soil
+      lit%struct_grnd = cfg%soil_carbon%spinup_struct_grnd
+      lit%struct_soil = cfg%soil_carbon%spinup_struct_soil
       call build_litter_input(lit, u_bar, lignin_bar)
       call solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, cfg%soil_carbon, pools_ss)
       do ipp = 1_ik, poly%patch%n
@@ -501,7 +501,7 @@ contains
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
       call manager_set_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
-                                any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE))
+                                any(cfg%pft%allom(1:cfg%pft%n)%height_allometry == HEIGHT_CHAVE))
       call manager_finalize(files)
    end subroutine open_output_files
 

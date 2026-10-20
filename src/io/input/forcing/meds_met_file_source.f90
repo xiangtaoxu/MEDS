@@ -201,9 +201,9 @@ contains
       st = nc_inq_varid_f(int(src%ncid, c_int), 'longitude', vlon) ; call nc_check(st, 'resolve_grid_index: longitude varid')
       st = nc_get_vara_double(int(src%ncid, c_int), vlon, start1, count1, lon_grid)
       call nc_check(st, 'resolve_grid_index: longitude values')
-      src%grid_index = nearest_grid_index(src%fcfg%longitude_deg, src%fcfg%latitude_deg, lon_grid, lat_grid)
+      src%grid_index = nearest_grid_index(src%fcfg%longitude, src%fcfg%latitude, lon_grid, lat_grid)
       write(*,'(a,i0,a,f8.3,a,f8.3,a)') 'met_open: grid_match=nearest resolved grid_index=', src%grid_index, &
-            ' (site lon=', src%fcfg%longitude_deg, ' lat=', src%fcfg%latitude_deg, ')'
+            ' (site lon=', src%fcfg%longitude, ' lat=', src%fcfg%latitude, ')'
       deallocate(lat_grid, lon_grid)
    end subroutine resolve_grid_index
 

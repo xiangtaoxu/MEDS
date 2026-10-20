@@ -303,7 +303,7 @@ program test_column_dynamics
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
-   col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN           ! sealed: the water has nowhere to drain
+   col_config%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN           ! sealed: the water has nowhere to drain
    col_config%soil_water_opts%drain_factor = 0.0_wp
    call integrate_day()
    call check_true('SATURATED: the column reached theta_sat (saturation path is live)',                               &
@@ -344,7 +344,7 @@ program test_column_dynamics
    !  enthalpy or sublimation vapour shows up directly in the residual as an unpaired term.   !
    !=====================================================================================!
    theta_seed = THETA0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
-   col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
+   col_config%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. A pack that ends   !
    !      near zero makes a "pack still present" assertion test the last few percent of the melt   !
    !      energy rather than the wiring. A surviving pack lets the schemes be compared on melt     !
@@ -461,7 +461,7 @@ program test_column_dynamics
    !  difference. The first pass (the default scheme) is the reference the others are compared to.   !
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = THETA0
-   col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
+   col_config%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    snowf_total = 2.0e-5_wp * real(NSTEP, wp) * DT_FAST     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
@@ -759,14 +759,14 @@ contains
       !----- (a) DEFAULT: each group is seeded from the config key that governs it. -------------------!
       t = build_tol_set(c)
       call check_true('tol: every group takes [fast].rtol', all(t%rtol == c%rtol), maxval(abs(t%rtol - c%rtol)))
-      call check_true('tol: theta group seeded from [fast].water_atol', t%atol(GRP_THETA)  == c%soil%atol,           &
+      call check_true('tol: theta group seeded from [fast].water_atol', t%atol(GRP_THETA)  == c%soil%water_atol,           &
               t%atol(GRP_THETA))
       !----- (b) THE DIALS: rtol sets every group; atol_scale multiplies every atol. ------------------!
       c%rtol       = 1.0e-7_wp
       c%atol_scale = 1.0e-2_wp
       t = build_tol_set(c)
       call check_true('tol: rtol sets ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
-      call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, t%atol(GRP_THETA))
+      call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%soil%water_atol * 1.0e-2_wp, t%atol(GRP_THETA))
       !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ARK march: the     !
       !      soil-plant water network takes the GRP_THETA pair for soil and plant stores alike. -------!
       call build_fast_context(c, fx)
@@ -778,7 +778,8 @@ contains
       !      BUDGET-CLOSURE threshold, which atol_scale scales directly, outside the tolerance groups.    !
       !      This assertion catches a dropped path.                                                      !
       call check_true('tol: atol_scale reaches the soil-energy BUDGET threshold',                                     &
-              fx%col_config%energy%atol == c%energy%atol * 1.0e-2_wp, fx%col_config%energy%atol)
+              fx%col_config%energy%soil_energy_budget_atol == c%energy%soil_energy_budget_atol * 1.0e-2_wp,          &
+              fx%col_config%energy%soil_energy_budget_atol)
    end subroutine test_tolerance_unification
 
 end program test_column_dynamics

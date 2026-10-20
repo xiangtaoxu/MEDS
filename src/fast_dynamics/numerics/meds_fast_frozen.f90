@@ -572,7 +572,7 @@ contains
       spac%t_soil(1:nsl) = biophys%soil_energy%soil_temp(1:nsl)
       spac%w_pond_max = col_config%soil_water_opts%w_pond_max
       spac%rtol       = col_config%soil_water_opts%rtol
-      spac%atol       = col_config%soil_water_opts%atol
+      spac%atol       = col_config%soil_water_opts%water_atol
       call spac_set_state(spac, col_config%soil, col_config%hydraulics_table, biophys%soil_water%theta(1:nsl),      &
                           biophys%soil_water%w_surface, biophys%soil_water%w_surface_energy,                              &
                           biophys%leaf_water_mass(1:n), biophys%wood_water_mass(1:n))

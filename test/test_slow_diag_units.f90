@@ -68,7 +68,7 @@ program test_slow_diag_units
    !      property check 1 asserts; it is set here rather than inherited so the mirror is explicit.!
    cfg%dt_fast            = 900.0_wp
    cfg%n_fast_per_slow    = 96_ik
-   cfg%soil_carbon_on     = .true.
+   cfg%soil_carbon%soil_carbon_on     = .true.
 
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &

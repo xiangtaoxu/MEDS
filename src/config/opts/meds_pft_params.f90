@@ -33,13 +33,45 @@ module meds_pft_params
    implicit none
    private
 
-   public :: pft_table_t, alloc_pft_table, derive_leaf_params
+   public :: pft_table_t, phenology_traits_t, alloc_pft_table, derive_leaf_params
    public :: HYD_UNSET
    public :: PATH_C3, PATH_C4
 
    !----- Photosynthetic-pathway flags (per-PFT trait values). ----------------------------!
    integer(ik), parameter :: PATH_C3 = 1_ik   !< C3 (Farquhar-von Caemmerer-Berry)
    integer(ik), parameter :: PATH_C4 = 2_ik   !< C4 (Collatz et al. 1992)
+
+   !----- A PFT's [phenology] block (docs/science/plant_phenology.md). Every switch is            !
+   !      sigma(s (x - x*)), a centre and a signed sharpness. A PFT file without the block keeps    !
+   !      these defaults: both masks CUE_NONE (0), always flushing and never senescing, leaves     !
+   !      lost to background turnover alone. They equal pheno_params_t's (meds_phenology_types),  !
+   !      into which the slow-loop driver copies them with the turgor-loss point. ------------------!
+   type :: phenology_traits_t
+      integer(ik) :: flush_cue_mask        = 0_ik        !< cues of the flush side (TEMP 1, LIGHT 2, WATER 4)
+      integer(ik) :: shed_cue_mask         = 0_ik        !< cues of the shed side
+      real(wp)    :: flush_cue_timescale   = 5.0_wp      !< [day] smoothing of the flush tendency
+      real(wp)    :: shed_cue_timescale    = 5.0_wp      !< [day] smoothing of the shed tendency
+      real(wp)    :: flush_rate_max        = 0.06667_wp  !< [1/day] leaf growth at full tendency
+      real(wp)    :: shed_rate_max         = 0.05_wp     !< [1/day] senescence at full tendency
+      real(wp)    :: min_leaf_cover        = 0.0_wp      !< [-] leaf cover senescence stops at
+      real(wp)    :: bare_leaf_cover       = 0.02_wp     !< [-] a dormant canopy below this goes bare
+      real(wp)    :: flush_base_temp       = 278.15_wp   !< [K] warmth base
+      real(wp)    :: flush_degree_days     = 100.0_wp    !< [K day] warmth requirement
+      real(wp)    :: flush_temp_sharpness  = 0.04_wp     !< [1/(K day)]
+      real(wp)    :: shed_base_temp        = 290.15_wp   !< [K] cold base
+      real(wp)    :: shed_degree_days      = 50.0_wp     !< [K day] cold requirement after midsummer
+      real(wp)    :: shed_temp_sharpness   = 0.1_wp      !< [1/(K day)]
+      real(wp)    :: par_min               = 5.0_wp      !< [umol/m2/s] PAR that counts as an hour of light
+      real(wp)    :: flush_light_hours     = 12.0_wp     !< [h/day] hours of light that permit flushing
+      real(wp)    :: flush_light_sharpness = 1.0_wp      !< [1/h]
+      real(wp)    :: shed_light_hours      = 11.0_wp     !< [h/day] hours of light that trigger shedding
+      real(wp)    :: shed_light_sharpness  = -1.0_wp     !< [1/h]; < 0: short or dim days trigger
+      real(wp)    :: light_window          = 10.0_wp     !< [day] running mean of the hours of light
+      real(wp)    :: flush_water_sum       = 10.0_wp     !< [MPa day] wet sum that permits flushing
+      real(wp)    :: flush_water_sharpness = 0.5_wp      !< [1/(MPa day)]
+      real(wp)    :: shed_water_sum        = 10.0_wp     !< [MPa day] dry sum that triggers shedding
+      real(wp)    :: shed_water_sharpness  = 0.5_wp      !< [1/(MPa day)]
+   end type phenology_traits_t
 
    !---------------------------------------------------------------------------------------!
    ! PFT trait table (SoA).  Units in brackets.                                            !
@@ -188,36 +220,7 @@ module meds_pft_params
       real(wp),    allocatable :: kplastic_vcmax(:)         !< [1/(m2/m2)] Vcmax light-response slope (<0)
       real(wp),    allocatable :: kplastic_rd(:)            !< [1/(m2/m2)] Rd light-response slope
       real(wp),    allocatable :: kplastic_leaf_turnover(:) !< [1/(m2/m2)] leaf-turnover light-response slope (<=0)
-      !----- Leaf-phenology cue params (per PFT; flattened into a pheno_params_t by the slow-loop  !
-      !       phenology advance). Read only from a PFT file's [phenology] section; without one a PFT  !
-      !       keeps the defaults alloc_pft_table installs: both masks CUE_NONE, i.e. always flushing  !
-      !       and never senescing, with leaf loss from background turnover alone. Every switch is    !
-      !       sigma(s (x - x*)): a centre and a signed sharpness (docs/science/plant_phenology.md). !
-      !       The water cue's turgor-loss point is derived (pft_leaf_psi_tlp), not a key here. ----!
-      integer(ik), allocatable :: pheno_flush_cue_mask(:)        !< cues of the flush side (TEMP 1, LIGHT 2, WATER 4)
-      integer(ik), allocatable :: pheno_shed_cue_mask(:)         !< cues of the shed side
-      real(wp),    allocatable :: pheno_flush_cue_timescale(:)   !< [day]   smoothing of the flush tendency
-      real(wp),    allocatable :: pheno_shed_cue_timescale(:)    !< [day]   smoothing of the shed tendency
-      real(wp),    allocatable :: pheno_flush_rate_max(:)        !< [1/day] leaf growth at full tendency
-      real(wp),    allocatable :: pheno_shed_rate_max(:)         !< [1/day] senescence at full tendency
-      real(wp),    allocatable :: pheno_flush_base_temp(:)       !< [K]     warmth base
-      real(wp),    allocatable :: pheno_flush_degree_days(:)     !< [K day] warmth requirement
-      real(wp),    allocatable :: pheno_flush_temp_sharpness(:)  !< [1/(K day)]
-      real(wp),    allocatable :: pheno_shed_base_temp(:)        !< [K]     cold base
-      real(wp),    allocatable :: pheno_shed_degree_days(:)      !< [K day] cold requirement after midsummer
-      real(wp),    allocatable :: pheno_shed_temp_sharpness(:)   !< [1/(K day)]
-      real(wp),    allocatable :: pheno_par_min(:)               !< [umol/m2/s] PAR at the cohort's top that counts as light
-      real(wp),    allocatable :: pheno_flush_light_hours(:)     !< [h/day] hours of light that permit flushing
-      real(wp),    allocatable :: pheno_flush_light_sharpness(:) !< [1/h]
-      real(wp),    allocatable :: pheno_shed_light_hours(:)      !< [h/day] hours of light that trigger shedding
-      real(wp),    allocatable :: pheno_shed_light_sharpness(:)  !< [1/h]; < 0: short or dim days trigger, > 0 bright
-      real(wp),    allocatable :: pheno_light_window(:)          !< [day]   running mean of the hours of light
-      real(wp),    allocatable :: pheno_flush_water_sum(:)       !< [MPa day] wet sum that permits flushing
-      real(wp),    allocatable :: pheno_flush_water_sharpness(:) !< [1/(MPa day)]
-      real(wp),    allocatable :: pheno_shed_water_sum(:)        !< [MPa day] dry sum that triggers shedding
-      real(wp),    allocatable :: pheno_shed_water_sharpness(:)  !< [1/(MPa day)]
-      real(wp),    allocatable :: pheno_min_leaf_cover(:)        !< [--] leaf cover senescence stops at
-      real(wp),    allocatable :: pheno_bare_leaf_cover(:)       !< [--] a dormant canopy below this goes bare
+      type(phenology_traits_t), allocatable :: pheno(:) !< each PFT's phenology ([phenology])
    end type pft_table_t
 
    !----- 'not given' sentinel of the optional stomatal stress points. Large and negative so it
@@ -279,44 +282,7 @@ contains
       pft%leaf_surf_water_max = 0.1_wp ; pft%wood_surf_water_max = 0.1_wp   ! optional keys: CLM5's dewmx
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
       allocate(pft%kplastic_sla(n), pft%kplastic_vcmax(n), pft%kplastic_rd(n), pft%kplastic_leaf_turnover(n))
-      !----- Leaf-phenology cue params: the defaults a PFT without a [phenology] section keeps --   !
-      !       both masks CUE_NONE, so only the flush rate, the cue timescales and the background    !
-      !       turnover act. They equal the pheno_params_t defaults (meds_phenology_types). ----------!
-      allocate(pft%pheno_flush_cue_mask(n), pft%pheno_shed_cue_mask(n),                              &
-               pft%pheno_flush_cue_timescale(n), pft%pheno_shed_cue_timescale(n),                    &
-               pft%pheno_flush_rate_max(n), pft%pheno_shed_rate_max(n),                              &
-               pft%pheno_flush_base_temp(n), pft%pheno_flush_degree_days(n),                         &
-               pft%pheno_flush_temp_sharpness(n), pft%pheno_shed_base_temp(n),                       &
-               pft%pheno_shed_degree_days(n), pft%pheno_shed_temp_sharpness(n),                      &
-               pft%pheno_par_min(n), pft%pheno_flush_light_hours(n), pft%pheno_flush_light_sharpness(n), &
-               pft%pheno_shed_light_hours(n), pft%pheno_shed_light_sharpness(n), pft%pheno_light_window(n), &
-               pft%pheno_flush_water_sum(n), pft%pheno_flush_water_sharpness(n),                     &
-               pft%pheno_shed_water_sum(n), pft%pheno_shed_water_sharpness(n),                       &
-               pft%pheno_min_leaf_cover(n), pft%pheno_bare_leaf_cover(n))
-      pft%pheno_flush_cue_mask        = 0_ik         ! CUE_NONE: always flushing
-      pft%pheno_shed_cue_mask         = 0_ik         ! CUE_NONE: no senescence
-      pft%pheno_flush_cue_timescale   = 5.0_wp
-      pft%pheno_shed_cue_timescale    = 5.0_wp
-      pft%pheno_flush_rate_max        = 0.06667_wp   ! a bare canopy fills in ~15 days
-      pft%pheno_shed_rate_max         = 0.05_wp
-      pft%pheno_flush_base_temp       = 278.15_wp
-      pft%pheno_flush_degree_days     = 100.0_wp
-      pft%pheno_flush_temp_sharpness  = 0.04_wp
-      pft%pheno_shed_base_temp        = 290.15_wp
-      pft%pheno_shed_degree_days      = 50.0_wp
-      pft%pheno_shed_temp_sharpness   = 0.1_wp
-      pft%pheno_par_min               = 5.0_wp       ! a low threshold: the hours of light ~ the day length
-      pft%pheno_flush_light_hours     = 12.0_wp
-      pft%pheno_flush_light_sharpness = 1.0_wp
-      pft%pheno_shed_light_hours      = 11.0_wp
-      pft%pheno_shed_light_sharpness  = -1.0_wp
-      pft%pheno_light_window          = 10.0_wp
-      pft%pheno_flush_water_sum       = 10.0_wp
-      pft%pheno_flush_water_sharpness = 0.5_wp
-      pft%pheno_shed_water_sum        = 10.0_wp
-      pft%pheno_shed_water_sharpness  = 0.5_wp
-      pft%pheno_min_leaf_cover        = 0.0_wp
-      pft%pheno_bare_leaf_cover       = 0.02_wp
+      allocate(pft%pheno(n))                ! a PFT without a [phenology] block keeps the defaults
    end subroutine alloc_pft_table
 
    !---------------------------------------------------------------------------------------!

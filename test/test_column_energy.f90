@@ -138,7 +138,7 @@ contains
       forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
       forcing%w_flux_top = 0.0_wp ; forcing%w_flux_bot = 0.0_wp
       if (ddeep > 0.0_wp) then
-         opts%bottom_bc = ENERGY_BC_DIRICHLET ; opts%deep_temp = tmean ; opts%deep_depth = ddeep
+         opts%thermal_bottom_bc = ENERGY_BC_DIRICHLET ; opts%deep_temp = tmean ; opts%deep_depth = ddeep
       end if
       do k = 1_ik, nl
          col%soil_energy(k) = temp_to_internal_energy(therm%soil_dry_heat_capacity(k),            &

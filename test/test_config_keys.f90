@@ -75,7 +75,7 @@ program test_config_keys
    call toml_parse_file('test_config_keys_pft.toml', tp, ok)
    cfg = build_test_config()
    cfg%forcing%forcing_on = .true.
-   cfg%forcing%backend    = MET_BACKEND_ED_ERA5LAND
+   cfg%forcing%format    = MET_BACKEND_ED_ERA5LAND
    report = key_report_t()
    call check_key_use(t, tp, cfg, report)
    call check(report%n == 2_ik, 'both inapplicable keys are reported')

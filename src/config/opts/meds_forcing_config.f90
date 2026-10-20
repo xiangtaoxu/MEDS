@@ -96,7 +96,7 @@ module meds_forcing_config
    !==========================================================================================!
    type :: forcing_config_t
       logical            :: forcing_on   = .false.               !< master gate (indep. of fast_biophysics_on)
-      integer(ik)        :: backend      = MET_BACKEND_ED_DEFAULT !< format: "ED_default" | "ED_ERA5land" | "const"
+      integer(ik)        :: format       = MET_BACKEND_ED_DEFAULT !< format: "ED_default" | "ED_ERA5land" | "const"
       character(len=MET_PATH_LEN) :: path = ''                   !< forcing NetCDF path (format = "ED_default")
       !----- The ED_ERA5land archive (format = "ED_ERA5land"; docs/science/forcing.md §1). The      !
       !      file template and static file are derived from data_path when left empty, which is     !
@@ -108,7 +108,7 @@ module meds_forcing_config
       real(wp)           :: max_distance_km = 15.0_wp            !< [km] a site on a no-data cell takes the nearest
                                                                  !<      valid cell within this, else it is an error
       integer(ik)        :: grid_index   = 1_ik                  !< which (time,grid) location this polygon reads
-      real(wp)           :: dt_forcing   = 3600.0_wp             !< [s] native interval (hourly ERA5-Land)
+      real(wp)           :: timestep     = 3600.0_wp             !< [s] native interval (hourly ERA5-Land)
       integer(ik)        :: avg_convention = METAVG_END          !< flux vars mean over the hour ENDING at the stamp
       integer(ik)        :: sw_partition = SWPART_CLEARIDX        !< ERA5-Land total SW -> partition required
       integer(ik)        :: lwdown_source = LW_FILE              !< file (ERA5-Land strd) | synthesize
@@ -142,9 +142,9 @@ module meds_forcing_config
       integer(ik)        :: grid_match   = GRIDMATCH_EXPLICIT    !< explicit grid_index | nearest [site] lat/lon
       !----- Site geolocation ([site]) -- solar geometry and lapse. Every forcing clock is UTC,     !
       !      so the longitude alone gives local solar time (docs/science/forcing.md eq. (2)). ------!
-      real(wp)           :: latitude_deg  = 42.44_wp             !< [deg +N] Ithaca NY
-      real(wp)           :: longitude_deg = -76.50_wp            !< [deg +E] Ithaca NY (solar time)
-      real(wp)           :: elevation_m   = 320.0_wp             !< [m] site elevation (Ithaca ~320 m; elevation lapse)
+      real(wp)           :: latitude      = 42.44_wp             !< [deg +N] Ithaca NY
+      real(wp)           :: longitude     = -76.50_wp            !< [deg +E] Ithaca NY (solar time)
+      real(wp)           :: elevation     = 320.0_wp             !< [m] site elevation (Ithaca ~320 m; elevation lapse)
       !----- The forcing's own heights ([forcing]; defaults are ERA5-Land's). Every sample is moved  !
       !      from them to the top of each patch's canopy air space, per patch (meds_lapse_rate).     !
       real(wp)           :: tq_height            = 2.0_wp       !< [m] height of air temperature and humidity
@@ -159,7 +159,7 @@ module meds_forcing_config
       logical            :: apply_elevation_lapse = .false.      !< lapse T, P, q, LW from the grid-cell elevation to the site
       real(wp)           :: lapse_rate_tair(12) = 0.0065_wp      !< [K/m] environmental lapse, January .. December
                                                                  !<       (positive = cooling upward)
-      real(wp)           :: grid_elevation_m  = 320.0_wp         !< [m] elevation of the forcing source grid cell
+      real(wp)           :: grid_elevation    = 320.0_wp         !< [m] elevation of the forcing source grid cell
    end type forcing_config_t
 
 end module meds_forcing_config

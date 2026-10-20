@@ -144,8 +144,8 @@ contains
       type(meds_config_t),  intent(in)    :: cfg
       surf%soil_column = cfg%soil_column
       call soil_column_params(cfg%soil_column, surf%soil, surf%soil_thermal)
-      call soil_column_start_theta(cfg%soil_column, surf%soil, cfg%init_soil_theta, surf%theta_start)
-      surf%water_bottom_bc = cfg%soil%bottom_bc
+      call soil_column_start_theta(cfg%soil_column, surf%soil, cfg%init%soil_theta, surf%theta_start)
+      surf%water_bottom_bc = cfg%soil%water_bottom_bc
       surf%drain_factor    = cfg%soil%drain_factor
       surf%deep_temp       = cfg%energy%deep_temp
       surf%deep_depth      = cfg%energy%deep_depth

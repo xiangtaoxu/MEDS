@@ -198,11 +198,11 @@ program test_fast_loop
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
       cfg%forcing%forcing_on   = .true.
-      cfg%forcing%backend      = MET_BACKEND_ED_DEFAULT
+      cfg%forcing%format      = MET_BACKEND_ED_DEFAULT
       cfg%forcing%path         = 'test_fast_loop_forcing.nc'
-      cfg%forcing%grid_index   = 1_ik ; cfg%forcing%dt_forcing = 3600.0_wp
+      cfg%forcing%grid_index   = 1_ik ; cfg%forcing%timestep = 3600.0_wp
       cfg%forcing%avg_convention = METAVG_END ; cfg%forcing%sw_partition = SWPART_CLEARIDX
-      cfg%forcing%latitude_deg = 42.44_wp ; cfg%forcing%longitude_deg = -76.50_wp
+      cfg%forcing%latitude = 42.44_wp ; cfg%forcing%longitude = -76.50_wp
       cfg%forcing%recycle = .false.
       cfg%forcing%co2_const = 415.0_wp          ! CO2 comes from config, not the file (docs/science/forcing.md §12)
 
@@ -212,9 +212,9 @@ program test_fast_loop
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(poly)
       call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg,                            &
-                           cfg%forcing%elevation_m)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
+                           cfg%forcing%longitude,                            &
+                           cfg%forcing%elevation)
 
       call init_fast_reservoirs(poly, ctx)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
@@ -247,8 +247,8 @@ program test_fast_loop
          ob%fast_on = .true.
          call init_fast_reservoirs(poly, ctx)
          call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
-         call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg, &
-                              cfg%forcing%elevation_m)
+         call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude, &
+                              cfg%forcing%elevation)
          sum_t = 0.0_wp ; sum_q = 0.0_wp ; sum_pb = 0.0_wp ; sum_cz = 0.0_wp ; sum_sw = 0.0_wp
          exact = .true.
          do isub = 1_ik, cfg%n_fast_per_slow
@@ -342,9 +342,9 @@ program test_fast_loop
          call add_cohort(poly, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(poly)
          call met_open(drv3, cfg%forcing)
-         call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude_deg,      &
-                              cfg%forcing%longitude_deg,                            &
-                              cfg%forcing%elevation_m)
+         call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude,      &
+                              cfg%forcing%longitude,                            &
+                              cfg%forcing%elevation)
          call init_fast_reservoirs(poly, ctx)
          call fast_dynamics(poly, ctx, cfg, met_src=drv3, met_cur=cur3,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
@@ -390,9 +390,9 @@ program test_fast_loop
          call add_cohort(poly, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(poly)
          call met_open(drv4, cfg%forcing)
-         call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude_deg,      &
-                              cfg%forcing%longitude_deg,                            &
-                              cfg%forcing%elevation_m)
+         call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude,      &
+                              cfg%forcing%longitude,                            &
+                              cfg%forcing%elevation)
          call init_fast_reservoirs(poly, ctx)
          ctx_mt = ctx ; ctx_mt%patch_threads = 4_ik
          call fast_dynamics(poly, ctx_mt, cfg, met_src=drv4, met_cur=cur4,             &
@@ -454,9 +454,9 @@ program test_fast_loop
          poly%cohort%nplant(ii) = LAI_EACH / max(poly%cohort%leaf_area(ii), 1.0e-9_wp)
       end do
       call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg,                            &
-                           cfg%forcing%elevation_m)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
+                           cfg%forcing%longitude,                            &
+                           cfg%forcing%elevation)
 
       call init_fast_reservoirs(poly, ctx)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
@@ -498,9 +498,9 @@ program test_fast_loop
       call add_cohort(poly, cfg, 2_ik, 1_ik, 0.20_wp,  5.0_wp)
       call finalize_init(poly)                                   ! patch 3 keeps 0 cohorts (bare)
       call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg,                            &
-                           cfg%forcing%elevation_m)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
+                           cfg%forcing%longitude,                            &
+                           cfg%forcing%elevation)
       call init_fast_reservoirs(poly, ctx)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
@@ -631,8 +631,8 @@ program test_fast_loop
             call hold_cohort_tissue_temps(poly%cohort, 1_ik)
          end if
          call met_open(drv, cfg%forcing)
-         call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg,        &
-                              cfg%forcing%elevation_m)
+         call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude,        &
+                              cfg%forcing%elevation)
          call init_fast_reservoirs(poly, ctx)
          call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur, step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik), &
                             n_budget_fail=nfail(icase))

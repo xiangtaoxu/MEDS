@@ -57,9 +57,9 @@ contains
    function tower_config(convention) result(fc)
       integer(ik), intent(in) :: convention
       type(forcing_config_t)  :: fc
-      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = TOWER_FILE ; fc%grid_index = 1_ik
-      fc%dt_forcing = DT ; fc%avg_convention = convention ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 9.1568_wp ; fc%longitude_deg = -79.8486_wp ; fc%elevation_m = 150.0_wp
+      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = TOWER_FILE ; fc%grid_index = 1_ik
+      fc%timestep = DT ; fc%avg_convention = convention ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude = 9.1568_wp ; fc%longitude = -79.8486_wp ; fc%elevation = 150.0_wp
       fc%recycle = .false.
       fc%tq_height = TOWER_HEIGHT ; fc%wind_height = TOWER_HEIGHT
       fc%height_above = HEIGHT_ABOVE_GROUND ; fc%wind_exposure = WIND_EXPOSURE_LOCAL
@@ -200,7 +200,7 @@ contains
       call write_tower_file('begin', 'RHair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
       call met_open(src, fc, stat=st)
       call check_true('an RHair file opens', st == MET_OK, real(st, wp))
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%elevation_m)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, stamp_seconds(K))
       call check('RHair -> q by rh_to_specific_humidity at the record''s T and P', met%qair,           &
                  rh_to_specific_humidity(rh_at(K), tair_at(K), PSURF), 1.0e-15_wp)
@@ -209,7 +209,7 @@ contains
       call write_tower_file('begin', 'Tdew', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
       call met_open(src, fc, stat=st)
       call check_true('a Tdew file opens', st == MET_OK, real(st, wp))
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%elevation_m)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, stamp_seconds(K))
       call check('Tdew -> q by dewpoint_to_specific_humidity', met%qair,                              &
                  dewpoint_to_specific_humidity(tair_at(K) - 3.0_wp, PSURF), 1.0e-15_wp)
@@ -218,7 +218,7 @@ contains
       call write_tower_file('begin', 'Qair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
       call met_open(src, fc, stat=st)
       call check_true('a Qair file opens', st == MET_OK, real(st, wp))
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%elevation_m)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, stamp_seconds(K))
       call check('Qair is used as it is', met%qair, 0.018_wp, 1.0e-15_wp)
       call met_close(src)
@@ -317,7 +317,7 @@ contains
       fc = tower_config(convention)
       call met_open(src, fc, stat=st)
       call check_true('the file opens', st == MET_OK, real(st, wp))
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%elevation_m)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, t0 - 0.5_wp * DT)
       call check('no rain in the interval before', met%precip, 0.0_wp, 1.0e-15_wp)
       met = sample(src, cur, t0 + 0.25_wp * DT)
@@ -343,11 +343,11 @@ contains
       !      interval's too: on a begin file, the next record's would be the dark one after sunset.  !
       fc%lwdown_source = LW_SYNTHESIZE
       call met_open(src, fc, stat=st)
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%elevation_m)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, t0 + 0.4_wp * DT)
       call check('the remembered clearness is the containing interval''s', cur%kt_last_day,              &
                  clearness_index(sw_at(k_sw), met_solar_cosz(time_advance_seconds(base, t0 + 0.4_wp * DT),  &
-                                 t0 + 0.4_wp * DT, fc%latitude_deg, fc%longitude_deg)), 1.0e-12_wp)
+                                 t0 + 0.4_wp * DT, fc%latitude, fc%longitude)), 1.0e-12_wp)
       call met_close(src)
    end subroutine test_flux_interval
 
@@ -365,7 +365,7 @@ contains
       fc = tower_config(METAVG_BEGIN)
       call met_open(src, fc, stat=st)
       call check_true('the tower file opens', st == MET_OK, real(st, wp))
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%elevation_m)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
 
       !----- At every stamp the model's own inverse returns the tower's relative humidity. This is  !
       !      what storing RHair buys: the provider's saturation curve never enters. ----------------!

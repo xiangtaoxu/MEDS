@@ -541,7 +541,7 @@ contains
                                                  + kill_frac * cohort%nplant(i) * cohort_water_enthalpy(cohort, i) &
                                                    / new_area / max(cfg%dt_slow, tiny_num)
                      w_tot = w_tot + poly%site%area(is) * w_kill   ! w_kill is per m2 of the site
-                     if (cfg%soil_carbon_on) then
+                     if (cfg%soil_carbon%soil_carbon_on) then
                         lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
                         pf = cohort%pft(i)
                         call necromass_to_litter(lost_density * cohort%leaf_carbon(i),                  &

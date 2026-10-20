@@ -121,7 +121,7 @@ module meds_output_config
       !      here; manager_setup installs DBH_EDGES_DEFAULT below when the TOML names none,       !
       !      so the default lives in exactly one place and the type stays a plain literal.        !
       integer(ik)        :: n_dbh_class = 0_ik
-      real(wp)           :: dbh_edges(MAX_DBH_EDGE) = 0.0_wp
+      real(wp)           :: dbh_class_edges(MAX_DBH_EDGE) = 0.0_wp
    end type output_config_t
 
    !----- The default DBH class edges [cm]: the common tropical forest-inventory set. Six       !

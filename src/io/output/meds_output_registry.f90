@@ -1172,7 +1172,7 @@ contains
       files%file_chunk = cfg%output%file_chunk
       files%sync_every = cfg%output%sync_every
       files%fast_interval_steps = cfg%output%fast_interval_steps
-      if (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND)                &
+      if (cfg%forcing%forcing_on .and. cfg%forcing%format == MET_BACKEND_ED_ERA5LAND)                &
          files%forcing_qair = 'computed by MEDS from the ED_ERA5land 2 m dewpoint Td and surface '//         &
                             'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
                             'liquid-water saturation vapour pressure of meds_therm_lib'
@@ -1186,7 +1186,7 @@ contains
       if (cfg%output%n_dbh_class > 0_ik) then
          files%diag%n_dbh_class = min(cfg%output%n_dbh_class, MAX_DBH_CLASS)
          ne = files%diag%n_dbh_class + 1_ik
-         files%diag%dbh_edges(1:ne) = cfg%output%dbh_edges(1:ne)
+         files%diag%dbh_edges(1:ne) = cfg%output%dbh_class_edges(1:ne)
       else
          files%diag%n_dbh_class = N_DBH_CLASS_DEFAULT
          files%diag%dbh_edges(1:N_DBH_CLASS_DEFAULT + 1_ik) = DBH_EDGES_DEFAULT
