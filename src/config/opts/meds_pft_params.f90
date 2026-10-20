@@ -279,7 +279,8 @@ contains
       pft%stomata_psi_onset = HYD_UNSET   ! half the PFT's turgor-loss point
       pft%wstress_psi_open  = HYD_UNSET   ! the turgor-loss point
       pft%wstress_psi_close = HYD_UNSET   ! twice it
-      pft%leaf_surf_water_max = 0.1_wp ; pft%wood_surf_water_max = 0.1_wp   ! optional keys: CLM5's dewmx
+      pft%leaf_surf_water_max = 0.1_wp
+      pft%wood_surf_water_max = 0.1_wp   ! optional keys: CLM5's dewmx
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
       allocate(pft%kplastic_sla(n), pft%kplastic_vcmax(n), pft%kplastic_rd(n), pft%kplastic_leaf_turnover(n))
       allocate(pft%pheno(n))                ! a PFT without a [phenology] block keeps the defaults

@@ -188,7 +188,10 @@ contains
       yes = .false.
       do i = 1_ik, t%n
          if (len_trim(t%key(i)) > n) then
-            if (t%key(i)(1:n) == pre) then ; yes = .true. ; return ; end if
+            if (t%key(i)(1:n) == pre) then
+               yes = .true.
+               return
+            end if
          end if
       end do
    end function toml_has_section
@@ -305,7 +308,8 @@ contains
          return
       end if
       s  = adjustl(t%val(idx))
-      lb = index(s, '[') ; rb = index(s, ']', back=.true.)
+      lb = index(s, '[')
+      rb = index(s, ']', back=.true.)
       if (rb <= lb) call toml_parse_error(key, t%val(idx), 'string array (expected [..] literal)')
       s = s(lb+1:rb-1)
       do
@@ -332,7 +336,8 @@ contains
       idx = find_key(t, key)
       if (idx == 0_ik) return                       ! absent -> nout = 0 (caller records missing key)
       s  = t%val(idx)
-      lb = index(s, '[') ; rb = index(s, ']', back=.true.)
+      lb = index(s, '[')
+      rb = index(s, ']', back=.true.)
       if (lb == 0 .or. rb <= lb) call toml_parse_error(key, t%val(idx), 'real array (expected [..] literal)')
       s = s(lb+1:rb-1)
       do i = 1, len_trim(s)                         ! commas -> spaces for list-directed read
@@ -367,15 +372,20 @@ contains
       slot = 0_ik
       do i = 1_ik, rec_n
          if (rec_index(i) == index .and. rec_key(i) == key .and. rec_source(i) == t%source) then
-            slot = i ; exit
+            slot = i
+            exit
          end if
       end do
       if (slot == 0_ik) then
          if (rec_n >= MAXREC) return
-         rec_n = rec_n + 1_ik ; slot = rec_n
+         rec_n = rec_n + 1_ik
+         slot = rec_n
       end if
-      rec_source(slot) = t%source ; rec_key(slot) = key ; rec_index(slot) = index
-      rec_present(slot) = present ; rec_value(slot) = adjustl(text)
+      rec_source(slot) = t%source
+      rec_key(slot) = key
+      rec_index(slot) = index
+      rec_present(slot) = present
+      rec_value(slot) = adjustl(text)
    end subroutine record_value
 
    !----- Empty the record: what a run reads from here on is the whole of its record. -------!
@@ -422,7 +432,11 @@ contains
       integer :: i
       q = '"'
       do i = 1, len_trim(text)
-         if (text(i:i) == '"') then ; q = q // '""' ; else ; q = q // text(i:i) ; end if
+         if (text(i:i) == '"') then
+            q = q // '""'
+         else
+            q = q // text(i:i)
+         end if
       end do
       q = q // '"'
    end function csv_quote
@@ -432,7 +446,8 @@ contains
       character(len=*), intent(in) :: s
       integer(ik) :: i
       logical     :: in_tok
-      nt = 0_ik ; in_tok = .false.
+      nt = 0_ik
+      in_tok = .false.
       do i = 1_ik, len_trim(s)
          if (s(i:i) /= ' ') then
             if (.not. in_tok) nt = nt + 1_ik

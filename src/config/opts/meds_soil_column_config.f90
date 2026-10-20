@@ -138,14 +138,22 @@ contains
       type(soil_column_config_t),  intent(in)  :: sc
       type(soil_texture_layers_t), intent(out) :: tex
       if (sc%n_layer_values > 0_ik) then
-         tex%theta_sat = sc%layer_theta_sat ; tex%theta_res = sc%layer_theta_res ; tex%ksat = sc%layer_ksat
-         tex%par_a     = sc%layer_curve_par_a ; tex%par_n   = sc%layer_curve_par_n
-         tex%k_solid   = sc%layer_solid_conductivity ; tex%k_dry = sc%layer_dry_conductivity
+         tex%theta_sat = sc%layer_theta_sat
+         tex%theta_res = sc%layer_theta_res
+         tex%ksat = sc%layer_ksat
+         tex%par_a     = sc%layer_curve_par_a
+         tex%par_n   = sc%layer_curve_par_n
+         tex%k_solid   = sc%layer_solid_conductivity
+         tex%k_dry = sc%layer_dry_conductivity
          tex%dry_cvol  = sc%layer_dry_heat_capacity
       else
-         tex%theta_sat = sc%theta_sat ; tex%theta_res = sc%theta_res ; tex%ksat = sc%ksat
-         tex%par_a     = sc%curve_par_a ; tex%par_n   = sc%curve_par_n
-         tex%k_solid   = sc%solid_conductivity ; tex%k_dry = sc%dry_conductivity
+         tex%theta_sat = sc%theta_sat
+         tex%theta_res = sc%theta_res
+         tex%ksat = sc%ksat
+         tex%par_a     = sc%curve_par_a
+         tex%par_n   = sc%curve_par_n
+         tex%k_solid   = sc%solid_conductivity
+         tex%k_dry = sc%dry_conductivity
          tex%dry_cvol  = sc%dry_heat_capacity
       end if
    end subroutine soil_column_texture
@@ -287,7 +295,11 @@ contains
       real(wp),            intent(in)  :: theta_sat, theta_res, ksat, par_a, par_n, psi_fc_m
       type(soil_params_t), intent(out) :: params
       real(wp) :: ts(n_active), tr(n_active), ks(n_active), pa(n_active), pn(n_active)
-      ts = theta_sat ; tr = theta_res ; ks = ksat ; pa = par_a ; pn = par_n
+      ts = theta_sat
+      tr = theta_res
+      ks = ksat
+      pa = par_a
+      pn = par_n
       call build_soil_hydr_params_layers(n_active, retention, layer_bottoms, ts, tr, ks, pa, pn,        &
                                          psi_fc_m, params)
    end subroutine build_soil_hydr_params
@@ -309,7 +321,9 @@ contains
       real(wp),                    intent(in)  :: k_solid, k_dry, dry_cvol
       type(soil_thermal_params_t), intent(out) :: therm
       real(wp) :: ks(n_active), kd(n_active), cv(n_active)
-      ks = k_solid ; kd = k_dry ; cv = dry_cvol
+      ks = k_solid
+      kd = k_dry
+      cv = dry_cvol
       call build_soil_therm_params_layers(n_active, ks, kd, cv, therm)
    end subroutine build_soil_therm_params
 

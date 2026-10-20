@@ -137,11 +137,16 @@ contains
    pure integer(ik) function freq_tier_index(freq_bit) result(idx)
       integer(ik), intent(in) :: freq_bit
       select case (freq_bit)
-      case (FREQ_FAST)   ; idx = 1_ik
-      case (FREQ_DAILY)  ; idx = 2_ik
-      case (FREQ_MONTHLY); idx = 3_ik
-      case (FREQ_ANNUAL) ; idx = 4_ik
-      case default       ; idx = 0_ik
+      case (FREQ_FAST)
+         idx = 1_ik
+      case (FREQ_DAILY)
+         idx = 2_ik
+      case (FREQ_MONTHLY)
+         idx = 3_ik
+      case (FREQ_ANNUAL)
+         idx = 4_ik
+      case default
+         idx = 0_ik
       end select
    end function freq_tier_index
 
@@ -149,11 +154,16 @@ contains
    pure character(len=1) function freq_letter(freq_bit) result(c)
       integer(ik), intent(in) :: freq_bit
       select case (freq_bit)
-      case (FREQ_FAST)   ; c = 'F'
-      case (FREQ_DAILY)  ; c = 'D'
-      case (FREQ_MONTHLY); c = 'M'
-      case (FREQ_ANNUAL) ; c = 'Y'
-      case default       ; c = '?'
+      case (FREQ_FAST)
+         c = 'F'
+      case (FREQ_DAILY)
+         c = 'D'
+      case (FREQ_MONTHLY)
+         c = 'M'
+      case (FREQ_ANNUAL)
+         c = 'Y'
+      case default
+         c = '?'
       end select
    end function freq_letter
 

@@ -79,7 +79,10 @@ contains
    subroutine note_missing(m, key)
       type(keymiss_t),  intent(inout) :: m
       character(len=*), intent(in)    :: key
-      if (m%n < MAXMISS) then ; m%n = m%n + 1_ik ; m%key(m%n) = key ; end if
+      if (m%n < MAXMISS) then
+         m%n = m%n + 1_ik
+         m%key(m%n) = key
+      end if
    end subroutine note_missing
 
    subroutine req_r(t, key, out, m)
@@ -88,7 +91,11 @@ contains
       real(wp),           intent(out) :: out
       type(keymiss_t),    intent(inout) :: m
       out = 0.0_wp
-      if (toml_has(t, key)) then ; out = toml_real(t, key, 0.0_wp) ; else ; call note_missing(m, key) ; end if
+      if (toml_has(t, key)) then
+         out = toml_real(t, key, 0.0_wp)
+      else
+         call note_missing(m, key)
+      end if
    end subroutine req_r
 
    subroutine req_i(t, key, out, m)
@@ -97,7 +104,11 @@ contains
       integer(ik),        intent(out) :: out
       type(keymiss_t),    intent(inout) :: m
       out = 0_ik
-      if (toml_has(t, key)) then ; out = toml_int(t, key, 0_ik) ; else ; call note_missing(m, key) ; end if
+      if (toml_has(t, key)) then
+         out = toml_int(t, key, 0_ik)
+      else
+         call note_missing(m, key)
+      end if
    end subroutine req_i
 
    subroutine req_l(t, key, out, m)
@@ -106,7 +117,11 @@ contains
       logical,            intent(out) :: out
       type(keymiss_t),    intent(inout) :: m
       out = .false.
-      if (toml_has(t, key)) then ; out = toml_logical(t, key, .false.) ; else ; call note_missing(m, key) ; end if
+      if (toml_has(t, key)) then
+         out = toml_logical(t, key, .false.)
+      else
+         call note_missing(m, key)
+      end if
    end subroutine req_l
 
    subroutine req_s(t, key, out, m)
@@ -115,7 +130,11 @@ contains
       character(len=*),   intent(out) :: out
       type(keymiss_t),    intent(inout) :: m
       out = ''
-      if (toml_has(t, key)) then ; out = toml_string(t, key, '') ; else ; call note_missing(m, key) ; end if
+      if (toml_has(t, key)) then
+         out = toml_string(t, key, '')
+      else
+         call note_missing(m, key)
+      end if
    end subroutine req_s
 
    subroutine req_dur(t, key, secs, m)       ! duration string ("1d","7d","12h","1800s") -> seconds
@@ -129,21 +148,34 @@ contains
       integer           :: ios
       real(wp)          :: v, mult
       secs = 86400.0_wp                        ! 1 day (used only if the key is missing)
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      if (.not. toml_has(t, key)) then
+         call note_missing(m, key)
+         return
+      end if
       s = adjustl(toml_string(t, key, '1d'))
       n = int(len_trim(s), ik)
-      if (n == 0_ik) then ; call note_missing(m, key) ; return ; end if   ! present but empty -> invalid
+      if (n == 0_ik) then
+         call note_missing(m, key)
+         return
+      end if   ! present but empty -> invalid
       u = s(n:n)
       select case (u)
-      case ('s', 'S') ; mult = 1.0_wp
-      case ('m', 'M') ; mult = 60.0_wp
-      case ('h', 'H') ; mult = 3600.0_wp
-      case ('d', 'D') ; mult = 86400.0_wp
-      case ('w', 'W') ; mult = 604800.0_wp
-      case default    ; mult = 0.0_wp          ! no unit suffix -> the whole string is seconds
+      case ('s', 'S')
+         mult = 1.0_wp
+      case ('m', 'M')
+         mult = 60.0_wp
+      case ('h', 'H')
+         mult = 3600.0_wp
+      case ('d', 'D')
+         mult = 86400.0_wp
+      case ('w', 'W')
+         mult = 604800.0_wp
+      case default
+         mult = 0.0_wp          ! no unit suffix -> the whole string is seconds
       end select
       if (mult == 0.0_wp) then
-         read(s(1:n), *, iostat=ios) v ; mult = 1.0_wp
+         read(s(1:n), *, iostat=ios) v
+         mult = 1.0_wp
       else
          read(s(1:n-1_ik), *, iostat=ios) v
       end if
@@ -405,8 +437,10 @@ contains
    !      default) or "chave2014", the log-quadratic, whose PFTs take Chave's coefficients        !
    !      unless given their own fit, and the site's stress index chave_e. ------------------------!
    subroutine opt_height_allometry(t, cfg, npft, m)
-      type(toml_table_t), intent(in) :: t ; type(meds_config_t), intent(inout) :: cfg
-      integer(ik), intent(in) :: npft ; type(keymiss_t), intent(inout) :: m
+      type(toml_table_t), intent(in) :: t
+      type(meds_config_t), intent(inout) :: cfg
+      integer(ik), intent(in) :: npft
+      type(keymiss_t), intent(inout) :: m
       character(len=16) :: forms(MAXPFT)
       integer(ik) :: nform, pf, k
       real(wp)    :: chave_e
@@ -764,7 +798,10 @@ contains
       character(len=64) :: sval
       logical :: ok
       out = meds_time_t()
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      if (.not. toml_has(t, key)) then
+         call note_missing(m, key)
+         return
+      end if
       sval = toml_string(t, key, '')
       call string_to_time(trim(sval), out, ok)
       if (.not. ok) call note_missing(m, key)         ! present but unparseable
@@ -780,7 +817,11 @@ contains
       real(wp)    :: buf(MAXPFT)
       integer(ik) :: nout
       call toml_real_array(t, key, buf, nout)
-      if (nout == npft) then ; out(1:npft) = buf(1:npft) ; else ; call note_missing(m, key) ; end if
+      if (nout == npft) then
+         out(1:npft) = buf(1:npft)
+      else
+         call note_missing(m, key)
+      end if
    end subroutine req_pa
 
    !----- OPTIONAL per-PFT array: keeps whatever `out` already holds when the key is absent,      !
@@ -800,7 +841,11 @@ contains
       integer(ik) :: nout
       if (.not. toml_has(t, key)) return                  ! absent -> keep the default
       call toml_real_array(t, key, buf, nout)
-      if (nout == npft) then ; out(1:npft) = buf(1:npft) ; else ; call note_missing(m, key) ; end if
+      if (nout == npft) then
+         out(1:npft) = buf(1:npft)
+      else
+         call note_missing(m, key)
+      end if
    end subroutine opt_pa
 
    !----- A required per-PFT real given as one value, for every PFT, or as an array of npft. --!
@@ -857,7 +902,11 @@ contains
       real(wp)    :: buf(MAXPFT)
       integer(ik) :: nout
       call toml_real_array(t, key, buf, nout)
-      if (nout == npft) then ; out(1:npft) = nint(buf(1:npft), ik) ; else ; call note_missing(m, key) ; end if
+      if (nout == npft) then
+         out(1:npft) = nint(buf(1:npft), ik)
+      else
+         call note_missing(m, key)
+      end if
    end subroutine req_pa_int
 
    !----- A per-PFT LOGICAL array. The minimal TOML reader has no boolean-array primitive, and    !
