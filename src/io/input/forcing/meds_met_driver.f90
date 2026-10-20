@@ -31,7 +31,7 @@ module meds_met_driver
    use meds_kinds, only : wp, ik
    use meds_therm_lib, only : air_density
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string
-   use meds_forcing_opts, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,     &
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,   &
                                    MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN, METAVG_CENTER, &
                                    SWPART_PASSTHROUGH, CLAMP_ERROR, INTERP_LINEAR,                &
                                    LW_SYNTHESIZE, CO2_SOURCE_FILE

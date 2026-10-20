@@ -17,7 +17,7 @@ module meds_site_state_vars
    use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_diag_vars,          only : site_diag_block
    use meds_config,             only : meds_config_t, soil_column_params, soil_column_start_theta
-   use meds_soil_column_config, only : soil_column_config_t, soil_params_t, soil_thermal_params_t
+   use meds_soil_params,        only : soil_column_config_t, soil_params_t, soil_thermal_params_t
    implicit none
    private
 

@@ -13,34 +13,33 @@ module meds_config_io
    use meds_config,     only : meds_config_t, derive_parameters, alloc_pft_table, INIT_CENSUS,        &
                                INIT_RESTART, pft_stomata_psi_onset, pft_wstress_psi_open,             &
                                pft_wstress_psi_close
-   use meds_fast_opts,  only : INTEG_ARK, INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE,                &
-                               CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_soil_column_config, only : soil_column_config_t
-   use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION
-   use meds_maps_opts, only : soil_maps_on
+   use meds_fast_params,   only : INTEG_ARK, INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE,             &
+                                  CTRL_L2_STRICT, CTRL_I, CTRL_PI
+   use meds_soil_params,   only : soil_column_config_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,    &
+                                  soil_opts_t, energy_opts_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
+   use meds_region_params, only : RUN_MODE_SITE, RUN_MODE_REGION
+   use meds_maps_params,   only : soil_maps_on
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
+   use meds_leaf_params,   only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_therm_lib,     only : TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED
-   use meds_forcing_opts, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
-   use meds_forcing_opts, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                       &
+   use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
+   use meds_forcing_params, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
-   use meds_forcing_opts, only : forcing_config_t,                                              &
+   use meds_forcing_params, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, &
                                    METAVG_END, METAVG_BEGIN,                                     &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
-   use meds_output_opts, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,            &
+   use meds_output_params, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
                                  GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_FORCING,        &
                                  AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH,  &
                                  MAX_DBH_EDGE,                                                   &
                                    GRP_ENERGY, GRP_NUMERICS, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
                                    FC_RUN
    use meds_time,       only : meds_time_t, string_to_time
-   use meds_biophysics_opts, only : ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
-   use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_DRAIN, SOIL_BC_AQUIFER
-   use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
+   use meds_biophysics_params, only : snow_params_t, aero_cfg_t
+   use meds_biogeochem_params, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,          &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
                               toml_int, toml_real, toml_table_count,                        &
@@ -744,7 +743,7 @@ contains
       call req_pa(t, 'phenology.shed_light_sharpness',    cfg%pft%pheno%shed_light_sharpness,  npft, m)
       call req_pa(t, 'phenology.light_window',            cfg%pft%pheno%light_window,          npft, m)
       !----- Optional: the water cue, which a PFT turns on through its masks. An absent key        !
-      !      keeps the alloc_pft_table default, which equals the pheno_params_t default. ----------!
+      !      keeps the alloc_pft_table default, which equals the pheno_args_t default. ------------!
       call opt_pa(t, 'phenology.flush_water_sum',         cfg%pft%pheno%flush_water_sum,       npft, m)
       call opt_pa(t, 'phenology.flush_water_sharpness',   cfg%pft%pheno%flush_water_sharpness, npft, m)
       call opt_pa(t, 'phenology.shed_water_sum',          cfg%pft%pheno%shed_water_sum,        npft, m)

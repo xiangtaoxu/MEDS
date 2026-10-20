@@ -17,8 +17,8 @@ module meds_fast_config
    use meds_kinds,       only : wp, ik
    use meds_config,      only : meds_config_t, pft_stomata_psi_onset, pft_wstress_psi_open,           &
                                 pft_wstress_psi_close
-   use meds_fast_opts,   only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
+   use meds_fast_params, only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t,                     &
@@ -46,7 +46,7 @@ contains
    pure subroutine leaf_photo_params_for_pft(cfg, ipft, p)
       type(meds_config_t),       intent(in)  :: cfg
       integer(ik),               intent(in)  :: ipft
-      type(leaf_photo_params_t), intent(out) :: p
+      type(leaf_photo_args_t),   intent(out) :: p
       associate (t => cfg%pft)
          p%pathway        = t%photosynthetic_pathway(ipft)
          p%vcmax25        = t%vcmax25(ipft)
@@ -177,7 +177,7 @@ contains
       type(leaf_flux_t),   intent(out) :: flux
       real(wp), optional,  intent(in)  :: vcmax25   !< per-cohort (plastic) Vcmax25 override; jmax/tpu scale with it
       real(wp), optional,  intent(in)  :: rd25      !< per-cohort (plastic) Rd25 override
-      type(leaf_photo_params_t)        :: p
+      type(leaf_photo_args_t)          :: p
       call leaf_photo_params_for_pft(cfg, ipft, p)
       if (present(vcmax25)) then
          p%vcmax25 = vcmax25

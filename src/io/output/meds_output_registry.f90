@@ -14,12 +14,12 @@
 module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
-   use meds_forcing_opts, only : MET_BACKEND_ED_ERA5LAND
+   use meds_forcing_params, only : MET_BACKEND_ED_ERA5LAND
    use meds_polygon_state_vars, only : polygon_t
    use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, alloc_cohort_diag, alloc_patch_diag, &
                                        N_SI_ROWS, alloc_site_diag, SI_SW_IN, SI_PAR_BEAM, SI_NIR_BEAM, SI_LWDOWN, &
                                        SI_TAIR, SI_QAIR, SI_PSURF, SI_RHO_AIR
-   use meds_output_opts,    only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
+   use meds_output_params,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
                                    GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY,              &
@@ -1177,7 +1177,7 @@ contains
                             'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
                             'liquid-water saturation vapour pressure of meds_therm_lib'
 
-      !----- Run-dependent parameters the DERIVED diagnostics need (diag_params_t). n_pft is the  !
+      !----- Run-dependent parameters the DERIVED diagnostics need (diag_setup_t). n_pft is the   !
       !      RUN-TIME PFT count, so the netCDF `pft` dimension is run-dependent -- which is why      !
       !      the serializer also writes a `pft` coordinate variable, so a file stays self-describing !
       !      when compared across runs with different PFT tables.                                    !

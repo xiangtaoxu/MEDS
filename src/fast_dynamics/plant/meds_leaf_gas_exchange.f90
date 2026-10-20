@@ -11,8 +11,8 @@
 module meds_leaf_gas_exchange
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : p_std, tiny_num, gsw_2_gsc, gbw_2_gbc, mol_2_umol
-   use meds_leaf_opts,     only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t, PATH_C3, PATH_C4, &
+   use meds_leaf_params,   only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t, PATH_C3, PATH_C4,   &
                                 LIM_NONE, LIM_RUBISCO, &
                                 LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    use meds_therm_lib,     only : temp_response, arrhenius_scale
@@ -217,7 +217,7 @@ contains
    ! at the shipped 0.209 the O2 factor is exactly 1.                                      !
    !---------------------------------------------------------------------------------------!
    pure subroutine rubisco_kinetics(p, t_leaf, pressure, kc, ko, gstar, o2)
-      type(leaf_photo_params_t), intent(in)  :: p
+      type(leaf_photo_args_t),   intent(in)  :: p
       real(wp),                  intent(in)  :: t_leaf      !< [K]
       real(wp),                  intent(in)  :: pressure    !< [Pa] the air's pressure at the leaf
       real(wp),                  intent(out) :: kc, ko, gstar, o2   !< [umol/mol]
@@ -244,7 +244,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine solve_leaf_gas_exchange(env, p, sm, temp_response_form, colim, use_boundary_layer, flux)
       type(leaf_env_t),          intent(in)  :: env
-      type(leaf_photo_params_t), intent(in)  :: p
+      type(leaf_photo_args_t),   intent(in)  :: p
       integer(ik),               intent(in)  :: sm, temp_response_form, colim
       logical,                   intent(in)  :: use_boundary_layer
       type(leaf_flux_t),         intent(out) :: flux
@@ -543,7 +543,7 @@ contains
       type(leaf_photo_table_t), intent(in) :: table
       integer(ik),              intent(in) :: ipft
       real(wp),                 intent(in) :: vcmax25, rd25
-      type(leaf_photo_params_t)            :: p
+      type(leaf_photo_args_t)              :: p
       p         = table%pft(ipft)
       p%vcmax25 = vcmax25
       p%jmax25  = table%jmax_vcmax_ratio(ipft) * vcmax25
@@ -586,7 +586,7 @@ contains
       integer(ik), optional, intent(out) :: limitation(n)
       type(leaf_env_t)          :: env
       type(leaf_flux_t)         :: flux
-      type(leaf_photo_params_t) :: p
+      type(leaf_photo_args_t)   :: p
       integer(ik) :: i
       do i = 1_ik, n
          env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)

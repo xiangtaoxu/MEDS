@@ -4,7 +4,7 @@
 !                                                                                          !
 ! WHY THIS TEST EXISTS. The same reason test_c_api_leaf does, one subsystem over. A C-API  !
 ! shim that only the optional `-DMEDS_BUILD_PYLIB=ON` library compiles is invisible to     !
-! ctest on both back ends, so a field inserted into `pheno_params_t` or a renamed          !
+! ctest on both back ends, so a field inserted into `pheno_args_t` or a renamed            !
 ! component can leave the C API unable to compile while the whole suite stays green. Every !
 ! C-API shim is therefore compiled into a ctest target, so an interface mismatch fails the !
 ! build (docs/building.md §Running the tests).                                             !
@@ -20,14 +20,14 @@ program test_c_api_phenology
    use, intrinsic :: iso_c_binding, only : c_double, c_int
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : yr_day
-   use meds_c_api_phenology, only : pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c,      &
+   use meds_c_api_phenology, only : pheno_env_c, pheno_args_c, pheno_state_c, pheno_out_c,        &
                                     meds_phenology_step, meds_leaf_turnover_step, meds_daylength
    use meds_phenology_types, only : CUE_NONE, CUE_TEMP, CUE_WATER, CUE_LIGHT
    use meds_test_support, only : banner, check, check_close
    implicit none
 
    type(pheno_env_c)    :: env
-   type(pheno_params_c) :: p
+   type(pheno_args_c)   :: p
    type(pheno_state_c)  :: st
    type(pheno_out_c)    :: out
    real(c_double), parameter :: DT = 1.0_c_double
@@ -118,7 +118,7 @@ contains
    end function warm_day
 
    !----- Parameters with the two cue masks under test and everything else benign. -----------!
-   type(pheno_params_c) function base_params(flush_mask, shed_mask) result(q)
+   type(pheno_args_c)   function base_params(flush_mask, shed_mask) result(q)
       integer(ik), intent(in) :: flush_mask, shed_mask
       q%flush_cue_mask        = int(flush_mask, c_int)
       q%shed_cue_mask         = int(shed_mask,  c_int)

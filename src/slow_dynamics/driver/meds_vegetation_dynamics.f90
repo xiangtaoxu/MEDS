@@ -36,7 +36,7 @@ module meds_vegetation_dynamics
    use meds_demography_rates,    only : npp_to_growth, camac_mortality, decline_to_floor_mortality,  &
                                         npp_to_recruitment
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
-   use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
+   use meds_phenology_types, only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t
    use meds_phenology, only : phenology_kernel, leaf_turnover_step, turnover_gate
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_sink_limitation,      only : growth_sink_limitation
@@ -1166,7 +1166,7 @@ contains
       !      absent, it is the run's [site] latitude. -----------------------------------------------!
       real(wp),            intent(in), optional :: latitude_deg
       type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
+      type(pheno_args_t)   :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: i, pf, is
@@ -1323,7 +1323,7 @@ contains
    subroutine flatten_pheno_params(cfg, ipft, p)
       type(meds_config_t),  intent(in)  :: cfg
       integer(ik),          intent(in)  :: ipft
-      type(pheno_params_t), intent(out) :: p
+      type(pheno_args_t),   intent(out) :: p
       associate (t => cfg%pft)
          p%flush_cue_mask        = t%pheno(ipft)%flush_cue_mask
          p%shed_cue_mask         = t%pheno(ipft)%shed_cue_mask

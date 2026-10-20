@@ -16,7 +16,7 @@ program test_surface_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cp_air, latent_heat_vap, stefan_boltzmann, pi, cp_liq, tissue_c_wood_dry
    use meds_allometry_lib,    only : allometry_t, dbh_to_wai, sapwood_fraction
-   use meds_plant_types, only : veg_thermal_params_t
+   use meds_plant_types, only : veg_thermal_args_t
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_temp_to_enthalpy,  &
                                         cas_enthalpy_to_temp
    use meds_plant_biophysics, only : veg_energy_balance
@@ -139,7 +139,7 @@ contains
    ! EXACT, not merely convergent.                                                              !
    !=======================================================================================!
    subroutine test_veg_exponential()
-      type(veg_thermal_params_t) :: tp
+      type(veg_thermal_args_t)   :: tp
       real(wp) :: dtt, ts, tr, dh, drn, dt_diag_ref, ts_ref
       real(wp) :: t_cas, t0, sw, lw, h, les, lws, ler, cap, dt, denom, tau, a_st
       real(wp) :: t_exact, t_march, worst

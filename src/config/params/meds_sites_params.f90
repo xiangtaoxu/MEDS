@@ -1,12 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_sites_opts -- the [[sites]] tables, as a config leaf: one record per site of the    !
+! meds_sites_params -- the [[sites]] tables, as a config leaf: one record per site of the  !
 ! polygon (docs/configuration.md, "Several sites"). A site's surface is built from it at   !
 ! setup (make_site_surface, through site_config); the record itself is never state.        !
 !==========================================================================================!
-module meds_sites_opts
+module meds_sites_params
    use meds_kinds,              only : wp, ik
-   use meds_soil_column_config, only : soil_column_config_t
+   use meds_soil_params, only : soil_column_config_t
    implicit none
    private
 
@@ -30,4 +30,4 @@ module meds_sites_opts
       real(wp)    :: deep_depth      = 0.0_wp     !< [m]
    end type site_spec_t
 
-end module meds_sites_opts
+end module meds_sites_params

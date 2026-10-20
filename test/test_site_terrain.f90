@@ -17,7 +17,7 @@ program test_site_terrain
    use meds_kinds,           only : wp
    use meds_time,            only : meds_time_t, seconds_into_day
    use meds_therm_lib,       only : sat_vapor_pressure, air_density
-   use meds_forcing_opts,    only : forcing_config_t
+   use meds_forcing_params,  only : forcing_config_t
    use meds_forcing_types,   only : met_forcing_t
    use meds_forcing_kernels, only : met_solar_cosz, slope_incidence_cosz, slope_beam_factor
    use meds_lapse_rate,      only : met_at_site

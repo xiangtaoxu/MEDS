@@ -1,10 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_leaf_opts -- the [leaf_physiology] selector codes, as a config leaf: meds_config    !
+! meds_leaf_params -- the [leaf_physiology] selector codes, as a config leaf: meds_config  !
 ! reads and validates them, and the leaf kernel (meds_leaf_gas_exchange) switches on them  !
 ! without importing meds_config.                                                           !
 !==========================================================================================!
-module meds_leaf_opts
+module meds_leaf_params
    use meds_kinds, only : ik
    implicit none
    private
@@ -23,4 +23,4 @@ module meds_leaf_opts
 
    !----- The temp_response_form codes, TEMP_RESPONSE_*, are in meds_therm_lib with the    !
    !      responses they select. ----------------------------------------------------------!
-end module meds_leaf_opts
+end module meds_leaf_params

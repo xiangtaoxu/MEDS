@@ -32,8 +32,10 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 the PFT file's, its hydraulics among them, and the traits that follow a fitted relation are computed
 outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's potential (#461).
 `src/shared` is `src/share` (#462). A named constant is spelled by its kind (#463). The configuration
-reads only keys it uses, checks them in one module, and names every field as its key; `src/config/opts`
+reads only keys it uses, checks them in one module, and names every field as its key; `src/config/params`
 holds one module per block, and the reference config describes each key in a line or two (#464).
+The configuration's leaves are the run's parameters, `src/config/params`, and a kernel's parameter
+bundle is its `*_args_t` (#465).
 
 **Upgrading from v0.3.5:**
 - **Six keys nothing read are gone** (#464): `[demography].patch_diff_age_tol`,
@@ -74,15 +76,26 @@ holds one module per block, and the reference config describes each key in a lin
     `allom%height_allometry`; `pft%pheno(pf)%<key>` in place of `pft%pheno_<key>(pf)`.
 - **Fortran: the configuration's modules** (#464). `validate_config`, `check_config_keys`,
   `nearest_key` and the key lists are in `meds_config_check`, and `meds_config_keys` is gone.
-  `INTEG_*`, `CTRL_*` and `process_mask_t` come from `meds_fast_opts`, `site_spec_t` from
-  `meds_sites_opts`, `MAX_RECYCLE_YEARS` from `meds_forcing_opts`, and `DIST_PRIMARY` and
+  `INTEG_*`, `CTRL_*` and `process_mask_t` come from `meds_fast_params`, `site_spec_t` from
+  `meds_sites_params`, `MAX_RECYCLE_YEARS` from `meds_forcing_params`, and `DIST_PRIMARY` and
   `DIST_TREEFALL` from `meds_patch_state_vars`. `meds_forcing_config` and `meds_output_config` are
-  `meds_forcing_opts` and `meds_output_opts`, named like the other leaves; their types keep their
+  `meds_forcing_params` and `meds_output_params`, named like the other leaves; their types keep their
   names. `snow_cover_fraction` takes the snow roughness.
-  `BK_*`, `cfg%backend` and `INTERP_COSZ` are gone. The per-block modules are in `src/config/opts/`,
+  `BK_*`, `cfg%backend` and `INTERP_COSZ` are gone. The per-block modules are in `src/config/params/`,
   and hold types and codes: the soil column's builders (`soil_column_params`, `soil_column_layers`,
   `build_soil_hydr_params`, `top_soil_psi`, …) and `alloc_pft_table` and `derive_leaf_params` come
   from `meds_config`. `soil_matric_potential` comes from `meds_soil_hydr_lib`.
+- **Fortran: parameters and kernel arguments** (#465). The per-block modules are the run's
+  parameters, `meds_<block>_params` in `src/config/params/`: `meds_biogeochem_opts`,
+  `meds_biophysics_opts`, `meds_leaf_opts`, `meds_maps_opts` and `meds_region_opts` are `*_params`,
+  as are the new `meds_fast_params` and `meds_sites_params`, and `meds_soil_column_config` is
+  `meds_soil_params`. `meds_soil_params` holds the whole `[soil]` block: `soil_opts_t`,
+  `energy_opts_t`, `SOIL_BC_*`, `ENERGY_BC_*` and `ANNUAL_DAMPING_DEPTH` come from it, and
+  `meds_biophysics_params` keeps `[snow]` and `[aerodynamics]`. The types a kernel takes its
+  parameter values in are its arguments, `*_args_t`: `leaf_photo_args_t`, `hydro_args_t` and
+  `hydro_args_table_t`, `pheno_args_t`, `wood_args_t`, `root_args_t`, `veg_thermal_args_t`, and the
+  C API's `leaf_args_c` and `pheno_args_c`. `diag_params_t` is `diag_setup_t`. `soil_params_t`,
+  `soil_thermal_params_t` and `snow_params_t` are the configuration's and keep their names.
 - **The PFT file's size allometry is per PFT** (#459). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
   `sapwood_area_b1`, `sapwood_area_b2` and `aboveground_frac` move to `[allometry]`, and every
   `[allometry]` key takes one value, for every PFT, or an array with one per PFT; `height_allometry`
@@ -152,7 +165,7 @@ holds one module per block, and the reference config describes each key in a lin
   `reduce_patch_column_to_site` is `reduce_patch_columns_to_sites` (each site's column, with a
   validity mask), and `gather_patch_columns` reads each patch's layer count from its site.
   `manager_set_soil_params` goes: a soil potential reads its site's retention curve, and
-  `diag_params_t%soil_ready` says the fast loop runs.
+  `diag_setup_t%soil_ready` says the fast loop runs.
 - **State files carry each cohort's tissue energy** (#457). `leaf_energy` and `wood_energy` [J per
   plant] are the prognostic tissue state; `leaf_temp` and `wood_temp` are written beside them as
   diagnosed twins. The canopy films `leaf_surf_water` and `wood_surf_water` are per plant, marked
@@ -166,7 +179,7 @@ holds one module per block, and the reference config describes each key in a lin
   temperature is more than 10⁻⁶ K from the one its energy gives. `leaf_surf_water` and
   `wood_surf_water` are per plant (`cohort_film_water` gives a cohort's per m² of ground).
   `slow_tissue_heat` is `slow_tissue_energy`; `tissue_coefficients_t%water_store_enth` is the
-  per-cohort `leaf_water_enth` and `wood_water_enth`; `veg_thermal_params_t` loses `c_leaf` and
+  per-cohort `leaf_water_enth` and `wood_water_enth`; `veg_thermal_args_t` loses `c_leaf` and
   `c_wood_dry`, and `tissue_dry_heat_capacity` (`meds_therm_lib`) gives the dry capacities.
 - **Fortran code that names three constants uses their new names** (#458): `halfpi` is `pio2`,
   `stefan` is `stefan_boltzmann` and `vonkarman` is `von_karman`. `C2B_WOOD`, `TISSUE_C_LEAF`,
@@ -217,7 +230,7 @@ holds one module per block, and the reference config describes each key in a lin
   zero potential.
 - **Named constants are spelled by their kind** (#463): lower case in `meds_constants` and
   `meds_kinds`, UPPER case everywhere else. Fortran ignores case, so a caller's old spelling still
-  compiles; the names that changed are `ANNUAL_DAMPING_DEPTH` (`meds_biophysics_opts`), the
+  compiles; the names that changed are `ANNUAL_DAMPING_DEPTH` (`meds_soil_params`), the
   `BUDGET_*` tolerances (`meds_budget_check`) and `N_SOIL_POOL` (`meds_biogeochem_types`).
 - **The plant hydraulics are the PFT file's `[hydraulics]` block** (#461). Every key of the main
   config's `[hydraulics]`, and every per-PFT hydraulic key of `[pft]`, moves there; each is required,
@@ -234,7 +247,7 @@ holds one module per block, and the reference config describes each key in a lin
 - **Fortran code that reads the hydraulics takes the PFT's record** (#461): `cfg%pft%hydro(pf)`
   (`plant_hydraulics_t`, in `meds_plant_hydr_lib`) in place of `cfg%hydraulics` and
   `pft_tissue_curves`. `apply_hydraulics_config` and `init_cohort` drop their hydraulics argument,
-  `hydro_params_t` extends `plant_hydraulics_t`, and `pft%kplastic_vm0` is `pft%kplastic_vcmax`.
+  `hydro_args_t` extends `plant_hydraulics_t`, and `pft%kplastic_vm0` is `pft%kplastic_vcmax`.
 - **`src/shared` is `src/share`, and its CMake library `meds_shared` is `meds_share`** (#462). A
   build script or an out-of-tree target that links `meds_shared` links `meds_share`.
 - **Python: `meds.config` reads and sets one PFT of a key given for every PFT** (#461):
@@ -247,11 +260,11 @@ holds one module per block, and the reference config describes each key in a lin
 - **`src/config` is the configuration and its checks** (#464): `meds_config` (the aggregate, one field
   per key, grouped by block in the reference's order, and the routines that derive what the parameters
   imply: the soil column's layers and bundles, the PFT table's arrays and leaf capacities),
-  `meds_config_io` (the loader), `meds_config_check` and `meds_toml`. `src/config/opts/` holds one leaf
+  `meds_config_io` (the loader), `meds_config_check` and `meds_toml`. `src/config/params/` holds one leaf
   per block, the types and selector codes the kernels import without `meds_config`: the PFT table, the
   soil column, forcing, output, the fast loop
-  (`meds_fast_opts`, new), biophysics, leaf, biogeochemistry, maps, region and sites
-  (`meds_sites_opts`, new). The loader reads every selector through one reader, which replaces eleven
+  (`meds_fast_params`, new), biophysics, leaf, biogeochemistry, maps, region and sites
+  (`meds_sites_params`, new). The loader reads every selector through one reader, which replaces eleven
   hand-written parsers, and the value checks are one routine per block.
 - **The reference config describes each key in a line or two** (#464), and the code annotates each field
   in one; the longer explanations are on `docs/configuration.md` (new: "Threads and the slow tier") and
@@ -354,7 +367,8 @@ holds one module per block, and the reference config describes each key in a lin
 - **The soil column's parameters are configuration** (#447). `state/column/meds_column_params.f90` is
   dissolved: the soil parameter bundles (`soil_params_t`, `soil_thermal_params_t`), their builders,
   the layer template and `soil_layer_grid` join the soil-column block and `soil_column_params` (from
-  `meds_config`) in a new config leaf, `src/config/meds_soil_column_config.f90`; the array ceilings
+  `meds_config`) in a new config leaf, now `src/config/params/meds_soil_params.f90` with its builders
+  in `meds_config`; the array ceilings
   `n_soil_layer_max` and `n_snow_layer_max` and the tissue heat constants go to `meds_constants`.
   `meds_config` links `meds_shared` only, so config reads nothing from state. Outputs are unchanged
   bit for bit.

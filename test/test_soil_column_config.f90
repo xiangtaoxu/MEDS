@@ -15,7 +15,7 @@
 program test_soil_column_config
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : n_soil_layer_max
-   use meds_soil_column_config, only : soil_column_config_t, soil_params_t, soil_thermal_params_t
+   use meds_soil_params,   only : soil_column_config_t, soil_params_t, soil_thermal_params_t
    use meds_config,             only : soil_column_layers, build_soil_hydr_params,                    &
                                        build_soil_therm_params
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL

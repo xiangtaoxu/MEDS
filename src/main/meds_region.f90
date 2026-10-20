@@ -43,7 +43,7 @@ module meds_region
    use meds_init,                   only : init_bare_ground, init_bare_sites, seed_bare_ground,       &
                                            init_from_census, restructure_census_stand
    use meds_forcing_types,          only : met_source_t, met_cells_t
-   use meds_forcing_opts,           only : MET_PATH_LEN, MET_BACKEND_ED_ERA5LAND
+   use meds_forcing_params,         only : MET_PATH_LEN, MET_BACKEND_ED_ERA5LAND
    use meds_met_driver,             only : met_open, met_close, met_prefetch, MET_OK
    use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
                                            map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs

@@ -16,13 +16,13 @@ program test_pft_optics_config
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t, pft_leaf_psi_tlp, soil_column_params
    use meds_config_io,      only : write_pft_params_csv
-   use meds_plant_types,    only : hydro_params_table_t
+   use meds_plant_types,    only : hydro_args_table_t
    use meds_fast_types,     only : apply_hydraulics_config
    use meds_plant_hydr_lib, only : conductance_retained_fraction, tissue_psi_tlp,  &
                                    tissue_psi_to_water
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
-   use meds_soil_column_config, only : soil_params_t
+   use meds_soil_params,    only : soil_params_t
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
    use meds_vegetation_dynamics, only : shed_excess_tissue_water
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
@@ -91,7 +91,7 @@ program test_pft_optics_config
    !        entry carries its own [hydraulics] record, and a different record CHANGES the answer,
    !        not merely that it compiles.
    block
-      type(hydro_params_table_t) :: tab
+      type(hydro_args_table_t)   :: tab
       real(wp) :: plc1, plc2
       cfg%pft%hydro(2)%wood_psi50     = -0.8_wp   ! vs PFT 1's -2.0
       cfg%pft%hydro(2)%leaf_curve%pi0 = -2.5_wp   ! vs PFT 1's -1.5
@@ -129,7 +129,7 @@ program test_pft_optics_config
    !=== A cohort is born with its tissue water on ITS PFT's curve, the one the fast loop reads    !
    !    the water back on, and the slow tier caps a store on that curve too. ======================!
    block
-      type(hydro_params_table_t) :: tab
+      type(hydro_args_table_t)   :: tab
       type(polygon_t) :: poly
       real(wp) :: w_expect, w_shed, t_birth, psi_birth
       integer(ik) :: i2

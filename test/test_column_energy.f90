@@ -33,10 +33,10 @@ program test_column_energy
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_column_config, only : soil_thermal_params_t, soil_params_t
+   use meds_soil_params,      only : soil_thermal_params_t, soil_params_t, energy_opts_t,             &
+                                     ENERGY_BC_DIRICHLET
    use meds_config,             only : build_soil_hydr_params, build_soil_therm_params
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
    use meds_therm_lib,           only : soil_thermal_conductivity, soil_volumetric_heat_capacity,              &
                                         temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,  &
                                         sat_vapor_pressure_temp_deriv, internal_energy_liquid

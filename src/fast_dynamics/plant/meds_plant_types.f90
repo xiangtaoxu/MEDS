@@ -6,11 +6,11 @@
 !                                                                                          !
 ! The types are pure DATA -- no methods, no hidden state -- organized in clearly delimited !
 ! sections:                                                                                !
-!   * LEAF        -- leaf_env_t / leaf_flux_t / leaf_photo_params_t / leaf_photo_table_t + !
+!   * LEAF        -- leaf_env_t / leaf_flux_t / leaf_photo_args_t / leaf_photo_table_t +   !
 !                    limitation & pathway flags.                                           !
-!   * HYDRAULICS  -- hydro_params_t / hydro_params_table_t (per-PFT traits), hydro_opts_t. !
-!   * RESPIRATION -- wood_params_t / root_params_t (run-uniform trait PODs).               !
-!   * THERMAL     -- veg_thermal_params_t.                                                 !
+!   * HYDRAULICS  -- hydro_args_t / hydro_args_table_t (per-PFT traits), hydro_opts_t.     !
+!   * RESPIRATION -- wood_args_t / root_args_t (run-uniform trait PODs).                   !
+!   * THERMAL     -- veg_thermal_args_t.                                                   !
 !==========================================================================================!
 module meds_plant_types
    use meds_kinds,          only : wp, ik
@@ -20,16 +20,16 @@ module meds_plant_types
    private
 
    !----- LEAF -----------------------------------------------------------------------------!
-   public :: leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
+   public :: leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t
    public :: PATH_C3, PATH_C4                       ! re-export (pathway lives with the PFT traits)
    public :: LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    !----- HYDRAULICS -----------------------------------------------------------------------!
-   public :: hydro_params_t, hydro_opts_t, hydro_params_table_t
+   public :: hydro_args_t, hydro_opts_t, hydro_args_table_t
    !----- RESPIRATION: the kernels are `elemental pure` over bare scalars (MEDS_NUMERICS_SCOPING.md  !
    !      §11), so only the run-uniform trait PODs live here. ---------------------------------------!
-   public :: wood_params_t, root_params_t
+   public :: wood_args_t, root_args_t
    !----- THERMAL ----------------------------------------------------------------------------!
-   public :: veg_thermal_params_t
+   public :: veg_thermal_args_t
 
    !=======================================================================================!
    !     LEAF -- leaf-level gas-exchange interface seam.                                    !
@@ -62,7 +62,7 @@ module meds_plant_types
       !      `s_ref` is calibrated against whichever quantity is passed -- hence the neutral name. A !
       !      caller with no predawn history (a recruit, or the first step of a run) is seeded from   !
       !      the surface-layer soil potential. The stress begins only below                          !
-      !      leaf_photo_params_t%psi_onset, which stands in for Sabot's field-capacity threshold     !
+      !      leaf_photo_args_t%psi_onset, which stands in for Sabot's field-capacity threshold       !
       !      because the gravity head is there even in wet soil.                                     !
       real(wp) :: psi = 0.0_wp  !< [MPa] supply-side water potential driving beta_stomata (Sabot 2022)
    end type leaf_env_t
@@ -89,7 +89,7 @@ module meds_plant_types
 
    !----- Flat per-PFT parameter set (per-PFT traits + shared biochemistry), self-contained !
    !       so the solver never references meds_config. Filled by the interface from the config.!
-   type :: leaf_photo_params_t
+   type :: leaf_photo_args_t
       integer(ik) :: pathway        !< PATH_C3 | PATH_C4
       !----- Per-PFT capacities at 25 degC and stomatal/water-stress traits. ---------------!
       real(wp) :: vcmax25, jmax25, tpu25, rd25, kp25
@@ -117,7 +117,7 @@ module meds_plant_types
       real(wp) :: hd_vcmax, hd_jmax, hd_rd, ds_vcmax, ds_jmax, ds_rd
       real(wp) :: o2_mol_frac, absorptance, phi_psii
       real(wp) :: medlyn_vpd_min = 0.05_wp   !< [kPa] the VPD the Medlyn model uses at least ([leaf_physiology])
-   end type leaf_photo_params_t
+   end type leaf_photo_args_t
 
    !----- leaf_photo_table_t -- the leaf-photosynthesis parameters of EVERY PFT, assembled ONCE at  !
    !      configuration time (meds_fast_config%build_leaf_photo_table), not re-flattened from the   !
@@ -128,7 +128,7 @@ module meds_plant_types
    !      nothing else from the configuration. -----------------------------------------------------!
    type :: leaf_photo_table_t
       integer(ik) :: n_pft = 0_ik
-      type(leaf_photo_params_t), allocatable :: pft(:)              !< per-PFT parameters (table capacities)
+      type(leaf_photo_args_t),   allocatable :: pft(:)              !< per-PFT parameters (table capacities)
       real(wp),                  allocatable :: jmax_vcmax_ratio(:) !< [--] Jmax25 / Vcmax25 per PFT
       real(wp),                  allocatable :: tpu_vcmax_ratio(:)  !< [--] TPU25 / Vcmax25 per PFT
       integer(ik) :: stomatal_model     = 0_ik    !< SM_LEUNING | SM_MEDLYN | SM_KATUL
@@ -142,21 +142,21 @@ module meds_plant_types
    !     is the soil-plant water solver's (meds_spac_solver).                                 !
    !=======================================================================================!
    !----- A PFT's hydraulic traits (cfg%pft%hydro) and the Kirchhoff table its wood_kexp sets. !
-   type, extends(plant_hydraulics_t) :: hydro_params_t
+   type, extends(plant_hydraulics_t) :: hydro_args_t
       !----- Precomputed Kirchhoff lookup table (built from wood_kexp by build_hydro_table). It is    !
       !       consulted on the hot path ONLY for wood_kexp not in {1,2} (the quadrature regime); for   !
       !       kexp in {1,2} the solver keeps the exact closed form, so it stays dormant there. --------!
       type(hydro_table_t) :: vuln_table
-   end type hydro_params_t
+   end type hydro_args_t
 
    !----- PER-PFT hydraulic parameter table, the hydraulic twin of leaf_photo_table_t. Built ONCE !
    !      per run (each entry carries its own precomputed Kirchhoff lookup, which is what makes   !
    !      per-PFT vulnerability shapes affordable on the hot path) and indexed by the cohort's    !
    !      PFT where the parameters are consumed. -------------------------------------------------!
-   type :: hydro_params_table_t
+   type :: hydro_args_table_t
       integer(ik) :: n_pft = 0_ik
-      type(hydro_params_t), allocatable :: pft(:)
-   end type hydro_params_table_t
+      type(hydro_args_t),   allocatable :: pft(:)
+   end type hydro_args_table_t
 
    !----- Run switch: whether the leaves sit a hydrostatic head above the wood. --------------!
    type :: hydro_opts_t
@@ -170,19 +170,19 @@ module meds_plant_types
    !     (Leaf dark respiration Rd is computed in the leaf solver, returned as leaf_flux_t%rd.)!
    !=======================================================================================!
    !----- Woody-tissue (stem) maintenance respiration (ED2 Chambers surface-area form). ----!
-   type :: wood_params_t
+   type :: wood_args_t
       real(wp) :: ea                    = 46390.0_wp   !< [J/mol]   peaked-Arrhenius activation energy (leaf ea_rd)
       real(wp) :: hd                    = 200000.0_wp  !< [J/mol]   deactivation energy   (leaf hd_rd)
       real(wp) :: ds                    = 490.0_wp     !< [J/mol/K] entropy term          (leaf ds_rd)
-   end type wood_params_t
+   end type wood_args_t
 
    !----- Fine-root maintenance respiration (ED2 per-broot form; the temperature response is summed !
    !      over the root layers, root_zone_temp_scale). ---------------------------------------------!
-   type :: root_params_t
+   type :: root_args_t
       real(wp) :: ea                 = 46390.0_wp  !< peaked-Arrhenius terms (default leaf ea_rd/hd_rd/ds_rd)
       real(wp) :: hd                 = 200000.0_wp
       real(wp) :: ds                 = 490.0_wp
-   end type root_params_t
+   end type root_args_t
 
 
    !=======================================================================================!
@@ -197,10 +197,10 @@ module meds_plant_types
    !----- Per-PFT vegetation thermal parameters (docs/science/vegetation_energy_dynamics.md eq.   !
    !      (1)). The tissues' specific heats are constants (tissue_c_leaf, tissue_c_wood_dry in     !
    !      meds_constants). -----------------------------------------------------------------------!
-   type :: veg_thermal_params_t
+   type :: veg_thermal_args_t
       real(wp) :: effarea_heat   = 2.0_wp                   !< [-] sensible sidedness (both leaf sides)
       real(wp) :: effarea_evap   = 1.0_wp                   !< [-] film-evaporation sidedness
       real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness (per PFT)
-   end type veg_thermal_params_t
+   end type veg_thermal_args_t
 
 end module meds_plant_types

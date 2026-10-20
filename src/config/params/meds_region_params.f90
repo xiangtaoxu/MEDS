@@ -1,11 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_region_opts -- [run].mode and the [region] block, as a config leaf                  !
+! meds_region_params -- [run].mode and the [region] block, as a config leaf                !
 ! (docs/configuration.md, "Regional runs"). A site run simulates one location from [site]; !
 ! a region run simulates every selected forcing cell of a box as its own polygon, at its   !
 ! cell's centre.                                                                           !
 !==========================================================================================!
-module meds_region_opts
+module meds_region_params
    use meds_kinds, only : wp, ik
    implicit none
    private
@@ -25,4 +25,4 @@ module meds_region_opts
       real(wp)           :: cell_mask_min = 0.5_wp
    end type region_opts_t
 
-end module meds_region_opts
+end module meds_region_params

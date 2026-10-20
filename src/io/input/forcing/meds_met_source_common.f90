@@ -13,7 +13,7 @@ module meds_met_source_common
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, is_leap_year,        &
                          time_to_string, whole_years_between
-   use meds_forcing_opts, only : MET_BACKEND_ED_DEFAULT, METAVG_BEGIN, SWPART_PASSTHROUGH,        &
+   use meds_forcing_params, only : MET_BACKEND_ED_DEFAULT, METAVG_BEGIN, SWPART_PASSTHROUGH,      &
                                    HEIGHT_ABOVE_GROUND, MAX_RECYCLE_YEARS
    use meds_forcing_types, only : met_source_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, FLD_QAIR,          &
                                   FLD_RHAIR, FLD_TDEW

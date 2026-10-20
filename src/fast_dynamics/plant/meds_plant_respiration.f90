@@ -25,7 +25,7 @@
 module meds_plant_respiration
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, tiny_num
-   use meds_plant_types, only : wood_params_t, root_params_t
+   use meds_plant_types, only : wood_args_t, root_args_t
    use meds_therm_lib,     only : peaked_arrhenius_scale
    implicit none
    private
@@ -63,7 +63,7 @@ contains
       !      it, and a large one more. The volume includes the coarse roots, as the surface does. --!
       real(wp),            intent(in)  :: sap_volume        !< [m3/plant] sapwood volume
       real(wp),            intent(in)  :: resp_sapwood25    !< [umol CO2/m3 sapwood/s @25C] cohort PFT's sapwood rate
-      type(wood_params_t), intent(in)  :: params      !< run-uniform trait POD (broadcast)
+      type(wood_args_t),   intent(in)  :: params      !< run-uniform trait POD (broadcast)
       real(wp),            intent(out) :: stem_resp   !< [umol CO2 / plant / s]
       real(wp) :: tscale, stem_area
 
@@ -114,7 +114,7 @@ contains
       real(wp),            intent(in) :: soil_temp(:)  !< [K] per-layer soil temperature
       real(wp),            intent(in) :: root_frac(:)  !< [-] per-layer root fraction (sums to 1)
       integer(ik),         intent(in) :: n             !< active layers
-      type(root_params_t), intent(in) :: params
+      type(root_args_t),   intent(in) :: params
       real(wp)    :: tscale
       integer(ik) :: k
       tscale = 0.0_wp

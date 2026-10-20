@@ -60,7 +60,7 @@ module meds_fast_dynamics
                                  set_aero_env_atm, set_aero_env_canopy
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : snow_params_t
+   use meds_biophysics_params, only : snow_params_t
    use meds_canopy_types, only : ground_optics_state_t
    use meds_canopy_radiation, only : canopy_radiation, ground_optics
    use meds_ground_biophysics, only : snow_cover_fraction
@@ -170,7 +170,7 @@ contains
       !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
       ctx%col_config%canopy_water_on    = cfg%canopy_water_on
       !----- Fast-loop biophysics run-config from the [soil]/[snow]/[aerodynamics] blocks and [fast]  !
-      !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
+      !      (all opt-in; cfg carries the meds_biophysics_params defaults unless a block overrides).  !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
       ctx%col_config%soil_water_opts  = cfg%soil        ! [soil], [fast] -> soil water and the water network
       ctx%soil_albedo(1) = cfg%soil%ground_albedo_vis   ! [soil] ground optics -> the canopy radiation solver

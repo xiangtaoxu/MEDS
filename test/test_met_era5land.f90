@@ -12,7 +12,7 @@ program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_time,            only : meds_time_t
-   use meds_forcing_opts,    only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END,          &
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
    use meds_forcing_kernels, only : dewpoint_to_specific_humidity, clear_sky_emissivity

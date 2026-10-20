@@ -20,8 +20,7 @@ module meds_soil_water
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav, grav_head, r_wv, tiny_num, p_std, safe_exp
    use meds_soil_types, only : chydro_forcing_t
-   use meds_soil_column_config, only : soil_params_t
-   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_AQUIFER
+   use meds_soil_params,      only : soil_params_t, soil_opts_t, SOIL_BC_AQUIFER
    use meds_soil_hydr_lib,    only : soil_head_to_theta
    use meds_numerics,         only : smooth_max0
    use meds_therm_lib,        only : sat_specific_humidity

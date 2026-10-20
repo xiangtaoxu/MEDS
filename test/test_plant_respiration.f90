@@ -20,7 +20,7 @@ program test_plant_respiration
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, t_ref_photo
    use meds_therm_lib,     only : peaked_arrhenius_scale
-   use meds_plant_types, only : wood_params_t, root_params_t
+   use meds_plant_types, only : wood_args_t, root_args_t
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,     &
                                      root_zone_temp_scale
    implicit none
@@ -53,7 +53,7 @@ contains
 
    !----- 1. Grass has no stem. ------------------------------------------------------------!
    subroutine test_grass_zero()
-      type(wood_params_t) :: p
+      type(wood_args_t)   :: p
       real(wp)            :: stem_resp
       !----- is_woody is a per-PFT TRAIT, passed per cohort. -----------------------------------!
       call stem_maintenance_respiration(300.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, .false., SRF, 0.0_wp, 0.0_wp, &
@@ -63,7 +63,7 @@ contains
 
    !----- 2. At 25 degC the peaked scale is 1 => R = factor25 * stem_area. ------------------!
    subroutine test_stem_identity_25c()
-      type(wood_params_t) :: p
+      type(wood_args_t)   :: p
       real(wp) :: expect, stem_resp
       call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, &
                                         0.0_wp, 0.0_wp, p, stem_resp)
@@ -73,7 +73,7 @@ contains
 
    !----- 3. Temperature response: at T /= 25C, R = factor25 * peaked_scale(T) * stem_area. -!
    subroutine test_temp_response()
-      type(wood_params_t) :: p
+      type(wood_args_t)   :: p
       real(wp) :: expect, tscale, stem_resp
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p, stem_resp)
       tscale = peaked_arrhenius_scale(1.0_wp, p%ea, p%hd, p%ds, 305.0_wp)
@@ -83,7 +83,7 @@ contains
 
    !----- 4. The WAI branch term adds pi*wai/nplant/aboveground_frac to the per-plant stem area. ------!
    subroutine test_wai_branch()
-      type(wood_params_t) :: p
+      type(wood_args_t)   :: p
       real(wp) :: tscale, expect_delta, r0, r1
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p, r0)
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p, r1)
@@ -98,7 +98,7 @@ contains
    !          area by it, so halving the fraction must double the respiration EXACTLY -- an     !
    !          inverse-proportionality, not just a change.                                       !
    subroutine test_aboveground_frac_scales()
-      type(wood_params_t) :: p
+      type(wood_args_t)   :: p
       real(wp) :: r_high, r_low
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, 0.7_wp,  WOODY, SRF, 0.0_wp, 0.0_wp, p, r_high)
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, 0.35_wp, WOODY, SRF, 0.0_wp, 0.0_wp, p, r_low)
@@ -109,7 +109,7 @@ contains
    !         is the PFT's `root_resp_factor25`, passed per cohort, so the expected value        !
    !         is written against the same constant the call uses -- not a literal that can drift. !
    subroutine test_root()
-      type(root_params_t) :: p
+      type(root_args_t)   :: p
       real(wp) :: r_hot, r_cold, r_zero, f_hot, f_cold
       real(wp) :: t_uniform(4), t_split(4), frac(4), f_mean, f_layer
       f_hot  = root_zone_temp_scale([t_ref_photo], [1.0_wp], 1_ik, p)
@@ -147,8 +147,8 @@ contains
    !         identically however they differed. Same shape as the aboveground_frac check above: !
    !         assert the trait CHANGES the answer, not merely that the argument compiles.        !
    subroutine test_pft_respiration_traits()
-      type(wood_params_t) :: pw
-      type(root_params_t) :: pr
+      type(wood_args_t)   :: pw
+      type(root_args_t)   :: pr
       real(wp) :: r_a, r_b
       !----- stem baseline is a plain multiplier: double it, double the flux. ------------------!
       call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY,      &
@@ -171,7 +171,7 @@ contains
    !----- 7. The sapwood term: rate x sapwood volume x the same temperature response, added to    !
    !         the surface term. With no surface rate it is the whole flux; with both, they add. ------!
    subroutine test_sapwood_term()
-      type(wood_params_t) :: pw
+      type(wood_args_t)   :: pw
       real(wp), parameter :: RSAP = 40.0_wp, VSAP = 0.05_wp   ! [umol/m3/s @25C], [m3/plant]
       real(wp) :: r_sap, r_surf, r_both, tscale
       call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY,   &

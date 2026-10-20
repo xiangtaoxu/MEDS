@@ -147,15 +147,15 @@ add_library(meds_share STATIC ${SHARE_SOURCES})
 meds_fortran_flags(meds_share)
 
 #----- CONFIGURATION: the meds_config_t aggregator, the loader that fills it from two TOML files, #
-#      the checks it passes and the minimal TOML reader; in opts/, one leaf per block (the PFT     #
-#      table, the soil column with the parameters derived from it, forcing, output, the fast loop, #
-#      biophysics, leaf, biogeochemistry, maps, region, sites). `toml` and `config_io` live here,  #
+#      the checks it passes and the minimal TOML reader; in params/, one leaf per block (the PFT   #
+#      table, the soil, forcing, output, the fast loop, snow and aerodynamics, leaf,               #
+#      biogeochemistry, maps, region, sites). `toml` and `config_io` live here,                    #
 #      not in src/io/:                                                                             #
 #      they are configuration INPUT, not I/O of model results, and they carry no external          #
 #      dependency, unlike the netCDF output layer. Links meds_share only; nothing here imports     #
 #      model state or a kernel.                                                                    #
 file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90
-                                           ${CMAKE_CURRENT_SOURCE_DIR}/src/config/opts/*.f90)
+                                           ${CMAKE_CURRENT_SOURCE_DIR}/src/config/params/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
 #      The keys a config may hold are the ones the two reference configs list (meds_config_check): #
 #      written into an include at configure time, and re-written when either reference changes.   #
@@ -181,7 +181,7 @@ meds_fortran_flags(meds_config)
 #  The kernels take only the per-patch store types (from meds_patch_state_vars), never        #
 #  polygon_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_no_site_state    #
 #  checks it, because the shared module directory cannot. The parameters that describe the    #
-#  stores are config (meds_soil_column_config): a parameter is not state.                     #
+#  stores are config (meds_soil_params): a parameter is not state.                            #
 file(GLOB STATE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/*.f90)
 add_library(meds_state STATIC ${STATE_SOURCES})
 target_link_libraries(meds_state PUBLIC meds_share meds_config)
@@ -605,7 +605,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- C-API shims. Compiling each C-API source INTO a ctest target is the point: a shim        #
    #      built only by the optional -DMEDS_BUILD_PYLIB=ON shared library breaks unseen -- a       #
-   #      component inserted mid-type in leaf_photo_params_t, or a signature changed under the     #
+   #      component inserted mid-type in leaf_photo_args_t, or a signature changed under the       #
    #      demography shim, leaves the whole suite green on both back ends while the C API is       #
    #      broken. Registering it here makes that class of break a normal build failure.            #
    #      Needs no .so and no Python: the test calls the bind(c) procedures directly. EVERY shim   #

@@ -39,7 +39,7 @@ module meds_fast_frozen
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
    use meds_therm_lib, only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy, tissue_dry_heat_capacity
    use meds_soil_types, only : snow_env_t, snow_flux_t
-   use meds_biophysics_opts, only : snow_params_t
+   use meds_biophysics_params, only : snow_params_t
    use meds_patch_state_vars,   only : snow_column_t
    use meds_ground_biophysics, only : snow_energy_step
    use meds_fast_types, only : snow_stage_t

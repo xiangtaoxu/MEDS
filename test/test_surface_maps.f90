@@ -29,10 +29,10 @@ program test_surface_maps
                                           MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
                                           map_inputs_t, read_map_inputs, apply_map_inputs
    use meds_config,                only : meds_config_t, alloc_pft_table
-   use meds_maps_opts,          only : maps_opts_t
+   use meds_maps_params,           only : maps_opts_t
    use meds_soil_hydr_lib,         only : soil_texture_t, soil_texture_to_hydraulics
    use meds_therm_lib,             only : soil_texture_to_thermal
-   use meds_biophysics_opts,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
+   use meds_soil_params,           only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
    implicit none
 
    real(wp), parameter :: FILL = -9999.0_wp

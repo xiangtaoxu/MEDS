@@ -13,7 +13,7 @@
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : grav_head, tiny_num
-   use meds_plant_types, only : hydro_params_t, hydro_opts_t
+   use meds_plant_types, only : hydro_args_t, hydro_opts_t
    use meds_plant_hydr_lib, only : root_fraction_profile, tissue_water_to_psi
    use meds_numerics,       only : smooth_max0
    implicit none
@@ -51,7 +51,7 @@ contains
       real(wp),             intent(in) :: wood_water  !< [kg H2O/plant] wood (sapwood + fine-root) water
       real(wp),             intent(in) :: bwood       !< [kgC/plant] sapwood + fine-root carbon
       real(wp),             intent(in) :: height      !< [m] cohort height
-      type(hydro_params_t), intent(in) :: p
+      type(hydro_args_t),   intent(in) :: p
       type(hydro_opts_t),   intent(in) :: o
       if (p%leaf_curve%water_sat*bleaf > tiny_num) then
          psi_l = tissue_water_to_psi(leaf_water, p%leaf_curve, bleaf)
@@ -65,7 +65,7 @@ contains
    !      soil column. --------------------------------------------------------------------------------!
    pure real(wp) function cohort_root_depth(height, hp, soil_depth) result(depth)
       real(wp),             intent(in) :: height      !< [m] cohort height
-      type(hydro_params_t), intent(in) :: hp          !< the cohort's PFT
+      type(hydro_args_t),   intent(in) :: hp          !< the cohort's PFT
       real(wp),             intent(in) :: soil_depth  !< [m] depth of the soil column's bottom
       depth = min(hp%root_depth_b1 * max(height, 0.0_wp)**hp%root_depth_b2, soil_depth)
    end function cohort_root_depth
@@ -75,7 +75,7 @@ contains
    !      rooting depth D, (1 - beta^(d/D)) / (1 - beta) above depth d. Layers below D hold none. ---!
    pure subroutine cohort_root_profile(height, hp, z_top, z_bot, frac)
       real(wp),             intent(in)  :: height      !< [m] cohort height
-      type(hydro_params_t), intent(in)  :: hp          !< the cohort's PFT
+      type(hydro_args_t),   intent(in)  :: hp          !< the cohort's PFT
       real(wp),             intent(in)  :: z_top(:)    !< [m] depth of each layer's top (>= 0)
       real(wp),             intent(in)  :: z_bot(:)    !< [m] depth of each layer's bottom (> z_top)
       real(wp),             intent(out) :: frac(:)     !< [-] the cohort's fine roots in each layer

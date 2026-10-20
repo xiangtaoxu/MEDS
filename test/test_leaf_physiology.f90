@@ -8,12 +8,12 @@ program test_leaf_physiology
    use meds_config,             only : meds_config_t, pft_leaf_psi_tlp, pft_stomata_psi_onset,  &
                                        pft_wstress_psi_open, pft_wstress_psi_close
    use meds_pft_params,         only : HYD_UNSET
-   use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
+   use meds_leaf_params,        only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_therm_lib,     only : arrhenius_scale, peaked_arrhenius_scale, kattge_knorr_entropy,  &
                                   kattge_knorr_jv_ratio
    use meds_leaf_gas_exchange,only : assimilation_demand_c3, rubisco_kinetics
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, &
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP,   &
                                 LIM_C4_PEP
    use meds_fast_config, only : leaf_gas_exchange, leaf_photo_params_for_pft
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -360,7 +360,7 @@ program test_leaf_physiology
    !       42.75 umol/mol at sea level and at 3000 m (70 kPa) alike. Kc and Ko are partial          !
    !       pressures, so as mole fractions they scale as 1/P. ======================================!
    block
-      type(leaf_photo_params_t) :: pp
+      type(leaf_photo_args_t)   :: pp
       real(wp) :: kc_low, ko_low, gstar_low, o2_low, kc_high, ko_high, gstar_high, o2_high
       call leaf_photo_params_for_pft(cfg, 1_ik, pp)
       call rubisco_kinetics(pp, t_kelvin + 25.0_wp, 101325.0_wp, kc_low, ko_low, gstar_low, o2_low)

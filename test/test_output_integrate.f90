@@ -31,7 +31,7 @@ program test_output_integrate
    use meds_config,           only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,  &
-                                     diag_params_t, slab_col,                                     &
+                                     diag_setup_t, slab_col,                                      &
                                      MISSING_VALUE,                                               &
                                      AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
                                      AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT
@@ -47,7 +47,7 @@ program test_output_integrate
                                      manager_setup, manager_finalize, build_freq_index,          &
                                      apply_variable_override, OVR_MASK
    use meds_diagnostic_reduce, only : W_NPLANT, W_LEAF_AREA
-   use meds_output_opts,      only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
+   use meds_output_params,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
    use meds_constants,        only : n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, test_pft_table, check, check_close
    implicit none
@@ -132,7 +132,7 @@ contains
       type(integ_buffer_t) :: buf
       real(wp)             :: slab(64), out(64), scal
       logical              :: valid(64), vslab(64)
-      type(diag_params_t)  :: dp
+      type(diag_setup_t)   :: dp
       integer(ik)          :: n_out, i
       !----- A fixed 3-cohort / 1-patch site (slot set constant across the window). ----------!
       call alloc_polygon(poly, 2_ik, 64_ik, 8_ik, 4_ik, test_pft_table())
