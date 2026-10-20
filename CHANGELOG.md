@@ -182,9 +182,12 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 - **The Newton solvers share their step safeguards** (#460): `meds_numerics` holds `smooth_max0`,
   `sufficient_decrease` (the Armijo test of a damped step, used by the soil-plant water solver and the
   fast backward-Euler stage) and `fraction_to_boundary` (the step share that keeps a positive unknown
-  positive). Under gfortran every output is unchanged bit for bit. Under ifx's optimised build the
-  ledger residuals `resid_energy_site` and `resid_water_site` move at round-off (at most
-  7.5×10⁻¹¹ J m⁻² and 2.1×10⁻¹⁷ kg m⁻²); every other output is unchanged.
+  positive). Under gfortran every output is unchanged bit for bit. Under ifx's optimised build,
+  which fuses and orders the arithmetic differently once the tests are functions of their own, a
+  line-search step accepted at the margin can go the other way, and the solver then converges along
+  another path within its tolerance: on a 2-year census run annual outputs move by at most 10⁻⁷ of
+  their size, single sub-daily values (GPP, latent heat) by up to 10⁻³, the solvers' work counters by
+  up to 30 %, and the ledger residuals at round-off.
 
 - **Each PFT has its own size allometry** (#459). A PFT's record, `pft%allom(pf)` (`meds_allometry`),
   holds its height curve and cap, its gMM and log-quadratic coefficients (the latter default to Chave
