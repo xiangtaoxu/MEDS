@@ -23,14 +23,14 @@ module meds_fast_prepass
                                      CO_CA, CO_PRESSURE
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_plant_types, only : veg_thermal_params_t
+   use meds_plant_types, only : veg_thermal_args_t
    use meds_fast_types, only : patch_biophys_t
    use meds_soil_column_config, only : soil_params_t
    use meds_state_defaults, only : is_unset_negative
    use meds_biophysics_opts, only : aero_cfg_t
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
-   use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, hydro_params_table_t, hydro_opts_t, &
-                                wood_params_t, root_params_t
+   use meds_plant_types, only : leaf_photo_table_t, hydro_args_t, hydro_args_table_t, hydro_opts_t,     &
+                                wood_args_t, root_args_t
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
@@ -204,9 +204,9 @@ contains
                                        biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
-      type(hydro_params_table_t), intent(in)  :: hyd_table              !< PER-PFT leaf PV curve
+      type(hydro_args_table_t),   intent(in)  :: hyd_table              !< PER-PFT leaf PV curve
       type(hydro_opts_t),         intent(in)  :: hyd_opts               !< gravity switch (leafless cohorts)
-      type(veg_thermal_params_t), intent(in)  :: veg_thermal  !< effective exchange areas
+      type(veg_thermal_args_t),   intent(in)  :: veg_thermal  !< effective exchange areas
       type(soil_params_t),        intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
       type(column_cohort_t),      intent(in)  :: col_cohort
       type(column_forcing_t),     intent(in)  :: forc         !< absorbed PAR per cohort
@@ -323,8 +323,8 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine canopy_maintenance_respiration(wood, root, soil, root_frac, col_cohort, wood_temp, soil_temp, &
                                              ra_stem, ra_root, stem_resp_coh, root_resp_coh)
-      type(wood_params_t),   intent(in)  :: wood
-      type(root_params_t),   intent(in)  :: root
+      type(wood_args_t),     intent(in)  :: wood
+      type(root_args_t),     intent(in)  :: root
       real(wp),              intent(in)  :: root_frac(:)        !< [-] the patch's fine roots by layer
       type(soil_params_t),   intent(in)  :: soil                !< active layer count
       type(column_cohort_t), intent(in)  :: col_cohort

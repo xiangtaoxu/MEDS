@@ -18,7 +18,7 @@ module meds_c_api_canopy
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
    use meds_config_io,            only : load_meds_config
-   use meds_plant_types,          only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
+   use meds_plant_types,          only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t
    use meds_leaf_gas_exchange,    only : solve_leaf_gas_exchange, leaf_params_at_capacity
    use meds_fast_config,          only : build_leaf_photo_table, build_rad_optics
    use meds_plant_trait_dynamics, only : light_plastic_traits
@@ -112,7 +112,7 @@ contains
       real(c_double),        intent(out) :: a_gross(n), a_net(n), gs(n), ci(n)
       type(leaf_env_t)          :: env
       type(leaf_flux_t)         :: flux
-      type(leaf_photo_params_t) :: p
+      type(leaf_photo_args_t)   :: p
       integer(ik) :: i
       do i = 1_ik, int(n, ik)
          env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)

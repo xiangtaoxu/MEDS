@@ -18,7 +18,7 @@ module meds_output_types
    implicit none
    private
 
-   public :: var_desc_t, integ_buffer_t, output_registry_t, diag_params_t
+   public :: var_desc_t, integ_buffer_t, output_registry_t, diag_setup_t
    public :: pending_record_t, record_queue_t, stream_file_t
    public :: output_files_t, output_buffers_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_TMEAN, AGG_FLUXSUM
@@ -89,14 +89,14 @@ module meds_output_types
    ! surface: the column the fast loop integrates, so a psi reported here and a psi the roots !
    ! saw are the same curve by construction.                                                  !
    !==========================================================================================!
-   type :: diag_params_t
+   type :: diag_setup_t
       integer(ik) :: n_pft       = 0_ik      !< run-time PFT count (the DIM_PFT axis length)
       !----- The fast loop runs, so the soil water has a curve to read (attach_output). ----------!
       logical     :: soil_ready  = .false.   !< .false. => psi/wetness diagnostics emit _FillValue
       !----- DBH size classes (DIM_SIZE): n_class+1 ascending edges [cm]. ----------------------!
       integer(ik) :: n_dbh_class = 0_ik
       real(wp)    :: dbh_edges(MAX_DBH_CLASS + 1_ik) = 0.0_wp
-   end type diag_params_t
+   end type diag_setup_t
 
    !==========================================================================================!
    ! One diagnostic variable: a pure DATA descriptor, NO pointers into the SoA.                   !
@@ -237,7 +237,7 @@ module meds_output_types
       !      variables read as missing rather than as a 0 nothing computed. -------------------------!
       logical                 :: fast_loop_on = .true.
       type(output_registry_t) :: reg
-      type(diag_params_t)     :: diag       !< run-dependent params the derived diagnostics need
+      type(diag_setup_t)      :: diag       !< run-dependent params the derived diagnostics need
       integer(ik)       :: cohort_max = 0_ik, patch_max = 0_ik, max_slab = 0_ik
       logical           :: cohort_axis = .false., patch_axis = .false.  !< a live variable has that axis
       type(stream_file_t)    :: stream(N_FREQ)
@@ -314,7 +314,7 @@ module meds_output_types
       logical              :: fast_ready   = .false.           !< the staging is filled and awaits replay
       !----- The diagnostic parameters this polygon's extraction reads: its file set's, with         !
       !      soil_ready set when its fast loop runs (attach_output). --------------------------------!
-      type(diag_params_t)  :: diag
+      type(diag_setup_t)   :: diag
    end type output_buffers_t
 
 contains

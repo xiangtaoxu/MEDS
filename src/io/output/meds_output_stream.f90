@@ -26,7 +26,7 @@ module meds_output_stream
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
                                   output_files_t, output_buffers_t,                                  &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
-                                  DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, diag_params_t,              &
+                                  DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, diag_setup_t,               &
                                   XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,    &
                                   AGG_LAST, AGG_TMEAN, AGG_FLUXSUM,                                &
                                   MISSING_VALUE, MISSING_INT, ragged_dim
@@ -452,7 +452,7 @@ contains
    subroutine write_size_coord(ncid, vlo_ik, vhi_ik, dg)
       integer(c_int),      intent(in) :: ncid
       integer(ik),         intent(in) :: vlo_ik, vhi_ik
-      type(diag_params_t), intent(in) :: dg
+      type(diag_setup_t),  intent(in) :: dg
       real(c_double)    :: lo(max(dg%n_dbh_class,1_ik)), hi(max(dg%n_dbh_class,1_ik))
       integer(c_size_t) :: st(1), cn(1)
       integer(ik)       :: i, nc
@@ -508,7 +508,7 @@ contains
       integer(ik),         intent(in) :: np                     !< polygons
       integer(ik),         intent(in) :: ns                     !< the site axis's length
       integer(ik),         intent(in) :: cohort_dim, patch_dim  !< the file's TRIMMED (live-count) axis lengths
-      type(diag_params_t), intent(in) :: dg
+      type(diag_setup_t),  intent(in) :: dg
       integer(c_int)    :: xt, dims(4), rank
       integer(c_size_t) :: chunk(4)
       character(len=16) :: cm

@@ -605,7 +605,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- C-API shims. Compiling each C-API source INTO a ctest target is the point: a shim        #
    #      built only by the optional -DMEDS_BUILD_PYLIB=ON shared library breaks unseen -- a       #
-   #      component inserted mid-type in leaf_photo_params_t, or a signature changed under the     #
+   #      component inserted mid-type in leaf_photo_args_t, or a signature changed under the       #
    #      demography shim, leaves the whole suite green on both back ends while the C API is       #
    #      broken. Registering it here makes that class of break a normal build failure.            #
    #      Needs no .so and no Python: the test calls the bind(c) procedures directly. EVERY shim   #

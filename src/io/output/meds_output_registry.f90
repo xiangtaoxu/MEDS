@@ -1177,7 +1177,7 @@ contains
                             'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
                             'liquid-water saturation vapour pressure of meds_therm_lib'
 
-      !----- Run-dependent parameters the DERIVED diagnostics need (diag_params_t). n_pft is the  !
+      !----- Run-dependent parameters the DERIVED diagnostics need (diag_setup_t). n_pft is the   !
       !      RUN-TIME PFT count, so the netCDF `pft` dimension is run-dependent -- which is why      !
       !      the serializer also writes a `pft` coordinate variable, so a file stays self-describing !
       !      when compared across runs with different PFT tables.                                    !

@@ -18,7 +18,7 @@ module meds_output_integrate
    use meds_time,           only : meds_time_t
    use meds_output_opts,    only : N_FREQ
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,   &
-                                   diag_params_t, pending_record_t, record_queue_t,                &
+                                   diag_setup_t, pending_record_t, record_queue_t,                 &
                                    slab_col,                                                     &
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
@@ -553,7 +553,7 @@ contains
    !      build (-fpe0) aborts, a Release build writes NaN. ----------------------------------!
    pure subroutine layer_source_field(poly, dp, src, col, ok)
       type(polygon_t),     intent(in)  :: poly
-      type(diag_params_t), intent(in)  :: dp
+      type(diag_setup_t),  intent(in)  :: dp
       integer(ik),         intent(in)  :: src
       real(wp),            intent(out) :: col(:,:)
       logical,             intent(out) :: ok
@@ -625,7 +625,7 @@ contains
    !=======================================================================================!
    subroutine extract_variable(poly, dp, v, scalar_out, slab_out, valid_out, n_out)
       type(polygon_t),     intent(in)  :: poly
-      type(diag_params_t), intent(in)  :: dp
+      type(diag_setup_t),  intent(in)  :: dp
       type(var_desc_t),    intent(in)  :: v
       real(wp),            intent(out) :: scalar_out
       real(wp),            intent(out) :: slab_out(:)

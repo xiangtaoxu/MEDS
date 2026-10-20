@@ -34,12 +34,12 @@ program test_column_hydrology
    use meds_soil_water,       only : ground_evaporation_rate, bottom_flux
    use meds_spac_solver,    only : spac_solver_t, spac_allocate, spac_set_state,     &
                                      spac_advance, POND
-   use meds_plant_types,      only : hydro_params_table_t
+   use meds_plant_types,      only : hydro_args_table_t
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
 
-   type(hydro_params_table_t) :: no_plants
+   type(hydro_args_table_t)   :: no_plants
 
    allocate(no_plants%pft(1))
    call test_constitutive()

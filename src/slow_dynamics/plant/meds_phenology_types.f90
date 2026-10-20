@@ -14,7 +14,7 @@ module meds_phenology_types
    implicit none
    private
 
-   public :: pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
+   public :: pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t
    public :: CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER, CUE_ALL
 
    !=======================================================================================!
@@ -63,7 +63,7 @@ module meds_phenology_types
    !      spans x* +- 2/|s|. The defaults below are the ones a PFT without a [phenology]        !
    !      section keeps (both masks CUE_NONE: always flushing, no senescence), so only the      !
    !      rates and the timescales act.                                                         !
-   type :: pheno_params_t
+   type :: pheno_args_t
       integer(ik) :: flush_cue_mask      = CUE_NONE         !< cues of the flush side
       integer(ik) :: shed_cue_mask       = CUE_NONE         !< cues of the shed side
       real(wp)    :: flush_cue_timescale = 5.0_wp           !< [day]  smoothing of the flush tendency
@@ -93,7 +93,7 @@ module meds_phenology_types
       real(wp)    :: flush_water_sharpness = 0.5_wp         !< [1/(MPa day)]
       real(wp)    :: shed_water_sum        = 10.0_wp        !< [MPa day] dry sum that triggers shedding
       real(wp)    :: shed_water_sharpness  = 0.5_wp         !< [1/(MPa day)]
-   end type pheno_params_t
+   end type pheno_args_t
 
    !----- Outputs: the potential relative rates the tendencies allow. ----------------------!
    type :: pheno_out_t

@@ -26,7 +26,7 @@ program test_plant_phenology
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : yr_day
    use meds_time,            only : daylength
-   use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,     &
+   use meds_phenology_types, only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t,       &
                                     CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER, CUE_ALL
    use meds_phenology,       only : phenology_kernel, leaf_turnover_step, turnover_gate
    implicit none
@@ -57,7 +57,7 @@ contains
    !----- A temperate deciduous PFT (warmth x light, cold x short days). The tests feed the   !
    !      day length as the hours of light, which is what a low par_min counts. ----------------!
    pure function temperate_deciduous() result(p)
-      type(pheno_params_t) :: p
+      type(pheno_args_t)   :: p
       p%flush_cue_mask        = CUE_TEMP + CUE_LIGHT
       p%shed_cue_mask         = CUE_TEMP + CUE_LIGHT
       p%flush_degree_days     = 92.0_wp
@@ -70,7 +70,7 @@ contains
    !----- 1. No cues: always flushing, never senescing, under ANY drivers. -----------------!
    subroutine test_no_cues()
       type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
+      type(pheno_args_t)   :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
@@ -99,7 +99,7 @@ contains
       type(pheno_env_t)    :: env
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
-      type(pheno_params_t) :: params
+      type(pheno_args_t)   :: params
       integer(ik) :: d, de
       real(wp)    :: lat_signed
       params = temperate_deciduous()
@@ -152,7 +152,7 @@ contains
    !----- 4. Drought deciduous: the wet and dry sums of predawn psi against the TLP. -------!
    subroutine test_drought_deciduous()
       type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
+      type(pheno_args_t)   :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
@@ -196,7 +196,7 @@ contains
    !----- 5. Light-driven leaf exchange: flush stays on, senescence rises with light. -------!
    subroutine test_light_exchanging()
       type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
+      type(pheno_args_t)   :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
@@ -226,7 +226,7 @@ contains
    !----- 6. Rate mapping: the potentials are exactly rate_max times the tendencies. ------!
    subroutine test_rate_mapping()
       type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
+      type(pheno_args_t)   :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
@@ -249,7 +249,7 @@ contains
    !----- 7. Degenerate drivers: potentials stay finite and non-negative, no FP trap. -----!
    subroutine test_degenerate()
       type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
+      type(pheno_args_t)   :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d

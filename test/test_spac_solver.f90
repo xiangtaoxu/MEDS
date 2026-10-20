@@ -36,7 +36,7 @@ program test_spac_solver
                                    tissue_water_relations, water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
    use meds_soil_hydr_lib,   only : soil_water_relations, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL,  &
                                     soil_theta_to_head
-   use meds_plant_types,   only : hydro_params_table_t
+   use meds_plant_types,   only : hydro_args_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
    use meds_soil_column_config, only : soil_params_t
    use meds_config,             only : build_soil_hydr_params
@@ -45,7 +45,7 @@ program test_spac_solver
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_DRAIN
    implicit none
 
-   type(hydro_params_table_t) :: hyd
+   type(hydro_args_table_t)   :: hyd
    type(soil_params_t)        :: soil
    type(soil_opts_t)          :: sopts
    type(chydro_forcing_t)     :: forc
@@ -77,7 +77,7 @@ contains
 
    !----- One PFT with the shipped [hydraulics] values and a tropical wood conductivity. -----!
    subroutine make_pft(h)
-      type(hydro_params_table_t), intent(out) :: h
+      type(hydro_args_table_t),   intent(out) :: h
       h%n_pft = 1_ik
       allocate(h%pft(1))
       h%pft(1)%leaf_curve = water_curve_t(pi0=-1.5_wp, elastic_mod=12.0_wp, apoplast_frac=0.30_wp, water_sat=2.0_wp)

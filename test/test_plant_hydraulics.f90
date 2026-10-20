@@ -23,7 +23,7 @@ program test_plant_hydraulics
                                    xylem_max_conductance, rhizosphere_conductance, xylem_sapflow,                &
                                    tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi, tissue_psi_to_water,    &
                                    tissue_capacitance, tissue_water_to_psi, tissue_capped_water, water_curve_t
-   use meds_plant_types, only : hydro_params_t, hydro_opts_t
+   use meds_plant_types, only : hydro_args_t, hydro_opts_t
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_plant_hydraulics, only : cohort_root_depth, cohort_root_profile
    implicit none
@@ -45,7 +45,7 @@ contains
 
    !----- A pioneer-like default trait set + cohort environment. ---------------------------!
    subroutine defaults(p, o)
-      type(hydro_params_t), intent(out) :: p
+      type(hydro_args_t),   intent(out) :: p
       type(hydro_opts_t),   intent(out) :: o
       p%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
       p%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
@@ -210,7 +210,7 @@ contains
    ! from the soil (the network's uptake follows its potential). --------------------------------!
    !=======================================================================================!
    subroutine test_growth_seam()
-      type(hydro_params_t) :: p ; type(hydro_opts_t) :: o
+      type(hydro_args_t)   :: p ; type(hydro_opts_t) :: o
       real(wp) :: bwood0, bwood1, psi_wood0, psi_wood1, w0
       print '(a)', '-- Biomass fast/slow seam: mass-conserving growth --'
       call defaults(p, o)
@@ -229,7 +229,7 @@ contains
    ! Gardner's value, so a layer split in two keeps its total.                                     !
    !=======================================================================================!
    subroutine test_cohort_roots()
-      type(hydro_params_t) :: hp
+      type(hydro_args_t)   :: hp
       type(hydro_opts_t)   :: o
       real(wp)    :: edges(13), frac(12), depth, lv, half, g, g_half
       integer(ik) :: k
@@ -306,7 +306,7 @@ contains
    ! (about pi0 * 1e4 MPa). A cohort with leaves still reads its own leaf water.                    !
    !=======================================================================================!
    subroutine test_leafless_leaf_psi()
-      type(hydro_params_t) :: p ; type(hydro_opts_t) :: o
+      type(hydro_args_t)   :: p ; type(hydro_opts_t) :: o
       real(wp) :: bwood, w_wood, w_leaf, psi_w, psi_l
       real(wp), parameter :: BLEAF = 0.5_wp, HEIGHT = 20.0_wp
       print '(a)', '-- Leafless cohort: leaf node at the wood potential less gravity --'

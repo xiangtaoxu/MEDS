@@ -5,7 +5,7 @@
 ! WHY THIS TEST EXISTS -- and why it is MANDATORY, not gated on the pylib option. Outside  !
 ! this target the shim is compiled only by the optional shared library                     !
 ! (`-DMEDS_BUILD_PYLIB=ON`), which is in neither the default build nor ctest. So a change  !
-! to `leaf_env_t` or `leaf_photo_params_t` -- a component inserted mid-type shifts every   !
+! to `leaf_env_t` or `leaf_photo_args_t` -- a component inserted mid-type shifts every     !
 ! trailing value of a POSITIONAL structure constructor -- could pass the whole suite on    !
 ! both back ends while leaving the C API unable to compile. Every C-API shim is therefore  !
 ! compiled into a ctest target, so an interface mismatch fails the build (docs/building.md !
@@ -22,7 +22,7 @@
 program test_c_api_leaf
    use, intrinsic :: iso_c_binding, only : c_double, c_int
    use meds_kinds,        only : wp, ik
-   use meds_c_api_leaf,    only : leaf_env_c, leaf_params_c, leaf_flux_c, meds_leaf_solve,        &
+   use meds_c_api_leaf,    only : leaf_env_c, leaf_args_c, leaf_flux_c, meds_leaf_solve,          &
                                  meds_arrhenius, meds_peaked_arrhenius, leaf_kinetics_c,          &
                                  meds_rubisco_kinetics
    use meds_plant_types, only : PATH_C3
@@ -32,7 +32,7 @@ program test_c_api_leaf
    implicit none
 
    type(leaf_env_c)    :: env
-   type(leaf_params_c) :: p
+   type(leaf_args_c)   :: p
    type(leaf_flux_c)   :: f0, f1, f2, fb
    type(leaf_kinetics_c) :: kin
    real(wp)            :: k25, arr
@@ -107,7 +107,7 @@ contains
    !----- The same C3 trait set the Python wrapper ships as its defaults (meds/plant/leaf.py), !
    !      so this test and the Python path exercise the same numbers. -------------------------!
    pure function c3_defaults() result(q)
-      type(leaf_params_c) :: q
+      type(leaf_args_c)   :: q
       q%pathway = int(PATH_C3, c_int)
       q%vcmax25 = 60.0_c_double  ; q%jmax25 = 108.0_c_double ; q%tpu25 = 1.0e6_c_double
       q%rd25    = 0.9_c_double   ; q%kp25   = 0.0_c_double

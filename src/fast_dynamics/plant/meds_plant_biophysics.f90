@@ -18,7 +18,7 @@ module meds_plant_biophysics
    use meds_constants,        only : pi, tiny_num, stefan_boltzmann, cp_air, cp_liq, latent_heat_vap
    use meds_therm_lib,        only : internal_energy_to_temp, sat_specific_humidity,                        &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor
-   use meds_plant_types, only : veg_thermal_params_t
+   use meds_plant_types, only : veg_thermal_args_t
    implicit none
    private
 

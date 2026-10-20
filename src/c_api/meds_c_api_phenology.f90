@@ -10,13 +10,13 @@
 module meds_c_api_phenology
    use iso_c_binding,        only : c_double, c_int
    use meds_kinds,           only : wp, ik
-   use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
+   use meds_phenology_types, only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t
    use meds_phenology,       only : phenology_kernel, leaf_turnover_step
    use meds_time,            only : daylength
    implicit none
    private
 
-   public :: pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c
+   public :: pheno_env_c, pheno_args_c, pheno_state_c, pheno_out_c
    public :: meds_phenology_step, meds_leaf_turnover_step, meds_daylength
 
    !----- C mirror of pheno_env_t (3 doubles + 2 ints; hemis_north 0/1). --------------------!
@@ -25,8 +25,8 @@ module meds_c_api_phenology
       integer(c_int) :: doy, hemis_north
    end type pheno_env_c
 
-   !----- C mirror of pheno_params_t. ---------------------------------------------------------!
-   type, bind(c) :: pheno_params_c
+   !----- C mirror of pheno_args_t. -----------------------------------------------------------!
+   type, bind(c) :: pheno_args_c
       integer(c_int) :: flush_cue_mask, shed_cue_mask
       real(c_double) :: flush_cue_timescale, shed_cue_timescale, flush_rate_max, shed_rate_max
       real(c_double) :: flush_base_temp, flush_degree_days, flush_temp_sharpness
@@ -35,7 +35,7 @@ module meds_c_api_phenology
       real(c_double) :: shed_light_hours, shed_light_sharpness, light_window
       real(c_double) :: leaf_psi_tlp, flush_water_sum, flush_water_sharpness
       real(c_double) :: shed_water_sum, shed_water_sharpness
-   end type pheno_params_c
+   end type pheno_args_c
 
    !----- C mirror of pheno_state_t (7 doubles; the prognostic memory, in/out). -------------!
    type, bind(c) :: pheno_state_c
@@ -58,12 +58,12 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine meds_phenology_step(env_c, p_c, dt, state_c, out_c) bind(c, name="meds_phenology_step")
       type(pheno_env_c),    intent(in)    :: env_c
-      type(pheno_params_c), intent(in)    :: p_c
+      type(pheno_args_c),   intent(in)    :: p_c
       real(c_double), value, intent(in)   :: dt
       type(pheno_state_c),  intent(inout) :: state_c
       type(pheno_out_c),    intent(out)   :: out_c
       type(pheno_env_t)    :: env
-      type(pheno_params_t) :: p
+      type(pheno_args_t)   :: p
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
 

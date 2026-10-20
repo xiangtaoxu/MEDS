@@ -25,7 +25,7 @@ module meds_pft_params
    integer(ik), parameter :: PATH_C4 = 2_ik   !< C4 (Collatz et al. 1992)
 
    !----- A PFT's [phenology] block (docs/science/plant_phenology.md). The defaults equal  !
-   !      pheno_params_t's (meds_phenology_types), into which the slow-loop driver copies  !
+   !      pheno_args_t's (meds_phenology_types), into which the slow-loop driver copies    !
    !      them with the turgor-loss point. ------------------------------------------------!
    type :: phenology_traits_t
       integer(ik) :: flush_cue_mask        = 0_ik        !< cues of the flush side (TEMP 1, LIGHT 2, WATER 4)

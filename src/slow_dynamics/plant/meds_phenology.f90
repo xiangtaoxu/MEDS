@@ -50,7 +50,7 @@ contains
    !=======================================================================================!
    pure subroutine phenology_kernel(env, params, dt, state, out)
       type(pheno_env_t),    intent(in)    :: env
-      type(pheno_params_t), intent(in)    :: params
+      type(pheno_args_t),   intent(in)    :: params
       real(wp),             intent(in)    :: dt
       type(pheno_state_t),  intent(inout) :: state
       type(pheno_out_t),    intent(out)   :: out
@@ -106,13 +106,13 @@ contains
 
    !----- The two water switches, from the sums of predawn leaf psi above and below the TLP. -!
    pure real(wp) function wet_water_switch(params, state) result(sw)
-      type(pheno_params_t), intent(in) :: params
+      type(pheno_args_t),   intent(in) :: params
       type(pheno_state_t),  intent(in) :: state
       sw = logistic(params%flush_water_sharpness * (state%wet_psi_sum - params%flush_water_sum))
    end function wet_water_switch
 
    pure real(wp) function dry_water_switch(params, state) result(sw)
-      type(pheno_params_t), intent(in) :: params
+      type(pheno_args_t),   intent(in) :: params
       type(pheno_state_t),  intent(in) :: state
       sw = logistic(params%shed_water_sharpness * (state%dry_psi_sum - params%shed_water_sum))
    end function dry_water_switch
@@ -122,7 +122,7 @@ contains
    !=======================================================================================!
    pure subroutine accumulate(env, params, dt, both, state)
       type(pheno_env_t),    intent(in)    :: env
-      type(pheno_params_t), intent(in)    :: params
+      type(pheno_args_t),   intent(in)    :: params
       real(wp),             intent(in)    :: dt
       integer(ik),          intent(in)    :: both
       type(pheno_state_t),  intent(inout) :: state

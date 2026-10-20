@@ -152,7 +152,7 @@ holds one module per block, and the reference config describes each key in a lin
   `reduce_patch_column_to_site` is `reduce_patch_columns_to_sites` (each site's column, with a
   validity mask), and `gather_patch_columns` reads each patch's layer count from its site.
   `manager_set_soil_params` goes: a soil potential reads its site's retention curve, and
-  `diag_params_t%soil_ready` says the fast loop runs.
+  `diag_setup_t%soil_ready` says the fast loop runs.
 - **State files carry each cohort's tissue energy** (#457). `leaf_energy` and `wood_energy` [J per
   plant] are the prognostic tissue state; `leaf_temp` and `wood_temp` are written beside them as
   diagnosed twins. The canopy films `leaf_surf_water` and `wood_surf_water` are per plant, marked
@@ -166,7 +166,7 @@ holds one module per block, and the reference config describes each key in a lin
   temperature is more than 10⁻⁶ K from the one its energy gives. `leaf_surf_water` and
   `wood_surf_water` are per plant (`cohort_film_water` gives a cohort's per m² of ground).
   `slow_tissue_heat` is `slow_tissue_energy`; `tissue_coefficients_t%water_store_enth` is the
-  per-cohort `leaf_water_enth` and `wood_water_enth`; `veg_thermal_params_t` loses `c_leaf` and
+  per-cohort `leaf_water_enth` and `wood_water_enth`; `veg_thermal_args_t` loses `c_leaf` and
   `c_wood_dry`, and `tissue_dry_heat_capacity` (`meds_therm_lib`) gives the dry capacities.
 - **Fortran code that names three constants uses their new names** (#458): `halfpi` is `pio2`,
   `stefan` is `stefan_boltzmann` and `vonkarman` is `von_karman`. `C2B_WOOD`, `TISSUE_C_LEAF`,
@@ -234,7 +234,7 @@ holds one module per block, and the reference config describes each key in a lin
 - **Fortran code that reads the hydraulics takes the PFT's record** (#461): `cfg%pft%hydro(pf)`
   (`plant_hydraulics_t`, in `meds_plant_hydr_lib`) in place of `cfg%hydraulics` and
   `pft_tissue_curves`. `apply_hydraulics_config` and `init_cohort` drop their hydraulics argument,
-  `hydro_params_t` extends `plant_hydraulics_t`, and `pft%kplastic_vm0` is `pft%kplastic_vcmax`.
+  `hydro_args_t` extends `plant_hydraulics_t`, and `pft%kplastic_vm0` is `pft%kplastic_vcmax`.
 - **`src/shared` is `src/share`, and its CMake library `meds_shared` is `meds_share`** (#462). A
   build script or an out-of-tree target that links `meds_shared` links `meds_share`.
 - **Python: `meds.config` reads and sets one PFT of a key given for every PFT** (#461):
