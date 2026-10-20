@@ -14,7 +14,7 @@ module meds_test_support
    use meds_plant_hydr_lib, only : plant_hydraulics_t, water_curve_t
    use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE, INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
-   use meds_therm_lib,     only : temp_response_peaked
+   use meds_therm_lib,     only : TEMP_RESPONSE_PEAKED
    use meds_test_assert, only : check, check_close, check_true, check_int, banner,             &
                                 test_report, test_reset, test_failures
    implicit none
@@ -65,7 +65,7 @@ contains
       cfg%gpp_ref = 0.3_wp
 
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
-      cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = temp_response_peaked
+      cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TEMP_RESPONSE_PEAKED
       cfg%colimitation = COLIM_QUADRATIC ; cfg%leaf_use_boundary_layer = .false.
       cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
       cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp

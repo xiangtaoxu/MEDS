@@ -16,7 +16,7 @@
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
-   use meds_allometry_lib, only : height_power, height_chave
+   use meds_allometry_lib, only : HEIGHT_POWER, HEIGHT_CHAVE
    use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
@@ -25,9 +25,9 @@ module meds_config_io
    use meds_soil_column_config, only : soil_column_config_t
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION
    use meds_maps_opts, only : soil_maps_on
-   use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_therm_lib,     only : temp_response_arrhenius, temp_response_peaked
+   use meds_therm_lib,     only : TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
    use meds_forcing_config, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
@@ -200,8 +200,8 @@ contains
       if (toml_has(tm, 'soil.retention')) then
          str = toml_string(tm, 'soil.retention', '')
          select case (trim(str))
-         case ('van_genuchten') ; c%retention = soil_retention_vg
-         case ('campbell')      ; c%retention = soil_retention_campbell
+         case ('van_genuchten') ; c%retention = SOIL_RETENTION_VG
+         case ('campbell')      ; c%retention = SOIL_RETENTION_CAMPBELL
          case default ; error stop 'load_meds_config: soil.retention must be van_genuchten|campbell'
          end select
       end if
@@ -363,18 +363,18 @@ contains
       s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
    end subroutine load_soil_carbon_opts
 
-   subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> temp_response_* mode
+   subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TEMP_RESPONSE_* mode
       type(toml_table_t), intent(in)    :: t
       character(len=*),   intent(in)    :: key
       integer(ik),        intent(out)   :: mode
       type(keymiss_t),    intent(inout) :: m
       character(len=64) :: s
-      mode = temp_response_peaked
+      mode = TEMP_RESPONSE_PEAKED
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
       s = toml_string(t, key, 'peaked')
       select case (trim(s))
-      case ('arrhenius') ; mode = temp_response_arrhenius
-      case ('peaked')    ; mode = temp_response_peaked
+      case ('arrhenius') ; mode = TEMP_RESPONSE_ARRHENIUS
+      case ('peaked')    ; mode = TEMP_RESPONSE_PEAKED
       case default       ; call note_missing(m, key)   ! present but unrecognized -> hard error
       end select
    end subroutine req_temp_response
@@ -470,15 +470,15 @@ contains
       associate (allom => cfg%pft%allom)
          do pf = 1_ik, npft
             select case (trim(forms(pf)))
-            case ('power')     ; allom(pf)%height_form = height_power
-            case ('chave2014') ; allom(pf)%height_form = height_chave
+            case ('power')     ; allom(pf)%height_form = HEIGHT_POWER
+            case ('chave2014') ; allom(pf)%height_form = HEIGHT_CHAVE
             case ('gmm')
                error stop 'load_meds_config: allometry.height_allometry = "gmm" is gone: fit the '// &
                           'log-quadratic, "chave2014" with chave_a, chave_b and chave_c, to the heights'
             case default       ; call note_missing(m, 'allometry.height_allometry')
             end select
          end do
-         if (any(allom(1:npft)%height_form == height_chave)) then
+         if (any(allom(1:npft)%height_form == HEIGHT_CHAVE)) then
             call opt_pa_bcast(t, 'allometry.chave_a',   allom%chave_a,   npft, m)
             call opt_pa_bcast(t, 'allometry.chave_b',   allom%chave_b,   npft, m)
             call opt_pa_bcast(t, 'allometry.chave_c',   allom%chave_c,   npft, m)

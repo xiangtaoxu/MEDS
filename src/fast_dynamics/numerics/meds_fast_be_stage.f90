@@ -38,7 +38,7 @@ module meds_fast_be_stage
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
    use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp,  &
                               internal_energy_ice, liquid_energy_to_temp
-   use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
+   use meds_budget_check, only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR, BUDGET_CO2_RATE_FLOOR
    use meds_numerics,     only : sufficient_decrease
    implicit none
    private

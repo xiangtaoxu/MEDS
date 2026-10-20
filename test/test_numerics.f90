@@ -20,7 +20,7 @@ program test_numerics
    use meds_linear_algebra, only : thomas_solve
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
-                                 budget_rtol_flux, last_check_closed
+                                 BUDGET_RTOL_FLUX, last_check_closed
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    implicit none
 
@@ -40,22 +40,22 @@ contains
 
    !----- 1. Tridiagonal solve of a 4-node system embedded in size-8 arrays. -----------------!
    subroutine test_thomas()
-      integer(ik), parameter :: nmax = 8_ik, n = 4_ik
-      real(wp) :: a(nmax), b(nmax), c(nmax), d(nmax), x(nmax), xtrue(n)
+      integer(ik), parameter :: NMAX = 8_ik, N = 4_ik
+      real(wp) :: a(NMAX), b(NMAX), c(NMAX), d(NMAX), x(NMAX), xtrue(N)
       integer(ik) :: k
       a = 0.0_wp ; b = 0.0_wp ; c = 0.0_wp ; d = 0.0_wp ; x = 0.0_wp
       xtrue = [1.0_wp, 2.0_wp, 3.0_wp, 4.0_wp]
       !----- Symmetric diagonally-dominant matrix: b=4, a=c=-1. d = A*xtrue. -----------------!
-      do k = 1_ik, n
+      do k = 1_ik, N
          a(k) = -1.0_wp ; b(k) = 4.0_wp ; c(k) = -1.0_wp
       end do
       d(1) = b(1)*xtrue(1) + c(1)*xtrue(2)
-      do k = 2_ik, n-1_ik
+      do k = 2_ik, N-1_ik
          d(k) = a(k)*xtrue(k-1) + b(k)*xtrue(k) + c(k)*xtrue(k+1)
       end do
-      d(n) = a(n)*xtrue(n-1) + b(n)*xtrue(n)
-      call thomas_solve(a, b, c, d, x, n)          ! actual arrays are longer than n
-      do k = 1_ik, n
+      d(N) = a(N)*xtrue(N-1) + b(N)*xtrue(N)
+      call thomas_solve(a, b, c, d, x, N)          ! actual arrays are longer than n
+      do k = 1_ik, N
          call check('thomas x', x(k), xtrue(k), 1.0e-12_wp)
       end do
    end subroutine test_thomas
@@ -131,7 +131,7 @@ contains
          call check('budget_merge: area-weighted resid_sum', r%resid_sum, 1.0e-5_wp, 1.0e-12_wp)
          call check('budget_merge: elapsed is the common window', r%elapsed, 900.0_wp, 1.0e-12_wp)
          call check_true('budget_merge: counts add', r%n_check == 2_ik .and. r%n_fail == 1_ik, real(r%n_check, wp))
-         call check_true('budget_rtol_flux is the documented 1e-6', budget_rtol_flux == 1.0e-6_wp, budget_rtol_flux)
+         call check_true('BUDGET_RTOL_FLUX is the documented 1e-6', BUDGET_RTOL_FLUX == 1.0e-6_wp, BUDGET_RTOL_FLUX)
          call budget_report(r, 'unit-test', 'J/m2', 'W/m2')
       end block
    end subroutine test_budget

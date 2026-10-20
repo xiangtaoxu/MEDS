@@ -35,7 +35,7 @@ module meds_therm_lib
    !----- Temperature response of enzyme rates. -------------------------------------------!
    public :: arrhenius_scale, peaked_arrhenius_scale, temp_response
    public :: kattge_knorr_entropy, kattge_knorr_jv_ratio
-   public :: temp_response_arrhenius, temp_response_peaked
+   public :: TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED
 
    !----- CLM5 mineral soil (Lawrence & Slater 2008; CLM5 technote 2.7.2): the solids'     !
    !      conductivity and heat capacity per sand and clay, and the dry soil's             !
@@ -49,8 +49,8 @@ module meds_therm_lib
    real(wp), parameter :: SR_FLOOR = 0.05_wp
 
    !----- The forms [leaf_physiology].temp_response_form selects. -------------------------!
-   integer(ik), parameter :: temp_response_arrhenius = 1_ik  !< plain Arrhenius
-   integer(ik), parameter :: temp_response_peaked    = 2_ik  !< Arrhenius with high-temperature deactivation
+   integer(ik), parameter :: TEMP_RESPONSE_ARRHENIUS = 1_ik  !< plain Arrhenius
+   integer(ik), parameter :: TEMP_RESPONSE_PEAKED    = 2_ik  !< Arrhenius with high-temperature deactivation
 
 contains
 
@@ -386,11 +386,11 @@ contains
 
    !----- The configured form; the Arrhenius form ignores hd and ds. ----------------------!
    elemental pure function temp_response(form, k25, ea, hd, ds, t_leaf) result(k)
-      integer(ik), intent(in) :: form   !< temp_response_arrhenius | temp_response_peaked
+      integer(ik), intent(in) :: form   !< TEMP_RESPONSE_ARRHENIUS | TEMP_RESPONSE_PEAKED
       real(wp),    intent(in) :: k25, ea, hd, ds, t_leaf
       real(wp)                :: k
       select case (form)
-      case (temp_response_peaked) ; k = peaked_arrhenius_scale(k25, ea, hd, ds, t_leaf)
+      case (TEMP_RESPONSE_PEAKED) ; k = peaked_arrhenius_scale(k25, ea, hd, ds, t_leaf)
       case default        ; k = arrhenius_scale(k25, ea, t_leaf)
       end select
    end function temp_response

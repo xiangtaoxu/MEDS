@@ -6,7 +6,7 @@
 ! parameters, no methods -- the biogeochem analogue of meds_canopy_types/meds_soil_types. Links    !
 ! meds_kinds and meds_patch_state_vars only.                                                       !
 !                                                                                          !
-! Owned HERE: the fixed pool count `n_soil_pool` + `IP_*`, soilc_audit_t, soilc_seam_t and         !
+! Owned HERE: the fixed pool count `N_SOIL_POOL` + `IP_*`, soilc_audit_t, soilc_seam_t and         !
 ! soilc_diag_t. The pools themselves (soil_carbon_t) and litter_input_t are per-patch state in     !
 ! meds_patch_state_vars (litter_input_t is re-exported here; see the notes below), and             !
 ! decomp_opts_t + its selector codes are config, in meds_biogeochem_opts.                          !
@@ -18,7 +18,7 @@ module meds_biogeochem_types
    private
 
    !----- Slow soil-carbon matrix: pool count, indices and records. -----------------------------!
-   public :: n_soil_pool
+   public :: N_SOIL_POOL
    public :: IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    public :: litter_input_t, soilc_audit_t, soilc_seam_t, soilc_diag_t
    !----- There is exactly ONE heterotrophic-respiration form: the CENTURY matrix                    !
@@ -31,7 +31,7 @@ module meds_biogeochem_types
    !  Ordered litter -> SOM -> passive so the default-scheme ACTIVE block of A is lower-triangular  !
    !  (back-substitution / GE solvable). The 7-pool ceiling matches ED2's CENTURY set exactly.      !
    !==========================================================================================!
-   integer(ik), parameter :: n_soil_pool = 7_ik   !< length of the carbon matrix state vector X
+   integer(ik), parameter :: N_SOIL_POOL = 7_ik   !< length of the carbon matrix state vector X
 
    integer(ik), parameter :: IP_FAST_GRND   = 1_ik   !< metabolic litter, above-ground (flammable)
    integer(ik), parameter :: IP_FAST_SOIL   = 2_ik   !< metabolic litter, below-ground
@@ -91,8 +91,8 @@ module meds_biogeochem_types
 
    !----- Traceability diagnostics (pure post-processing off the assembled matrices). -------------!
    type :: soilc_diag_t
-      real(wp) :: x_c(n_soil_pool) = 0.0_wp   !< [kgC/m2] storage CAPACITY (equilibrium under current climate+input)
-      real(wp) :: x_p(n_soil_pool) = 0.0_wp   !< [kgC/m2] storage POTENTIAL = x_c - X (remaining sink; <0 = source)
+      real(wp) :: x_c(N_SOIL_POOL) = 0.0_wp   !< [kgC/m2] storage CAPACITY (equilibrium under current climate+input)
+      real(wp) :: x_p(N_SOIL_POOL) = 0.0_wp   !< [kgC/m2] storage POTENTIAL = x_c - X (remaining sink; <0 = source)
       real(wp) :: tau_e            = 0.0_wp   !< [yr]     ecosystem soil-carbon residence time = sum(X_c)/sum(u)
       real(wp) :: rh               = 0.0_wp   !< [kgC/m2/day] instantaneous Rh = -1^T*A*xi*K*X
    end type soilc_diag_t

@@ -46,7 +46,7 @@ program test_output_roundtrip
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,        only : n_soil_layer_max
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
-   use meds_soil_hydr_lib,    only : soil_retention_vg
+   use meds_soil_hydr_lib,    only : SOIL_RETENTION_VG
    use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close, test_pft_table
    use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp
@@ -94,7 +94,7 @@ program test_output_roundtrip
    !      soil column on a real run -- and soil_matric_potential evaluated on padding whose       !
    !      theta_sat is 0 aborts a -fpe0 build. ---------------------------------------------------!
    call geometric_layer_bottoms(2.0_wp, N_ACTIVE, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(N_ACTIVE, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,     &
+   call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
                                2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
    !----- The site's soil column gives the extraction its layers and curve; the polygon's row of  !
    !      the file set gives the files their layer depths, as attach_output does in a run. -------!

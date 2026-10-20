@@ -16,15 +16,15 @@
 program test_allometry_defaults
    use meds_kinds,         only : wp, ik
    use meds_toml,          only : toml_table_t, toml_parse_file, toml_has, toml_real, toml_string, toml_real_array
-   use meds_allometry_lib, only : allometry_t, height_power
+   use meds_allometry_lib, only : allometry_t, HEIGHT_POWER
    use meds_test_support,  only : banner, check, check_close
    implicit none
 
-   real(wp), parameter :: c2b              = 2.0_wp          ! ED2 C2B, carbon -> biomass
-   real(wp), parameter :: chave14_scale    = 0.0673_wp       ! Chave et al. (2014) eq. 4 [kg dry mass]
-   real(wp), parameter :: chave14_exponent = 0.976_wp        ! Chave et al. (2014) eq. 4
-   real(wp), parameter :: ed2_bl_xx_scale  = 0.46769540_wp   ! ED2 c14f15_bl_xx(1)
-   real(wp), parameter :: rtol             = 1.0e-12_wp
+   real(wp), parameter :: C2B              = 2.0_wp          ! ED2 C2B, carbon -> biomass
+   real(wp), parameter :: CHAVE14_SCALE    = 0.0673_wp       ! Chave et al. (2014) eq. 4 [kg dry mass]
+   real(wp), parameter :: CHAVE14_EXPONENT = 0.976_wp        ! Chave et al. (2014) eq. 4
+   real(wp), parameter :: ED2_BL_XX_SCALE  = 0.46769540_wp   ! ED2 c14f15_bl_xx(1)
+   real(wp), parameter :: RTOL             = 1.0e-12_wp
    type(toml_table_t)  :: t
    character(len=512)  :: arg
    logical             :: ok
@@ -39,9 +39,9 @@ program test_allometry_defaults
    call check(ok, 'the shipped meds_config_pft.toml parses')
 
    !----- The Fortran initializers: Chave 2014 in carbon, and ED2's leaf fit over C2B. ----!
-   call check_close(d%agb_c1, chave14_scale / c2b, rtol, 'agb_c1 initializer = Chave 2014 eq. 4 scale / C2B')
-   call check_close(d%agb_c2, chave14_exponent, rtol, 'agb_c2 initializer = Chave 2014 eq. 4 exponent')
-   call check_close(d%lai_b1, ed2_bl_xx_scale / c2b, rtol, 'lai_b1 initializer = ED2 c14f15_bl_xx(1)/C2B')
+   call check_close(d%agb_c1, CHAVE14_SCALE / C2B, RTOL, 'agb_c1 initializer = Chave 2014 eq. 4 scale / C2B')
+   call check_close(d%agb_c2, CHAVE14_EXPONENT, RTOL, 'agb_c2 initializer = Chave 2014 eq. 4 exponent')
+   call check_close(d%lai_b1, ED2_BL_XX_SCALE / C2B, RTOL, 'lai_b1 initializer = ED2 c14f15_bl_xx(1)/C2B')
 
    !----- The shipped config equals the initializers, key by key. -----------------------!
    call same('b1Ht', d%b1Ht)
@@ -58,15 +58,15 @@ program test_allometry_defaults
    call same_per_pft('sapwood_area_b2',  d%sapwood_area_b2)
    call same_per_pft('aboveground_frac', d%aboveground_frac)
    !----- The log-quadratic initializers are Chave et al. (2014) eq. 6a. -----------------!
-   call check_close(d%chave_a, 0.893_wp, rtol, 'chave_a initializer = Chave 2014 eq. 6a')
-   call check_close(d%chave_b, 0.760_wp, rtol, 'chave_b initializer = Chave 2014 eq. 6a')
-   call check_close(d%chave_c, -0.0340_wp, rtol, 'chave_c initializer = Chave 2014 eq. 6a')
-   call check_close(d%chave_rse, 0.243_wp, rtol, 'chave_rse initializer = Chave 2014 eq. 6a')
+   call check_close(d%chave_a, 0.893_wp, RTOL, 'chave_a initializer = Chave 2014 eq. 6a')
+   call check_close(d%chave_b, 0.760_wp, RTOL, 'chave_b initializer = Chave 2014 eq. 6a')
+   call check_close(d%chave_c, -0.0340_wp, RTOL, 'chave_c initializer = Chave 2014 eq. 6a')
+   call check_close(d%chave_rse, 0.243_wp, RTOL, 'chave_rse initializer = Chave 2014 eq. 6a')
 
    !----- The height curve: the shipped config and the initializer are both the power law. ---!
    call check(trim(toml_string(t, 'allometry.height_allometry', '')) == 'power',                    &
               'meds_config_pft.toml sets [allometry].height_allometry = "power"')
-   call check(d%height_form == height_power, 'the height-curve initializer is the power law')
+   call check(d%height_form == HEIGHT_POWER, 'the height-curve initializer is the power law')
 
    print '(a)', 'test_allometry_defaults: ALL PASSED'
 
@@ -76,7 +76,7 @@ contains
       character(len=*), intent(in) :: key
       real(wp),         intent(in) :: initializer
       call check(toml_has(t, 'allometry.'//key), 'meds_config_pft.toml sets [allometry].'//key)
-      call check_close(toml_real(t, 'allometry.'//key, -huge(1.0_wp)), initializer, rtol,         &
+      call check_close(toml_real(t, 'allometry.'//key, -huge(1.0_wp)), initializer, RTOL,         &
                        'meds_config_pft.toml [allometry].'//key//' equals the meds_allometry_lib initializer')
    end subroutine same
 
@@ -87,7 +87,7 @@ contains
       integer(ik) :: n
       call toml_real_array(t, 'allometry.'//key, buf, n)
       call check(n > 0, 'meds_config_pft.toml lists [allometry].'//key//' per PFT')
-      call check(all(abs(buf(1:n) - initializer) <= rtol * abs(initializer)),                         &
+      call check(all(abs(buf(1:n) - initializer) <= RTOL * abs(initializer)),                         &
                  'meds_config_pft.toml [allometry].'//key//' equals the meds_allometry_lib initializer for every PFT')
    end subroutine same_per_pft
 

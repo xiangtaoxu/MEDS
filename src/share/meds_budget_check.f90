@@ -15,13 +15,13 @@ module meds_budget_check
 
    public :: budget_t, closure_ok, budget_imbalance, budget_accumulate, budget_check_stop
    public :: budget_check, budget_merge, budget_report, last_check_closed
-   public :: budget_rtol_flux, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
+   public :: BUDGET_RTOL_FLUX, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR, BUDGET_CO2_RATE_FLOOR
 
    !----- Closure tolerances of every ledger (docs/science/numerical_scheme.md §5b). ------!
-   real(wp), parameter :: budget_rtol_flux         = 1.0e-6_wp  !< [-] relative to the gross boundary flux
-   real(wp), parameter :: budget_energy_rate_floor = 1.0e-3_wp  !< [W/m2] absolute floor, as a rate
-   real(wp), parameter :: budget_water_rate_floor  = 1.0e-9_wp  !< [kg/m2/s] absolute floor (~1e-4 mm/day)
-   real(wp), parameter :: budget_co2_rate_floor    = 1.0e-6_wp  !< [umol/m2/s] absolute floor
+   real(wp), parameter :: BUDGET_RTOL_FLUX         = 1.0e-6_wp  !< [-] relative to the gross boundary flux
+   real(wp), parameter :: BUDGET_ENERGY_RATE_FLOOR = 1.0e-3_wp  !< [W/m2] absolute floor, as a rate
+   real(wp), parameter :: BUDGET_WATER_RATE_FLOOR  = 1.0e-9_wp  !< [kg/m2/s] absolute floor (~1e-4 mm/day)
+   real(wp), parameter :: BUDGET_CO2_RATE_FLOOR    = 1.0e-6_wp  !< [umol/m2/s] absolute floor
 
    !----- One store's ledger over a series of checks (fast steps, days, a run). -----------!
    type :: budget_t
@@ -99,9 +99,9 @@ contains
       real(wp) :: scale, atol
       scale = abs(influx) + abs(outflux)
       atol  = rate_floor * dt_window
-      call budget_accumulate(b, store0, store1, influx, outflux, 1.0_wp, scale, budget_rtol_flux, atol, &
+      call budget_accumulate(b, store0, store1, influx, outflux, 1.0_wp, scale, BUDGET_RTOL_FLUX, atol, &
                              elapsed=dt_window)
-      call budget_check_stop(b%resid, scale, budget_rtol_flux, atol, label, halt)
+      call budget_check_stop(b%resid, scale, BUDGET_RTOL_FLUX, atol, label, halt)
    end subroutine budget_check
 
    !----- Whether the last budget_check on b closed, by the tolerance it applied. A caller !
@@ -110,7 +110,7 @@ contains
    pure logical function last_check_closed(b, dt_window, rate_floor) result(ok)
       type(budget_t), intent(in) :: b
       real(wp),       intent(in) :: dt_window, rate_floor
-      ok = closure_ok(b%resid, abs(b%influx) + abs(b%outflux), budget_rtol_flux, rate_floor * dt_window)
+      ok = closure_ok(b%resid, abs(b%influx) + abs(b%outflux), BUDGET_RTOL_FLUX, rate_floor * dt_window)
    end function last_check_closed
 
    !----- Fold c into b with weight w: a patch's area fraction when the patches are        !

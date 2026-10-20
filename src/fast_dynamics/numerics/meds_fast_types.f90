@@ -29,7 +29,7 @@ module meds_fast_types
    use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
-   use meds_biogeochem_types, only : n_soil_pool
+   use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
    use meds_config, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
@@ -274,7 +274,7 @@ module meds_fast_types
       !      (fast_dynamics) accumulates xi_step*dt_fast_days into the per-patch day integral       !
       !      (xi_accum), and rh_matrix_step*dt_fast_days into rh_fast_accum for the audit-only      !
       !      rh_seam_gap check. --------------------------------------------------------------------!
-      real(wp)       :: xi_step(n_soil_pool) = 0.0_wp   !< [-] this sub-step's per-pool env scalar
+      real(wp)       :: xi_step(N_SOIL_POOL) = 0.0_wp   !< [-] this sub-step's per-pool env scalar
       real(wp)       :: rh_matrix_step       = 0.0_wp   !< [kgC/m2/day] this sub-step's matrix Rh
       !----- WORK counters. These are the COST axis of a numerics benchmark: without them a sweep   !
       !      can report accuracy but not accuracy-per-unit-work, and wall-clock alone is too coarse !

@@ -517,6 +517,11 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME kernels_no_site_state
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_kernel_state.py
                        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+      #----- A named constant is spelled by its kind: lower case in meds_constants and meds_kinds,     #
+      #      UPPER everywhere else. scripts/lint/check_constant_case.py explains the rule.             #
+      add_test(NAME constants_named
+               COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_constant_case.py
+                       ${CMAKE_CURRENT_SOURCE_DIR})
    endif()
    add_executable(test_config_keys test/test_config_keys.f90)
    target_link_libraries(test_config_keys PRIVATE meds_config meds_testsupport)

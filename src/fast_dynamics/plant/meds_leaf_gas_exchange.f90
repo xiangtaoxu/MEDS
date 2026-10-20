@@ -34,15 +34,15 @@ module meds_leaf_gas_exchange
    !----- Stomatal conductance. ----------------------------------------------------------!
    public :: stomata_gs_leuning, stomata_gs_medlyn, katul_lambda
 
-   real(wp), parameter :: beta_floor   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
+   real(wp), parameter :: BETA_FLOOR   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
 
    !----- The coupled Ci solver. ---------------------------------------------------------!
    public :: solve_leaf_gas_exchange, rubisco_kinetics
    public :: leaf_gas_exchange_batch, leaf_params_at_capacity
 
-   real(wp),    parameter :: ci_tol_ppm = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
-   real(wp),    parameter :: lo_eps_ppm = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
-   integer(ik), parameter :: max_iter   = 100_ik       !< bisection iteration cap (safety net)
+   real(wp),    parameter :: CI_TOL_PPM = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
+   real(wp),    parameter :: LO_EPS_PPM = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
+   integer(ik), parameter :: MAX_ITER   = 100_ik       !< bisection iteration cap (safety net)
 
    !----- Which stomatal conductance a pass of the Ci solve uses (solve_leaf_gas_exchange). -----!
    integer(ik), parameter :: GS_FROM_MODEL = 1_ik      !< the configured stomatal model
@@ -201,7 +201,7 @@ contains
       real(wp), intent(in) :: beta            !< [--] water-stress factor (0 = closed, 1 = open)
       real(wp), intent(in) :: lambda_psi_exp  !< [--] water-stress exponent
       real(wp)             :: lambda
-      lambda = lambda25 * max(beta, beta_floor) ** (-lambda_psi_exp)
+      lambda = lambda25 * max(beta, BETA_FLOOR) ** (-lambda_psi_exp)
    end function katul_lambda
 
 
@@ -339,13 +339,13 @@ contains
          return
       end if
 
-      !----- Bracket Ci in (Gamma*, Ca] and bisect the residual to ci_tol_ppm. If the chosen    !
+      !----- Bracket Ci in (Gamma*, Ca] and bisect the residual to CI_TOL_PPM. If the chosen    !
       !       stomatal model yields no consistent open solution (no sign change -- e.g. Katul      !
       !       under strong water stress where lambda -> large), fall back to the cuticular floor   !
       !       g0 (closed stomata), which always brackets when net A(Ca) > 0. The explicit-gs       !
       !       residual serves Leuning/Medlyn and the g0 fallback; Katul's own pass uses the        !
       !       optimality residual (ci_residual). --------------------------------------------------!
-      lo0 = gstar_ppm + lo_eps_ppm
+      lo0 = gstar_ppm + LO_EPS_PPM
       hi0 = ca_ppm
       prob%gs_rule = GS_FROM_MODEL
       do                                                 ! at most two passes: model, then g0-pinned
@@ -514,7 +514,7 @@ contains
           - gsw_2_gsc * prob%ddef * prob%lambda * (dAn_dci * (cs_surf - ci) + An_loc)
    end function residual_optimality
 
-   !----- Bisect ci_residual on [lo, hi] to ci_tol_ppm. A same-sign bracket returns the midpoint  !
+   !----- Bisect ci_residual on [lo, hi] to CI_TOL_PPM. A same-sign bracket returns the midpoint  !
    !      with converged = .false., so the caller can change the conductance rule and retry. ----!
    pure subroutine bisect_ci(prob, lo, hi, ci, converged)
       type(ci_problem_t), intent(in)  :: prob
@@ -527,12 +527,12 @@ contains
       flo = ci_residual(prob, a) ; fhi = ci_residual(prob, b)
       converged = .false. ; ci = 0.5_wp * (a + b)
       if (flo * fhi <= 0.0_wp) then
-         do it = 1_ik, max_iter
+         do it = 1_ik, MAX_ITER
             mid = 0.5_wp * (a + b) ; fmid = ci_residual(prob, mid)
             if (flo * fmid <= 0.0_wp) then ; b = mid ; else ; a = mid ; flo = fmid ; end if
-            if (b - a < ci_tol_ppm) exit
+            if (b - a < CI_TOL_PPM) exit
          end do
-         ci = 0.5_wp * (a + b) ; converged = (b - a < ci_tol_ppm)
+         ci = 0.5_wp * (a + b) ; converged = (b - a < CI_TOL_PPM)
       end if
    end subroutine bisect_ci
 

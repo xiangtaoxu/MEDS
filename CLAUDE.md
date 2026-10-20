@@ -134,6 +134,15 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 `nplant`, `pft`. Inside `associate`, alias to the full word. Readability beats succinctness when
 performance is equal. Name a helper by its operation, not by its caller's domain.
 
+**Constants.** A named constant is spelled by its kind, not by who uses it. The physical,
+mathematical and unit-conversion constants and the kinds, in `meds_constants` and `meds_kinds`, are lower
+case: they read as symbols in a formula (`grav`, `rho_h2o`, `day_sec`, `wp`). Every other named constant
+is UPPER case, public or private, module-level or local: a selector code, an index or a flag, with one
+prefix per family (`SOIL_RETENTION_VG`, `INTEG_ARK`), and a number chosen in the code, a tolerance, a
+floor, a table size or a fitted coefficient (`RWC_FLOOR`, `HYDRO_TABLE_NTAB`). A constant keeps its name
+when another module starts to use it. ctest `constants_named` (`scripts/lint/check_constant_case.py`)
+enforces it.
+
 **Style.** `implicit none` everywhere; explicit interfaces via modules; parameterized kinds (never
 bare `real*8` or `1.0d0`); `allocatable` over `pointer`; `pure`/`elemental` for leaf math;
 `error stop` rather than a halt routine, so failures are catchable in tests; one responsibility per

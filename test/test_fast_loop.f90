@@ -18,7 +18,7 @@ program test_fast_loop
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params, top_soil_psi
-   use meds_soil_hydr_lib,   only : soil_retention_vg
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
@@ -40,7 +40,7 @@ program test_fast_loop
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
-   integer(ik), parameter :: nsl = 10_ik
+   integer(ik), parameter :: NSL = 10_ik
    type(meds_config_t)  :: cfg
    type(polygon_t)      :: poly
    type(fast_context_t) :: ctx
@@ -57,10 +57,10 @@ program test_fast_loop
    cfg%n_fast_per_slow    = 48_ik           ! 48 x 150 s = 2 h of fast integration per slow step
 
    !----- Build the column config + reference met inside the fast context. -----------------!
-   call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(nsl, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,            &
+   call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
+   call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
-   call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
+   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
    call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
@@ -681,7 +681,7 @@ contains
       real(c_double) :: tsec(NT), dat(1, NT)
       integer :: it, k
       real(wp) :: hh, sw
-      character(len=8), parameter :: nm(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ',        &
+      character(len=8), parameter :: NM(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ',        &
                                               'Rainf   ','SWdown  ','LWdown  ']
       st = nc_create_f(path, NC_NETCDF4, ncid) ; call nc_check(st,'c')
       st = nc_def_dim_f(ncid,'time',int(NT,c_size_t),td) ; call nc_check(st,'t')
@@ -692,7 +692,7 @@ contains
       dims1(1)=gd ; st = nc_def_var_f(ncid,'latitude',NC_DOUBLE,1,dims1,vla) ; call nc_check(st,'la')
       st = nc_def_var_f(ncid,'longitude',NC_DOUBLE,1,dims1,vlo) ; call nc_check(st,'lo')
       dims2(1)=td ; dims2(2)=gd
-      do k=1,7 ; st = nc_def_var_f(ncid,trim(nm(k)),NC_DOUBLE,2,dims2,vv(k)) ; call nc_check(st,'v') ; end do
+      do k=1,7 ; st = nc_def_var_f(ncid,trim(NM(k)),NC_DOUBLE,2,dims2,vv(k)) ; call nc_check(st,'v') ; end do
       st = nc_put_att_text_f(ncid,NC_GLOBAL,'time_zone',3_c_size_t,'UTC') ; call nc_check(st,'tz')
       st = nc_enddef(ncid) ; call nc_check(st,'e')
       do it=1,NT ; tsec(it)=real(it-1,c_double)*3600.0_c_double ; end do

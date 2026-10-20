@@ -21,11 +21,11 @@ module meds_soil_hydr_lib
    !----- A layer's curve from the soil maps. ---------------------------------------------!
    public :: soil_texture_t, soil_texture_to_hydraulics
    !----- Retention curve: theta(head) and head(theta) read-offs. -------------------------!
-   public :: soil_retention_vg, soil_retention_campbell, vg_pore_connectivity
+   public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
    public :: soil_head_to_theta, soil_theta_to_head
    !----- The water relations the soil-plant water solver uses, in the variable it solves  !
    !      for: a soil layer's saturation (dry) or potential (wet), the pond's head. -------!
-   public :: soil_specific_storage, pond_depression_depth
+   public :: SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH
    public :: soil_layer_curve_t, build_soil_layer_curve, soil_water_relations, soil_theta_to_unknown
    public :: pond_water_relations, pond_water_to_head
 
@@ -51,14 +51,14 @@ module meds_soil_hydr_lib
    real(wp), parameter :: PARTICLE_DENSITY = 2.65_wp                 !< [g/cm3]
 
    !----- Retention-curve selector codes (soil_params_t%retention). -----------------------!
-   integer(ik), parameter :: soil_retention_vg       = 1_ik  !< van Genuchten-Mualem (default)
-   integer(ik), parameter :: soil_retention_campbell = 2_ik  !< Campbell / Clapp-Hornberger (option)
+   integer(ik), parameter :: SOIL_RETENTION_VG       = 1_ik  !< van Genuchten-Mualem (default)
+   integer(ik), parameter :: SOIL_RETENTION_CAMPBELL = 2_ik  !< Campbell / Clapp-Hornberger (option)
 
    !----- Mualem's pore-connectivity exponent L in the van Genuchten conductivity          !
    !      (docs/science/soil_biophysics.md eq. (2)), set here only: -1 after Schaap & Leij !
    !      (2000, SSSA J. 64:843), which keeps a soil of n near 1.4 conducting down to      !
    !      about -2 MPa. -------------------------------------------------------------------!
-   real(wp), parameter :: vg_pore_connectivity = -1.0_wp
+   real(wp), parameter :: VG_PORE_CONNECTIVITY = -1.0_wp
 
    !----- [-] Floor on the effective saturation in the read-offs; the solver's curves have !
    !      none. ---------------------------------------------------------------------------!
@@ -71,12 +71,12 @@ module meds_soil_hydr_lib
    !      compressibility of the soil matrix and of water: a typical value for clays and   !
    !      loams (Freeze and Cherry 1979, table 2.5). It acts only above saturation         !
    !      (docs/science/soil_plant_water.md §2). ------------------------------------------!
-   real(wp), parameter :: soil_specific_storage = 1.0e-4_wp
+   real(wp), parameter :: SOIL_SPECIFIC_STORAGE = 1.0e-4_wp
 
    !----- One soil layer's curve, set up once per layer: the retention parameters and the  !
    !      point where the solver's unknown changes from saturation to potential. ----------!
    type :: soil_layer_curve_t
-      integer(ik) :: retention    = 1_ik    !< soil_retention_vg or soil_retention_campbell
+      integer(ik) :: retention    = 1_ik    !< SOIL_RETENTION_VG or SOIL_RETENTION_CAMPBELL
       real(wp)    :: theta_sat    = 0.0_wp  !< [m3/m3]
       real(wp)    :: theta_res    = 0.0_wp  !< [m3/m3]
       real(wp)    :: par_a        = 0.0_wp  !< vG alpha [1/m], or Campbell's air-entry head [m, < 0]
@@ -91,7 +91,7 @@ module meds_soil_hydr_lib
    !----- [m] Depth of the surface's small hollows, which the pond fills before a head     !
    !      builds, so its storage stays smooth as it fills or empties                       !
    !      (docs/science/soil_plant_water.md §2). ------------------------------------------!
-   real(wp), parameter :: pond_depression_depth = 1.0e-3_wp
+   real(wp), parameter :: POND_DEPRESSION_DEPTH = 1.0e-3_wp
 
 contains
 
@@ -132,7 +132,7 @@ contains
 
          !----- Ks of the fine earth from the water that drains between saturation, at     !
          !      zero head on this curve, and -33 kPa (Ottoni et al. 2019). ----------------!
-         theta_33  = soil_head_to_theta(soil_retention_vg, HEAD_33KPA, theta_sat, theta_res, vg_alpha, vg_n)
+         theta_33  = soil_head_to_theta(SOIL_RETENTION_VG, HEAD_33KPA, theta_sat, theta_res, vg_alpha, vg_n)
          drainable = max(theta_sat - theta_33, tiny_num)
          ksat      = OTTONI_KS_COEF / day_sec * drainable**OTTONI_KS_EXP
 
@@ -203,7 +203,7 @@ contains
       real(wp) :: m, x
       c%retention = retention ; c%theta_sat = theta_sat ; c%theta_res = theta_res
       c%par_a = par_a ; c%par_n = par_n ; c%ksat = ksat ; c%dz = dz
-      if (retention == soil_retention_campbell) then
+      if (retention == SOIL_RETENTION_CAMPBELL) then
          c%se_switch    = 1.0_wp
          c%head_switch   = par_a
          c%slope_switch = -1.0_wp / (par_n * par_a)
@@ -220,7 +220,7 @@ contains
    !      derivatives in the solver's unknown tau (docs/science/soil_plant_water.md §2).   !
    !      Dry of the branch point tau is the effective saturation Se; wet of it tau runs   !
    !      linearly with the potential, at the slope that joins the two branches smoothly.  !
-   !      Above saturation the layer stores water through soil_specific_storage instead of !
+   !      Above saturation the layer stores water through SOIL_SPECIFIC_STORAGE instead of !
    !      being clipped. ------------------------------------------------------------------!
    elemental subroutine soil_water_relations(c, tau, psi, dpsi, w, dw, kcond, dkcond)
       type(soil_layer_curve_t), intent(in)  :: c
@@ -253,8 +253,8 @@ contains
             dw     = rho_h2o * c%dz * dtheta * dse_dhead * dhead
             dkcond = dk_dhead * dhead
          else
-            w      = rho_h2o * c%dz * (c%theta_sat + soil_specific_storage * head)
-            dw     = rho_h2o * c%dz * soil_specific_storage * dhead
+            w      = rho_h2o * c%dz * (c%theta_sat + SOIL_SPECIFIC_STORAGE * head)
+            dw     = rho_h2o * c%dz * SOIL_SPECIFIC_STORAGE * dhead
             kcond  = c%ksat
             dkcond = 0.0_wp
          end if
@@ -276,7 +276,7 @@ contains
          return
       end if
       if (theta > c%theta_sat) then
-         head = (theta - c%theta_sat) / soil_specific_storage
+         head = (theta - c%theta_sat) / SOIL_SPECIFIC_STORAGE
       else if (se >= 1.0_wp) then
          head = 0.0_wp
       else
@@ -298,7 +298,7 @@ contains
       real(wp),    intent(in)  :: par_a, par_n, se
       real(wp),    intent(out) :: head, dse_dhead
       real(wp) :: m, u, logx, x
-      if (retention == soil_retention_campbell) then
+      if (retention == SOIL_RETENTION_CAMPBELL) then
          head      = par_a * se ** (-par_n)
          dse_dhead = -se ** (1.0_wp + par_n) / (par_n * par_a)
       else
@@ -319,7 +319,7 @@ contains
       real(wp),    intent(in)  :: par_a, par_n, head
       real(wp),    intent(out) :: se, dse_dhead
       real(wp) :: m, x, xn, u
-      if (retention == soil_retention_campbell) then
+      if (retention == SOIL_RETENTION_CAMPBELL) then
          if (head < par_a) then
             se        = (head / par_a) ** (-1.0_wp / par_n)
             dse_dhead = -se ** (1.0_wp + par_n) / (par_n * par_a)
@@ -337,7 +337,7 @@ contains
    end subroutine head_to_saturation
 
    !----- Conductivity [m/s] and dK/dSe at saturation se: van Genuchten-Mualem with L =    !
-   !      vg_pore_connectivity (docs/science/soil_biophysics.md eq. (2)), or Campbell's Ks !
+   !      VG_PORE_CONNECTIVITY (docs/science/soil_biophysics.md eq. (2)), or Campbell's Ks !
    !      Se^(2b+3). No floor: K goes to zero with Se. The van Genuchten slope is          !
    !      unbounded at Se = 1; the solver calls this only dry of the branch point. --------!
    elemental subroutine saturation_to_conductivity(retention, par_n, ksat, se, kcond, dk_dse)
@@ -345,16 +345,16 @@ contains
       real(wp),    intent(in)  :: par_n, ksat, se
       real(wp),    intent(out) :: kcond, dk_dse
       real(wp) :: m, u, t
-      if (retention == soil_retention_campbell) then
+      if (retention == SOIL_RETENTION_CAMPBELL) then
          kcond  = ksat * se ** (2.0_wp * par_n + 3.0_wp)
          dk_dse = (2.0_wp * par_n + 3.0_wp) * kcond / se
       else
          m  = 1.0_wp - 1.0_wp / par_n
          u  = 1.0_wp - se ** (1.0_wp / m)
          t  = 1.0_wp - u ** m
-         kcond  = ksat * se ** vg_pore_connectivity * t * t
-         dk_dse = ksat * (vg_pore_connectivity * se ** (vg_pore_connectivity - 1.0_wp) * t * t                  &
-                  + 2.0_wp * se ** vg_pore_connectivity * t * u ** (m - 1.0_wp) * se ** (1.0_wp / m - 1.0_wp))
+         kcond  = ksat * se ** VG_PORE_CONNECTIVITY * t * t
+         dk_dse = ksat * (VG_PORE_CONNECTIVITY * se ** (VG_PORE_CONNECTIVITY - 1.0_wp) * t * t                  &
+                  + 2.0_wp * se ** VG_PORE_CONNECTIVITY * t * u ** (m - 1.0_wp) * se ** (1.0_wp / m - 1.0_wp))
       end if
    end subroutine saturation_to_conductivity
 
@@ -366,7 +366,7 @@ contains
       real(wp),    intent(in)  :: par_a, par_n, ksat, head
       real(wp),    intent(out) :: kcond, dk_dhead
       real(wp) :: m, x, xn, u, t, se, dse_dhead, dk_dse
-      if (retention == soil_retention_campbell) then
+      if (retention == SOIL_RETENTION_CAMPBELL) then
          call head_to_saturation(retention, par_a, par_n, head, se, dse_dhead)
          if (head < par_a) then
             call saturation_to_conductivity(retention, par_n, ksat, se, kcond, dk_dse)
@@ -383,10 +383,10 @@ contains
       u  = xn / (1.0_wp + xn)                      ! 1 - Se^(1/m)
       dse_dhead = par_a * m * par_n * se * u / max(x, tiny_num)
       t     = 1.0_wp - u ** m
-      kcond = ksat * se ** vg_pore_connectivity * t * t
+      kcond = ksat * se ** VG_PORE_CONNECTIVITY * t * t
       !----- dK/dhead = dK/dSe dSe/dhead, the Mualem term rewritten in u and x. -----------!
-      dk_dhead = ksat * (vg_pore_connectivity * t * t * se ** (vg_pore_connectivity - 1.0_wp) * dse_dhead          &
-                 + 2.0_wp * par_a * m * par_n * t * se ** (vg_pore_connectivity + 1.0_wp / m) * u ** m             &
+      dk_dhead = ksat * (VG_PORE_CONNECTIVITY * t * t * se ** (VG_PORE_CONNECTIVITY - 1.0_wp) * dse_dhead          &
+                 + 2.0_wp * par_a * m * par_n * t * se ** (VG_PORE_CONNECTIVITY + 1.0_wp / m) * u ** m             &
                    / max(x, tiny_num))
    end subroutine head_to_conductivity
 
@@ -404,11 +404,11 @@ contains
       dpsi = grav_head
       if (h <= 0.0_wp) then
          w = 0.0_wp ; dw = 0.0_wp
-      else if (h < pond_depression_depth) then
-         w  = rho_h2o * h * h / (2.0_wp * pond_depression_depth)
-         dw = rho_h2o * h / pond_depression_depth
+      else if (h < POND_DEPRESSION_DEPTH) then
+         w  = rho_h2o * h * h / (2.0_wp * POND_DEPRESSION_DEPTH)
+         dw = rho_h2o * h / POND_DEPRESSION_DEPTH
       else
-         w  = rho_h2o * (h - 0.5_wp * pond_depression_depth)
+         w  = rho_h2o * (h - 0.5_wp * POND_DEPRESSION_DEPTH)
          dw = rho_h2o
       end if
    end subroutine pond_water_relations
@@ -421,10 +421,10 @@ contains
       depth = w / rho_h2o
       if (depth <= 0.0_wp) then
          h = 0.0_wp
-      else if (depth < 0.5_wp * pond_depression_depth) then
-         h = sqrt(2.0_wp * pond_depression_depth * depth)
+      else if (depth < 0.5_wp * POND_DEPRESSION_DEPTH) then
+         h = sqrt(2.0_wp * POND_DEPRESSION_DEPTH * depth)
       else
-         h = depth + 0.5_wp * pond_depression_depth
+         h = depth + 0.5_wp * POND_DEPRESSION_DEPTH
       end if
    end function pond_water_to_head
 
