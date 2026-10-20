@@ -31,7 +31,7 @@ module meds_time
       integer(ik) :: second = 0_ik
    end type meds_time_t
 
-   integer(ik), parameter :: month_len(12) = [31_ik, 28_ik, 31_ik, 30_ik, 31_ik, 30_ik,       &
+   integer(ik), parameter :: MONTH_LEN(12) = [31_ik, 28_ik, 31_ik, 30_ik, 31_ik, 30_ik,       &
                                                31_ik, 31_ik, 30_ik, 31_ik, 30_ik, 31_ik]
 
 contains
@@ -45,7 +45,7 @@ contains
 
    elemental integer(ik) function days_in_month(year, month) result(d)
       integer(ik), intent(in) :: year, month
-      d = month_len(month)
+      d = MONTH_LEN(month)
       if (month == 2_ik .and. is_leap_year(year)) d = 29_ik
    end function days_in_month
 

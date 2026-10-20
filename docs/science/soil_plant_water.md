@@ -234,7 +234,7 @@ the pond takes the mixture; the canopy film keeps the rain's valuation, since it
 |---|---|
 | the solver: assembly, Newton, sub-steps, commit | `meds_spac_solver` (`numerics/`): `spac_allocate`, `spac_set_state`, `spac_advance` |
 | the linear solve (block arrowhead, Schur complement) | `meds_linear_algebra`: `arrowhead_allocate`, `arrowhead_factor`, `arrowhead_solve` |
-| the stores' water relations in their unknowns | `meds_soil_hydr_lib`: `soil_water_relations`, `pond_water_relations` and their inverses, `VG_PORE_CONNECTIVITY`; `meds_plant_hydr_lib`: `tissue_water_relations` and its inverses |
+| the stores' water relations in their unknowns | `meds_soil_hydr_lib`: `soil_water_relations`, `pond_water_relations` and their inverses, `vg_pore_connectivity`; `meds_plant_hydr_lib`: `tissue_water_relations` and its inverses |
 | plant flows | `meds_plant_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`, `supply_limited_transpiration`; their rounded corner `smooth_max0` (`meds_numerics`) |
 | soil flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
 | one patch's step | `meds_fast_frozen`: `run_spac_solver` (called from `build_column_frozen`) |

@@ -43,7 +43,7 @@ module meds_plant_hydr_lib
 
    !----- [-] Floor on the symplastic relative water content in the read-offs; the         !
    !      solver's relations have none. ---------------------------------------------------!
-   real(wp), parameter :: rwc_floor = 1.0e-4_wp
+   real(wp), parameter :: RWC_FLOOR = 1.0e-4_wp
    !----- Cap on tissue_shared_potential's halvings. The loop stops when its bracket is    !
    !      as narrow as the arithmetic resolves, about 70 halvings for a root near -1       !
    !      MPa; only a root at 0, where that width has no floor, reaches the cap. ----------!
@@ -65,11 +65,11 @@ module meds_plant_hydr_lib
    !----- Sapwood specific conductivity against wood density, ln Ks = a + b rho: a         !
    !      lognormal fit to 72 neotropical dry-forest species (Xu et al. 2016, New Phytol   !
    !      212:80; docs/science/plant_hydraulics.md eq. (11)). -----------------------------!
-   real(wp), parameter :: kmax_ln_a     =  2.348_wp   !< [ln(kg/m/s/MPa)] intercept
-   real(wp), parameter :: kmax_ln_b     = -2.455_wp   !< [ln(kg/m/s/MPa) per g/cm3] slope
-   real(wp), parameter :: kmax_ln_var   =  0.6186_wp  !< [-] residual variance of ln Ks
-   real(wp), parameter :: kmax_rho_min  =  0.35_wp    !< [g/cm3] lowest wood density fitted; a lower one takes it
-   real(wp), parameter :: kmax_rho_max  =  0.95_wp    !< [g/cm3] highest wood density fitted; a higher one takes it
+   real(wp), parameter :: KMAX_LN_A     =  2.348_wp   !< [ln(kg/m/s/MPa)] intercept
+   real(wp), parameter :: KMAX_LN_B     = -2.455_wp   !< [ln(kg/m/s/MPa) per g/cm3] slope
+   real(wp), parameter :: KMAX_LN_VAR   =  0.6186_wp  !< [-] residual variance of ln Ks
+   real(wp), parameter :: KMAX_RHO_MIN  =  0.35_wp    !< [g/cm3] lowest wood density fitted; a lower one takes it
+   real(wp), parameter :: KMAX_RHO_MAX  =  0.95_wp    !< [g/cm3] highest wood density fitted; a higher one takes it
    !----- Floors that keep a cohort's leaves joined to its wood however dry or small it    !
    !      is, so its equations stay solvable; neither moves water that matters. -----------!
    real(wp), parameter :: XYLEM_RETAINED_MIN = 1.0e-12_wp   !< [-] share of the intact conductance a fully embolised xylem keeps
@@ -91,7 +91,7 @@ contains
    !=======================================================================================!
    !     Tissue pressure-volume curve (Bartlett / Tyree-Hammel;                            !
    !     docs/science/plant_hydraulics.md §2, eqs. (3)-(6)): read-offs, floored at         !
-   !     rwc_floor.                                                                        !
+   !     RWC_FLOOR.                                                                        !
    !=======================================================================================!
 
    !----- Turgor loss point [MPa] (Bartlett et al. 2012 eq. 1;                             !
@@ -109,12 +109,12 @@ contains
    end function tissue_rwc_tlp
 
    !----- Water potential [MPa] at symplastic relative water content rwc, floored at       !
-   !      rwc_floor (docs/science/plant_hydraulics.md eq. (4)). ---------------------------!
+   !      RWC_FLOOR (docs/science/plant_hydraulics.md eq. (4)). ---------------------------!
    elemental real(wp) function tissue_rwc_to_psi(rwc, pi0, elastic_mod) result(psi)
       real(wp), intent(in) :: rwc, pi0, elastic_mod
       real(wp) :: rwc_tlp, r
       rwc_tlp = tissue_rwc_tlp(pi0, elastic_mod)
-      r       = max(rwc, rwc_floor)
+      r       = max(rwc, RWC_FLOOR)
       if (r >= rwc_tlp) then
          psi = elastic_mod*(r - rwc_tlp) + pi0/r      ! turgor + osmotic
       else
@@ -122,7 +122,7 @@ contains
       end if
    end function tissue_rwc_to_psi
 
-   !----- Symplastic relative water content at water potential psi, floored at rwc_floor   !
+   !----- Symplastic relative water content at water potential psi, floored at RWC_FLOOR   !
    !      (docs/science/plant_hydraulics.md eq. (4)). -------------------------------------!
    elemental real(wp) function tissue_psi_to_rwc(psi, pi0, elastic_mod) result(rwc)
       real(wp), intent(in) :: psi, pi0, elastic_mod
@@ -136,7 +136,7 @@ contains
       else                                    ! flaccid
          rwc  = pi0/psi
       end if
-      rwc = max(rwc, rwc_floor)
+      rwc = max(rwc, RWC_FLOOR)
    end function tissue_psi_to_rwc
 
    !----- Total tissue water [kg per plant] at potential psi: the symplast's saturated     !
@@ -194,7 +194,7 @@ contains
       real(wp),            intent(in) :: head_b                !< [MPa] gravity head of b above a: at rest psi_b = psi_a - head_b
       real(wp)    :: lo, hi
       integer(ik) :: k
-      lo = min(curve_a%pi0, curve_b%pi0 + head_b) / rwc_floor
+      lo = min(curve_a%pi0, curve_b%pi0 + head_b) / RWC_FLOOR
       hi = 0.0_wp
       if (w_total <= held(lo)) then
          psi = lo
@@ -382,11 +382,11 @@ contains
    !      plc_retained. -------------------------------------------------------------------!
    pure real(wp) function kirchhoff_panel(a, b, kexp) result(g)
       real(wp), intent(in) :: a, b, kexp
-      real(wp), parameter :: node(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
+      real(wp), parameter :: NODE(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
                                            -0.4058451513773972_wp,  0.0000000000000000_wp,     &
                                             0.4058451513773972_wp,  0.7415311855993945_wp,     &
                                             0.9491079123427585_wp ]
-      real(wp), parameter :: weight(7) = [  0.1294849661688697_wp,  0.2797053914892766_wp,     &
+      real(wp), parameter :: WEIGHT(7) = [  0.1294849661688697_wp,  0.2797053914892766_wp,     &
                                             0.3818300505051189_wp,  0.4179591836734694_wp,     &
                                             0.3818300505051189_wp,  0.2797053914892766_wp,     &
                                             0.1294849661688697_wp ]
@@ -396,11 +396,11 @@ contains
       half = 0.5_wp * (b - a)
       acc  = 0.0_wp
       do k = 1_ik, 7_ik
-         u = mid + half * node(k)
+         u = mid + half * NODE(k)
          if (u <= 0.0_wp) then
-            acc = acc + weight(k)
+            acc = acc + WEIGHT(k)
          else
-            acc = acc + weight(k) / (1.0_wp + u**kexp)
+            acc = acc + WEIGHT(k) / (1.0_wp + u**kexp)
          end if
       end do
       g = half * acc
@@ -469,7 +469,7 @@ contains
    !      (docs/science/plant_hydraulics.md eq. (11)). ------------------------------------!
    elemental real(wp) function wood_density_to_kmax(rho) result(kmax)
       real(wp), intent(in) :: rho
-      kmax = exp(kmax_ln_a + kmax_ln_b*min(max(rho, kmax_rho_min), kmax_rho_max) + 0.5_wp*kmax_ln_var)
+      kmax = exp(KMAX_LN_A + KMAX_LN_B*min(max(rho, KMAX_RHO_MIN), KMAX_RHO_MAX) + 0.5_wp*KMAX_LN_VAR)
    end function wood_density_to_kmax
 
    !----- One plant's intact-xylem conductance [kg/s/MPa]: the sapwood's specific          !

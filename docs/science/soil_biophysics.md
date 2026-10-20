@@ -39,7 +39,7 @@ Genuchten conductivity is Mualem's,
 K = K_{sat}\,S_e^{L}\,\big[1-(1-S_e^{1/m})^m\big]^2, \qquad L = -1 \qquad(2)
 ```
 
-with pore connectivity $L=-1$ (Schaap & Leij 2000, `VG_PORE_CONNECTIVITY`), as ED2 uses with this
+with pore connectivity $L=-1$ (Schaap & Leij 2000, `vg_pore_connectivity`), as ED2 uses with this
 curve: with Mualem's 0.5 a soil of $n$ near 1.4 conducts less than ED2's floor of
 1.16×10⁻¹³ m s⁻¹ from about −0.7 MPa, far wetter than measured (UNSODA), and −1 keeps it above that
 to about −2 MPa. MEDS has no film-flow term

@@ -23,7 +23,7 @@ program test_canopy_radiation
    use meds_constants,      only : stefan_boltzmann
    use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_forcing, RAD_VIS, RAD_NIR, RAD_LW, &
                                  N_RAD_BAND_DEFAULT
-   use meds_optics_lib,     only : beta_lidf, leaf_bf, moments_to_beta_params, gfun_direct, N_LEAF_CLASS
+   use meds_optics_lib,     only : beta_lidf, leaf_bf, moments_to_beta_params, gfun_direct, n_leaf_class
    use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics_state_t,    &
                                      ground_optics
    implicit none
@@ -108,7 +108,7 @@ contains
    !=======================================================================================!
    subroutine test_leaf_angle_limits()
       real(wp) :: p, q, bf
-      real(wp) :: lidf(N_LEAF_CLASS)
+      real(wp) :: lidf(n_leaf_class)
       print '(a)', '[1] leaf-angle distribution limits'
       !----- Uniform inclination (Beta(1,1)): <cos^2> = 0.5 exactly. ------------------------!
       lidf = beta_lidf(1.0_wp, 1.0_wp) ; bf = leaf_bf(lidf)

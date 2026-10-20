@@ -18,7 +18,7 @@ program test_fast_loop
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params, top_soil_psi
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,   only : soil_retention_vg
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
@@ -58,7 +58,7 @@ program test_fast_loop
 
    !----- Build the column config + reference met inside the fast context. -----------------!
    call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
+   call build_soil_hydr_params(nsl, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,            &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)

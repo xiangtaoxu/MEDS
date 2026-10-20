@@ -22,18 +22,18 @@ module meds_allometry_lib
    public :: size_to_leaf_carbon, size_to_wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: storage_carbon_target
    public :: dbh_to_wai, sapwood_fraction
-   public :: HEIGHT_POWER, HEIGHT_CHAVE
+   public :: height_power, height_chave
 
    !----- Height curves: a power law, or the log-quadratic of Chave et al. (2014) eq. 6a,  !
    !      whose coefficients a PFT may fit to its own site. ------------------------------!
-   integer(ik), parameter :: HEIGHT_POWER = 1_ik, HEIGHT_CHAVE = 2_ik
+   integer(ik), parameter :: height_power = 1_ik, height_chave = 2_ik
 
    !----- One PFT's allometry, from the PFT file's [allometry] block. The defaults are the  !
    !      shipped pan-tropical values, so a record made without a config (a unit test, a   !
    !      Python call) is usable. ---------------------------------------------------------!
    type :: allometry_t
       !----- Height: the curve, and the cap on every curve. ------------------------------!
-      integer(ik) :: height_form = HEIGHT_POWER   !< the height curve: power law or log-quadratic
+      integer(ik) :: height_form = height_power   !< the height curve: power law or log-quadratic
       real(wp)    :: hgt_max     = 46.0_wp        !< [m]   the largest height
       real(wp)    :: b1Ht        = 1.139963_wp    !< [--]  power law: intercept of ln H on ln dbh
       real(wp)    :: b2Ht        = 0.564899_wp    !< [--]  power law: slope of ln H on ln dbh
@@ -62,7 +62,7 @@ contains
       real(wp),          intent(in) :: dbh
       real(wp)                      :: h, x
       select case (allom%height_form)
-      case (HEIGHT_CHAVE)
+      case (height_chave)
          x  = log(max(dbh, tiny_num))
          h  = exp(chave_intercept(allom) + allom%chave_b * x + allom%chave_c * x * x)
       case default
@@ -77,7 +77,7 @@ contains
       real(wp),          intent(in) :: h
       real(wp)                      :: dbh
       select case (allom%height_form)
-      case (HEIGHT_CHAVE)
+      case (height_chave)
          dbh = exp(chave_small_root(allom%chave_c, allom%chave_b, chave_intercept(allom) - log(max(h, tiny_num))))
       case default
          dbh = exp((log(max(h, tiny_num)) - allom%b1Ht) / allom%b2Ht)
@@ -132,7 +132,7 @@ contains
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: agb, rho
       real(wp)                      :: dbh, k_un, p_un, k_cap, p_cap, h
-      if (allom%height_form == HEIGHT_CHAVE) then
+      if (allom%height_form == height_chave) then
          dbh = agb_to_dbh_chave(allom, agb, rho)
          return
       end if

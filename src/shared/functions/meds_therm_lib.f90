@@ -34,21 +34,21 @@ module meds_therm_lib
    !----- Temperature response of enzyme rates. -------------------------------------------!
    public :: arrhenius_scale, peaked_arrhenius_scale, temp_response
    public :: kattge_knorr_entropy, kattge_knorr_jv_ratio
-   public :: TRESP_ARRHENIUS, TRESP_PEAKED
+   public :: tresp_arrhenius, tresp_peaked
 
    !----- CLM5 mineral soil (Lawrence & Slater 2008; CLM5 technote 2.7.2): the solids'     !
    !      conductivity and heat capacity per sand and clay, and the dry soil's             !
    !      conductivity from its bulk density (Johansen 1975); grains are 2700 kg/m3. ------!
-   real(wp), parameter :: k_quartz         = 8.80_wp     !< [W/m/K]    sand grains
-   real(wp), parameter :: k_clay_mineral   = 2.92_wp     !< [W/m/K]    clay grains
-   real(wp), parameter :: cv_sand          = 2.128e6_wp  !< [J/m3/K]   sand grains
-   real(wp), parameter :: cv_clay          = 2.385e6_wp  !< [J/m3/K]   clay grains
-   real(wp), parameter :: clm_grain_density = 2700.0_wp  !< [kg/m3]
+   real(wp), parameter :: K_QUARTZ         = 8.80_wp     !< [W/m/K]    sand grains
+   real(wp), parameter :: K_CLAY_MINERAL   = 2.92_wp     !< [W/m/K]    clay grains
+   real(wp), parameter :: CV_SAND          = 2.128e6_wp  !< [J/m3/K]   sand grains
+   real(wp), parameter :: CV_CLAY          = 2.385e6_wp  !< [J/m3/K]   clay grains
+   real(wp), parameter :: CLM_GRAIN_DENSITY = 2700.0_wp  !< [kg/m3]
    real(wp), parameter :: SR_FLOOR = 0.05_wp     !< [-] floor on relative saturation, where Johansen's log10 form holds
 
    !----- The forms [leaf_physiology].temp_response_form selects. -------------------------!
-   integer(ik), parameter :: TRESP_ARRHENIUS = 1_ik  !< plain Arrhenius
-   integer(ik), parameter :: TRESP_PEAKED    = 2_ik  !< Arrhenius with high-temperature deactivation
+   integer(ik), parameter :: tresp_arrhenius = 1_ik  !< plain Arrhenius
+   integer(ik), parameter :: tresp_peaked    = 2_ik  !< Arrhenius with high-temperature deactivation
 
 contains
 
@@ -304,10 +304,10 @@ contains
       real(wp), intent(out) :: k_dry      !< [W/m/K]  conductivity of the dry soil
       real(wp), intent(out) :: dry_cvol   !< [J/m3/K] heat capacity of the solids per layer volume
       real(wp) :: bulk_density
-      k_solid      = (k_quartz*sand + k_clay_mineral*clay) / (sand + clay)
-      bulk_density = clm_grain_density * (1.0_wp - theta_sat)
-      k_dry        = (0.135_wp*bulk_density + 64.7_wp) / (clm_grain_density - 0.947_wp*bulk_density)
-      dry_cvol     = (cv_sand*sand + cv_clay*clay) / (sand + clay) * (1.0_wp - theta_sat)
+      k_solid      = (K_QUARTZ*sand + K_CLAY_MINERAL*clay) / (sand + clay)
+      bulk_density = CLM_GRAIN_DENSITY * (1.0_wp - theta_sat)
+      k_dry        = (0.135_wp*bulk_density + 64.7_wp) / (CLM_GRAIN_DENSITY - 0.947_wp*bulk_density)
+      dry_cvol     = (CV_SAND*sand + CV_CLAY*clay) / (sand + clay) * (1.0_wp - theta_sat)
    end subroutine soil_texture_to_thermal
 
    !----- Soil thermal conductivity [W/m/K], Johansen's made ice-aware                     !
@@ -384,11 +384,11 @@ contains
 
    !----- The configured form; the Arrhenius form ignores hd and ds. ----------------------!
    elemental pure function temp_response(form, k25, ea, hd, ds, t_leaf) result(k)
-      integer(ik), intent(in) :: form   !< TRESP_ARRHENIUS | TRESP_PEAKED
+      integer(ik), intent(in) :: form   !< tresp_arrhenius | tresp_peaked
       real(wp),    intent(in) :: k25, ea, hd, ds, t_leaf
       real(wp)                :: k
       select case (form)
-      case (TRESP_PEAKED) ; k = peaked_arrhenius_scale(k25, ea, hd, ds, t_leaf)
+      case (tresp_peaked) ; k = peaked_arrhenius_scale(k25, ea, hd, ds, t_leaf)
       case default        ; k = arrhenius_scale(k25, ea, t_leaf)
       end select
    end function temp_response

@@ -304,7 +304,7 @@ contains
       integer(ik), intent(in)  :: m, s
       real(wp),    intent(in)  :: a_in(m, m)
       real(wp),    intent(out) :: e(m, m)
-      integer(ik), parameter :: n_taylor = 12_ik
+      integer(ik), parameter :: N_TAYLOR = 12_ik
       real(wp)    :: a(m, m), term(m, m), tmp(m, m)
       integer(ik) :: i, k, sq
       a = a_in * (2.0_wp ** (-s))
@@ -314,7 +314,7 @@ contains
          e(i, i)    = 1.0_wp
          term(i, i) = 1.0_wp
       end do
-      do k = 1_ik, n_taylor
+      do k = 1_ik, N_TAYLOR
          call matmul_square(term, a, tmp, m)
          term = tmp / real(k, wp)
          e = e + term

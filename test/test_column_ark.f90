@@ -22,7 +22,7 @@ program test_column_ark
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,   only : soil_retention_vg
    use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
@@ -80,7 +80,7 @@ program test_column_ark
    call check_close(col_cohort%aboveground_frac(1), cfg%pft%allom(1)%aboveground_frac, 1.0e-14_wp,   &
                     'aboveground_frac did not reach the column view from the PFT table')
    call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
+   call build_soil_hydr_params(nsl, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)

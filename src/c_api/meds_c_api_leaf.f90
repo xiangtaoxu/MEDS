@@ -66,7 +66,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Coupled leaf gas-exchange: unpack the C structs into the model types, solve, pack back. !
-   ! sm/tresp/colim are the SM_*/TRESP_*/COLIM_* integer codes; use_boundary_layer is 0/1.               !
+   ! sm/tresp/colim are the SM_*/tresp_*/COLIM_* integer codes; use_boundary_layer is 0/1.               !
    !---------------------------------------------------------------------------------------!
    subroutine meds_leaf_solve(env_c, p_c, sm, tresp, colim, use_boundary_layer, flux_c) bind(c, name="meds_leaf_solve")
       type(leaf_env_c),    intent(in)  :: env_c

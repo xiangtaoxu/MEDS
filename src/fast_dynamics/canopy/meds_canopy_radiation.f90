@@ -23,7 +23,7 @@ module meds_canopy_radiation
    use meds_constants,    only : stefan_boltzmann, tiny_num, lnexp_max
    use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_flux, alloc_rad_pft_optics, &
                                  ground_optics_state_t
-   use meds_optics_lib,   only : N_LEAF_CLASS, beta_lidf, leaf_bf, gfun_direct, scatter_pair
+   use meds_optics_lib,   only : n_leaf_class, beta_lidf, leaf_bf, gfun_direct, scatter_pair
    implicit none
    private
 
@@ -57,7 +57,7 @@ contains
       type(rad_pft_optics_t), intent(out) :: optics
       integer(ik) :: b, p
 
-      call alloc_rad_pft_optics(optics, n_band, n_pft, N_LEAF_CLASS)
+      call alloc_rad_pft_optics(optics, n_band, n_pft, n_leaf_class)
       optics%clumping_leaf = clumping_leaf
       optics%clumping_wood = clumping_wood
       optics%has_beam      = has_beam

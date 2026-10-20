@@ -23,7 +23,7 @@ program test_column_rk45
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head
+   use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell, soil_theta_to_head
    use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
@@ -76,7 +76,7 @@ program test_column_rk45
    !      mutually consistent. -------------------------------------------------------------------!
    call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
    call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
+   call build_soil_hydr_params(nsl, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
@@ -654,7 +654,7 @@ contains
       type(soil_params_t) :: vg_soil
       real(wp) :: cdiag(N_CO_FAST_ROWS, n), seed
       vg_soil = col_config%soil
-      call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, test_bottoms, theta_sat, theta_res,     &
+      call build_soil_hydr_params(nsl, soil_retention_campbell, test_bottoms, theta_sat, theta_res,     &
                                   2.89e-6_wp, psi_sat, b, -3.37_wp, col_config%soil)
       call set_noon_forcing()
       call reset_state()
@@ -664,7 +664,7 @@ contains
       call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws,           &
                             gpp_coh=gpp_coh, cdiag=cdiag)
       col_config%soil = vg_soil
-      seed = grav_head * soil_theta_to_head(SOIL_RETENTION_CAMPBELL, theta_seed, theta_sat, theta_res, psi_sat, b)
+      seed = grav_head * soil_theta_to_head(soil_retention_campbell, theta_seed, theta_sat, theta_res, psi_sat, b)
       call check_true('Campbell seed: the cohort has no predawn potential of its own yet',                            &
               col_cohort%dmax_psi_leaf(1) > 0.0_wp, col_cohort%dmax_psi_leaf(1))
       call check_true('Campbell seed: the top layer is unsaturated (a seed below zero)', seed < 0.0_wp, seed)

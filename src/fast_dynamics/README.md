@@ -81,7 +81,7 @@ The soil **material-property** kernels are stateless and `elemental`, grouped wi
 constitutive relations by physical quantity rather than by caller:
 
 - **Retention curves** → `meds_soil_hydr_lib`: the water content, potential, conductivity and moisture
-  capacity relations (van Genuchten by default, Campbell available) plus the `SOIL_RETENTION_*`
+  capacity relations (van Genuchten by default, Campbell available) plus the `soil_retention_*`
   selectors, and the pedotransfer function that sets them from the soil maps; the plant's
   pressure-volume and vulnerability curves are the matching `meds_plant_hydr_lib`.
 - **Thermal properties** → `meds_therm_lib`: the ice-aware Johansen conductivity and the volumetric

@@ -49,7 +49,7 @@ module meds_polygon
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
    use meds_constants,              only : n_soil_layer_max
-   use meds_allometry_lib,          only : HEIGHT_CHAVE
+   use meds_allometry_lib,          only : height_chave
    use meds_biophysics_opts,        only : SOIL_BC_AQUIFER
    use meds_forcing_types,          only : met_cells_t
    use meds_toml,                   only : toml_table_t, toml_parse_file
@@ -501,7 +501,7 @@ contains
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
       call manager_set_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
-                                any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE))
+                                any(cfg%pft%allom(1:cfg%pft%n)%height_form == height_chave))
       call manager_finalize(files)
    end subroutine open_output_files
 

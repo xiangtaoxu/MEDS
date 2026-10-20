@@ -17,7 +17,7 @@ program test_soil_column_config
    use meds_constants,     only : n_soil_layer_max
    use meds_soil_column_config, only : soil_column_config_t, soil_column_layers, soil_params_t, soil_thermal_params_t, &
                                        build_soil_hydr_params, build_soil_therm_params
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -35,7 +35,7 @@ program test_soil_column_config
    call check_close(sc%depth,       2.0_wp,   1.0e-14_wp, 'default depth changed (was the hard-coded 2.0 m)')
    call check_close(sc%theta_sat,   0.43_wp,  1.0e-14_wp, 'default theta_sat changed')
    call check_close(sc%ksat,        2.89e-6_wp, 1.0e-14_wp, 'default ksat changed')
-   call check(sc%retention == SOIL_RETENTION_VG,         'default retention is not van Genuchten')
+   call check(sc%retention == soil_retention_vg,         'default retention is not van Genuchten')
 
    !=== 2. The default column is the template cut at 2 m: seven layers, a 5 cm top layer,    !
    !       SoilGrids' bottoms to 1 m, and the base at -depth exactly. ========================!
@@ -93,13 +93,13 @@ program test_soil_column_config
 
    !=== 7. The retention family selects which pair curve_par_a/n mean: for Campbell, the air-entry !
    !       suction psi_sat [m] (< 0) and the exponent b, as validate_config requires. ================!
-   sc%retention = SOIL_RETENTION_CAMPBELL
+   sc%retention = soil_retention_campbell
    sc%curve_par_a = -0.26_wp ; sc%curve_par_n = 5.65_wp
    call build_column(sc, p2)
-   call check(p2%retention == SOIL_RETENTION_CAMPBELL,   'retention family did not reach the column')
+   call check(p2%retention == soil_retention_campbell,   'retention family did not reach the column')
    call check(p2%theta_fc(1) > p2%theta_res(1) .and. p2%theta_fc(1) < p2%theta_sat(1),           &
               'Campbell field capacity lies between residual content and saturation')
-   sc%retention = SOIL_RETENTION_VG
+   sc%retention = soil_retention_vg
    sc%curve_par_a = 3.6_wp ; sc%curve_par_n = 1.56_wp                  ! the van Genuchten defaults
 
    !=== 8. The thermal keys reach the thermal column, on the same layers. ====================!

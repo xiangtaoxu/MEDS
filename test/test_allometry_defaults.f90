@@ -16,7 +16,7 @@
 program test_allometry_defaults
    use meds_kinds,         only : wp, ik
    use meds_toml,          only : toml_table_t, toml_parse_file, toml_has, toml_real, toml_string, toml_real_array
-   use meds_allometry_lib, only : allometry_t, HEIGHT_POWER
+   use meds_allometry_lib, only : allometry_t, height_power
    use meds_test_support,  only : banner, check, check_close
    implicit none
 
@@ -66,7 +66,7 @@ program test_allometry_defaults
    !----- The height curve: the shipped config and the initializer are both the power law. ---!
    call check(trim(toml_string(t, 'allometry.height_allometry', '')) == 'power',                    &
               'meds_config_pft.toml sets [allometry].height_allometry = "power"')
-   call check(d%height_form == HEIGHT_POWER, 'the height-curve initializer is the power law')
+   call check(d%height_form == height_power, 'the height-curve initializer is the power law')
 
    print '(a)', 'test_allometry_defaults: ALL PASSED'
 

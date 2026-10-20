@@ -12,12 +12,12 @@ module meds_config
    use meds_constants,  only : yr_day, yr_sec, day_sec, n_soil_layer_max
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
-   use meds_allometry_lib, only : HEIGHT_CHAVE
+   use meds_allometry_lib, only : height_chave
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
-   use meds_therm_lib,     only : TRESP_ARRHENIUS, TRESP_PEAKED
+   use meds_therm_lib,     only : tresp_arrhenius, tresp_peaked
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell
    use meds_plant_hydr_lib,  only : tissue_psi_tlp, water_curve_t
    use meds_soil_column_config, only : soil_column_config_t, soil_texture_layers_t, soil_params_t,       &
                                        soil_column_layers, soil_column_texture, soil_column_params,   &
@@ -66,7 +66,7 @@ module meds_config
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
    !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the         !
-   !      temperature-response selectors (TRESP_*) by meds_therm_lib. Imported above           !
+   !      temperature-response selectors (tresp_*) by meds_therm_lib. Imported above           !
    !      for LOADING and VALIDATION only -- not re-exported, so a caller that switches on     !
    !      one imports it from the module that defines it. -------------------------------------!
 
@@ -316,7 +316,7 @@ module meds_config
 
       !----- Leaf physiology: model selection (non-PFT). ----------------------------------!
       integer(ik) :: stomatal_model           !< SM_LEUNING | SM_MEDLYN | SM_KATUL
-      integer(ik) :: temp_response_form        !< TRESP_ARRHENIUS | TRESP_PEAKED
+      integer(ik) :: temp_response_form        !< tresp_arrhenius | tresp_peaked
       integer(ik) :: colimitation             !< COLIM_MIN | COLIM_QUADRATIC
       logical     :: leaf_use_boundary_layer  !< if .true., couple via the leaf boundary layer (gb)
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
@@ -686,7 +686,7 @@ contains
          !----- curve_par_a and curve_par_n mean different things per family: van Genuchten's alpha  !
          !      [1/m] > 0 and n > 1, Campbell's air-entry suction psi_sat [m] < 0 and exponent b > 0.  !
          !      The other family's pair makes the curve raise a negative base to a fractional power. -!
-         if (sc%retention == SOIL_RETENTION_VG) then
+         if (sc%retention == soil_retention_vg) then
             if (any(tex%par_a(1:n) <= 0.0_wp))                                                    &
                error stop tag//'soil.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
             if (any(tex%par_n(1:n) <= 1.0_wp))                                                    &
@@ -876,7 +876,7 @@ contains
          if (.not. soil_maps_on(cfg%maps))                                                       &
             error stop tag//'[run].mode = "region" needs the soil maps: maps.soil_depth_map, '//    &
                             'soil_texture_map and soil_chemistry_map'
-         if (any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)                          &
+         if (any(cfg%pft%allom(1:cfg%pft%n)%height_form == height_chave)                          &
              .and. len_trim(cfg%maps%chave_e_map) == 0)                                          &
             error stop tag//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//   &
                             'needs maps.chave_e_map'
@@ -897,7 +897,7 @@ contains
          if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND))     &
             error stop tag//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
       end if
-      if (len_trim(cfg%maps%chave_e_map) > 0 .and. .not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)) &
+      if (len_trim(cfg%maps%chave_e_map) > 0 .and. .not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == height_chave)) &
          error stop tag//'maps.chave_e_map needs a PFT with allometry.height_allometry = "chave2014"'
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !
@@ -1046,7 +1046,7 @@ contains
       !      (docs/science/leaf_gas_exchange.md eq. (4)). The Arrhenius form has no dS, so the      !
       !      flag would be silently inert -- refuse rather than let a config believe                !
       !      acclimation is on when nothing acclimates. --------------------------------------------!
-      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= TRESP_PEAKED)              &
+      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= tresp_peaked)              &
          error stop tag//'leaf_physiology.thermal_acclimation requires temp_response_form = '//    &
                     '"peaked" (the Arrhenius form has no entropy term to shift)'
       if (cfg%leaf_thermal_acclimation .and. cfg%acclim_window_days <= 0.0_wp)                    &

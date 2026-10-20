@@ -4,7 +4,7 @@ program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry_lib, only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh, dbh_to_leaf_area,  &
                                   allometry_t, size_to_leaf_carbon, size_to_wood_carbon, wood_to_dbh,      &
-                                  HEIGHT_CHAVE
+                                  height_chave
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -86,7 +86,7 @@ program test_allometry
 
    !=== Chave et al. (2014) eq. 6a at E = 0.2 and its two inverses. The expected heights are     !
    !    BIOMASS's retrieveH: exp(0.893 - E + 0.760 ln D - 0.0340 (ln D)^2 + 0.243^2/2). =========!
-   allom = allometry_t(height_form = HEIGHT_CHAVE, chave_e = 0.2_wp, hgt_max = 100.0_wp)
+   allom = allometry_t(height_form = height_chave, chave_e = 0.2_wp, hgt_max = 100.0_wp)
    call check_close(dbh_to_height(allom, 1.0_wp), 2.0596261794_wp, 1.0e-9_wp, 'Chave height at 1 cm')
    call check_close(dbh_to_height(allom, 10.0_wp), 9.8969302660_wp, 1.0e-9_wp, 'Chave height at 10 cm')
    call check_close(dbh_to_height(allom, 30.0_wp), 18.4325408427_wp, 1.0e-9_wp, 'Chave height at 30 cm')
@@ -105,12 +105,12 @@ program test_allometry
    wood_c = size_to_wood_carbon(allom, 80.0_wp, dbh_to_height(allom, 80.0_wp), rho)
    call check_close(wood_to_dbh(allom, wood_c, rho), 80.0_wp, 1.0e-9_wp, 'Chave wood_to_dbh inverse')
    !----- A PFT's own log-quadratic coefficients replace Chave's: a flatter curve is shorter. --!
-   call check(dbh_to_height(allometry_t(height_form = HEIGHT_CHAVE, chave_b = 0.6_wp), 30.0_wp) <              &
-              dbh_to_height(allometry_t(height_form = HEIGHT_CHAVE), 30.0_wp), 'a smaller chave_b gives shorter trees')
+   call check(dbh_to_height(allometry_t(height_form = height_chave, chave_b = 0.6_wp), 30.0_wp) <              &
+              dbh_to_height(allometry_t(height_form = height_chave), 30.0_wp), 'a smaller chave_b gives shorter trees')
 
    !=== A local log-quadratic (Barro Colorado's: chave_a, chave_b, chave_c, no E, no RSE term)   !
    !    follows its own coefficients, and both inverses hold on it. =======================!
-   allom = allometry_t(height_form = HEIGHT_CHAVE, chave_a = 0.8898_wp, chave_b = 0.7908_wp,          &
+   allom = allometry_t(height_form = height_chave, chave_a = 0.8898_wp, chave_b = 0.7908_wp,          &
                        chave_c = -0.04923_wp, chave_rse = 0.0_wp, chave_e = 0.0_wp, hgt_max = 100.0_wp)
    call check_close(dbh_to_height(allom, 1.0_wp), exp(0.8898_wp), 1.0e-12_wp, 'local fit: height at 1 cm is exp(chave_a)')
    call check_close(dbh_to_height(allom, 100.0_wp),                                                          &
@@ -125,7 +125,7 @@ program test_allometry
 
    !=== Each PFT has its own record: a short log-quadratic understorey PFT and a power-law PFT     !
    !    keep their own heights and caps side by side (elemental over the records). ============!
-   two(1) = allometry_t(height_form = HEIGHT_CHAVE, chave_a = 0.6_wp, chave_b = 0.6_wp, chave_c = -0.03_wp,  &
+   two(1) = allometry_t(height_form = height_chave, chave_a = 0.6_wp, chave_b = 0.6_wp, chave_c = -0.03_wp,  &
                         chave_rse = 0.0_wp, hgt_max = 12.0_wp)
    two(2) = allometry_t()
    hh = dbh_to_height(two, 40.0_wp)

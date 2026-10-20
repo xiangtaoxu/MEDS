@@ -34,7 +34,7 @@ program test_spac_solver
                                 spac_jacobian_error, POND, WOOD, LEAF
    use meds_plant_hydr_lib, only : xylem_max_conductance, rhizosphere_conductance, build_hydro_table,  &
                                    tissue_water_relations, water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
-   use meds_soil_hydr_lib,   only : soil_water_relations, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL,  &
+   use meds_soil_hydr_lib,   only : soil_water_relations, soil_retention_vg, soil_retention_campbell,  &
                                     soil_theta_to_head
    use meds_plant_types,   only : hydro_params_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
@@ -93,7 +93,7 @@ contains
       real(wp),            intent(in)  :: depth, growth
       real(wp) :: bottoms(n_soil_layer_max)
       call geometric_layer_bottoms(depth, nsl, growth, bottoms)
-      call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,          &
+      call build_soil_hydr_params(nsl, soil_retention_vg, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,          &
                                   0.7607_wp, 1.3554_wp, -3.37_wp, s)
    end subroutine make_soil
 
@@ -500,7 +500,7 @@ contains
       vg_soil = soil
       nsl = vg_soil%n_active
       call geometric_layer_bottoms(1.44_wp, nsl, 3.0_wp, bottoms)
-      call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, bottoms, theta_sat, theta_res, 4.54e-6_wp,      &
+      call build_soil_hydr_params(nsl, soil_retention_campbell, bottoms, theta_sat, theta_res, 4.54e-6_wp,      &
                                   psi_sat, b, -3.37_wp, soil)
       theta = 0.30_wp
       call make_stand(spac, 4_ik, theta, 0.0_wp, 0.95_wp, 0.9_wp, 0.0_wp)
@@ -521,7 +521,7 @@ contains
          !----- Each layer's potential against the Campbell curve at the water it holds, which the  !
          !      sub-step commits from its flows: the two agree to the Newton tolerance. ------------!
          theta = spac%water_soil(2:nsl+1) / (rho_h2o * soil%dz(1:nsl))
-         psi_curve = grav_head * soil_theta_to_head(SOIL_RETENTION_CAMPBELL, theta, theta_sat, theta_res,    &
+         psi_curve = grav_head * soil_theta_to_head(soil_retention_campbell, theta, theta_sat, theta_res,    &
                                                      psi_sat, b)
          worst_psi = max(worst_psi, maxval(abs(spac%psi_soil(2:nsl+1) - psi_curve) / abs(psi_curve)))
          below_zero = below_zero .and. all(spac%psi_soil(2:nsl+1) < 0.0_wp)                                 &
