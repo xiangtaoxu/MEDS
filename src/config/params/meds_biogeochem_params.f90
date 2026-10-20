@@ -1,11 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_biogeochem_opts -- the [soil_carbon] block (docs/science/soil_carbon.md): the       !
+! meds_biogeochem_params -- the [soil_carbon] block (docs/science/soil_carbon.md): the     !
 ! decomposition selectors and their codes, the decay rates, the respired fractions and the !
 ! environmental-scalar parameters. A config leaf (meds_kinds only): the soil-carbon kernels!
 ! import it without meds_config.                                                           !
 !==========================================================================================!
-module meds_biogeochem_opts
+module meds_biogeochem_params
    use meds_kinds, only : wp, ik
    implicit none
    private
@@ -69,4 +69,4 @@ module meds_biogeochem_opts
       real(wp)    :: spinup_struct_soil = 0.0_wp
    end type decomp_opts_t
 
-end module meds_biogeochem_opts
+end module meds_biogeochem_params

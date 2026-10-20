@@ -5,7 +5,7 @@
 ! it into a per-(variable,tier) running reduction (integrate_scalar / integrate_slab), close a       !
 ! period (normalize_*), and re-seed for the next (reset_buffer).                                      !
 !                                                                                          !
-! Links meds_output_types + meds_output_opts + the demographic state/reductions ONLY -- no C          !
+! Links meds_output_types + meds_output_params + the demographic state/reductions ONLY -- no C        !
 ! bindings, so the stepper edge that calls these pulls no netCDF (src/README.md, The library graph).  !
 !                                                                                          !
 ! NO CHAINING: each ACTIVE tier integrates raw state independently every step; there is NO inter-tier  !
@@ -16,7 +16,7 @@
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
    use meds_time,           only : meds_time_t
-   use meds_output_opts,    only : N_FREQ
+   use meds_output_params,      only : N_FREQ
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,   &
                                    diag_setup_t, pending_record_t, record_queue_t,                 &
                                    slab_col,                                                     &

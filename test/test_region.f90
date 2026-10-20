@@ -33,7 +33,7 @@ program test_region
    use meds_test_assert,           only : check_true, test_report
    use meds_test_era5land_archive, only : write_archive, write_map, write_surface_maps, deep_temp_at, &
                                           f_leak_at, NLAT, NLON
-   use meds_biophysics_opts,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
+   use meds_soil_params,           only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_constants,             only : n_soil_layer_max
    use meds_netcdf_c
    use meds_output_types,          only : output_registry_t, DIM_SCALAR, DIM_COHORT, DIM_PATCH,   &

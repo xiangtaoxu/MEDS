@@ -57,9 +57,13 @@ another setting leaves with nothing to do is refused in `check_key_use`. Both ar
 
 ## Where a config type lives
 
-A per-block leaf in `src/config/opts/`, so `meds_config` — the root of the dependency graph —
+A per-block leaf in `src/config/params/`, so `meds_config` — the root of the dependency graph —
 can carry it with no back-edge into a kernel library, and so the sealed kernels stay
 device-eligible. Never put a config type in a kernel module.
+
+`params/` holds the run's parameters: every value the config files set, and the types of what is
+derived from them (`soil_params_t`). The routines that derive them are in `meds_config`. A kernel's
+argument types, which its driver fills from the parameters, are `*_args_t` and live with the kernel.
 
 ## A field has its key's name
 

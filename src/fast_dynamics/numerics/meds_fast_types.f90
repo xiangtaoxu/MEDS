@@ -24,15 +24,15 @@ module meds_fast_types
    use meds_constants, only : t_3ple, n_soil_layer_max
    use meds_plant_types, only : hydro_args_table_t
    use meds_plant_types, only : veg_thermal_args_t
-   use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t
+   use meds_soil_params, only : soil_params_t, soil_thermal_params_t, soil_opts_t, energy_opts_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
-   use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
+   use meds_biophysics_params, only : aero_cfg_t, snow_params_t
    use meds_plant_types, only : wood_args_t, root_args_t, hydro_args_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
-   use meds_fast_opts, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I, process_mask_t
+   use meds_fast_params, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I, process_mask_t
    use meds_plant_hydr_lib, only : build_hydro_table
    use meds_pft_params, only : pft_table_t
    use meds_state_defaults,    only : UNSET_NEGATIVE

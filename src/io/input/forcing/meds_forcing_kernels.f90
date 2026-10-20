@@ -5,16 +5,16 @@
 ! shortwave disaggregation, the total->4-stream shortwave partition, humidity from dewpoint / RH,  !
 ! the rainfall phase split, the longwave synthesis and the grid match. Depends only on meds_share  !
 ! (meds_kinds, meds_constants, meds_therm_lib, meds_time) and the forcing config's enumerations    !
-! (meds_forcing_opts): the saturation curve is meds_therm_lib%sat_vapor_pressure and the solar     !
+! (meds_forcing_params): the saturation curve is meds_therm_lib%sat_vapor_pressure and the solar   !
 ! geometry meds_time%solar_cosz, the model's own. GPU-safe (leaf math over scalars).               !
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan_boltzmann
-   use meds_forcing_opts, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
+   use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_therm_lib,         only : sat_vapor_pressure
    use meds_time,           only : meds_time_t, solar_cosz, day_of_year, solar_declination
-   use meds_forcing_opts, only : INTERP_LINEAR, INTERP_STEP,                                   &
+   use meds_forcing_params, only : INTERP_LINEAR, INTERP_STEP,                                 &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN
    implicit none
    private

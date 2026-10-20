@@ -2,15 +2,15 @@
 !==========================================================================================!
 ! test_biophysics_opts_config -- unit tests for the [soil]/[fast]/[snow]/[aerodynamics] TOML    !
 ! wiring of the fast-loop biophysics run-config (meds_config_io load_* helpers -> the            !
-! meds_biophysics_opts bundles). Writes a small TOML fixture, parses it, and checks: (1) string    !
+! meds_biophysics_params bundles). Writes a small TOML fixture, parses it, and checks: (1) string  !
 ! selectors map to the right enum codes, (2) scalar keys override the defaults, (3) keys ABSENT    !
-! from the block keep their meds_biophysics_opts default (opt-in, no clobber).                    !
+! from the block keep their meds_biophysics_params default (opt-in, no clobber).                  !
 !==========================================================================================!
 program test_biophysics_opts_config
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
-   use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_AQUIFER, SOIL_BC_DRAIN,                                &
+   use meds_biophysics_params, only : snow_params_t, aero_cfg_t
+   use meds_soil_params,     only : soil_opts_t, energy_opts_t, SOIL_BC_AQUIFER, SOIL_BC_DRAIN,       &
                                     ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_toml,            only : toml_table_t, toml_parse_file, toml_write_record
    use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg

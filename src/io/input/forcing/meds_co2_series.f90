@@ -26,7 +26,7 @@ module meds_co2_series
    use meds_time,            only : meds_time_t, string_to_time, time_to_string, time_eq, seconds_between,  &
                                     time_advance_seconds, time_advance_days, time_advance_months,           &
                                     time_advance_years
-   use meds_forcing_opts,    only : INTERP_LINEAR
+   use meds_forcing_params,  only : INTERP_LINEAR
    use meds_forcing_types,   only : co2_series_t
    use meds_forcing_kernels, only : interpolate_forcing
    implicit none

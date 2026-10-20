@@ -9,7 +9,7 @@
 ! Owned HERE: the fixed pool count `N_SOIL_POOL` + `IP_*`, soilc_audit_t, soilc_seam_t and         !
 ! soilc_diag_t. The pools themselves (soil_carbon_t) and litter_input_t are per-patch state in     !
 ! meds_patch_state_vars (litter_input_t is re-exported here; see the notes below), and             !
-! decomp_opts_t + its selector codes are config, in meds_biogeochem_opts.                          !
+! decomp_opts_t + its selector codes are config, in meds_biogeochem_params.                        !
 !==========================================================================================!
 module meds_biogeochem_types
    use meds_kinds, only : wp, ik

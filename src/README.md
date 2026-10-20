@@ -29,11 +29,11 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 ├── config/        meds_config_t (one field per key) and the routines that
 │   │              derive what the parameters imply (the soil column, the
 │   │              PFT table's arrays), the TOML reader, the loader, and
-│   │              the checks of the keys and their values                   3 109
-│   └── opts/      one leaf per TOML block, the types and codes a kernel
-│                  imports without meds_config: the PFT table, the soil
-│                  column and its bundles, forcing, output, the fast loop,
-│                  biophysics, sites, region, maps                             864
+│   │              the checks of the keys and their values                   3 119
+│   └── params/    the run's parameters, one leaf per TOML block: the types
+│                  and codes a kernel imports without meds_config (the PFT
+│                  table, the soil, forcing, output, the fast loop, snow and
+│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   861
 │
 │  ── STATE, one file per level of the hierarchy, each in sections ────────────
 ├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
@@ -121,9 +121,11 @@ machine precision.
 belongs in the `state/` file of the level that holds it: a patch's stores in
 `meds_patch_state_vars`, a cohort's fields in `meds_cohort_state_vars`. **Parameters are not state**: they are derived once and never
 integrated, so they live with the configuration they are derived from: their types in
-`config/opts/` (`soil_params_t` in `meds_soil_column_config`, `pft_table_t` in `meds_pft_params`),
+`config/params/` (`soil_params_t` in `meds_soil_params`, `pft_table_t` in `meds_pft_params`),
 and the routines that derive them in `config/meds_config` (the soil column's layer grid and
-bundles, the PFT table's leaf capacities).
+bundles, the PFT table's leaf capacities). A kernel's own argument types are not parameters in this
+sense: `*_args_t` (`leaf_photo_args_t`, `pheno_args_t`, …) carry the values a kernel reads, a driver
+fills them from the parameters, and they live with the kernel.
 
 **4. Laws and operators do not touch.** `demography/` holds both the vital-rate laws
 (`meds_demography_rates`) and the operators that apply them (`update_*`, `*_fusefiss`,
@@ -171,7 +173,7 @@ One edge is worth knowing because it is easy to get wrong:
 | a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_2_patches` and the new gap in `apply_patch_disturbance` |
 | a stateless constitutive curve: a physical or biological law with parameters | `share/functions/` |
 | a model-independent tool every layer needs (numerics, calendar, checks) | `share/`, if it uses nothing outside `share/` |
-| a TOML block | a leaf in `config/opts/`, so `meds_config` can carry it with no back-edge; its keys in `meds_config_main.toml`, its checks in `config/meds_config_check.f90` |
+| a TOML block | a leaf in `config/params/`, so `meds_config` can carry it with no back-edge; its keys in `meds_config_main.toml`, its checks in `config/meds_config_check.f90` |
 | a prescribed time-varying input (weather, CO2) | `io/input/forcing/` |
 | a static per-cell input map (soil, a cell mask) | `io/input/maps/meds_surface_maps.f90` |
 | an output variable | one `add_variable` line in `io/output/meds_output_registry.f90` |

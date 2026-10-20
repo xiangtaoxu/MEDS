@@ -26,7 +26,7 @@ program test_c_api_leaf
                                  meds_arrhenius, meds_peaked_arrhenius, leaf_kinetics_c,          &
                                  meds_rubisco_kinetics
    use meds_plant_types, only : PATH_C3
-   use meds_leaf_opts,    only : SM_MEDLYN, COLIM_QUADRATIC
+   use meds_leaf_params,  only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_therm_lib,     only : TEMP_RESPONSE_PEAKED
    use meds_test_support, only : banner, check, check_close
    implicit none

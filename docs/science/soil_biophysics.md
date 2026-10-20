@@ -396,7 +396,7 @@ and passes the resulting flux into the CO₂ source.
 |---|---|
 | soil water (the network) | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)); a layer's water relations: `meds_soil_hydr_lib`: `soil_water_relations` |
 | soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
-| soil layers | `meds_config`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`, `soil_column_layers`; the column's types in `meds_soil_column_config` |
+| soil layers | `meds_config`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`, `soil_column_layers`; the column's types in `meds_soil_params` |
 | retention curves (vG / Campbell) | `meds_soil_hydr_lib`, with the matric potential `soil_matric_potential` [MPa] |
 | hydraulic parameters from texture, eqs. (6)–(8) | `meds_soil_hydr_lib`: `soil_texture_to_hydraulics` |
 | thermal properties from texture, eq. (9) | `meds_therm_lib`: `soil_texture_to_thermal` |

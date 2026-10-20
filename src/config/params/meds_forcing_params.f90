@@ -1,12 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_forcing_opts -- the [forcing] and [site] blocks (docs/science/forcing.md) and the   !
+! meds_forcing_params -- the [forcing] and [site] blocks (docs/science/forcing.md) and the !
 ! selector codes the config, the reader and the disaggregation kernels share. A config     !
 ! leaf (meds_kinds and meds_time only), so meds_config carries forcing_config_t with no    !
 ! edge back to the forcing layer. The defaults are an Ithaca NY / ERA5-Land reference      !
 ! site.                                                                                    !
 !==========================================================================================!
-module meds_forcing_opts
+module meds_forcing_params
    use meds_kinds, only : wp, ik
    use meds_time,  only : meds_time_t
    implicit none
@@ -124,4 +124,4 @@ module meds_forcing_opts
       real(wp)           :: grid_elevation    = 320.0_wp         !< [m] elevation of the forcing source grid cell
    end type forcing_config_t
 
-end module meds_forcing_opts
+end module meds_forcing_params

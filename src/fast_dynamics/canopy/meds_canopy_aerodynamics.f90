@@ -24,7 +24,7 @@ module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : grav, pi, tiny_num, von_karman, safe_exp
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_biophysics_opts, only : aero_cfg_t
+   use meds_biophysics_params, only : aero_cfg_t
    implicit none
 
    !----- The bounds of the Monin-Obukhov initial guess (zeta from the bulk Richardson number), as in   !

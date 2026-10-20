@@ -20,9 +20,9 @@ module meds_output_stream
    use meds_kinds,    only : wp, ik
    use meds_time,     only : meds_time_t, time_to_decimal_year
    use meds_constants,     only : n_soil_layer_max
-   use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
+   use meds_soil_params,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_netcdf_c
-   use meds_output_opts, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter
+   use meds_output_params, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
                                   output_files_t, output_buffers_t,                                  &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &

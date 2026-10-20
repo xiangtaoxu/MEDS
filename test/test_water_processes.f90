@@ -37,8 +37,7 @@ program test_water_processes
    use meds_constants,  only : pi, grav, r_wv, p_std
    use meds_therm_lib,  only : sat_specific_humidity
    use meds_soil_types, only : chydro_forcing_t
-   use meds_soil_column_config, only : soil_params_t
-   use meds_biophysics_opts, only : soil_opts_t
+   use meds_soil_params, only : soil_params_t, soil_opts_t
    implicit none
 
    call test_soil_water_relations()

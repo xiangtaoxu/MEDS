@@ -29,7 +29,7 @@ module meds_column_state_ops
    use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t,                  &
                                      column_frozen_t, stage_bflux_t, column_bflux_t, GRP_ENTH,        &
                                      GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W
-   use meds_fast_opts,        only : process_mask_t
+   use meds_fast_params,      only : process_mask_t
    use meds_soil_types, only : energy_forcing_t
    use meds_fast_types, only : patch_biophys_t, tissue_coefficients_t
    implicit none

@@ -11,7 +11,7 @@ module meds_met_archive_source
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, seconds_into_day,    &
                          time_to_string
-   use meds_forcing_opts, only : MET_PATH_LEN, ARCHIVE_DT_SEC, SWPART_PASSTHROUGH
+   use meds_forcing_params, only : MET_PATH_LEN, ARCHIVE_DT_SEC, SWPART_PASSTHROUGH
    use meds_forcing_types, only : met_record_t, met_source_t, met_cursor_t, met_cells_t,          &
                                   HUMIDITY_TDEW
    use meds_era5land_reader, only : era5land_path, era5land_default_template,                     &

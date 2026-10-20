@@ -29,12 +29,12 @@ module meds_surface_maps
                                      era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
    use meds_config,           only : meds_config_t, soil_column_layers, soil_column_params
    use meds_config_check,     only : validate_config
-   use meds_maps_opts,     only : maps_opts_t, soil_maps_on
+   use meds_maps_params,      only : maps_opts_t, soil_maps_on
    use meds_constants,        only : n_soil_layer_max
-   use meds_soil_column_config, only : soil_params_t
+   use meds_soil_params,      only : soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER,                   &
+                                     ANNUAL_DAMPING_DEPTH
    use meds_soil_hydr_lib,    only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,        only : soil_texture_to_thermal
-   use meds_biophysics_opts,  only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
    implicit none
    private
 

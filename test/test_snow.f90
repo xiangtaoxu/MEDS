@@ -23,7 +23,7 @@ program test_snow
                                        internal_energy_liquid, sat_specific_humidity
    use meds_patch_state_vars,   only : snow_column_t
    use meds_soil_types, only : snow_env_t, snow_flux_t, snow_melt_t
-   use meds_biophysics_opts, only : snow_params_t
+   use meds_biophysics_params,  only : snow_params_t
    use meds_ground_biophysics,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
                                        snow_energy_step, snow_surface_fluxes
    implicit none

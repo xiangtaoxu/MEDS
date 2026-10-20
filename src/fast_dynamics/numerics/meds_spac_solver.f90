@@ -46,8 +46,7 @@ module meds_spac_solver
    use meds_soil_water,      only : soil_water_flux, ground_evaporation_rate, bottom_flux
    use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_soil_types,      only : chydro_forcing_t
-   use meds_soil_column_config, only : soil_params_t
-   use meds_biophysics_opts, only : soil_opts_t
+   use meds_soil_params,     only : soil_params_t, soil_opts_t
    use meds_plant_types,     only : hydro_args_table_t
    use meds_numerics,        only : sufficient_decrease, fraction_to_boundary
    use meds_therm_lib,       only : internal_energy_liquid, liquid_energy_to_temp

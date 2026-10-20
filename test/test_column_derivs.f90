@@ -22,11 +22,11 @@ program test_column_derivs
    use meds_budget_check,   only : budget_t, budget_accumulate
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t
+   use meds_soil_params,      only : soil_params_t, soil_thermal_params_t, energy_opts_t,             &
+                                     soil_opts_t
    use meds_config,             only : build_soil_hydr_params, build_soil_therm_params
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : energy_opts_t, soil_opts_t
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_plant_types, only : hydro_args_t, hydro_opts_t
    use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
@@ -40,7 +40,7 @@ program test_column_derivs
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : default_error_control
    use meds_fast_types,       only : error_control_t, fast_workspace_t
-   use meds_fast_opts,        only : CTRL_PI
+   use meds_fast_params,      only : CTRL_PI
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
    !----- The column's parameters for every make_column fixture (the frozen record holds only what  !

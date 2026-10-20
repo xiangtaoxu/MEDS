@@ -11,7 +11,7 @@
 module meds_leaf_gas_exchange
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : p_std, tiny_num, gsw_2_gsc, gbw_2_gbc, mol_2_umol
-   use meds_leaf_opts,     only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
+   use meds_leaf_params,   only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t, PATH_C3, PATH_C4,   &
                                 LIM_NONE, LIM_RUBISCO, &
                                 LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP

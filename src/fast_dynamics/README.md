@@ -19,8 +19,8 @@ split between them is by **timescale**, and within each half by domain. See
 
 Each domain owns its argument records: **`meds_canopy_types`** (radiative transfer and
 aerodynamics), **`meds_soil_types`** (hydrology, thermal, snow), **`meds_plant_types`** (leaf,
-hydraulics, tissue energy). The `SOIL_*` / `ENERGY_*` / `HR_*` selector codes live one layer down in
-`config/meds_biophysics_opts`, and the prognostic per-store column state — the canopy-air state, the
+hydraulics, tissue energy). The `SOIL_*` / `ENERGY_*` selector codes live one layer down in
+`config/params/meds_soil_params`, and the prognostic per-store column state — the canopy-air state, the
 two soil columns, the snow store — lives in `state/meds_patch_state_vars`, with the rest of what a
 patch holds, and the kernels take those types from there.
 
@@ -86,7 +86,7 @@ constitutive relations by physical quantity rather than by caller:
   pressure-volume and vulnerability curves are the matching `meds_plant_hydr_lib`.
 - **Thermal properties** → `meds_therm_lib`: the ice-aware Johansen conductivity and the volumetric
   heat capacity — beside the moist-air psychrometrics, which are their thermal twin.
-- **Per-column parameter bundles** → `meds_soil_column_config` in `src/config/opts/`, and their
+- **Per-column parameter bundles** → `meds_soil_params` in `src/config/params/`, and their
   `pure` builders → `meds_config` in `src/config/`, with the soil-column block they are derived from.
   The builders are state-free: they do not depend on water content or energy.
 

@@ -12,7 +12,7 @@
 ! Each kernel domain keeps its own records module (the plant and soil records are in       !
 ! meds_plant_types and meds_soil_types), not one grab-bag. The run-config bundles these    !
 ! kernels switch on (aero_cfg_t, the selector codes) live one layer down in                !
-! meds_biophysics_opts; the prognostic stores live in meds_patch_state_vars.               !
+! meds_biophysics_params; the prognostic stores live in meds_patch_state_vars.             !
 !==========================================================================================!
 module meds_canopy_types
    use meds_kinds,     only : wp, ik

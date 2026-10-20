@@ -19,7 +19,7 @@ program test_column_dynamics
                                         tissue_c_wood_dry
    use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
                                         build_soil_therm_params
-   use meds_fast_opts,           only : INTEG_ARK, INTEG_RK45
+   use meds_fast_params,         only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, tissue_temp_to_energy,  &
                                            internal_energy_liquid, tissue_dry_heat_capacity
@@ -27,7 +27,7 @@ program test_column_dynamics
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : SOIL_BC_DRAIN
+   use meds_soil_params,         only : SOIL_BC_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &

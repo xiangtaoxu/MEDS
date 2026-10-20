@@ -21,16 +21,16 @@ module meds_config
    use meds_pft_params,         only : pft_table_t, HYD_UNSET
    use meds_plant_hydr_lib,     only : tissue_psi_tlp
    use meds_soil_hydr_lib,      only : soil_head_to_theta, soil_matric_potential
-   use meds_fast_opts,          only : process_mask_t, INTEG_ARK, CTRL_I, CTRL_L1_ADAPTIVE
-   use meds_soil_column_config, only : soil_column_config_t, soil_texture_layers_t, soil_params_t,   &
-                                       soil_thermal_params_t
-   use meds_biophysics_opts,    only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
-   use meds_biogeochem_opts,    only : decomp_opts_t
-   use meds_forcing_opts,       only : forcing_config_t
-   use meds_output_opts,        only : output_config_t
-   use meds_region_opts,        only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
-   use meds_maps_opts,          only : maps_opts_t, soil_maps_on
-   use meds_sites_opts,         only : site_spec_t
+   use meds_fast_params,        only : process_mask_t, INTEG_ARK, CTRL_I, CTRL_L1_ADAPTIVE
+   use meds_soil_params,        only : soil_column_config_t, soil_texture_layers_t, soil_params_t,    &
+                                       soil_thermal_params_t, soil_opts_t, energy_opts_t
+   use meds_biophysics_params,  only : snow_params_t, aero_cfg_t
+   use meds_biogeochem_params,  only : decomp_opts_t
+   use meds_forcing_params,     only : forcing_config_t
+   use meds_output_params,      only : output_config_t
+   use meds_region_params,      only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
+   use meds_maps_params,        only : maps_opts_t, soil_maps_on
+   use meds_sites_params,       only : site_spec_t
    implicit none
    private
 

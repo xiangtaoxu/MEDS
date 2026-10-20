@@ -12,7 +12,7 @@
 ! gain no speed, and the block's field lists would name about 46 fields instead of 7       !
 ! stores. The patch's own numbers (area, age, the daily rates) are plain arrays, and its   !
 ! cohort map is the CSR map explained in meds_cohort_state_vars. The stores' parameters    !
-! are config (meds_soil_column_config), not state.                                         !
+! are config (meds_soil_params), not state.                                                !
 !==========================================================================================!
 module meds_patch_state_vars
    use meds_kinds,            only : wp, ik

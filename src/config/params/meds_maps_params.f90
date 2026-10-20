@@ -1,12 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_maps_opts -- the [maps] block, as a config leaf: the static maps a run reads its    !
+! meds_maps_params -- the [maps] block, as a config leaf: the static maps a run reads its  !
 ! soil and its height allometry's site index from (docs/configuration.md, "Input maps").   !
 ! Each map is on the forcing grid; meds_surface_maps reads it at the run's cells. A region !
 ! needs the three soil maps; a site may use them or set [soil] by hand, and a key a map    !
 ! provides is refused while the map is set.                                                !
 !==========================================================================================!
-module meds_maps_opts
+module meds_maps_params
    implicit none
    private
 
@@ -31,4 +31,4 @@ contains
       soil_maps_on = len_trim(s%soil_depth_map) > 0
    end function soil_maps_on
 
-end module meds_maps_opts
+end module meds_maps_params

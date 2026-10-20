@@ -6,7 +6,7 @@
 !                                                                                          !
 ! Each domain follows the same shape: a *_forcing_t / *_env_t the kernel reads, and a      !
 ! *_flux_t it returns, with the PROGNOSTIC stores themselves in meds_patch_state_vars and  !
-! the run-config selectors in meds_biophysics_opts.                                        !
+! the run-config selectors in meds_biophysics_params.                                      !
 !==========================================================================================!
 module meds_soil_types
    use meds_kinds,             only : wp, ik
@@ -20,8 +20,8 @@ module meds_soil_types
 
    !=======================================================================================!
    !  Soil-column water: the boundary the water network's evaporation reads. The soil's       !
-   !  parameters are soil_params_t (meds_soil_column_config), its options soil_opts_t         !
-   !  (meds_biophysics_opts), its retention curves meds_soil_hydr_lib.                         !
+   !  parameters are soil_params_t (meds_soil_params), its options soil_opts_t                !
+   !  (meds_biophysics_params), its retention curves meds_soil_hydr_lib.                       !
    !=======================================================================================!
 
    !----- The soil column's surface boundary for the water network's evaporation (read-only). -----!
@@ -100,7 +100,7 @@ module meds_soil_types
    !  SNOW / temporary-surface-water types (meds_ground_biophysics;                        !
    !  docs/science/snow_biophysics.md). STATELESS per-store kernels; forcing arrives as    !
    !  value types. (snow_params_t -- the physical parameter table -- lives in              !
-   !  meds_biophysics_opts.)                                                               !
+   !  meds_biophysics_params.)                                                             !
    !=======================================================================================!
 
    !----- Surface boundary conditions for the snow-surface energy balance (read-only, FORCED). --!

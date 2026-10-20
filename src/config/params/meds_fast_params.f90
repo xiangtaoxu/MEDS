@@ -1,10 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_opts -- the selector codes and the process mask of the [fast] block, as a      !
+! meds_fast_params -- the selector codes and the process mask of the [fast] block, as a    !
 ! config leaf: the time integrator and its error control (docs/science/numerical_scheme.md !
 ! §3, eqs. (3)-(4)). The fast-loop numerics switch on them and import them from here.      !
 !==========================================================================================!
-module meds_fast_opts
+module meds_fast_params
    use meds_kinds, only : ik
    implicit none
    private
@@ -38,4 +38,4 @@ module meds_fast_opts
       logical :: hydraulics = .true.   !< plant hydraulics (psi)
    end type process_mask_t
 
-end module meds_fast_opts
+end module meds_fast_params

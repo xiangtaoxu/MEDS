@@ -25,7 +25,7 @@ module meds_ground_biophysics
                                        internal_energy_liquid, precip_enthalpy
    use meds_patch_state_vars,   only : snow_column_t
    use meds_soil_types, only : snow_env_t, snow_flux_t, snow_melt_t
-   use meds_biophysics_opts, only : snow_params_t
+   use meds_biophysics_params,  only : snow_params_t
    implicit none
    private
 

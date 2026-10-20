@@ -19,9 +19,9 @@ module meds_soil_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, n_soil_layer_max
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
-   use meds_soil_column_config, only : soil_thermal_params_t, soil_params_t
+   use meds_soil_params,      only : soil_thermal_params_t, soil_params_t, energy_opts_t,             &
+                                     ENERGY_BC_DIRICHLET
    use meds_patch_state_vars,   only : soil_energy_column_t
-   use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
    use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid, soil_thermal_conductivity,  &
                                      soil_volumetric_heat_capacity
    use meds_linear_algebra,   only : thomas_solve
