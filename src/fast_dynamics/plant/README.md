@@ -7,7 +7,7 @@ unit-test standalone (`cmake --build … --target meds_fast_kernels`), orthogona
 **The daily plant kernels are next door** in `src/slow_dynamics/plant/` — phenology, carbon
 allocation, trait plasticity. The vital-rate laws are demography, not ecophysiology, and live in
 `src/slow_dynamics/demography/`. Structural allometry is a shared geometric constraint reachable by
-state, demography, plant and config alike, so it lives in `src/shared/functions/meds_allometry.f90`.
+state, demography, plant and config alike, so it lives in `src/shared/functions/meds_allometry_lib.f90`.
 
 Every process here is a stateless per-individual kernel driven by an environment record, and all of
 them are wired into the fast loop: the pre-pass calls gas exchange and the two maintenance-respiration
@@ -21,11 +21,11 @@ Each kernel module exposes its own seams; there is no façade.
 |---|---|
 | `meds_plant_types` | All the sub-daily derived types — leaf, hydraulics, tissue energy — in one sectioned module. Phenology's types are in `meds_phenology_types` under `slow_dynamics/plant/`. |
 | `meds_leaf_gas_exchange` | **The leaf seam.** FvCB C3 and Collatz C4 demand, the electron-transport hyperbola, Leuning / Medlyn / Katul stomata, and the bracketed Cᵢ solver. `solve_leaf_gas_exchange` for one leaf, `leaf_gas_exchange_batch` over bare arrays. Both take a photosynthesis parameter table, never a config handle. |
-| `meds_plant_hydraulics` | The coupled matrix-exponential network solve, over the tissue pressure-volume and Kirchhoff conductance curves in `meds_hydr_lib`. |
+| `meds_plant_hydraulics` | The coupled matrix-exponential network solve, over the tissue pressure-volume and Kirchhoff conductance curves in `meds_plant_hydr_lib`. |
 | `meds_plant_biophysics` | The leaf and wood tissue energy balance, and the canopy interception film they share. |
 | `meds_plant_respiration` | Non-leaf maintenance respiration: `stem_maintenance_respiration` and `fine_root_maintenance_respiration`. Growth respiration is charged in the daily allocator, on realized growth. |
 
-The shared temperature response (`meds_temp_response`, Arrhenius and peaked deactivation) lives in
+The shared temperature response (`meds_therm_lib`, Arrhenius and peaked deactivation) lives in
 `src/shared/functions/`, so leaf, stem and root reach one code path rather than three drifting
 copies.
 

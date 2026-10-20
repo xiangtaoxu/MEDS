@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_allometry -- a stem's size from its diameter: height, aboveground biomass (AGB),    !
+! meds_allometry_lib -- a stem's size from its diameter: height, aboveground biomass (AGB),    !
 ! leaf area, wood area and sapwood; the way back from carbon to diameter; and the carbon-  !
 ! pool targets the allocator fills. The curves, their shipped coefficients and the         !
 ! inversions are docs/science/plant_carbon_allocation.md §2 (The size allometry).          !
@@ -11,7 +11,7 @@
 ! holds its own copy, whose chave_e is its cell's (docs/configuration.md §Regional runs).  !
 ! Biomass and leaf area are in carbon.                                                     !
 !==========================================================================================!
-module meds_allometry
+module meds_allometry_lib
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, pio4
    implicit none
@@ -240,4 +240,4 @@ contains
       f_sap      = min(1.0_wp, sapw_area / max(basal_area, tiny_num))
    end function sapwood_fraction
 
-end module meds_allometry
+end module meds_allometry_lib

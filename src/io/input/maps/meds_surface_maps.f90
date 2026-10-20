@@ -31,8 +31,8 @@ module meds_surface_maps
    use meds_maps_opts,     only : maps_opts_t, soil_maps_on
    use meds_constants,        only : n_soil_layer_max
    use meds_soil_column_config, only : soil_params_t, soil_column_layers, soil_column_params
-   use meds_pedotransfer,     only : soil_texture_t, soil_hydraulics_from_texture, soil_thermal_from_texture
-   use meds_water_retention,  only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,    only : soil_texture_t, soil_hydraulics_from_texture, SOIL_RETENTION_VG
+   use meds_therm_lib,        only : soil_thermal_from_texture
    use meds_biophysics_opts,  only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, annual_damping_depth
    implicit none
    private
@@ -289,8 +289,9 @@ contains
                call soil_hydraulics_from_texture(tex, sc%layer_theta_sat(l), sc%layer_theta_res(l),      &
                                                  sc%layer_curve_par_a(l), sc%layer_curve_par_n(l),       &
                                                  sc%layer_ksat(l))
-               call soil_thermal_from_texture(tex, sc%layer_theta_sat(l), sc%layer_solid_conductivity(l), &
-                                              sc%layer_dry_conductivity(l), sc%layer_dry_heat_capacity(l))
+               call soil_thermal_from_texture(tex%sand, tex%clay, sc%layer_theta_sat(l),                     &
+                                              sc%layer_solid_conductivity(l), sc%layer_dry_conductivity(l),  &
+                                              sc%layer_dry_heat_capacity(l))
                top = bottoms(l)
             end do
             sc%n_layer_values = n

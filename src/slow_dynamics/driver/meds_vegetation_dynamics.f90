@@ -17,9 +17,9 @@ module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, yr_day, grav_head
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp, pft_tissue_curves
-   use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential
+   use meds_plant_hydr_lib,       only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential
    use meds_therm_lib,            only : internal_energy_liquid
-   use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
+   use meds_allometry_lib,        only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,  &
                                          storage_carbon_target
    use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon, &
                                          hold_cohort_tissue_temps, cohort_water_enthalpy

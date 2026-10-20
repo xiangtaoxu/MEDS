@@ -39,7 +39,7 @@ module meds_io
    use meds_polygon_state_vars,     only : alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_demography_update,      only : update_overtopping_lai
    use meds_constants,     only : n_soil_layer_max, n_snow_layer_max
-   use meds_water_retention, only : water_curve_t
+   use meds_plant_hydr_lib,  only : water_curve_t
    use meds_therm_lib,              only : internal_energy_liquid
    use meds_demography_cohort_fusefiss,   only : sort_cohorts
    implicit none

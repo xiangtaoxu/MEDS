@@ -20,9 +20,10 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │   │              constants, numerics (clamps, means, the conservation test),
 │   │              linear algebra (Thomas sweep, dense LU, arrowhead solve,
 │   │              matrix exponential), calendar time, budget checks         1 148
-│   └── functions/ stateless constitutive laws: allometry, thermodynamics,
-│                  retention and pressure-volume curves, soil pedotransfer,
-│                  canopy optics, temperature response                       1 916
+│   └── functions/ stateless constitutive laws, one library per domain:
+│                  allometry, plant hydraulics, soil hydraulics,
+│                  thermodynamics (with the temperature response of
+│                  enzyme rates), canopy optics                              1 916
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        TOML reader and loader, PFT trait table, meds_config_t,

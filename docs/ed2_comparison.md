@@ -385,18 +385,18 @@ apart from gross GPP as ED2 keeps them.
 The curves in `src/shared/functions` state MEDS's own rationale in their comments and their science
 pages; what they take from ED2 is listed here.
 
-- **Allometry** (`meds_allometry`). The pan-tropical curves are ED2's `iallom = 3` (`ed_params.f90`,
+- **Allometry** (`meds_allometry_lib`). The pan-tropical curves are ED2's `iallom = 3` (`ed_params.f90`,
   `utils/allometry.f90`). MEDS ships one coefficient set for every PFT; a PFT file may give each PFT its
   own curve and coefficients. The leaf-area coefficient
   `lai_b1` = 0.4677/2 comes from ED2's `size2bl` leaf fit,
   bleaf = `c14f15_bl_xx(1)`/(SLA·C2B)·(D²H)^0.6410495: SLA·bleaf, the leaf area, does not depend on
   SLA, so MEDS uses it directly. The wood area index is ED2's `cpatch%wai` form, b1·D^b2, and the
   sapwood fraction ED2's `dbh2sf`.
-- **Plant hydraulics** (`meds_hydr_lib`). The sapwood conductivity against wood density is Xu et al.
+- **Plant hydraulics** (`meds_plant_hydr_lib`). The sapwood conductivity against wood density is Xu et al.
   (2016) as ED2 codes it (`plant_hydro_scheme = 2`), with wood density held to ED2's 0.35–0.95 g cm⁻³.
   The root profile is ED2's cumulative exponential; over the rooting depth it sums to 1 − β, and MEDS
   divides by that so the fractions sum to one.
-- **Soil water** (`meds_pedotransfer`, `meds_water_retention`). The van Genuchten parameters follow
+- **Soil water** (`meds_soil_hydr_lib`). The van Genuchten parameters follow
   Hodnett & Tomasella (2002) and the saturated conductivity Ottoni et al. (2019), as ED2's
   `soil_hydro_scheme = 2` uses them; the residual water content is floored as ED2 floors it; the pore
   connectivity −1 is ED2's ([soil_biophysics](science/soil_biophysics.md) eq. (2)).
@@ -405,7 +405,7 @@ pages; what they take from ED2 is listed here.
   ice in a frozen layer.
 - **Calendar** (`meds_time`). ED2's daylength takes the polar-day branch at arg ≤ 1, which is wrong;
   MEDS takes it at arg ≤ −1. A month step clamps the day into the target month, as ED2's does.
-- **Temperature response** (`meds_temp_response`). The peaked form is Medlyn et al. (2002)'s, as FATES
+- **Temperature response** (`meds_therm_lib`). The peaked form is Medlyn et al. (2002)'s, as FATES
   also uses it.
 
 ---

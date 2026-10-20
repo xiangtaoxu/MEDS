@@ -6,11 +6,12 @@
 ! stored anywhere in state but are a closed-form function of things that are. Plain arguments      !
 ! only -- no polygon_t, no config aggregator -- so every routine here is directly unit-testable.   !
 !                                                                                          !
-! CONTENT RULE. Anything a physics library already owns is CALLED, never re-implemented:           !
-! soil_psi_from_theta / psi_from_water_content live in meds_water_retention, internal_energy_to_temp !
-! and the moist-air thermodynamics in meds_therm_lib, the allometry in meds_allometry. This module   !
-! holds only diagnostics that no physics kernel owns. Where a thin re-export is more readable than  !
-! making every caller `use` two modules, the wrapper is marked as such and simply forwards.         !
+! CONTENT RULE. Anything a physics library already owns is CALLED, never re-implemented:   !
+! soil_psi_from_theta lives in meds_soil_hydr_lib, psi_from_water_content in               !
+! meds_plant_hydr_lib, internal_energy_to_temp and the moist-air thermodynamics in         !
+! meds_therm_lib, the allometry in meds_allometry_lib. This module holds only diagnostics  !
+! that no physics kernel owns. Where a thin re-export is more readable than making every   !
+! caller `use` two modules, the wrapper is marked as such and simply forwards.             !
 !                                                                                          !
 ! PLACEMENT. src/io/ (the meds_io_prep target, which links meds_demography only -- no netCDF), NOT  !
 ! src/shared/functions/. Accepted consequence: nothing BELOW io in the library DAG can call these.   !
@@ -20,10 +21,10 @@
 ! that is the signal it was never a diagnostic and belongs in the owning physics library instead.   !
 !==========================================================================================!
 module meds_diagnostic_kernels
-   use meds_kinds,     only : wp, ik
-   use meds_constants, only : tiny_num, gsw_2_gsc, grav_head
-   use meds_therm_lib, only : sat_vapor_pressure, air_vpd, specific_humidity_to_vpd
-   use meds_water_retention, only : soil_psi_from_theta
+   use meds_kinds,         only : wp, ik
+   use meds_constants,     only : tiny_num, gsw_2_gsc, grav_head
+   use meds_therm_lib,     only : sat_vapor_pressure, air_vpd, specific_humidity_to_vpd
+   use meds_soil_hydr_lib, only : soil_psi_from_theta
    implicit none
    private
 
@@ -95,7 +96,7 @@ contains
    end function soil_wetness
 
    !----- Soil matric potential [MPa] from volumetric moisture. A thin re-export of            !
-   !      meds_water_retention's curve (which returns metres of head) with the unit             !
+   !      meds_soil_hydr_lib's curve (which returns metres of head) with the unit               !
    !      conversion the output layer wants, so a caller needs one `use`, not two.              !
    !      head [m] -> MPa via the shared `grav_head` (rho_w*g), the SAME constant plant           !
    !      hydraulics uses -- so a soil psi reported here and a psi_soil the roots saw are on one   !

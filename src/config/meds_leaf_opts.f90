@@ -29,5 +29,5 @@ module meds_leaf_opts
    integer(ik), parameter :: COLIM_QUADRATIC = 2_ik !< smoothed co-limitation quadratics
 
    !----- TRESP_ARRHENIUS / TRESP_PEAKED are the same KIND of selector but are owned by      !
-   !      meds_temp_response, which defines the responses they select. Import them there.     !
+   !      meds_therm_lib, which defines the responses they select. Import them there.         !
 end module meds_leaf_opts

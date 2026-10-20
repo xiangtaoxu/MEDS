@@ -129,17 +129,17 @@ function(meds_fortran_flags tgt)
 endfunction()
 
 #----- FOUNDATION (src/shared/): the kinds, the constants, the numerics, the calendar and the      #
-#      budget checks at the top, and the stateless constitutive laws in functions/ (allometry,     #
-#      thermodynamics, retention and pressure-volume curves, the soil pedotransfer function,       #
-#      canopy optics, temperature response).                                                       #
+#      budget checks at the top, and the stateless constitutive laws in functions/, one library    #
+#      per domain: allometry, plant hydraulics, soil hydraulics, thermodynamics (with the          #
+#      temperature response of enzyme rates) and canopy optics.                                    #
 #                                                                                                  #
 #      One folder, one library, and it links NOTHING. A module belongs in src/shared/ only if it   #
 #      `use`s nothing outside src/shared/ -- no model state, no configuration, no external         #
 #      library. That is what lets every layer above, and the tests that link one narrow library,   #
 #      reach it freely, and it is the test that keeps this folder from becoming the place a file   #
-#      goes when no other place fits. meds_temp_response sits here so leaf, respiration and any    #
-#      other tissue share one code path without a plant-domain -> plant-domain library edge;       #
-#      meds_allometry because it is a geometric CONSTRAINT that state, demography, plant and       #
+#      goes when no other place fits. The temperature response sits here so leaf, respiration and  #
+#      any other tissue share one code path without a plant-domain -> plant-domain library edge;   #
+#      meds_allometry_lib because it is a geometric CONSTRAINT that state, demography, plant and   #
 #      config all read.                                                                            #
 file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90
                                           ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/functions/*.f90)
@@ -843,8 +843,9 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- The shipped [allometry] block must equal the meds_allometry initializers (the Python  #
-   #      library's config-free values); biomass must be Chave 2014 in carbon, leaf ED2's over C2B. #
+   #----- The shipped [allometry] block must equal the meds_allometry_lib initializers (the     #
+   #      Python library's config-free values); biomass must be Chave 2014 in carbon, leaf      #
+   #      ED2's over C2B.                                                                       #
    add_executable(test_allometry_defaults test/test_allometry_defaults.f90)
    target_link_libraries(test_allometry_defaults PRIVATE meds_testsupport meds_model)
    meds_fortran_flags(test_allometry_defaults)

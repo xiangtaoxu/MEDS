@@ -3,9 +3,9 @@
 ! meds_pft_params -- plant functional type (PFT) trait table.                              !
 !                                                                                          !
 ! Structure-of-arrays: one allocatable array per trait, indexed by PFT. Each PFT's size    !
-! allometry is one record, allom(pft) (meds_allometry): its height curve and cap, biomass, !
-! leaf area, wood area, sapwood and the share of its wood above ground. Wood density (rho) !
-! enters its biomass and is a trait of its own.                                            !
+! allometry is one record, allom(pft) (meds_allometry_lib): its height curve and cap,      !
+! biomass, leaf area, wood area, sapwood and the share of its wood above ground. Wood      !
+! density (rho) enters its biomass and is a trait of its own.                              !
 !                                                                                          !
 ! The PFTs carry the parameters of the vital rates (meds_demography_rates, called from     !
 ! meds_vegetation_dynamics):                                                               !
@@ -22,8 +22,8 @@
 ! recruits are born; and each PFT's `min_repro_height`, the height it reproduces from.      !
 !==========================================================================================!
 module meds_pft_params
-   use meds_kinds,     only : wp, ik
-   use meds_allometry, only : allometry_t
+   use meds_kinds,         only : wp, ik
+   use meds_allometry_lib, only : allometry_t
    implicit none
    private
 

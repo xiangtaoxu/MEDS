@@ -34,11 +34,11 @@ program test_column_energy
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : soil_thermal_params_t, soil_params_t, build_soil_hydr_params, build_soil_therm_params
-   use meds_water_retention, only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
-   use meds_therm_lib,           only : soil_thermal_cond, soil_heat_cap_vol
-   use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,           &
-                                     sat_vapor_pressure_temp_deriv, internal_energy_liquid
+   use meds_therm_lib,           only : soil_thermal_cond, soil_heat_cap_vol, temp_to_internal_energy,  &
+                                        internal_energy_to_temp, sat_vapor_pressure,                    &
+                                        sat_vapor_pressure_temp_deriv, internal_energy_liquid
    use meds_soil_energy,      only : soil_energy_step_implicit
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on

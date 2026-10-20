@@ -42,7 +42,7 @@ scheme: it converges to a different limit that refinement does not remove
 **Soil and plant water are one network, on both schemes.** `run_spac_solver` (in
 `build_column_frozen`) solves the pond, soil layers and every cohort's wood and leaves together; the
 stages only move water at its time-mean rates, and hold each cohort's transpiration at the network's.
-A new water flow belongs in the network (its law in `meds_hydr_lib` or `meds_soil_water`), not in a scheme.
+A new water flow belongs in the network (its law in `meds_plant_hydr_lib` or `meds_soil_water`), not in a scheme.
 
 ## Rules that break things quietly
 

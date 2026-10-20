@@ -3,7 +3,7 @@
 ! test_water_processes -- the water relations and flows the soil-plant water solver uses   !
 ! (docs/science/soil_plant_water.md): every analytic derivative against a central finite   !
 ! difference, over dry, wet and saturated states, and every value against the read-offs of !
-! meds_water_retention, where those read-offs' floors do not bind.                         !
+! meds_soil_hydr_lib and meds_plant_hydr_lib, where those read-offs' floors do not bind.   !
 !                                                                                          !
 !   1. SOIL LAYERS  : two van Genuchten soils and a Campbell soil; the two branches of the      !
 !                     unknown meet with equal value and slope; theta and K match the            !
@@ -22,16 +22,16 @@ program test_water_processes
    use meds_test_assert, only : check_true, check_close, test_report
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : grav_head, rho_h2o
-   use meds_water_retention, only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,          &
-                                    soil_unknown_from_theta, tissue_water_relations, tissue_rwc_from_water,      &
-                                    pond_water_relations, pond_head_from_water, SOIL_SPECIFIC_STORAGE,          &
-                                    POND_DEPRESSION_DEPTH
+   use meds_soil_hydr_lib,   only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,     &
+                                    soil_unknown_from_theta, pond_water_relations, pond_head_from_water,  &
+                                    SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH, SOIL_RETENTION_VG,      &
+                                    SOIL_RETENTION_CAMPBELL, soil_theta_from_psi, VG_PORE_CONNECTIVITY
+   use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_rwc_from_water, rhizosphere_conductance,  &
+                                    root_water_uptake, xylem_sapflow, xylem_max_conductance,                 &
+                                    supply_limited_transpiration, hydro_table_t, build_hydro_table,          &
+                                    flux_potential, flux_potential_lin, plc_retained, water_curve_t,         &
+                                    psi_from_rwc, water_content
    use meds_numerics,    only : smooth_max0
-   use meds_hydr_lib,    only : rhizosphere_conductance, root_water_uptake, xylem_sapflow, xylem_max_conductance,  &
-                                supply_limited_transpiration, hydro_table_t, build_hydro_table, flux_potential,   &
-                                flux_potential_lin, plc_retained
-   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_from_psi,       &
-                                    VG_PORE_CONNECTIVITY, water_curve_t, psi_from_rwc, water_content
    use meds_soil_water, only : ground_evaporation_rate, soil_water_flux
    use meds_constants,  only : pi, grav, r_wv, p_std
    use meds_therm_lib,  only : sat_specific_humidity
@@ -53,7 +53,7 @@ program test_water_processes
 
 contains
 
-   !----- The conductivity's closed form, written independently of meds_water_retention: Mualem-  !
+   !----- The conductivity's closed form, written independently of meds_soil_hydr_lib: Mualem-    !
    !      van Genuchten Ks Se^L [1 - (1 - Se^(1/m))^m]^2, or Campbell's Ks Se^(2b+3). -------------!
    pure real(wp) function conductivity_ref(c, se) result(k)
       type(soil_layer_curve_t), intent(in) :: c
@@ -124,7 +124,7 @@ contains
                          abs(dpsi_hi - dpsi_lo) <= 1.0e-5_wp * abs(dpsi_lo))
          call check_true(trim(label(ic))//': branches meet (slope of water)',                          &
                          abs(dw_hi - dw_lo) <= 1.0e-5_wp * abs(dw_lo) .or. ic == 3)
-         !----- Values against meds_water_retention, where its floors do not bind. -----------!
+         !----- Values against meds_soil_hydr_lib, where its floors do not bind. -------------!
          ok_val = .true. ; ok_k_val = .true. ; ok_round = .true.
          do i = 1, 60
             head = -10.0_wp ** (-2.0_wp + 5.0_wp * real(i, wp) / 60.0_wp)          ! -1 cm .. -1 km
@@ -140,7 +140,7 @@ contains
             if (abs(psi / grav_head - head) > 1.0e-6_wp * abs(head) .and.                              &
                 theta_ref < c(ic)%theta_sat - 1.0e-9_wp) ok_round = .false.
          end do
-         call check_true(trim(label(ic))//': theta(psi) matches meds_water_retention', ok_val)
+         call check_true(trim(label(ic))//': theta(psi) matches meds_soil_hydr_lib', ok_val)
          call check_true(trim(label(ic))//': K(theta) matches the closed form', ok_k_val)
          call check_true(trim(label(ic))//': theta -> unknown -> potential round-trips', ok_round)
          !----- Above saturation the layer holds theta_sat + S_s * head. ---------------------!

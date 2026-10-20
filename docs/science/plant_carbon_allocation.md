@@ -99,7 +99,7 @@ the height it reaches on its own curve. The height is the same at every site: wh
 
 ### The size allometry
 
-The targets and every cohort's geometry come from its PFT's size allometry (`meds_allometry`, one
+The targets and every cohort's geometry come from its PFT's size allometry (`meds_allometry_lib`, one
 record per PFT), whose coefficients are the PFT file's `[allometry]` block (`docs/configuration.md`, "The
 PFT file"): each key one value for every PFT or one per PFT, so an understorey specialist and a canopy
 emergent can each have their own curve, cap and leaf display. With $D$ the diameter [cm], $H$ the height [m] and $\rho$ the wood density [g cm⁻³]:
@@ -278,7 +278,7 @@ This is the *only* plant-flux call on the slow carbon path.
 | input | source |
 |---|---|
 | `gpp`, `resp_maint` | fast-loop accumulators on the cohort SoA (`gpp_accum`, `*_resp_accum`) when `fast_biophysics_on`; otherwise the `gpp_ref·leaf_area` stub |
-| `leaf_demand`, `fineroot_demand` | allometric deficit (`meds_allometry.size2leaf_carbon`, using the **plastic** `cohort%sla`) **flush-capped** by the phenology flush rate |
+| `leaf_demand`, `fineroot_demand` | allometric deficit (`meds_allometry_lib.size2leaf_carbon`, using the **plastic** `cohort%sla`) **flush-capped** by the phenology flush rate |
 | `storage_demand`, `storage`, `repro_frac` | cohort SoA (`nonstructural_carbon`) + PFT traits (`storage_cushion`, `reproduction_investment_fraction`) |
 | `growth_resp_frac` | PFT trait `growth_resp_factor` |
 | this step's **shed** (litter) | `cohort_carbon_demand` calls `meds_phenology.leaf_turnover_step` (background turnover at the cohort's `leaf_turnover_rate` while flushing and no leaves drop, plus senescence down to `min_leaf_cover`) and turns fine roots over on the same `turnover_gate`, for the carbon amounts it pre-subtracts from the pools |
@@ -287,7 +287,7 @@ This is the *only* plant-flux call on the slow carbon path.
 
 | output | destination |
 |---|---|
-| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `pool_change_block` (`meds_vegetation_dynamics`; the net pool change, not the gross NPP the `CO_NPP_*` diagnostics report), and hands it to `update_cohort_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry.carbon_to_structure`) → the core engine's `update_cohort_states` |
+| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `pool_change_block` (`meds_vegetation_dynamics`; the net pool change, not the gross NPP the `CO_NPP_*` diagnostics report), and hands it to `update_cohort_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry_lib.carbon_to_structure`) → the core engine's `update_cohort_states` |
 | `growth_resp` | autotrophic-respiration accounting (with maintenance resp) |
 | `deficit`, `starving` | `deficit` is netted, with the opposite sign, into the patch's `slow_co2_rate` (`plant_respiration.md` §6); no tissue is destroyed. A deficit larger than the cohort's leaf carbon means it has no leaves and no storage, and it dies (§2) |
 | leaf + fine-root **litter** (`shed`) | the resorbed share to storage, the rest to the patch's litter (`add_necromass`); the exudate to `labile_soil` |
@@ -305,4 +305,4 @@ the core engine (`demography ⊥ plant`), which only ever *applies* the tendency
 | leaf loss (turnover + senescence) + flush cap | `meds_phenology`: `leaf_turnover_step` |
 | turnover-first carbon demand per cohort | `meds_vegetation_dynamics`: `cohort_carbon_demand` |
 | per-cohort orchestration (slow loop) | `meds_vegetation_dynamics`: `compute_carbon_allocation` (rates → shed-first → flush-capped demands → one elemental call → net npp + litter) |
-| geometry flip (wood_carbon → dbh) | `meds_vegetation_dynamics`: `update_cohort_derivatives`; `meds_allometry`: `carbon_to_structure` |
+| geometry flip (wood_carbon → dbh) | `meds_vegetation_dynamics`: `update_cohort_derivatives`; `meds_allometry_lib`: `carbon_to_structure` |

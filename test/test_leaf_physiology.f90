@@ -9,8 +9,8 @@ program test_leaf_physiology
                                        pft_wstress_psi_open, pft_wstress_psi_close
    use meds_pft_params,         only : HYD_UNSET
    use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale,                        &
-                                 kattge_knorr_entropy, kattge_knorr_jv_ratio
+   use meds_therm_lib,     only : arrhenius_scale, peaked_arrhenius_scale, kattge_knorr_entropy,  &
+                                  kattge_knorr_jv_ratio
    use meds_leaf_gas_exchange,only : assimilation_demand_c3, rubisco_kinetics
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, &

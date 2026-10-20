@@ -40,7 +40,7 @@ program test_slow_ledger
                                        SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
    use meds_slow_dynamics,      only : settle_tissue_water
    use meds_config,             only : pft_tissue_curves
-   use meds_water_retention,    only : water_curve_t, psi_from_water_content
+   use meds_plant_hydr_lib,     only : water_curve_t, psi_from_water_content
    use meds_constants,          only : grav_head, n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none

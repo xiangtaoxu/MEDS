@@ -21,10 +21,10 @@ module meds_cohort_state_vars
    use meds_constants,       only : tissue_c_leaf, tissue_c_wood_dry, cp_liq
    use meds_therm_lib,       only : tissue_heat_capacity, tissue_dry_heat_capacity, tissue_energy, tissue_temp, &
                                     internal_energy_liquid
-   use meds_water_retention, only : water_curve_t, water_content
+   use meds_plant_hydr_lib,  only : water_curve_t, water_content
    use meds_numerics,        only : pair_mean
-   use meds_allometry,       only : dbh_to_height, size2leaf_carbon, size2wood_carbon,                     &
-                                    carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
+   use meds_allometry_lib,   only : dbh_to_height, size2leaf_carbon, size2wood_carbon, carbon_to_structure,  &
+                                    dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_pft_params,      only : pft_table_t
    use meds_config,          only : hydraulics_config_t, pft_tissue_curves
    use meds_diag_vars,       only : cohort_diag_block, expand_cohort_diag, reorder_cohort_diag,              &
@@ -610,7 +610,7 @@ contains
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
       !----- The carbon->geometry flip is the single shared kernel carbon_to_structure             !
-      !       (meds_allometry); this per-slot wrapper just packs/unpacks the SoA fields.           !
+      !       (meds_allometry_lib); this per-slot wrapper just packs/unpacks the SoA fields.       !
       integer(ik) :: pf
       pf = cohort%pft(i)
       call carbon_to_structure(cohort%pft_table%allom(pf), cohort%wood_carbon(i), cohort%leaf_carbon(i), &

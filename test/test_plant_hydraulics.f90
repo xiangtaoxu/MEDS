@@ -18,12 +18,12 @@ program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head, pi
-   use meds_hydr_lib,      only : plc_retained, flux_potential, hydro_table_t, build_hydro_table,            &
-                                  flux_potential_lin, wood_kmax_from_density, root_fraction_profile,      &
-                                  xylem_max_conductance, rhizosphere_conductance, xylem_sapflow
-   use meds_water_retention, only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content, capacitance, &
-                                    psi_from_water_content, clamp_water_to_capacity, water_curve_t,  &
-                                    shared_potential
+   use meds_plant_hydr_lib, only : plc_retained, flux_potential, hydro_table_t, build_hydro_table,             &
+                                   flux_potential_lin, wood_kmax_from_density, root_fraction_profile,          &
+                                   xylem_max_conductance, rhizosphere_conductance, xylem_sapflow, pv_psi_tlp,  &
+                                   rwc_from_psi, psi_from_rwc, water_content, capacitance,                     &
+                                   psi_from_water_content, clamp_water_to_capacity, water_curve_t,             &
+                                   shared_potential
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_plant_hydraulics, only : cohort_root_depth, cohort_root_profile
@@ -282,7 +282,7 @@ contains
    ! exceed the current capacity after biomass SHRINKS (e.g. the phenology dormant-canopy leaf       !
    ! snap-to-bare), never after it grows. clamp_water_to_capacity must be an exact no-op on growth,   !
    ! must cap exactly at the new ceiling on a shrink, and must reduce a fully-bare tissue to exactly  !
-   ! 0 (no NaN/negative) -- see meds_water_retention.f90.                                              !
+   ! 0 (no NaN/negative) -- see meds_plant_hydr_lib.f90.                                               !
    !=======================================================================================!
    subroutine test_seam_capacity_clamp()
       real(wp), parameter :: pi0 = -1.0_wp, eps = 8.0_wp, af = 0.20_wp, ws = 1.0_wp

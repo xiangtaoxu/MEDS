@@ -293,7 +293,7 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   between layers through the plant. Same source.
 - **A root radial conductance in series.** *Planned.* [#356](https://github.com/xiangtaoxu/MEDS/issues/356) The soil-to-root path is the
   rhizosphere's Gardner conductance alone; a radial root conductance in series is a different flow
-  law for that path in `meds_hydr_lib`.
+  law for that path in `meds_plant_hydr_lib`.
 - **Γ* with surface pressure.** *Done in beta.* [#342](https://github.com/xiangtaoxu/MEDS/issues/342) `gstar25` is a partial pressure at 100 kPa,
   and dividing it by the local pressure made Γ* as a mole fraction rise as the pressure fell. It is now
   divided by that reference pressure (`leaf_gas_exchange.md` eq. (3)), so Γ* does not depend on

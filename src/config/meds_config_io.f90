@@ -18,7 +18,7 @@
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
-   use meds_allometry,  only : HEIGHT_POWER, HEIGHT_CHAVE
+   use meds_allometry_lib, only : HEIGHT_POWER, HEIGHT_CHAVE
    use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
@@ -27,9 +27,9 @@ module meds_config_io
    use meds_soil_column_config, only : soil_column_config_t
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION
    use meds_maps_opts, only : soil_maps_on
-   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
+   use meds_therm_lib,     only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
    use meds_forcing_config, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL

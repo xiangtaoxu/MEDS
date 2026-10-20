@@ -26,8 +26,8 @@
 ! (docs/science/plant_carbon_allocation.md §2 "Sink limitation of wood growth", eq. (4)).      !
 !==========================================================================================!
 module meds_sink_limitation
-   use meds_kinds,     only : wp
-   use meds_allometry, only : allometry_t, size2wood_carbon, dbh_to_height
+   use meds_kinds,         only : wp
+   use meds_allometry_lib, only : allometry_t, size2wood_carbon, dbh_to_height
    implicit none
    private
 

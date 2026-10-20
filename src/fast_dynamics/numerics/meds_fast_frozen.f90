@@ -20,8 +20,7 @@ module meds_fast_frozen
                               tissue_c_leaf, tissue_c_wood_dry
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
-   use meds_water_retention, only : rwc_from_psi
-   use meds_hydr_lib, only : plc_retained, xylem_max_conductance, rhizosphere_conductance
+   use meds_plant_hydr_lib,  only : rwc_from_psi, plc_retained, xylem_max_conductance, rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
    use meds_config, only : meds_config_t, pft_wstress_psi_close
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t

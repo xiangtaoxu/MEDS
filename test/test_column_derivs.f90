@@ -16,21 +16,20 @@ program test_column_derivs
    use meds_test_assert, only : check, check_true, check_close, test_report
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : latent_heat_vap, stefan_boltzmann, cp_air, tiny_num, rho_h2o, n_soil_layer_max
-   use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
-                                   sat_specific_humidity, sat_vapor_pressure,                    &
-                                   sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_internal_energy, internal_energy_to_temp
+   use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, sat_specific_humidity,  &
+                                      sat_vapor_pressure, sat_vapor_pressure_temp_deriv, enthalpy_vapor,  &
+                                      temp_to_internal_energy, internal_energy_to_temp, internal_energy_liquid
    use meds_budget_check,   only : budget_t, budget_accumulate
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : soil_params_t, soil_thermal_params_t, build_soil_hydr_params, build_soil_therm_params
    use meds_patch_state_vars,   only : soil_energy_column_t
-   use meds_water_retention, only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, soil_opts_t
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
-   use meds_water_retention,  only : water_content, water_curve_t
+   use meds_plant_hydr_lib,   only : water_content, water_curve_t
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
-   use meds_therm_lib,        only : internal_energy_liquid
    use meds_fast_types,       only : surface_state_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t, column_config_t
    use meds_fast_rk4_oracle,  only : rk4_column_step

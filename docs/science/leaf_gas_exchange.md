@@ -88,7 +88,7 @@ Then $A = A_g - R_d$.
 **Temperature.** $`K_c`$, $`K_o`$ and $`\Gamma^*`$ scale from 25 °C by the plain Arrhenius form, with
 Bernacchi et al. (2001)'s activation energies ($`f_{\mathrm{Arr}}`$ in eq. (3)). $`V_{cmax}`$,
 $`J_{max}`$, TPU, $`R_d`$ and the C4 $`k_p`$ take the form `[leaf_physiology].temp_response_form`
-selects, plain or peaked (`meds_temp_response`; `plant_respiration.md` eq. (5)).
+selects, plain or peaked (`meds_therm_lib`; `plant_respiration.md` eq. (5)).
 
 ### The co-limitation curvatures are not $`\theta_J`$
 

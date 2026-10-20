@@ -13,10 +13,9 @@
 !   * THERMAL     -- veg_thermal_params_t.                                                 !
 !==========================================================================================!
 module meds_plant_types
-   use meds_kinds,      only : wp, ik
-   use meds_pft_params, only : PATH_C3, PATH_C4
-   use meds_hydr_lib, only : hydro_table_t
-   use meds_water_retention, only : water_curve_t
+   use meds_kinds,          only : wp, ik
+   use meds_pft_params,     only : PATH_C3, PATH_C4
+   use meds_plant_hydr_lib, only : hydro_table_t, water_curve_t
    implicit none
    private
 

@@ -27,7 +27,7 @@ program test_c_api_leaf
                                  meds_rubisco_kinetics
    use meds_plant_types, only : PATH_C3
    use meds_leaf_opts,    only : SM_MEDLYN, COLIM_QUADRATIC
-   use meds_temp_response, only : TRESP_PEAKED
+   use meds_therm_lib,     only : TRESP_PEAKED
    use meds_test_support, only : banner, check, check_close
    implicit none
 

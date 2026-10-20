@@ -2,9 +2,8 @@
 !----- Pan-tropical allometry: dbh<->height round-trip, AGB monotonicity, agb_to_dbh inverse. !
 program test_allometry
    use meds_kinds,       only : wp, ik
-   use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
-                                dbh_to_leaf_area, allometry_t,                                &
-                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_CHAVE
+   use meds_allometry_lib, only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh, dbh_to_leaf_area,  &
+                                  allometry_t, size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_CHAVE
    use meds_test_support, only : banner, check, check_close
    implicit none
 

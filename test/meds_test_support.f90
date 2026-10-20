@@ -10,10 +10,10 @@ module meds_test_support
    use meds_constants,  only : day_sec
    use meds_time,       only : meds_time_t
    use meds_pft_params, only : pft_table_t, alloc_pft_table, PATH_C3, PATH_C4
-   use meds_allometry,  only : allometry_t
+   use meds_allometry_lib, only : allometry_t
    use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE, INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
-   use meds_temp_response, only : TRESP_PEAKED
+   use meds_therm_lib,     only : TRESP_PEAKED
    use meds_test_assert, only : check, check_close, check_true, check_int, banner,             &
                                 test_report, test_reset, test_failures
    implicit none

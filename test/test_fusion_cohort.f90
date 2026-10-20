@@ -15,7 +15,7 @@ program test_fusion_cohort
                                          max_cohort_count
    use meds_diagnostic_reduce, only : total_nplant, total_agb
    use meds_diag_vars,        only : alloc_cohort_diag, cohort_diag_value, CO_LEAF_TEMP, CO_WOOD_TEMP
-   use meds_allometry,       only : storage_carbon_target
+   use meds_allometry_lib,   only : storage_carbon_target
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 

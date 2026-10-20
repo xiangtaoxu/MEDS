@@ -13,9 +13,10 @@
 !   * boundaries: rain into the pond, ground evaporation from the top layer, drainage from       !
 !     the bottom one, and each cohort's transpiration, limited by what its leaves hold           !
 !     (docs/science/soil_plant_water.md eq. (3)).                                                !
-! How much each store holds is meds_water_retention's (the *_water_relations); how fast water    !
-! moves along each path is meds_hydr_lib's (rhizosphere, xylem, transpiration) and               !
-! meds_soil_water's (soil water flux, evaporation, drainage). This module only joins them.       !
+! How much each store holds is meds_soil_hydr_lib's and meds_plant_hydr_lib's (the               !
+! *_water_relations); how fast water moves along each path is meds_plant_hydr_lib's              !
+! (rhizosphere, xylem, transpiration) and meds_soil_water's (soil water flux, evaporation,       !
+! drainage). This module only joins them.                                                        !
 !                                                                                                !
 ! THE SOLVE (docs/science/soil_plant_water.md §3, eq. (2)). Implicit Euler on sub-steps. Each    !
 ! sub-step is a Newton solve of the water balance of every store at the sub-step's end,          !
@@ -37,11 +38,11 @@
 module meds_spac_solver
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : grav_head, rho_h2o, tiny_num
-   use meds_water_retention, only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,          &
-                                    soil_unknown_from_theta, tissue_water_relations, tissue_rwc_from_water,      &
-                                    tissue_unknown_from_rwc, pond_water_relations, pond_head_from_water,         &
-                                    rwc_from_psi
-   use meds_hydr_lib,        only : root_water_uptake_profile, xylem_sapflow, supply_limited_transpiration
+   use meds_soil_hydr_lib,   only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,  &
+                                    soil_unknown_from_theta, pond_water_relations, pond_head_from_water
+   use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_rwc_from_water, tissue_unknown_from_rwc,  &
+                                    rwc_from_psi, root_water_uptake_profile, xylem_sapflow,                  &
+                                    supply_limited_transpiration
    use meds_soil_water,      only : soil_water_flux, ground_evaporation_rate, bottom_flux
    use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_soil_types,      only : chydro_forcing_t

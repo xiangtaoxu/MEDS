@@ -170,7 +170,7 @@ twice. The fast loop and the state layer's `cohort_tissue_heat_capacity` build t
 way, so the fusion weights and the slow ledger use the same capacity. The intercepted film is a
 separate store and is not in $`\mathrm{cap}_{leaf}`$.
 
-The wood's area and its sapwood come from stem-size allometries (`meds_allometry`; each PFT's
+The wood's area and its sapwood come from stem-size allometries (`meds_allometry_lib`; each PFT's
 `[allometry]` `wai_b1/b2`, `sapwood_area_b1/b2`), with $D$ the diameter [cm]. The wood area index is
 $`\mathrm{WAI} = n_{plant}\,b_1\,D^{b_2}`$ (`dbh_to_wai`), and the sapwood is the share
 $`f_{sap} = \min\big(1,\ b_{1SA}\,D^{b_{2SA}}/(\tfrac{\pi}{4} D^2)\big)`$ of the basal area

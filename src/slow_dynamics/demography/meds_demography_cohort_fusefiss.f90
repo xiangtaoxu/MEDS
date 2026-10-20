@@ -22,7 +22,7 @@ module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num
    use meds_numerics,   only : conserved, pair_mean
-   use meds_allometry,  only : height_to_dbh, min_cohort_carbon
+   use meds_allometry_lib, only : height_to_dbh, min_cohort_carbon
    use meds_config,     only : meds_config_t
    use meds_diag_vars,        only : fuse_cohort_diag, PA_MORT_C_CULL
    use meds_cohort_state_vars, only : reorder_cohort_block, compact_cohort_block,                        &

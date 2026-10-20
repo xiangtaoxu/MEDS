@@ -15,7 +15,7 @@ program test_surface_energy
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cp_air, latent_heat_vap, stefan_boltzmann, pi, cp_liq, tissue_c_wood_dry
-   use meds_allometry,        only : allometry_t, dbh_to_wai, sapwood_fraction
+   use meds_allometry_lib,    only : allometry_t, dbh_to_wai, sapwood_fraction
    use meds_plant_types, only : veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy

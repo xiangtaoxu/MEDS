@@ -43,7 +43,7 @@ program test_slow_diag_units
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
-   use meds_water_retention,     only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,       only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
    use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config,         only : build_leaf_photo_table, build_integrator_opts

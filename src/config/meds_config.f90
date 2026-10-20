@@ -12,12 +12,13 @@ module meds_config
    use meds_constants,  only : yr_day, yr_sec, day_sec, n_soil_layer_max
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
-   use meds_allometry,  only : HEIGHT_CHAVE
+   use meds_allometry_lib, only : HEIGHT_CHAVE
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
-   use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
+   use meds_therm_lib,     only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp, water_curve_t
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_plant_hydr_lib,  only : pv_psi_tlp, water_curve_t
    use meds_soil_column_config, only : soil_column_config_t, soil_texture_layers_t, soil_params_t,       &
                                        soil_column_layers, soil_column_texture, soil_column_params,   &
                                        SOIL_LAYER_TEMPLATE
@@ -65,7 +66,7 @@ module meds_config
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
    !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the         !
-   !      temperature-response selectors (TRESP_*) by meds_temp_response. Imported above       !
+   !      temperature-response selectors (TRESP_*) by meds_therm_lib. Imported above           !
    !      for LOADING and VALIDATION only -- not re-exported, so a caller that switches on     !
    !      one imports it from the module that defines it. -------------------------------------!
 

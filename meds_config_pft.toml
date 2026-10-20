@@ -152,7 +152,7 @@ mort_beta_0    = 18.72      # growth-sensitivity scale [yr/cm]
 mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 
 [allometry]
-# Each PFT's size allometry (meds_allometry; docs/science/plant_carbon_allocation.md §2). Every key takes
+# Each PFT's size allometry (meds_allometry_lib; docs/science/plant_carbon_allocation.md §2). Every key takes
 # one value, for every PFT, or an array with one value per PFT.
 height_allometry = "power"  # "power" or "chave2014", or one per PFT (["chave2014", "power", "power"])
 hgt_max    = [46.0, 46.0, 46.0]   # [m] the largest height: the cap on every curve

@@ -11,8 +11,9 @@
 !                                resistance;                                               !
 !   * bottom_flux             -- drainage through the bottom face, free or leaky or none   !
 !                                (sealed bedrock), or a head-driven aquifer.               !
-! How much water a layer holds is in meds_water_retention, the flow from a layer into the  !
-! roots in meds_hydr_lib; meds_spac_solver solves them together with the plants' water.    !
+! How much water a layer holds is in meds_soil_hydr_lib, the flow from a layer into the    !
+! roots in meds_plant_hydr_lib; meds_spac_solver solves them together with the plants'     !
+! water.                                                                                   !
 ! Canopy interception lives in meds_plant_biophysics (a per-cohort film).                  !
 !==========================================================================================!
 module meds_soil_water
@@ -21,7 +22,7 @@ module meds_soil_water
    use meds_soil_types, only : chydro_forcing_t
    use meds_soil_column_config, only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_AQUIFER
-   use meds_water_retention,  only : soil_theta_from_psi
+   use meds_soil_hydr_lib,    only : soil_theta_from_psi
    use meds_numerics,         only : smooth_max0
    use meds_therm_lib,        only : sat_specific_humidity
    implicit none

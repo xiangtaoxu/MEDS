@@ -18,8 +18,7 @@ program test_pft_optics_config
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_params_table_t
    use meds_fast_types,     only : apply_hydraulics_config
-   use meds_hydr_lib,       only : plc_retained, wood_kmax_from_density
-   use meds_water_retention, only : pv_psi_tlp, water_content
+   use meds_plant_hydr_lib, only : plc_retained, wood_kmax_from_density, pv_psi_tlp, water_content
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
    use meds_soil_column_config, only : soil_params_t, soil_column_params

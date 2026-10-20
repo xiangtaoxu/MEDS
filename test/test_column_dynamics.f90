@@ -25,7 +25,7 @@ program test_column_dynamics
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
-   use meds_water_retention, only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
@@ -38,7 +38,7 @@ program test_column_dynamics
    use meds_fast_prepass,        only : aero_bottom_to_top, cohort_leaf_par
    use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
-   use meds_water_retention,     only : psi_from_water_content, water_content
+   use meds_plant_hydr_lib,      only : psi_from_water_content, water_content
    use meds_test_support, only : build_test_config, check_true, test_report
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on

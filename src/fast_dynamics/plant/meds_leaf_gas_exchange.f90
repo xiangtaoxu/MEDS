@@ -15,7 +15,7 @@ module meds_leaf_gas_exchange
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t, PATH_C3, PATH_C4, &
                                 LIM_NONE, LIM_RUBISCO, &
                                 LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
-   use meds_temp_response, only : temp_response, arrhenius_scale
+   use meds_therm_lib,     only : temp_response, arrhenius_scale
    use meds_numerics,      only : quadratic_smaller_root
    implicit none
 

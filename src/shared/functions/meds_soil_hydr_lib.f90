@@ -1,47 +1,55 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_water_retention -- how much water a store holds at a given water potential, and the !
-! inverse: a plant tissue's pressure-volume curve (docs/science/plant_hydraulics.md §2), a !
-! soil layer's retention curve and conductivity (docs/science/soil_biophysics.md eq. (2))  !
-! and the pond's depression store.                                                         !
+! meds_soil_hydr_lib -- the water relations of the soil: a layer's van Genuchten curve and !
+! saturated conductivity from what the soil maps report (docs/science/soil_biophysics.md   !
+! §Hydraulic parameters from soil texture, eqs. (6)-(8)), its retention curve and          !
+! conductivity (soil_biophysics.md eq. (2)), and the pond's depression store.              !
 !                                                                                          !
-! Each comes in two forms. The read-offs (rwc_from_psi, soil_psi_from_theta, ...) take a   !
-! state and return a potential or a water content, with floors that keep a diagnostic      !
-! finite. The water relations (*_water_relations) give the soil-plant water solver         !
+! The read-offs (soil_theta_from_psi, soil_psi_from_theta) take a state and return a       !
+! potential or a water content, with floors that keep a diagnostic finite. The water       !
+! relations (soil_water_relations, pond_water_relations) give the soil-plant water solver  !
 ! (meds_spac_solver) a store's potential, water and conductivity with their derivatives in !
-! the variable it solves for, with no floors (docs/science/soil_plant_water.md §2). How    !
-! water moves between the stores is in meds_hydr_lib, and between soil layers in           !
-! meds_soil_water.                                                                         !
+! the variable it solves for, with no floors (docs/science/soil_plant_water.md §2). Flow   !
+! between soil layers is in meds_soil_water; the plant's side is meds_plant_hydr_lib.      !
 !==========================================================================================!
-module meds_water_retention
+module meds_soil_hydr_lib
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : grav_head, rho_h2o, tiny_num
+   use meds_constants, only : grav_head, rho_h2o, day_sec, tiny_num
    implicit none
    private
 
-   !----- Tissue pressure-volume curve. ---------------------------------------------------!
-   public :: water_curve_t
-   public :: pv_psi_tlp, rwc_from_psi, psi_from_rwc
-   public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity, shared_potential
-   !----- Soil retention curve: theta(psi) and psi(theta) read-offs. ----------------------!
+   !----- A layer's curve from the soil maps. ---------------------------------------------!
+   public :: soil_texture_t, soil_hydraulics_from_texture
+   !----- Retention curve: theta(psi) and psi(theta) read-offs. ---------------------------!
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
    public :: soil_theta_from_psi, soil_psi_from_theta
-   !----- The water relations the soil-plant water solver uses, in the variable it solves  !
-   !      for: a soil layer's saturation (dry) or potential (wet), a tissue's relative     !
-   !      water content, the pond's head. -------------------------------------------------!
+   !----- The water relations the soil-plant water solver uses, in the variable it         !
+   !      solves for: a soil layer's saturation (dry) or potential (wet), the pond's       !
+   !      head. ---------------------------------------------------------------------------!
    public :: SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH
    public :: soil_layer_curve_t, build_soil_layer_curve, soil_water_relations, soil_unknown_from_theta
-   public :: tissue_water_relations, tissue_unknown_from_rwc, tissue_rwc_from_water
    public :: pond_water_relations, pond_head_from_water
 
-   !----- One tissue's pressure-volume curve: the four traits every tissue-water routine   !
-   !      reads, passed together with the tissue's biomass. -------------------------------!
-   type :: water_curve_t
-      real(wp) :: pi0           = 0.0_wp   !< [MPa] osmotic potential at full turgor (< 0)
-      real(wp) :: elastic_mod   = 0.0_wp   !< [MPa] bulk elastic modulus
-      real(wp) :: apoplast_frac = 0.0_wp   !< [-]   share of the saturated water outside the living cells
-      real(wp) :: water_sat     = 0.0_wp   !< [kg H2O / kgC] water per unit biomass at saturation
-   end type water_curve_t
+   !----- One soil layer as the soil maps describe it (SoilGrids 2.0's quantities). -------!
+   type :: soil_texture_t
+      real(wp) :: sand         = 0.0_wp   !< [%]           sand share of the fine earth
+      real(wp) :: silt         = 0.0_wp   !< [%]           silt share of the fine earth
+      real(wp) :: clay         = 0.0_wp   !< [%]           clay share of the fine earth
+      real(wp) :: org_carbon   = 0.0_wp   !< [g/kg]        organic carbon of the fine earth
+      real(wp) :: cec          = 0.0_wp   !< [cmol(c)/kg]  cation exchange capacity
+      real(wp) :: ph           = 0.0_wp   !< [-]           pH in water
+      real(wp) :: bulk_density = 0.0_wp   !< [g/cm3]       bulk density of the fine earth
+      real(wp) :: coarse_frag  = 0.0_wp   !< [% volume]    coarse fragments (> 2 mm) in the layer
+   end type soil_texture_t
+
+   real(wp), parameter :: kpa_per_mpa      = 1000.0_wp                !< [kPa/MPa]
+
+   !----- Ottoni et al. (2019): Ks = a (theta_sat - theta(-33 kPa))^b, Ks in m/day. -------!
+   real(wp), parameter :: psi_33kpa        = -0.033_wp / grav_head   !< [m] -33 kPa as water head
+   real(wp), parameter :: ottoni_ks_coef   = 19.31_wp                !< [m/day]
+   real(wp), parameter :: ottoni_ks_exp    = 1.948_wp                !< [-]
+   !----- Density of the mineral grains and of the fragments (Saxton & Rawls 2006). -------!
+   real(wp), parameter :: particle_density = 2.65_wp                 !< [g/cm3]
 
    !----- Retention-curve selector codes (soil_params_t%retention). -----------------------!
    integer(ik), parameter :: SOIL_RETENTION_VG       = 1_ik  !< van Genuchten-Mualem (default)
@@ -53,13 +61,9 @@ module meds_water_retention
    !      about -2 MPa. -------------------------------------------------------------------!
    real(wp), parameter :: VG_PORE_CONNECTIVITY = -1.0_wp
 
-   !----- Read-off floors that keep a diagnostic finite; the solver's curves have none. ---!
-   real(wp), parameter :: SE_MIN = 1.0e-9_wp      !< [-] effective-saturation floor
-   real(wp), parameter :: rwc_floor = 1.0e-4_wp   !< [-] symplastic relative water content floor
-   !----- Cap on shared_potential's halvings. The loop stops when its bracket is as narrow !
-   !      as the arithmetic resolves, about 70 halvings for a root near -1 MPa; only a     !
-   !      root at 0, where that width has no floor, reaches the cap. ----------------------!
-   integer(ik), parameter :: BISECTION_STEPS_MAX = 200_ik
+   !----- [-] Floor on the effective saturation in the read-offs; the solver's curves      !
+   !      have none. ----------------------------------------------------------------------!
+   real(wp), parameter :: SE_MIN = 1.0e-9_wp
 
    !----- [1/m] Water a saturated soil layer gains per metre of pressure head, from the    !
    !      compressibility of the soil matrix and of water: a typical value for clays and   !
@@ -92,145 +96,57 @@ module meds_water_retention
 contains
 
    !=======================================================================================!
-   !     Pressure-volume (Bartlett / Tyree-Hammel) curves                                  !
-   !     (docs/science/plant_hydraulics.md §2, eqs. (3)-(6)).                              !
+   !     A layer's curve from the soil maps (docs/science/soil_biophysics.md §Hydraulic    !
+   !     parameters from soil texture): the fine earth's van Genuchten curve after Hodnett !
+   !     & Tomasella (2002), its saturated conductivity after Ottoni et al. (2019), and    !
+   !     coarse fragments that hold no water and slow the flow (Saxton & Rawls 2006).      !
    !=======================================================================================!
 
-   !----- Turgor loss point [MPa] (Bartlett et al. 2012 eq. 1;                             !
-   !      docs/science/plant_hydraulics.md eq. (3)). --------------------------------------!
-   elemental real(wp) function pv_psi_tlp(pi0, elastic_mod) result(psi_tlp)
-      real(wp), intent(in) :: pi0, elastic_mod
-      psi_tlp = pi0*elastic_mod / (pi0 + elastic_mod)
-   end function pv_psi_tlp
+   !----- The van Genuchten curve and Ks of a soil layer (docs/science/soil_biophysics.md  !
+   !      eqs. (6)-(8)). Alpha comes out per kPa and is turned into per metre of water     !
+   !      head, the unit of the model's soil potential. -----------------------------------!
+   elemental subroutine soil_hydraulics_from_texture(texture, theta_sat, theta_res, vg_alpha, vg_n, ksat)
+      type(soil_texture_t), intent(in)  :: texture
+      real(wp),             intent(out) :: theta_sat   !< [m3/m3] water content at saturation, per layer volume
+      real(wp),             intent(out) :: theta_res   !< [m3/m3] residual water content, per layer volume
+      real(wp),             intent(out) :: vg_alpha    !< [1/m]   van Genuchten alpha
+      real(wp),             intent(out) :: vg_n        !< [-]     van Genuchten n
+      real(wp),             intent(out) :: ksat        !< [m/s]   saturated hydraulic conductivity of the layer
+      real(wp) :: oc_percent, theta_33, drainable, rock_volume, rock_mass, matrix_density_ratio
 
-   !----- Symplastic relative water content at turgor loss (Bartlett et al. 2012 eq. 2;    !
-   !      docs/science/plant_hydraulics.md eq. (3)). --------------------------------------!
-   elemental real(wp) function pv_rwc_tlp(pi0, elastic_mod) result(rwc_tlp)
-      real(wp), intent(in) :: pi0, elastic_mod
-      rwc_tlp = (pi0 + elastic_mod) / elastic_mod
-   end function pv_rwc_tlp
+      associate(sand => texture%sand, silt => texture%silt, clay => texture%clay, cec => texture%cec,  &
+                ph => texture%ph, bulk_density => texture%bulk_density)
+         oc_percent = texture%org_carbon / 10.0_wp
 
-   !----- Water potential [MPa] at symplastic relative water content rwc, floored at       !
-   !      rwc_floor (docs/science/plant_hydraulics.md eq. (4)). ---------------------------!
-   elemental real(wp) function psi_from_rwc(rwc, pi0, elastic_mod) result(psi)
-      real(wp), intent(in) :: rwc, pi0, elastic_mod
-      real(wp) :: rwc_tlp, r
-      rwc_tlp = pv_rwc_tlp(pi0, elastic_mod)
-      r       = max(rwc, rwc_floor)
-      if (r >= rwc_tlp) then
-         psi = elastic_mod*(r - rwc_tlp) + pi0/r      ! turgor + osmotic
-      else
-         psi = pi0/r                          ! turgor lost
-      end if
-   end function psi_from_rwc
+         !----- The fine earth's curve (Hodnett & Tomasella 2002, Table 8). ---------------!
+         vg_alpha  = exp((-2.294_wp - 3.526_wp*silt + 2.440_wp*oc_percent - 0.076_wp*cec - 11.331_wp*ph  &
+                          + 0.019_wp*silt**2) / 100.0_wp) * grav_head * kpa_per_mpa
+         vg_n      = exp((62.986_wp - 0.833_wp*clay - 0.529_wp*oc_percent + 0.593_wp*ph                 &
+                          + 0.007_wp*clay**2 - 0.014_wp*sand*silt) / 100.0_wp)
+         theta_sat = (81.799_wp + 0.099_wp*clay - 31.42_wp*bulk_density + 0.018_wp*cec + 0.451_wp*ph     &
+                      - 0.0005_wp*sand*clay) / 100.0_wp
+         !----- The regression dips below zero on sandy, alkaline, low-CEC soils, which    !
+         !      hold no residual water. ---------------------------------------------------!
+         theta_res = max((22.733_wp - 0.164_wp*sand + 0.235_wp*cec - 0.831_wp*ph + 0.0018_wp*clay**2  &
+                          + 0.0026_wp*sand*clay) / 100.0_wp, 0.0_wp)
 
-   !----- Symplastic relative water content at water potential psi, floored at rwc_floor   !
-   !      (docs/science/plant_hydraulics.md eq. (4)). -------------------------------------!
-   elemental real(wp) function rwc_from_psi(psi, pi0, elastic_mod) result(rwc)
-      real(wp), intent(in) :: psi, pi0, elastic_mod
-      real(wp) :: psi_tlp, b, disc
-      psi_tlp = pi0*elastic_mod / (pi0 + elastic_mod)
-      if (psi >= psi_tlp) then                ! turgid
-         !----- The larger root of elastic_mod R^2 - b R + pi0 = 0. -----------------------!
-         b    = psi + elastic_mod + pi0
-         disc = max(b*b - 4.0_wp*elastic_mod*pi0, 0.0_wp)
-         rwc  = (b + sqrt(disc)) / (2.0_wp*elastic_mod)
-      else                                    ! flaccid
-         rwc  = pi0/psi
-      end if
-      rwc = max(rwc, rwc_floor)
-   end function rwc_from_psi
+         !----- Ks of the fine earth from the water that drains between saturation, at     !
+         !      psi = 0 on this curve, and -33 kPa (Ottoni et al. 2019). ------------------!
+         theta_33  = soil_theta_from_psi(SOIL_RETENTION_VG, psi_33kpa, theta_sat, theta_res, vg_alpha, vg_n)
+         drainable = max(theta_sat - theta_33, tiny_num)
+         ksat      = ottoni_ks_coef / day_sec * drainable**ottoni_ks_exp
 
-   !----- Total tissue water [kg per plant] at potential psi: the symplast's saturated     !
-   !      water times R, plus the apoplast's, a constant reservoir                         !
-   !      (docs/science/plant_hydraulics.md eq. (5)). -------------------------------------!
-   elemental real(wp) function water_content(psi, curve, biomass) result(w)
-      real(wp),            intent(in) :: psi, biomass
-      type(water_curve_t), intent(in) :: curve
-      real(wp) :: w_sat, r
-      w_sat = curve%water_sat*biomass
-      r     = rwc_from_psi(psi, curve%pi0, curve%elastic_mod)
-      w     = (1.0_wp - curve%apoplast_frac)*w_sat*r + curve%apoplast_frac*w_sat
-   end function water_content
-
-   !----- Capacitance dW/dpsi [kg/MPa per plant] at potential psi                          !
-   !      (docs/science/plant_hydraulics.md eqs. (5)-(6)). --------------------------------!
-   elemental real(wp) function capacitance(psi, curve, biomass) result(c)
-      real(wp),            intent(in) :: psi, biomass
-      type(water_curve_t), intent(in) :: curve
-      real(wp) :: psi_tlp, w_sat_sym, r, cr
-      associate (pi0 => curve%pi0, elastic_mod => curve%elastic_mod)
-         psi_tlp   = pi0*elastic_mod / (pi0 + elastic_mod)
-         w_sat_sym = (1.0_wp - curve%apoplast_frac)*curve%water_sat*biomass
-         r         = rwc_from_psi(psi, pi0, elastic_mod)
-         if (psi >= psi_tlp) then
-            cr = 1.0_wp / (elastic_mod - pi0/(r*r))      ! dR/dpsi, turgid
-         else
-            cr = -(r*r)/pi0                       ! dR/dpsi, flaccid
-         end if
+         !----- Coarse fragments hold no water and slow the flow: Saxton & Rawls (2006)    !
+         !      eq. 22, on the fragments' share of the mass, which eq. 19 gives from their !
+         !      share of the volume. ------------------------------------------------------!
+         rock_volume          = texture%coarse_frag / 100.0_wp
+         matrix_density_ratio = bulk_density / particle_density
+         rock_mass = rock_volume / max(matrix_density_ratio*(1.0_wp - rock_volume) + rock_volume, tiny_num)
+         theta_sat = theta_sat * (1.0_wp - rock_volume)
+         theta_res = theta_res * (1.0_wp - rock_volume)
+         ksat      = ksat * (1.0_wp - rock_mass) / (1.0_wp - rock_mass*(1.0_wp - 1.5_wp*matrix_density_ratio))
       end associate
-      c = w_sat_sym*cr
-   end function capacitance
-
-   !----- Water potential [MPa] of a tissue holding w [kg per plant], the exact inverse of !
-   !      water_content (docs/science/plant_hydraulics.md eq. (5)). -----------------------!
-   elemental real(wp) function psi_from_water_content(w, curve, biomass) result(psi)
-      real(wp),            intent(in) :: w, biomass
-      type(water_curve_t), intent(in) :: curve
-      real(wp) :: w_sat, rwc
-      w_sat = curve%water_sat*biomass
-      rwc   = (w - curve%apoplast_frac*w_sat) / max((1.0_wp - curve%apoplast_frac)*w_sat, tiny_num)
-      psi   = psi_from_rwc(rwc, curve%pi0, curve%elastic_mod)
-   end function psi_from_water_content
-
-   !----- The potential [MPa] at which two tissues holding w_total [kg] between them are   !
-   !      at rest, a at psi and b at psi - head_b (docs/science/plant_hydraulics.md        !
-   !      eq. (2) with no flow), by bisection between the curves' dry floor and a's        !
-   !      saturation; a total outside returns the nearer end. The caller moves water by    !
-   !      the curves at the result, so what it moves is exact whatever the residual. ------!
-   elemental real(wp) function shared_potential(w_total, curve_a, biomass_a, curve_b, biomass_b, head_b)  &
-                                                result(psi)
-      real(wp),            intent(in) :: w_total               !< [kg] the water the two hold together
-      type(water_curve_t), intent(in) :: curve_a, curve_b
-      real(wp),            intent(in) :: biomass_a, biomass_b  !< [kgC]
-      real(wp),            intent(in) :: head_b                !< [MPa] gravity head of b above a: at rest psi_b = psi_a - head_b
-      real(wp)    :: lo, hi
-      integer(ik) :: k
-      lo = min(curve_a%pi0, curve_b%pi0 + head_b) / rwc_floor
-      hi = 0.0_wp
-      if (w_total <= held(lo)) then
-         psi = lo
-         return
-      end if
-      if (w_total >= held(hi)) then
-         psi = hi
-         return
-      end if
-      do k = 1_ik, BISECTION_STEPS_MAX
-         psi = 0.5_wp * (lo + hi)
-         if (held(psi) < w_total) then
-            lo = psi
-         else
-            hi = psi
-         end if
-         if (hi - lo <= epsilon(psi) * max(abs(lo), abs(hi))) exit
-      end do
-      psi = 0.5_wp * (lo + hi)
-   contains
-      pure real(wp) function held(p)
-         real(wp), intent(in) :: p
-         held = water_content(p, curve_a, biomass_a) + water_content(p - head_b, curve_b, biomass_b)
-      end function held
-   end function shared_potential
-
-   !----- Tissue water [kg per plant] capped at saturation, water_sat * biomass, for a     !
-   !      store that lost biomass without its water; the caller sheds the excess           !
-   !      (w - result) to the ground (docs/science/soil_plant_water.md §2). ---------------!
-   elemental real(wp) function clamp_water_to_capacity(w, curve, biomass) result(w_capped)
-      real(wp),            intent(in) :: w, biomass
-      type(water_curve_t), intent(in) :: curve
-      w_capped = min(w, curve%water_sat*biomass)
-   end function clamp_water_to_capacity
+   end subroutine soil_hydraulics_from_texture
 
    !=======================================================================================!
    !     Soil retention curves: van Genuchten-Mualem (default) or Campbell                 !
@@ -368,7 +284,9 @@ contains
       tau = c%se_switch + c%slope_switch * (head - c%psi_switch)
    end function soil_unknown_from_theta
 
-   !----- The curve's kernels. ------------------------------------------------------------!
+   !=======================================================================================!
+   !     The curve's kernels.                                                              !
+   !=======================================================================================!
 
    !----- Matric head [m] at saturation se in (0, 1), and dSe/dhead [1/m]. The van         !
    !      Genuchten head is evaluated through its logarithm, so a very dry layer gives a   !
@@ -473,56 +391,6 @@ contains
    end subroutine conductivity_of_head
 
    !=======================================================================================!
-   !     Plant tissues.                                                                    !
-   !=======================================================================================!
-
-   !----- A tissue at symplastic relative water content r: potential [MPa] and water       !
-   !      [kg/m2 of ground] for nplant plants of `biomass` each, with their derivatives in !
-   !      r. The pressure-volume curve without psi_from_rwc's floor: the solver keeps r    !
-   !      above zero (docs/science/plant_hydraulics.md eqs. (4)-(5)). ---------------------!
-   elemental subroutine tissue_water_relations(curve, biomass, nplant, r, psi, dpsi, w, dw)
-      type(water_curve_t), intent(in)  :: curve
-      real(wp),            intent(in)  :: biomass   !< [kgC per plant]
-      real(wp),            intent(in)  :: nplant    !< [plants/m2]
-      real(wp),            intent(in)  :: r         !< [-] symplastic relative water content
-      real(wp),            intent(out) :: psi, dpsi, w, dw
-      real(wp) :: r_tlp, w_sat
-      associate (pi0 => curve%pi0, emod => curve%elastic_mod, apo => curve%apoplast_frac)
-         r_tlp = pv_rwc_tlp(pi0, emod)
-         if (r >= r_tlp) then
-            psi  = emod * (r - r_tlp) + pi0 / r
-            dpsi = emod - pi0 / (r * r)
-         else
-            psi  = pi0 / r
-            dpsi = -pi0 / (r * r)
-         end if
-         w_sat = nplant * curve%water_sat * biomass
-         w     = w_sat * ((1.0_wp - apo) * r + apo)
-         dw    = w_sat * (1.0_wp - apo)
-      end associate
-   end subroutine tissue_water_relations
-
-   !----- Symplastic relative water content of a tissue holding w [kg per plant], the      !
-   !      inverse of tissue_water_relations's water. Undefined with no biomass: the caller !
-   !      then starts the tissue from a potential instead (rwc_from_psi). -----------------!
-   elemental function tissue_rwc_from_water(curve, biomass, w) result(r)
-      type(water_curve_t), intent(in) :: curve
-      real(wp),            intent(in) :: biomass, w
-      real(wp) :: r, w_sat
-      w_sat = curve%water_sat * biomass
-      r = (w / w_sat - curve%apoplast_frac) / (1.0_wp - curve%apoplast_frac)
-   end function tissue_rwc_from_water
-
-   !----- A tissue's unknown is its relative water content, kept strictly positive: zero   !
-   !      is an infinitely dry tissue. ----------------------------------------------------!
-   elemental function tissue_unknown_from_rwc(r) result(tau)
-      real(wp), intent(in) :: r
-      real(wp) :: tau
-      real(wp), parameter :: R_START = 1.0e-6_wp
-      tau = max(r, R_START)   ! clamp-ok: an emptied store starts just inside the curve
-   end function tissue_unknown_from_rwc
-
-   !=======================================================================================!
    !     The pond.                                                                         !
    !=======================================================================================!
 
@@ -560,4 +428,4 @@ contains
       end if
    end function pond_head_from_water
 
-end module meds_water_retention
+end module meds_soil_hydr_lib

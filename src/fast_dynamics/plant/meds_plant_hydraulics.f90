@@ -5,16 +5,15 @@
 ! its crown, its leaves' water potential, and its roots -- how deep they reach and how its !
 ! fine roots spread over the soil layers.                                                  !
 !                                                                                          !
-! How the plant's water MOVES -- uptake, sapflow, transpiration -- is in meds_hydr_lib,    !
-! how much a tissue holds in meds_water_retention, and meds_spac_solver solves them        !
+! How the plant's water MOVES -- uptake, sapflow, transpiration -- and how much a tissue   !
+! holds are in meds_plant_hydr_lib, and meds_spac_solver solves them                       !
 ! together with the soil's (docs/science/soil_plant_water.md).                             !
 !==========================================================================================!
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : grav_head, tiny_num
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
-   use meds_hydr_lib,      only : root_fraction_profile
-   use meds_water_retention, only : psi_from_water_content
+   use meds_plant_hydr_lib, only : root_fraction_profile, psi_from_water_content
    implicit none
    private
 

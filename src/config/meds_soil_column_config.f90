@@ -14,7 +14,7 @@
 module meds_soil_column_config
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, grav_head
-   use meds_water_retention,  only : soil_theta_from_psi, soil_psi_from_theta, SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,    only : soil_theta_from_psi, soil_psi_from_theta, SOIL_RETENTION_VG
    implicit none
    private
 

@@ -23,7 +23,7 @@ program test_plant_carbon_allocation
    use meds_kinds,           only : wp, ik
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
    use meds_sink_limitation,         only : growth_sink_limitation
-   use meds_allometry,               only : allometry_t, size2wood_carbon, wood_to_dbh, dbh_to_height
+   use meds_allometry_lib,           only : allometry_t, size2wood_carbon, wood_to_dbh, dbh_to_height
    implicit none
 
    !----- A stem for the sink-limit tests: wood density, height cap and aboveground share. -----!

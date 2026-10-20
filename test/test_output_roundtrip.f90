@@ -46,7 +46,7 @@ program test_output_roundtrip
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,        only : n_soil_layer_max
    use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
-   use meds_water_retention,  only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,    only : SOIL_RETENTION_VG
    use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close, test_pft_table
    use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp

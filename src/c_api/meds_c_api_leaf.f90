@@ -17,7 +17,7 @@ module meds_c_api_leaf
    use meds_plant_types,       only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j, rubisco_kinetics
-   use meds_temp_response,     only : peaked_arrhenius_scale, arrhenius_scale
+   use meds_therm_lib,         only : peaked_arrhenius_scale, arrhenius_scale
    implicit none
    private
 

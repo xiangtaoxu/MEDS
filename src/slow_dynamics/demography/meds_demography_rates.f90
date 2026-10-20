@@ -17,9 +17,9 @@
 ! recruitment laws are not here; they live in the Python example. Camac mortality stays here.    !
 !==========================================================================================!
 module meds_demography_rates
-   use meds_kinds,     only : wp
-   use meds_constants, only : tiny_num
-   use meds_allometry, only : allometry_t, wood_to_dbh
+   use meds_kinds,         only : wp
+   use meds_constants,     only : tiny_num
+   use meds_allometry_lib, only : allometry_t, wood_to_dbh
    implicit none
    private
 
@@ -63,10 +63,11 @@ contains
       mort = log(max(nplant, nplant_floor) / max(nplant_floor, tiny_num)) / max(window, tiny_num)
    end function decline_to_floor_mortality
 
-   !----- One cohort's reproduction-carbon recruit contribution [plant/m2/yr]: the per-plant       !
-   !       reproduction NPP over the step, as an annual rate, times the density and the            !
-   !       recruit carbon efficiency, over the min-size recruit carbon (min_cohort_carbon, from      !
-   !       meds_allometry). Caller reduces these into the (PFT, patch) array and gates by include_pft.!
+   !----- One cohort's reproduction-carbon recruit contribution [plant/m2/yr]: the per-plant      !
+   !      reproduction NPP over the step, as an annual rate, times the density and the recruit    !
+   !      carbon efficiency, over the min-size recruit carbon (min_cohort_carbon, from            !
+   !      meds_allometry_lib). Caller reduces these into the (PFT, patch) array and gates by      !
+   !      include_pft. ---------------------------------------------------------------------------!
    elemental pure function npp_to_recruitment(nplant, npp_repro, dt_yr,                         &
                                               recruit_carbon_efficiency, carbon_min) result(rec)
       real(wp), intent(in) :: nplant, npp_repro, dt_yr, recruit_carbon_efficiency, carbon_min

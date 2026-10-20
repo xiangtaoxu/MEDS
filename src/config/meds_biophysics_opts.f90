@@ -9,7 +9,7 @@
 ! biophysics kernels can `use` without depending on the meds_config aggregator. The        !
 ! kernels that switch on them and the loader that reads them import this module directly.  !
 !                                                                                          !
-! (The SOIL_RETENTION_* selectors stay in meds_water_retention with the retention curves;  !
+! (The SOIL_RETENTION_* selectors stay in meds_soil_hydr_lib with the retention curves;    !
 ! the per-column soil_params_t / soil_thermal_params_t descriptors are in                  !
 ! meds_soil_column_config.)                                                                !
 !==========================================================================================!

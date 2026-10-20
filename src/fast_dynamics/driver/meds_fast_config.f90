@@ -21,7 +21,7 @@ module meds_fast_config
                                 CTRL_I, CTRL_PI
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
-   use meds_temp_response, only : kattge_knorr_entropy, kattge_knorr_jv_ratio
+   use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t,                     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W,        &
                                 GRP_THETA, N_TOL_GROUP
