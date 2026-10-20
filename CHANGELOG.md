@@ -33,35 +33,35 @@ the PFT file's, its hydraulics among them, and the traits that follow a fitted r
 outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's potential (#461).
 `src/shared` is `src/share` (#462). A named constant is spelled by its kind (#463). The configuration
 reads only keys it uses, checks them in one module, and names every field as its key; `src/config/opts`
-holds one module per block, and the reference config describes each key in a line or two (#NNN).
+holds one module per block, and the reference config describes each key in a line or two (#464).
 
 **Upgrading from v0.3.5:**
-- **Six keys nothing read are gone** (#NNN): `[demography].patch_diff_age_tol`,
+- **Six keys nothing read are gone** (#464): `[demography].patch_diff_age_tol`,
   `patch_min_area_remain` and `enable_patch_fission`, `[snow].snow_stab_thresh`, and `[pft].huber_value`
   and `wood_carbon_density`. Delete them; a config that keeps one stops the run. The PFT CSV loses
   their two columns, and its `height_form` column is `height_allometry`.
-- **One relative tolerance and one snow roughness** (#NNN). `[fast].rtol` replaces `ark_rtol`,
+- **One relative tolerance and one snow roughness** (#464). `[fast].rtol` replaces `ark_rtol`,
   `water_rtol` and `rtol_all`, which set the same accuracy (1e-3 by default; `rtol_all` overrode both);
   `water_atol` and `atol_scale` stay. `[aerodynamics].snow_rough` replaces itself and `[snow].z0_snow`,
   which held the same value (0.001 m) under the same definition. Every result is unchanged at the
   defaults; a config that set `rtol_all` or `ark_rtol` sets `rtol`.
-- **Fewer required keys** (#NNN): `[init].restart_file` is required only with `init_mode = 2` and
+- **Fewer required keys** (#464): `[init].restart_file` is required only with `init_mode = 2` and
   `census_file` only with `init_mode = 1` (the Python census start reads it in any mode);
   `[carbon].gpp_ref` only with the fast loop off. The `"none"` placeholders can go.
-- **A selector takes only the names it lists** (#NNN). `[fast].error_level`, `step_controller`,
+- **A selector takes only the names it lists** (#464). `[fast].error_level`, `step_controller`,
   `[soil_carbon].decomp_scheme`, `step_solver` and `[output].sync_every` read any other value as their
   default, `time_integrator` took `"rk4"` and `error_level` `"l0"` and `"l2"`; each now stops the run
   with the names allowed. `[forcing].avg_convention` takes `"end"` or `"begin"`, the two it has a
   disaggregation for.
-- **An old key is an unknown key** (#NNN). The table of retired keys is gone, with the loader's
+- **An old key is an unknown key** (#464). The table of retired keys is gone, with the loader's
   retired spellings (`format = "netcdf"` and `"era5land"`, `height_allometry = "gmm"`, the `[io]` block,
   `time_integrator = "split"`): an old key stops the run as one MEDS does not read, with the listed key
   it most likely meant when one is close, and this file lists every rename.
-- **The `chave_*` keys need a PFT on `"chave2014"`** (#NNN): with every PFT on the power law they stop
+- **The `chave_*` keys need a PFT on `"chave2014"`** (#464): with every PFT on the power law they stop
   the run.
-- **A key a setting makes inapplicable is reported with the unknown and missing ones** (#NNN), all
+- **A key a setting makes inapplicable is reported with the unknown and missing ones** (#464), all
   together, rather than stopping the load at the first.
-- **Fortran: every configuration field has its key's name** (#NNN), `cfg%<record>%<key>` for a block
+- **Fortran: every configuration field has its key's name** (#464), `cfg%<record>%<key>` for a block
   with its own record and `cfg%<key>` otherwise:
   - `cfg%init%init_mode`, `%restart_file`, `%census_file`, `%pft_config`, `%soil_temp`, `%soil_theta`,
     `%reacclimate_traits` and `cfg%state%output_dir`, `%output_prefix`, `%write_state`, `%interval_years`
@@ -72,7 +72,7 @@ holds one module per block, and the reference config describes each key in a lin
     `energy%soil_energy_budget_atol`; `forcing%format`, `%timestep`, `%latitude`, `%longitude`,
     `%elevation`, `%grid_elevation`; a site's `elevation`, `slope`, `aspect`; `output%dbh_class_edges`;
     `allom%height_allometry`; `pft%pheno(pf)%<key>` in place of `pft%pheno_<key>(pf)`.
-- **Fortran: the configuration's modules** (#NNN). `validate_config`, `check_config_keys`,
+- **Fortran: the configuration's modules** (#464). `validate_config`, `check_config_keys`,
   `nearest_key` and the key lists are in `meds_config_check`, and `meds_config_keys` is gone.
   `INTEG_*`, `CTRL_*` and `process_mask_t` come from `meds_fast_opts`, `site_spec_t` from
   `meds_sites_opts`, `MAX_RECYCLE_YEARS` from `meds_forcing_config`, and `DIST_PRIMARY` and
@@ -106,7 +106,7 @@ holds one module per block, and the reference config describes each key in a lin
   - `[soil].bottom_bc` is now `[soil].water_bottom_bc`, and `[energy].bottom_bc` is
     `[soil].thermal_bottom_bc`;
   - `[energy].deep_temp` and `deep_depth` move to `[soil]`;
-  - `[soil].rtol` and `atol` are now `[fast].rtol` and `water_atol` (#NNN), `[energy].atol` is
+  - `[soil].rtol` and `atol` are now `[fast].rtol` and `water_atol` (#464), `[energy].atol` is
     `[fast].soil_energy_budget_atol`, and `[energy].debug_error` is `[fast].debug_error`;
   - `[soil].intercept_alpha` and `intercept_k` move to `[fast]`, beside `canopy_water_on`.
 
@@ -239,18 +239,18 @@ holds one module per block, and the reference config describes each key in a lin
 
 ### Changed
 
-- **`src/config` is the configuration and its checks** (#NNN): `meds_config` (the aggregate, one field
+- **`src/config` is the configuration and its checks** (#464): `meds_config` (the aggregate, one field
   per key, grouped by block in the reference's order), `meds_config_io` (the loader), `meds_config_check`
   and `meds_toml`. `src/config/opts/` holds one leaf per block, the record and selector codes the
   kernels import without `meds_config`: the PFT table, the soil column, forcing, output, the fast loop
   (`meds_fast_opts`, new), biophysics, leaf, biogeochemistry, maps, region and sites
   (`meds_sites_opts`, new). The loader reads every selector through one reader, which replaces eleven
   hand-written parsers, and the value checks are one routine per block.
-- **The reference config describes each key in a line or two** (#NNN), and the code annotates each field
+- **The reference config describes each key in a line or two** (#464), and the code annotates each field
   in one; the longer explanations are on `docs/configuration.md` (new: "Threads and the slow tier") and
   the science pages (`leaf_gas_exchange.md` on `phi_psii`, `soil_carbon.md` on `soil_carbon_on = false`).
   The ED2 provenance of the configuration's defaults is in `docs/ed2_comparison.md` §4.8.
-- **No `;` statement joins in `src/config`** (#NNN), as in `src/state`.
+- **No `;` statement joins in `src/config`** (#464), as in `src/state`.
 
 - **A named constant is spelled by its kind, not by who uses it** (#463). The physical,
   mathematical and unit-conversion constants and the kinds, in `meds_constants` and `meds_kinds`, are
@@ -528,7 +528,7 @@ holds one module per block, and the reference config describes each key in a lin
 
 ### Removed
 
-- **The retired-key table** (#NNN), 280 of `meds_config_keys`' 421 lines, and the loader's
+- **The retired-key table** (#464), 280 of `meds_config_keys`' 421 lines, and the loader's
   retired-spelling branches; the keys nothing read (listed under Upgrading); the reporting-only
   `backend` field with its `BK_*` labels; `INTERP_COSZ` and `METAVG_INSTANT`; `soil_opts_t%debug_error`,
   a copy of `[fast].debug_error` nothing read (the budget stops read `energy_opts_t%debug_error`).
