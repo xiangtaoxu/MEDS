@@ -30,12 +30,21 @@ module meds_optics_lib
 
 contains
 
-   !----- The midpoint inclination of class k [rad]. --------------------------------------!
-   pure function leaf_class_angle(k) result(theta)
-      integer(ik), intent(in) :: k
-      real(wp)                :: theta
-      theta = LEAF_CLASS_DEG(k) * pi / 180.0_wp
-   end function leaf_class_angle
+   !----- Beta (p, q) from the mean and standard deviation of the leaf angle [deg], by     !
+   !      moment matching on t = theta/90 (Goel & Strebel 1984). --------------------------!
+   pure subroutine moments_to_beta_params(mean_deg, std_deg, p, q)
+      real(wp), intent(in)  :: mean_deg, std_deg
+      real(wp), intent(out) :: p, q
+      real(wp) :: mt, vt, kappa
+      real(wp), parameter :: VT_MIN = 1.0e-6_wp   ! variance floor (std_deg floor ~0.09 deg)
+      mt = min(max(mean_deg / 90.0_wp, 1.0e-3_wp), 1.0_wp - 1.0e-3_wp)   ! clamp-ok: the beta mean inside (0, 1)
+      vt = (std_deg / 90.0_wp) ** 2
+      vt = min(vt, mt * (1.0_wp - mt) * (1.0_wp - 1.0e-6_wp))             ! a Beta needs vt < mt (1 - mt)
+      vt = max(vt, VT_MIN)                                                ! keep kappa finite at std_deg = 0
+      kappa = mt * (1.0_wp - mt) / vt - 1.0_wp                            ! concentration, p + q
+      p = mt * kappa
+      q = (1.0_wp - mt) * kappa
+   end subroutine moments_to_beta_params
 
    !----- The Beta LIDF: the leaf-area share of each inclination class, for shape          !
    !      parameters (p, q) (docs/science/canopy_radiation_transfer.md eq. (1)), by a      !
@@ -71,21 +80,12 @@ contains
       f  = exp((p - 1.0_wp) * log(tt) + (q - 1.0_wp) * log(1.0_wp - tt))
    end function beta_pdf_kernel
 
-   !----- Beta (p, q) from the mean and standard deviation of the leaf angle [deg], by     !
-   !      moment matching on t = theta/90 (Goel & Strebel 1984). --------------------------!
-   pure subroutine moments_to_beta_params(mean_deg, std_deg, p, q)
-      real(wp), intent(in)  :: mean_deg, std_deg
-      real(wp), intent(out) :: p, q
-      real(wp) :: mt, vt, kappa
-      real(wp), parameter :: VT_MIN = 1.0e-6_wp   ! variance floor (std_deg floor ~0.09 deg)
-      mt = min(max(mean_deg / 90.0_wp, 1.0e-3_wp), 1.0_wp - 1.0e-3_wp)   ! clamp-ok: the beta mean inside (0, 1)
-      vt = (std_deg / 90.0_wp) ** 2
-      vt = min(vt, mt * (1.0_wp - mt) * (1.0_wp - 1.0e-6_wp))             ! a Beta needs vt < mt (1 - mt)
-      vt = max(vt, VT_MIN)                                                ! keep kappa finite at std_deg = 0
-      kappa = mt * (1.0_wp - mt) / vt - 1.0_wp                            ! concentration, p + q
-      p = mt * kappa
-      q = (1.0_wp - mt) * kappa
-   end subroutine moments_to_beta_params
+   !----- The midpoint inclination of class k [rad]. --------------------------------------!
+   pure function leaf_class_angle(k) result(theta)
+      integer(ik), intent(in) :: k
+      real(wp)                :: theta
+      theta = LEAF_CLASS_DEG(k) * pi / 180.0_wp
+   end function leaf_class_angle
 
    !----- bf = <cos^2 theta_leaf> over the LIDF (docs/science/canopy_radiation_transfer.md !
    !      eq. (2)). -----------------------------------------------------------------------!
@@ -125,8 +125,8 @@ contains
    end function gfun_direct
 
    !----- Single-scatter albedo omega = rho + tau and asymmetry g = bf (rho - tau)/omega,  !
-   !      with g = 0 for a perfect absorber                                                !
-   !      (docs/science/canopy_radiation_transfer.md eq. (4)). ----------------------------!
+   !      with g = 0 for a perfect absorber (docs/science/canopy_radiation_transfer.md eq. !
+   !      (4)). ---------------------------------------------------------------------------!
    pure subroutine scatter_pair(rho, tau, bf, omega, g)
       real(wp), intent(in)  :: rho, tau, bf
       real(wp), intent(out) :: omega, g

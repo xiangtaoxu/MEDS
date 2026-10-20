@@ -14,15 +14,16 @@
 !==========================================================================================!
 module meds_therm_lib
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : mmdry, tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,    &
-                              t_3ple, tsupercool_liq, tsupercool_vap, r_dry,                    &
-                              rho_h2o, k_water, k_ice, c2b_wood, r_gas, t_ref_photo, safe_exp, t_kelvin
+   use meds_constants, only : mmdry, tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,  &
+                              t_3ple, tsupercool_liq, tsupercool_vap, r_dry, rho_h2o, k_water,      &
+                              k_ice, c2b_wood, r_gas, t_ref_photo, safe_exp, t_kelvin
    implicit none
    private
 
    !----- Energy datum: specific energies and the phase-change inverter. ------------------!
    public :: internal_energy_to_temp, temp_to_internal_energy
-   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, liquid_energy_to_temp, precip_enthalpy
+   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, liquid_energy_to_temp
+   public :: precip_enthalpy
    !----- Moist air. ----------------------------------------------------------------------!
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
    public :: sat_specific_humidity_temp_deriv, air_vpd, specific_humidity_to_vpd
@@ -39,12 +40,13 @@ module meds_therm_lib
    !----- CLM5 mineral soil (Lawrence & Slater 2008; CLM5 technote 2.7.2): the solids'     !
    !      conductivity and heat capacity per sand and clay, and the dry soil's             !
    !      conductivity from its bulk density (Johansen 1975); grains are 2700 kg/m3. ------!
-   real(wp), parameter :: K_QUARTZ         = 8.80_wp     !< [W/m/K]    sand grains
-   real(wp), parameter :: K_CLAY_MINERAL   = 2.92_wp     !< [W/m/K]    clay grains
-   real(wp), parameter :: CV_SAND          = 2.128e6_wp  !< [J/m3/K]   sand grains
-   real(wp), parameter :: CV_CLAY          = 2.385e6_wp  !< [J/m3/K]   clay grains
-   real(wp), parameter :: CLM_GRAIN_DENSITY = 2700.0_wp  !< [kg/m3]
-   real(wp), parameter :: SR_FLOOR = 0.05_wp     !< [-] floor on relative saturation, where Johansen's log10 form holds
+   real(wp), parameter :: K_QUARTZ          = 8.80_wp     !< [W/m/K]    sand grains
+   real(wp), parameter :: K_CLAY_MINERAL    = 2.92_wp     !< [W/m/K]    clay grains
+   real(wp), parameter :: CV_SAND           = 2.128e6_wp  !< [J/m3/K]   sand grains
+   real(wp), parameter :: CV_CLAY           = 2.385e6_wp  !< [J/m3/K]   clay grains
+   real(wp), parameter :: CLM_GRAIN_DENSITY = 2700.0_wp   !< [kg/m3]
+   !----- [-] Floor on the relative saturation, where Johansen's log10 form holds. --------!
+   real(wp), parameter :: SR_FLOOR = 0.05_wp
 
    !----- The forms [leaf_physiology].temp_response_form selects. -------------------------!
    integer(ik), parameter :: tresp_arrhenius = 1_ik  !< plain Arrhenius
@@ -202,9 +204,9 @@ contains
       vpd = max(0.0_wp, sat_vapor_pressure(temp) - e_vap)
    end function air_vpd
 
-   !----- VPD [Pa] from temperature, specific humidity and pressure. The vapour pressure   !
-   !      e = q p / (0.622 + 0.378 q) is the exact inverse of docs/science/forcing.md      !
-   !      eq. (11), so a saturated forcing record reads back as VPD = 0. ------------------!
+   !----- VPD [Pa] from temperature, specific humidity and pressure. The vapour pressure e !
+   !      = q p / (0.622 + 0.378 q) is the exact inverse of docs/science/forcing.md eq.    !
+   !      (11), so a saturated forcing record reads back as VPD = 0. ----------------------!
    pure elemental real(wp) function specific_humidity_to_vpd(temp, shv, pressure) result(vpd)
       real(wp), intent(in) :: temp      !< [K]
       real(wp), intent(in) :: shv       !< [kg/kg] specific humidity
@@ -364,9 +366,9 @@ contains
       k = arrhenius_scale(k25, ea, t_leaf) * fh_ref / fh_leaf
    end function peaked_arrhenius_scale
 
-   !----- Kattge & Knorr (2007) acclimation of the peaked form's entropy term,             !
-   !      dS = a - b T_growth[degC] (docs/science/leaf_gas_exchange.md eq. (4)), with      !
-   !      T_growth a running mean of air temperature, the quantity the fit was made on. ---!
+   !----- Kattge & Knorr (2007) acclimation of the peaked form's entropy term, dS = a - b  !
+   !      T_growth[degC] (docs/science/leaf_gas_exchange.md eq. (4)), with T_growth a      !
+   !      running mean of air temperature, the quantity the fit was made on. --------------!
    elemental pure function kattge_knorr_entropy(a_coef, b_coef, t_growth) result(ds)
       real(wp), intent(in) :: a_coef, b_coef   !< [J/mol/K], [J/mol/K2] intercept and slope
       real(wp), intent(in) :: t_growth         !< [K] growth temperature

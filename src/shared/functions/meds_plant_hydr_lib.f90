@@ -23,7 +23,8 @@ module meds_plant_hydr_lib
    !----- Tissue pressure-volume curve: read-offs and the solver's relations. -------------!
    public :: water_curve_t
    public :: tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi
-   public :: tissue_psi_to_water, tissue_capacitance, tissue_water_to_psi, tissue_capped_water, tissue_shared_potential
+   public :: tissue_psi_to_water, tissue_capacitance, tissue_water_to_psi, tissue_capped_water
+   public :: tissue_shared_potential
    public :: tissue_water_relations, tissue_rwc_to_unknown, tissue_water_to_rwc
    !----- Vulnerability curve and Kirchhoff potential. ------------------------------------!
    public :: plc_retained, kirchhoff_potential, hydro_table_t, build_hydro_table
@@ -44,9 +45,9 @@ module meds_plant_hydr_lib
    !----- [-] Floor on the symplastic relative water content in the read-offs; the         !
    !      solver's relations have none. ---------------------------------------------------!
    real(wp), parameter :: RWC_FLOOR = 1.0e-4_wp
-   !----- Cap on tissue_shared_potential's halvings. The loop stops when its bracket is    !
-   !      as narrow as the arithmetic resolves, about 70 halvings for a root near -1       !
-   !      MPa; only a root at 0, where that width has no floor, reaches the cap. ----------!
+   !----- Cap on tissue_shared_potential's halvings. The loop stops when its bracket is as !
+   !      narrow as the arithmetic resolves, about 70 halvings for a root near -1 MPa;     !
+   !      only a root at 0, where that width has no floor, reaches the cap. ---------------!
    integer(ik), parameter :: BISECTION_STEPS_MAX = 200_ik
 
    !----- The Kirchhoff lookup table for a general vulnerability exponent: G(r) on a       !
@@ -90,8 +91,8 @@ contains
 
    !=======================================================================================!
    !     Tissue pressure-volume curve (Bartlett / Tyree-Hammel;                            !
-   !     docs/science/plant_hydraulics.md §2, eqs. (3)-(6)): read-offs, floored at         !
-   !     RWC_FLOOR.                                                                        !
+   !     docs/science/plant_hydraulics.md §2, eqs. (3)-(6)): the read-offs diagnostics and !
+   !     a store's set-up use, floored at RWC_FLOOR so they stay finite.                   !
    !=======================================================================================!
 
    !----- Turgor loss point [MPa] (Bartlett et al. 2012 eq. 1;                             !
@@ -116,9 +117,9 @@ contains
       rwc_tlp = tissue_rwc_tlp(pi0, elastic_mod)
       r       = max(rwc, RWC_FLOOR)
       if (r >= rwc_tlp) then
-         psi = elastic_mod*(r - rwc_tlp) + pi0/r      ! turgor + osmotic
+         psi = elastic_mod*(r - rwc_tlp) + pi0/r   ! turgor + osmotic
       else
-         psi = pi0/r                          ! turgor lost
+         psi = pi0/r                               ! turgor lost
       end if
    end function tissue_rwc_to_psi
 
@@ -127,7 +128,7 @@ contains
    elemental real(wp) function tissue_psi_to_rwc(psi, pi0, elastic_mod) result(rwc)
       real(wp), intent(in) :: psi, pi0, elastic_mod
       real(wp) :: psi_tlp, b, disc
-      psi_tlp = pi0*elastic_mod / (pi0 + elastic_mod)
+      psi_tlp = tissue_psi_tlp(pi0, elastic_mod)
       if (psi >= psi_tlp) then                ! turgid
          !----- The larger root of elastic_mod R^2 - b R + pi0 = 0. -----------------------!
          b    = psi + elastic_mod + pi0
@@ -158,13 +159,13 @@ contains
       type(water_curve_t), intent(in) :: curve
       real(wp) :: psi_tlp, w_sat_sym, r, cr
       associate (pi0 => curve%pi0, elastic_mod => curve%elastic_mod)
-         psi_tlp   = pi0*elastic_mod / (pi0 + elastic_mod)
+         psi_tlp   = tissue_psi_tlp(pi0, elastic_mod)
          w_sat_sym = (1.0_wp - curve%apoplast_frac)*curve%water_sat*biomass
          r         = tissue_psi_to_rwc(psi, pi0, elastic_mod)
          if (psi >= psi_tlp) then
-            cr = 1.0_wp / (elastic_mod - pi0/(r*r))      ! dR/dpsi, turgid
+            cr = 1.0_wp / (elastic_mod - pi0/(r*r))   ! dR/dpsi, turgid
          else
-            cr = -(r*r)/pi0                       ! dR/dpsi, flaccid
+            cr = -(r*r)/pi0                           ! dR/dpsi, flaccid
          end if
       end associate
       c = w_sat_sym*cr
@@ -182,12 +183,12 @@ contains
    end function tissue_water_to_psi
 
    !----- The potential [MPa] at which two tissues holding w_total [kg] between them are   !
-   !      at rest, a at psi and b at psi - head_b (docs/science/plant_hydraulics.md        !
-   !      eq. (2) with no flow), by bisection between the curves' dry floor and a's        !
+   !      at rest, a at psi and b at psi - head_b (docs/science/plant_hydraulics.md eq.    !
+   !      (2) with no flow), by bisection between the curves' dry floor and a's            !
    !      saturation; a total outside returns the nearer end. The caller moves water by    !
    !      the curves at the result, so what it moves is exact whatever the residual. ------!
    elemental real(wp) function tissue_shared_potential(w_total, curve_a, biomass_a, curve_b, biomass_b, head_b)  &
-                                                result(psi)
+                                                       result(psi)
       real(wp),            intent(in) :: w_total               !< [kg] the water the two hold together
       type(water_curve_t), intent(in) :: curve_a, curve_b
       real(wp),            intent(in) :: biomass_a, biomass_b  !< [kgC]
@@ -222,8 +223,8 @@ contains
    end function tissue_shared_potential
 
    !----- Tissue water [kg per plant] capped at saturation, water_sat * biomass, for a     !
-   !      store that lost biomass without its water; the caller sheds the excess           !
-   !      (w - result) to the ground (docs/science/soil_plant_water.md §2). ---------------!
+   !      store that lost biomass without its water; the caller sheds the excess (w -      !
+   !      result) to the ground (docs/science/soil_plant_water.md §2). --------------------!
    elemental real(wp) function tissue_capped_water(w, curve, biomass) result(w_capped)
       real(wp),            intent(in) :: w, biomass
       type(water_curve_t), intent(in) :: curve
@@ -236,9 +237,9 @@ contains
    !=======================================================================================!
 
    !----- A tissue at symplastic relative water content r: potential [MPa] and water       !
-   !      [kg/m2 of ground] for nplant plants of `biomass` each, with their derivatives    !
-   !      in r. The pressure-volume curve without tissue_rwc_to_psi's floor: the solver    !
-   !      keeps r above zero (docs/science/plant_hydraulics.md eqs. (4)-(5)). -------------!
+   !      [kg/m2 of ground] for nplant plants of `biomass` each, with their derivatives in !
+   !      r. The pressure-volume curve without tissue_rwc_to_psi's floor: the solver keeps !
+   !      r above zero (docs/science/plant_hydraulics.md eqs. (4)-(5)). -------------------!
    elemental subroutine tissue_water_relations(curve, biomass, nplant, r, psi, dpsi, w, dw)
       type(water_curve_t), intent(in)  :: curve
       real(wp),            intent(in)  :: biomass   !< [kgC per plant]
@@ -287,10 +288,10 @@ contains
    !     PFT's lookup table, filled by 7-point Gauss-Legendre panels.                      !
    !=======================================================================================!
 
-   !----- Retained fraction of xylem conductance, 1 - PLC = 1 / (1 + r^kexp),              !
-   !      r = psi/psi50, and one at or above zero potential                                !
-   !      (docs/science/plant_hydraulics.md eq. (7)). r = 0 is kept off the general power: !
-   !      under floating-point trapping a compiler may take 0**kexp through log(0). -------!
+   !----- Retained fraction of xylem conductance, 1 - PLC = 1 / (1 + r^kexp), r =          !
+   !      psi/psi50, and one at or above zero potential (docs/science/plant_hydraulics.md  !
+   !      eq. (7)). r = 0 is kept off the general power: under floating-point trapping a   !
+   !      compiler may take 0**kexp through log(0). ---------------------------------------!
    elemental real(wp) function plc_retained(psi, psi50, kexp) result(f)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
@@ -303,7 +304,7 @@ contains
    end function plc_retained
 
    !----- Kirchhoff (matric flux) potential [MPa], Phi(psi) = integral of the retained     !
-   !      fraction from 0 to psi (docs/science/plant_hydraulics.md eq. (8)): closed form  !
+   !      fraction from 0 to psi (docs/science/plant_hydraulics.md eq. (8)): closed form   !
    !      for kexp 1 and 2, the PFT's table otherwise. Above zero potential nothing is     !
    !      embolised, so Phi = psi there; a flat Phi would read a supersaturated tissue's   !
    !      xylem as blocked. ---------------------------------------------------------------!
@@ -318,105 +319,6 @@ contains
          phi = kirchhoff_potential_table(psi, psi50, table)
       end if
    end function kirchhoff_potential
-
-   !----- Whether the vulnerability exponent is 1 or 2, where Phi has a closed form. ------!
-   pure logical function has_closed_form(kexp)
-      real(wp), intent(in) :: kexp
-      has_closed_form = abs(kexp - 1.0_wp) < 1.0e-9_wp .or. abs(kexp - 2.0_wp) < 1.0e-9_wp
-   end function has_closed_form
-
-   !----- The closed forms: psi50 ln(1 + r) for kexp 1, psi50 atan(r) for kexp 2. ---------!
-   pure real(wp) function kirchhoff_potential_closed(psi, psi50, kexp) result(phi)
-      real(wp), intent(in) :: psi, psi50, kexp
-      real(wp) :: r
-      r = max(psi/psi50, 0.0_wp)
-      if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
-         phi = psi50 * log(1.0_wp + r)
-      else
-         phi = psi50 * atan(r)
-      end if
-   end function kirchhoff_potential_closed
-
-   !----- Fill the table, one 7-point panel per interval added to the node below, so it    !
-   !      rises monotonically. A subroutine, not an array-valued function                  !
-   !      (docs/building.md, Compilers). --------------------------------------------------!
-   pure subroutine build_hydro_table(tab, kexp)
-      type(hydro_table_t), intent(out) :: tab
-      real(wp),            intent(in)  :: kexp
-      real(wp) :: h
-      integer  :: j
-      tab%kexp  = kexp
-      tab%r_max = HYDRO_TABLE_RMAX
-      tab%n     = int(HYDRO_TABLE_NTAB, ik)
-      h         = HYDRO_TABLE_RMAX / real(HYDRO_TABLE_NTAB, wp)
-      tab%inv_h = 1.0_wp / h
-      tab%g(0) = 0.0_wp
-      do j = 1, HYDRO_TABLE_NTAB
-         tab%g(j) = tab%g(j-1) + kirchhoff_panel(real(j-1, wp)*h, real(j, wp)*h, kexp)
-      end do
-   end subroutine build_hydro_table
-
-   !----- Kirchhoff potential [MPa] read from the table by linear interpolation; psi50 is  !
-   !      a run-time scale, so only kexp sets the table. Beyond the table the analytic     !
-   !      tail is added to its last node: extrapolating the last interval could turn a     !
-   !      dried leaf's potential positive. ------------------------------------------------!
-   pure real(wp) function kirchhoff_potential_table(psi, psi50, tab) result(phi)
-      real(wp),            intent(in) :: psi, psi50
-      type(hydro_table_t), intent(in) :: tab
-      real(wp) :: r, x, t
-      integer  :: idx
-      r   = max(psi/psi50, 0.0_wp)
-      if (r >= tab%r_max) then
-         phi = psi50 * ( tab%g(HYDRO_TABLE_NTAB) + kirchhoff_tail(tab%r_max, r, tab%kexp) )
-         return
-      end if
-      x   = r * tab%inv_h
-      idx = min(int(x), HYDRO_TABLE_NTAB - 1)
-      t   = x - real(idx, wp)
-      phi = psi50 * ( tab%g(idx)*(1.0_wp - t) + tab%g(idx+1)*t )
-   end function kirchhoff_potential_table
-
-   !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre, !
-   !      exact for polynomials up to degree 13. The sum is written out rather than handed !
-   !      a function (docs/building.md, no procedure arguments); u = 0 is guarded as in    !
-   !      plc_retained. -------------------------------------------------------------------!
-   pure real(wp) function kirchhoff_panel(a, b, kexp) result(g)
-      real(wp), intent(in) :: a, b, kexp
-      real(wp), parameter :: NODE(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
-                                           -0.4058451513773972_wp,  0.0000000000000000_wp,     &
-                                            0.4058451513773972_wp,  0.7415311855993945_wp,     &
-                                            0.9491079123427585_wp ]
-      real(wp), parameter :: WEIGHT(7) = [  0.1294849661688697_wp,  0.2797053914892766_wp,     &
-                                            0.3818300505051189_wp,  0.4179591836734694_wp,     &
-                                            0.3818300505051189_wp,  0.2797053914892766_wp,     &
-                                            0.1294849661688697_wp ]
-      real(wp)    :: mid, half, u, acc
-      integer(ik) :: k
-      mid  = 0.5_wp * (a + b)                    ! the nodes on [-1,1], mapped onto [a,b]
-      half = 0.5_wp * (b - a)
-      acc  = 0.0_wp
-      do k = 1_ik, 7_ik
-         u = mid + half * NODE(k)
-         if (u <= 0.0_wp) then
-            acc = acc + WEIGHT(k)
-         else
-            acc = acc + WEIGHT(k) / (1.0_wp + u**kexp)
-         end if
-      end do
-      g = half * acc
-   end function kirchhoff_panel
-
-   !----- integral_a^b du/(1+u^kexp) beyond the table (a >= HYDRO_TABLE_RMAX), where the   !
-   !      integrand is u^-kexp to leading order: positive and, for kexp > 1, bounded as b  !
-   !      grows, so the potential keeps rising toward its asymptote. ----------------------!
-   pure real(wp) function kirchhoff_tail(a, b, kexp) result(g)
-      real(wp), intent(in) :: a, b, kexp
-      if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
-         g = log(b / a)
-      else
-         g = (b**(1.0_wp - kexp) - a**(1.0_wp - kexp)) / (1.0_wp - kexp)
-      end if
-   end function kirchhoff_tail
 
    !----- dPhi/dpsi of exactly the potential kirchhoff_potential computes (the retained    !
    !      fraction, the slope of the table's linear piece, or the tail's), so the solver's !
@@ -459,6 +361,105 @@ contains
          d2phi = 0.0_wp
       end if
    end function kirchhoff_curvature
+
+   !----- Whether the vulnerability exponent is 1 or 2, where Phi has a closed form. ------!
+   pure logical function has_closed_form(kexp)
+      real(wp), intent(in) :: kexp
+      has_closed_form = abs(kexp - 1.0_wp) < 1.0e-9_wp .or. abs(kexp - 2.0_wp) < 1.0e-9_wp
+   end function has_closed_form
+
+   !----- The closed forms: psi50 ln(1 + r) for kexp 1, psi50 atan(r) for kexp 2. ---------!
+   pure real(wp) function kirchhoff_potential_closed(psi, psi50, kexp) result(phi)
+      real(wp), intent(in) :: psi, psi50, kexp
+      real(wp) :: r
+      r = max(psi/psi50, 0.0_wp)
+      if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
+         phi = psi50 * log(1.0_wp + r)
+      else
+         phi = psi50 * atan(r)
+      end if
+   end function kirchhoff_potential_closed
+
+   !----- Kirchhoff potential [MPa] read from the table by linear interpolation; psi50 is  !
+   !      a run-time scale, so only kexp sets the table. Beyond the table the analytic     !
+   !      tail is added to its last node: extrapolating the last interval could turn a     !
+   !      dried leaf's potential positive. ------------------------------------------------!
+   pure real(wp) function kirchhoff_potential_table(psi, psi50, tab) result(phi)
+      real(wp),            intent(in) :: psi, psi50
+      type(hydro_table_t), intent(in) :: tab
+      real(wp) :: r, x, t
+      integer  :: idx
+      r   = max(psi/psi50, 0.0_wp)
+      if (r >= tab%r_max) then
+         phi = psi50 * ( tab%g(HYDRO_TABLE_NTAB) + kirchhoff_tail(tab%r_max, r, tab%kexp) )
+         return
+      end if
+      x   = r * tab%inv_h
+      idx = min(int(x), HYDRO_TABLE_NTAB - 1)
+      t   = x - real(idx, wp)
+      phi = psi50 * ( tab%g(idx)*(1.0_wp - t) + tab%g(idx+1)*t )
+   end function kirchhoff_potential_table
+
+   !----- Fill the table, one 7-point panel per interval added to the node below, so it    !
+   !      rises monotonically. A subroutine, not an array-valued function                  !
+   !      (docs/building.md, Compilers). --------------------------------------------------!
+   pure subroutine build_hydro_table(tab, kexp)
+      type(hydro_table_t), intent(out) :: tab
+      real(wp),            intent(in)  :: kexp
+      real(wp) :: h
+      integer  :: j
+      tab%kexp  = kexp
+      tab%r_max = HYDRO_TABLE_RMAX
+      tab%n     = int(HYDRO_TABLE_NTAB, ik)
+      h         = HYDRO_TABLE_RMAX / real(HYDRO_TABLE_NTAB, wp)
+      tab%inv_h = 1.0_wp / h
+      tab%g(0) = 0.0_wp
+      do j = 1, HYDRO_TABLE_NTAB
+         tab%g(j) = tab%g(j-1) + kirchhoff_panel(real(j-1, wp)*h, real(j, wp)*h, kexp)
+      end do
+   end subroutine build_hydro_table
+
+   !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre, !
+   !      exact for polynomials up to degree 13. The sum is written out rather than handed !
+   !      a function (docs/building.md, no procedure arguments); u = 0 is guarded as in    !
+   !      plc_retained. -------------------------------------------------------------------!
+   pure real(wp) function kirchhoff_panel(a, b, kexp) result(g)
+      real(wp), intent(in) :: a, b, kexp
+      real(wp), parameter :: NODE(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
+                                           -0.4058451513773972_wp,  0.0000000000000000_wp,     &
+                                            0.4058451513773972_wp,  0.7415311855993945_wp,     &
+                                            0.9491079123427585_wp ]
+      real(wp), parameter :: WEIGHT(7) = [  0.1294849661688697_wp,  0.2797053914892766_wp,     &
+                                            0.3818300505051189_wp,  0.4179591836734694_wp,     &
+                                            0.3818300505051189_wp,  0.2797053914892766_wp,     &
+                                            0.1294849661688697_wp ]
+      real(wp)    :: mid, half, u, acc
+      integer(ik) :: k
+      mid  = 0.5_wp * (a + b)                    ! the nodes on [-1,1], mapped onto [a,b]
+      half = 0.5_wp * (b - a)
+      acc  = 0.0_wp
+      do k = 1_ik, 7_ik
+         u = mid + half * NODE(k)
+         if (u <= 0.0_wp) then
+            acc = acc + WEIGHT(k)
+         else
+            acc = acc + WEIGHT(k) / (1.0_wp + u**kexp)
+         end if
+      end do
+      g = half * acc
+   end function kirchhoff_panel
+
+   !----- integral_a^b du/(1+u^kexp) beyond the table (a >= HYDRO_TABLE_RMAX), where the   !
+   !      integrand is u^-kexp to leading order: positive and, for kexp > 1, bounded as b  !
+   !      grows, so the potential keeps rising toward its asymptote. ----------------------!
+   pure real(wp) function kirchhoff_tail(a, b, kexp) result(g)
+      real(wp), intent(in) :: a, b, kexp
+      if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
+         g = log(b / a)
+      else
+         g = (b**(1.0_wp - kexp) - a**(1.0_wp - kexp)) / (1.0_wp - kexp)
+      end if
+   end function kirchhoff_tail
 
    !=======================================================================================!
    !     Xylem (docs/science/plant_hydraulics.md eqs. (9)-(11)).                           !
@@ -520,8 +521,8 @@ contains
    !----- The share of a cohort's roots in the soil layer between depths z_top and z_bot,  !
    !      beta^(z_top/D) - beta^(z_bot/D) with D = root_depth and the depths clamped to    !
    !      [0, D], so a layer below the rooting depth gets none. Over [0, D] the shares sum !
-   !      to 1 - beta, which the caller divides by (docs/science/plant_hydraulics.md       !
-   !      eq. (13)). ----------------------------------------------------------------------!
+   !      to 1 - beta, which the caller divides by (docs/science/plant_hydraulics.md eq.   !
+   !      (13)). --------------------------------------------------------------------------!
    elemental real(wp) function root_fraction_profile(root_beta, root_depth, z_top, z_bot) result(frac)
       real(wp), intent(in) :: root_beta   !< [-]  root-profile decay (0,1); smaller => shallower
       real(wp), intent(in) :: root_depth  !< [m]  maximum rooting depth (> 0)

@@ -23,9 +23,8 @@ module meds_soil_hydr_lib
    !----- Retention curve: theta(head) and head(theta) read-offs. -------------------------!
    public :: soil_retention_vg, soil_retention_campbell, vg_pore_connectivity
    public :: soil_head_to_theta, soil_theta_to_head
-   !----- The water relations the soil-plant water solver uses, in the variable it         !
-   !      solves for: a soil layer's saturation (dry) or potential (wet), the pond's       !
-   !      head. ---------------------------------------------------------------------------!
+   !----- The water relations the soil-plant water solver uses, in the variable it solves  !
+   !      for: a soil layer's saturation (dry) or potential (wet), the pond's head. -------!
    public :: soil_specific_storage, pond_depression_depth
    public :: soil_layer_curve_t, build_soil_layer_curve, soil_water_relations, soil_theta_to_unknown
    public :: pond_water_relations, pond_water_to_head
@@ -42,8 +41,8 @@ module meds_soil_hydr_lib
       real(wp) :: coarse_frag  = 0.0_wp   !< [% volume]    coarse fragments (> 2 mm) in the layer
    end type soil_texture_t
 
+   !----- Hodnett & Tomasella (2002) give alpha per kPa. ----------------------------------!
    real(wp), parameter :: KPA_PER_MPA      = 1000.0_wp                !< [kPa/MPa]
-
    !----- Ottoni et al. (2019): Ks = a (theta_sat - theta(-33 kPa))^b, Ks in m/day. -------!
    real(wp), parameter :: HEAD_33KPA       = -0.033_wp / grav_head   !< [m] -33 kPa as water head
    real(wp), parameter :: OTTONI_KS_COEF   = 19.31_wp                !< [m/day]
@@ -61,37 +60,38 @@ module meds_soil_hydr_lib
    !      about -2 MPa. -------------------------------------------------------------------!
    real(wp), parameter :: vg_pore_connectivity = -1.0_wp
 
-   !----- [-] Floor on the effective saturation in the read-offs; the solver's curves      !
-   !      have none. ----------------------------------------------------------------------!
+   !----- [-] Floor on the effective saturation in the read-offs; the solver's curves have !
+   !      none. ---------------------------------------------------------------------------!
    real(wp), parameter :: SE_MIN = 1.0e-9_wp
+   !----- The largest logarithm the dry-soil head is evaluated at: e^700 m of head is far  !
+   !      beyond any physical soil and still finite in double precision. ------------------!
+   real(wp), parameter :: LOG_HEAD_MAX = 700.0_wp
 
    !----- [1/m] Water a saturated soil layer gains per metre of pressure head, from the    !
    !      compressibility of the soil matrix and of water: a typical value for clays and   !
    !      loams (Freeze and Cherry 1979, table 2.5). It acts only above saturation         !
    !      (docs/science/soil_plant_water.md §2). ------------------------------------------!
    real(wp), parameter :: soil_specific_storage = 1.0e-4_wp
-   !----- [m] Depth of the surface's small hollows, which the pond fills before a head     !
-   !      builds, so its storage stays smooth as it fills or empties                       !
-   !      (docs/science/soil_plant_water.md §2). ------------------------------------------!
-   real(wp), parameter :: pond_depression_depth = 1.0e-3_wp
-   !----- The largest logarithm the dry-soil head is evaluated at: e^700 m of head is far  !
-   !      beyond any physical soil and still finite in double precision. ------------------!
-   real(wp), parameter :: LOG_HEAD_MAX = 700.0_wp
 
    !----- One soil layer's curve, set up once per layer: the retention parameters and the  !
    !      point where the solver's unknown changes from saturation to potential. ----------!
    type :: soil_layer_curve_t
-      integer(ik) :: retention = 1_ik   !< soil_retention_vg or soil_retention_campbell
-      real(wp) :: theta_sat = 0.0_wp    !< [m3/m3]
-      real(wp) :: theta_res = 0.0_wp    !< [m3/m3]
-      real(wp) :: par_a     = 0.0_wp    !< vG alpha [1/m], or Campbell's air-entry head [m, < 0]
-      real(wp) :: par_n     = 0.0_wp    !< vG n [-], or Campbell's b [-]
-      real(wp) :: ksat      = 0.0_wp    !< [m/s] saturated conductivity
-      real(wp) :: dz        = 0.0_wp    !< [m] layer thickness
-      real(wp) :: se_switch    = 1.0_wp  !< [-] saturation where the unknown changes branch
-      real(wp) :: head_switch  = 0.0_wp  !< [m] the matric head there
-      real(wp) :: slope_switch = 1.0_wp  !< [1/m] dSe/dhead there, the unknown's scale on the wet side
+      integer(ik) :: retention    = 1_ik    !< soil_retention_vg or soil_retention_campbell
+      real(wp)    :: theta_sat    = 0.0_wp  !< [m3/m3]
+      real(wp)    :: theta_res    = 0.0_wp  !< [m3/m3]
+      real(wp)    :: par_a        = 0.0_wp  !< vG alpha [1/m], or Campbell's air-entry head [m, < 0]
+      real(wp)    :: par_n        = 0.0_wp  !< vG n [-], or Campbell's b [-]
+      real(wp)    :: ksat         = 0.0_wp  !< [m/s] saturated conductivity
+      real(wp)    :: dz           = 0.0_wp  !< [m] layer thickness
+      real(wp)    :: se_switch    = 1.0_wp  !< [-] saturation where the unknown changes branch
+      real(wp)    :: head_switch  = 0.0_wp  !< [m] the matric head there
+      real(wp)    :: slope_switch = 1.0_wp  !< [1/m] dSe/dhead there, the unknown's scale on the wet side
    end type soil_layer_curve_t
+
+   !----- [m] Depth of the surface's small hollows, which the pond fills before a head     !
+   !      builds, so its storage stays smooth as it fills or empties                       !
+   !      (docs/science/soil_plant_water.md §2). ------------------------------------------!
+   real(wp), parameter :: pond_depression_depth = 1.0e-3_wp
 
 contains
 
@@ -194,8 +194,8 @@ contains
    !=======================================================================================!
 
    !----- Set up one layer's curve and its branch point, where the curve holds the most    !
-   !      water per unit head: (alpha |head|)^n = m, Se = (1+m)^-m, for van Genuchten;     !
-   !      the air-entry point for Campbell (docs/science/soil_plant_water.md §2). ---------!
+   !      water per unit head: (alpha |head|)^n = m, Se = (1+m)^-m, for van Genuchten; the !
+   !      air-entry point for Campbell (docs/science/soil_plant_water.md §2). -------------!
    pure subroutine build_soil_layer_curve(retention, theta_sat, theta_res, par_a, par_n, ksat, dz, c)
       integer(ik),              intent(in)  :: retention
       real(wp),                 intent(in)  :: theta_sat, theta_res, par_a, par_n, ksat, dz
@@ -263,7 +263,7 @@ contains
 
    !----- The unknown tau of a layer holding theta [m3/m3], the inverse of                 !
    !      soil_water_relations's water. A layer at or below residual starts just inside    !
-   !      the curve, at SE_MIN; a Campbell layer at saturation sits at the branch point, !
+   !      the curve, at SE_MIN; a Campbell layer at saturation sits at the branch point,   !
    !      its air-entry potential. --------------------------------------------------------!
    elemental function soil_theta_to_unknown(c, theta) result(tau)
       type(soil_layer_curve_t), intent(in) :: c
@@ -336,11 +336,10 @@ contains
       dse_dhead = par_a * m * par_n * se * u / max(x, tiny_num)
    end subroutine head_to_saturation
 
-   !----- Conductivity [m/s] and dK/dSe at saturation se: van Genuchten-Mualem with        !
-   !      L = vg_pore_connectivity (docs/science/soil_biophysics.md eq. (2)), or           !
-   !      Campbell's Ks Se^(2b+3). No floor: K goes to zero with Se. The van Genuchten     !
-   !      slope is unbounded at Se = 1; the solver calls this only dry of the branch       !
-   !      point. --------------------------------------------------------------------------!
+   !----- Conductivity [m/s] and dK/dSe at saturation se: van Genuchten-Mualem with L =    !
+   !      vg_pore_connectivity (docs/science/soil_biophysics.md eq. (2)), or Campbell's Ks !
+   !      Se^(2b+3). No floor: K goes to zero with Se. The van Genuchten slope is          !
+   !      unbounded at Se = 1; the solver calls this only dry of the branch point. --------!
    elemental subroutine saturation_to_conductivity(retention, par_n, ksat, se, kcond, dk_dse)
       integer(ik), intent(in)  :: retention
       real(wp),    intent(in)  :: par_n, ksat, se
