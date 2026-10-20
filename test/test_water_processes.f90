@@ -28,10 +28,10 @@ program test_water_processes
                                     soil_specific_storage, pond_depression_depth, soil_retention_vg,   &
                                     soil_retention_campbell, soil_head_to_theta, vg_pore_connectivity
    use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, rhizosphere_conductance,  &
-                                    root_water_uptake, xylem_sapflow, xylem_max_conductance,               &
-                                    supply_limited_transpiration, hydro_table_t, build_hydro_table,        &
-                                    kirchhoff_potential, conductance_retained_fraction, water_curve_t,     &
-                                    tissue_rwc_to_psi, tissue_psi_to_water
+                                    root_water_uptake, xylem_sapflow, xylem_max_conductance, hydro_table_t, &
+                                    build_hydro_table, kirchhoff_potential, conductance_retained_fraction, &
+                                    water_curve_t, tissue_rwc_to_psi, tissue_psi_to_water
+   use meds_plant_hydraulics, only : supply_limited_transpiration
    use meds_numerics,    only : smooth_max0
    use meds_soil_water, only : ground_evaporation_rate, soil_water_flux
    use meds_constants,  only : pi, grav, r_wv, p_std

@@ -66,12 +66,13 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Coupled leaf gas-exchange: unpack the C structs into the model types, solve, pack back. !
-   ! sm/tresp/colim are the SM_*/tresp_*/COLIM_* integer codes; use_boundary_layer is 0/1.               !
+   ! sm, temp_response_form and colim are the SM_*, temp_response_* and COLIM_* integer      !
+   ! codes; use_boundary_layer is 0/1.                                                       !
    !---------------------------------------------------------------------------------------!
-   subroutine meds_leaf_solve(env_c, p_c, sm, tresp, colim, use_boundary_layer, flux_c) bind(c, name="meds_leaf_solve")
+   subroutine meds_leaf_solve(env_c, p_c, sm, temp_response_form, colim, use_boundary_layer, flux_c) bind(c, name="meds_leaf_solve")
       type(leaf_env_c),    intent(in)  :: env_c
       type(leaf_params_c), intent(in)  :: p_c
-      integer(c_int), value, intent(in) :: sm, tresp, colim, use_boundary_layer
+      integer(c_int), value, intent(in) :: sm, temp_response_form, colim, use_boundary_layer
       type(leaf_flux_c),   intent(out) :: flux_c
       type(leaf_env_t)          :: env
       type(leaf_photo_params_t) :: p
@@ -79,7 +80,7 @@ contains
 
       env = to_env(env_c) ; p = to_params(p_c)
 
-      call solve_leaf_gas_exchange(env, p, int(sm), int(tresp), int(colim), use_boundary_layer /= 0_c_int, flux)
+      call solve_leaf_gas_exchange(env, p, int(sm), int(temp_response_form), int(colim), use_boundary_layer /= 0_c_int, flux)
 
       flux_c%A_net = flux%A_net ; flux_c%A_gross = flux%A_gross ; flux_c%gs = flux%gs
       flux_c%ci = flux%ci ; flux_c%cs = flux%cs ; flux_c%transpiration = flux%transpiration
@@ -92,16 +93,16 @@ contains
    ! that sweeps drivers (a light response, a canopy). env_c and flux_c are arrays of the       !
    ! mirror structs; each leaf is exactly meds_leaf_solve's.                                     !
    !---------------------------------------------------------------------------------------!
-   subroutine meds_leaf_solve_batch(n, env_c, p_c, sm, tresp, colim, use_boundary_layer, flux_c) &
+   subroutine meds_leaf_solve_batch(n, env_c, p_c, sm, temp_response_form, colim, use_boundary_layer, flux_c) &
                                     bind(c, name="meds_leaf_solve_batch")
       integer(c_int), value, intent(in)  :: n
       type(leaf_env_c),      intent(in)  :: env_c(n)
       type(leaf_params_c),   intent(in)  :: p_c
-      integer(c_int), value, intent(in)  :: sm, tresp, colim, use_boundary_layer
+      integer(c_int), value, intent(in)  :: sm, temp_response_form, colim, use_boundary_layer
       type(leaf_flux_c),     intent(out) :: flux_c(n)
       integer(c_int) :: i
       do i = 1_c_int, n
-         call meds_leaf_solve(env_c(i), p_c, sm, tresp, colim, use_boundary_layer, flux_c(i))
+         call meds_leaf_solve(env_c(i), p_c, sm, temp_response_form, colim, use_boundary_layer, flux_c(i))
       end do
    end subroutine meds_leaf_solve_batch
 

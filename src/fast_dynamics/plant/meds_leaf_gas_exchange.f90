@@ -233,19 +233,19 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Solve the leaf A-gs-Ci system (docs/science/leaf_gas_exchange.md §1, §5). The         !
-   ! selectors (sm, tresp, colim, use_boundary_layer) come from the run config; p carries  !
-   ! every per-PFT and shared parameter so this routine is self-contained and              !
-   ! unit-testable without a full meds_config_t.                                           !
+   ! selectors (sm, temp_response_form, colim, use_boundary_layer) come from the run       !
+   ! config; p carries every per-PFT and shared parameter so this routine is               !
+   ! self-contained and unit-testable without a full meds_config_t.                        !
    !   use_boundary_layer -- account for the leaf boundary layer (env%gb). When .true. (and !
    !     gb > 0), leaf-surface CO2 is drawn down from ambient (Cs = Ca - 1.4*A/gb, eq. (1)) !
    !     and transpiration puts stomata gs in SERIES with gb; when .false. the leaf is     !
    !     well-coupled (Cs = Ca, E = gs*VPD/pressure). The 1.4 / 1.6 factors are the        !
    !     boundary-layer / stomatal H2O:CO2 diffusivity ratios.                             !
    !---------------------------------------------------------------------------------------!
-   subroutine solve_leaf_gas_exchange(env, p, sm, tresp, colim, use_boundary_layer, flux)
+   subroutine solve_leaf_gas_exchange(env, p, sm, temp_response_form, colim, use_boundary_layer, flux)
       type(leaf_env_t),          intent(in)  :: env
       type(leaf_photo_params_t), intent(in)  :: p
-      integer(ik),               intent(in)  :: sm, tresp, colim
+      integer(ik),               intent(in)  :: sm, temp_response_form, colim
       logical,                   intent(in)  :: use_boundary_layer
       type(leaf_flux_t),         intent(out) :: flux
 
@@ -264,10 +264,10 @@ contains
       do_boundary_layer    = use_boundary_layer .and. env%gb > 0.0_wp
 
       call rubisco_kinetics(p, t_leaf, pressure, kc_ppm, ko_ppm, gstar_ppm, o2_ppm)
-      vcmax = temp_response(tresp, p%vcmax25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
-      jmax  = temp_response(tresp, p%jmax25,  p%ea_jmax,  p%hd_jmax,  p%ds_jmax,  t_leaf)
-      tpu   = temp_response(tresp, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
-      rd    = temp_response(tresp, p%rd25,    p%ea_rd,    p%hd_rd,    p%ds_rd,    t_leaf)
+      vcmax = temp_response(temp_response_form, p%vcmax25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
+      jmax  = temp_response(temp_response_form, p%jmax25,  p%ea_jmax,  p%hd_jmax,  p%ds_jmax,  t_leaf)
+      tpu   = temp_response(temp_response_form, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
+      rd    = temp_response(temp_response_form, p%rd25,    p%ea_rd,    p%hd_rd,    p%ds_rd,    t_leaf)
 
       !----- Water stress: two controls on two time scales (docs/science/leaf_gas_exchange.md §4;   !
       !      Sabot 2022 / Zhou 2013; Xu et al. 2016 likewise has a fast leaf-potential term and a   !
@@ -303,7 +303,7 @@ contains
          !      peaked form, its high-T deactivation) -- reuse the Vcmax Ea/Hd/dS set, exactly as  !
          !      the tpu term above does. temp_response == 1 at 25 degC, so kp25 is the 25 degC     !
          !      value. ----------------------------------------------------------------------------!
-         kp_eff    = temp_response(tresp, p%kp25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)       &
+         kp_eff    = temp_response(temp_response_form, p%kp25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)       &
                      * pressure / p_std
          jrate     = 0.0_wp
       else

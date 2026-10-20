@@ -29,7 +29,7 @@ module meds_config_io
    use meds_maps_opts, only : soil_maps_on
    use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_therm_lib,     only : tresp_arrhenius, tresp_peaked
+   use meds_therm_lib,     only : temp_response_arrhenius, temp_response_peaked
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
    use meds_forcing_config, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
@@ -365,18 +365,18 @@ contains
       s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
    end subroutine load_soil_carbon_opts
 
-   subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> tresp_* mode
+   subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> temp_response_* mode
       type(toml_table_t), intent(in)    :: t
       character(len=*),   intent(in)    :: key
       integer(ik),        intent(out)   :: mode
       type(keymiss_t),    intent(inout) :: m
       character(len=64) :: s
-      mode = tresp_peaked
+      mode = temp_response_peaked
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
       s = toml_string(t, key, 'peaked')
       select case (trim(s))
-      case ('arrhenius') ; mode = tresp_arrhenius
-      case ('peaked')    ; mode = tresp_peaked
+      case ('arrhenius') ; mode = temp_response_arrhenius
+      case ('peaked')    ; mode = temp_response_peaked
       case default       ; call note_missing(m, key)   ! present but unrecognized -> hard error
       end select
    end subroutine req_temp_response

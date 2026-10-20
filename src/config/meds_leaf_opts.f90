@@ -28,6 +28,7 @@ module meds_leaf_opts
    integer(ik), parameter :: COLIM_MIN       = 1_ik !< sharp minimum
    integer(ik), parameter :: COLIM_QUADRATIC = 2_ik !< smoothed co-limitation quadratics
 
-   !----- tresp_arrhenius / tresp_peaked are the same KIND of selector but are owned by      !
-   !      meds_therm_lib, which defines the responses they select. Import them there.         !
+   !----- temp_response_arrhenius / temp_response_peaked are the same KIND of selector but   !
+   !      are owned by meds_therm_lib, which defines the responses they select. Import them   !
+   !      there. ---------------------------------------------------------------------------!
 end module meds_leaf_opts

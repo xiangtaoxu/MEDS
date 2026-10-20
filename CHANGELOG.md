@@ -133,7 +133,8 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
     `meds_soil_hydr_lib`;
   - `meds_temp_response` is part of `meds_therm_lib`, as is `soil_thermal_from_texture`;
   - `meds_allometry` is `meds_allometry_lib`;
-  - `smooth_max0` is in `meds_numerics`.
+  - `smooth_max0` is in `meds_numerics`, and `supply_limited_transpiration` in `meds_plant_hydraulics`,
+    beside the solver it keeps solvable.
 - **Fortran code that calls a renamed routine uses its new name** (#460). Conversions are named
   `<input>_to_<output>`, and the pressure-volume routines carry `tissue_`:
 
@@ -156,15 +157,17 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   | `size2leaf_carbon`, `size2wood_carbon` | `size_to_leaf_carbon`, `size_to_wood_carbon` |
   | `beta_params_from_mean` | `moments_to_beta_params` |
   | `time_from_string` | `string_to_time` |
+  | `TRESP_ARRHENIUS`, `TRESP_PEAKED` | `temp_response_arrhenius`, `temp_response_peaked` |
 - **`soil_thermal_from_texture` is `soil_texture_to_thermal(sand, clay, theta_sat, ...)`** (#460): it
   takes the sand and clay shares [%] in place of the soil texture record.
 - **`flux_potential` and `flux_potential_lin` are private** (#460): call
   `kirchhoff_potential(psi, psi50, kexp, table)`, the potential the sapflow uses, which is psi above
   zero potential.
-- **Ten constants of `src/shared/functions` are spelled in lower case** (#460), since other modules use
-  them: `soil_retention_vg`, `soil_retention_campbell`, `vg_pore_connectivity`,
-  `soil_specific_storage`, `pond_depression_depth`, `tresp_arrhenius`, `tresp_peaked`, `height_power`,
-  `height_chave` and `n_leaf_class`. Fortran ignores case, so the old spellings still compile.
+- **Eight constants of `src/shared/functions` are spelled in lower case** (#460), since other modules
+  use them: `soil_retention_vg`, `soil_retention_campbell`, `vg_pore_connectivity`,
+  `soil_specific_storage`, `pond_depression_depth`, `height_power`, `height_chave` and
+  `n_leaf_class`. Fortran ignores case, so the old spellings still compile. The temperature-response
+  selectors `TRESP_ARRHENIUS` and `TRESP_PEAKED` are renamed (see the table above).
 
 ### Changed
 

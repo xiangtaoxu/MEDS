@@ -41,8 +41,8 @@ module meds_spac_solver
    use meds_soil_hydr_lib,   only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,  &
                                     soil_theta_to_unknown, pond_water_relations, pond_water_to_head
    use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, tissue_rwc_to_unknown,  &
-                                    tissue_psi_to_rwc, root_water_uptake_profile, xylem_sapflow,         &
-                                    supply_limited_transpiration
+                                    tissue_psi_to_rwc, root_water_uptake_profile, xylem_sapflow
+   use meds_plant_hydraulics, only : supply_limited_transpiration
    use meds_soil_water,      only : soil_water_flux, ground_evaporation_rate, bottom_flux
    use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_soil_types,      only : chydro_forcing_t

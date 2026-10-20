@@ -15,7 +15,7 @@ module meds_config
    use meds_allometry_lib, only : height_chave
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
-   use meds_therm_lib,     only : tresp_arrhenius, tresp_peaked
+   use meds_therm_lib,     only : temp_response_arrhenius, temp_response_peaked
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell
    use meds_plant_hydr_lib,  only : tissue_psi_tlp, water_curve_t
@@ -66,7 +66,7 @@ module meds_config
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
    !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the         !
-   !      temperature-response selectors (tresp_*) by meds_therm_lib. Imported above           !
+   !      temperature-response selectors (temp_response_*) by meds_therm_lib. Imported above   !
    !      for LOADING and VALIDATION only -- not re-exported, so a caller that switches on     !
    !      one imports it from the module that defines it. -------------------------------------!
 
@@ -316,7 +316,7 @@ module meds_config
 
       !----- Leaf physiology: model selection (non-PFT). ----------------------------------!
       integer(ik) :: stomatal_model           !< SM_LEUNING | SM_MEDLYN | SM_KATUL
-      integer(ik) :: temp_response_form        !< tresp_arrhenius | tresp_peaked
+      integer(ik) :: temp_response_form        !< temp_response_arrhenius | temp_response_peaked
       integer(ik) :: colimitation             !< COLIM_MIN | COLIM_QUADRATIC
       logical     :: leaf_use_boundary_layer  !< if .true., couple via the leaf boundary layer (gb)
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
@@ -1046,7 +1046,7 @@ contains
       !      (docs/science/leaf_gas_exchange.md eq. (4)). The Arrhenius form has no dS, so the      !
       !      flag would be silently inert -- refuse rather than let a config believe                !
       !      acclimation is on when nothing acclimates. --------------------------------------------!
-      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= tresp_peaked)              &
+      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= temp_response_peaked)              &
          error stop tag//'leaf_physiology.thermal_acclimation requires temp_response_form = '//    &
                     '"peaked" (the Arrhenius form has no entropy term to shift)'
       if (cfg%leaf_thermal_acclimation .and. cfg%acclim_window_days <= 0.0_wp)                    &

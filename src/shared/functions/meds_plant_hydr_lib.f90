@@ -3,9 +3,8 @@
 ! meds_plant_hydr_lib -- the water relations of a plant: how much water a tissue holds at  !
 ! a given potential, its pressure-volume curve (docs/science/plant_hydraulics.md §2), and  !
 ! how water moves into and through the plant: the vulnerability curve and its Kirchhoff    !
-! potential, the xylem's conductance and sapflow, root water uptake and the leaves' supply !
-! limit on transpiration (plant_hydraulics.md §3-§4, docs/science/soil_plant_water.md §1   !
-! and §4).                                                                                 !
+! potential, the xylem's conductance and sapflow, and root water uptake                    !
+! (plant_hydraulics.md §3-§4, docs/science/soil_plant_water.md §1).                        !
 !                                                                                          !
 ! The read-offs (tissue_psi_to_rwc, tissue_water_to_psi, ...) carry floors that keep a     !
 ! diagnostic finite. The solver's relations (tissue_water_relations and the flows) have    !
@@ -28,10 +27,9 @@ module meds_plant_hydr_lib
    public :: tissue_water_relations, tissue_rwc_to_unknown, tissue_water_to_rwc
    !----- Vulnerability curve and Kirchhoff potential. ------------------------------------!
    public :: conductance_retained_fraction, kirchhoff_potential, hydro_table_t, build_hydro_table
-   !----- Xylem, roots and leaves: the conductances and the flows they carry. -------------!
+   !----- Xylem and roots: the conductances and the flows they carry. ---------------------!
    public :: wood_density_to_kmax, xylem_max_conductance, xylem_sapflow
    public :: root_fraction_profile, rhizosphere_conductance, root_water_uptake, root_water_uptake_profile
-   public :: supply_limited_transpiration
 
    !----- One tissue's pressure-volume curve: the four traits every tissue-water routine   !
    !      reads, passed together with the tissue's biomass. -------------------------------!
@@ -82,10 +80,9 @@ module meds_plant_hydr_lib
    !----- [-] Floor of half-spacing / root radius in the single-root (Gardner)             !
    !      conductance: closer, the roots all but touch and the form fails. ----------------!
    real(wp), parameter :: MIN_SPACING_RATIO = 2.0_wp
-   !----- Widths over which smooth_max0 rounds a one-way flow's corner                     !
-   !      (docs/science/soil_plant_water.md eqs. (1) and (3)). ----------------------------!
-   real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-3_wp    !< [MPa] root uptake; small against the 0.1-1 MPa a root works across
-   real(wp), parameter :: TRANSP_CLOSE_WIDTH = 2.0e-2_wp   !< [-] the leaves' supply limit, in relative water content
+   !----- [MPa] Width over which smooth_max0 rounds root uptake's corner, small against the !
+   !      0.1-1 MPa a root works across (docs/science/soil_plant_water.md eq. (1)). -------!
+   real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-3_wp
 
 contains
 
@@ -587,24 +584,5 @@ contains
                                 du_dpsi_soil(k), du_dpsi_wood, du_dk(k))
       end do
    end subroutine root_water_uptake_profile
-
-   !=======================================================================================!
-   !     Leaves (docs/science/soil_plant_water.md eq. (3)).                                !
-   !=======================================================================================!
-
-   !----- Transpiration [kg/m2/s] of a leaf whose stomata ask for e_demand, at symplastic  !
-   !      relative water content r: the demand above r_close, the water content at the     !
-   !      closing potential, and below it the demand scaled by r/r_close, so an emptying   !
-   !      leaf stops transpiring before it empties. The corner is rounded over             !
-   !      TRANSP_CLOSE_WIDTH (docs/science/soil_plant_water.md eq. (3)). ------------------!
-   elemental subroutine supply_limited_transpiration(e_demand, r, r_close, e, de_dr)
-      real(wp), intent(in)  :: e_demand, r, r_close
-      real(wp), intent(out) :: e, de_dr
-      real(wp) :: excess, dexcess, share
-      call smooth_max0(r - r_close, TRANSP_CLOSE_WIDTH, excess, dexcess)
-      share = (r - excess) / r_close
-      e     = e_demand * share
-      de_dr = e_demand * (1.0_wp - dexcess) / r_close
-   end subroutine supply_limited_transpiration
 
 end module meds_plant_hydr_lib

@@ -132,7 +132,7 @@ module meds_plant_types
       real(wp),                  allocatable :: jmax_vcmax_ratio(:) !< [--] Jmax25 / Vcmax25 per PFT
       real(wp),                  allocatable :: tpu_vcmax_ratio(:)  !< [--] TPU25 / Vcmax25 per PFT
       integer(ik) :: stomatal_model     = 0_ik    !< SM_LEUNING | SM_MEDLYN | SM_KATUL
-      integer(ik) :: temp_response_form = 0_ik    !< tresp_arrhenius | tresp_peaked
+      integer(ik) :: temp_response_form = 0_ik    !< temp_response_arrhenius | temp_response_peaked
       integer(ik) :: colimitation       = 0_ik    !< COLIM_MIN | COLIM_QUADRATIC
       logical     :: use_boundary_layer = .true.  !< couple through the leaf boundary layer (gb)
    end type leaf_photo_table_t
