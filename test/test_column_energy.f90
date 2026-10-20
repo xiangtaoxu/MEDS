@@ -34,7 +34,7 @@ program test_column_energy
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_column_config, only : soil_thermal_params_t, soil_params_t, build_soil_hydr_params, build_soil_therm_params
-   use meds_soil_hydr_lib,   only : soil_retention_vg
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
    use meds_therm_lib,           only : soil_thermal_conductivity, soil_volumetric_heat_capacity,              &
                                         temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,  &
@@ -131,7 +131,7 @@ contains
       integer(ik) :: k, istep, nstep_yr, iyr
 
       call geometric_layer_bottoms(2.0_wp, nl, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(nl, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,       &
+      call build_soil_hydr_params(nl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,       &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       call build_soil_therm_params(nl, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:nl) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
@@ -169,32 +169,32 @@ contains
    end subroutine damping_profile
 
    subroutine test_inverter()
-      real(wp), parameter :: dh = 1000.0_wp, wm = 0.3_wp
+      real(wp), parameter :: DH = 1000.0_wp, WM = 0.3_wp
       real(wp) :: uext, t, fl, u_freeze, u_melt
       print '(a)', 'test_inverter:'
-      uext = temp_to_internal_energy(dh, wm, 290.0_wp, 1.0_wp)
-      call internal_energy_to_temp(uext, wm, dh, t, fl)
+      uext = temp_to_internal_energy(DH, WM, 290.0_wp, 1.0_wp)
+      call internal_energy_to_temp(uext, WM, DH, t, fl)
       call check('liquid T round-trip', t, 290.0_wp, 1.0e-9_wp)
       call check_true('liquid fliq = 1', abs(fl - 1.0_wp) < 1.0e-12_wp, fl)
-      uext = temp_to_internal_energy(dh, wm, 260.0_wp, 0.0_wp)
-      call internal_energy_to_temp(uext, wm, dh, t, fl)
+      uext = temp_to_internal_energy(DH, WM, 260.0_wp, 0.0_wp)
+      call internal_energy_to_temp(uext, WM, DH, t, fl)
       call check('ice T round-trip', t, 260.0_wp, 1.0e-9_wp)
       call check_true('ice fliq = 0', abs(fl) < 1.0e-12_wp, fl)
-      u_freeze = (dh + wm * cp_ice) * t_3ple
-      u_melt   = u_freeze + wm * latent_heat_fusion
-      call internal_energy_to_temp(u_freeze, wm, dh, t, fl) ; call check('continuity at u_freeze', t, t_3ple, 1.0e-9_wp)
-      call internal_energy_to_temp(u_melt,   wm, dh, t, fl) ; call check('continuity at u_melt',   t, t_3ple, 1.0e-9_wp)
-      call internal_energy_to_temp(0.5_wp * (u_freeze + u_melt), wm, dh, t, fl)
+      u_freeze = (DH + WM * cp_ice) * t_3ple
+      u_melt   = u_freeze + WM * latent_heat_fusion
+      call internal_energy_to_temp(u_freeze, WM, DH, t, fl) ; call check('continuity at u_freeze', t, t_3ple, 1.0e-9_wp)
+      call internal_energy_to_temp(u_melt,   WM, DH, t, fl) ; call check('continuity at u_melt',   t, t_3ple, 1.0e-9_wp)
+      call internal_energy_to_temp(0.5_wp * (u_freeze + u_melt), WM, DH, t, fl)
       call check('plateau temp = t_3ple', t, t_3ple, 1.0e-9_wp)
       call check('plateau fliq = 0.5', fl, 0.5_wp, 1.0e-9_wp)
    end subroutine test_inverter
 
    subroutine test_clausius()
       real(wp) :: ana, fd
-      real(wp), parameter :: dt = 1.0e-3_wp
+      real(wp), parameter :: DT = 1.0e-3_wp
       print '(a)', 'test_clausius:'
       ana = sat_vapor_pressure_temp_deriv(295.0_wp)
-      fd  = (sat_vapor_pressure(295.0_wp + dt) - sat_vapor_pressure(295.0_wp - dt)) / (2.0_wp * dt)
+      fd  = (sat_vapor_pressure(295.0_wp + DT) - sat_vapor_pressure(295.0_wp - DT)) / (2.0_wp * DT)
       call check('d(e_sat)/dT vs FD', ana, fd, 1.0e-3_wp * abs(fd) + 1.0e-6_wp)
    end subroutine test_clausius
 
@@ -264,7 +264,7 @@ contains
       type(soil_thermal_params_t), intent(out) :: therm
       type(energy_forcing_t),      intent(out) :: forcing
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(10_ik, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,      &
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
@@ -338,17 +338,17 @@ contains
    !----- Ice-aware saturated conductivity: frozen soil conducts more (k_ice > k_water). -----!
    subroutine test_ice_conductivity()
       real(wp) :: k_liq, k_frz, ksat_liq, ksat_frz, ke_liq, ke_frz, sr
-      real(wp), parameter :: ts = 0.5_wp, th = 0.15_wp, ksol = 3.0_wp, kdry = 0.15_wp
+      real(wp), parameter :: TS = 0.5_wp, TH = 0.15_wp, KSOL = 3.0_wp, KDRY = 0.15_wp
       print '(a)', 'test_ice_conductivity:'
       k_liq = soil_thermal_conductivity(0.40_wp, 1.0_wp, 0.43_wp, 3.0_wp, 0.15_wp)   ! all-liquid saturation
       k_frz = soil_thermal_conductivity(0.40_wp, 0.0_wp, 0.43_wp, 3.0_wp, 0.15_wp)   ! all-ice saturation
       call check_true('frozen soil conducts more than liquid', k_frz > k_liq, k_frz - k_liq)
       !----- Kersten number: Johansen log10 form when liquid, Farouki linear s_r form when frozen. --!
-      sr       = th / ts                                                     ! 0.30 (intermediate sat.)
-      ksat_liq = ksol ** (1.0_wp - ts) * k_water ** ts                       ! all-liquid geometric mean
-      ksat_frz = ksol ** (1.0_wp - ts) * k_ice   ** ts                       ! all-ice geometric mean
-      ke_liq   = (soil_thermal_conductivity(th, 1.0_wp, ts, ksol, kdry) - kdry) / (ksat_liq - kdry)
-      ke_frz   = (soil_thermal_conductivity(th, 0.0_wp, ts, ksol, kdry) - kdry) / (ksat_frz - kdry)
+      sr       = TH / TS                                                     ! 0.30 (intermediate sat.)
+      ksat_liq = KSOL ** (1.0_wp - TS) * k_water ** TS                       ! all-liquid geometric mean
+      ksat_frz = KSOL ** (1.0_wp - TS) * k_ice   ** TS                       ! all-ice geometric mean
+      ke_liq   = (soil_thermal_conductivity(TH, 1.0_wp, TS, KSOL, KDRY) - KDRY) / (ksat_liq - KDRY)
+      ke_frz   = (soil_thermal_conductivity(TH, 0.0_wp, TS, KSOL, KDRY) - KDRY) / (ksat_frz - KDRY)
       call check('unfrozen Kersten is the log10 form',  ke_liq, log10(sr) + 1.0_wp, 1.0e-9_wp)
       call check('frozen Kersten is the linear s_r form', ke_frz, sr,               1.0e-9_wp)
    end subroutine test_ice_conductivity
@@ -361,7 +361,7 @@ contains
       type(energy_forcing_t),      intent(out) :: forcing
       real(wp),                    intent(in)  :: theta, depth
       call geometric_layer_bottoms(depth, 1_ik, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(1_ik, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,        &
+      call build_soil_hydr_params(1_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       call build_soil_therm_params(1_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
@@ -375,16 +375,16 @@ contains
       type(soil_energy_column_t)  :: col
       type(energy_opts_t)         :: opts
       type(energy_flux_t)         :: flux
-      real(wp), parameter :: theta = 0.40_wp, depth = 0.05_wp
+      real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
       real(wp) :: latent_expect, e_enter, e_exit, worst_pin, worst_res, fl_prev, fl, tp, e_col
       integer(ik) :: step
       logical :: got_enter, got_exit
       print '(a)', 'test_freeze_plateau:'
-      call setup_1layer(soil, therm, forcing, theta, depth)
-      col%soil_energy(1) = temp_to_internal_energy(therm%soil_dry_heat_capacity(1), theta * rho_h2o,       &
+      call setup_1layer(soil, therm, forcing, THETA, DEPTH)
+      col%soil_energy(1) = temp_to_internal_energy(therm%soil_dry_heat_capacity(1), THETA * rho_h2o,       &
                                         t_3ple + 0.2_wp, 1.0_wp)               ! all-liquid, just above 0 C
       forcing%g_top = -100.0_wp                                               ! steady surface cooling
-      latent_expect = theta * rho_h2o * latent_heat_fusion * soil%dz(1)       ! [J/m2] to freeze the layer
+      latent_expect = THETA * rho_h2o * latent_heat_fusion * soil%dz(1)       ! [J/m2] to freeze the layer
       worst_pin = 0.0_wp ; worst_res = 0.0_wp ; fl_prev = 1.0_wp
       e_enter = 0.0_wp ; e_exit = 0.0_wp ; got_enter = .false. ; got_exit = .false.
       do step = 1_ik, 100_ik
@@ -411,13 +411,13 @@ contains
       type(soil_energy_column_t)  :: col
       type(energy_opts_t)         :: opts
       type(energy_flux_t)         :: flux
-      real(wp), parameter :: theta = 0.40_wp, depth = 0.05_wp
+      real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
       real(wp) :: worst_pin, fl, tp
       integer(ik) :: step
       logical :: melted
       print '(a)', 'test_thaw_plateau:'
-      call setup_1layer(soil, therm, forcing, theta, depth)
-      col%soil_energy(1) = temp_to_internal_energy(therm%soil_dry_heat_capacity(1), theta * rho_h2o,       &
+      call setup_1layer(soil, therm, forcing, THETA, DEPTH)
+      col%soil_energy(1) = temp_to_internal_energy(therm%soil_dry_heat_capacity(1), THETA * rho_h2o,       &
                                         t_3ple - 0.2_wp, 0.0_wp)              ! all-ice, just below 0 C
       forcing%g_top = 100.0_wp                                               ! steady surface warming
       worst_pin = 0.0_wp ; melted = .false.

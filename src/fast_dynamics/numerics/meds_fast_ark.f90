@@ -51,7 +51,7 @@ module meds_fast_ark
                                ark_stages_t, fast_workspace_t
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
    use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, liquid_energy_to_temp
-   use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
+   use meds_budget_check, only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR, BUDGET_CO2_RATE_FLOOR
    implicit none
    private
 
@@ -502,11 +502,11 @@ contains
       !      rate floor * dt_fast, because a store-scaled tolerance lets a ~1 W/m2 leak through. -------!
       budget%atm_heat_export = acc%atm_heat_out ; budget%atm_vap_export = acc%atm_vap_out
       call budget_check(budget%cas_energy, cas_mass_capacity*enth0, cas_mass_capacity*enth1, acc%cas_enth_in, acc%cas_enth_out, &
-                        dt_fast, budget_energy_rate_floor, 'cas_energy (ark)', halt_budgets)
+                        dt_fast, BUDGET_ENERGY_RATE_FLOOR, 'cas_energy (ark)', halt_budgets)
       call budget_check(budget%cas_water,  cas_mass_capacity*shv0,  cas_mass_capacity*shv1,  acc%cas_vap_in,  acc%cas_vap_out, &
-                        dt_fast, budget_water_rate_floor, 'cas_water (ark)', halt_budgets)
+                        dt_fast, BUDGET_WATER_RATE_FLOOR, 'cas_water (ark)', halt_budgets)
       call budget_check(budget%cas_co2,    cas_molar_capacity*co20,  cas_molar_capacity*co21,  acc%cas_co2_in,  acc%cas_co2_out, &
-                        dt_fast, budget_co2_rate_floor, 'cas_co2 (ark)', halt_budgets)
+                        dt_fast, BUDGET_CO2_RATE_FLOOR, 'cas_co2 (ark)', halt_budgets)
       !----- cond_dep_enth is a boundary INPUT to the SOIL store, though the whole-column ledger needs     !
       !      no term for it. The deposit moves condensate CAS -> soil layer 1 AFTER the march: the         !
       !      whole-column ledger sees a transfer between two stores it tracks, which telescopes, but       !
@@ -516,7 +516,7 @@ contains
       !      per-kernel soil budgets: every store rides the same column_derivs RHS, so its                 !
       !      whole-column ledger is the per-store one. ----------------------------------------------------!
       call budget_check(budget%soil_energy, e_soil0, e_soil1, acc%soil_enth_in + cond_dep_enth,            &
-                        acc%soil_enth_out, dt_fast, budget_energy_rate_floor, 'soil_energy (ark)', halt_budgets)
+                        acc%soil_enth_out, dt_fast, BUDGET_ENERGY_RATE_FLOOR, 'soil_energy (ark)', halt_budgets)
       !----- SOIL WATER: storage theta^n -> theta1 (both the water network's), in through the top face   !
       !      net of evaporation and exfiltration (q_top), out through the bottom and to the roots -- the   !
       !      network's own flows, which moved its water exactly -- plus the condensate deposit (see the    !
@@ -524,7 +524,7 @@ contains
       call budget_check(budget%soil_water,  w_soil0, w_soil1,                                              &
                         frozen%hydrology%q_top*rho_h2o*dt_fast + cond_dep_mass,                            &
                         (frozen%hydrology%drainage + frozen%roots%uptake)*dt_fast,                         &
-                        dt_fast, budget_water_rate_floor, 'soil_water (ark)', halt_budgets)
+                        dt_fast, BUDGET_WATER_RATE_FLOOR, 'soil_water (ark)', halt_budgets)
       !----- whole-WATER: rainfall IN; drainage + runoff + CAS-vapour OUT; soil, ponding, plant internal  !
       !      water and the films in the store. The soil, pond, plant, drainage and runoff terms are the     !
       !      water network's step; the CAS-vapour exchange g_atm_vapour*(shv-shv_atm) is the ARK-          !
@@ -541,7 +541,7 @@ contains
                         acc%whole_wat_out                                                                   &
                         + (frozen%hydrology%runoff_surf + frozen%hydrology%drainage)*dt_fast                &
                                           + surf_overflow - surf_deficit,                                 &
-                        dt_fast, budget_water_rate_floor, 'whole_water (ark)', halt_budgets)
+                        dt_fast, BUDGET_WATER_RATE_FLOOR, 'whole_water (ark)', halt_budgets)
       call budget_check(budget%whole_energy,                                                               &
                              !----- The pack hands its meltwater, mass and enthalpy, to the POND:           !
                              !      both are tracked stores, so the pair telescopes here. ------------------!
@@ -555,7 +555,7 @@ contains
                         acc%whole_enth_out + (surf_overflow - surf_deficit)                                 &
                         * internal_energy_liquid(frozen%hydrology%t_film_valuation) &
                                            + frozen%hydrology%runoff_enth*dt_fast,                                    &
-                        dt_fast, budget_energy_rate_floor, 'whole_energy (ark)', halt_budgets)
+                        dt_fast, BUDGET_ENERGY_RATE_FLOOR, 'whole_energy (ark)', halt_budgets)
 
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps

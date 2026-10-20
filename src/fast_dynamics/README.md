@@ -32,7 +32,7 @@ so every symbol has exactly one legal spelling.
 
 - **Canopy radiative transfer** — ED2 two-stream (`icanrad = 2`). The pure optical-property kernels
   (the Beta leaf-angle distribution, the Ross `G` function, the single-scatter pair) live in the
-  shared `meds_optics_lib` in `src/shared/functions/`. The optics assembly, the unified multi-band
+  shared `meds_optics_lib` in `src/share/functions/`. The optics assembly, the unified multi-band
   VIS / NIR / LW adding solver, and the public seam `canopy_radiation` are together in
   **`meds_canopy_radiation`**.
 - **Canopy aerodynamics** — **`meds_canopy_aerodynamics`**: a CLM5 Monin-Obukhov surface layer, ED2
@@ -52,7 +52,7 @@ so every symbol has exactly one legal spelling.
   the dry-surface-layer ground evaporation and the bottom boundary (drainage at a factor of free
   drainage, from 1 to 0 for bedrock, or an aquifer);
   `meds_plant_hydr_lib` the plant's flows and tissue water relations, and `meds_soil_hydr_lib` the
-  soil layers' and the pond's (both in `src/shared/functions/`). Closes a machine-precision water
+  soil layers' and the pond's (both in `src/share/functions/`). Closes a machine-precision water
   budget.
 - **Soil thermal** — **`meds_soil_energy`**: the soil-heat store as prognostic **internal energy**,
   not temperature, so freeze/thaw is a read-off of the shared inverter. An implicit
@@ -75,13 +75,13 @@ so every symbol has exactly one legal spelling.
 respiration debits the same CENTURY pool the daily step does — the one documented fast/slow kernel
 seam in the model.
 
-## Shared constitutive kernels (in `src/shared/functions/`)
+## Shared constitutive kernels (in `src/share/functions/`)
 
 The soil **material-property** kernels are stateless and `elemental`, grouped with the other
 constitutive relations by physical quantity rather than by caller:
 
 - **Retention curves** → `meds_soil_hydr_lib`: the water content, potential, conductivity and moisture
-  capacity relations (van Genuchten by default, Campbell available) plus the `soil_retention_*`
+  capacity relations (van Genuchten by default, Campbell available) plus the `SOIL_RETENTION_*`
   selectors, and the pedotransfer function that sets them from the soil maps; the plant's
   pressure-volume and vulnerability curves are the matching `meds_plant_hydr_lib`.
 - **Thermal properties** → `meds_therm_lib`: the ice-aware Johansen conductivity and the volumetric

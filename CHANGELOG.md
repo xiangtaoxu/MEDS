@@ -31,6 +31,7 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 `<input>_to_<output>`, and the Newton solvers share their step safeguards (#460). Every PFT trait is
 the PFT file's, its hydraulics among them, and the traits that follow a fitted relation are computed
 outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's potential (#461).
+`src/shared` is `src/share` (#462). A named constant is spelled by its kind (#463).
 
 **Upgrading from v0.3.5:**
 - **The PFT file's size allometry is per PFT** (#459). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
@@ -159,17 +160,16 @@ outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's
   | `size2leaf_carbon`, `size2wood_carbon` | `size_to_leaf_carbon`, `size_to_wood_carbon` |
   | `beta_params_from_mean` | `moments_to_beta_params` |
   | `time_from_string` | `string_to_time` |
-  | `TRESP_ARRHENIUS`, `TRESP_PEAKED` | `temp_response_arrhenius`, `temp_response_peaked` |
+  | `TRESP_ARRHENIUS`, `TRESP_PEAKED` | `TEMP_RESPONSE_ARRHENIUS`, `TEMP_RESPONSE_PEAKED` |
 - **`soil_thermal_from_texture` is `soil_texture_to_thermal(sand, clay, theta_sat, ...)`** (#460): it
   takes the sand and clay shares [%] in place of the soil texture record.
 - **`flux_potential` and `flux_potential_lin` are private** (#460): call
   `kirchhoff_potential(psi, psi50, kexp, table)`, the potential the sapflow uses, which is psi above
   zero potential.
-- **Eight constants of `src/shared/functions` are spelled in lower case** (#460), since other modules
-  use them: `soil_retention_vg`, `soil_retention_campbell`, `vg_pore_connectivity`,
-  `soil_specific_storage`, `pond_depression_depth`, `height_power`, `height_chave` and
-  `n_leaf_class`. Fortran ignores case, so the old spellings still compile. The temperature-response
-  selectors `TRESP_ARRHENIUS` and `TRESP_PEAKED` are renamed (see the table above).
+- **Named constants are spelled by their kind** (#463): lower case in `meds_constants` and
+  `meds_kinds`, UPPER case everywhere else. Fortran ignores case, so a caller's old spelling still
+  compiles; the names that changed are `ANNUAL_DAMPING_DEPTH` (`meds_biophysics_opts`), the
+  `BUDGET_*` tolerances (`meds_budget_check`) and `N_SOIL_POOL` (`meds_biogeochem_types`).
 - **The plant hydraulics are the PFT file's `[hydraulics]` block** (#461). Every key of the main
   config's `[hydraulics]`, and every per-PFT hydraulic key of `[pft]`, moves there; each is required,
   and takes one value for every PFT or an array with one per PFT, as `[allometry]` keys do.
@@ -187,6 +187,8 @@ outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's
   (`plant_hydraulics_t`, in `meds_plant_hydr_lib`) in place of `cfg%hydraulics` and
   `pft_tissue_curves`. `apply_hydraulics_config` and `init_cohort` drop their hydraulics argument,
   `hydro_params_t` extends `plant_hydraulics_t`, and `pft%kplastic_vm0` is `pft%kplastic_vcmax`.
+- **`src/shared` is `src/share`, and its CMake library `meds_shared` is `meds_share`** (#462). A
+  build script or an out-of-tree target that links `meds_shared` links `meds_share`.
 - **Python: `meds.config` reads and sets one PFT of a key given for every PFT** (#461):
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
@@ -194,6 +196,13 @@ outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's
 
 ### Changed
 
+- **A named constant is spelled by its kind, not by who uses it** (#463). The physical,
+  mathematical and unit-conversion constants and the kinds, in `meds_constants` and `meds_kinds`, are
+  lower case; every other named constant, public or private, module-level or local, is UPPER case: a
+  selector code, an index or a flag, and a number chosen in the code (a tolerance, a floor, a table
+  size, a fitted coefficient). 184 constants changed case, 162 of them local to a test; ctest
+  `constants_named` (`scripts/lint/check_constant_case.py`) keeps the rule. Outputs are unchanged bit
+  for bit.
 - **Every PFT trait is the PFT file's** (#461). The model derives no PFT trait from another: the
   sapwood conductivity from wood density (Xu et al. 2016), the mortality hazard from wood density
   (Camac et al. 2018) and the light-plasticity slopes from Vcmax25 and the leaf turnover rate (ED2,
@@ -217,8 +226,7 @@ outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's
   its solver relations, the pond), `meds_therm_lib` (the energy datum, moist air, plant tissue heat,
   soil heat and the temperature response of enzyme rates), `meds_allometry_lib` and
   `meds_optics_lib`. Each is ordered in sections, with a banner per section. Conversions are named
-  `<input>_to_<output>`, as the allometry's are, and constants follow one rule: UPPER case where only
-  their module uses them, lower case where other modules do.
+  `<input>_to_<output>`, as the allometry's are.
 - **The Newton solvers share their step safeguards** (#460): `meds_numerics` holds `smooth_max0`,
   `sufficient_decrease` (the Armijo test of a damped step, used by the soil-plant water solver and the
   fast backward-Euler stage) and `fraction_to_boundary` (the step share that keeps a positive unknown

@@ -24,7 +24,7 @@ program test_column_dynamics
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
-   use meds_soil_hydr_lib,   only : soil_retention_vg
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
@@ -42,16 +42,16 @@ program test_column_dynamics
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
-   integer(ik), parameter :: n = 1_ik, nsl = 10_ik
-   real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   integer(ik), parameter :: N = 1_ik, NSL = 10_ik
+   real(wp),    parameter :: DT_FAST = 150.0_wp, LAT = 40.0_wp, T0 = 288.0_wp, THETA0 = 0.30_wp
    !----- Durations and times of day are written in hours and turned into steps here, so a change of  !
-   !      dt_fast keeps what each test covers: the march puts step i at (i - 1/2)*dt_fast after       !
+   !      DT_FAST keeps what each test covers: the march puts step i at (i - 1/2)*DT_FAST after       !
    !      midnight, and the sun follows the clock. ---------------------------------------------------!
-   integer(ik), parameter :: steps_per_hour = nint(3600.0_wp / dt_fast, ik)
-   integer(ik), parameter :: nstep = 24_ik * steps_per_hour      ! one day
+   integer(ik), parameter :: STEPS_PER_HOUR = nint(3600.0_wp / DT_FAST, ik)
+   integer(ik), parameter :: NSTEP = 24_ik * STEPS_PER_HOUR      ! one day
    !----- Seed moisture + rain-pulse rate, VARIABLES so RUN 7 can drive the column to saturation.  !
    !      Initialized to the values RUNS 1-6 run on. ----------------------------------------------!
-   real(wp) :: theta_seed = theta0, rain_pulse = 1.5e-4_wp
+   real(wp) :: theta_seed = THETA0, rain_pulse = 1.5e-4_wp
    real(wp), parameter :: PSI_FIXTURE = -0.1_wp   !< [MPa] the fixture tissues' starting potential, a mild tension
    real(wp) :: pond_peak, theta_peak_col
    !----- RUN 8 (snow): seed mass for the pack (0 = no pack, the default for RUNS 1-7) plus the  !
@@ -112,18 +112,18 @@ program test_column_dynamics
                    col_cohort%sap_area(1))
 
    !----- Static column config: soil column + respiration parameters. ---------------------!
-   call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(nsl, soil_retention_vg, test_bottoms, 0.43_wp, 0.078_wp,           &
+   call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
+   call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
-   call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
+   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg%pft, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
 
-   call alloc_aero_out(aero, n)
-   allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
+   call alloc_aero_out(aero, N)
+   allocate(forc%abs_sw(N), forc%abs_lw(N), forc%abs_par(N), forc%abs_sw_wood(N), forc%abs_lw_wood(N))
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
 
    !----- A cohort's leaf PAR is its absorbed PAR per unit of its own leaf area: a thin cohort's   !
@@ -342,7 +342,7 @@ program test_column_dynamics
    !  two budget assertions below are the regression net: a dropped swe delta, pack rainfall  !
    !  enthalpy or sublimation vapour shows up directly in the residual as an unpaired term.   !
    !=====================================================================================!
-   theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
+   theta_seed = THETA0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
    col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. A pack that ends   !
    !      near zero makes a "pack still present" assertion test the last few percent of the melt   !
@@ -459,9 +459,9 @@ program test_column_dynamics
    !  that sublimation, a genuine boundary OUTPUT, is common to the pair and cancels in the           !
    !  difference. The first pass (the default scheme) is the reference the others are compared to.   !
    !=====================================================================================!
-   snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
+   snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = THETA0
    col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
-   snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-rainfall input
+   snowf_total = 2.0e-5_wp * real(NSTEP, wp) * DT_FAST     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
       case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ref'
@@ -509,18 +509,18 @@ program test_column_dynamics
    !  the snow day poorer by ~L_f per kg (melting the snow costs soil heat). Liquid valuation gives  !
    !  ~0 difference.                                                                                 !
    !=====================================================================================!
-   snow_seed = 0.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
+   snow_seed = 0.0_wp ; rain_pulse = 0.0_wp ; theta_seed = THETA0
    snowfall_on = .true. ; snowf_rate = 5.0e-6_wp          ! 7.5e-4 kg/m2 per 150 s step < min_new_snow_mass (1e-3)
    call integrate_day()
-   e_col_snow = sum(biophys%soil_energy%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_water%w_surface_energy
+   e_col_snow = sum(biophys%soil_energy%soil_energy(1:NSL) * col_config%soil%dz(1:NSL)) + biophys%soil_water%w_surface_energy
    call check_true('RUN 9b: sub-threshold snowfall never started a pack', biophys%snow%nlayer == 0_ik,                &
            real(biophys%snow%nlayer, wp))
    call check_true('RUN 9b snow: whole-column energy closes to round-off', budget%whole_energy%worst < 1.0e-3_wp,     &
            budget%whole_energy%worst)
-   snow_mass_total = snowf_rate * real(nstep, wp) * dt_fast
+   snow_mass_total = snowf_rate * real(NSTEP, wp) * DT_FAST
    snowfall_on = .false. ; cold_air = .true. ; rain_rate = snowf_rate
    call integrate_day()
-   e_col_rain = sum(biophys%soil_energy%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_water%w_surface_energy
+   e_col_rain = sum(biophys%soil_energy%soil_energy(1:NSL) * col_config%soil%dz(1:NSL)) + biophys%soil_water%w_surface_energy
    cold_air = .false. ; rain_rate = 0.0_wp ; snowf_rate = 2.0e-5_wp
    fusion_expect = latent_heat_fusion * snow_mass_total
    !----- ~0.56 L_f on this fixture: the colder, wetter surface loses less to the air over the day and    !
@@ -545,25 +545,25 @@ contains
 
       !----- (Re)seed the prognostic column state. --------------------------------------!
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
-      call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
+      call alloc_patch_biophys(biophys, N, T0, 0.008_wp, 400.0_wp, T0)
       !----- alloc_patch_biophys starts leaf_water_mass/wood_water_mass at a scratch 0, which the    !
       !      production gather overwrites from the cohort block -- give them a physical store at a  !
       !      mild tension, tissue_psi_to_water(PSI_FIXTURE,...), or tissue_water_to_psi would       !
       !      diagnose an unphysical psi from an empty pool. -----------------------------------------!
-      biophys%leaf_water_mass(1:n) = tissue_psi_to_water(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%leaf_curve, &
-            col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = tissue_psi_to_water(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
-            col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      biophys%leaf_water_mass(1:N) = tissue_psi_to_water(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%leaf_curve, &
+            col_cohort%bleaf(1:N))
+      biophys%wood_water_mass(1:N) = tissue_psi_to_water(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
+            col_cohort%bsap(1:N) + col_cohort%broot(1:N))
       !----- ...and the tissues' energy at t0, the state the column advances. ----------------------!
-      biophys%leaf_energy(1:n) = tissue_temp_to_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
-                                    col_cohort%bleaf(1:n), tissue_c_leaf),                                    &
-                                    max(biophys%leaf_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
-      biophys%wood_energy(1:n) = tissue_temp_to_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:n),                &
-                                    col_cohort%bwood(1:n), tissue_c_wood_dry),                                &
-                                    max(biophys%wood_water_mass(1:n), 0.0_wp) * col_cohort%nplant(1:n), t0)
+      biophys%leaf_energy(1:N) = tissue_temp_to_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:N),                &
+                                    col_cohort%bleaf(1:N), tissue_c_leaf),                                    &
+                                    max(biophys%leaf_water_mass(1:N), 0.0_wp) * col_cohort%nplant(1:N), T0)
+      biophys%wood_energy(1:N) = tissue_temp_to_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:N),                &
+                                    col_cohort%bwood(1:N), tissue_c_wood_dry),                                &
+                                    max(biophys%wood_water_mass(1:N), 0.0_wp) * col_cohort%nplant(1:N), T0)
       budget = column_budget_t()
       biophys%shed_water_rate = shed_seed
-      biophys%shed_water_enth = shed_seed * internal_energy_liquid(t0)   ! shed by tissues at t0
+      biophys%shed_water_enth = shed_seed * internal_energy_liquid(T0)   ! shed by tissues at t0
       !----- RUN 8: seed a snow pack when asked. snow_seed = 0 (RUNS 1-7) leaves nlayer = 0, which is  !
       !      exactly the no-pack state alloc_patch_biophys already produces, so those runs are          !
       !      untouched. rho_snow = 250 kg/m3 matches the model's own initial-pack seeding. ------------!
@@ -574,11 +574,11 @@ contains
          biophys%snow%nlayer         = 1_ik
       end if
       snow_physical = .true.
-      biophys%soil_water%theta(1:nsl) = theta_seed
-      do k = 1_ik, nsl
+      biophys%soil_water%theta(1:NSL) = theta_seed
+      do k = 1_ik, NSL
          biophys%soil_energy%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k),  &
-                                     theta_seed * rho_h2o, t0, 1.0_wp)
-         biophys%soil_energy%soil_temp(k)   = t0
+                                     theta_seed * rho_h2o, T0, 1.0_wp)
+         biophys%soil_energy%soil_temp(k)   = T0
       end do
 
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp ; sd_min = 1.0e9_wp ; sd_max = -1.0e9_wp
@@ -586,9 +586,9 @@ contains
       surf_water_peak = -1.0e9_wp
       pond_peak = 0.0_wp ; theta_peak_col = 0.0_wp
 
-      do istep = 1_ik, nstep
-         t_sec = (real(istep, wp) - 0.5_wp) * dt_fast
-         cosz  = solar_cosz(sim_date, t_sec, lat)
+      do istep = 1_ik, NSTEP
+         t_sec = (real(istep, wp) - 0.5_wp) * DT_FAST
+         cosz  = solar_cosz(sim_date, t_sec, LAT)
          t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
 
          forc%abs_sw   = 500.0_wp * cosz                            ! leaf-absorbed shortwave [W/m2]
@@ -597,7 +597,7 @@ contains
          forc%abs_sw_ground = 75.0_wp * cosz
          forc%abs_lw_ground = 0.0_wp
          forc%rainfall   = 0.0_wp
-         if (istep >= 3_ik * steps_per_hour .and. istep <= 7_ik * steps_per_hour) &
+         if (istep >= 3_ik * STEPS_PER_HOUR .and. istep <= 7_ik * STEPS_PER_HOUR) &
             forc%rainfall = rain_pulse                   ! morning rain pulse, 03:00-07:00
          if (rain_rate > 0.0_wp) forc%rainfall = rain_rate                        ! RUN 9b: all-day rain
          !----- RUNS 8-9b: steady light snowfall (tests the accumulate path and the pack's          !
@@ -606,7 +606,7 @@ contains
          if (snowfall_on) forc%snowfall = snowf_rate
          if (snowfall_on .or. cold_air) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
          if (iso_dark) then     ! RUN 5b: dark, rain-free, the air at the column's own temperature
-            t_air = t0 ; forc%abs_sw = 0.0_wp ; forc%abs_par = 0.0_wp ; forc%abs_sw_ground = 0.0_wp
+            t_air = T0 ; forc%abs_sw = 0.0_wp ; forc%abs_par = 0.0_wp ; forc%abs_sw_ground = 0.0_wp
             forc%rainfall = 0.0_wp
          end if
          forc%air_temp         = t_air                                    ! values frozen precipitation as ice at this T
@@ -620,7 +620,7 @@ contains
          !      forcing's air temperature, through the SAME routine fill_aenv uses. -----------------!
          call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)
 
-         call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
+         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
                                h_flux=h_step)
          if (iso_dark) then
             h_first = h_step ; gah_first = aenv%rho_air * aero%ustar * aero%temp1
@@ -628,21 +628,21 @@ contains
          end if
 
          ss_min = min(ss_min, biophys%soil_energy%soil_temp(1))   ; ss_max = max(ss_max, biophys%soil_energy%soil_temp(1))
-         sd_min = min(sd_min, biophys%soil_energy%soil_temp(nsl)) ; sd_max = max(sd_max, biophys%soil_energy%soil_temp(nsl))
+         sd_min = min(sd_min, biophys%soil_energy%soil_temp(NSL)) ; sd_max = max(sd_max, biophys%soil_energy%soil_temp(NSL))
          th_min = min(th_min, biophys%soil_water%theta(1))       ; th_max = max(th_max, biophys%soil_water%theta(1))
          surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
          pond_peak       = max(pond_peak, biophys%soil_water%w_surface)
-         theta_peak_col  = max(theta_peak_col, maxval(biophys%soil_water%theta(1:nsl)))
+         theta_peak_col  = max(theta_peak_col, maxval(biophys%soil_water%theta(1:NSL)))
          if (biophys%snow%nlayer >= 1_ik) then
             snow_physical = snow_physical .and. biophys%snow%swe(1) >= 0.0_wp                            &
                             .and. biophys%snow%snow_temp(1) > 200.0_wp                                   &
                             .and. biophys%snow%snow_temp(1) < 290.0_wp
-            do k = 1_ik, nsl
+            do k = 1_ik, NSL
                snow_physical = snow_physical .and. biophys%soil_energy%soil_temp(k) > 230.0_wp                &
                                .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
             end do
          end if
-         if (istep == 13_ik * steps_per_hour + steps_per_hour / 2_ik) then     ! 13:30
+         if (istep == 13_ik * STEPS_PER_HOUR + STEPS_PER_HOUR / 2_ik) then     ! 13:30
             ct_noon = biophys%cas%can_temp ; tleaf_noon = biophys%leaf_temp(1) ; co2_noon = biophys%cas%can_co2
             ustar_noon = aero%ustar ; dtheta_noon = biophys%cas%can_temp - aenv%theta_atm
             gpp_noon = budget%gpp_last ; nee_noon = budget%nee_last
@@ -651,7 +651,7 @@ contains
             psileaf_noon = tissue_water_to_psi(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_curve, &
                   col_cohort%bleaf(1))
          end if
-         if (istep == steps_per_hour / 2_ik) then                             ! 00:30
+         if (istep == STEPS_PER_HOUR / 2_ik) then                             ! 00:30
             ct_night = biophys%cas%can_temp ; tleaf_night = biophys%leaf_temp(1) ; co2_night = biophys%cas%can_co2
             psileaf_night = tissue_water_to_psi(biophys%leaf_water_mass(1), &
                   col_config%hydraulics_table%pft(1)%leaf_curve, col_cohort%bleaf(1))
@@ -662,7 +662,7 @@ contains
       !      RUN 9's boundary-input accounting. Not a budget -- just the store the arriving water     !
       !      must land in if it lands anywhere at all. -----------------------------------------------!
       col_water_end = biophys%soil_water%w_surface + biophys%snow%swe(1)
-      do k = 1_ik, nsl
+      do k = 1_ik, NSL
          col_water_end = col_water_end + biophys%soil_water%theta(k) * col_config%soil%dz(k) * rho_h2o
       end do
    end subroutine integrate_day

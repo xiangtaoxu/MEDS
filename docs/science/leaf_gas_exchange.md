@@ -367,7 +367,7 @@ drought response (see `docs/ROADMAP.md`).
 ## 5. The coupled solver
 
 `solve_leaf_gas_exchange` brackets $`C_i \in (\Gamma^*, C_a]`$ and bisects the residual to a
-tolerance `ci_tol_ppm` (the module's private `bisect_ci`):
+tolerance `CI_TOL_PPM` (the module's private `bisect_ci`):
 
 - **Night / closed branch** — if the best-case net rate $A(C_a) \le 0$, stomata sit at $g_0$ and
   the solve returns immediately.

@@ -24,7 +24,7 @@ program test_soil_biogeochem
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, kgcday_2_umols
-   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
+   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL, &
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_patch_state_vars,   only : soil_carbon_t
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2, &
@@ -71,8 +71,8 @@ contains
       type(soil_carbon_t) :: pools
       type(decomp_opts_t) :: opts
       type(soilc_audit_t) :: audit
-      real(wp) :: u(n_soil_pool), lignin_in(2), xi_int(n_soil_pool), rh, x(n_soil_pool), sx
-      real(wp) :: a_mat(n_soil_pool,n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool), x1(n_soil_pool)
+      real(wp) :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh, x(N_SOIL_POOL), sx
+      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), x1(N_SOIL_POOL)
       integer(ik) :: i, j
       print '(a)', '-- test 1: mass closure (EULER + EXPM) --'
       opts%decomp_scheme = DECOMP_SCHEME_CENTURY5      ! all 5 active -> exercises transfers + EXPM
@@ -85,10 +85,10 @@ contains
       pools%struct_grnd_carbon = 2.0_wp ; pools%struct_soil_carbon = 3.0_wp
       pools%microbial_carbon = 0.5_wp ; pools%slow_carbon = 8.0_wp ; pools%passive_carbon = 20.0_wp
       pools%struct_grnd_lignin = 0.6_wp ; pools%struct_soil_lignin = 0.9_wp
-      u = [ (0.01_wp * frac(int(10*i, ik)), i = 1, n_soil_pool) ]
+      u = [ (0.01_wp * frac(int(10*i, ik)), i = 1, N_SOIL_POOL) ]
       u(IP_MICR:IP_PASSIVE) = 0.0_wp                   ! litter only enters pools 1-4
       lignin_in = [0.002_wp, 0.003_wp]
-      xi_int = [ (0.5_wp * frac(int(3*i+1, ik)) + 0.1_wp, i = 1, n_soil_pool) ]  ! ~O(0.1..0.6) day
+      xi_int = [ (0.5_wp * frac(int(3*i+1, ik)) + 0.1_wp, i = 1, N_SOIL_POOL) ]  ! ~O(0.1..0.6) day
 
       call pack_pool_vector(pools, x) ; sx = max(sum(x), 1.0_wp)
 
@@ -104,18 +104,18 @@ contains
          !      max over pools of xi_int*K, must name that pool, and -- the property that makes the   !
          !      frozen-pool approximation sound at all -- must be well under 1 for a daily step.  ----!
          call check('lambda_max == max_j xi_int_j*k_j', audit%lambda_max,                          &
-                    maxval(xi_int(1:n_soil_pool)*k_diag(1:n_soil_pool)), 1.0e-15_wp)
+                    maxval(xi_int(1:N_SOIL_POOL)*k_diag(1:N_SOIL_POOL)), 1.0e-15_wp)
          call check_true('lambda_max is far below 1 for a daily step', audit%lambda_max < 0.1_wp,   &
                          audit%lambda_max)
          call check_true('lambda_pool names a real pool', audit%lambda_pool >= 1_ik .and.          &
-                         audit%lambda_pool <= n_soil_pool, real(audit%lambda_pool, wp))
+                         audit%lambda_pool <= N_SOIL_POOL, real(audit%lambda_pool, wp))
          call check_true('EULER rh_today >= 0', rh >= 0.0_wp, rh)
          !----- INDEPENDENT (non-tautological) mass check: dC == litter_in - Rh, with Rh recomputed    !
          !      from er*xi_int*K*X0 (NOT from rh_today = litter_in - dC, which is closure-by-definition).!
          !      This catches a dropped-litter or misattributed-transfer bug that a residual cannot.    !
          call pack_pool_vector(p, x1)
          rh_indep = 0.0_wp
-         do j = 1_ik, n_soil_pool
+         do j = 1_ik, N_SOIL_POOL
             rh_indep = rh_indep + er(j)*xi_int(j)*k_diag(j)*x(j)
          end do
          dc = sum(x1) - sum(x)
@@ -137,8 +137,8 @@ contains
    subroutine test_rh_complement()
       type(soil_carbon_t) :: pools
       type(decomp_opts_t) :: opts
-      real(wp) :: a_mat(n_soil_pool,n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      real(wp) :: xi(n_soil_pool), x(n_soil_pool), rh_fun, rh_hand, colsum, worst
+      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
+      real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL), rh_fun, rh_hand, colsum, worst
       integer(ik) :: i, j
       print '(a)', '-- test 2: Rh = -1^T A xi K X + column identity --'
       opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
@@ -150,17 +150,17 @@ contains
       pools%struct_grnd_carbon=2.0_wp; pools%struct_soil_carbon=3.0_wp
       pools%microbial_carbon=0.5_wp; pools%slow_carbon=8.0_wp; pools%passive_carbon=20.0_wp
       call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
-      xi = [ (0.4_wp + 0.3_wp*frac(int(i,ik)), i = 1, n_soil_pool) ]
+      xi = [ (0.4_wp + 0.3_wp*frac(int(i,ik)), i = 1, N_SOIL_POOL) ]
       call pack_pool_vector(pools, x)
       rh_fun  = heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools)
       rh_hand = 0.0_wp
-      do j = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
          rh_hand = rh_hand + er(j)*xi(j)*k_diag(j)*x(j)
       end do
       call check('Rh matrix == sum er*xi*K*X', rh_fun, rh_hand, 1.0e-14_wp*max(abs(rh_hand),1.0_wp))
       ! column identity: sum_i a_ij = -er_j  and  a_jj = -1
       worst = 0.0_wp
-      do j = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
          colsum = sum(a_mat(:, j))
          worst  = max(worst, abs(colsum + er(j)))
          worst  = max(worst, abs(a_mat(j,j) + 1.0_wp))
@@ -174,9 +174,9 @@ contains
    subroutine test_scalar_placement()
       type(soil_carbon_t) :: pools
       type(decomp_opts_t) :: opts
-      real(wp) :: a_mat(n_soil_pool,n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      real(wp) :: xi(n_soil_pool), x(n_soil_pool)
-      real(wp) :: dcorrect(n_soil_pool), dwrong(n_soil_pool), rh, loss_correct, loss_wrong
+      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
+      real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL)
+      real(wp) :: dcorrect(N_SOIL_POOL), dwrong(N_SOIL_POOL), rh, loss_correct, loss_wrong
       integer(ik) :: i, j
       print '(a)', '-- test 3: scalar placement A*(xi*K*X) vs xi*(A*K*X) --'
       opts%decomp_scheme = DECOMP_SCHEME_ED2           ! default 3-active
@@ -187,9 +187,9 @@ contains
       ! DISTINCT per-pool xi (surface vs below), so ordering matters:
       xi = [0.9_wp, 0.3_wp, 0.9_wp, 0.3_wp, 0.3_wp, 0.3_wp, 0.3_wp]
       ! correct: dX_i = sum_j a_ij*(xi_j*K_j*X_j)   (donor scalar)
-      do i = 1_ik, n_soil_pool
+      do i = 1_ik, N_SOIL_POOL
          dcorrect(i) = 0.0_wp ; dwrong(i) = 0.0_wp
-         do j = 1_ik, n_soil_pool
+         do j = 1_ik, N_SOIL_POOL
             dcorrect(i) = dcorrect(i) + a_mat(i,j)*(xi(j)*k_diag(j)*x(j))
             dwrong(i)   = dwrong(i)   + a_mat(i,j)*(xi(i)*k_diag(j)*x(j))    ! receiver scalar (WRONG)
          end do
@@ -207,7 +207,7 @@ contains
    subroutine test_scheme_topology()
       type(soil_carbon_t) :: pools
       type(decomp_opts_t) :: opts
-      real(wp) :: a_mat(n_soil_pool,n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool), offsum
+      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), offsum
       real(wp) :: er_micr, ex_mp, ex_sp
       integer(ik) :: i, j
       print '(a)', '-- test 4: decomp scheme topology --'
@@ -222,8 +222,8 @@ contains
       call check('scheme0 er(fast_soil)=1.0',   er(IP_FAST_SOIL),   1.0_wp, 1.0e-14_wp)
       ! everything except a(6,3),a(6,4) and the -1 diagonal must be 0:
       offsum = 0.0_wp
-      do j = 1_ik, n_soil_pool
-         do i = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
+         do i = 1_ik, N_SOIL_POOL
             if (i /= j .and. .not. (i==IP_SLOW .and. (j==IP_STRUCT_GRND .or. j==IP_STRUCT_SOIL))) then
                offsum = offsum + abs(a_mat(i,j))
             end if
@@ -267,8 +267,8 @@ contains
       type(soil_carbon_t) :: pools, pss, p
       type(decomp_opts_t) :: opts
       type(soilc_audit_t) :: audit
-      real(wp) :: a_mat(n_soil_pool,n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      real(wp) :: xi(n_soil_pool), u(n_soil_pool), lignin_in(2), xss(n_soil_pool), x1(n_soil_pool)
+      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
+      real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL), x1(N_SOIL_POOL)
       real(wp) :: rh, worst, relerr
       integer(ik) :: it
       opts = decomp_opts_t()
@@ -298,7 +298,7 @@ contains
             real(wp)    :: mcol_inert
             integer(ik) :: ii
             mcol_inert = 0.0_wp
-            do ii = 1_ik, n_soil_pool
+            do ii = 1_ik, N_SOIL_POOL
                mcol_inert = mcol_inert + abs(a_mat(ii,IP_MICR)   *xi(IP_MICR)   *k_diag(IP_MICR))   &
                                        + abs(a_mat(ii,IP_PASSIVE)*xi(IP_PASSIVE)*k_diag(IP_PASSIVE))
             end do
@@ -340,8 +340,8 @@ contains
       type(decomp_opts_t) :: opts
       type(soilc_diag_t)  :: diag
       type(soilc_audit_t) :: audit
-      real(wp) :: a_mat(n_soil_pool,n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      real(wp) :: xi(n_soil_pool), u(n_soil_pool), lignin_in(2), xss(n_soil_pool)
+      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
+      real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL)
       real(wp) :: x_before, x_after, rh
       print '(a)', '-- test 6: residence time / storage capacity --'
       opts = decomp_opts_t()
@@ -376,26 +376,26 @@ contains
       type(decomp_opts_t) :: opts
       type(litter_input_t):: lit
       type(soilc_audit_t) :: audit
-      real(wp) :: u(n_soil_pool), lignin_in(2), xi_int(n_soil_pool), rh
+      real(wp) :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh
       real(wp) :: f_lig_before, f_lig_after, c_before, l_before, d_s
       ! (a) driver-side per-cohort split demo (two PFTs) summed into a pool-destined litter_input_t:
-      real(wp), parameter :: leaf1=0.10_wp, root1=0.06_wp, wood1=0.20_wp
-      real(wp), parameter :: leaf2=0.08_wp, root2=0.05_wp, wood2=0.30_wp
-      real(wp), parameter :: flab_leaf1=0.7_wp, flab_stem1=0.05_wp, agf1=0.6_wp
-      real(wp), parameter :: flab_leaf2=0.5_wp, flab_stem2=0.10_wp, agf2=0.7_wp
+      real(wp), parameter :: LEAF1=0.10_wp, ROOT1=0.06_wp, WOOD1=0.20_wp
+      real(wp), parameter :: LEAF2=0.08_wp, ROOT2=0.05_wp, WOOD2=0.30_wp
+      real(wp), parameter :: FLAB_LEAF1=0.7_wp, FLAB_STEM1=0.05_wp, AGF1=0.6_wp
+      real(wp), parameter :: FLAB_LEAF2=0.5_wp, FLAB_STEM2=0.10_wp, AGF2=0.7_wp
       real(wp) :: exp_lab_grnd, exp_lab_soil, exp_str_grnd, exp_str_soil
       print '(a)', '-- test 7: litter mapping + lignin tracer --'
 
       ! per-cohort split: leaf splits labile/structural by f_labile_leaf and lies above ground;
       ! fineroot is below-ground; wood (CWD) is mostly structural via f_labile_stem, split by agf.
-      exp_lab_grnd = leaf1*flab_leaf1 + wood1*flab_stem1*agf1                            &
-                   + leaf2*flab_leaf2 + wood2*flab_stem2*agf2
-      exp_lab_soil = root1*flab_leaf1 + wood1*flab_stem1*(1.0_wp-agf1)                    &
-                   + root2*flab_leaf2 + wood2*flab_stem2*(1.0_wp-agf2)
-      exp_str_grnd = leaf1*(1.0_wp-flab_leaf1) + wood1*(1.0_wp-flab_stem1)*agf1          &
-                   + leaf2*(1.0_wp-flab_leaf2) + wood2*(1.0_wp-flab_stem2)*agf2
-      exp_str_soil = root1*(1.0_wp-flab_leaf1) + wood1*(1.0_wp-flab_stem1)*(1.0_wp-agf1)  &
-                   + root2*(1.0_wp-flab_leaf2) + wood2*(1.0_wp-flab_stem2)*(1.0_wp-agf2)
+      exp_lab_grnd = LEAF1*FLAB_LEAF1 + WOOD1*FLAB_STEM1*AGF1                            &
+                   + LEAF2*FLAB_LEAF2 + WOOD2*FLAB_STEM2*AGF2
+      exp_lab_soil = ROOT1*FLAB_LEAF1 + WOOD1*FLAB_STEM1*(1.0_wp-AGF1)                    &
+                   + ROOT2*FLAB_LEAF2 + WOOD2*FLAB_STEM2*(1.0_wp-AGF2)
+      exp_str_grnd = LEAF1*(1.0_wp-FLAB_LEAF1) + WOOD1*(1.0_wp-FLAB_STEM1)*AGF1          &
+                   + LEAF2*(1.0_wp-FLAB_LEAF2) + WOOD2*(1.0_wp-FLAB_STEM2)*AGF2
+      exp_str_soil = ROOT1*(1.0_wp-FLAB_LEAF1) + WOOD1*(1.0_wp-FLAB_STEM1)*(1.0_wp-AGF1)  &
+                   + ROOT2*(1.0_wp-FLAB_LEAF2) + WOOD2*(1.0_wp-FLAB_STEM2)*(1.0_wp-AGF2)
       lit%labile_grnd = exp_lab_grnd ; lit%labile_soil = exp_lab_soil
       lit%struct_grnd = exp_str_grnd ; lit%struct_soil = exp_str_soil
       lit%lignin_grnd = 0.3_wp*exp_str_grnd ; lit%lignin_soil = 0.3_wp*exp_str_soil
@@ -465,10 +465,10 @@ contains
    !     the pool streams.                                                                          !
    !=======================================================================================!
    subroutine test_necromass_to_litter()
-      real(wp), parameter :: leaf1=0.10_wp, root1=0.06_wp, wood1=0.20_wp
-      real(wp), parameter :: leaf2=0.08_wp, root2=0.05_wp, wood2=0.30_wp
-      real(wp), parameter :: flab_leaf1=0.7_wp, flab_stem1=0.05_wp, agf1=0.6_wp
-      real(wp), parameter :: flab_leaf2=0.5_wp, flab_stem2=0.10_wp, agf2=0.7_wp
+      real(wp), parameter :: LEAF1=0.10_wp, ROOT1=0.06_wp, WOOD1=0.20_wp
+      real(wp), parameter :: LEAF2=0.08_wp, ROOT2=0.05_wp, WOOD2=0.30_wp
+      real(wp), parameter :: FLAB_LEAF1=0.7_wp, FLAB_STEM1=0.05_wp, AGF1=0.6_wp
+      real(wp), parameter :: FLAB_LEAF2=0.5_wp, FLAB_STEM2=0.10_wp, AGF2=0.7_wp
       real(wp) :: lg1, ls1, sg1, ss1, lig_g1, lig_s1
       real(wp) :: lg2, ls2, sg2, ss2, lig_g2, lig_s2
       real(wp) :: exp_lab_grnd, exp_lab_soil, exp_str_grnd, exp_str_soil
@@ -478,18 +478,18 @@ contains
 
       ! (a) per-cohort call reproduces test_litter_and_lignin's hand formula exactly (storage_c=0,
       !     lignin_frac=0.3 matching that test's flat structural-stream lignin fraction).
-      call necromass_to_litter(leaf1, root1, wood1, 0.0_wp, flab_leaf1, flab_stem1, agf1, 0.3_wp,   &
+      call necromass_to_litter(LEAF1, ROOT1, WOOD1, 0.0_wp, FLAB_LEAF1, FLAB_STEM1, AGF1, 0.3_wp,   &
                                lg1, ls1, sg1, ss1, lig_g1, lig_s1)
-      call necromass_to_litter(leaf2, root2, wood2, 0.0_wp, flab_leaf2, flab_stem2, agf2, 0.3_wp,   &
+      call necromass_to_litter(LEAF2, ROOT2, WOOD2, 0.0_wp, FLAB_LEAF2, FLAB_STEM2, AGF2, 0.3_wp,   &
                                lg2, ls2, sg2, ss2, lig_g2, lig_s2)
-      exp_lab_grnd = leaf1*flab_leaf1 + wood1*flab_stem1*agf1                            &
-                   + leaf2*flab_leaf2 + wood2*flab_stem2*agf2
-      exp_lab_soil = root1*flab_leaf1 + wood1*flab_stem1*(1.0_wp-agf1)                    &
-                   + root2*flab_leaf2 + wood2*flab_stem2*(1.0_wp-agf2)
-      exp_str_grnd = leaf1*(1.0_wp-flab_leaf1) + wood1*(1.0_wp-flab_stem1)*agf1          &
-                   + leaf2*(1.0_wp-flab_leaf2) + wood2*(1.0_wp-flab_stem2)*agf2
-      exp_str_soil = root1*(1.0_wp-flab_leaf1) + wood1*(1.0_wp-flab_stem1)*(1.0_wp-agf1)  &
-                   + root2*(1.0_wp-flab_leaf2) + wood2*(1.0_wp-flab_stem2)*(1.0_wp-agf2)
+      exp_lab_grnd = LEAF1*FLAB_LEAF1 + WOOD1*FLAB_STEM1*AGF1                            &
+                   + LEAF2*FLAB_LEAF2 + WOOD2*FLAB_STEM2*AGF2
+      exp_lab_soil = ROOT1*FLAB_LEAF1 + WOOD1*FLAB_STEM1*(1.0_wp-AGF1)                    &
+                   + ROOT2*FLAB_LEAF2 + WOOD2*FLAB_STEM2*(1.0_wp-AGF2)
+      exp_str_grnd = LEAF1*(1.0_wp-FLAB_LEAF1) + WOOD1*(1.0_wp-FLAB_STEM1)*AGF1          &
+                   + LEAF2*(1.0_wp-FLAB_LEAF2) + WOOD2*(1.0_wp-FLAB_STEM2)*AGF2
+      exp_str_soil = ROOT1*(1.0_wp-FLAB_LEAF1) + WOOD1*(1.0_wp-FLAB_STEM1)*(1.0_wp-AGF1)  &
+                   + ROOT2*(1.0_wp-FLAB_LEAF2) + WOOD2*(1.0_wp-FLAB_STEM2)*(1.0_wp-AGF2)
       call check('necromass_to_litter matches hand formula: labile_grnd', lg1+lg2, exp_lab_grnd, 1.0e-14_wp)
       call check('necromass_to_litter matches hand formula: labile_soil', ls1+ls2, exp_lab_soil, 1.0e-14_wp)
       call check('necromass_to_litter matches hand formula: struct_grnd', sg1+sg2, exp_str_grnd, 1.0e-14_wp)
@@ -544,8 +544,8 @@ contains
    subroutine test_temperature_moisture()
       type(soil_carbon_t) :: pools
       type(decomp_opts_t) :: opts
-      real(wp) :: xi_a(n_soil_pool), xi_b(n_soil_pool), xi_lo(n_soil_pool), xi_hi(n_soil_pool)
-      real(wp) :: xi_opt(n_soil_pool), xi_dry(n_soil_pool)
+      real(wp) :: xi_a(N_SOIL_POOL), xi_b(N_SOIL_POOL), xi_lo(N_SOIL_POOL), xi_hi(N_SOIL_POOL)
+      real(wp) :: xi_opt(N_SOIL_POOL), xi_dry(N_SOIL_POOL)
       print '(a)', '-- test 8: temperature / moisture response --'
       pools = soil_carbon_t()
       ! Q10 = 2 doubling per 10 K (scheme 5, uncapped):
@@ -580,7 +580,7 @@ contains
    subroutine test_fast_slow_seam()
       type(soil_carbon_t) :: pools
       type(decomp_opts_t) :: dopts
-      real(wp) :: xi(n_soil_pool), a_mat(n_soil_pool,n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
+      real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: theta, theta_dry, theta_sat, xpool
       real(wp) :: xi_int, today_rh, tmean, ftemp, fwater, rel, dt_sub, ttime, k2
       real(wp) :: rh_today, rh_meanpath, xi_meanpath

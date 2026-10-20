@@ -15,8 +15,8 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 ```
 src/                                    35.5 k lines · 91 modules · 21 CMake libraries
 │
-│  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_shared
-├── shared/        uses nothing outside itself; every layer may use it: kinds,
+│  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_share
+├── share/         uses nothing outside itself; every layer may use it: kinds,
 │   │              constants, numerics (clamps, means, the conservation test),
 │   │              linear algebra (Thomas sweep, dense LU, arrowhead solve,
 │   │              matrix exponential), calendar time, budget checks         1 148
@@ -86,12 +86,12 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
                    (the PROGRAM)                                             1 392
 ```
 
-**`shared/` is one library, and it admits only what depends on nothing outside it.** Every module
-there `use`s other `shared/` modules and compiler intrinsics and nothing else: no model state, no
+**`share/` is one library, and it admits only what depends on nothing outside it.** Every module
+there `use`s other `share/` modules and compiler intrinsics and nothing else: no model state, no
 configuration, no external library. That is what lets every other layer, and the tests that link
 one narrow library, use it freely. A file that needs `meds_config`, a state type or netCDF is not
 foundation however small or widely used it is, and goes to its caller's layer instead; `config/`
-is a library of its own because configuration is not foundation. The test is what keeps `shared/`
+is a library of its own because configuration is not foundation. The test is what keeps `share/`
 from becoming the place a file goes when no other place fits.
 
 ## Four rules, in the order you apply them
@@ -164,8 +164,8 @@ One edge is worth knowing because it is easy to get wrong:
 | a per-patch store the kernels and the patch block share | `state/meds_patch_state_vars.f90`: its type, its blend, and its section of `patch_block` |
 | a per-cohort field | `state/meds_cohort_state_vars.f90`: its section of `cohort_block` and of each lockstep list — and every creation site, and the fusion policy |
 | a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_2_patches` and the new gap in `apply_patch_disturbance` |
-| a stateless constitutive curve: a physical or biological law with parameters | `shared/functions/` |
-| a model-independent tool every layer needs (numerics, calendar, checks) | `shared/`, if it uses nothing outside `shared/` |
+| a stateless constitutive curve: a physical or biological law with parameters | `share/functions/` |
+| a model-independent tool every layer needs (numerics, calendar, checks) | `share/`, if it uses nothing outside `share/` |
 | a TOML block | `config/`, as an `*_opts` leaf so `meds_config` can carry it with no back-edge |
 | a prescribed time-varying input (weather, CO2) | `io/input/forcing/` |
 | a static per-cell input map (soil, a cell mask) | `io/input/maps/meds_surface_maps.f90` |
@@ -227,7 +227,7 @@ oversight**.
 Flat wins because the suite's files have globally unique names, so a mirror buys no lookup that
 `test_<subject>.f90` does not already give — while costing a test rename on every source move. The
 thing that actually needs to stay honest is the **link line**, not the directory: many tests
-deliberately link one narrow library each (`meds_shared`, `meds_config`,
+deliberately link one narrow library each (`meds_share`, `meds_config`,
 `meds_fast_kernels`, `meds_forcing`) so those layers stay standalone-buildable, and that discipline
 is visible in `CMakeLists.txt` whatever directory the file sits in. It is also why the assertion
 helpers live in `meds_test_assert`, which depends on nothing but a kind.

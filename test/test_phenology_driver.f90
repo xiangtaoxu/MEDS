@@ -31,7 +31,7 @@ program test_phenology_driver
    use meds_test_support, only : build_test_config, check_close, check_int, check_true, test_report
    implicit none
 
-   real(wp), parameter :: twopi = 6.283185307179586_wp
+   real(wp), parameter :: TWOPI = 6.283185307179586_wp
    type(meds_config_t) :: cfg
    type(polygon_t)     :: poly
    integer(ik) :: doy
@@ -269,7 +269,7 @@ contains
    !----- Ithaca-like daily-mean air temperature [K]: ~270 in winter, ~297 in summer. --------!
    pure real(wp) function daily_tair(doy) result(t)
       integer(ik), intent(in) :: doy
-      t = 283.15_wp + 14.0_wp * sin(twopi * (real(doy, wp) - 110.0_wp) / 365.0_wp)
+      t = 283.15_wp + 14.0_wp * sin(TWOPI * (real(doy, wp) - 110.0_wp) / 365.0_wp)
    end function daily_tair
 
 end program test_phenology_driver

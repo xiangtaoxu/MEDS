@@ -33,7 +33,7 @@ program test_surface_maps
    use meds_maps_opts,          only : maps_opts_t
    use meds_soil_hydr_lib,         only : soil_texture_t, soil_texture_to_hydraulics
    use meds_therm_lib,             only : soil_texture_to_thermal
-   use meds_biophysics_opts,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, annual_damping_depth
+   use meds_biophysics_opts,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
    implicit none
 
    real(wp), parameter :: FILL = -9999.0_wp
@@ -200,7 +200,7 @@ program test_surface_maps
                    .and. f_leak_at(1_ik, 0_ik) < 1.0_wp)
    call check_true('the thermal anchor: the map''s temperature, d/sqrt(2) below the bottom node',          &
                    close(cfg%energy%deep_temp, deep_temp_at(1_ik, 0_ik)) .and.                            &
-                   close(cfg%energy%deep_depth, 0.85_wp + annual_damping_depth / sqrt(2.0_wp)))
+                   close(cfg%energy%deep_depth, 0.85_wp + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)))
    call check_true('Chave''s E is the cell''s', close(cfg%pft%allom(1)%chave_e, chave_e_at(1_ik, 0_ik)))
 
    !----- Rows 2-3, columns 14-17: cell (3, 17) is 2.55 m deep, 8 layers, the last 2.0-2.55 m, below    !

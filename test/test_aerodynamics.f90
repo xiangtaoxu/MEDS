@@ -94,8 +94,8 @@ contains
       type(aero_env_t)  :: env
       type(aero_geom_t) :: geom
       type(aero_out_t)  :: out
-      integer(ik), parameter :: n = 2_ik
-      real(wp) :: height(n), lai(n), tl(n), tw(n), lw(n), bd(n)
+      integer(ik), parameter :: N = 2_ik
+      real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N)
       real(wp) :: ggbare_open
       !----- Bottom(1) -> Top(2) ordering (RT convention). ----------------------------------!
       height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 2.0_wp]
@@ -103,8 +103,8 @@ contains
       lw = [0.04_wp, 0.04_wp]   ; bd = [0.02_wp, 0.02_wp]
       geom%veg_height = 18.0_wp ; geom%opencan_frac = 0.0_wp ; geom%snowfac = 0.0_wp
 
-      call alloc_aero_out(out, n)
-      call canopy_aerodynamics(cfg, env, geom, n, height, lai, tl, tw, lw, bd, out)
+      call alloc_aero_out(out, N)
+      call canopy_aerodynamics(cfg, env, geom, N, height, lai, tl, tw, lw, bd, out)
 
       call check_true('master ustar > 0', out%ustar > 0.0_wp, out%ustar)
       call check_true('master ggnet > 0', out%ggnet > 0.0_wp, out%ggnet)
@@ -127,7 +127,7 @@ contains
 
       !----- Open-canopy limit: ggnet collapses to ggbare. ----------------------------------!
       geom%opencan_frac = 1.0_wp
-      call canopy_aerodynamics(cfg, env, geom, n, height, lai, tl, tw, lw, bd, out)
+      call canopy_aerodynamics(cfg, env, geom, N, height, lai, tl, tw, lw, bd, out)
       ggbare_open = out%ggbare
       call check('ggnet == ggbare when open', out%ggnet, ggbare_open, 1.0e-12_wp)
    end subroutine test_master
@@ -138,15 +138,15 @@ contains
       type(aero_env_t)  :: env
       type(aero_geom_t) :: geom
       type(aero_out_t)  :: out
-      integer(ik), parameter :: n = 2_ik, nw = 11_ik
-      real(wp) :: height(n), lai(n), tl(n), tw(n), lw(n), bd(n), gg(nw)
+      integer(ik), parameter :: N = 2_ik, NW = 11_ik
+      real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N), gg(NW)
       integer(ik) :: k
       height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 2.0_wp]
       tl = [299.0_wp, 300.0_wp] ; tw = [298.5_wp, 299.0_wp]
       lw = [0.04_wp, 0.04_wp]   ; bd = [0.02_wp, 0.02_wp]
       geom%veg_height = 18.0_wp ; geom%snowfac = 0.0_wp
       env%t_ground = env%can_temp + 2.0_wp           ! a warm ground: the dense term's stability is 0
-      call alloc_aero_out(out, n)
+      call alloc_aero_out(out, N)
 
       !----- The open fraction: 1 on bare ground, exp(-PAI) under plants. --------------------------!
       call check('a patch with no leaf or wood area is fully open', open_canopy_fraction(0.0_wp, 0.0_wp), &
@@ -154,21 +154,21 @@ contains
       call check('W = exp(-(LAI + WAI))', open_canopy_fraction(5.0_wp, 1.0_wp), exp(-6.0_wp), 1.0e-15_wp)
 
       !----- The two limits, exactly, and a monotone rise between them. ----------------------------!
-      do k = 1_ik, nw
-         geom%opencan_frac = real(k - 1_ik, wp) / real(nw - 1_ik, wp)
-         call canopy_aerodynamics(cfg, env, geom, n, height, lai, tl, tw, lw, bd, out)
+      do k = 1_ik, NW
+         geom%opencan_frac = real(k - 1_ik, wp) / real(NW - 1_ik, wp)
+         call canopy_aerodynamics(cfg, env, geom, N, height, lai, tl, tw, lw, bd, out)
          gg(k) = out%ggnet
          if (k == 1_ik) call check('W = 0: the dense-canopy conductance', out%ggnet, out%ggveg, 0.0_wp)
-         if (k == nw)   call check('W = 1: the bare-ground conductance', out%ggnet, out%ggbare, 0.0_wp)
+         if (k == NW)   call check('W = 1: the bare-ground conductance', out%ggnet, out%ggbare, 0.0_wp)
       end do
       call check_true('the bare-ground conductance exceeds the dense one', out%ggbare > out%ggveg,  &
                       out%ggbare - out%ggveg)
-      call check_true('the ground conductance rises monotonically with W', all(gg(2:) > gg(:nw - 1)), &
-                      minval(gg(2:) - gg(:nw - 1)))
+      call check_true('the ground conductance rises monotonically with W', all(gg(2:) > gg(:NW - 1)), &
+                      minval(gg(2:) - gg(:NW - 1)))
       !----- At LAI 6 (W = 0.0025) the blend is the linear weighting of the two terms, and the       !
       !      ground stays far closer to the dense value than to the bare one. ------------------------!
       geom%opencan_frac = open_canopy_fraction(6.0_wp, 0.0_wp)
-      call canopy_aerodynamics(cfg, env, geom, n, height, lai, tl, tw, lw, bd, out)
+      call canopy_aerodynamics(cfg, env, geom, N, height, lai, tl, tw, lw, bd, out)
       call check('LAI 6: W ggbare + (1 - W) ggveg', out%ggnet,                                       &
                  geom%opencan_frac * out%ggbare + (1.0_wp - geom%opencan_frac) * out%ggveg, 1.0e-15_wp)
       call check_true('LAI 6: the ground couples nearly as under the dense form alone',                &
@@ -183,16 +183,16 @@ contains
       type(aero_env_t)  :: env
       type(aero_geom_t) :: geom
       type(aero_out_t)  :: one, split
-      real(wp), parameter :: h2(2) = [8.0_wp, 18.0_wp], lai2(2) = [1.5_wp, 2.0_wp]
-      real(wp), parameter :: tl2(2) = [299.0_wp, 300.0_wp], tw2(2) = [298.5_wp, 299.0_wp]
-      real(wp), parameter :: lw2(2) = [0.04_wp, 0.04_wp], bd2(2) = [0.02_wp, 0.02_wp]
-      real(wp), parameter :: h3(3) = [8.0_wp, 18.0_wp, 18.0_wp], lai3(3) = [1.5_wp, 1.0_wp, 1.0_wp]
-      real(wp), parameter :: tl3(3) = [299.0_wp, 300.0_wp, 300.0_wp], tw3(3) = [298.5_wp, 299.0_wp, 299.0_wp]
-      real(wp), parameter :: lw3(3) = [0.04_wp, 0.04_wp, 0.04_wp], bd3(3) = [0.02_wp, 0.02_wp, 0.02_wp]
+      real(wp), parameter :: H2(2) = [8.0_wp, 18.0_wp], LAI2(2) = [1.5_wp, 2.0_wp]
+      real(wp), parameter :: TL2(2) = [299.0_wp, 300.0_wp], TW2(2) = [298.5_wp, 299.0_wp]
+      real(wp), parameter :: LW2(2) = [0.04_wp, 0.04_wp], BD2(2) = [0.02_wp, 0.02_wp]
+      real(wp), parameter :: H3(3) = [8.0_wp, 18.0_wp, 18.0_wp], LAI3(3) = [1.5_wp, 1.0_wp, 1.0_wp]
+      real(wp), parameter :: TL3(3) = [299.0_wp, 300.0_wp, 300.0_wp], TW3(3) = [298.5_wp, 299.0_wp, 299.0_wp]
+      real(wp), parameter :: LW3(3) = [0.04_wp, 0.04_wp, 0.04_wp], BD3(3) = [0.02_wp, 0.02_wp, 0.02_wp]
       geom%veg_height = 18.0_wp ; geom%opencan_frac = 0.0_wp ; geom%snowfac = 0.0_wp
       call alloc_aero_out(one, 2_ik) ; call alloc_aero_out(split, 3_ik)
-      call canopy_aerodynamics(cfg, env, geom, 2_ik, h2, lai2, tl2, tw2, lw2, bd2, one)
-      call canopy_aerodynamics(cfg, env, geom, 3_ik, h3, lai3, tl3, tw3, lw3, bd3, split)
+      call canopy_aerodynamics(cfg, env, geom, 2_ik, H2, LAI2, TL2, TW2, LW2, BD2, one)
+      call canopy_aerodynamics(cfg, env, geom, 3_ik, H3, LAI3, TL3, TW3, LW3, BD3, split)
       call check('tied: both halves of the top crown meet its wind', split%wind(2), one%wind(2), 1.0e-14_wp)
       call check('tied: the two halves meet the same wind', split%wind(3), split%wind(2), 0.0_wp)
       call check('tied: the cohort below meets the wind it met under the whole crown', split%wind(1),     &

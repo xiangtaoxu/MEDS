@@ -8,13 +8,13 @@
 ! soil_params_t (the layers, the hydraulic texture and the field capacity) and             !
 ! soil_thermal_params_t (the thermal texture). They are derived from the config and never  !
 ! integrated -- parameters, not state -- so they live with the config, as the PFT table's  !
-! derived rates do (meds_pft_params). A config leaf: it uses only src/shared/, so the soil !
+! derived rates do (meds_pft_params). A config leaf: it uses only src/share/, so the soil  !
 ! kernels import it without the meds_config aggregator.                                    !
 !==========================================================================================!
 module meds_soil_column_config
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, grav_head
-   use meds_soil_hydr_lib,    only : soil_head_to_theta, soil_theta_to_head, soil_retention_vg
+   use meds_soil_hydr_lib,    only : soil_head_to_theta, soil_theta_to_head, SOIL_RETENTION_VG
    implicit none
    private
 
@@ -51,7 +51,7 @@ module meds_soil_column_config
       integer(ik) :: n_layer_bottoms = 0_ik      !< [-]  entries of layer_bottoms; 0 = the template
       real(wp)    :: layer_bottoms(n_soil_layer_max) = 0.0_wp   !< [m] layer bottoms, positive down
       !----- Hydraulic texture, one for the whole column (or per layer: n_layer_values below). ------!
-      integer(ik) :: retention   = soil_retention_vg  !< van_genuchten | campbell
+      integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
       real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
       real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
       real(wp)    :: ksat        = 2.89e-6_wp !< [m/s]   saturated hydraulic conductivity
@@ -89,7 +89,7 @@ module meds_soil_column_config
    !      size (n_soil_layer_max) so the hydrology kernel stays allocatable-free and GPU-eligible.!
    type :: soil_params_t
       integer(ik) :: n_active  = n_soil_layer_max            !< active layer count (<= n_soil_layer_max)
-      integer(ik) :: retention = soil_retention_vg           !< curve family
+      integer(ik) :: retention = SOIL_RETENTION_VG           !< curve family
       real(wp) :: soil_layer_z(n_soil_layer_max+1) = 0.0_wp  !< [m] interface elevations (<= 0, ED2 slz)
       real(wp) :: z_node(n_soil_layer_max)  = 0.0_wp         !< [m] node (mid) elevations (<= 0)
       real(wp) :: dz(n_soil_layer_max)      = 0.0_wp         !< [m] layer thickness (> 0)

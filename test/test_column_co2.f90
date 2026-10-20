@@ -84,22 +84,22 @@ contains
    !----- 1. Closed-budget residual ~ 0 over a spread of states/fluxes/steps. ------------------!
    subroutine test_resid_zero()
       type(co2_budget_t) :: b
-      real(wp), parameter :: cco2(6) = [400.0_wp, 380.0_wp, 450.0_wp, 500.0_wp, 350.0_wp, 420.0_wp]
-      real(wp), parameter :: gpp(6)  = [ 20.0_wp,   5.0_wp,  30.0_wp,   0.0_wp,  12.0_wp,  18.0_wp]
-      real(wp), parameter :: pr(6)   = [  6.0_wp,   4.0_wp,   9.0_wp,   2.0_wp,   5.0_wp,   7.0_wp]
-      real(wp), parameter :: hr(6)   = [  3.0_wp,   2.0_wp,   5.0_wp,   1.0_wp,   4.0_wp,   2.5_wp]
-      real(wp), parameter :: us(6)   = [ 0.30_wp,  0.10_wp,  0.50_wp,  0.05_wp,  0.20_wp,  0.40_wp]
-      real(wp), parameter :: rho(6)  = [  1.2_wp,  1.15_wp,  1.25_wp,   1.1_wp,   1.3_wp,  1.18_wp]
-      real(wp), parameter :: shv(6)  = [ 0.00_wp,  0.01_wp,  0.02_wp, 0.005_wp, 0.015_wp,  0.00_wp]
-      real(wp), parameter :: dts(6)  = [ 60.0_wp, 300.0_wp,  30.0_wp,1800.0_wp, 120.0_wp, 900.0_wp]
+      real(wp), parameter :: CCO2(6) = [400.0_wp, 380.0_wp, 450.0_wp, 500.0_wp, 350.0_wp, 420.0_wp]
+      real(wp), parameter :: GPP(6)  = [ 20.0_wp,   5.0_wp,  30.0_wp,   0.0_wp,  12.0_wp,  18.0_wp]
+      real(wp), parameter :: PR(6)   = [  6.0_wp,   4.0_wp,   9.0_wp,   2.0_wp,   5.0_wp,   7.0_wp]
+      real(wp), parameter :: HR(6)   = [  3.0_wp,   2.0_wp,   5.0_wp,   1.0_wp,   4.0_wp,   2.5_wp]
+      real(wp), parameter :: US(6)   = [ 0.30_wp,  0.10_wp,  0.50_wp,  0.05_wp,  0.20_wp,  0.40_wp]
+      real(wp), parameter :: RHO(6)  = [  1.2_wp,  1.15_wp,  1.25_wp,   1.1_wp,   1.3_wp,  1.18_wp]
+      real(wp), parameter :: SHV(6)  = [ 0.00_wp,  0.01_wp,  0.02_wp, 0.005_wp, 0.015_wp,  0.00_wp]
+      real(wp), parameter :: DTS(6)  = [ 60.0_wp, 300.0_wp,  30.0_wp,1800.0_wp, 120.0_wp, 900.0_wp]
       real(wp)    :: cc, worst
       integer(ik) :: i
       print '(a)', 'test_resid_zero:'
       worst = 0.0_wp
       do i = 1_ik, 6_ik
-         cc = cco2(i)
-         call co2_step(cc, 20.0_wp, shv(i), gpp(i), pr(i), hr(i), us(i), 1.0_wp,          &
-                                    400.0_wp, rho(i), dts(i), b)
+         cc = CCO2(i)
+         call co2_step(cc, 20.0_wp, SHV(i), GPP(i), PR(i), HR(i), US(i), 1.0_wp,          &
+                                    400.0_wp, RHO(i), DTS(i), b)
          worst = max(worst, abs(b%resid) / max(abs(b%storage), 1.0_wp))
       end do
       call check_true('CO2 budget residual ~ 0 (relative)', worst < 1.0e-9_wp, worst)
@@ -152,19 +152,19 @@ contains
    !----- 4. Constant source  =>  can_co2 -> co2_atm + f_bio/gatm_co2 (analytic fixed point). ---!
    subroutine test_steady_ca()
       type(co2_budget_t) :: b
-      real(wp), parameter :: rho_air = 1.2_wp, ustar = 0.30_wp, hetero = 5.0_wp, co2_atm = 400.0_wp
+      real(wp), parameter :: RHO_AIR = 1.2_wp, USTAR = 0.30_wp, HETERO = 5.0_wp, CO2_ATM = 400.0_wp
       real(wp) :: cc, gatm_co2, expect
       integer(ik) :: step
       print '(a)', 'test_steady_ca:'
-      gatm_co2 = rho_air / mmdry * ustar                     ! can_shv = 0 => can_dmol = rho/mmdry
-      expect   = co2_atm + hetero / gatm_co2                 ! f_bio = hetero (gpp = plant_resp = 0)
-      cc = co2_atm
+      gatm_co2 = RHO_AIR / mmdry * USTAR                     ! can_shv = 0 => can_dmol = rho/mmdry
+      expect   = CO2_ATM + HETERO / gatm_co2                 ! f_bio = hetero (gpp = plant_resp = 0)
+      cc = CO2_ATM
       do step = 1_ik, 4000_ik
-         call co2_step(cc, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, hetero, ustar, 1.0_wp,         &
-                                    co2_atm, rho_air, 60.0_wp, b)
+         call co2_step(cc, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, HETERO, USTAR, 1.0_wp,         &
+                                    CO2_ATM, RHO_AIR, 60.0_wp, b)
       end do
       call check('steady canopy CO2 = atm + f_bio/gatm', cc, expect, 1.0e-4_wp)
-      call check('steady loss2atm balances the source', b%loss2atm, hetero, 1.0e-4_wp)
+      call check('steady loss2atm balances the source', b%loss2atm, HETERO, 1.0e-4_wp)
    end subroutine test_steady_ca
 
    !----- 5. GPP-only draws CO2 down (nep>0); respiration-only pushes it up (nee>0, vents up). --!
@@ -188,16 +188,16 @@ contains
    !----- 6. d(storage) = dt*(nee - loss2atm), assembled independently of the kernel's resid. --!
    subroutine test_conservation_identity()
       type(co2_budget_t) :: b
-      real(wp), parameter :: rho_air = 1.2_wp, can_shv = 0.01_wp, can_depth = 20.0_wp, dt = 600.0_wp
+      real(wp), parameter :: RHO_AIR = 1.2_wp, CAN_SHV = 0.01_wp, CAN_DEPTH = 20.0_wp, DT = 600.0_wp
       real(wp) :: cc, ccapcan, storage_before, actual_delta, expect_delta
       print '(a)', 'test_conservation_identity:'
       cc = 430.0_wp
-      ccapcan        = ccapcan_of(rho_air, can_shv, can_depth)
+      ccapcan        = ccapcan_of(RHO_AIR, CAN_SHV, CAN_DEPTH)
       storage_before = ccapcan * cc
-      call co2_step(cc, can_depth, can_shv, 22.0_wp, 7.0_wp, 4.0_wp, 0.25_wp, 1.0_wp,      &
-                                 400.0_wp, rho_air, dt, b)
+      call co2_step(cc, CAN_DEPTH, CAN_SHV, 22.0_wp, 7.0_wp, 4.0_wp, 0.25_wp, 1.0_wp,      &
+                                 400.0_wp, RHO_AIR, DT, b)
       actual_delta = b%storage - storage_before
-      expect_delta = dt * (b%nee - b%loss2atm)
+      expect_delta = DT * (b%nee - b%loss2atm)
       call check('d(storage) = dt*(nee - loss2atm)', actual_delta, expect_delta, 1.0e-6_wp)
    end subroutine test_conservation_identity
 

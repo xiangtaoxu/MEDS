@@ -23,12 +23,12 @@ program test_canopy_radiation
    use meds_constants,      only : stefan_boltzmann
    use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_forcing, RAD_VIS, RAD_NIR, RAD_LW, &
                                  N_RAD_BAND_DEFAULT
-   use meds_optics_lib,     only : beta_lidf, leaf_bf, moments_to_beta_params, gfun_direct, n_leaf_class
+   use meds_optics_lib,     only : beta_lidf, leaf_bf, moments_to_beta_params, gfun_direct, N_LEAF_CLASS
    use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics_state_t,    &
                                      ground_optics
    implicit none
 
-   real(wp), parameter :: tol = 1.0e-9_wp
+   real(wp), parameter :: TOL = 1.0e-9_wp
 
    call test_leaf_angle_limits()
    call test_energy_conservation()
@@ -108,7 +108,7 @@ contains
    !=======================================================================================!
    subroutine test_leaf_angle_limits()
       real(wp) :: p, q, bf
-      real(wp) :: lidf(n_leaf_class)
+      real(wp) :: lidf(N_LEAF_CLASS)
       print '(a)', '[1] leaf-angle distribution limits'
       !----- Uniform inclination (Beta(1,1)): <cos^2> = 0.5 exactly. ------------------------!
       lidf = beta_lidf(1.0_wp, 1.0_wp) ; bf = leaf_bf(lidf)
@@ -342,12 +342,12 @@ contains
       integer(ik) :: pft(NC), i
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), net_lw, maxnet
       integer :: ih
-      real(wp), parameter :: teq = 300.0_wp
+      real(wp), parameter :: TEQ = 300.0_wp
       print '(a)', '[6] longwave radiative equilibrium (isothermal -> zero net absorption)'
       call build_optics(45.0_wp, opt)
-      call build_forcing(0.5_wp, teq, teq, f)          ! sky and soil both at Teq
+      call build_forcing(0.5_wp, TEQ, TEQ, f)          ! sky and soil both at Teq
       pft  = [1_ik, 2_ik, 1_ik] ; lai = [2.0_wp, 1.0_wp, 0.5_wp] ; wai = 0.1_wp * lai
-      tcan = teq                                        ! canopy also at Teq
+      tcan = TEQ                                        ! canopy also at Teq
       hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
       call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
       maxnet = 0.0_wp
@@ -355,7 +355,7 @@ contains
          net_lw = flux%abs_leaf(RAD_LW,i) + flux%abs_wood(RAD_LW,i)
          maxnet = max(maxnet, abs(net_lw))
       end do
-      call check('max |net LW| at equilibrium', maxnet, 0.0_wp, 1.0e-7_wp * stefan_boltzmann * teq ** 4)
+      call check('max |net LW| at equilibrium', maxnet, 0.0_wp, 1.0e-7_wp * stefan_boltzmann * TEQ ** 4)
    end subroutine test_longwave_equilibrium
 
 end program test_canopy_radiation

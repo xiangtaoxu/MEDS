@@ -532,7 +532,7 @@ contains
       real(c_double) :: dat(NG, NT)        ! (grid, time) column-major == C [time][grid]
       integer :: it, ig, k
       real(wp) :: hh, sw_mean
-      character(len=8), parameter :: vnames(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ', &
+      character(len=8), parameter :: VNAMES(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ', &
                                                   'Rainf   ','SWdown  ','LWdown  ']
       integer(c_size_t) :: start2(2), count2(2), start1(1), count1(1)
       logical :: co2air
@@ -551,8 +551,8 @@ contains
       st = nc_def_var_f(ncid, 'longitude', NC_DOUBLE, 1, dims1, vlo) ; call nc_check(st, 'write: lon var')
       dims2(1) = td ; dims2(2) = gd        ! [time, grid] (slowest first)
       do k = 1, 7
-         st = nc_def_var_f(ncid, trim(vnames(k)), NC_DOUBLE, 2, dims2, vv(k))
-         call nc_check(st, 'write: var '//trim(vnames(k)))
+         st = nc_def_var_f(ncid, trim(VNAMES(k)), NC_DOUBLE, 2, dims2, vv(k))
+         call nc_check(st, 'write: var '//trim(VNAMES(k)))
       end do
       if (co2air) then
          st = nc_def_var_f(ncid, 'CO2air', NC_DOUBLE, 2, dims2, vc) ; call nc_check(st, 'write: var CO2air')
@@ -606,7 +606,7 @@ contains
             end do
          end do
          st = nc_put_vara_double(ncid, vv(k), start2, count2, dat)
-         call nc_check(st, 'write: vals '//trim(vnames(k)))
+         call nc_check(st, 'write: vals '//trim(VNAMES(k)))
       end do
       if (present(with_components)) then
          if (with_components) then
@@ -999,7 +999,7 @@ contains
       integer(c_size_t) :: start2(2), count2(2), start1(1), count1(1)
       real(c_double)    :: tsec(NT), la(NG), lo(NG), dat(NG, NT)
       integer :: it, k
-      character(len=8), parameter :: vnames(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ', &
+      character(len=8), parameter :: VNAMES(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ', &
                                                   'Rainf   ','SWdown  ','LWdown  ']
       character(len=40) :: units
       write(units,'(a,i0,a)') 'seconds since ', year, '-01-01 00:00:00'
@@ -1012,7 +1012,7 @@ contains
       st = nc_def_var_f(ncid, 'latitude',  NC_DOUBLE, 1, dims1, vla) ; call nc_check(st, 'yf: lat var')
       st = nc_def_var_f(ncid, 'longitude', NC_DOUBLE, 1, dims1, vlo) ; call nc_check(st, 'yf: lon var')
       dims2(1) = td ; dims2(2) = gd
-      do k = 1, 7 ; st = nc_def_var_f(ncid, trim(vnames(k)), NC_DOUBLE, 2, dims2, vv(k)) ; call nc_check(st, 'yf: var') ; end do
+      do k = 1, 7 ; st = nc_def_var_f(ncid, trim(VNAMES(k)), NC_DOUBLE, 2, dims2, vv(k)) ; call nc_check(st, 'yf: var') ; end do
       st = nc_put_att_text_f(ncid, NC_GLOBAL, 'time_zone', 3_c_size_t, 'UTC') ; call nc_check(st, 'yf: time_zone')
       st = nc_enddef(ncid) ; call nc_check(st, 'yf: enddef')
       do it = 1, NT ; tsec(it) = real(it-1, c_double) * 86400.0_c_double ; end do

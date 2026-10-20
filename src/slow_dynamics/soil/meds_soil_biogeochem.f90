@@ -31,7 +31,7 @@ module meds_soil_biogeochem
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, tiny_num, kgcday_2_umols
    use meds_linear_algebra,   only : matrix_exp, lu_factor, lu_solve
-   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
+   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL, &
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_patch_state_vars,   only : soil_carbon_t
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_CENTURY5
@@ -65,12 +65,12 @@ module meds_soil_biogeochem
 contains
 
    !=======================================================================================!
-   !  MARSHALLING -- between the readable named type and the length-n_soil_pool array the      !
+   !  MARSHALLING -- between the readable named type and the length-N_SOIL_POOL array the      !
    !  matrix kernels operate on (keeps kernels array-based / GPU-friendly, state self-documenting).!
    !=======================================================================================!
    pure subroutine pack_pool_vector(pools, x)
       type(soil_carbon_t), intent(in)  :: pools
-      real(wp),            intent(out) :: x(n_soil_pool)
+      real(wp),            intent(out) :: x(N_SOIL_POOL)
       x(IP_FAST_GRND)   = pools%fast_grnd_carbon
       x(IP_FAST_SOIL)   = pools%fast_soil_carbon
       x(IP_STRUCT_GRND) = pools%struct_grnd_carbon
@@ -81,7 +81,7 @@ contains
    end subroutine pack_pool_vector
 
    pure subroutine unpack_pool_vector(x, pools)
-      real(wp),            intent(in)    :: x(n_soil_pool)
+      real(wp),            intent(in)    :: x(N_SOIL_POOL)
       type(soil_carbon_t), intent(inout) :: pools   !< inout: only the 7 carbon pools are overwritten
       pools%fast_grnd_carbon   = x(IP_FAST_GRND)
       pools%fast_soil_carbon   = x(IP_FAST_SOIL)
@@ -109,7 +109,7 @@ contains
       real(wp),            intent(in)  :: theta_active, theta_dry, theta_sat   !< [m3/m3]
       type(soil_carbon_t), intent(in)  :: pools                               !< for f_lignin
       type(decomp_opts_t), intent(in)  :: opts
-      real(wp),            intent(out) :: xi(n_soil_pool)                     !< [-] diagonal scalar, > 0
+      real(wp),            intent(out) :: xi(N_SOIL_POOL)                     !< [-] diagonal scalar, > 0
       real(wp) :: f_temp_surf, f_temp_active, f_water, rel, f_lig_g, f_lig_s, brake_g, brake_s
 
       f_temp_surf   = decomp_temperature_factor(soil_temp_surf,   opts)
@@ -176,9 +176,9 @@ contains
    pure subroutine assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
       type(soil_carbon_t), intent(in)  :: pools
       type(decomp_opts_t), intent(in)  :: opts
-      real(wp),            intent(out) :: a_mat(n_soil_pool, n_soil_pool)   !< [-] a_ii=-1, a_ij transfer frac
-      real(wp),            intent(out) :: k_diag(n_soil_pool)               !< [1/day] baseline decay rates
-      real(wp),            intent(out) :: er(n_soil_pool)                   !< [-] respired fraction 1 - sum_i a_ij
+      real(wp),            intent(out) :: a_mat(N_SOIL_POOL, N_SOIL_POOL)   !< [-] a_ii=-1, a_ij transfer frac
+      real(wp),            intent(out) :: k_diag(N_SOIL_POOL)               !< [1/day] baseline decay rates
+      real(wp),            intent(out) :: er(N_SOIL_POOL)                   !< [-] respired fraction 1 - sum_i a_ij
       real(wp)    :: f_lig_g, f_lig_s, er_stg, er_sts, er_micr, ex_mp, ex_sp
       integer(ik) :: j
 
@@ -199,7 +199,7 @@ contains
 
       !----- uniform a_jj = -1 (all decayed carbon leaves the donor), off-diagonals zeroed. --------!
       a_mat = 0.0_wp
-      do j = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
          a_mat(j, j) = -1.0_wp
       end do
 
@@ -231,7 +231,7 @@ contains
       end if
 
       !----- respired fraction er_j = 1 - sum_{i!=j} a_ij  (= -sum_i a_ij, since a_jj=-1). ---------!
-      do j = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
          er(j) = 1.0_wp - (sum(a_mat(:, j)) + 1.0_wp)      ! sum_i a_ij = a_jj(-1) + sum_{i!=j}; er = 1 - sum_{i!=j}
       end do
    end subroutine assemble_transfer_matrix
@@ -245,7 +245,7 @@ contains
    !=======================================================================================!
    pure subroutine build_litter_input(litter, u, lignin_in)
       type(litter_input_t), intent(in)  :: litter
-      real(wp),             intent(out) :: u(n_soil_pool)   !< [kgC/m2/day] input to each pool (1-4 nonzero)
+      real(wp),             intent(out) :: u(N_SOIL_POOL)   !< [kgC/m2/day] input to each pool (1-4 nonzero)
       real(wp),             intent(out) :: lignin_in(2)     !< [kgC/m2/day] lignin flux to struct_grnd/struct_soil
       u = 0.0_wp
       u(IP_FAST_GRND)   = litter%labile_grnd
@@ -266,14 +266,14 @@ contains
    !  docs/science/soil_carbon.md eq. (2) and §7.                                                        !
    !=======================================================================================!
    pure function heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools) result(rh)
-      real(wp),            intent(in) :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool)
-      real(wp),            intent(in) :: xi(n_soil_pool)
+      real(wp),            intent(in) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
+      real(wp),            intent(in) :: xi(N_SOIL_POOL)
       type(soil_carbon_t), intent(in) :: pools
-      real(wp) :: rh, x(n_soil_pool), er_j
+      real(wp) :: rh, x(N_SOIL_POOL), er_j
       integer(ik) :: j
       call pack_pool_vector(pools, x)
       rh = 0.0_wp
-      do j = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
          er_j = -sum(a_mat(:, j))                    ! column sum of A is -er_j (a_jj=-1)
          rh   = rh + er_j * xi(j) * k_diag(j) * x(j)
       end do
@@ -298,13 +298,13 @@ contains
    !=======================================================================================!
    subroutine soil_carbon_step(pools, u, lignin_in, xi_int, opts, rh_today, audit)
       type(soil_carbon_t), intent(inout) :: pools
-      real(wp),            intent(in)    :: u(n_soil_pool), lignin_in(2)
-      real(wp),            intent(in)    :: xi_int(n_soil_pool)   !< [day] INT_day xi_j dt (fast accumulator)
+      real(wp),            intent(in)    :: u(N_SOIL_POOL), lignin_in(2)
+      real(wp),            intent(in)    :: xi_int(N_SOIL_POOL)   !< [day] INT_day xi_j dt (fast accumulator)
       type(decomp_opts_t), intent(in)    :: opts
       real(wp),            intent(out)   :: rh_today              !< [kgC/m2/day] actual pool loss = fast loop's Rh
       type(soilc_audit_t), intent(out)   :: audit
-      real(wp) :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      real(wp) :: x0(n_soil_pool), x1(n_soil_pool), dvec(n_soil_pool), loss(n_soil_pool)
+      real(wp) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
+      real(wp) :: x0(N_SOIL_POOL), x1(N_SOIL_POOL), dvec(N_SOIL_POOL), loss(N_SOIL_POOL)
       real(wp) :: lig0(2), lig1(2), d_s(2), surv(2), litter_in, dc_pool, lig_resid
       integer(ik) :: i, j
 
@@ -314,7 +314,7 @@ contains
       lig0(2) = pools%struct_soil_lignin
 
       !----- per-pool day-integrated decay FRACTION d_j = xi_int_j * K_j [-] (dimensionless). ------!
-      do j = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
          dvec(j) = xi_int(j) * k_diag(j)
       end do
 
@@ -322,12 +322,12 @@ contains
       case (DECOMP_STEP_EXPM)
          call step_expm(a_mat, dvec, u, x0, x1)
       case default   ! DECOMP_STEP_EULER
-         do j = 1_ik, n_soil_pool
+         do j = 1_ik, N_SOIL_POOL
             loss(j) = dvec(j) * x0(j)                 ! [kgC/m2] day-integrated loss of donor j
          end do
-         do i = 1_ik, n_soil_pool
+         do i = 1_ik, N_SOIL_POOL
             x1(i) = x0(i) + u(i)
-            do j = 1_ik, n_soil_pool
+            do j = 1_ik, N_SOIL_POOL
                x1(i) = x1(i) + a_mat(i, j) * loss(j)  ! a_ii=-1 removes donor i's own loss; a_ij adds transfers
             end do
          end do
@@ -371,7 +371,7 @@ contains
       !      the slow step is sound, and how it differs from rh_seam_gap.  ---------------------------!
       audit%lambda_max   = 0.0_wp
       audit%lambda_pool  = 0_ik
-      do i = 1_ik, n_soil_pool
+      do i = 1_ik, N_SOIL_POOL
          if (dvec(i) > audit%lambda_max) then
             audit%lambda_max  = dvec(i)
             audit%lambda_pool = i
@@ -392,17 +392,17 @@ contains
    !  SEMI-ANALYTIC SPIN-UP (SASU; docs/science/soil_carbon.md eq. (7)). Steady state under           !
    !  climatological-mean drivers is a direct linear                                                  !
    !  solve, X_ss = -(A*xi_bar*K)^{-1} * B*I_bar, over the ACTIVE sub-block {j: K_j>0} ONLY -- the full !
-   !  n_soil_pool system is SINGULAR (inert pools have K=0). Inert pools are held at their conserved      !
+   !  N_SOIL_POOL system is SINGULAR (inert pools have K=0). Inert pools are held at their conserved      !
    !  value (0: no litter input, no transfer into them in the default scheme). The reduced block is       !
    !  solved by LU factorisation with partial pivoting (meds_linear_algebra), which handles the            !
    !  non-triangular scheme-5 back-transfers as well as the default block.                                 !
    !=======================================================================================!
    pure subroutine solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, opts, pools_ss)
-      real(wp),            intent(in)  :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool)
-      real(wp),            intent(in)  :: xi_bar(n_soil_pool), u_bar(n_soil_pool)
+      real(wp),            intent(in)  :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
+      real(wp),            intent(in)  :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL)
       type(decomp_opts_t), intent(in)  :: opts
       type(soil_carbon_t), intent(out) :: pools_ss
-      real(wp)    :: x_ss(n_soil_pool)
+      real(wp)    :: x_ss(N_SOIL_POOL)
       !----- opts is not read: the active set {K_j>0} is derived inside steady_state_vector,           !
       !      which already encodes the scheme via k_micr/k_pass = 0. It stays in the interface for     !
       !      an iterated scheme-5 steady state. --------------------------------------------------------!
@@ -413,12 +413,12 @@ contains
 
    !----- Solve M[active]*x = -u[active] on the active sub-block; inert indices held at 0. --------!
    pure subroutine steady_state_vector(a_mat, k_diag, xi_bar, u_bar, x_ss)
-      real(wp), intent(in)  :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool)
-      real(wp), intent(in)  :: xi_bar(n_soil_pool), u_bar(n_soil_pool)
-      real(wp), intent(out) :: x_ss(n_soil_pool)
-      real(wp)    :: xik(n_soil_pool), m_red(n_soil_pool, n_soil_pool), b_red(n_soil_pool)
-      real(wp)    :: x_red(n_soil_pool)
-      integer(ik) :: idx(n_soil_pool), piv(n_soil_pool), na, i, j
+      real(wp), intent(in)  :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
+      real(wp), intent(in)  :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL)
+      real(wp), intent(out) :: x_ss(N_SOIL_POOL)
+      real(wp)    :: xik(N_SOIL_POOL), m_red(N_SOIL_POOL, N_SOIL_POOL), b_red(N_SOIL_POOL)
+      real(wp)    :: x_red(N_SOIL_POOL)
+      integer(ik) :: idx(N_SOIL_POOL), piv(N_SOIL_POOL), na, i, j
       logical     :: ok
 
       xik   = xi_bar * k_diag                             ! diag(xi*K)
@@ -427,7 +427,7 @@ contains
       idx   = 0_ik
       !----- active index set {j: K_j > 0}. -------------------------------------------------------!
       na = 0_ik
-      do j = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
          if (k_diag(j) > tiny_num) then
             na = na + 1_ik
             idx(na) = j
@@ -460,11 +460,11 @@ contains
    !  All on the ACTIVE sub-block (inert pools carry no residence time; held at 0).                      !
    !=======================================================================================!
    pure subroutine soil_carbon_diagnostics(a_mat, k_diag, xi, u, pools, diag)
-      real(wp),            intent(in)  :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool)
-      real(wp),            intent(in)  :: xi(n_soil_pool), u(n_soil_pool)
+      real(wp),            intent(in)  :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
+      real(wp),            intent(in)  :: xi(N_SOIL_POOL), u(N_SOIL_POOL)
       type(soil_carbon_t), intent(in)  :: pools
       type(soilc_diag_t),  intent(out) :: diag
-      real(wp) :: x_c(n_soil_pool), x(n_soil_pool), throughput
+      real(wp) :: x_c(N_SOIL_POOL), x(N_SOIL_POOL), throughput
       call steady_state_vector(a_mat, k_diag, xi, u, x_c)        ! X_c = -(A xi K)^{-1} u
       call pack_pool_vector(pools, x)
       diag%x_c  = x_c
@@ -489,35 +489,35 @@ contains
    !  docs/science/soil_carbon.md eq. (6).                                                                !
    !=======================================================================================!
    pure subroutine step_expm(a_mat, dvec, u, x0, x1)
-      real(wp), intent(in)  :: a_mat(n_soil_pool, n_soil_pool)
-      real(wp), intent(in)  :: dvec(n_soil_pool)          !< day-integrated decay fraction xi_int*K [-]
-      real(wp), intent(in)  :: u(n_soil_pool), x0(n_soil_pool)
-      real(wp), intent(out) :: x1(n_soil_pool)
-      integer(ik), parameter :: m = n_soil_pool + 1_ik
-      real(wp)    :: aug(m, m), e(m, m), y0(m), y1(m)
+      real(wp), intent(in)  :: a_mat(N_SOIL_POOL, N_SOIL_POOL)
+      real(wp), intent(in)  :: dvec(N_SOIL_POOL)          !< day-integrated decay fraction xi_int*K [-]
+      real(wp), intent(in)  :: u(N_SOIL_POOL), x0(N_SOIL_POOL)
+      real(wp), intent(out) :: x1(N_SOIL_POOL)
+      integer(ik), parameter :: M = N_SOIL_POOL + 1_ik
+      real(wp)    :: aug(M, M), e(M, M), y0(M), y1(M)
       integer(ik) :: i, j
 
       !----- assemble Aug = [[A*diag(dvec), u],[0,0]]. ---------------------------------------------!
       aug = 0.0_wp
-      do j = 1_ik, n_soil_pool
-         do i = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
+         do i = 1_ik, N_SOIL_POOL
             aug(i, j) = a_mat(i, j) * dvec(j)
          end do
       end do
-      do i = 1_ik, n_soil_pool
-         aug(i, m) = u(i)
+      do i = 1_ik, N_SOIL_POOL
+         aug(i, M) = u(i)
       end do
-      call matrix_exp(aug, e, m)
+      call matrix_exp(aug, e, M)
       !----- y1 = e * [x0; 1]. --------------------------------------------------------------------!
-      y0(1:n_soil_pool) = x0
-      y0(m)             = 1.0_wp
-      do i = 1_ik, m
+      y0(1:N_SOIL_POOL) = x0
+      y0(M)             = 1.0_wp
+      do i = 1_ik, M
          y1(i) = 0.0_wp
-         do j = 1_ik, m
+         do j = 1_ik, M
             y1(i) = y1(i) + e(i, j) * y0(j)
          end do
       end do
-      x1 = y1(1:n_soil_pool)
+      x1 = y1(1:N_SOIL_POOL)
    end subroutine step_expm
 
    !---------------------------------------------------------------------------------------!
@@ -531,11 +531,11 @@ contains
    pure function soil_carbon_bad_pool(pools) result(k)
       type(soil_carbon_t), intent(in) :: pools
       integer(ik)                     :: k
-      real(wp)    :: x(n_soil_pool)
+      real(wp)    :: x(N_SOIL_POOL)
       integer(ik) :: j
       call pack_pool_vector(pools, x)
       k = 0_ik
-      do j = 1_ik, n_soil_pool
+      do j = 1_ik, N_SOIL_POOL
          !----- NaN first, and alone, by classification. A comparison with a NaN can raise IEEE      !
          !      invalid -- ordered ones always, and ifx compiles even `x /= x` that way at -O0 --     !
          !      which a trapping build (-fpe0, -ffpe-trap=invalid) stops on, and `.or.` does not    !

@@ -34,7 +34,7 @@ program test_spac_solver
                                 spac_jacobian_error, POND, WOOD, LEAF
    use meds_plant_hydr_lib, only : xylem_max_conductance, rhizosphere_conductance, build_hydro_table,  &
                                    tissue_water_relations, water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
-   use meds_soil_hydr_lib,   only : soil_water_relations, soil_retention_vg, soil_retention_campbell,  &
+   use meds_soil_hydr_lib,   only : soil_water_relations, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL,  &
                                     soil_theta_to_head
    use meds_plant_types,   only : hydro_params_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
@@ -98,7 +98,7 @@ contains
       real(wp),            intent(in)  :: depth, growth
       real(wp) :: bottoms(n_soil_layer_max)
       call geometric_layer_bottoms(depth, nsl, growth, bottoms)
-      call build_soil_hydr_params(nsl, soil_retention_vg, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,          &
+      call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,          &
                                   0.7607_wp, 1.3554_wp, -3.37_wp, s)
    end subroutine make_soil
 
@@ -166,52 +166,52 @@ contains
    !=======================================================================================!
    subroutine test_arrowhead_solve()
       type(arrowhead_system_t) :: s
-      integer(ik), parameter :: nc = 7, ng = 5, mg = 2, nt = nc + ng*mg
-      real(wp) :: full(nt, nt), rhs(nt), x_ref(nt), r_c(nc), r_g(mg, ng), x_c(nc), x_g(mg, ng), v
-      real(wp) :: add_c(nc), add_g(mg, ng), a_kept(nc, nc)
+      integer(ik), parameter :: NC = 7, NG = 5, MG = 2, NT = NC + NG*MG
+      real(wp) :: full(NT, NT), rhs(NT), x_ref(NT), r_c(NC), r_g(MG, NG), x_c(NC), x_g(MG, NG), v
+      real(wp) :: add_c(NC), add_g(MG, NG), a_kept(NC, NC)
       integer(ik) :: i, j, g, l, seed
       logical :: ok
-      call arrowhead_allocate(s, nc, ng, mg)
+      call arrowhead_allocate(s, NC, NG, MG)
       seed = 12345_ik ; full = 0.0_wp
-      do j = 1_ik, nc
-         do i = 1_ik, nc
+      do j = 1_ik, NC
+         do i = 1_ik, NC
             v = pseudo(seed) ; s%a(i, j) = v ; full(i, j) = v
          end do
          s%a(j, j) = s%a(j, j) + 8.0_wp ; full(j, j) = full(j, j) + 8.0_wp
       end do
-      do g = 1_ik, ng
-         do i = 1_ik, nc            ! each group meets the core through its first unknown
-            v = pseudo(seed) ; s%b(i, g) = v ; full(i, nc + (g-1)*mg + 1) = v
-            v = pseudo(seed) ; s%c(i, g) = v ; full(nc + (g-1)*mg + 1, i) = v
+      do g = 1_ik, NG
+         do i = 1_ik, NC            ! each group meets the core through its first unknown
+            v = pseudo(seed) ; s%b(i, g) = v ; full(i, NC + (g-1)*MG + 1) = v
+            v = pseudo(seed) ; s%c(i, g) = v ; full(NC + (g-1)*MG + 1, i) = v
          end do
-         do l = 1_ik, mg
-            do j = 1_ik, mg
+         do l = 1_ik, MG
+            do j = 1_ik, MG
                v = pseudo(seed) + merge(5.0_wp, 0.0_wp, j == l)
-               s%d(l, j, g) = v ; full(nc + (g-1)*mg + l, nc + (g-1)*mg + j) = v
+               s%d(l, j, g) = v ; full(NC + (g-1)*MG + l, NC + (g-1)*MG + j) = v
             end do
          end do
       end do
       !----- Additions to the blocks' diagonals, as a Newton matrix's storage terms are added. --------!
-      do i = 1_ik, nc
+      do i = 1_ik, NC
          add_c(i) = 1.5_wp + 0.1_wp * real(i, wp) ; full(i, i) = full(i, i) + add_c(i)
       end do
-      do g = 1_ik, ng
-         do l = 1_ik, mg
-            add_g(l, g) = 0.7_wp ; full(nc + (g-1)*mg + l, nc + (g-1)*mg + l) = full(nc + (g-1)*mg + l, nc + (g-1)*mg + l) + 0.7_wp
+      do g = 1_ik, NG
+         do l = 1_ik, MG
+            add_g(l, g) = 0.7_wp ; full(NC + (g-1)*MG + l, NC + (g-1)*MG + l) = full(NC + (g-1)*MG + l, NC + (g-1)*MG + l) + 0.7_wp
          end do
       end do
-      do i = 1_ik, nt
+      do i = 1_ik, NT
          rhs(i) = pseudo(seed)
       end do
-      r_c = rhs(1:nc) ; r_g = reshape(rhs(nc+1:nt), [mg, ng])
-      call dense_solve(full, rhs, x_ref, nt)
+      r_c = rhs(1:NC) ; r_g = reshape(rhs(NC+1:NT), [MG, NG])
+      call dense_solve(full, rhs, x_ref, NT)
       a_kept = s%a
       call arrowhead_factor(s, add_c, add_g, ok)
       call check_true('arrowhead solve: factorisation succeeds', ok)
       call check_true('arrowhead solve: factoring leaves the blocks as they were', all(s%a == a_kept))
       call arrowhead_solve(s, r_c, r_g, x_c, x_g)
       call check_true('arrowhead solve: equals dense elimination',                                             &
-                      maxval(abs([x_c, reshape(x_g, [ng*mg])] - x_ref)) < 1.0e-12_wp * maxval(abs(x_ref)))
+                      maxval(abs([x_c, reshape(x_g, [NG*MG])] - x_ref)) < 1.0e-12_wp * maxval(abs(x_ref)))
    end subroutine test_arrowhead_solve
 
    !=======================================================================================!
@@ -497,7 +497,7 @@ contains
    subroutine test_campbell()
       type(spac_solver_t) :: spac
       type(soil_params_t) :: vg_soil
-      real(wp), parameter :: theta_sat = 0.44_wp, theta_res = 0.0_wp, psi_sat = -0.26_wp, b = 5.65_wp
+      real(wp), parameter :: THETA_SAT = 0.44_wp, THETA_RES = 0.0_wp, PSI_SAT = -0.26_wp, B = 5.65_wp
       real(wp) :: bottoms(n_soil_layer_max), theta(soil%n_active), psi_curve(soil%n_active)
       real(wp) :: w0, w1, dt, hour, flows, worst, worst_psi, uptake
       integer(ik) :: step, nfail, nsl
@@ -505,8 +505,8 @@ contains
       vg_soil = soil
       nsl = vg_soil%n_active
       call geometric_layer_bottoms(1.44_wp, nsl, 3.0_wp, bottoms)
-      call build_soil_hydr_params(nsl, soil_retention_campbell, bottoms, theta_sat, theta_res, 4.54e-6_wp,      &
-                                  psi_sat, b, -3.37_wp, soil)
+      call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, bottoms, THETA_SAT, THETA_RES, 4.54e-6_wp,      &
+                                  PSI_SAT, B, -3.37_wp, soil)
       theta = 0.30_wp
       call make_stand(spac, 4_ik, theta, 0.0_wp, 0.95_wp, 0.9_wp, 0.0_wp)
       dt = 900.0_wp ; worst = 0.0_wp ; worst_psi = 0.0_wp ; uptake = 0.0_wp ; nfail = 0_ik
@@ -526,8 +526,8 @@ contains
          !----- Each layer's potential against the Campbell curve at the water it holds, which the  !
          !      sub-step commits from its flows: the two agree to the Newton tolerance. ------------!
          theta = spac%water_soil(2:nsl+1) / (rho_h2o * soil%dz(1:nsl))
-         psi_curve = grav_head * soil_theta_to_head(soil_retention_campbell, theta, theta_sat, theta_res,    &
-                                                     psi_sat, b)
+         psi_curve = grav_head * soil_theta_to_head(SOIL_RETENTION_CAMPBELL, theta, THETA_SAT, THETA_RES,    &
+                                                     PSI_SAT, B)
          worst_psi = max(worst_psi, maxval(abs(spac%psi_soil(2:nsl+1) - psi_curve) / abs(psi_curve)))
          below_zero = below_zero .and. all(spac%psi_soil(2:nsl+1) < 0.0_wp)                                 &
                                  .and. all(spac%psi_soil(2:nsl+1) > -huge(1.0_wp))

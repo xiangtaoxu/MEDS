@@ -12,12 +12,12 @@ module meds_config
    use meds_constants,  only : yr_day, yr_sec, day_sec, n_soil_layer_max
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_leaf_params, HYD_UNSET
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
-   use meds_allometry_lib, only : height_chave
+   use meds_allometry_lib, only : HEIGHT_CHAVE
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
-   use meds_therm_lib,     only : temp_response_arrhenius, temp_response_peaked
+   use meds_therm_lib,     only : TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_soil_hydr_lib,   only : soil_retention_vg, soil_retention_campbell
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_plant_hydr_lib,  only : tissue_psi_tlp
    use meds_soil_column_config, only : soil_column_config_t, soil_texture_layers_t, soil_params_t,       &
                                        soil_column_layers, soil_column_texture, soil_column_params,   &
@@ -66,7 +66,7 @@ module meds_config
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
    !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the         !
-   !      temperature-response selectors (temp_response_*) by meds_therm_lib. Imported above   !
+   !      temperature-response selectors (TEMP_RESPONSE_*) by meds_therm_lib. Imported above   !
    !      for LOADING and VALIDATION only -- not re-exported, so a caller that switches on     !
    !      one imports it from the module that defines it. -------------------------------------!
 
@@ -281,7 +281,7 @@ module meds_config
 
       !----- Leaf physiology: model selection (non-PFT). ----------------------------------!
       integer(ik) :: stomatal_model           !< SM_LEUNING | SM_MEDLYN | SM_KATUL
-      integer(ik) :: temp_response_form        !< temp_response_arrhenius | temp_response_peaked
+      integer(ik) :: temp_response_form        !< TEMP_RESPONSE_ARRHENIUS | TEMP_RESPONSE_PEAKED
       integer(ik) :: colimitation             !< COLIM_MIN | COLIM_QUADRATIC
       logical     :: leaf_use_boundary_layer  !< if .true., couple via the leaf boundary layer (gb)
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
@@ -514,7 +514,7 @@ contains
    !---------------------------------------------------------------------------------------!
    recursive subroutine validate_config(cfg)
       type(meds_config_t), intent(in) :: cfg
-      character(len=*), parameter :: tag = 'meds_config: '
+      character(len=*), parameter :: TAG = 'meds_config: '
       integer(ik) :: ipft
 
       !----- [[sites]]: shares of the polygon that sum to 1, a terrain that is a surface, the      !
@@ -526,20 +526,20 @@ contains
             integer(ik) :: is, ns
             ns = size(cfg%sites, kind=ik)
             if (cfg%run_mode == RUN_MODE_REGION)                                                     &
-               error stop tag//'a region refuses [[sites]]: each cell is one site until a site map gives its sites'
-            if (any(cfg%sites%area_fraction <= 0.0_wp)) error stop tag//'[[sites]].area_fraction must be > 0'
+               error stop TAG//'a region refuses [[sites]]: each cell is one site until a site map gives its sites'
+            if (any(cfg%sites%area_fraction <= 0.0_wp)) error stop TAG//'[[sites]].area_fraction must be > 0'
             if (abs(sum(cfg%sites%area_fraction) - 1.0_wp) > 1.0e-6_wp)                             &
-               error stop tag//'the [[sites]] area_fraction values must sum to 1'
+               error stop TAG//'the [[sites]] area_fraction values must sum to 1'
             if (any(cfg%sites%slope_deg < 0.0_wp .or. cfg%sites%slope_deg >= 90.0_wp))              &
-               error stop tag//'[[sites]].slope must lie in [0, 90) degrees'
+               error stop TAG//'[[sites]].slope must lie in [0, 90) degrees'
             if (any(cfg%sites%aspect_deg < 0.0_wp .or. cfg%sites%aspect_deg > 360.0_wp))            &
-               error stop tag//'[[sites]].aspect must lie in [0, 360] degrees'
+               error stop TAG//'[[sites]].aspect must lie in [0, 360] degrees'
             if (cfg%init_mode == INIT_CENSUS) then
                if (any(cfg%sites%census_site_id <= 0_ik))                                           &
-                  error stop tag//'a census run needs [[sites]].census_site_id > 0 for every site'
+                  error stop TAG//'a census run needs [[sites]].census_site_id > 0 for every site'
                do is = 2_ik, ns
                   if (any(cfg%sites(1:is - 1_ik)%census_site_id == cfg%sites(is)%census_site_id))   &
-                     error stop tag//'two [[sites]] read the same census_site_id'
+                     error stop TAG//'two [[sites]] read the same census_site_id'
                end do
             end if
             do is = 1_ik, ns
@@ -556,21 +556,21 @@ contains
       !      sapwood conductance needs a positive conductivity and path factor. ---------------------!
       associate (hydro => cfg%pft%hydro(1:cfg%pft%n))
          if (any(hydro%root_beta <= 0.0_wp .or. hydro%root_beta >= 1.0_wp))                         &
-            error stop tag//'hydraulics.root_beta must lie in (0, 1)'
-         if (any(hydro%root_depth_b1 <= 0.0_wp)) error stop tag//'hydraulics.root_depth_b1 must be > 0'
-         if (any(hydro%root_depth_b2 < 0.0_wp))  error stop tag//'hydraulics.root_depth_b2 must be >= 0'
+            error stop TAG//'hydraulics.root_beta must lie in (0, 1)'
+         if (any(hydro%root_depth_b1 <= 0.0_wp)) error stop TAG//'hydraulics.root_depth_b1 must be > 0'
+         if (any(hydro%root_depth_b2 < 0.0_wp))  error stop TAG//'hydraulics.root_depth_b2 must be >= 0'
          if (any(hydro%specific_root_length <= 0.0_wp))                                             &
-            error stop tag//'hydraulics.specific_root_length must be > 0'
-         if (any(hydro%fine_root_radius <= 0.0_wp)) error stop tag//'hydraulics.fine_root_radius must be > 0'
-         if (any(hydro%vessel_curl <= 0.0_wp)) error stop tag//'hydraulics.vessel_curl must be > 0'
-         if (any(hydro%wood_kmax <= 0.0_wp))   error stop tag//'hydraulics.wood_kmax must be > 0'
+            error stop TAG//'hydraulics.specific_root_length must be > 0'
+         if (any(hydro%fine_root_radius <= 0.0_wp)) error stop TAG//'hydraulics.fine_root_radius must be > 0'
+         if (any(hydro%vessel_curl <= 0.0_wp)) error stop TAG//'hydraulics.vessel_curl must be > 0'
+         if (any(hydro%wood_kmax <= 0.0_wp))   error stop TAG//'hydraulics.wood_kmax must be > 0'
       end associate
       !----- [soil] ground optics. --------------------------------------------------------------!
       if (cfg%soil%ground_albedo_vis < 0.0_wp .or. cfg%soil%ground_albedo_vis >= 1.0_wp .or.       &
           cfg%soil%ground_albedo_nir < 0.0_wp .or. cfg%soil%ground_albedo_nir >= 1.0_wp)           &
-         error stop tag//'soil.ground_albedo_vis and ground_albedo_nir must lie in [0, 1)'
+         error stop TAG//'soil.ground_albedo_vis and ground_albedo_nir must lie in [0, 1)'
       if (cfg%soil%ground_emissivity <= 0.0_wp .or. cfg%soil%ground_emissivity > 1.0_wp)           &
-         error stop tag//'soil.ground_emissivity must lie in (0, 1]'
+         error stop TAG//'soil.ground_emissivity must lie in (0, 1]'
 
       !----- The [soil] column. Every one of these produces a silently WRONG column rather than a !
       !      crash: a layer count over the compile-time ceiling writes past the active region, a   !
@@ -582,48 +582,48 @@ contains
       real(wp)    :: bottoms(n_soil_layer_max)
       integer(ik) :: n
       associate (sc => cfg%soil_column)
-         if (sc%depth <= 0.0_wp)          error stop tag//'soil.depth <= 0'
+         if (sc%depth <= 0.0_wp)          error stop TAG//'soil.depth <= 0'
          if (sc%n_layer_bottoms > 0_ik) then
             if (sc%layer_bottoms(1) <= 0.0_wp .or. any(sc%layer_bottoms(2:sc%n_layer_bottoms)              &
                 <= sc%layer_bottoms(1:sc%n_layer_bottoms - 1)))                                     &
-               error stop tag//'soil.layer_bottoms must be positive depths [m] that increase'
+               error stop TAG//'soil.layer_bottoms must be positive depths [m] that increase'
             if (sc%layer_bottoms(sc%n_layer_bottoms) < sc%depth)                                    &
-               error stop tag//'soil.layer_bottoms must reach soil.depth'
+               error stop TAG//'soil.layer_bottoms must reach soil.depth'
          else if (sc%depth > SOIL_LAYER_TEMPLATE(size(SOIL_LAYER_TEMPLATE))) then
-            error stop tag//'soil.depth is below the deepest default layer (27 m): '//       &
+            error stop TAG//'soil.depth is below the deepest default layer (27 m): '//       &
                        'set soil.layer_bottoms'
          end if
          call soil_column_layers(sc, bottoms, n)
          if (sc%n_layer_values > 0_ik .and. sc%n_layer_values /= n)                                 &
-            error stop tag//'soil: the per-layer texture does not match the column''s layers'
+            error stop TAG//'soil: the per-layer texture does not match the column''s layers'
          call soil_column_texture(sc, tex)
-         if (any(tex%theta_sat(1:n) <= tex%theta_res(1:n))) error stop tag//'soil.theta_sat <= theta_res'
-         if (any(tex%theta_res(1:n) < 0.0_wp))       error stop tag//'soil.theta_res < 0'
+         if (any(tex%theta_sat(1:n) <= tex%theta_res(1:n))) error stop TAG//'soil.theta_sat <= theta_res'
+         if (any(tex%theta_res(1:n) < 0.0_wp))       error stop TAG//'soil.theta_res < 0'
          !----- With a texture per layer, the run starts each layer at its field capacity, so      !
          !      init.soil_theta is not used (build_fast_context). ----------------------------------!
          if (sc%n_layer_values == 0_ik) then
             if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)          &
-               error stop tag//'init.soil_theta must lie in (soil.theta_res, theta_sat]'
+               error stop TAG//'init.soil_theta must lie in (soil.theta_res, theta_sat]'
          end if
-         if (any(tex%ksat(1:n) <= 0.0_wp))           error stop tag//'soil.ksat <= 0'
+         if (any(tex%ksat(1:n) <= 0.0_wp))           error stop TAG//'soil.ksat <= 0'
          !----- curve_par_a and curve_par_n mean different things per family: van Genuchten's alpha  !
          !      [1/m] > 0 and n > 1, Campbell's air-entry suction psi_sat [m] < 0 and exponent b > 0.  !
          !      The other family's pair makes the curve raise a negative base to a fractional power. -!
-         if (sc%retention == soil_retention_vg) then
+         if (sc%retention == SOIL_RETENTION_VG) then
             if (any(tex%par_a(1:n) <= 0.0_wp))                                                    &
-               error stop tag//'soil.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
+               error stop TAG//'soil.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
             if (any(tex%par_n(1:n) <= 1.0_wp))                                                    &
-               error stop tag//'soil.curve_par_n must exceed 1 for van Genuchten'
+               error stop TAG//'soil.curve_par_n must exceed 1 for van Genuchten'
          else
             if (any(tex%par_a(1:n) >= 0.0_wp))                                                    &
-               error stop tag//'soil.curve_par_a (Campbell psi_sat, m) must be < 0'
+               error stop TAG//'soil.curve_par_a (Campbell psi_sat, m) must be < 0'
             if (any(tex%par_n(1:n) <= 0.0_wp))                                                    &
-               error stop tag//'soil.curve_par_n (Campbell b) must be > 0'
+               error stop TAG//'soil.curve_par_n (Campbell b) must be > 0'
          end if
-         if (sc%psi_fc >= 0.0_wp)         error stop tag//'soil.psi_fc must be negative (a suction head)'
+         if (sc%psi_fc >= 0.0_wp)         error stop TAG//'soil.psi_fc must be negative (a suction head)'
          if (any(tex%k_solid(1:n) <= 0.0_wp) .or. any(tex%k_dry(1:n) <= 0.0_wp))                  &
-            error stop tag//'soil conductivities must be positive'
-         if (any(tex%dry_cvol(1:n) <= 0.0_wp)) error stop tag//'soil.dry_heat_capacity <= 0'
+            error stop TAG//'soil conductivities must be positive'
+         if (any(tex%dry_cvol(1:n) <= 0.0_wp)) error stop TAG//'soil.dry_heat_capacity <= 0'
       end associate
       end block soil_column
 
@@ -642,21 +642,21 @@ contains
          block
             type(soil_params_t) :: sp
             if (cfg%energy%deep_temp <= 0.0_wp)                                                  &
-               error stop tag//'soil.thermal_bottom_bc = "dirichlet" requires soil.deep_temp [K] -- '// &
+               error stop TAG//'soil.thermal_bottom_bc = "dirichlet" requires soil.deep_temp [K] -- '// &
                           'the mean annual soil temperature below the damping depth. It is a site '//&
                           'property, like latitude; there is no safe default.'
             if (cfg%energy%deep_temp < 200.0_wp .or. cfg%energy%deep_temp > 330.0_wp)             &
-               error stop tag//'soil.deep_temp outside 200..330 K -- it is an absolute temperature'
+               error stop TAG//'soil.deep_temp outside 200..330 K -- it is an absolute temperature'
             !----- Build the real grid rather than re-deriving the bottom node here: the grid rule  !
             !      lives in ONE place and a second copy would drift from it silently. --------------!
             call soil_column_params(cfg%soil_column, sp)
             if (cfg%energy%deep_depth <= abs(sp%z_node(sp%n_active)))                            &
-               error stop tag//'soil.deep_depth must lie BELOW the bottom soil node '//          &
+               error stop TAG//'soil.deep_depth must lie BELOW the bottom soil node '//          &
                           '(it is measured down from the surface, and the anchor conducts to it)'
          end block
       end if
 
-      if (any(cfg%pft%nbg_init_density < 0.0_wp)) error stop tag//'pft.nbg_init_density must be >= 0'
+      if (any(cfg%pft%nbg_init_density < 0.0_wp)) error stop TAG//'pft.nbg_init_density must be >= 0'
 
       !----- Co-limitation and hyperbola curvatures must lie in (0, 1]. A curvature of zero          !
       !      makes the smoothing quadratic degenerate and a value above one has no root in the       !
@@ -666,15 +666,15 @@ contains
          integer(ik) :: pf
          do pf = 1_ik, cfg%pft%n
             if (cfg%pft%theta_j(pf)     <= 0.0_wp .or. cfg%pft%theta_j(pf)     > 1.0_wp)         &
-               error stop tag//'pft.theta_j outside (0, 1]'
+               error stop TAG//'pft.theta_j outside (0, 1]'
             if (cfg%pft%theta_cj_c3(pf) <= 0.0_wp .or. cfg%pft%theta_cj_c3(pf) > 1.0_wp)         &
-               error stop tag//'pft.theta_cj_c3 outside (0, 1]'
+               error stop TAG//'pft.theta_cj_c3 outside (0, 1]'
             if (cfg%pft%theta_ip_c3(pf) <= 0.0_wp .or. cfg%pft%theta_ip_c3(pf) > 1.0_wp)         &
-               error stop tag//'pft.theta_ip_c3 outside (0, 1]'
+               error stop TAG//'pft.theta_ip_c3 outside (0, 1]'
             if (cfg%pft%theta_cj_c4(pf) <= 0.0_wp .or. cfg%pft%theta_cj_c4(pf) > 1.0_wp)         &
-               error stop tag//'pft.theta_cj_c4 outside (0, 1]'
+               error stop TAG//'pft.theta_cj_c4 outside (0, 1]'
             if (cfg%pft%theta_ic_c4(pf) <= 0.0_wp .or. cfg%pft%theta_ic_c4(pf) > 1.0_wp)         &
-               error stop tag//'pft.theta_ic_c4 outside (0, 1]'
+               error stop TAG//'pft.theta_ic_c4 outside (0, 1]'
          end do
       end block
 
@@ -686,33 +686,33 @@ contains
          integer(ik) :: pf
          do pf = 1_ik, cfg%pft%n
             if (cfg%pft%leaf_reflect_vis(pf) + cfg%pft%leaf_transmit_vis(pf) >= 1.0_wp)           &
-               error stop tag//'pft.leaf_reflect_vis + leaf_transmit_vis >= 1'
+               error stop TAG//'pft.leaf_reflect_vis + leaf_transmit_vis >= 1'
             if (cfg%pft%leaf_reflect_nir(pf) + cfg%pft%leaf_transmit_nir(pf) >= 1.0_wp)           &
-               error stop tag//'pft.leaf_reflect_nir + leaf_transmit_nir >= 1'
+               error stop TAG//'pft.leaf_reflect_nir + leaf_transmit_nir >= 1'
             if (cfg%pft%wood_reflect_vis(pf) + cfg%pft%wood_transmit_vis(pf) >= 1.0_wp)           &
-               error stop tag//'pft.wood_reflect_vis + wood_transmit_vis >= 1'
+               error stop TAG//'pft.wood_reflect_vis + wood_transmit_vis >= 1'
             if (cfg%pft%wood_reflect_nir(pf) + cfg%pft%wood_transmit_nir(pf) >= 1.0_wp)           &
-               error stop tag//'pft.wood_reflect_nir + wood_transmit_nir >= 1'
+               error stop TAG//'pft.wood_reflect_nir + wood_transmit_nir >= 1'
             if (cfg%pft%leaf_emissivity(pf) <= 0.0_wp .or. cfg%pft%leaf_emissivity(pf) > 1.0_wp)  &
-               error stop tag//'pft.leaf_emissivity outside (0,1]'
+               error stop TAG//'pft.leaf_emissivity outside (0,1]'
             if (cfg%pft%wood_emissivity(pf) <= 0.0_wp .or. cfg%pft%wood_emissivity(pf) > 1.0_wp)  &
-               error stop tag//'pft.wood_emissivity outside (0,1]'
+               error stop TAG//'pft.wood_emissivity outside (0,1]'
             if (cfg%pft%leaf_clumping(pf) <= 0.0_wp .or. cfg%pft%leaf_clumping(pf) > 1.0_wp)      &
-               error stop tag//'pft.leaf_clumping outside (0,1]'
+               error stop TAG//'pft.leaf_clumping outside (0,1]'
             if (cfg%pft%wood_clumping(pf) <= 0.0_wp .or. cfg%pft%wood_clumping(pf) > 1.0_wp)      &
-               error stop tag//'pft.wood_clumping outside (0,1]'
+               error stop TAG//'pft.wood_clumping outside (0,1]'
             if (cfg%pft%leaf_angle_mean(pf) <= 0.0_wp .or. cfg%pft%leaf_angle_mean(pf) >= 90.0_wp) &
-               error stop tag//'pft.leaf_angle_mean outside (0,90) degrees'
+               error stop TAG//'pft.leaf_angle_mean outside (0,90) degrees'
             if (cfg%pft%leaf_angle_std(pf) < 0.0_wp)                                              &
-               error stop tag//'pft.leaf_angle_std < 0'
+               error stop TAG//'pft.leaf_angle_std < 0'
          end do
       end block
 
-      if (cfg%pft%n < 1_ik)                          error stop tag//'empty PFT table'
-      if (.not. time_lt(cfg%start_time, cfg%end_time)) error stop tag//'end_time must be after start_time'
-      if (cfg%dt_slow <= 0.0_wp)                        error stop tag//'dt_slow <= 0'
+      if (cfg%pft%n < 1_ik)                          error stop TAG//'empty PFT table'
+      if (.not. time_lt(cfg%start_time, cfg%end_time)) error stop TAG//'end_time must be after start_time'
+      if (cfg%dt_slow <= 0.0_wp)                        error stop TAG//'dt_slow <= 0'
       if (cfg%fast_biophysics_on) then
-         if (cfg%dt_fast <= 0.0_wp)                     error stop tag//'dt_fast <= 0'
+         if (cfg%dt_fast <= 0.0_wp)                     error stop TAG//'dt_fast <= 0'
          !----- dt_fast is an ACCURACY parameter, not a stability one                               !
          !      (docs/science/numerical_scheme.md §5a): the surface layer is re-solved at every     !
          !      stage, so the canopy air is stable at every dt_fast measured, and what a longer     !
@@ -729,22 +729,22 @@ contains
          if (cfg%dt_fast > 1800.0_wp) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 1800 s is outside the measured range entirely.'
          end if
-         if (cfg%dt_fast > cfg%dt_slow)                 error stop tag//'dt_fast > dt_slow'
+         if (cfg%dt_fast > cfg%dt_slow)                 error stop TAG//'dt_fast > dt_slow'
          if (abs(cfg%dt_slow / cfg%dt_fast - real(nint(cfg%dt_slow / cfg%dt_fast, ik), wp)) > 1.0e-6_wp) &
-            error stop tag//'dt_slow must be an integer multiple of dt_fast'
+            error stop TAG//'dt_slow must be an integer multiple of dt_fast'
          if (cfg%time_integrator /= INTEG_ARK .and. cfg%time_integrator /= INTEG_RK45)          &
-            error stop tag//'time_integrator out of range'
-         if (cfg%rtol_all < 0.0_wp)           error stop tag//'rtol_all < 0 (0 = unset)'
-         if (cfg%atol_scale <= 0.0_wp)        error stop tag//'atol_scale <= 0 (1 = unset)'
+            error stop TAG//'time_integrator out of range'
+         if (cfg%rtol_all < 0.0_wp)           error stop TAG//'rtol_all < 0 (0 = unset)'
+         if (cfg%atol_scale <= 0.0_wp)        error stop TAG//'atol_scale <= 0 (1 = unset)'
          if (cfg%forcing_sample_frac < 0.0_wp .or. cfg%forcing_sample_frac > 1.0_wp)                 &
-            error stop tag//'forcing_sample_frac outside [0,1]'
+            error stop TAG//'forcing_sample_frac outside [0,1]'
          if (cfg%step_controller /= CTRL_I .and. cfg%step_controller /= CTRL_PI)                &
-            error stop tag//'step_controller out of range (I|PI)'
+            error stop TAG//'step_controller out of range (I|PI)'
          if (cfg%error_level /= CTRL_L0_FIXED .and. cfg%error_level /= CTRL_L1_ADAPTIVE .and.    &
              cfg%error_level /= CTRL_L2_STRICT)                                                 &
-            error stop tag//'error_level out of range (L0|L1|L2)'
-         if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
-         if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
+            error stop TAG//'error_level out of range (L0|L1|L2)'
+         if (cfg%ark_rtol <= 0.0_wp)          error stop TAG//'ark_rtol <= 0'
+         if (cfg%ark_fixed_substep < 1_ik)    error stop TAG//'ark_fixed_substep < 1'
          !----- The sub-daily probe is the ONE fast-loop writer that is not thread-safe -- it        !
          !      holds a `save`d unit and appends to a shared file, so under threads its rows         !
          !      would interleave in thread-arrival order and stop being a reproducible               !
@@ -752,19 +752,19 @@ contains
          !      which is the property the probe exists for, so the two are mutually exclusive by     !
          !      construction rather than by luck (docs/science/numerical_scheme.md §6a). ------------!
          if (cfg%fast_probe .and. cfg%n_threads > 1_ik)                                            &
-            error stop tag//'fast_probe requires n_threads = 1 (the probe writes one shared, &
+            error stop TAG//'fast_probe requires n_threads = 1 (the probe writes one shared, &
                            &order-significant CSV)'
       end if
-      if (cfg%n_threads < 1_ik)               error stop tag//'n_threads < 1'
+      if (cfg%n_threads < 1_ik)               error stop TAG//'n_threads < 1'
       !----- The FAST output tier closes a window every fast_interval_steps sub-steps, counted       !
       !      over the run. A window must not straddle two slow steps: the stand can be               !
       !      restructured between them, and a window's cohort and patch slots are fixed when it      !
       !      opens. ---------------------------------------------------------------------------------!
       if (cfg%fast_biophysics_on .and. cfg%output%enabled) then
          if (cfg%output%fast_interval_steps < 1_ik)                                                &
-            error stop tag//'output.fast_interval_steps < 1'
+            error stop TAG//'output.fast_interval_steps < 1'
          if (mod(cfg%n_fast_per_slow, cfg%output%fast_interval_steps) /= 0_ik)                    &
-            error stop tag//'output.fast_interval_steps must divide the fast steps in a slow step '// &
+            error stop TAG//'output.fast_interval_steps must divide the fast steps in a slow step '// &
                             '(dt_slow / dt_fast), so no fast-tier window straddles two slow steps'
       end if
       !----- REGION MODE (docs/configuration.md, "Regional runs"). Every polygon reads its own       !
@@ -774,34 +774,34 @@ contains
       !      polygon would write into it). ----------------------------------------------------------!
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                         &
-            error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
+            error stop TAG//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
          if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                       &
-            error stop tag//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
+            error stop TAG//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
          if (cfg%fast_probe)                                                                       &
-            error stop tag//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
+            error stop TAG//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
          if (cfg%init_mode == INIT_CENSUS)                                                         &
-            error stop tag//'[run].mode = "region" starts from bare ground or a region state file '// &
+            error stop TAG//'[run].mode = "region" starts from bare ground or a region state file '// &
                             '(init.init_mode = 0 or 2), not a census'
          associate (b => cfg%region%box_nwse)
             if (.not. (b(1) > b(3) .and. b(1) <= 90.0_wp .and. b(3) >= -90.0_wp))               &
-               error stop tag//'region.box_nwse needs -90 <= S < N <= 90 ([N, W, S, E])'
+               error stop TAG//'region.box_nwse needs -90 <= S < N <= 90 ([N, W, S, E])'
             if (any(abs(b([2, 4])) > 360.0_wp))                                                    &
-               error stop tag//'region.box_nwse longitudes must lie within [-360, 360]'
+               error stop TAG//'region.box_nwse longitudes must lie within [-360, 360]'
          end associate
          if (cfg%region%land_fraction_min < 0.0_wp .or. cfg%region%land_fraction_min > 1.0_wp)     &
-            error stop tag//'region.land_fraction_min must lie in [0, 1]'
+            error stop TAG//'region.land_fraction_min must lie in [0, 1]'
          if (len_trim(cfg%region%cell_mask) > 0 .and. len_trim(cfg%region%cell_mask_var) == 0)       &
-            error stop tag//'region.cell_mask_var must name the mask''s variable'
+            error stop TAG//'region.cell_mask_var must name the mask''s variable'
          if (.not. ieee_is_finite(cfg%region%cell_mask_min))                                       &
-            error stop tag//'region.cell_mask_min must be a finite number'
+            error stop TAG//'region.cell_mask_min must be a finite number'
          !----- Every polygon takes its soil from its own cell, and so does its height              !
          !      allometry's site index: a region does not run one hand-set soil everywhere. --------!
          if (.not. soil_maps_on(cfg%maps))                                                       &
-            error stop tag//'[run].mode = "region" needs the soil maps: maps.soil_depth_map, '//    &
+            error stop TAG//'[run].mode = "region" needs the soil maps: maps.soil_depth_map, '//    &
                             'soil_texture_map and soil_chemistry_map'
-         if (any(cfg%pft%allom(1:cfg%pft%n)%height_form == height_chave)                          &
+         if (any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)                          &
              .and. len_trim(cfg%maps%chave_e_map) == 0)                                          &
-            error stop tag//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//   &
+            error stop TAG//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//   &
                             'needs maps.chave_e_map'
          !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
          !      recycle seam must fall on a month boundary: a window starting at 00:00 or 01:00 on the !
@@ -809,7 +809,7 @@ contains
          if (cfg%forcing%recycle .and. time_valid(cfg%forcing%recycle_start)) then
             associate (a => cfg%forcing%recycle_start)
                if (a%day /= 1_ik .or. a%hour > 1_ik .or. a%minute /= 0_ik .or. a%second /= 0_ik)    &
-                  error stop tag//'[run].mode = "region" needs forcing.recycle_start at 00:00 or '//  &
+                  error stop TAG//'[run].mode = "region" needs forcing.recycle_start at 00:00 or '//  &
                                   '01:00 on the 1st of a month'
             end associate
          end if
@@ -818,64 +818,64 @@ contains
       !      cell, so they need that archive. A chave_e map serves the Chave height allometry only. -!
       if (soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0) then
          if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND))     &
-            error stop tag//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
+            error stop TAG//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
       end if
-      if (len_trim(cfg%maps%chave_e_map) > 0 .and. .not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == height_chave)) &
-         error stop tag//'maps.chave_e_map needs a PFT with allometry.height_allometry = "chave2014"'
+      if (len_trim(cfg%maps%chave_e_map) > 0 .and. .not. any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE)) &
+         error stop TAG//'maps.chave_e_map needs a PFT with allometry.height_allometry = "chave2014"'
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !
       !      has to clear the canopy: the forcing is moved to each patch's canopy-air top.              !
       if (cfg%forcing%forcing_on) then
-         if (cfg%forcing%tq_height <= 0.0_wp)   error stop tag//'forcing.tq_height must be > 0'
-         if (cfg%forcing%wind_height <= 0.0_wp) error stop tag//'forcing.wind_height must be > 0'
+         if (cfg%forcing%tq_height <= 0.0_wp)   error stop TAG//'forcing.tq_height must be > 0'
+         if (cfg%forcing%wind_height <= 0.0_wp) error stop TAG//'forcing.wind_height must be > 0'
          if (cfg%forcing%wind_exposure == WIND_EXPOSURE_OPEN_TERRAIN) then
             if (cfg%forcing%wind_exposure_z0 <= 0.0_wp .or.                                       &
                 cfg%forcing%wind_exposure_z0 >= cfg%forcing%wind_height)                           &
-               error stop tag//'forcing.wind_exposure_z0 must lie in (0, wind_height)'
+               error stop TAG//'forcing.wind_exposure_z0 must lie in (0, wind_height)'
             if (cfg%forcing%wind_blending_height < cfg%forcing%wind_height)                         &
-               error stop tag//'forcing.wind_blending_height must be >= wind_height'
+               error stop TAG//'forcing.wind_blending_height must be >= wind_height'
          end if
          !----- The terrain lapse rate: between isothermal and about the dry adiabat. --------------!
          if (any(cfg%forcing%lapse_rate_tair < 0.0_wp) .or. any(cfg%forcing%lapse_rate_tair > 0.01_wp)) &
-            error stop tag//'site.lapse_rate_tair must lie in [0, 0.01] K/m'
+            error stop TAG//'site.lapse_rate_tair must lie in [0, 0.01] K/m'
          !----- Longwave synthesis (docs/science/forcing.md eq. (17)): its cloud coefficient       !
          !      must be physical -- a negative cloud term would make a cloudy sky emit LESS        !
          !      than a clear one. -----------------------------------------------------------------!
          if (cfg%forcing%lwdown_source == LW_SYNTHESIZE .and. cfg%forcing%lw_cloud_a < 0.0_wp)     &
-            error stop tag//'forcing.lw_cloud_a must be >= 0 (a cloudy sky emits MORE, not less)'
+            error stop TAG//'forcing.lw_cloud_a must be >= 0 (a cloudy sky emits MORE, not less)'
          !----- avg_convention: "instant" and "center" PARSE, but only METAVG_BEGIN and            !
          !      METAVG_END have a disaggregation branch, and everything else would fall            !
          !      through to METAVG_END -- a scheme the user did not ask for, silently. Each is      !
          !      refused until it has its own branch, because a forcing switch that does            !
          !      nothing is worse than one that is absent. -----------------------------------------!
          if (cfg%forcing%avg_convention == METAVG_INSTANT)                                       &
-            error stop tag//'forcing.avg_convention = "instant" is not implemented (it would '//  &
+            error stop TAG//'forcing.avg_convention = "instant" is not implemented (it would '//  &
                             'silently run the "end" path); use "end" or "begin"'
          if (cfg%forcing%avg_convention == METAVG_CENTER)                                        &
-            error stop tag//'forcing.avg_convention = "center" is not implemented (it would '//   &
+            error stop TAG//'forcing.avg_convention = "center" is not implemented (it would '//   &
                             'silently run the "end" path); use "end" or "begin"'
          !----- The ED_ERA5land archive (docs/science/forcing.md §1) is hourly, end-stamped        !
          !      and stores TOTAL shortwave; a config that says otherwise would mis-time or         !
          !      mis-partition every record. -------------------------------------------------------!
          if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
-            if (len_trim(cfg%forcing%data_path) == 0) error stop tag//'forcing.data_path is empty'
+            if (len_trim(cfg%forcing%data_path) == 0) error stop TAG//'forcing.data_path is empty'
             if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)      &
-               error stop tag//'forcing.max_distance_km must be > 0'
+               error stop TAG//'forcing.max_distance_km must be > 0'
             if (abs(cfg%forcing%dt_forcing - ARCHIVE_DT_SEC) > 0.5_wp)                             &
-               error stop tag//'forcing.timestep must be 1 hour for format = "ED_ERA5land"'
+               error stop TAG//'forcing.timestep must be 1 hour for format = "ED_ERA5land"'
             if (cfg%forcing%avg_convention /= METAVG_END)                                          &
-               error stop tag//'forcing.avg_convention must be "end" for format = "ED_ERA5land"'
+               error stop TAG//'forcing.avg_convention must be "end" for format = "ED_ERA5land"'
             if (cfg%forcing%sw_partition == SWPART_PASSTHROUGH)                                    &
-               error stop tag//'forcing.sw_partition cannot be "passthrough" for format = "ED_ERA5land" '// &
+               error stop TAG//'forcing.sw_partition cannot be "passthrough" for format = "ED_ERA5land" '// &
                                '(the archive stores total shortwave)'
             !----- The reader loads an archive month, plus the record before it, before each         !
             !      step. A daily step from midnight reads exactly that; a longer step, or one        !
             !      starting mid-day, can straddle two months. ---------------------------------------!
             if (abs(cfg%dt_slow - 86400.0_wp) > 0.5_wp)                                             &
-               error stop tag//'format = "ED_ERA5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
+               error stop TAG//'format = "ED_ERA5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
             if (cfg%start_time%hour /= 0_ik .or. cfg%start_time%minute /= 0_ik .or.                 &
                 cfg%start_time%second /= 0_ik)                                                     &
-               error stop tag//'format = "ED_ERA5land" needs [run].start_time at 00:00:00'
+               error stop TAG//'format = "ED_ERA5land" needs [run].start_time at 00:00:00'
          end if
          !----- RECYCLE WINDOW (docs/science/forcing.md §9): declared, never inferred, and           !
          !      required to be an exact whole number of calendar years. A window of any other        !
@@ -888,11 +888,11 @@ contains
          !      must be whole years. ----------------------------------------------------------------!
          if (cfg%forcing%recycle) then
             if (.not. time_valid(cfg%forcing%recycle_start))                                    &
-               error stop tag//'forcing.recycle_start is not a valid date/time'
+               error stop TAG//'forcing.recycle_start is not a valid date/time'
             if (.not. time_valid(cfg%forcing%recycle_end))                                      &
-               error stop tag//'forcing.recycle_end is not a valid date/time'
+               error stop TAG//'forcing.recycle_end is not a valid date/time'
             if (.not. time_lt(cfg%forcing%recycle_start, cfg%forcing%recycle_end))              &
-               error stop tag//'forcing.recycle_end must be after forcing.recycle_start'
+               error stop TAG//'forcing.recycle_end must be after forcing.recycle_start'
             if (whole_years_between(cfg%forcing%recycle_start, cfg%forcing%recycle_end,         &
                                     MAX_RECYCLE_YEARS) < 1_ik) then
                write(*,'(4a)') ' meds_config: forcing recycle window ',                          &
@@ -902,7 +902,7 @@ contains
                write(*,'(a)')  '   partial-year window drifts hour-of-day and day-of-year on every'
                write(*,'(a)')  '   wrap. Set recycle_end to the SAME month/day/time as recycle_start,'
                write(*,'(a)')  '   N years later (it is the exclusive end of the window).'
-               error stop tag//'forcing recycle window is not a whole number of years'
+               error stop TAG//'forcing recycle window is not a whole number of years'
             end if
          end if
       end if
@@ -912,116 +912,116 @@ contains
       associate (p => cfg%pft, n => cfg%pft%n)
          if (any(p%pheno_flush_cue_mask(1:n) < 0_ik .or. p%pheno_flush_cue_mask(1:n) > 7_ik) .or.      &
              any(p%pheno_shed_cue_mask(1:n)  < 0_ik .or. p%pheno_shed_cue_mask(1:n)  > 7_ik))          &
-            error stop tag//'phenology flush_cue_mask / shed_cue_mask out of range [0,7]'
+            error stop TAG//'phenology flush_cue_mask / shed_cue_mask out of range [0,7]'
          if (any(p%pheno_flush_cue_timescale(1:n) <= 0.0_wp) .or.                                     &
              any(p%pheno_shed_cue_timescale(1:n)  <= 0.0_wp) .or.                                     &
              any(p%pheno_light_window(1:n)        <= 0.0_wp))                                         &
-            error stop tag//'phenology cue timescales and light_window must be > 0'
+            error stop TAG//'phenology cue timescales and light_window must be > 0'
          if (any(p%pheno_par_min(1:n) < 0.0_wp))                                                      &
-            error stop tag//'phenology.par_min must be >= 0'
+            error stop TAG//'phenology.par_min must be >= 0'
          if (any(p%pheno_flush_rate_max(1:n) <= 0.0_wp))                                              &
-            error stop tag//'phenology.flush_rate_max must be > 0'
+            error stop TAG//'phenology.flush_rate_max must be > 0'
          if (any(p%pheno_shed_rate_max(1:n) < 0.0_wp))                                                &
-            error stop tag//'phenology.shed_rate_max must be >= 0'
+            error stop TAG//'phenology.shed_rate_max must be >= 0'
          if (any(p%pheno_min_leaf_cover(1:n) < 0.0_wp .or. p%pheno_min_leaf_cover(1:n) >= 1.0_wp) .or. &
              any(p%pheno_bare_leaf_cover(1:n) < 0.0_wp .or. p%pheno_bare_leaf_cover(1:n) >= 1.0_wp))   &
-            error stop tag//'phenology min_leaf_cover / bare_leaf_cover must be in [0,1)'
+            error stop TAG//'phenology min_leaf_cover / bare_leaf_cover must be in [0,1)'
          if (any(p%pheno_flush_temp_sharpness(1:n) == 0.0_wp) .or.                                   &
              any(p%pheno_shed_temp_sharpness(1:n)  == 0.0_wp) .or.                                   &
              any(p%pheno_flush_light_sharpness(1:n) == 0.0_wp) .or.                                  &
              any(p%pheno_shed_light_sharpness(1:n)  == 0.0_wp) .or.                                  &
              any(p%pheno_flush_water_sharpness(1:n) == 0.0_wp) .or.                                  &
              any(p%pheno_shed_water_sharpness(1:n)  == 0.0_wp))                                      &
-            error stop tag//'a phenology sharpness is 0: its switch would be a constant 0.5'
+            error stop TAG//'a phenology sharpness is 0: its switch would be a constant 0.5'
       end associate
-      if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
-      if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
-      if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'
-      if (cfg%n_patch_fusion_iter < 1_ik)                   error stop tag//'n_patch_fusion_iter < 1'
-      if (cfg%patch_light_tol <= 0.0_wp)                    error stop tag//'patch_light_tol <= 0'
+      if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop TAG//'cohort_size_tol_min <= 0'
+      if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop TAG//'cohort_size_tol_max < min'
+      if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop TAG//'n_cohort_fusion_iter < 1'
+      if (cfg%n_patch_fusion_iter < 1_ik)                   error stop TAG//'n_patch_fusion_iter < 1'
+      if (cfg%patch_light_tol <= 0.0_wp)                    error stop TAG//'patch_light_tol <= 0'
       if (cfg%init_soil_temp < 233.0_wp .or. cfg%init_soil_temp > 333.0_wp)                          &
-         error stop tag//'init.soil_temp outside 233-333 K'
+         error stop TAG//'init.soil_temp outside 233-333 K'
       if (cfg%init_reacclimate_traits .and. cfg%init_mode /= INIT_RESTART)                          &
-         error stop tag//'init.reacclimate_traits applies to a restart (init.init_mode = 2) only'
+         error stop TAG//'init.reacclimate_traits applies to a restart (init.init_mode = 2) only'
       if (cfg%fineroot_turnover_plastic .and. .not. cfg%trait_plasticity_on)                          &
-         error stop tag//'trait_dynamics.fineroot_turnover_plastic needs trait_plasticity_on = true'
-      if (cfg%patch_light_tol_max < cfg%patch_light_tol)   error stop tag//'patch_light_tol_max < patch_light_tol'
-      if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
-      if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
-      if (cfg%cohort_lai_cap <= 0.0_wp)              error stop tag//'cohort_lai_cap <= 0'
-      if (cfg%growth_memory_days <= 0.0_wp)          error stop tag//'growth_memory_days <= 0'
-      if (cfg%patch_disturbance_rate < 0.0_wp)       error stop tag//'patch_disturbance_rate < 0'
-      if (cfg%disturbance_survive_height <= 0.0_wp)  error stop tag//'disturbance_survive_height <= 0'
-      if (any(cfg%pft%wood_density <= 0.0_wp))       error stop tag//'wood_density <= 0'
+         error stop TAG//'trait_dynamics.fineroot_turnover_plastic needs trait_plasticity_on = true'
+      if (cfg%patch_light_tol_max < cfg%patch_light_tol)   error stop TAG//'patch_light_tol_max < patch_light_tol'
+      if (cfg%n_height_layers < 2_ik)                error stop TAG//'n_height_layers < 2'
+      if (cfg%min_patch_area <= 0.0_wp)              error stop TAG//'min_patch_area <= 0'
+      if (cfg%cohort_lai_cap <= 0.0_wp)              error stop TAG//'cohort_lai_cap <= 0'
+      if (cfg%growth_memory_days <= 0.0_wp)          error stop TAG//'growth_memory_days <= 0'
+      if (cfg%patch_disturbance_rate < 0.0_wp)       error stop TAG//'patch_disturbance_rate < 0'
+      if (cfg%disturbance_survive_height <= 0.0_wp)  error stop TAG//'disturbance_survive_height <= 0'
+      if (any(cfg%pft%wood_density <= 0.0_wp))       error stop TAG//'wood_density <= 0'
       !----- A leaf turnover rate of 0 would keep every leaf forever, and the plasticity slope    !
       !      (docs/science/plant_traits.md eq. (4)) and the fine roots' share of it divide by it.  !
-      if (any(cfg%pft%leaf_turnover_rate_toc <= 0.0_wp)) error stop tag//'leaf_turnover_rate_toc <= 0'
-      if (any(cfg%pft%stem_resp_sapwood25 < 0.0_wp)) error stop tag//'stem_resp_sapwood25 < 0'
+      if (any(cfg%pft%leaf_turnover_rate_toc <= 0.0_wp)) error stop TAG//'leaf_turnover_rate_toc <= 0'
+      if (any(cfg%pft%stem_resp_sapwood25 < 0.0_wp)) error stop TAG//'stem_resp_sapwood25 < 0'
       if (any(cfg%pft%max_relative_growth_rate < 0.0_wp))                                          &
-         error stop tag//'max_relative_growth_rate < 0'
+         error stop TAG//'max_relative_growth_rate < 0'
       if (any(cfg%pft%max_absolute_growth_rate < 0.0_wp))                                          &
-         error stop tag//'max_absolute_growth_rate < 0'
+         error stop TAG//'max_absolute_growth_rate < 0'
       !----- A recruit must survive its own birth: pool threshold must exceed the cull. ---!
       if (cfg%min_recruit_size <= cfg%negligible_nplant)                                   &
-         error stop tag//'min_recruit_size must exceed negligible_nplant'
+         error stop TAG//'min_recruit_size must exceed negligible_nplant'
 
       !----- THERMAL ACCLIMATION shifts the PEAKED form's entropy term                              !
       !      (docs/science/leaf_gas_exchange.md eq. (4)). The Arrhenius form has no dS, so the      !
       !      flag would be silently inert -- refuse rather than let a config believe                !
       !      acclimation is on when nothing acclimates. --------------------------------------------!
-      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= temp_response_peaked)              &
-         error stop tag//'leaf_physiology.thermal_acclimation requires temp_response_form = '//    &
+      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= TEMP_RESPONSE_PEAKED)              &
+         error stop TAG//'leaf_physiology.thermal_acclimation requires temp_response_form = '//    &
                     '"peaked" (the Arrhenius form has no entropy term to shift)'
       if (cfg%leaf_thermal_acclimation .and. cfg%acclim_window_days <= 0.0_wp)                    &
-         error stop tag//'leaf_physiology.acclim_window_days must be > 0'
+         error stop TAG//'leaf_physiology.acclim_window_days must be > 0'
 
       !----- Leaf physiology: shared biochemistry scalars (Kc/Ko/Gamma* are denominators). -!
-      if (cfg%kc25 <= 0.0_wp)            error stop tag//'kc25 <= 0'
-      if (cfg%ko25 <= 0.0_wp)            error stop tag//'ko25 <= 0'
-      if (cfg%gstar25 <= 0.0_wp)         error stop tag//'gstar25 <= 0'
-      if (cfg%o2_mol_frac <= 0.0_wp)     error stop tag//'o2_mol_frac <= 0'
-      if (cfg%leaf_absorptance <= 0.0_wp) error stop tag//'leaf_absorptance <= 0'
-      if (cfg%phi_psii <= 0.0_wp)        error stop tag//'phi_psii <= 0'
-      if (cfg%medlyn_vpd_min <= 0.0_wp)  error stop tag//'medlyn_vpd_min <= 0 [kPa]'
+      if (cfg%kc25 <= 0.0_wp)            error stop TAG//'kc25 <= 0'
+      if (cfg%ko25 <= 0.0_wp)            error stop TAG//'ko25 <= 0'
+      if (cfg%gstar25 <= 0.0_wp)         error stop TAG//'gstar25 <= 0'
+      if (cfg%o2_mol_frac <= 0.0_wp)     error stop TAG//'o2_mol_frac <= 0'
+      if (cfg%leaf_absorptance <= 0.0_wp) error stop TAG//'leaf_absorptance <= 0'
+      if (cfg%phi_psii <= 0.0_wp)        error stop TAG//'phi_psii <= 0'
+      if (cfg%medlyn_vpd_min <= 0.0_wp)  error stop TAG//'medlyn_vpd_min <= 0 [kPa]'
       !----- Leaf physiology: per-PFT traits. ---------------------------------------------!
       if (any(cfg%pft%photosynthetic_pathway /= PATH_C3 .and.                              &
-              cfg%pft%photosynthetic_pathway /= PATH_C4)) error stop tag//'photosynthetic_pathway not in {1,2}'
-      if (any(cfg%pft%vcmax25 <= 0.0_wp))            error stop tag//'vcmax25 <= 0'
-      if (any(cfg%pft%jmax_vcmax_ratio <= 0.0_wp))   error stop tag//'jmax_vcmax_ratio <= 0'
-      if (any(cfg%pft%tpu_vcmax_ratio <= 0.0_wp))    error stop tag//'tpu_vcmax_ratio <= 0'
-      if (any(cfg%pft%rd_vcmax_ratio < 0.0_wp))      error stop tag//'rd_vcmax_ratio < 0'
-      if (any(cfg%pft%stomatal_g0 < 0.0_wp))         error stop tag//'stomatal_g0 < 0'
-      if (any(cfg%pft%stomatal_g1 < 0.0_wp))         error stop tag//'stomatal_g1 < 0'
-      if (any(cfg%pft%stomatal_d0 <= 0.0_wp))        error stop tag//'stomatal_d0 <= 0 (Leuning divides by it)'
-      if (any(cfg%pft%katul_lambda25 <= 0.0_wp))     error stop tag//'katul_lambda25 <= 0'
+              cfg%pft%photosynthetic_pathway /= PATH_C4)) error stop TAG//'photosynthetic_pathway not in {1,2}'
+      if (any(cfg%pft%vcmax25 <= 0.0_wp))            error stop TAG//'vcmax25 <= 0'
+      if (any(cfg%pft%jmax_vcmax_ratio <= 0.0_wp))   error stop TAG//'jmax_vcmax_ratio <= 0'
+      if (any(cfg%pft%tpu_vcmax_ratio <= 0.0_wp))    error stop TAG//'tpu_vcmax_ratio <= 0'
+      if (any(cfg%pft%rd_vcmax_ratio < 0.0_wp))      error stop TAG//'rd_vcmax_ratio < 0'
+      if (any(cfg%pft%stomatal_g0 < 0.0_wp))         error stop TAG//'stomatal_g0 < 0'
+      if (any(cfg%pft%stomatal_g1 < 0.0_wp))         error stop TAG//'stomatal_g1 < 0'
+      if (any(cfg%pft%stomatal_d0 <= 0.0_wp))        error stop TAG//'stomatal_d0 <= 0 (Leuning divides by it)'
+      if (any(cfg%pft%katul_lambda25 <= 0.0_wp))     error stop TAG//'katul_lambda25 <= 0'
       if (any(cfg%pft%wstress_lambda_exp < 0.0_wp .or. cfg%pft%wstress_lambda_exp > 8.0_wp)) &
-         error stop tag//'wstress_lambda_exp must be in [0,8]'
+         error stop TAG//'wstress_lambda_exp must be in [0,8]'
       do ipft = 1_ik, cfg%pft%n
-         if (pft_wstress_psi_open(cfg, ipft) > 0.0_wp) error stop tag//'wstress_psi_open must be <= 0'
+         if (pft_wstress_psi_open(cfg, ipft) > 0.0_wp) error stop TAG//'wstress_psi_open must be <= 0'
          if (pft_wstress_psi_close(cfg, ipft) >= pft_wstress_psi_open(cfg, ipft))           &
-            error stop tag//'wstress_psi_close must be below wstress_psi_open'
+            error stop TAG//'wstress_psi_close must be below wstress_psi_open'
       end do
       if (any(cfg%pft%wstress_sref_stomata <= 0.0_wp))                                     &
-         error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*(psi - psi_onset)))'
+         error stop TAG//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*(psi - psi_onset)))'
       if (any(cfg%pft%stomata_psi_onset > 0.0_wp))                                         &
-         error stop tag//'stomata_psi_onset must be <= 0 (a predawn leaf water potential)'
+         error stop TAG//'stomata_psi_onset must be <= 0 (a predawn leaf water potential)'
       if (any(cfg%pft%leaf_surf_water_max < 0.0_wp) .or. any(cfg%pft%wood_surf_water_max < 0.0_wp)) &
-         error stop tag//'leaf_surf_water_max and wood_surf_water_max must be >= 0 [kg/m2 of surface]'
+         error stop TAG//'leaf_surf_water_max and wood_surf_water_max must be >= 0 [kg/m2 of surface]'
       !----- C3 uses theta_j (the J hyperbola / co-limitation curvature); C4 does not. -----!
       if (any(cfg%pft%photosynthetic_pathway == PATH_C3 .and.                              &
               (cfg%pft%theta_j <= 0.0_wp .or. cfg%pft%theta_j >= 1.0_wp)))                 &
-         error stop tag//'C3 theta_j must be in (0,1)'
+         error stop TAG//'C3 theta_j must be in (0,1)'
       !----- C4-only constraints (PEPcase slope, light slope, the two co-limitation curvatures).-!
       if (any(cfg%pft%photosynthetic_pathway == PATH_C4 .and. cfg%pft%kp25 <= 0.0_wp))     &
-         error stop tag//'C4 PFT needs kp25 > 0'
+         error stop TAG//'C4 PFT needs kp25 > 0'
       if (any(cfg%pft%photosynthetic_pathway == PATH_C4 .and. cfg%pft%quantum_yield_c4 <= 0.0_wp)) &
-         error stop tag//'C4 PFT needs quantum_yield_c4 > 0'
+         error stop TAG//'C4 PFT needs quantum_yield_c4 > 0'
       if (any(cfg%pft%photosynthetic_pathway == PATH_C4 .and.                              &
               (cfg%pft%theta_cj_c4 <= 0.0_wp .or. cfg%pft%theta_cj_c4 >= 1.0_wp)))         &
-         error stop tag//'C4 theta_cj_c4 must be in (0,1)'
+         error stop TAG//'C4 theta_cj_c4 must be in (0,1)'
       if (any(cfg%pft%photosynthetic_pathway == PATH_C4 .and.                              &
               (cfg%pft%theta_ic_c4 <= 0.0_wp .or. cfg%pft%theta_ic_c4 >= 1.0_wp)))         &
-         error stop tag//'C4 theta_ic_c4 must be in (0,1)'
+         error stop TAG//'C4 theta_ic_c4 must be in (0,1)'
    end subroutine validate_config
 
 end module meds_config

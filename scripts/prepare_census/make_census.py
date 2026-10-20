@@ -141,7 +141,7 @@ def write_census(rows, out, header_lines):
 # --------------------------------------------------------------------------------------------- #
 def pft_params(pft_file, pft):
     """The allometry and turnover of one PFT from a MEDS PFT file (the same formulas as
-    src/shared/functions/meds_allometry_lib.f90)."""
+    src/share/functions/meds_allometry_lib.f90)."""
     with open(pft_file, "rb") as fh:
         t = tomllib.load(fh)
     a, p, k = t["allometry"], t["pft"], int(pft) - 1

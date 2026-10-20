@@ -13,18 +13,18 @@ module meds_optics_lib
    implicit none
    private
 
-   public :: n_leaf_class
+   public :: N_LEAF_CLASS
    public :: beta_lidf, moments_to_beta_params, leaf_bf, gfun_direct
    public :: scatter_pair
 
    !----- SCOPE's 13 inclination classes: 10 degrees wide to 80, then 2 degrees to 90. ----!
-   integer(ik), parameter :: n_leaf_class = 13_ik
+   integer(ik), parameter :: N_LEAF_CLASS = 13_ik
    !----- Class midpoints [deg]. ----------------------------------------------------------!
-   real(wp), parameter :: LEAF_CLASS_DEG(n_leaf_class) =                                      &
+   real(wp), parameter :: LEAF_CLASS_DEG(N_LEAF_CLASS) =                                      &
       [  5.0_wp, 15.0_wp, 25.0_wp, 35.0_wp, 45.0_wp, 55.0_wp, 65.0_wp, 75.0_wp,               &
         81.0_wp, 83.0_wp, 85.0_wp, 87.0_wp, 89.0_wp ]
    !----- Class upper bounds [deg]; class 1 starts at 0. ----------------------------------!
-   real(wp), parameter :: LEAF_BND_DEG(n_leaf_class) =                                        &
+   real(wp), parameter :: LEAF_BND_DEG(N_LEAF_CLASS) =                                        &
       [ 10.0_wp, 20.0_wp, 30.0_wp, 40.0_wp, 50.0_wp, 60.0_wp, 70.0_wp, 80.0_wp,               &
         82.0_wp, 84.0_wp, 86.0_wp, 88.0_wp, 90.0_wp ]
 
@@ -51,12 +51,12 @@ contains
    !      midpoint rule: no special function, and the singular endpoints are never hit. ---!
    pure function beta_lidf(p, q) result(lidf)
       real(wp), intent(in) :: p, q
-      real(wp)             :: lidf(n_leaf_class)
+      real(wp)             :: lidf(N_LEAF_CLASS)
       integer(ik), parameter :: NSUB = 64_ik           ! midpoint panels per class
       real(wp)    :: tlo, thi, dt, t, acc, tot
       integer(ik) :: k, j
       tlo = 0.0_wp
-      do k = 1_ik, n_leaf_class
+      do k = 1_ik, N_LEAF_CLASS
          thi = LEAF_BND_DEG(k) / 90.0_wp
          dt  = (thi - tlo) / real(NSUB, wp)
          acc = 0.0_wp
@@ -94,7 +94,7 @@ contains
       real(wp)             :: bf
       integer(ik)          :: k
       bf = 0.0_wp
-      do k = 1_ik, n_leaf_class
+      do k = 1_ik, N_LEAF_CLASS
          bf = bf + lidf(k) * cos(leaf_class_angle(k)) ** 2
       end do
    end function leaf_bf
@@ -110,7 +110,7 @@ contains
       integer(ik)          :: k
       sinz = sqrt(max(0.0_wp, 1.0_wp - cosz * cosz))
       gee  = 0.0_wp
-      do k = 1_ik, n_leaf_class
+      do k = 1_ik, N_LEAF_CLASS
          cs = cos(leaf_class_angle(k)) * cosz
          ss = sin(leaf_class_angle(k)) * sinz
          as = max(ss, cs)

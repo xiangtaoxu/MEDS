@@ -42,8 +42,8 @@ module meds_fast_rk45
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_fast_types, only : patch_biophys_t, fast_workspace_t
    use meds_biophysics_opts, only : SOIL_BC_AQUIFER
-   use meds_budget_check,     only : budget_check, last_check_closed, budget_energy_rate_floor,      &
-                                     budget_water_rate_floor
+   use meds_budget_check,     only : budget_check, last_check_closed, BUDGET_ENERGY_RATE_FLOOR,      &
+                                     BUDGET_WATER_RATE_FLOOR
    implicit none
    private
 
@@ -675,7 +675,7 @@ contains
                         + frozen%snow%swe0,                                                          &
                         w_soil1 + cas_mass_capacity*shv1 + w_pond_rk + w_plant1 + surf_water1                        &
                         + frozen%snow%swe1,                                                          &
-                        w_in, w_out, dt_fast, budget_water_rate_floor, 'whole_water (rk45)', .false.)
+                        w_in, w_out, dt_fast, BUDGET_WATER_RATE_FLOOR, 'whole_water (rk45)', .false.)
       !----- The snow store and its accumulated rainfall enthalpy join the ledger; 0 without snow. ----!
       call budget_check(budget%whole_energy,                                                           &
                         !----- The pack hands its meltwater, mass and enthalpy, to the POND: both     !
@@ -684,7 +684,7 @@ contains
                         + frozen%snow%enth0 + e_pond0 + tissue_store0,                              &
                         e_soil1 + cas_mass_capacity*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond_rk            &
                         + tissue_store1,                                                                &
-                        e_in, e_out, dt_fast, budget_energy_rate_floor, 'whole_energy (rk45)', .false.)
+                        e_in, e_out, dt_fast, BUDGET_ENERGY_RATE_FLOOR, 'whole_energy (rk45)', .false.)
       !----- CAS CO2 is not checked on this path: a per-kernel cas_co2 closure (ARK's budget%cas_co2)    !
       !      needs a b-weighted per-stage CO2 atmospheric-exchange accumulation, which                   !
       !      rk45_column_step does not keep (it tracks rnet, atm_enth, atm_vap and cond only). ----------!
@@ -701,12 +701,12 @@ contains
       real(wp),              intent(in) :: dt_fast
       type(column_config_t), intent(in) :: col_config
       if (.not. (col_config%energy%debug_error .and. mask_is_full(col_config%mask))) return
-      if (.not. last_check_closed(budget%whole_water, dt_fast, budget_water_rate_floor)) then
+      if (.not. last_check_closed(budget%whole_water, dt_fast, BUDGET_WATER_RATE_FLOOR)) then
          write(*, '(a,es13.5)') 'meds_fast_rk45: whole_water (rk45) did not close, resid = ',               &
                                 budget%whole_water%resid
          error stop 'meds_fast_rk45: a kept RK45 step breached its whole-column water ledger'
       end if
-      if (.not. last_check_closed(budget%whole_energy, dt_fast, budget_energy_rate_floor)) then
+      if (.not. last_check_closed(budget%whole_energy, dt_fast, BUDGET_ENERGY_RATE_FLOOR)) then
          write(*, '(a,es13.5)') 'meds_fast_rk45: whole_energy (rk45) did not close, resid = ',              &
                                 budget%whole_energy%resid
          error stop 'meds_fast_rk45: a kept RK45 step breached its whole-column energy ledger'

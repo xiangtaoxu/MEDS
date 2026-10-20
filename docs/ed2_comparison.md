@@ -382,7 +382,7 @@ apart from gross GPP as ED2 keeps them.
 
 ### 4.7 Where the shared functions come from
 
-The curves in `src/shared/functions` state MEDS's own rationale in their comments and their science
+The curves in `src/share/functions` state MEDS's own rationale in their comments and their science
 pages; what they take from ED2 is listed here.
 
 - **Allometry** (`meds_allometry_lib`). The pan-tropical curves are ED2's `iallom = 3` (`ed_params.f90`,
