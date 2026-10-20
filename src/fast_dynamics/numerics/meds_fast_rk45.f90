@@ -38,7 +38,8 @@ module meds_fast_rk45
    use meds_diag_vars,        only : CO_TRANSP
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
-   use meds_config,           only : meds_config_t, CTRL_L2_STRICT
+   use meds_config,           only : meds_config_t
+   use meds_fast_opts,        only : CTRL_L2_STRICT
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_fast_types, only : patch_biophys_t, fast_workspace_t
    use meds_biophysics_opts, only : SOIL_BC_AQUIFER

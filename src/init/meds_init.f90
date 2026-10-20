@@ -9,7 +9,8 @@
 !==========================================================================================!
 module meds_init
    use meds_kinds,      only : wp, ik
-   use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
+   use meds_config,     only : meds_config_t, growth_window_steps
+   use meds_patch_state_vars, only : DIST_PRIMARY
    use meds_allometry_lib, only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
    use meds_site_state_vars,       only : make_site_surface

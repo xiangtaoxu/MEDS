@@ -22,10 +22,12 @@ module meds_config
    use meds_biogeochem_opts, only : decomp_opts_t
    use meds_region_opts,   only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
    use meds_maps_opts,  only : maps_opts_t, soil_maps_on
+   use meds_sites_opts, only : site_spec_t
+   use meds_fast_opts,  only : INTEG_ARK, CTRL_I, CTRL_L1_ADAPTIVE
    implicit none
    private
 
-   public :: meds_config_t, site_spec_t, site_config
+   public :: meds_config_t, site_config
    public :: derive_config, derive_parameters
    public :: growth_window_steps
    public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
@@ -33,78 +35,13 @@ module meds_config
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
    public :: maps_opts_t, soil_maps_on
-   public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
-   public :: INTEG_ARK, INTEG_RK45
-   public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
 
-   !----- Patch disturbance / land-use classes. -------------------------------------------!
-   integer(ik), parameter :: DIST_PRIMARY  = 1_ik   !< undisturbed / primary stand
-   integer(ik), parameter :: DIST_TREEFALL = 2_ik   !< treefall-gap (age-0) patch
-   !----- Initialization modes (selected by [init].init_mode). ----------------------------!
+   !----- Initialization modes ([init].init_mode). ------------------------------------------!
    integer(ik), parameter :: INIT_BARE    = 0_ik    !< near-bare ground
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
-   !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the         !
-   !      temperature-response selectors (TEMP_RESPONSE_*) by meds_therm_lib. Imported above   !
-   !      for LOADING and VALIDATION only -- not re-exported, so a caller that switches on     !
-   !      one imports it from the module that defines it. -------------------------------------!
-
-
-   !----- Fast-loop TIME integrator ([fast].time_integrator). TWO schemes, and there is             !
-   !      deliberately no third: docs/science/numerical_scheme.md §3 ("Why there is no              !
-   !      operator-split scheme") records why, and there is no separate coupling-sweep selector     !
-   !      because nothing is swept.                                                                 !
-   !                                                                                                !
-   !      NAMING, stated once so it stops propagating: INTEG_ARK is NOT an IMEX method. The         !
-   !      biotic CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and     !
-   !      the scheme is a 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2) (the ARS(2,2,2) value;         !
-   !      docs/science/numerical_scheme.md eq. (1)). The config string stays "ark". ----------------!
-   !----- NOT IMPLEMENTED: a "dynamic vapour pressure" control -- the substomatal air held at       !
-   !      the Kelvin humidity exp(psi/(rho_w*Rv*T)) rather than saturated, so the transpiration     !
-   !      gradient shrinks with psi and REVERSES into foliar water uptake once e_i < e_a.           !
-   !      Scaling the existing latent flux by a humidity factor is not sound, because that flux     !
-   !      is linearised about T_cas: it needs the flux AND its temperature derivative rebuilt       !
-   !      from rh_leaf*qsat(T_leaf) inside the leaf energy balance. It matters mainly as a          !
-   !      route to foliar uptake, not as a stress control: the leaf's water stress is the fast      !
-   !      capacity ramp and the slow stomatal factor (docs/science/leaf_gas_exchange.md eqs.        !
-   !      (9) and (10)). See docs/ROADMAP.md. ------------------------------------------------------!
-   integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
-   integer(ik), parameter :: INTEG_RK45   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
-
-   !----- Fast-loop ERROR-CONTROL selectors (consumed by meds_fast_control;                         !
-   !      docs/science/numerical_scheme.md eqs. (3)-(4)). Strictness LEVEL                          !
-   !      ([fast].error_level): L0 fixed / L1 adaptive (default) / L2 strict (adaptive + hard       !
-   !      failure when a floor step can't meet tolerance). CONTROLLER ([fast].step_controller):     !
-   !      I = integral (default) / PI = Gustafsson proportional-integral (damps step-size           !
-   !      hunting). --------------------------------------------------------------------------------!
-   integer(ik), parameter :: CTRL_L0_FIXED    = 0_ik
-   integer(ik), parameter :: CTRL_L1_ADAPTIVE = 1_ik
-   integer(ik), parameter :: CTRL_L2_STRICT   = 2_ik
-   integer(ik), parameter :: CTRL_I  = 1_ik
-   integer(ik), parameter :: CTRL_PI = 2_ik
-
-   !----- A field with no in-type default is set by the config reader (presence-mapped) or     !
-   !      derived (derive_config / derive_leaf_params). DERIVED fields are noted. -------------!
-
-   !----- One site of the polygon ([[sites]]; docs/configuration.md, Several sites): its share of !
-   !      the polygon, its terrain, the census rows it reads and, when its table sets any of      !
-   !      [soil]'s column keys, its own ground, [soil]'s values for each key it leaves out. ------!
-   type :: site_spec_t
-      real(wp)    :: area_fraction  = 0.0_wp      !< [-] its share of the polygon
-      logical     :: has_elevation  = .false.     !< .false.: the polygon's elevation
-      real(wp)    :: elevation_m    = 0.0_wp      !< [m]
-      real(wp)    :: slope_deg      = 0.0_wp      !< [degrees] from horizontal
-      real(wp)    :: aspect_deg     = 0.0_wp      !< [degrees] clockwise from north
-      integer(ik) :: census_site_id = 0_ik        !< the census rows it reads; 0: not given
-      logical     :: own_ground     = .false.     !< .false.: the polygon's ground
-      type(soil_column_config_t) :: soil_column
-      integer(ik) :: water_bottom_bc = 0_ik       !< SOIL_BC_*
-      real(wp)    :: drain_factor    = 1.0_wp     !< [-]
-      real(wp)    :: deep_temp       = 0.0_wp     !< [K]
-      real(wp)    :: deep_depth      = 0.0_wp     !< [m]
-   end type site_spec_t
 
    type :: meds_config_t
       !----- Time stepping (run bounded by start/end calendar dates). ----------------------!

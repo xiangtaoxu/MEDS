@@ -17,9 +17,9 @@
 module meds_config_io
    use meds_kinds,      only : wp, ik
    use meds_allometry_lib, only : HEIGHT_POWER, HEIGHT_CHAVE
-   use meds_config,     only : meds_config_t, derive_parameters,                                &
-                               INIT_CENSUS, INIT_RESTART, INTEG_ARK, INTEG_RK45,                &
-                               CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
+   use meds_config,     only : meds_config_t, derive_parameters, INIT_CENSUS, INIT_RESTART
+   use meds_fast_opts,  only : INTEG_ARK, INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE,                &
+                               CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_config,     only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    use meds_soil_column_config, only : soil_column_config_t
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION

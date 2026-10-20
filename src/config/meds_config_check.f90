@@ -32,10 +32,10 @@ module meds_config_check
    use meds_biophysics_opts,    only : ENERGY_BC_DIRICHLET
    use meds_region_opts,        only : RUN_MODE_REGION
    use meds_maps_opts,          only : soil_maps_on
-   use meds_config,             only : meds_config_t, site_config, pft_wstress_psi_open,             &
-                                       pft_wstress_psi_close, INIT_CENSUS, INIT_RESTART, INTEG_ARK,    &
-                                       INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT,     &
-                                       CTRL_I, CTRL_PI
+   use meds_config,             only : meds_config_t, site_config, pft_wstress_psi_open,              &
+                                       pft_wstress_psi_close, INIT_CENSUS, INIT_RESTART
+   use meds_fast_opts,          only : INTEG_ARK, INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE,        &
+                                       CTRL_L2_STRICT, CTRL_I, CTRL_PI
    implicit none
    private
 

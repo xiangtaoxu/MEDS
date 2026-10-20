@@ -32,7 +32,7 @@ module meds_fast_types
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
-   use meds_config, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
+   use meds_fast_opts, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_plant_hydr_lib, only : build_hydro_table
    use meds_pft_params, only : pft_table_t
    use meds_state_defaults,    only : UNSET_NEGATIVE

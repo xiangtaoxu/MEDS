@@ -146,14 +146,16 @@ file(GLOB SHARE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/share/
 add_library(meds_share STATIC ${SHARE_SOURCES})
 meds_fortran_flags(meds_share)
 
-#----- CONFIGURATION: the PFT trait table, the per-domain option leaves (biophysics, leaf,         #
-#      biogeochemistry, maps, region, output, forcing, and the soil column with the parameters     #
-#      derived from it), the meds_config_t aggregator, the minimal TOML reader and the loader that #
-#      fills the aggregator from two TOML files. `toml` and `config_io` live here, not in src/io/: #
+#----- CONFIGURATION: the meds_config_t aggregator, the loader that fills it from two TOML files, #
+#      the checks it passes and the minimal TOML reader; in opts/, one leaf per block (the PFT     #
+#      table, the soil column with the parameters derived from it, forcing, output, the fast loop, #
+#      biophysics, leaf, biogeochemistry, maps, region, sites). `toml` and `config_io` live here,  #
+#      not in src/io/:                                                                             #
 #      they are configuration INPUT, not I/O of model results, and they carry no external          #
 #      dependency, unlike the netCDF output layer. Links meds_share only; nothing here imports     #
 #      model state or a kernel.                                                                    #
-file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
+file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90
+                                           ${CMAKE_CURRENT_SOURCE_DIR}/src/config/opts/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
 #      The keys a config may hold are the ones the two reference configs list (meds_config_check): #
 #      written into an include at configure time, and re-written when either reference changes.   #

@@ -12,7 +12,8 @@ module meds_test_support
    use meds_pft_params, only : pft_table_t, alloc_pft_table, PATH_C3, PATH_C4
    use meds_allometry_lib,  only : allometry_t
    use meds_plant_hydr_lib, only : plant_hydraulics_t, water_curve_t
-   use meds_config,     only : meds_config_t, derive_parameters, INIT_BARE, INTEG_ARK
+   use meds_config,     only : meds_config_t, derive_parameters, INIT_BARE
+   use meds_fast_opts,  only : INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_therm_lib,     only : TEMP_RESPONSE_PEAKED
    use meds_test_assert, only : check, check_close, check_true, check_int, banner,             &

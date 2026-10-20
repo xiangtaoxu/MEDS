@@ -15,7 +15,8 @@
 program test_column_rk45
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o, grav_head, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
-   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
+   use meds_config,              only : meds_config_t
+   use meds_fast_opts,           only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,  &
                                            sat_specific_humidity, tissue_temp_to_energy,                         &

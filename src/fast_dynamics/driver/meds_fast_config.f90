@@ -15,10 +15,9 @@
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
-   use meds_config,      only : meds_config_t, pft_stomata_psi_onset, pft_wstress_psi_open,         &
-                                pft_wstress_psi_close,                                             &
-                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT,    &
-                                CTRL_I, CTRL_PI
+   use meds_config,      only : meds_config_t, pft_stomata_psi_onset, pft_wstress_psi_open,           &
+                                pft_wstress_psi_close
+   use meds_fast_opts,   only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio

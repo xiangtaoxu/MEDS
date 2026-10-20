@@ -39,7 +39,7 @@ program test_column_derivs
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : default_error_control
    use meds_fast_types,       only : error_control_t, fast_workspace_t
-   use meds_config,           only : CTRL_PI
+   use meds_fast_opts,        only : CTRL_PI
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
    !----- The column's parameters for every make_column fixture (the frozen record holds only what  !

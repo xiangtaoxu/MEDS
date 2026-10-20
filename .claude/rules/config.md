@@ -55,7 +55,7 @@ selector is unimplemented, reject it in `validate_config`.
 
 ## Where a config type lives
 
-A per-domain `*_opts` leaf in `src/config/`, so `meds_config` — the root of the dependency graph —
+A per-block leaf in `src/config/opts/`, so `meds_config` — the root of the dependency graph —
 can carry it with no back-edge into a kernel library, and so the sealed kernels stay
 device-eligible. Never put a config type in a kernel module.
 
