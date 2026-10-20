@@ -27,7 +27,7 @@ module meds_plant_hydr_lib
    public :: tissue_shared_potential
    public :: tissue_water_relations, tissue_rwc_to_unknown, tissue_water_to_rwc
    !----- Vulnerability curve and Kirchhoff potential. ------------------------------------!
-   public :: plc_retained, kirchhoff_potential, hydro_table_t, build_hydro_table
+   public :: conductance_retained_fraction, kirchhoff_potential, hydro_table_t, build_hydro_table
    !----- Xylem, roots and leaves: the conductances and the flows they carry. -------------!
    public :: wood_density_to_kmax, xylem_max_conductance, xylem_sapflow
    public :: root_fraction_profile, rhizosphere_conductance, root_water_uptake, root_water_uptake_profile
@@ -292,7 +292,7 @@ contains
    !      psi/psi50, and one at or above zero potential (docs/science/plant_hydraulics.md  !
    !      eq. (7)). r = 0 is kept off the general power: under floating-point trapping a   !
    !      compiler may take 0**kexp through log(0). ---------------------------------------!
-   elemental real(wp) function plc_retained(psi, psi50, kexp) result(f)
+   elemental real(wp) function conductance_retained_fraction(psi, psi50, kexp) result(f)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
       r = max(psi/psi50, 0.0_wp)
@@ -301,7 +301,7 @@ contains
       else
          f = 1.0_wp / (1.0_wp + r**kexp)
       end if
-   end function plc_retained
+   end function conductance_retained_fraction
 
    !----- Kirchhoff (matric flux) potential [MPa], Phi(psi) = integral of the retained     !
    !      fraction from 0 to psi (docs/science/plant_hydraulics.md eq. (8)): closed form   !
@@ -331,7 +331,7 @@ contains
       if (psi > 0.0_wp) then
          dphi = 1.0_wp
       else if (has_closed_form(kexp)) then
-         dphi = plc_retained(psi, psi50, kexp)
+         dphi = conductance_retained_fraction(psi, psi50, kexp)
       else
          r = psi / psi50
          if (r >= table%r_max) then
@@ -345,7 +345,8 @@ contains
 
    !----- d2Phi/dpsi2, the slope of kirchhoff_slope: d/dpsi of 1/(1 + r^kexp) for the      !
    !      closed forms; zero on the table's linear pieces and above zero potential; the    !
-   !      tail's slope beyond the table. r = 0 is guarded as in plc_retained. -------------!
+   !      tail's slope beyond the table. r = 0 is guarded as in                            !
+   !      conductance_retained_fraction. --------------------------------------------------!
    pure real(wp) function kirchhoff_curvature(psi, psi50, kexp, table) result(d2phi)
       real(wp),            intent(in) :: psi, psi50, kexp
       type(hydro_table_t), intent(in) :: table
@@ -422,7 +423,7 @@ contains
    !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre, !
    !      exact for polynomials up to degree 13. The sum is written out rather than handed !
    !      a function (docs/building.md, no procedure arguments); u = 0 is guarded as in    !
-   !      plc_retained. -------------------------------------------------------------------!
+   !      conductance_retained_fraction. --------------------------------------------------!
    pure real(wp) function kirchhoff_panel(a, b, kexp) result(g)
       real(wp), intent(in) :: a, b, kexp
       real(wp), parameter :: NODE(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &

@@ -20,7 +20,8 @@ module meds_fast_frozen
                               tissue_c_leaf, tissue_c_wood_dry
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
-   use meds_plant_hydr_lib,  only : tissue_psi_to_rwc, plc_retained, xylem_max_conductance, rhizosphere_conductance
+   use meds_plant_hydr_lib,  only : tissue_psi_to_rwc, conductance_retained_fraction, xylem_max_conductance,  &
+                                    rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
    use meds_config, only : meds_config_t, pft_wstress_psi_close
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
@@ -469,7 +470,7 @@ contains
             cdiag(CO_ROOT_UPTAKE, i) = frozen%plant%uptake_frozen(i)
             cdiag(CO_PSI_WOOD,    i) = spac%psi_coh(WOOD, i)
             associate (hp => col_config%hydraulics_table%pft(col_cohort%pft(i)))
-               cdiag(CO_PLC, i) = 1.0_wp - plc_retained(spac%psi_coh(WOOD, i), hp%wood_psi50, hp%wood_kexp)
+               cdiag(CO_PLC, i) = 1.0_wp - conductance_retained_fraction(spac%psi_coh(WOOD, i), hp%wood_psi50, hp%wood_kexp)
             end associate
          end do
       end if

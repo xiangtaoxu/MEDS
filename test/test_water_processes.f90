@@ -30,8 +30,8 @@ program test_water_processes
    use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, rhizosphere_conductance,  &
                                     root_water_uptake, xylem_sapflow, xylem_max_conductance,               &
                                     supply_limited_transpiration, hydro_table_t, build_hydro_table,        &
-                                    kirchhoff_potential, plc_retained, water_curve_t, tissue_rwc_to_psi,   &
-                                    tissue_psi_to_water
+                                    kirchhoff_potential, conductance_retained_fraction, water_curve_t,     &
+                                    tissue_rwc_to_psi, tissue_psi_to_water
    use meds_numerics,    only : smooth_max0
    use meds_soil_water, only : ground_evaporation_rate, soil_water_flux
    use meds_constants,  only : pi, grav, r_wv, p_std
@@ -320,7 +320,7 @@ contains
       real(wp),            intent(in) :: psi_up, psi_down, k, psi50, kexp
       type(hydro_table_t), intent(in) :: tab
       if (abs(psi_up - psi_down) <= 1.0e-6_wp) then
-         keff = k * plc_retained(0.5_wp * (psi_up + psi_down), psi50, kexp)
+         keff = k * conductance_retained_fraction(0.5_wp * (psi_up + psi_down), psi50, kexp)
       else
          keff = k * (kirchhoff_potential(psi_up, psi50, kexp, tab) - kirchhoff_potential(psi_down, psi50, kexp, tab)) &
                 / (psi_up - psi_down)

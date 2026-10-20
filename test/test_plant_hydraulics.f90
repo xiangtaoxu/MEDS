@@ -18,11 +18,11 @@ program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head, pi
-   use meds_plant_hydr_lib, only : plc_retained, kirchhoff_potential, hydro_table_t, build_hydro_table,        &
-                                   wood_density_to_kmax, root_fraction_profile, xylem_max_conductance,         &
-                                   rhizosphere_conductance, xylem_sapflow, tissue_psi_tlp, tissue_psi_to_rwc,  &
-                                   tissue_rwc_to_psi, tissue_psi_to_water, tissue_capacitance,                 &
-                                   tissue_water_to_psi, tissue_capped_water, water_curve_t,                    &
+   use meds_plant_hydr_lib, only : conductance_retained_fraction, kirchhoff_potential, hydro_table_t,            &
+                                   build_hydro_table, wood_density_to_kmax, root_fraction_profile,               &
+                                   xylem_max_conductance, rhizosphere_conductance, xylem_sapflow,                &
+                                   tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi, tissue_psi_to_water,    &
+                                   tissue_capacitance, tissue_water_to_psi, tissue_capped_water, water_curve_t,  &
                                    tissue_shared_potential
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
    use meds_plant_hydraulics, only : leaf_node_psi
@@ -98,7 +98,8 @@ contains
       avg_plc = s / ((psi_w - psi_l) * kcond)
       !----- <plc> lies between the two endpoint retained fractions. -------------------!
       call check_true('<plc> in (plc(leaf), plc(wood))',                                       &
-           avg_plc > plc_retained(psi_l,psi50,kexp) .and. avg_plc < plc_retained(psi_w,psi50,kexp))
+           avg_plc > conductance_retained_fraction(psi_l,psi50,kexp)                                &
+           .and. avg_plc < conductance_retained_fraction(psi_w,psi50,kexp))
       !----- <plc> = (Phi(up)-Phi(down))/(up-down). -----------------------------------!
       call check('<plc> = DeltaPhi/Deltapsi', avg_plc,                                          &
            (kirchhoff_potential(psi_w,psi50,kexp,tab)-kirchhoff_potential(psi_l,psi50,kexp,tab))/(psi_w-psi_l),  &
@@ -106,7 +107,7 @@ contains
       !----- |dpsi|->0 limit is the pointwise value at the mean. -----------------------!
       pmid  = -0.9_wp
       call xylem_sapflow(kcond, pmid, pmid - 1.0e-9_wp, 0.0_wp, psi50, kexp, tab, s0, dum1, dum2)
-      call check('Kirchhoff dpsi->0 limit', s0 / (1.0e-9_wp * kcond), plc_retained(pmid,psi50,kexp), 1.0e-6_wp)
+      call check('Kirchhoff dpsi->0 limit', s0 / (1.0e-9_wp * kcond), conductance_retained_fraction(pmid,psi50,kexp), 1.0e-6_wp)
    end subroutine test_xylem_kirchhoff_mean
 
    !----- integral_0^r du/(1+u^kexp) by composite Simpson on 2000 intervals: the reference. ---!

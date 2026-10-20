@@ -144,6 +144,7 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   | `tissue_rwc_from_water`, `tissue_unknown_from_rwc` | `tissue_water_to_rwc`, `tissue_rwc_to_unknown` |
   | `pv_psi_tlp`, `capacitance`, `shared_potential`, `clamp_water_to_capacity` | `tissue_psi_tlp`, `tissue_capacitance`, `tissue_shared_potential`, `tissue_capped_water` |
   | `wood_kmax_from_density` | `wood_density_to_kmax` |
+  | `plc_retained` | `conductance_retained_fraction` |
   | `soil_theta_from_psi`, `soil_psi_from_theta` | `soil_head_to_theta`, `soil_theta_to_head` (the head is in metres) |
   | `soil_unknown_from_theta`, `pond_head_from_water` | `soil_theta_to_unknown`, `pond_water_to_head` |
   | `soil_hydraulics_from_texture` | `soil_texture_to_hydraulics` |

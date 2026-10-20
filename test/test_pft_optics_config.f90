@@ -18,7 +18,8 @@ program test_pft_optics_config
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_params_table_t
    use meds_fast_types,     only : apply_hydraulics_config
-   use meds_plant_hydr_lib, only : plc_retained, wood_density_to_kmax, tissue_psi_tlp, tissue_psi_to_water
+   use meds_plant_hydr_lib, only : conductance_retained_fraction, wood_density_to_kmax, tissue_psi_tlp,  &
+                                   tissue_psi_to_water
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
    use meds_soil_column_config, only : soil_params_t, soil_column_params
@@ -109,8 +110,8 @@ program test_pft_optics_config
       call check_close(tab%pft(2)%vessel_curl, cfg%hydraulics%vessel_curl, 1.0e-12_wp,            &
                        'an unset trait still falls back to the shared value, per PFT')
       !----- And it MATTERS: at the same potential the more vulnerable xylem has lost more. -----!
-      plc1 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(1)%wood_psi50, tab%pft(1)%wood_kexp)
-      plc2 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(2)%wood_psi50, tab%pft(2)%wood_kexp)
+      plc1 = 1.0_wp - conductance_retained_fraction(-1.5_wp, tab%pft(1)%wood_psi50, tab%pft(1)%wood_kexp)
+      plc2 = 1.0_wp - conductance_retained_fraction(-1.5_wp, tab%pft(2)%wood_psi50, tab%pft(2)%wood_kexp)
       call check(plc2 > plc1, 'a more vulnerable PFT loses more conductance at the same psi')
       !----- The fast water-stress limb (the turgor-loss point to twice it) follows the PFT's OWN   !
       !      pressure-volume curve, the one the plant-water solver stores its leaf water on. -------!
