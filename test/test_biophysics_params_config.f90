@@ -1,12 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_biophysics_opts_config -- unit tests for the [soil]/[fast]/[snow]/[aerodynamics] TOML    !
-! wiring of the fast-loop biophysics run-config (meds_config_io load_* helpers -> the            !
-! meds_biophysics_params bundles). Writes a small TOML fixture, parses it, and checks: (1) string  !
-! selectors map to the right enum codes, (2) scalar keys override the defaults, (3) keys ABSENT    !
-! from the block keep their meds_biophysics_params default (opt-in, no clobber).                  !
+! test_biophysics_params_config -- unit tests for the TOML wiring of the fast-loop         !
+! biophysics run-config: the [soil], [fast], [snow] and [aerodynamics] loaders             !
+! (meds_config_io load_* helpers) that fill the meds_soil_params and                       !
+! meds_biophysics_params records. Writes a small TOML fixture, parses it, and checks:      !
+! (1) string selectors map to the right enum codes, (2) scalar keys override the           !
+! defaults, (3) keys absent from the block keep their type default (opt-in, no clobber).   !
 !==========================================================================================!
-program test_biophysics_opts_config
+program test_biophysics_params_config
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_biophysics_params, only : snow_params_t, aero_cfg_t
@@ -16,7 +17,7 @@ program test_biophysics_opts_config
    use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg
    implicit none
 
-   character(len=*), parameter :: TOMLFILE = 'test_biophysics_opts_tmp.toml'
+   character(len=*), parameter :: TOMLFILE = 'test_biophysics_params_tmp.toml'
    type(toml_table_t) :: tm
    type(soil_opts_t)    :: s
    type(energy_opts_t)  :: e
@@ -57,7 +58,7 @@ program test_biophysics_opts_config
    call load_snow_params(tm, sn)
    call load_aero_cfg(tm, a)
 
-   print '(a)', 'test_biophysics_opts_config:'
+   print '(a)', 'test_biophysics_params_config:'
 
    !----- [soil] and [fast]: string selectors -> enums, scalar overrides, and absent-keeps-default. -!
    call check_true('soil.water_bottom_bc "aquifer" -> SOIL_BC_AQUIFER', s%water_bottom_bc == SOIL_BC_AQUIFER,   &
@@ -105,16 +106,16 @@ program test_biophysics_opts_config
       type(toml_table_t)  :: tm2
       type(energy_opts_t) :: e2
       logical             :: ok2
-      open(newunit=u, file='test_biophysics_opts_empty.toml', status='replace', action='write')
+      open(newunit=u, file='test_biophysics_params_empty.toml', status='replace', action='write')
       write(u,'(a)') '[run]'
       write(u,'(a)') 'dt_slow = "1d"'
       close(u)
-      call toml_parse_file('test_biophysics_opts_empty.toml', tm2, ok2)
+      call toml_parse_file('test_biophysics_params_empty.toml', tm2, ok2)
       call check_true('empty-block TOML parsed', ok2, 0.0_wp)
       call load_energy_opts(tm2, e2)
       call check_true('no [soil] block -> default ENERGY_BC_GEOTHERMAL',                           &
                       e2%thermal_bottom_bc == ENERGY_BC_GEOTHERMAL, real(e2%thermal_bottom_bc, wp))
-      open(newunit=u, file='test_biophysics_opts_empty.toml', status='old', action='write')
+      open(newunit=u, file='test_biophysics_params_empty.toml', status='old', action='write')
       close(u, status='delete')
    end block
 
@@ -127,15 +128,15 @@ program test_biophysics_opts_config
       character(len=*), parameter :: NAMES(2) = [character(len=10) :: 'free_drain', 'bedrock']
       integer(ik) :: i
       do i = 1_ik, 2_ik
-         open(newunit=u, file='test_biophysics_opts_bc.toml', status='replace', action='write')
+         open(newunit=u, file='test_biophysics_params_bc.toml', status='replace', action='write')
          write(u,'(a)') '[soil]'
          write(u,'(3a)') 'water_bottom_bc = "', trim(NAMES(i)), '"'
          close(u)
-         call toml_parse_file('test_biophysics_opts_bc.toml', tb, okb)
+         call toml_parse_file('test_biophysics_params_bc.toml', tb, okb)
          if (i == 1_ik) call load_soil_opts(tb, s_free)
          if (i == 2_ik) call load_soil_opts(tb, s_rock)
       end do
-      open(newunit=u, file='test_biophysics_opts_bc.toml', status='old', action='write')
+      open(newunit=u, file='test_biophysics_params_bc.toml', status='old', action='write')
       close(u, status='delete')
       call check_true('soil.water_bottom_bc "free_drain" -> drainage at f = 1, the default',          &
                       s_free%water_bottom_bc == SOIL_BC_DRAIN .and. s_free%drain_factor == 1.0_wp .and.     &
@@ -177,10 +178,10 @@ program test_biophysics_opts_config
    open(newunit=u, file=TOMLFILE, status='old', action='write')
    close(u, status='delete')
 
-   call test_report('test_biophysics_opts_config')
+   call test_report('test_biophysics_params_config')
 
 contains
 
 
 
-end program test_biophysics_opts_config
+end program test_biophysics_params_config

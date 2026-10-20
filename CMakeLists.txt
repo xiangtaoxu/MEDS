@@ -813,10 +813,10 @@ if(MEDS_BUILD_TESTS)
    endif()
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[fast]/[snow]/[aerodynamics]).   #
-   add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
-   target_link_libraries(test_biophysics_opts_config PRIVATE meds_config meds_testassert)
-   meds_fortran_flags(test_biophysics_opts_config)
-   add_test(NAME biophysics_opts_config COMMAND test_biophysics_opts_config)
+   add_executable(test_biophysics_params_config test/test_biophysics_params_config.f90)
+   target_link_libraries(test_biophysics_params_config PRIVATE meds_config meds_testassert)
+   meds_fortran_flags(test_biophysics_params_config)
+   add_test(NAME biophysics_params_config COMMAND test_biophysics_params_config)
 
    #----- Fast-loop column-dynamics integration test (links the whole model + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)
