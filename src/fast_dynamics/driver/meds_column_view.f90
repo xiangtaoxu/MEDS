@@ -30,7 +30,6 @@ module meds_column_view
    use meds_constants,        only : cm2_to_m2, c2b_wood, t_3ple
    use meds_cohort_state_vars, only : cohort_block, alloc_cohort_block, init_cohort, set_cohort_size
    use meds_pft_params,       only : pft_table_t
-   use meds_config,           only : hydraulics_config_t
    use meds_fast_types,       only : column_cohort_t, ensure_column_cohort_capacity
    implicit none
    private
@@ -114,10 +113,9 @@ contains
       block%n = n
       do j = 1_ik, n
          !----- The view carries no tissue water or temperature (the column's stores are the         !
-         !      caller's), so the [hydraulics] defaults for the curves and any birth state reach       !
-         !      nothing: the fixture is born saturated (0 MPa) at the triple point. ------------------!
-         call init_cohort(block, j, pft, ipft(j), 1_ik, nplant(j), dbh(j), hydraulics_config_t(),      &
-                          t_3ple, 0.0_wp)
+         !      caller's), so the birth state reaches nothing: the fixture is born saturated (0 MPa)   !
+         !      at the triple point. --------------------------------------------------------------!
+         call init_cohort(block, j, pft, ipft(j), 1_ik, nplant(j), dbh(j), t_3ple, 0.0_wp)
       end do
       call copy_column_cohort(cc, block, 1_ik, n)
    end subroutine column_cohort_init

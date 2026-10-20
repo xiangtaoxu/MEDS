@@ -25,8 +25,10 @@ entire subsystem off for every config that omitted the key.
 Two exceptions, both explicit:
 
 - **Derived quantities** are computed from the primary ones — the step in years, the height class
-  edges, the mortality-hazard coefficients from wood density. Set `[options].override_derived =
-  true` and supply a `[derived]` block to pin them instead.
+  edges, the leaf capacities from their ratios to Vcmax25. No PFT trait is derived from another: a
+  trait that follows a fitted relation (the sapwood conductivity or the mortality hazard from wood
+  density, the plasticity slopes from Vcmax25) is computed outside MEDS, by
+  [`scripts/pft_traits`](../scripts/pft_traits/README.md), and written into the PFT file.
 - **Optional keys.** Solver settings, process switches and a few late-added blocks (`[soil]`,
   `[snow]`, `[soil_carbon]`) read each key with a fallback to its default, so a feature needs no
   TOML edits. The reference file lists each one commented out at that default.
@@ -71,13 +73,11 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[soil]` | The **ground**: depth and layers, hydraulic texture, retention family and thermal properties; its surface (the pond, the dry surface layer, and the optics `ground_albedo_vis`, `ground_albedo_nir` and `ground_emissivity`); and its two bottom boundaries, `water_bottom_bc` and `thermal_bottom_bc` with the thermal anchor's `deep_temp` and `deep_depth`. |
 | `[snow]`, `[aerodynamics]` | The snow store's and the canopy aerodynamics' parameters. |
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
-| `[hydraulics]` | Plant water transport: the pressure–volume and vulnerability traits, the sapwood path factor `vessel_curl` (the sapwood conductivity follows wood density; `pft.wood_kmax` overrides it), and the roots (`root_beta`, `root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait, so `[soil_column].root_beta` is refused. |
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
 | `[[sites]]` | A site run's polygon as several sites, one table each: its share, terrain and ground ([Several sites](#several-sites)). |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
 | `[state]` | Restart checkpointing: output directory, prefix, interval. *(The spelling `[io]` is refused.)* |
-| `[options]` | `override_derived` and other run switches. |
 
 **`[soil]` is the ground; `[fast]` holds the solvers' settings.** Every property of the ground is in
 one block, whichever solver reads it: the column, its surface and both bottom boundaries. The column
@@ -164,16 +164,25 @@ passes, to reproduce the schedule before the ceiling existed.
 
 ### The PFT file
 
-Everything PFT-specific: the `[pft]` trait table, the `[camac]` mortality-hazard derivation
-coefficients, and each PFT's size allometry, `[allometry]`. **The number of PFTs is the length of
-`[pft].wood_density`** — every other trait array must match it. Every `[allometry]` key takes one value,
-for every PFT, or an array with one value per PFT.
+Everything PFT-specific: the `[pft]` trait table, each PFT's size allometry, `[allometry]`, and each
+PFT's plant hydraulics, `[hydraulics]`. **The number of PFTs is the length of `[pft].wood_density`** —
+every other trait array must match it. Every `[allometry]` and `[hydraulics]` key takes one value, for
+every PFT, or an array with one value per PFT.
 
-Wood density is the primary PFT axis. The Camac-2018 mortality coefficients are derived from it as
-power laws, so low-density PFTs get a higher growth-independent hazard and a steeper low-growth
-penalty. The one exception to the growth-driven hazard is a cohort with no leaves and no storage, which
-dies in the step it is found (`science/plant_carbon_allocation.md` §2). Growth, competition and
-reproduction parameters are per-PFT but ship uniform.
+`[hydraulics]` holds plant water transport (`science/plant_hydraulics.md`): the leaf and wood
+pressure–volume curves, the xylem's vulnerability (`wood_psi50`, `wood_kexp`), its sapwood specific
+conductivity `wood_kmax` and path factor `vessel_curl`, and the roots (`root_beta`,
+`root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait,
+so `[soil_column].root_beta` is refused, and a main config's `[hydraulics]` key or a `[pft]`
+hydraulic key is refused, naming the PFT file's block.
+
+Wood density is the primary PFT axis. The mortality hazard's parameters, `[pft].mort_gamma`,
+`mort_alpha` and `mort_beta`, ship as Camac et al. (2018)'s power laws in it, so low-density PFTs get a
+higher growth-independent hazard and a steeper low-growth penalty; `scripts/pft_traits` computes them,
+and a site's own census fit replaces them (example 05 does). The one exception to the growth-driven
+hazard is a cohort with no leaves and no storage, which dies in the step it is found
+(`science/plant_carbon_allocation.md` §2). Growth, competition and reproduction parameters are per-PFT
+but ship uniform.
 
 Each PFT's height follows the curve `[allometry].height_allometry` names for it (one name for every
 PFT, or one per PFT, `["chave2014", "power", "power"]`). `"power"`, the default, is the pan-tropical
@@ -193,10 +202,14 @@ its height reaches its PFT's `[pft].min_repro_height` [m], a height set outside 
 Leaves are parameterized by their turnover: `[pft].leaf_turnover_rate_toc` [yr⁻¹, > 0] is the share
 of a top-of-canopy cohort's leaf carbon its background turnover replaces a year, and with
 `[trait_dynamics].trait_plasticity_on` it slows in shade (`docs/science/plant_traits.md` eq. (1)).
+The light-plasticity slopes, `[pft].kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and
+`kplastic_leaf_turnover`, ship as ED2's fits to Vcmax25 and the turnover rate (Lloyd et al. 2010), from
+`scripts/pft_traits`.
 Three keys named after a leaf lifespan are refused, each with its replacement:
 - `[pft].leaf_lifespan_toc` [yr]: set `leaf_turnover_rate_toc` to its reciprocal (a 2-yr lifespan is
   a rate of 0.5);
-- `[derived].kplastic_llspan`: `kplastic_leaf_turnover` is its negative (≤ 0, the rate falls in shade);
+- `[derived].kplastic_llspan`: `[pft].kplastic_leaf_turnover` is its negative (≤ 0, the rate falls in
+  shade);
 - `[trait_dynamics].fineroot_lifespan_plastic`: `fineroot_turnover_plastic`.
 
 A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.

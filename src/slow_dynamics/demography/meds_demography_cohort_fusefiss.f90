@@ -477,7 +477,7 @@ contains
                call patch_physical_state(patch%cas(ip), patch%soil_water(ip), cfg,                     &
                                          poly%site%surface(patch%owner_site(ip)), t_birth, psi_birth)
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
-                                cfg%hydraulics, t_birth, psi_birth)
+                                t_birth, psi_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !
                !      carbon the pool actually paid for at `carbon_min` per plant. ---------------!
                c_min = min_cohort_carbon(cohort%pft_table%allom(pf), pft%min_cohort_height, pft%wood_density(pf))

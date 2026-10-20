@@ -28,7 +28,7 @@ module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
    use meds_state_defaults, only : is_unset_positive
-   use meds_config,   only : meds_config_t, growth_window_steps, pft_tissue_curves
+   use meds_config,   only : meds_config_t, growth_window_steps
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
    use meds_polygon_state_vars, only : polygon_t
@@ -39,7 +39,6 @@ module meds_io
    use meds_polygon_state_vars,     only : alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_demography_update,      only : update_overtopping_lai
    use meds_constants,     only : n_soil_layer_max, n_snow_layer_max
-   use meds_plant_hydr_lib,  only : water_curve_t
    use meds_therm_lib,              only : internal_energy_liquid
    use meds_demography_cohort_fusefiss,   only : sort_cohorts
    implicit none
@@ -949,7 +948,6 @@ contains
       !      init_fast_reservoirs then re-seeds the patch and its cohorts. -----------------------------!
       if (ncoh > 0_ik .and. npat > 0_ik .and. .not. (tissue_water_ok .and. tissue_temp_ok)) then
          block
-            type(water_curve_t) :: leaf_curve, wood_curve
             real(wp) :: t_birth, psi_birth
             integer(ik) :: ip
             do i = 1_ik, ncoh
@@ -960,8 +958,9 @@ contains
                   poly%cohort%leaf_temp(i) = t_birth ; poly%cohort%wood_temp(i) = t_birth
                end if
                if (.not. tissue_water_ok) then
-                  call pft_tissue_curves(cfg%hydraulics, cfg%pft, poly%cohort%pft(i), leaf_curve, wood_curve)
-                  call set_cohort_tissue_water(poly%cohort, i, psi_birth, leaf_curve, wood_curve)
+                  associate (hydro => cfg%pft%hydro(poly%cohort%pft(i)))
+                     call set_cohort_tissue_water(poly%cohort, i, psi_birth, hydro%leaf_curve, hydro%wood_curve)
+                  end associate
                end if
             end do
          end block

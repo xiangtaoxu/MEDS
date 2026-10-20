@@ -61,10 +61,6 @@ disturbance_survive_height = 10.0
 [recruitment]
 min_recruit_size = 1.0e-2
 
-# The PFT file's [derived] table sets the light-plasticity slopes; mortality follows wood density ([camac]).
-[options]
-override_derived = true
-
 #----- Start: the Palo Verde 2009 inventory (ED2 site files merged; patch_id = 10 x plot + patch). -----
 [init]
 init_mode    = 1

@@ -26,7 +26,6 @@ module meds_cohort_state_vars
    use meds_allometry_lib,   only : dbh_to_height, size_to_leaf_carbon, size_to_wood_carbon,  &
                                     carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_pft_params,      only : pft_table_t
-   use meds_config,          only : hydraulics_config_t, pft_tissue_curves
    use meds_diag_vars,       only : cohort_diag_block, expand_cohort_diag, reorder_cohort_diag,              &
                                     copy_cohort_diag, clear_cohort_diag
    use meds_state_defaults,  only : UNSET_POSITIVE, UNSET_NEGATIVE, DMAX_PSI_LEAF_ACCUM_RESET,            &
@@ -777,19 +776,16 @@ contains
    ! hold a stale value; it is recomputed by update_overtopping_lai every slow step anyway).    !
    ! The caller ensures capacity, stamps the global id, and bumps cohort%n.                    !
    !---------------------------------------------------------------------------------------!
-   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, hydraulics, birth_temp, birth_psi)
+   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, birth_temp, birth_psi)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: m, ipft, owner_patch
       type(pft_table_t),  intent(in)    :: pft
       real(wp),           intent(in)    :: nplant, dbh
-      !----- The shared [hydraulics] traits, which with the PFT's own give its tissue curves. -------!
-      type(hydraulics_config_t), intent(in) :: hydraulics
       !----- The state the cohort is born in, its patch's (patch_physical_state): its leaves and wood !
       !      start at birth_temp, holding the water their tissues hold at birth_psi, and with the    !
       !      energy those tissues then hold. ------------------------------------------------------!
       real(wp),           intent(in)    :: birth_temp   !< [K]
       real(wp),           intent(in)    :: birth_psi    !< [MPa]
-      type(water_curve_t) :: leaf_curve, wood_curve
       cohort%pft(m)              = ipft
       cohort%owner_patch(m)      = owner_patch
       cohort%nplant(m)           = nplant
@@ -822,8 +818,7 @@ contains
       cohort%leaf_surf_water(m)  = 0.0_wp             ! a new cohort's canopy starts dry
       cohort%wood_surf_water(m)  = 0.0_wp
       call set_cohort_size(cohort, m)                 ! carbon pools from dbh, then the geometry from them
-      call pft_tissue_curves(hydraulics, pft, ipft, leaf_curve, wood_curve)
-      call set_cohort_tissue_water(cohort, m, birth_psi, leaf_curve, wood_curve)
+      call set_cohort_tissue_water(cohort, m, birth_psi, pft%hydro(ipft)%leaf_curve, pft%hydro(ipft)%wood_curve)
       call hold_cohort_tissue_temps(cohort, m)
    end subroutine init_cohort
 

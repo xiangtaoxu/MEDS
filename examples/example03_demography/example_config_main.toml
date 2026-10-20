@@ -62,9 +62,6 @@ output_prefix         = "example_output"
 write_state           = false
 interval_years  = 50
 
-[options]
-override_derived = false
-
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance, unused here: the fast loop is off and growth is a
 # census law. MODEL-CHOICE keys are run-level; the per-PFT biochemical traits (Vcmax25, g1, pathway,

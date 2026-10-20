@@ -63,10 +63,6 @@ disturbance_survive_height = 10.0
 [recruitment]
 min_recruit_size = 1.0e-2
 
-# The PFT file's [derived] table sets each PFT's mortality (example 03's census fit).
-[options]
-override_derived = true
-
 #----- Start: bare ground. Six empty patches; the first trees arrive with the seed rain. -------------
 [init]
 init_mode    = 0

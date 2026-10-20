@@ -12,11 +12,12 @@ User-facing description: [`docs/configuration.md`](../../docs/configuration.md).
 
 The source defines only true **constants** — numerical, geometric, calendar. Every model parameter
 is required from TOML across two files: a main file with all non-PFT settings, which names a PFT
-file carrying the trait table, the mortality-hazard coefficients and the allometry coefficients.
+file carrying every PFT trait, its allometry and hydraulics among them. A trait that follows a fitted
+relation is computed outside the model (`scripts/pft_traits`) and written into the PFT file.
 
 `load_meds_config` builds a **presence map** while reading and stops listing every missing key. A
 missing file is also a hard error. There is no `build_config` and no defaults path: derived
-quantities come from the derive routines, overridable via an options flag plus a derived block.
+quantities come from the derive routines, and no PFT trait is derived from another.
 
 **Tests get their config from `build_test_config()` in `test/meds_test_support.f90`** — the only
 place "default" values live in code.
@@ -40,8 +41,8 @@ both bottom boundaries, so one Fortran type does not map to one block (`soil_col
 The physical column — depth and layer bottoms, hydraulic texture, retention family, thermal
 properties — is validated at load, because a layer count over the compile-time ceiling, layer
 bottoms that do not increase or a saturated water content below the residual produce a silently
-wrong column rather than a crash. The root profile is a plant trait: it lives in `[hydraulics]`,
-with optional per-PFT values in the PFT file.
+wrong column rather than a crash. The root profile is a plant trait: it lives in the PFT file's
+`[hydraulics]` block.
 
 ## Do not add a flag whose off path is known-wrong physics
 

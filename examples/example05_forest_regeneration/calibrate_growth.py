@@ -103,8 +103,8 @@ def apply(cfg, par):
     vc = [v * par["vcmax_scale"] for v in cfg.get("pft.vcmax25", file="pft")]
     k_vc, k_rd = plasticity_slopes(vc, cfg.get("pft.rd_vcmax_ratio", file="pft"))
     cfg.set("pft.vcmax25", vc, file="pft")
-    cfg.set("derived.kplastic_vcmax", k_vc, file="pft")
-    cfg.set("derived.kplastic_rd", k_rd, file="pft")
+    cfg.set("pft.kplastic_vcmax", k_vc, file="pft")
+    cfg.set("pft.kplastic_rd", k_rd, file="pft")
     cfg.set("pft.fineroot_turnover_rate",
             [par["fineroot_turnover"] * r for r in cfg.get("pft.leaf_turnover_rate_toc", file="pft")], file="pft")
     cfg.set("pft.min_repro_height", [par["min_repro_height"]] * len(cfg.get("pft.wood_density", file="pft")),

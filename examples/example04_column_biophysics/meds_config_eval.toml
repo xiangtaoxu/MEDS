@@ -100,9 +100,6 @@ file_chunk = "year"
 enabled    = false
 file_chunk = "run"
 
-[options]
-override_derived = false
-
 # The leaf traits follow the canopy's light gradient: each cohort's Vcmax25, Rd25, SLA and leaf
 # turnover rate are its PFT's top-of-canopy values times exp(k * LAI above it), set at the census start
 # and followed as the canopy changes (docs/science/plant_traits.md §1-§2). The calibration keeps it

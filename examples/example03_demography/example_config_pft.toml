@@ -1,11 +1,14 @@
-# MEDS PFT configuration -- all PFT-specific parameters, plus the allometry and mortality-hazard
-# (Camac) coefficients (shared by all PFTs). Named by [init].pft_config in the
-# main config. EVERY key is REQUIRED; a missing key is a hard error.
+# MEDS PFT configuration -- every PFT-specific parameter, its allometry and hydraulics among them.
+# Named by [init].pft_config in the main config. EVERY key is REQUIRED; a missing key is a hard error.
 #
 # The number of PFTs is the length of [pft].wood_density; every per-PFT array must match it.
 
 [pft]
 wood_density       = [0.36, 0.50, 0.68]    # [g/cm3] basal-area means of the BCI wood-density classes
+# The mortality hazard, mort_gamma + mort_alpha*exp(-mort_beta*growth_avg) (unused here: mortality is a census law).
+mort_gamma         = [0.02405204866515945, 0.013144921634338494, 0.0074671218975402125]   # [1/yr]
+mort_alpha         = [0.08993749192134758, 0.06165566842575936, 0.04330088203962493]      # [1/yr]
+mort_beta          = [16.23176227388226, 17.790921380676103, 19.385745356710245]          # [yr/cm]
 # The four reproduction keys are required by the loader and unused here: recruitment is a census law.
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
@@ -66,23 +69,16 @@ storage_cushion        = [0.5, 0.5, 0.5]  # [--] storage target, x (leaf + fine-
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
 retained_carbon_fraction = [0.0, 0.0, 0.0]   # [--] no resorption, as in examples 04 and 05 (default 0.3)
 leaf_turnover_rate_toc = [1.0, 0.5, 0.33]          # [1/yr] top-of-canopy baseline leaf turnover
+# Light plasticity: a trait is its top-of-canopy value times exp(k * LAI above it), k in 1/(m2/m2).
+kplastic_vcmax         = [-0.1459341188305866, -0.11760191025318557, -0.10943768264434321]
+kplastic_rd            = [-0.1459341188305866, -0.11760191025318557, -0.10943768264434321]
+kplastic_sla           = [0.15654750929099287, 0.12615477645341722, 0.11739678683665906]
+kplastic_leaf_turnover = [-0.058535787713143994, -0.015560662518427415, 0.0]
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05, 0.05, 0.05]         # [--] labile fraction of wood/CWD necromass
 struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of the structural-litter stream
-
-[camac]
-# Required by the loader and unused here: mortality is a census law.
-# Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
-# law in wood density: param = param_0 * (rho/mort_rho_ref)^exp (always positive).
-mort_rho_ref   = 0.6        # [g/cm3] wood-density reference
-mort_gamma_0   = 0.0094     # baseline (growth-independent) hazard scale [1/yr]
-mort_gamma_exp = -1.8392    # baseline hazard exponent on (rho/ref)
-mort_alpha_0   = 0.05       # low-growth hazard scale [1/yr]
-mort_alpha_exp = -1.1493    # low-growth hazard exponent
-mort_beta_0    = 18.72      # growth-sensitivity scale [yr/cm]
-mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 
 [allometry]
 # Pan-tropical (ED2 iallom==3) size allometry. height = exp(b1Ht + b2Ht*ln dbh) capped at the
@@ -109,9 +105,24 @@ chave_c    = -0.04923
 chave_rse  = 0.0
 chave_e    = 0.0
 
-# [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
-# mortality-hazard parameters instead of deriving them from wood density:
-# [derived]
-# mort_gamma = [...]   # length = number of PFTs
-# mort_alpha = [...]
-# mort_beta  = [...]
+[hydraulics]
+# The PFT's plant-hydraulics traits (meds_config_pft.toml documents each key); one value for every PFT,
+# or one per PFT.
+leaf_pi0             = -1.5                                                         # [MPa]
+leaf_elastic_mod     = 12.0                                                         # [MPa]
+leaf_apoplast_frac   = 0.3                                                          # [-]
+leaf_water_sat       = 2.0                                                          # [kg H2O/kgC]
+wood_pi0             = -1.0                                                         # [MPa]
+wood_elastic_mod     = 8.0                                                          # [MPa]
+wood_apoplast_frac   = 0.2                                                          # [-]
+wood_water_sat       = 1.0                                                          # [kg H2O/kgC]
+wood_psi50           = -2.0                                                         # [MPa]
+wood_kexp            = 2.0                                                          # [-]
+wood_kmax            = [5.8914373491131515, 4.177863535653273, 2.685588809977599]   # [kg/m/s/MPa]
+vessel_curl          = 1.5                                                          # [-]
+root_beta            = 0.1                                                          # [-]
+root_depth_b1        = 1.114058                                                     # [m]
+root_depth_b2        = 0.4223014                                                    # [-]
+specific_root_length = 20000.0                                                      # [m/kgC]
+fine_root_radius     = 0.00025                                                      # [m]
+

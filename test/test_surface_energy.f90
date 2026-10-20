@@ -55,7 +55,7 @@ contains
    !=======================================================================================!
    subroutine test_wood_stiffness_spread()
       real(wp), parameter :: C2B = 2.0_wp, DT_FAST = 900.0_wp, TREF = 295.0_wp
-      !----- The default wood store's saturated water, [hydraulics].wood_water_sat [kg/kgC]: a      !
+      !----- The shipped wood store's saturated water, [hydraulics].wood_water_sat [kg/kgC]: a      !
       !      saturated store, the most water the wood's heat capacity can count. ------------------!
       real(wp), parameter :: WOOD_WATER_SAT = 1.0_wp
       real(wp), parameter :: GBH = 0.03_wp, RHO = 1.2_wp

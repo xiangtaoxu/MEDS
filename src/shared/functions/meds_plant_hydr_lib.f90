@@ -19,16 +19,17 @@ module meds_plant_hydr_lib
    implicit none
    private
 
+   !----- A PFT's hydraulic traits, from its PFT file's [hydraulics] block. ---------------!
+   public :: plant_hydraulics_t
    !----- Tissue pressure-volume curve: read-offs and the solver's relations. -------------!
    public :: water_curve_t
    public :: tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi
    public :: tissue_psi_to_water, tissue_capacitance, tissue_water_to_psi, tissue_capped_water
-   public :: tissue_shared_potential
    public :: tissue_water_relations, tissue_rwc_to_unknown, tissue_water_to_rwc
    !----- Vulnerability curve and Kirchhoff potential. ------------------------------------!
    public :: conductance_retained_fraction, kirchhoff_potential, hydro_table_t, build_hydro_table
    !----- Xylem and roots: the conductances and the flows they carry. ---------------------!
-   public :: wood_density_to_kmax, xylem_max_conductance, xylem_sapflow
+   public :: xylem_max_conductance, xylem_sapflow
    public :: root_fraction_profile, rhizosphere_conductance, root_water_uptake, root_water_uptake_profile
 
    !----- One tissue's pressure-volume curve: the four traits every tissue-water routine   !
@@ -40,13 +41,25 @@ module meds_plant_hydr_lib
       real(wp) :: water_sat     = 0.0_wp   !< [kg H2O / kgC] water per unit biomass at saturation
    end type water_curve_t
 
+   !----- One PFT's hydraulic traits, from its PFT file's [hydraulics] block               !
+   !      (docs/science/plant_hydraulics.md, Parameters). The traits have no defaults: a   !
+   !      PFT file gives every one, for every PFT. ----------------------------------------!
+   type :: plant_hydraulics_t
+      type(water_curve_t) :: leaf_curve, wood_curve      !< the tissues' pressure-volume curves
+      real(wp) :: wood_psi50           = 0.0_wp  !< [MPa, < 0] xylem potential at 50 % loss of conductance
+      real(wp) :: wood_kexp            = 0.0_wp  !< [-] vulnerability-curve shape
+      real(wp) :: wood_kmax            = 0.0_wp  !< [kg/m/s/MPa] sapwood specific conductivity
+      real(wp) :: vessel_curl          = 0.0_wp  !< [-] xylem path length per unit height
+      real(wp) :: root_beta            = 0.0_wp  !< [-] share of the root profile below the rooting depth
+      real(wp) :: root_depth_b1        = 0.0_wp  !< [m] rooting depth = b1 * height[m]^b2
+      real(wp) :: root_depth_b2        = 0.0_wp  !< [-]
+      real(wp) :: specific_root_length = 0.0_wp  !< [m/kgC] fine-root length per unit fine-root carbon
+      real(wp) :: fine_root_radius     = 0.0_wp  !< [m] fine-root radius
+   end type plant_hydraulics_t
+
    !----- [-] Floor on the symplastic relative water content in the read-offs; the         !
    !      solver's relations have none. ---------------------------------------------------!
    real(wp), parameter :: RWC_FLOOR = 1.0e-4_wp
-   !----- Cap on tissue_shared_potential's halvings. The loop stops when its bracket is as !
-   !      narrow as the arithmetic resolves, about 70 halvings for a root near -1 MPa;     !
-   !      only a root at 0, where that width has no floor, reaches the cap. ---------------!
-   integer(ik), parameter :: BISECTION_STEPS_MAX = 200_ik
 
    !----- The Kirchhoff lookup table for a general vulnerability exponent: G(r) on a       !
    !      uniform grid (docs/science/plant_hydraulics.md §3). A fixed-size record, so a    !
@@ -61,14 +74,6 @@ module meds_plant_hydr_lib
       real(wp)    :: g(0:HYDRO_TABLE_NTAB) = 0.0_wp       !< g(j) = integral_0^{j*h} du/(1+u^kexp)
    end type hydro_table_t
 
-   !----- Sapwood specific conductivity against wood density, ln Ks = a + b rho: a         !
-   !      lognormal fit to 72 neotropical dry-forest species (Xu et al. 2016, New Phytol   !
-   !      212:80; docs/science/plant_hydraulics.md eq. (11)). -----------------------------!
-   real(wp), parameter :: KMAX_LN_A     =  2.348_wp   !< [ln(kg/m/s/MPa)] intercept
-   real(wp), parameter :: KMAX_LN_B     = -2.455_wp   !< [ln(kg/m/s/MPa) per g/cm3] slope
-   real(wp), parameter :: KMAX_LN_VAR   =  0.6186_wp  !< [-] residual variance of ln Ks
-   real(wp), parameter :: KMAX_RHO_MIN  =  0.35_wp    !< [g/cm3] lowest wood density fitted; a lower one takes it
-   real(wp), parameter :: KMAX_RHO_MAX  =  0.95_wp    !< [g/cm3] highest wood density fitted; a higher one takes it
    !----- Floors that keep a cohort's leaves joined to its wood however dry or small it    !
    !      is, so its equations stay solvable; neither moves water that matters. -----------!
    real(wp), parameter :: XYLEM_RETAINED_MIN = 1.0e-12_wp   !< [-] share of the intact conductance a fully embolised xylem keeps
@@ -178,46 +183,6 @@ contains
       rwc   = (w - curve%apoplast_frac*w_sat) / max((1.0_wp - curve%apoplast_frac)*w_sat, tiny_num)
       psi   = tissue_rwc_to_psi(rwc, curve%pi0, curve%elastic_mod)
    end function tissue_water_to_psi
-
-   !----- The potential [MPa] at which two tissues holding w_total [kg] between them are   !
-   !      at rest, a at psi and b at psi - head_b (docs/science/plant_hydraulics.md eq.    !
-   !      (2) with no flow), by bisection between the curves' dry floor and a's            !
-   !      saturation; a total outside returns the nearer end. The caller moves water by    !
-   !      the curves at the result, so what it moves is exact whatever the residual. ------!
-   elemental real(wp) function tissue_shared_potential(w_total, curve_a, biomass_a, curve_b, biomass_b, head_b)  &
-                                                       result(psi)
-      real(wp),            intent(in) :: w_total               !< [kg] the water the two hold together
-      type(water_curve_t), intent(in) :: curve_a, curve_b
-      real(wp),            intent(in) :: biomass_a, biomass_b  !< [kgC]
-      real(wp),            intent(in) :: head_b                !< [MPa] gravity head of b above a: at rest psi_b = psi_a - head_b
-      real(wp)    :: lo, hi
-      integer(ik) :: k
-      lo = min(curve_a%pi0, curve_b%pi0 + head_b) / RWC_FLOOR
-      hi = 0.0_wp
-      if (w_total <= held(lo)) then
-         psi = lo
-         return
-      end if
-      if (w_total >= held(hi)) then
-         psi = hi
-         return
-      end if
-      do k = 1_ik, BISECTION_STEPS_MAX
-         psi = 0.5_wp * (lo + hi)
-         if (held(psi) < w_total) then
-            lo = psi
-         else
-            hi = psi
-         end if
-         if (hi - lo <= epsilon(psi) * max(abs(lo), abs(hi))) exit
-      end do
-      psi = 0.5_wp * (lo + hi)
-   contains
-      pure real(wp) function held(p)
-         real(wp), intent(in) :: p
-         held = tissue_psi_to_water(p, curve_a, biomass_a) + tissue_psi_to_water(p - head_b, curve_b, biomass_b)
-      end function held
-   end function tissue_shared_potential
 
    !----- Tissue water [kg per plant] capped at saturation, water_sat * biomass, for a     !
    !      store that lost biomass without its water; the caller sheds the excess (w -      !
@@ -460,16 +425,8 @@ contains
    end function kirchhoff_tail
 
    !=======================================================================================!
-   !     Xylem (docs/science/plant_hydraulics.md eqs. (9)-(11)).                           !
+   !     Xylem (docs/science/plant_hydraulics.md eqs. (9)-(10)).                           !
    !=======================================================================================!
-
-   !----- Sapwood specific conductivity [kg/m/s/MPa] of a wood density rho [g/cm3]: the    !
-   !      mean of the lognormal fit, exp(a + b rho + s2/2)                                 !
-   !      (docs/science/plant_hydraulics.md eq. (11)). ------------------------------------!
-   elemental real(wp) function wood_density_to_kmax(rho) result(kmax)
-      real(wp), intent(in) :: rho
-      kmax = exp(KMAX_LN_A + KMAX_LN_B*min(max(rho, KMAX_RHO_MIN), KMAX_RHO_MAX) + 0.5_wp*KMAX_LN_VAR)
-   end function wood_density_to_kmax
 
    !----- One plant's intact-xylem conductance [kg/s/MPa]: the sapwood's specific          !
    !      conductivity over its cross-section and its path, height x vessel_curl, floored  !

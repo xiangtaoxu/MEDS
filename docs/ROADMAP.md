@@ -277,11 +277,10 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   per-plant pool distributed by the static `root_beta` profile rather than a prognostic per-layer
   one.
 - **Per-PFT hydraulic traits are shipped** (#179, v0.2.0); what remains is that nothing has
-  *calibrated* them. The `[hydraulics]` traits are selectable per PFT and default to the shared
-  `[hydraulics]` block, so a run that does not set them is unchanged — which means MEDS ships with
-  hydraulically identical PFTs until somebody puts real trait values in. Wood density is the obvious
-  axis to derive them from, as the Camac mortality coefficients already are, and `wood_kmax` now
-  is (Xu et al. 2016); `wood_psi50` (denser wood ⇒ more negative) is next.
+  *calibrated* them. Every PFT file sets its `[hydraulics]` block, and the shipped PFTs differ
+  hydraulically only in `wood_kmax` (Xu et al. 2016's fit to wood density). Wood density is the
+  obvious axis for more of them, as for the Camac mortality coefficients: `wood_psi50` (denser wood ⇒
+  more negative) is next, as a fit in `scripts/pft_traits`.
 - **Phase B — per-layer root nodes.** *Planned.* [#180](https://github.com/xiangtaoxu/MEDS/issues/180) Each soil layer is now its own path into a cohort's
   wood in the water network, with no root store between. A root node would be the first unknown of
   each cohort's block in the arrowhead solve, which takes it as it stands. Sources:
