@@ -195,7 +195,6 @@ albedo_vis_aged    = 0.518    # [-]     aged VIS endpoint (ED2)
 albedo_nir_aged    = 0.435    # [-]     aged NIR endpoint (ED2)
 snow_emiss         = 0.97     # [-]     thermal (LW) emissivity
 liquid_holding_frac = 0.10    # [-]     percolation holding capacity (LEAF-3 1:9)
-snow_stab_thresh   = 3.0      # [kg/m2] active-integration floor (thinner packs stay passive)
 min_new_snow_mass  = 1.0e-3   # [kg/m2] first-flake creation threshold
 tiny_snow_mass     = 1.0e-6   # [kg/m2] melt-out threshold (dump residual to soil)
 ny07_a             = 2.5      # [-]     Niu-Yang07 snow-cover-fraction shape factor
@@ -251,10 +250,7 @@ patch_light_tol           = 0.10     # mean light-profile distance to fuse two p
 patch_light_tol_max       = 0.15     # ceiling of that tolerance: no fusion beyond it, even above max_patch
 # light_ext_coeff_fusefiss  = 0.5      # [-] extinction of the light profiles fusion compares, exp(-k LAI above)
 patch_light_maxdev_factor = 1.5      # max single-layer deviation multiplier
-patch_diff_age_tol        = 1.0      # [yr] same-age phase window
 min_patch_area            = 1.0e-4   # cull patches below this area fraction
-patch_min_area_remain     = 0.99     # stop fusing once this area fraction is kept
-enable_patch_fission      = false
 conservation_tol          = 0.001    # 0.1% AGB/area conservation tolerance
 growth_memory_days        = 365.0    # [day] window of the moving-average growth that drives mortality: a
                                      #       full year, so a seasonal pause in growth is not read as decline
@@ -270,8 +266,9 @@ min_recruit_size = 1.0e-2            # [plant/m2] pool threshold to spawn a recr
 
 [init]
 init_mode    = 0                              # 0 = near-bare ground | 1 = cohort census | 2 = restart
-restart_file = "meds_output-S-22500101000000.nc"  # state checkpoint (init_mode = 2)
-census_file  = "data/census_example.csv"  # cohort CSV (init_mode = 1)
+# restart_file = "meds_output-S-22500101000000.nc"   # state checkpoint: required by init_mode = 2
+census_file  = "data/census_example.csv"   # cohort CSV: required by init_mode = 1 (the Python census start
+                                           #   reads it in any mode)
 pft_config   = "meds_config_pft.toml"             # the REQUIRED PFT config file
 # soil_temp          = 288.0      # [K]      initial soil temperature, every layer (init_mode 0 and 1)
 # soil_theta         = 0.30       # [m3/m3]  initial soil moisture, every layer (init_mode 0 and 1)
@@ -354,7 +351,8 @@ sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed 
   file_chunk = "run"
 
 [carbon]
-gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area, used when the fast loop is off
+gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area: required with the fast loop off,
+                               #   optional (and unused) with it on
 
 # ------------------------------------------------------------------------------------------
 # Leaf phenology runs in every run's slow loop; there is no switch. Once a day the slow-loop driver

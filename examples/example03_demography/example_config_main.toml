@@ -36,10 +36,7 @@ n_patch_fusion_iter       = 6
 patch_light_tol           = 0.10
 patch_light_tol_max       = 0.15
 patch_light_maxdev_factor = 1.5
-patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
-patch_min_area_remain     = 0.99
-enable_patch_fission      = false
 conservation_tol          = 0.001
 growth_memory_days        = 365.0
 
@@ -52,7 +49,6 @@ min_recruit_size = 1.0e-2
 
 [init]
 init_mode    = 0
-restart_file = "meds_output-S-22500101000000.nc"
 census_file  = "examples/example03_demography/data/bci_1985_census.csv"   # prepare_census.py
 pft_config   = "examples/example03_demography/example_config_pft.toml"
 

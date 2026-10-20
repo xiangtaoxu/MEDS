@@ -167,6 +167,8 @@ contains
       write(uout,'(a)') 'write_state = false'
       write(uout,'(a)') '[output]'
       write(uout,'(a)') 'enabled = false'
+      write(uout,'(a)') '[carbon]'
+      write(uout,'(a)') 'gpp_ref = 0.3'
       open(newunit=uin, file=CFG_DEFAULT, status='old', action='read')
       do
          read(uin,'(a)',iostat=ios) line

@@ -260,8 +260,9 @@ hold both a table and an array of tables of one name.
 
 ## How a run starts
 
-`[init].init_mode` selects one of three, and the files for the unselected modes are ignored rather
-than removed:
+`[init].init_mode` selects one of three. The file a mode starts from is required by that mode and
+optional otherwise; the Python census start (`meds.demography.Site(census=True)`) reads `census_file`
+whatever the mode:
 
 | Mode | Start from | Needs |
 |---|---|---|

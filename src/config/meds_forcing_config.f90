@@ -22,7 +22,7 @@ module meds_forcing_config
    public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_CLEARIDX
    public :: LW_FILE, LW_SYNTHESIZE, LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    public :: CLAMP_ERROR, CLAMP_HOLD
-   public :: INTERP_LINEAR, INTERP_STEP, INTERP_COSZ
+   public :: INTERP_LINEAR, INTERP_STEP
    public :: GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    public :: CO2_SOURCE_CONST, CO2_SOURCE_FILE
    public :: HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
@@ -66,7 +66,6 @@ module meds_forcing_config
    !----- Per-variable temporal-interpolation policy (used by interpolate_forcing). ---------!
    integer(ik), parameter :: INTERP_LINEAR = 0_ik   !< linear in the window (state vars)
    integer(ik), parameter :: INTERP_STEP   = 1_ik   !< step-constant (rainfall; hold prev)
-   integer(ik), parameter :: INTERP_COSZ   = 2_ik   !< cosz-weighted (shortwave; handled by disaggregate_sw)
 
    !----- How a polygon binds to the file's `grid` dimension (docs/science/forcing.md §1). ---!
    integer(ik), parameter :: GRIDMATCH_EXPLICIT = 0_ik  !< use grid_index verbatim (default)

@@ -46,10 +46,7 @@ n_patch_fusion_iter       = 6
 patch_light_tol           = 0.05
 patch_light_tol_max       = 0.10
 patch_light_maxdev_factor = 1.5
-patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
-patch_min_area_remain     = 0.99
-enable_patch_fission      = false
 conservation_tol          = 0.001
 growth_memory_days        = 365.0
 
@@ -64,7 +61,6 @@ min_recruit_size = 1.0e-2
 #----- Start: the Palo Verde 2009 inventory (ED2 site files merged; patch_id = 10 x plot + patch). -----
 [init]
 init_mode    = 1
-restart_file = "none"
 census_file  = "data/pv_2009_census.csv"
 pft_config   = "pft_parameters.toml"
 soil_temp    = 300.0              # [K]
@@ -103,9 +99,6 @@ file_chunk = "run"
 [output.annual]
 enabled    = true
 file_chunk = "run"
-
-[carbon]
-gpp_ref       = 0.3               # required by the loader; unused with the column on
 
 #----- Leaf physiology (example 04's calibrated configuration). ----------------------------------------
 [leaf_physiology]

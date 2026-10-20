@@ -53,7 +53,6 @@ wstress_sref_stomata = [2.0]     # [1/MPa] Sabot stomatal-stress sensitivity
 # Carbon-dynamics traits.
 sla                    = [13.0]
 root_to_leaf_ratio     = [1.0]
-huber_value            = [1.5e-4]
 
 #----- Non-leaf maintenance respiration (leaf Rd is rd_vcmax_ratio above).
 is_woody           = [1]     # 1 = woody (0 = grass: no stem respiration)
@@ -90,7 +89,6 @@ kplastic_rd            = [-0.09746311979977108]
 kplastic_sla           = [0.10455134669429987]
 kplastic_leaf_turnover = [-0.015560662518427415]
 fineroot_turnover_rate = [0.8]   # [1/yr]
-wood_carbon_density    = [300.0] # [kgC/m3]
 # Necromass -> litter-destination split, as the reference meds_config_pft.toml's mid-successional PFT.
 f_labile_leaf          = [0.70]  # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05]  # [--] labile fraction of wood/CWD necromass

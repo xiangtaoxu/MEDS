@@ -146,7 +146,7 @@ def make_regions(n_regions, years, threads, pft, archive, maps, chave_e, cost_fi
         for sec, key, val in [
                 ("run", "mode", '"region"'), ("run", "n_threads", str(threads)),
                 ("run", "end_time", f'"{START_YEAR + years}-06-01"'),
-                ("init", "init_mode", "0"), ("init", "census_file", '"none"'), ("init", "pft_config", f'"{pft}"'),
+                ("init", "init_mode", "0"), ("init", "pft_config", f'"{pft}"'),
                 ("state", "output_dir", f'"{rdir}"'), ("state", "output_prefix", f'"{name}"'),
                 ("state", "write_state", "true"), ("state", "interval_years", str(min(25, years))),
                 ("output", "dir", f'"{rdir}"'), ("output", "prefix", f'"{name}"'),

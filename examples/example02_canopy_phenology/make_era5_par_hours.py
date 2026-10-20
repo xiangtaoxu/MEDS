@@ -51,7 +51,7 @@ def configure(site, work, archive):
         "run.dt_slow": "1d", "run.start_time": first, "run.end_time": stop,
         "fast.fast_biophysics_on": True, "fast.dt_fast": "900s",
         "demography.demography_on": False,
-        "init.init_mode": 0, "init.census_file": "none", "init.restart_file": "none",
+        "init.init_mode": 0,
         "state.write_state": False,
         "output.enabled": True, "output.dir": "out", "output.prefix": site,
         "output.io_config": os.path.join(work, "variables.toml"), "output.fast_interval_steps": 1,

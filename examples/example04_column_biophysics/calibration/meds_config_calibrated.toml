@@ -49,10 +49,7 @@ n_patch_fusion_iter       = 6
 patch_light_tol           = 0.04    # strict: the census's gaps stay apart from the closed forest
 patch_light_tol_max       = 0.08    #   (130 patches and 1,924 cohorts at the start)
 patch_light_maxdev_factor = 1.5
-patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
-patch_min_area_remain     = 0.99
-enable_patch_fission      = false
 conservation_tol          = 0.001
 growth_memory_days        = 365.0
 
@@ -65,7 +62,6 @@ min_recruit_size = 1.0e-2
 
 [init]
 init_mode    = 1                  # a census: one patch per 20 m quadrat, fused by MEDS before the first step
-restart_file = "none"
 census_file  = "data/bci_census2010_meds.csv"   # run_example.py builds it from bci_census.toml
 pft_config   = "calibration/pft_parameters_calibrated.toml"
 soil_temp    = 298.65             # [K] the tower's mean air temperature, as [soil].deep_temp
@@ -116,9 +112,6 @@ file_chunk = "run"
 # on (calibration.toml).
 [trait_dynamics]
 trait_plasticity_on = true
-
-[carbon]
-gpp_ref       = 0.3
 
 [leaf_physiology]
 stomatal_model     = "medlyn"

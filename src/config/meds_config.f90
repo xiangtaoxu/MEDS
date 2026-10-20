@@ -43,17 +43,11 @@ module meds_config
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
    public :: maps_opts_t, soil_maps_on
-   public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: INTEG_ARK, INTEG_RK45
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
-   !----- Parallel backend labels (the actual backend is chosen at COMPILE time via the    !
-   !      compiler's do-concurrent target; this is for reporting/reproducibility only).    !
-   integer(ik), parameter :: BK_SERIAL    = 0_ik
-   integer(ik), parameter :: BK_MULTICORE = 1_ik
-   integer(ik), parameter :: BK_GPU       = 2_ik
    !----- Upper bound on the declared forcing recycle window, in whole calendar years. Purely a  !
    !      search bound for the whole-year test (no real met record spans centuries). -------------!
    integer(ik), parameter :: MAX_RECYCLE_YEARS = 200_ik
@@ -227,7 +221,6 @@ module meds_config
       !      per-(patch,sub-step) CAS temp / GPP / ET / soil-top temp / leaf temp to a CSV. -------------!
       logical            :: fast_probe      = .false.
       character(len=256) :: fast_probe_file = 'fast_probe.csv'
-      integer(ik) :: backend                     !< reporting only
 
       !----- Structural master switches. --------------------------------------------------!
       logical     :: do_cohort_fissfuse, do_patch_fissfuse, do_patch_disturbance
@@ -245,15 +238,14 @@ module meds_config
 
       !----- Patch fusion / termination. --------------------------------------------------!
       integer(ik) :: max_patch, n_patch_fusion_iter
-      real(wp)    :: patch_light_tol, patch_light_maxdev_factor, patch_diff_age_tol
+      real(wp)    :: patch_light_tol, patch_light_maxdev_factor
       !----- The light-profile tolerance steps from patch_light_tol to this ceiling and no further:   !
       !      two patches more different than it stay apart even above max_patch, which makes the   !
       !      patch count a target rather than a hard limit.                                          !
       real(wp)    :: patch_light_tol_max
       real(wp)    :: patch_light_tol_mult        !< DERIVED (geometric multiplier)
       real(wp)    :: light_ext_coeff_fusefiss = 0.5_wp   !< [-] extinction of the light profiles fusion compares
-      real(wp)    :: min_patch_area, patch_min_area_remain
-      logical     :: enable_patch_fission
+      real(wp)    :: min_patch_area
 
       !----- Patch disturbance, growth memory, recruitment, conservation. -----------------!
       real(wp) :: patch_disturbance_rate, disturbance_survive_height
@@ -261,7 +253,7 @@ module meds_config
 
       !----- Initial conditions (init_mode: 0 bare | 1 census | 2 restart). ---------------!
       integer(ik)        :: init_mode
-      character(len=256) :: init_restart_file, init_census_file
+      character(len=256) :: init_restart_file = '', init_census_file = ''
       !----- The soil state a run starts from when no state file restores one: every layer of    !
       !      every patch at this temperature and volumetric water content. ----------------------!
       real(wp)           :: init_soil_temp  = 288.0_wp   !< [K]
@@ -311,7 +303,7 @@ module meds_config
 
       !----- Carbon growth: the model's demographic growth is carbon-prognostic (wood_carbon is  !
       !       the size anchor, driven by NPP). gpp_ref is the stub GPP when the fast loop is off.  !
-      real(wp)    :: gpp_ref                  !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
+      real(wp)    :: gpp_ref = 0.0_wp         !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
 
       !----- Light trait plasticity ([trait_dynamics]; docs/science/plant_traits.md). OPT-IN:       !
       !      default .false. => cohort leaf traits (sla/vcmax25/rd25/leaf_turnover_rate) stay at   !

@@ -18,8 +18,7 @@ module meds_config_io
    use meds_kinds,      only : wp, ik
    use meds_allometry_lib, only : HEIGHT_POWER, HEIGHT_CHAVE
    use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
-                               BK_SERIAL,                                                       &
-                               INTEG_ARK, INTEG_RK45, &
+                               INIT_CENSUS, INIT_RESTART, INTEG_ARK, INTEG_RK45,                &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_config,     only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    use meds_soil_column_config, only : soil_column_config_t
@@ -293,7 +292,6 @@ contains
       s%albedo_nir_aged     = toml_real(tm, 'snow.albedo_nir_aged',     s%albedo_nir_aged)
       s%snow_emiss          = toml_real(tm, 'snow.snow_emiss',          s%snow_emiss)
       s%liquid_holding_frac = toml_real(tm, 'snow.liquid_holding_frac', s%liquid_holding_frac)
-      s%snow_stab_thresh    = toml_real(tm, 'snow.snow_stab_thresh',    s%snow_stab_thresh)
       s%min_new_snow_mass   = toml_real(tm, 'snow.min_new_snow_mass',   s%min_new_snow_mass)
       s%tiny_snow_mass      = toml_real(tm, 'snow.tiny_snow_mass',      s%tiny_snow_mass)
       s%ny07_a              = toml_real(tm, 'snow.ny07_a',              s%ny07_a)
@@ -1075,7 +1073,6 @@ contains
       call toml_parse_file(path, tm, found)
       if (.not. found) error stop 'meds_config: main config file not found: '//trim(path)
       call check_config_keys(tm, MAIN_KEYS, unknown)
-      cfg%backend = BK_SERIAL                        ! reporting only, not a config parameter
 
       call req_dur (tm, 'run.dt_slow',    cfg%dt_slow,    miss)
       call req_date(tm, 'run.start_time', cfg%start_time, miss)
@@ -1197,10 +1194,7 @@ contains
          cfg%patch_light_tol_max = max(0.15_wp, cfg%patch_light_tol)   ! clamp-ok: the setting's default
       cfg%patch_light_tol_max = toml_real(tm, 'demography.patch_light_tol_max', cfg%patch_light_tol_max)
       cfg%light_ext_coeff_fusefiss = toml_real(tm, 'demography.light_ext_coeff_fusefiss', 0.5_wp)
-      call req_r(tm, 'demography.patch_diff_age_tol',     cfg%patch_diff_age_tol,     miss)
       call req_r(tm, 'demography.min_patch_area',         cfg%min_patch_area,         miss)
-      call req_r(tm, 'demography.patch_min_area_remain',  cfg%patch_min_area_remain,  miss)
-      call req_l(tm, 'demography.enable_patch_fission',   cfg%enable_patch_fission,   miss)
       call req_r(tm, 'demography.conservation_tol',       cfg%conservation_tol,       miss)
       call req_r(tm, 'demography.growth_memory_days',     cfg%growth_memory_days,     miss)
 
@@ -1210,8 +1204,18 @@ contains
       call req_r(tm, 'recruitment.min_recruit_size',      cfg%min_recruit_size,       miss)
 
       call req_i(tm, 'init.init_mode',     cfg%init_mode,         miss)
-      call req_s(tm, 'init.restart_file',  cfg%init_restart_file, miss)
-      call req_s(tm, 'init.census_file',   cfg%init_census_file,  miss)
+      !----- The state file and the census file are required by the mode that starts from them,     !
+      !      and optional otherwise: the Python census start reads census_file in any mode. ---------!
+      if (cfg%init_mode == INIT_RESTART) then
+         call req_s(tm, 'init.restart_file', cfg%init_restart_file, miss)
+      else
+         cfg%init_restart_file = toml_string(tm, 'init.restart_file', '')
+      end if
+      if (cfg%init_mode == INIT_CENSUS) then
+         call req_s(tm, 'init.census_file', cfg%init_census_file, miss)
+      else
+         cfg%init_census_file = toml_string(tm, 'init.census_file', '')
+      end if
       call req_s(tm, 'init.pft_config',    cfg%pft_config,        miss)
       cfg%init_soil_temp  = toml_real(tm, 'init.soil_temp',  cfg%init_soil_temp)
       cfg%init_soil_theta = toml_real(tm, 'init.soil_theta', cfg%init_soil_theta)
@@ -1231,8 +1235,12 @@ contains
       call req_i(tm, 'state.interval_years', cfg%state_interval_years_cfg, miss)
 
 
-      !----- Carbon growth: stub GPP (used when the fast loop is off). ---------------------!
-      call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
+      !----- Carbon growth: the stub GPP of a run without the fast loop, required there only. ---!
+      if (.not. cfg%fast_biophysics_on) then
+         call req_r(tm, 'carbon.gpp_ref', cfg%gpp_ref, miss)
+      else
+         cfg%gpp_ref = toml_real(tm, 'carbon.gpp_ref', cfg%gpp_ref)
+      end if
 
       !----- Light trait plasticity (opt-in; DEFAULTED false). Leaf phenology always runs;        !
       !      its per-PFT cue params are read by load_phenology_pft. ------------------------------!
@@ -1362,7 +1370,6 @@ contains
       call req_pa(tp, 'pft.leaf_width',              cfg%pft%leaf_width,              npft, miss)
       call req_pa(tp, 'pft.branch_diameter',         cfg%pft%branch_diameter,         npft, miss)
       call req_pa(tp, 'pft.root_to_leaf_ratio',     cfg%pft%root_to_leaf_ratio,     npft, miss)
-      call req_pa(tp, 'pft.huber_value',            cfg%pft%huber_value,            npft, miss)
       call req_pa(tp, 'pft.storage_cushion',        cfg%pft%storage_cushion,        npft, miss)
       call req_pa(tp, 'pft.growth_resp_factor',     cfg%pft%growth_resp_factor,     npft, miss)
       !----- Storage maintenance: OPTIONAL, default 0 (off). -----------------------------!
@@ -1371,7 +1378,6 @@ contains
       call opt_pa(tp, 'pft.retained_carbon_fraction', cfg%pft%retained_carbon_fraction, npft, miss)
       call req_pa(tp, 'pft.leaf_turnover_rate_toc', cfg%pft%leaf_turnover_rate_toc, npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
-      call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
       call req_pa(tp, 'pft.f_labile_leaf',          cfg%pft%f_labile_leaf,          npft, miss)
       call req_pa(tp, 'pft.f_labile_stem',          cfg%pft%f_labile_stem,          npft, miss)
       call req_pa(tp, 'pft.struct_lignin_frac',     cfg%pft%struct_lignin_frac,     npft, miss)
@@ -1475,9 +1481,9 @@ contains
            //'theta_cj_c4,theta_ic_c4,'                                                               &
            //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,wstress_sref_stomata,' &
            //'stomata_psi_onset,leaf_surf_water_max,wood_surf_water_max,'                                &
-           //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
+           //'sla,root_to_leaf_ratio,aboveground_frac,storage_cushion,growth_resp_factor,'      &
            //'storage_turnover_rate,retained_carbon_fraction,'                                     &
-           //'leaf_turnover_rate_toc,fineroot_turnover_rate,wood_carbon_density,'            &
+           //'leaf_turnover_rate_toc,fineroot_turnover_rate,'                                &
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
            //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_leaf_turnover,'                        &
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
@@ -1489,11 +1495,11 @@ contains
            //'root_depth_b1,root_depth_b2,specific_root_length,fine_root_radius'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 94 ITEMS: i0 + 8 + i0 + 2 + i0 + 48 + i0 + 32. A format SHORTER than the value    !
+            !----- 92 ITEMS: i0 + 8 + i0 + 2 + i0 + 46 + i0 + 32. A format SHORTER than the value    !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8),",",i0,32(",",es15.8))') &
+            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,46(",",es15.8),",",i0,32(",",es15.8))') &
                  pf, p%wood_density(pf), p%allom(pf)%hgt_max,                                           &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -1505,11 +1511,11 @@ contains
                  p%katul_lambda25(pf), pft_wstress_psi_open(cfg, pf), pft_wstress_psi_close(cfg, pf),   &
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf), pft_stomata_psi_onset(cfg, pf),   &
                  p%leaf_surf_water_max(pf), p%wood_surf_water_max(pf),                                &
-                 p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%allom(pf)%aboveground_frac,  &
+                 p%sla(pf), p%root_to_leaf_ratio(pf), p%allom(pf)%aboveground_frac,                     &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &
                  p%retained_carbon_fraction(pf),                                                     &
                  p%leaf_turnover_rate_toc(pf),                                                       &
-                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf),                             &
+                 p%fineroot_turnover_rate(pf),                                                        &
                  p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf),                  &
                  p%recruit_shade_decay(pf), p%kplastic_vcmax(pf), p%kplastic_rd(pf),                   &
                  p%kplastic_sla(pf), p%kplastic_leaf_turnover(pf),                                   &

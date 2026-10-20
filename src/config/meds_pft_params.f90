@@ -125,7 +125,6 @@ module meds_pft_params
       real(wp),    allocatable :: leaf_width(:)             !< [m]  characteristic leaf width (leaf boundary layer)
       real(wp),    allocatable :: branch_diameter(:)        !< [m]  characteristic branch diameter (wood boundary layer)
       real(wp),    allocatable :: root_to_leaf_ratio(:)     !< [--]     fine-root:leaf target ratio (ED2 q)
-      real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
       real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf + fine-root target
       !----- STORAGE MAINTENANCE. Fractional turnover of the non-structural pool [1/yr], charged as
       !      respiration and taken from the pool -- ED2's growth_balive.f90 form, with no temperature
@@ -171,7 +170,6 @@ module meds_pft_params
       real(wp),    allocatable :: leaf_angle_std(:)                           !< [deg] its standard deviation
       real(wp),    allocatable :: leaf_turnover_rate_toc(:) !< [1/yr]   top-of-canopy baseline leaf turnover
       real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
-      real(wp),    allocatable :: wood_carbon_density(:)    !< [kgC/m3] wood carbon density (Huber sapwood carbon)
       !----- Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter;      !
       !      docs/science/soil_carbon.md §5). Consumed wherever plant carbon dies (leaf/fine-       !
       !      root turnover shed, continuous background mortality, cull-termination, treefall        !
@@ -255,7 +253,7 @@ contains
       allocate(pft%leaf_surf_water_max(n), pft%wood_surf_water_max(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
       allocate(pft%leaf_width(n), pft%branch_diameter(n))
-      allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
+      allocate(pft%sla(n), pft%root_to_leaf_ratio(n),                                        &
                pft%storage_cushion(n), pft%growth_resp_factor(n),                            &
                pft%storage_turnover_rate(n), pft%retained_carbon_fraction(n),               &
                pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
@@ -265,8 +263,7 @@ contains
                pft%wood_transmit_nir(n), pft%wood_emissivity(n),                             &
                pft%leaf_clumping(n), pft%wood_clumping(n),                                   &
                pft%leaf_angle_mean(n), pft%leaf_angle_std(n),                                &
-               pft%leaf_turnover_rate_toc(n), pft%fineroot_turnover_rate(n),                  &
-               pft%wood_carbon_density(n))
+               pft%leaf_turnover_rate_toc(n), pft%fineroot_turnover_rate(n))
       pft%storage_turnover_rate = 0.0_wp   ! optional key; 0 = no storage maintenance
       allocate(pft%max_relative_growth_rate(n), pft%max_absolute_growth_rate(n),                     &
                pft%max_absolute_growth_exponent(n))

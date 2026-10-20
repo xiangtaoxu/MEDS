@@ -322,7 +322,8 @@ program test_region
                 'do not apply to [run].mode = "region"')
    call refused('a region needs the archive', '[forcing]'//nl()//'format = "ED_default"'//nl()//region_block(), &
                 .true., .true., 'needs forcing.format = "ED_ERA5land"')
-   call refused('a region does not start from a census', '[init]'//nl()//'init_mode = 1'//nl()//region_block(), &
+   call refused('a region does not start from a census', '[init]'//nl()//'init_mode = 1'//nl()//           &
+                'census_file = "census.csv"'//nl()//region_block(),                                           &
                 .true., .false., 'not a census')
    call refused('a fast-tier window may not straddle two slow steps',                               &
                 '[output]'//nl()//'fast_interval_steps = 5'//nl()//site_block(1_ik), .false., .false., &
