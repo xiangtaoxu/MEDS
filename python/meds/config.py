@@ -165,16 +165,18 @@ class RunConfig:
 
     def get(self, key: str, file: str = "main", pft: int | None = None, default=None):
         """A key's value in the main file or the PFT file. With ``pft`` (1-based), one PFT's element
-        of a per-PFT array."""
+        of a per-PFT array; a key the PFT file gives as one value for every PFT ([allometry],
+        [hydraulics]) returns that value."""
         v = deep_get(self._table(file), key, default)
-        if pft is None or v is default:
+        if pft is None or v is default or not isinstance(v, list):
             return v
         return v[pft - 1]
 
     def set(self, key: str, value, file: str = "main", pft: int | None = None) -> None:
         """Set a key in the main file or the PFT file. With ``pft`` (1-based), set that PFT's element
-        of a per-PFT array and keep the others. A per-PFT key the PFT file does not list can be set
-        only when there is one PFT, because the other PFTs' values would be unknown."""
+        of a per-PFT array and keep the others; a key given as one value for every PFT stays one
+        value with one PFT and becomes one per PFT with more. A per-PFT key the PFT file does not
+        list can be set only when there is one PFT, because the other PFTs' values would be unknown."""
         table = self._table(file)
         if pft is None:
             deep_set(table, key, value)
@@ -185,6 +187,12 @@ class RunConfig:
                 raise KeyError(f"'{key}' is not in the PFT file, and with {self.n_pft} PFTs the other "
                                "PFTs' values are unknown: add it to the PFT file")
             arr = [value]
+        elif not isinstance(arr, list):
+            if self.n_pft == 1:
+                deep_set(table, key, value)
+                return
+            arr = [arr] * self.n_pft
+            arr[pft - 1] = value
         else:
             arr = list(arr)
             arr[pft - 1] = value

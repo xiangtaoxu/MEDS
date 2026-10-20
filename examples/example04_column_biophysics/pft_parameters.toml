@@ -7,6 +7,10 @@
 
 [pft]
 wood_density       = [0.60]      # [g/cm3] mid-successional
+# The mortality hazard, mort_gamma + mort_alpha*exp(-mort_beta*growth_avg).
+mort_gamma         = [0.0094]   # [1/yr]
+mort_alpha         = [0.05]     # [1/yr]
+mort_beta          = [18.72]    # [yr/cm]
 
 #----- Canopy-element geometry for the aerodynamic boundary layers.
 leaf_width         = [0.04]     # [m]  characteristic leaf width
@@ -70,21 +74,17 @@ storage_cushion        = [0.5]  # [--] storage target, x (leaf + fine-root targe
 growth_resp_factor     = [0.3]
 retained_carbon_fraction = [0.0]   # [--] no resorption, as the example's calibration assumes (default 0.3)
 leaf_turnover_rate_toc = [0.5]   # [1/yr]
+# Light plasticity: a trait is its top-of-canopy value times exp(k * LAI above it), k in 1/(m2/m2).
+kplastic_vcmax         = [-0.11760191025318557]
+kplastic_rd            = [-0.11760191025318557]
+kplastic_sla           = [0.12615477645341722]
+kplastic_leaf_turnover = [-0.015560662518427415]
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
 # Necromass -> litter-destination split, as the reference meds_config_pft.toml's mid-successional PFT.
 f_labile_leaf          = [0.70]  # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05]  # [--] labile fraction of wood/CWD necromass
 struct_lignin_frac     = [0.25]  # [--] lignin fraction of the structural-litter stream
-
-[camac]
-mort_rho_ref   = 0.6
-mort_gamma_0   = 0.0094
-mort_gamma_exp = -1.8392
-mort_alpha_0   = 0.05
-mort_alpha_exp = -1.1493
-mort_beta_0    = 18.72
-mort_beta_exp  = 0.2792
 
 [allometry]
 b1Ht       = 1.139963
@@ -99,6 +99,27 @@ wai_b2             = [2.0947]    # [--] ED2 b2WAI
 sapwood_area_b1    = [1.582]     # [cm2/cm^b2] ED2 b1SA
 sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
 aboveground_frac       = [0.7]
+
+[hydraulics]
+# The PFT's plant-hydraulics traits (meds_config_pft.toml documents each key); one value for every PFT,
+# or one per PFT.
+leaf_pi0             = -1.5                 # [MPa]
+leaf_elastic_mod     = 12.0                 # [MPa]
+leaf_apoplast_frac   = 0.3                  # [-]
+leaf_water_sat       = 2.0                  # [kg H2O/kgC]
+wood_pi0             = -1.0                 # [MPa]
+wood_elastic_mod     = 8.0                  # [MPa]
+wood_apoplast_frac   = 0.2                  # [-]
+wood_water_sat       = 1.0                  # [kg H2O/kgC]
+wood_psi50           = -2.0                 # [MPa]
+wood_kexp            = 2.0                  # [-]
+wood_kmax            = 3.2683981418222547   # [kg/m/s/MPa]
+vessel_curl          = 1.5                  # [-]
+root_beta            = 0.1                  # [-]
+root_depth_b1        = 1.114058             # [m]
+root_depth_b2        = 0.4223014            # [-]
+specific_root_length = 20000.0              # [m/kgC]
+fine_root_radius     = 0.00025              # [m]
 
 # No [phenology] section: without it every PFT always flushes and never senesces, losing leaves to
 # background turnover alone, which is what a single evergreen tropical PFT needs.

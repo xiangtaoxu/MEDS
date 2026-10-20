@@ -89,7 +89,7 @@ contains
             pf = int(pft(i), ik)
             if (g_cfg%trait_plasticity_on) then
                call light_plastic_traits(real(lai_above(i), wp), t%sla(pf), t%vcmax25(pf), t%rd25(pf),  &
-                                         t%leaf_turnover_rate_toc(pf), t%kplastic_sla(pf), t%kplastic_vm0(pf), &
+                                         t%leaf_turnover_rate_toc(pf), t%kplastic_sla(pf), t%kplastic_vcmax(pf), &
                                          t%kplastic_rd(pf), t%kplastic_leaf_turnover(pf), sla_t, vc_t, rd_t,   &
                                          turnover_t)
             else

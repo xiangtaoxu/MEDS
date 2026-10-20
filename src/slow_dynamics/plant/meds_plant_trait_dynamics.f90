@@ -40,14 +40,14 @@ contains
    ! docs/science/plant_traits.md eq. (1).                                                      !
    !---------------------------------------------------------------------------------------!
    elemental pure subroutine light_plastic_traits(cum_lai_above, sla_toc, vcmax25_toc, rd25_toc,  &
-            turnover_toc, kplastic_sla, kplastic_vm0, kplastic_rd, kplastic_turnover,              &
+            turnover_toc, kplastic_sla, kplastic_vcmax, kplastic_rd, kplastic_turnover,              &
             sla_target, vcmax25_target, rd25_target, turnover_target)
       real(wp), intent(in)  :: cum_lai_above                                 !< [m2/m2] LAI above the cohort
       real(wp), intent(in)  :: sla_toc, vcmax25_toc, rd25_toc, turnover_toc  !< top-of-canopy trait values
-      real(wp), intent(in)  :: kplastic_sla, kplastic_vm0, kplastic_rd, kplastic_turnover  !< light-response slopes
+      real(wp), intent(in)  :: kplastic_sla, kplastic_vcmax, kplastic_rd, kplastic_turnover  !< light-response slopes
       real(wp), intent(out) :: sla_target, vcmax25_target, rd25_target, turnover_target
       sla_target      = sla_toc      * light_gradient(kplastic_sla,      cum_lai_above)
-      vcmax25_target  = vcmax25_toc  * light_gradient(kplastic_vm0,      cum_lai_above)
+      vcmax25_target  = vcmax25_toc  * light_gradient(kplastic_vcmax,      cum_lai_above)
       rd25_target     = rd25_toc     * light_gradient(kplastic_rd,       cum_lai_above)
       turnover_target = turnover_toc * light_gradient(kplastic_turnover, cum_lai_above)
    end subroutine light_plastic_traits

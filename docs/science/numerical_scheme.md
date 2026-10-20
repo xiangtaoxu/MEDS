@@ -294,7 +294,7 @@ capacity held independent of ψ, that accumulation reproduces the 12.5 s answer 
 *Leaf water potential is the sensitive input, because the fast water-stress control amplifies it.*
 The non-stomatal limb `beta = (ψ − ψ_close)/(ψ_open − ψ_close)` is a linear ramp on Vcmax/Jmax/TPU in
 the step-start leaf potential, from the turgor-loss point to twice it (`leaf_gas_exchange.md` §4.1):
-its slope is about 0.6 MPa⁻¹ on the default `[hydraulics]` curve, so a 1 MPa error in ψ becomes a
+its slope is about 0.6 MPa⁻¹ on the shipped `[hydraulics]` curve, so a 1 MPa error in ψ becomes a
 ~60% error in capacity. An explicit plant-water update with frozen sapflow and uptake makes errors of
 that size, growing with the step: on the same stand it runs the daytime-mean leaf potential at
 −1.19 MPa at 900 s against −0.23 MPa at 12.5 s (a per-step |Δψ| of up to 0.84 MPa), and GPP 33% and

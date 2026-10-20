@@ -19,7 +19,7 @@ program test_plant_hydraulics
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head, pi
    use meds_plant_hydr_lib, only : conductance_retained_fraction, kirchhoff_potential, hydro_table_t,            &
-                                   build_hydro_table, wood_density_to_kmax, root_fraction_profile,               &
+                                   build_hydro_table, root_fraction_profile,                                     &
                                    xylem_max_conductance, rhizosphere_conductance, xylem_sapflow,                &
                                    tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi, tissue_psi_to_water,    &
                                    tissue_capacitance, tissue_water_to_psi, tissue_capped_water, water_curve_t,  &
@@ -53,6 +53,11 @@ contains
       p%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       p%wood_psi50 = -2.0_wp ; p%wood_kexp = 2.0_wp
       p%wood_kmax = 9.0_wp ; p%vessel_curl = 1.5_wp      ! 3.0e-3 kg/s/MPa over the 20 m path
+      p%root_beta = 0.1_wp
+      p%root_depth_b1 = 1.1140580_wp
+      p%root_depth_b2 = 0.4223014_wp
+      p%specific_root_length = 2.0e4_wp
+      p%fine_root_radius = 2.5e-4_wp
       o = hydro_opts_t()   ! gravity on
    end subroutine defaults
 
@@ -168,8 +173,7 @@ contains
    !=======================================================================================!
    !----- The maximum conductance is the sapwood's, wood_kmax * sap_area / (height * vessel_curl):  !
    !      doubling the conductivity, doubling the sapwood area and halving the path factor give the !
-   !      same step, and a faster one than the base. wood_kmax follows wood density (Xu et al.    !
-   !      2016): 3.27 at 0.6 g/cm3, falling with density, and held at the fit's 0.35-0.95. -------!
+   !      same step, and a faster one than the base. ------------------------------------------!
    subroutine test_sapwood_conductance()
       real(wp) :: k0
       print '(a)', '-- Sapwood conductance --'
@@ -181,14 +185,6 @@ contains
                  2.0_wp * k0, 1.0e-15_wp)
       call check_true('a plant with no sapwood keeps a positive conductance',                         &
                       xylem_max_conductance(9.0_wp, 0.0_wp, 20.0_wp, 1.5_wp) > 0.0_wp)
-      call check('wood_kmax at 0.6 g/cm3 (Xu et al. 2016)', wood_density_to_kmax(0.6_wp),       &
-                 exp(2.348_wp - 2.455_wp*0.6_wp + 0.5_wp*0.6186_wp), 1.0e-12_wp)
-      call check_true('denser wood conducts less',                                               &
-                      wood_density_to_kmax(0.8_wp) < wood_density_to_kmax(0.4_wp))
-      call check('below the fitted range: the 0.35 value', wood_density_to_kmax(0.2_wp),        &
-                 wood_density_to_kmax(0.35_wp), 0.0_wp)
-      call check('above the fitted range: the 0.95 value', wood_density_to_kmax(1.1_wp),        &
-                 wood_density_to_kmax(0.95_wp), 0.0_wp)
    end subroutine test_sapwood_conductance
 
    !=======================================================================================!
@@ -235,10 +231,12 @@ contains
    ! Gardner's value, so a layer split in two keeps its total.                                     !
    !=======================================================================================!
    subroutine test_cohort_roots()
-      type(hydro_params_t) :: hp                       ! the defaults: ED2 IALLOM 1, beta 0.1
+      type(hydro_params_t) :: hp
+      type(hydro_opts_t)   :: o
       real(wp)    :: edges(13), frac(12), depth, lv, half, g, g_half
       integer(ik) :: k
       print '(a)', '-- Cohort roots --'
+      call defaults(hp, o)                             ! ED2 IALLOM 1, beta 0.1
       call check('a 35 m tree roots to 5 m (ED2 IALLOM 1)', cohort_root_depth(35.0_wp, hp, 10.0_wp), 5.0_wp, 1.0e-3_wp)
       call check('the rooting depth stops at the soil column', cohort_root_depth(35.0_wp, hp, 2.0_wp), 2.0_wp, 0.0_wp)
       call check_true('a 3 m sapling roots shallower than 2 m', cohort_root_depth(3.0_wp, hp, 10.0_wp) < 2.0_wp)

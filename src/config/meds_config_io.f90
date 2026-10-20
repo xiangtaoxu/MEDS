@@ -9,12 +9,10 @@
 ! ERROR. The exceptions are the optional keys -- solver settings, process switches and a   !
 ! few blocks ([soil], [snow], [aerodynamics], [soil_carbon]) -- which fall back to their   !
 ! defaults. The MAIN file (passed on the CLI) holds all non-PFT parameters and names the   !
-! PFT file; the PFT file holds all PFT-specific traits plus the                            !
-! allometry and mortality-hazard coefficients. Presence is tracked while reading (a        !
-! "missing key" list); after both files are read, any missing required key aborts with the !
-! full list. Derived quantities are then computed (derive_parameters); with                !
-! [options].override_derived a [derived] block in the PFT file overwrites the computed     !
-! mortality-hazard parameters and light-plasticity slopes.                                 !
+! PFT file; the PFT file holds every PFT trait, its allometry and its hydraulics among     !
+! them. Presence is tracked while reading (a "missing key" list); after both files are     !
+! read, any missing required key aborts with the full list. Derived quantities are then    !
+! computed (derive_parameters).                                                            !
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
@@ -1142,29 +1140,6 @@ contains
       cfg%fast_probe        = toml_logical(tm, 'fast.fast_probe',        .false.)
       cfg%fast_probe_file   = toml_string (tm, 'fast.fast_probe_file',   'fast_probe.csv')
 
-      !----- [hydraulics]: each key DEFAULTED to its hydraulics_config_t value, which pft.<key>     !
-      !      overrides per PFT. Consumed only by the fast loop (fast_biophysics_on). ---------------!
-      cfg%hydraulics%leaf_pi0       = toml_real(tm, 'hydraulics.leaf_pi0',       cfg%hydraulics%leaf_pi0)
-      cfg%hydraulics%leaf_elastic_mod       = toml_real(tm, 'hydraulics.leaf_elastic_mod',       cfg%hydraulics%leaf_elastic_mod)
-      cfg%hydraulics%leaf_apoplast_frac        = toml_real(tm, 'hydraulics.leaf_apoplast_frac', &
-                   cfg%hydraulics%leaf_apoplast_frac)
-      cfg%hydraulics%leaf_water_sat = toml_real(tm, 'hydraulics.leaf_water_sat', cfg%hydraulics%leaf_water_sat)
-      cfg%hydraulics%wood_pi0       = toml_real(tm, 'hydraulics.wood_pi0',       cfg%hydraulics%wood_pi0)
-      cfg%hydraulics%wood_elastic_mod       = toml_real(tm, 'hydraulics.wood_elastic_mod',       cfg%hydraulics%wood_elastic_mod)
-      cfg%hydraulics%wood_apoplast_frac        = toml_real(tm, 'hydraulics.wood_apoplast_frac', &
-                   cfg%hydraulics%wood_apoplast_frac)
-      cfg%hydraulics%wood_water_sat = toml_real(tm, 'hydraulics.wood_water_sat', cfg%hydraulics%wood_water_sat)
-      cfg%hydraulics%wood_psi50     = toml_real(tm, 'hydraulics.wood_psi50',     cfg%hydraulics%wood_psi50)
-      cfg%hydraulics%wood_kexp      = toml_real(tm, 'hydraulics.wood_kexp',      cfg%hydraulics%wood_kexp)
-      cfg%hydraulics%vessel_curl    = toml_real(tm, 'hydraulics.vessel_curl',    cfg%hydraulics%vessel_curl)
-      cfg%hydraulics%root_beta     = toml_real(tm, 'hydraulics.root_beta',     cfg%hydraulics%root_beta)
-      cfg%hydraulics%root_depth_b1 = toml_real(tm, 'hydraulics.root_depth_b1', cfg%hydraulics%root_depth_b1)
-      cfg%hydraulics%root_depth_b2 = toml_real(tm, 'hydraulics.root_depth_b2', cfg%hydraulics%root_depth_b2)
-      cfg%hydraulics%specific_root_length = toml_real(tm, 'hydraulics.specific_root_length',                &
-                                                      cfg%hydraulics%specific_root_length)
-      cfg%hydraulics%fine_root_radius     = toml_real(tm, 'hydraulics.fine_root_radius',                    &
-                                                      cfg%hydraulics%fine_root_radius)
-
       !----- [soil]/[snow]/[aerodynamics] fast-loop biophysics run-config, and its solver         !
       !      settings in [fast] (every key DEFAULTED to its type's value, so an absent block      !
       !      keeps the defaults). build_fast_context copies these verbatim into the column        !
@@ -1255,7 +1230,6 @@ contains
       call req_l(tm, 'state.write_state',    cfg%state_write_state,        miss)
       call req_i(tm, 'state.interval_years', cfg%state_interval_years_cfg, miss)
 
-      call req_l(tm, 'options.override_derived', cfg%override_derived,         miss)
 
       !----- Carbon growth: stub GPP (used when the fast loop is off). ---------------------!
       call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
@@ -1395,27 +1369,6 @@ contains
       call opt_pa(tp, 'pft.storage_turnover_rate', cfg%pft%storage_turnover_rate,  npft, miss)
       !----- Leaf and fine-root resorption: OPTIONAL, default 0.3. ----------------------!
       call opt_pa(tp, 'pft.retained_carbon_fraction', cfg%pft%retained_carbon_fraction, npft, miss)
-      !----- PER-PFT HYDRAULIC TRAITS, all OPTIONAL. An absent key keeps the HYD_UNSET sentinel     !
-      !      and the table builder substitutes the [hydraulics] scalar (wood_kmax, a [pft] key      !
-      !      only, follows the PFT's wood density), so a config can make ONE trait per-PFT          !
-      !      without restating the others. ---------------------------------------------------------!
-      call opt_pa(tp, 'pft.leaf_pi0',            cfg%pft%hyd_leaf_pi0,            npft, miss)
-      call opt_pa(tp, 'pft.leaf_elastic_mod',    cfg%pft%hyd_leaf_elastic_mod,    npft, miss)
-      call opt_pa(tp, 'pft.leaf_apoplast_frac',  cfg%pft%hyd_leaf_apoplast_frac,  npft, miss)
-      call opt_pa(tp, 'pft.leaf_water_sat',      cfg%pft%hyd_leaf_water_sat,      npft, miss)
-      call opt_pa(tp, 'pft.wood_pi0',            cfg%pft%hyd_wood_pi0,            npft, miss)
-      call opt_pa(tp, 'pft.wood_elastic_mod',    cfg%pft%hyd_wood_elastic_mod,    npft, miss)
-      call opt_pa(tp, 'pft.wood_apoplast_frac',  cfg%pft%hyd_wood_apoplast_frac,  npft, miss)
-      call opt_pa(tp, 'pft.wood_water_sat',      cfg%pft%hyd_wood_water_sat,      npft, miss)
-      call opt_pa(tp, 'pft.wood_psi50',          cfg%pft%hyd_wood_psi50,          npft, miss)
-      call opt_pa(tp, 'pft.wood_kexp',           cfg%pft%hyd_wood_kexp,           npft, miss)
-      call opt_pa(tp, 'pft.wood_kmax',           cfg%pft%hyd_wood_kmax,           npft, miss)
-      call opt_pa(tp, 'pft.vessel_curl',         cfg%pft%hyd_vessel_curl,         npft, miss)
-      call opt_pa(tp, 'pft.root_beta',           cfg%pft%hyd_root_beta,           npft, miss)
-      call opt_pa(tp, 'pft.root_depth_b1',       cfg%pft%hyd_root_depth_b1,       npft, miss)
-      call opt_pa(tp, 'pft.root_depth_b2',       cfg%pft%hyd_root_depth_b2,       npft, miss)
-      call opt_pa(tp, 'pft.specific_root_length', cfg%pft%hyd_specific_root_length, npft, miss)
-      call opt_pa(tp, 'pft.fine_root_radius',    cfg%pft%hyd_fine_root_radius,    npft, miss)
       call req_pa(tp, 'pft.leaf_turnover_rate_toc', cfg%pft%leaf_turnover_rate_toc, npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
@@ -1427,13 +1380,35 @@ contains
       !      [phenology] section; see load_phenology_pft). ------------------------------------!
       call load_phenology_pft(tp, cfg, npft, miss)
 
-      call req_r(tp, 'camac.mort_rho_ref',   cfg%pft%mort_rho_ref,   miss)
-      call req_r(tp, 'camac.mort_gamma_0',   cfg%pft%mort_gamma_0,   miss)
-      call req_r(tp, 'camac.mort_gamma_exp', cfg%pft%mort_gamma_exp, miss)
-      call req_r(tp, 'camac.mort_alpha_0',   cfg%pft%mort_alpha_0,   miss)
-      call req_r(tp, 'camac.mort_alpha_exp', cfg%pft%mort_alpha_exp, miss)
-      call req_r(tp, 'camac.mort_beta_0',    cfg%pft%mort_beta_0,    miss)
-      call req_r(tp, 'camac.mort_beta_exp',  cfg%pft%mort_beta_exp,  miss)
+      !----- The mortality hazard and the light-plasticity slopes, per PFT. -------------------!
+      call req_pa(tp, 'pft.mort_gamma',             cfg%pft%mort_gamma,             npft, miss)
+      call req_pa(tp, 'pft.mort_alpha',             cfg%pft%mort_alpha,             npft, miss)
+      call req_pa(tp, 'pft.mort_beta',              cfg%pft%mort_beta,              npft, miss)
+      call req_pa(tp, 'pft.kplastic_vcmax',         cfg%pft%kplastic_vcmax,         npft, miss)
+      call req_pa(tp, 'pft.kplastic_rd',            cfg%pft%kplastic_rd,            npft, miss)
+      call req_pa(tp, 'pft.kplastic_sla',           cfg%pft%kplastic_sla,           npft, miss)
+      call req_pa(tp, 'pft.kplastic_leaf_turnover', cfg%pft%kplastic_leaf_turnover, npft, miss)
+
+      !----- Each PFT's hydraulic traits: every key one value for all PFTs, or one per PFT. ---!
+      associate (hydro => cfg%pft%hydro)
+         call req_pa_bcast(tp, 'hydraulics.leaf_pi0',             hydro%leaf_curve%pi0,           npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.leaf_elastic_mod',     hydro%leaf_curve%elastic_mod,   npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.leaf_apoplast_frac',   hydro%leaf_curve%apoplast_frac, npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.leaf_water_sat',       hydro%leaf_curve%water_sat,     npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.wood_pi0',             hydro%wood_curve%pi0,           npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.wood_elastic_mod',     hydro%wood_curve%elastic_mod,   npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.wood_apoplast_frac',   hydro%wood_curve%apoplast_frac, npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.wood_water_sat',       hydro%wood_curve%water_sat,     npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.wood_psi50',           hydro%wood_psi50,               npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.wood_kexp',            hydro%wood_kexp,                npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.wood_kmax',            hydro%wood_kmax,                npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.vessel_curl',          hydro%vessel_curl,              npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.root_beta',            hydro%root_beta,                npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.root_depth_b1',        hydro%root_depth_b1,            npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.root_depth_b2',        hydro%root_depth_b2,            npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.specific_root_length', hydro%specific_root_length,     npft, miss)
+         call req_pa_bcast(tp, 'hydraulics.fine_root_radius',     hydro%fine_root_radius,         npft, miss)
+      end associate
 
       !----- Each PFT's allometry: every key one value for all PFTs, or one per PFT. ---------!
       associate (allom => cfg%pft%allom)
@@ -1473,27 +1448,6 @@ contains
       !----- Install allometry + compute every derived quantity (one consolidation point). -----!
       call derive_parameters(cfg)
 
-      !----- Global override: a [derived] block in the PFT file pins the mortality params. -!
-      if (cfg%override_derived) then
-         call toml_real_array(tp, 'derived.mort_gamma', buf, nout)
-         if (nout == npft) cfg%pft%mort_gamma = buf(1:npft)
-         call toml_real_array(tp, 'derived.mort_alpha', buf, nout)
-         if (nout == npft) cfg%pft%mort_alpha = buf(1:npft)
-         call toml_real_array(tp, 'derived.mort_beta', buf, nout)
-         if (nout == npft) cfg%pft%mort_beta = buf(1:npft)
-         !----- ... and the light-plasticity slopes: a cohort's trait is its PFT's top-of-canopy  !
-         !      value times exp(k * LAI above it) [1/(m2/m2)]. Each one is pinned on its own, so Rd !
-         !      can fall faster than Vcmax down the canopy (lower Rd/Vcmax in shade).  -----------!
-         call toml_real_array(tp, 'derived.kplastic_vcmax', buf, nout)
-         if (nout == npft) cfg%pft%kplastic_vm0 = buf(1:npft)
-         call toml_real_array(tp, 'derived.kplastic_rd', buf, nout)
-         if (nout == npft) cfg%pft%kplastic_rd = buf(1:npft)
-         call toml_real_array(tp, 'derived.kplastic_sla', buf, nout)
-         if (nout == npft) cfg%pft%kplastic_sla = buf(1:npft)
-         call toml_real_array(tp, 'derived.kplastic_leaf_turnover', buf, nout)
-         if (nout == npft) cfg%pft%kplastic_leaf_turnover = buf(1:npft)
-      end if
-
       call validate_config(cfg)
    end subroutine load_meds_config
 
@@ -1529,14 +1483,17 @@ contains
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
            //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density,'                &
            //'height_form,b1Ht,b2Ht,chave_a,chave_b,chave_c,chave_rse,chave_e,'                          &
-           //'agb_c1,agb_c2,lai_b1,lai_b2,wai_b1,wai_b2,sapwood_area_b1,sapwood_area_b2'
+           //'agb_c1,agb_c2,lai_b1,lai_b2,wai_b1,wai_b2,sapwood_area_b1,sapwood_area_b2,'            &
+           //'leaf_pi0,leaf_elastic_mod,leaf_apoplast_frac,leaf_water_sat,wood_pi0,wood_elastic_mod,'   &
+           //'wood_apoplast_frac,wood_water_sat,wood_psi50,wood_kexp,wood_kmax,vessel_curl,root_beta,'  &
+           //'root_depth_b1,root_depth_b2,specific_root_length,fine_root_radius'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 77 ITEMS: i0 + 8 + i0 + 2 + i0 + 48 + i0 + 15. A format SHORTER than the value    !
+            !----- 94 ITEMS: i0 + 8 + i0 + 2 + i0 + 48 + i0 + 32. A format SHORTER than the value    !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8),",",i0,15(",",es15.8))') &
+            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8),",",i0,32(",",es15.8))') &
                  pf, p%wood_density(pf), p%allom(pf)%hgt_max,                                           &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -1554,7 +1511,7 @@ contains
                  p%leaf_turnover_rate_toc(pf),                                                       &
                  p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf),                             &
                  p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf),                  &
-                 p%recruit_shade_decay(pf), p%kplastic_vm0(pf), p%kplastic_rd(pf),                   &
+                 p%recruit_shade_decay(pf), p%kplastic_vcmax(pf), p%kplastic_rd(pf),                   &
                  p%kplastic_sla(pf), p%kplastic_leaf_turnover(pf),                                   &
                  p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
                  p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
@@ -1564,7 +1521,15 @@ contains
                  p%allom(pf)%chave_rse, p%allom(pf)%chave_e,                                          &
                  p%allom(pf)%agb_c1, p%allom(pf)%agb_c2, p%allom(pf)%lai_b1, p%allom(pf)%lai_b2,      &
                  p%allom(pf)%wai_b1, p%allom(pf)%wai_b2,                                              &
-                 p%allom(pf)%sapwood_area_b1, p%allom(pf)%sapwood_area_b2
+                 p%allom(pf)%sapwood_area_b1, p%allom(pf)%sapwood_area_b2,                            &
+                 p%hydro(pf)%leaf_curve%pi0, p%hydro(pf)%leaf_curve%elastic_mod,                      &
+                 p%hydro(pf)%leaf_curve%apoplast_frac, p%hydro(pf)%leaf_curve%water_sat,              &
+                 p%hydro(pf)%wood_curve%pi0, p%hydro(pf)%wood_curve%elastic_mod,                      &
+                 p%hydro(pf)%wood_curve%apoplast_frac, p%hydro(pf)%wood_curve%water_sat,              &
+                 p%hydro(pf)%wood_psi50, p%hydro(pf)%wood_kexp, p%hydro(pf)%wood_kmax,                &
+                 p%hydro(pf)%vessel_curl, p%hydro(pf)%root_beta, p%hydro(pf)%root_depth_b1,           &
+                 p%hydro(pf)%root_depth_b2, p%hydro(pf)%specific_root_length,                         &
+                 p%hydro(pf)%fine_root_radius
          end do
       end associate
       close(u)

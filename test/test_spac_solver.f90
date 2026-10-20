@@ -74,7 +74,7 @@ contains
    !     Fixtures.                                                                          !
    !=======================================================================================!
 
-   !----- One PFT with the shipped [hydraulics] defaults and a tropical wood conductivity. ----!
+   !----- One PFT with the shipped [hydraulics] values and a tropical wood conductivity. -----!
    subroutine make_pft(h)
       type(hydro_params_table_t), intent(out) :: h
       h%n_pft = 1_ik
@@ -83,6 +83,11 @@ contains
       h%pft(1)%wood_curve = water_curve_t(pi0=-1.0_wp, elastic_mod=8.0_wp,  apoplast_frac=0.20_wp, water_sat=1.0_wp)
       h%pft(1)%wood_psi50  = -2.0_wp ; h%pft(1)%wood_kexp = 2.0_wp
       h%pft(1)%wood_kmax   = 3.3_wp  ; h%pft(1)%vessel_curl = 1.5_wp
+      h%pft(1)%root_beta = 0.1_wp
+      h%pft(1)%root_depth_b1 = 1.1140580_wp
+      h%pft(1)%root_depth_b2 = 0.4223014_wp
+      h%pft(1)%specific_root_length = 2.0e4_wp
+      h%pft(1)%fine_root_radius = 2.5e-4_wp
       call build_hydro_table(h%pft(1)%vuln_table, h%pft(1)%wood_kexp)
    end subroutine make_pft
 

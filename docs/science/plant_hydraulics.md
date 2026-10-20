@@ -113,12 +113,12 @@ K_s=\exp\!\left(2.348-2.455\,\rho+\tfrac{1}{2}\,0.6186\right) \qquad(11)
 
 $A_{sap}$ is the sapwood area of the stem allometry, $H$ the plant's height, and `vessel_curl`
 (1.5, as in ED2) lengthens the path beyond the height. $K_s$ [kg m⁻¹ s⁻¹ MPa⁻¹], the sapwood
-specific conductivity, is a PFT trait: by default it follows the PFT's wood density $\rho$
-[g cm⁻³] through the fit of Xu et al. (2016, New Phytol 212:80) to 72 species of neotropical
-seasonally dry forests, as ED2 codes it (`plant_hydro_scheme` 2). The fit is lognormal, so the
-residual variance 0.6186 turns its median into the mean (×1.36); $\rho$ outside 0.35–0.95 takes
-the nearest edge. $K_s$ is 6.0 at $\rho$ = 0.35, 3.3 at 0.60 and 1.4 at 0.95; `pft.wood_kmax`
-overrides it. Wood density explains a fifth of the variance ($R^2$ 0.21): one species' $K_s$ can
+specific conductivity, is a PFT trait, `[hydraulics].wood_kmax`. The shipped PFTs take it from their
+wood density $\rho$ [g cm⁻³] through the fit of Xu et al. (2016, New Phytol 212:80) to 72 species of
+neotropical seasonally dry forests, as ED2 codes it (`plant_hydro_scheme` 2), eq. (11), which
+`scripts/pft_traits` computes outside the model. The fit is lognormal, so the residual variance
+0.6186 turns its median into the mean (×1.36); $\rho$ outside 0.35–0.95 takes the nearest edge.
+$K_s$ is 6.0 at $\rho$ = 0.35, 3.3 at 0.60 and 1.4 at 0.95. Wood density explains a fifth of the variance ($R^2$ 0.21): one species' $K_s$ can
 lie a factor of 2 either side. Branches of Panama canopy trees span about 1.6–12, and 2–4 at
 $\rho$ = 0.6 (Meinzer et al. 2008), and FATES's default is 3.0. For a 35 m BCI canopy
 tree (72 cm dbh, 0.30 m² of sapwood, 553 m² of leaf) the 0.60 value gives
@@ -213,20 +213,15 @@ $R$: [soil_plant_water](soil_plant_water.md). Each cohort's transpiration is its
 limited by the water its leaves hold below the closing potential (§4 there). Water is advanced by the
 flows themselves, so the plant and soil water budgets close to round-off.
 
-## Parameters (config names, `[hydraulics]` / `hydraulics_config_t`)
+## Parameters (the PFT file's `[hydraulics]`; `plant_hydraulics_t`)
 
-> **These are per-PFT.** The `[hydraulics]` block is the shared base; any `[hydraulics]` trait
-> below can be given a per-PFT array in the `[pft]` table under the **same key name**, and that
-> value wins for that PFT. An absent key falls back to the `[hydraulics]` scalar, so a config can
-> make **one** trait per-PFT without restating the others, and a config that mentions none runs
-> every PFT on the `[hydraulics]` values. `wood_kmax` is a `[pft]` key only, and the sapwood
-> allometry is a required `[pft]` trait.
+> **These are per-PFT.** Each key of the PFT file's `[hydraulics]` block takes one value, for every
+> PFT, or an array with one value per PFT, and every key is required: the model holds no default
+> and derives no trait from another. Each PFT's traits are one record, `pft%hydro(pf)`.
 >
-> `apply_hydraulics_config` builds the per-PFT table and there is deliberately **no** PFT-uniform
-> companion struct: a second, easier-to-reach copy is how a caller ends up silently running every
-> PFT on the first one's hydraulics. Each entry carries its **own** Kirchhoff lookup, rebuilt from
-> that PFT's `wood_kexp` — sharing one would give every PFT the first one's vulnerability shape
-> while every budget still closes.
+> `apply_hydraulics_config` builds the fast loop's per-PFT table from those records. Each entry
+> carries its **own** Kirchhoff lookup, built from that PFT's `wood_kexp` — sharing one would give
+> every PFT the first one's vulnerability shape while every budget still closes.
 
 | Symbol | Config key | Meaning |
 |---|---|---|
@@ -236,7 +231,7 @@ flows themselves, so the plant and soil water budgets close to round-off.
 | $w_{sat}$ | `leaf_water_sat`, `wood_water_sat` | saturated water content [kg H₂O / kgC] |
 | $\psi_{50}$ | `wood_psi50` | xylem potential at 50 % loss of conductance [MPa] |
 | $a$ | `wood_kexp` | vulnerability-curve shape [–] |
-| $K_s$ | `pft.wood_kmax` | sapwood specific conductivity [kg m⁻¹ s⁻¹ MPa⁻¹]; default from wood density (Xu et al. 2016) |
+| $K_s$ | `wood_kmax` | sapwood specific conductivity [kg m⁻¹ s⁻¹ MPa⁻¹]; the shipped values from wood density, eq. (11) (`scripts/pft_traits`) |
 | — | `vessel_curl` | tortuosity / path-length factor [–] |
 | $\beta$ | `root_beta` | the root profile within the rooting depth [–], $0<\beta<1$ (ED2: 0.1) |
 | $`b_{1Rd}, b_{2Rd}`$ | `root_depth_b1`, `root_depth_b2` | rooting depth $`b_{1Rd}\,h^{b_{2Rd}}`$ [m], capped at the soil column (ED2 IALLOM 1) |

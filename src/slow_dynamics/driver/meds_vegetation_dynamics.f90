@@ -16,7 +16,7 @@
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, yr_day, grav_head
-   use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp, pft_tissue_curves
+   use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
    use meds_plant_hydr_lib,       only : water_curve_t, tissue_psi_to_water, tissue_capped_water, tissue_shared_potential
    use meds_therm_lib,            only : internal_energy_liquid
    use meds_allometry_lib,        only : size_to_leaf_carbon, carbon_to_structure, min_cohort_carbon,  &
@@ -895,7 +895,8 @@ contains
          do i = 1_ik, cohort%n
             grown = cohort%leaf_carbon(i) - leaf_carbon_before(i)
             if (grown <= 0.0_wp) cycle
-            call pft_tissue_curves(cfg%hydraulics, cfg%pft, cohort%pft(i), leaf_curve, wood_curve)
+            leaf_curve = cfg%pft%hydro(cohort%pft(i))%leaf_curve
+            wood_curve = cfg%pft%hydro(cohort%pft(i))%wood_curve
             head     = grav_head * cohort%height(i)          ! the crown above the wood datum [MPa]
             psi_wood = tissue_shared_potential(cohort%wood_water_mass(i), wood_curve,                       &
                           cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)), &
@@ -929,7 +930,8 @@ contains
       water_shed = 0.0_wp
       associate (cohort => poly%cohort, patch => poly%patch)
          do i = 1_ik, cohort%n
-            call pft_tissue_curves(cfg%hydraulics, cfg%pft, cohort%pft(i), leaf_curve, wood_curve)
+            leaf_curve = cfg%pft%hydro(cohort%pft(i))%leaf_curve
+            wood_curve = cfg%pft%hydro(cohort%pft(i))%wood_curve
             leaf_kept = tissue_capped_water(cohort%leaf_water_mass(i), leaf_curve, cohort%leaf_carbon(i))
             wood_kept = tissue_capped_water(cohort%wood_water_mass(i), wood_curve,                &
                            cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
@@ -1243,7 +1245,7 @@ contains
             !----- Light-acclimated targets from this cohort's cumulative LAI above. -----------!
             call light_plastic_traits(cohort%overtopping_lai(j),                                 &
                      pft%sla(pf), pft%vcmax25(pf), pft%rd25(pf), pft%leaf_turnover_rate_toc(pf),  &
-                     pft%kplastic_sla(pf), pft%kplastic_vm0(pf), pft%kplastic_rd(pf),             &
+                     pft%kplastic_sla(pf), pft%kplastic_vcmax(pf), pft%kplastic_rd(pf),             &
                      pft%kplastic_leaf_turnover(pf), sla_t, vcmax_t, rd_t, turnover_t)
             !----- Update each live trait toward its target (gradual at the leaf-replacement rate,  !
             !      or an instantaneous jump on a census restart). ---------------------------------!
@@ -1293,7 +1295,7 @@ contains
             if (cfg%trait_plasticity_on) then
                call light_plastic_traits(cohort%overtopping_lai(j),                              &
                         pft%sla(pf), pft%vcmax25(pf), pft%rd25(pf), pft%leaf_turnover_rate_toc(pf), &
-                        pft%kplastic_sla(pf), pft%kplastic_vm0(pf), pft%kplastic_rd(pf),          &
+                        pft%kplastic_sla(pf), pft%kplastic_vcmax(pf), pft%kplastic_rd(pf),          &
                         pft%kplastic_leaf_turnover(pf), sla_t, vcmax_t, rd_t, turnover_t)
             else
                sla_t = pft%sla(pf) ; vcmax_t = pft%vcmax25(pf) ; rd_t = pft%rd25(pf)

@@ -54,11 +54,11 @@ lose a year divided by their carbon. There is no free acclimation-timescale para
 flag jumps straight to the target ($`f=1`$), used **once** on a census restart (§5), where the cohorts sit
 in an established stand but carry no trait history.
 
-## 3. The four slopes (derived per PFT)
+## 3. The four slopes (per PFT)
 
-The slopes $`k_X`$ reproduce ED2's `trait_plasticity_scheme = 2` (Lloyd et al. 2010), **derived per PFT** in
-`derive_pft_rates` from the base traits — the same pattern MEDS uses for the wood-density→mortality
-derivation — so the PFT file carries only base traits and `leaf_turnover_rate_toc` unless a slope is overridden:
+The slopes $`k_X`$ are PFT traits, `[pft].kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and
+`kplastic_leaf_turnover`. The shipped PFTs take ED2's `trait_plasticity_scheme = 2` fits (Lloyd et al.
+2010) to their base traits, which `scripts/pft_traits` computes outside the model:
 
 ```math
 k_{V} = -\exp\!\big(\mathrm{clamp}(-2.788 + 0.01439\,V_{\mathrm{cmax25}})\big), \qquad k_{R} = k_{V} \qquad(3)
@@ -68,7 +68,7 @@ k_{V} = -\exp\!\big(\mathrm{clamp}(-2.788 + 0.01439\,V_{\mathrm{cmax25}})\big), 
 k_{\mathrm{SLA}} = -k_{V}\,\tfrac{1.18}{1.10}, \qquad k_{\gamma} = \min\!\Big(0,\; 0.062\,\ln(12/\gamma_{\mathrm{toc}}) - 0.2126\Big) \qquad(4)
 ```
 
-$`R_\mathrm{d}`$ has its own slope (defaulting to $`k_V`$, as ED2's `kplastic_rd0`). $`k_\gamma`$ is minus ED2's
+$`R_\mathrm{d}`$ has its own slope ($`k_V`$ in the fit, as ED2's `kplastic_rd0`). $`k_\gamma`$ is minus ED2's
 slope for the leaf lifespan, $`0.2126 - 0.062\ln(12\,\ell_{\mathrm{toc}})`$ with $`12\,\ell_{\mathrm{toc}} = 12/\gamma_{\mathrm{toc}}`$
 the lifespan in months. The **cap at 0** is a MEDS choice: ED2's fit crosses zero near
 $`\gamma_{\mathrm{toc}}\approx0.39`$ yr⁻¹ (a 2.6-yr lifespan), which would make *slow-turnover* PFTs turn their
@@ -137,7 +137,7 @@ consumers live outside it.
 
 | Symbol | Config key | Meaning |
 |---|---|---|
-| $`k_{\mathrm{SLA}}, k_{V}, k_{R}, k_{\gamma}`$ | `[derived]` `kplastic_sla`, `kplastic_vcmax`, `kplastic_rd`, `kplastic_leaf_turnover` | light-response slopes — **derived** per PFT (§3); a `[derived]` block in the PFT file pins them when `[options].override_derived = true` |
+| $`k_{\mathrm{SLA}}, k_{V}, k_{R}, k_{\gamma}`$ | `[pft]` `kplastic_sla`, `kplastic_vcmax`, `kplastic_rd`, `kplastic_leaf_turnover` | light-response slopes per PFT [1/(m² m⁻²)] (§3; `scripts/pft_traits` for the fits) |
 | $`\gamma_{\mathrm{toc}}`$ | `leaf_turnover_rate_toc` | top-of-canopy baseline leaf turnover rate [yr⁻¹], > 0 |
 | $`\mathrm{SLA}_{\mathrm{toc}}, V_{\mathrm{toc}}, R_{\mathrm{toc}}`$ | `sla`, `vcmax25`, `rd25` | top-of-canopy trait values (base PFT traits) |
 | — | `[trait_dynamics].trait_plasticity_on` | opt-in master switch (default off) |
@@ -149,7 +149,7 @@ consumers live outside it.
 |---|---|
 | light target traits (eq. (1)) | `meds_plant_trait_dynamics`: `light_plastic_traits` (+ private `light_gradient`) |
 | replacement-weighted / instant update (eq. (2)) | `meds_plant_trait_dynamics`: `update_plastic_trait` |
-| derived slopes (eqs. (3)–(4)) | `meds_pft_params`: `derive_pft_rates` |
+| the slopes' fits (eqs. (3)–(4)) | `scripts/pft_traits/pft_traits.py`: `plasticity` |
 | per-cohort trait state + fusion weighting | `meds_cohort_state_vars` (SoA `sla/vcmax25/rd25/leaf_turnover_rate`); `meds_demography_cohort_fusefiss`: `fuse_2_cohorts` |
 | slow-loop orchestration + SLA-overshoot resorption | `meds_vegetation_dynamics`: `advance_plant_traits` |
 | carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `cohort%leaf_turnover_rate`); `meds_leaf_gas_exchange`: `leaf_gas_exchange_batch`, `leaf_params_at_capacity` (`vcmax25`/`rd25`) |

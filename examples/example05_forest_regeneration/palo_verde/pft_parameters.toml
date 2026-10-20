@@ -128,37 +128,16 @@ wood_clumping      = [0.50, 0.50, 0.50, 0.50]
 leaf_angle_mean    = [55.1153, 55.1153, 55.1153, 55.1153]   # [deg] this set's own: example 04's fit on a 1.4 m column
 leaf_angle_std     = [20.0, 20.0, 20.0, 20.0]
 
-#----- Hydraulics (MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md §6.2): ED2 X16 / base relations in WD and SLA. -----#
-leaf_pi0               = [-1.1228, -1.6148, -2.2017, -2.504]   # [MPa] solved so pi0*eps/(pi0+eps) = the X16 TLP
-                                                               #       -1.50, -1.96, -2.43, -2.72
-leaf_elastic_mod       = [4.4558, 9.1201, 23.3042, 31.7135]   # [MPa] ED2: 2.5 + 37.5/(1 + exp(5.7 - 8 WD))
-leaf_water_sat         = [3.7, 3.7, 3.7, 3.7]   # [kg H2O/kgC] X16: 1.85 kg/kg dry
-wood_pi0               = [-0.936, -1.6432, -2.5584, -3.0992]   # [MPa] ED2: 0.52 - 4.16 WD
-wood_elastic_mod       = [4.1342, 9.0481, 23.389, 40.7123]   # [MPa] ED2: sqrt(1.02 exp(8.5 WD) - 2.89)
-wood_water_sat         = [4.4071, 2.539, 1.3955, 0.9917]   # [kg H2O/kgC] ED2: 2 (1 - WD/1.53) / WD
-wood_psi50             = [-1.649, -2.159, -2.819, -3.209]   # [MPa] X16: -3.0 WD - 0.599
-wood_kexp              = [4, 4, 4, 4]   # [-] X16
-root_depth_b1          = [0.6499, 0.9655, 1.374, 1.6154]   # [m] 1.114 * WD/0.6
-root_depth_b2          = [0.422301, 0.422301, 0.422301, 0.422301]   # [-] MEDS default (ED2 IALLOM 1)
-root_beta              = [0.001, 0.002, 0.005, 0.01]   # [-] deeper profiles with wood density (the default 0.1
-                                                       #     would put half the roots below 51 cm)
-
 # Mortality m = mort_gamma + mort_alpha * exp(-mort_beta * g), g a cohort's dbh growth [cm/yr] over the
 # growth window (growth_memory_days, a year): Camac et al. (2018, PNAS)'s hazard across BCI's species, each
 # parameter p = p0 (WD/0.6)^b of wood density. At these PFTs' WD: gamma 0.0253, 0.0122,
 # 0.0064, 0.0047 /yr; alpha 0.093, 0.059, 0.039, 0.033 /yr; beta 16.1, 18.0, 19.8, 20.8 yr/cm. The fit counts
 # every death, so treefall (main config, 0.014/yr on trees above 10 m in each new gap) comes on top of it.
-[camac]
-mort_rho_ref   = 0.6
-mort_gamma_0   = 0.0094
-mort_gamma_exp = -1.8392
-mort_alpha_0   = 0.05
-mort_alpha_exp = -1.1493
-mort_beta_0    = 18.72
-mort_beta_exp  = 0.2792
+# The values are Camac's power laws at these wood densities (scripts/pft_traits/pft_traits.py).
+mort_gamma = [0.025331078812726417, 0.01223010776146058, 0.006391645127479957, 0.00474613212227681]   # [1/yr]
+mort_alpha = [0.09289703076840167, 0.05893816273414772, 0.039290831605228047, 0.032621938104004176]   # [1/yr]
+mort_beta  = [16.104595210127126, 17.986810071937334, 19.848857390790634, 20.766331887441872]   # [yr/cm]
 
-# Read because the main config sets [options].override_derived = true.
-[derived]
 # Light plasticity, trait = top-of-canopy value x exp(k x overtopping LAI) (docs/science/plant_traits.md
 # eq. (1)): Ma et al. (2025, JGR Biogeosciences) from BCI's crane, saplings against canopy leaves --
 # k_Vcmax = -(0.00242 Vcmax25 + 0.06212), k_Rd = -(0.18974 Rd25 + 0.11744) with Rd25 = 0.015 Vcmax25,
@@ -188,6 +167,28 @@ sapwood_area_b2    = [1.764, 1.764, 1.764, 1.764]
 aboveground_frac       = [0.7, 0.7, 0.7, 0.7]
 height_allometry = "chave2014"
 chave_e    = 0.134          # [--] Chave's stress index at the forcing cell
+
+#----- Hydraulics (MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md §6.2): ED2 X16 / base relations in WD and SLA. -----#
+[hydraulics]
+leaf_pi0               = [-1.1228, -1.6148, -2.2017, -2.504]   # [MPa] solved so pi0*eps/(pi0+eps) = the X16 TLP
+                                                               #       -1.50, -1.96, -2.43, -2.72
+leaf_elastic_mod       = [4.4558, 9.1201, 23.3042, 31.7135]   # [MPa] ED2: 2.5 + 37.5/(1 + exp(5.7 - 8 WD))
+leaf_apoplast_frac     = 0.3   # [-]
+leaf_water_sat         = [3.7, 3.7, 3.7, 3.7]   # [kg H2O/kgC] X16: 1.85 kg/kg dry
+wood_pi0               = [-0.936, -1.6432, -2.5584, -3.0992]   # [MPa] ED2: 0.52 - 4.16 WD
+wood_elastic_mod       = [4.1342, 9.0481, 23.389, 40.7123]   # [MPa] ED2: sqrt(1.02 exp(8.5 WD) - 2.89)
+wood_apoplast_frac     = 0.2   # [-]
+wood_water_sat         = [4.4071, 2.539, 1.3955, 0.9917]   # [kg H2O/kgC] ED2: 2 (1 - WD/1.53) / WD
+wood_psi50             = [-1.649, -2.159, -2.819, -3.209]   # [MPa] X16: -3.0 WD - 0.599
+wood_kexp              = [4, 4, 4, 4]   # [-] X16
+wood_kmax              = [6.0378621462769955, 3.9776850327121633, 2.3177572139966176, 1.6844683588774712]   # [kg/m/s/MPa] Xu et al. (2016) in WD (scripts/pft_traits)
+vessel_curl            = 1.5   # [-]
+root_depth_b1          = [0.6499, 0.9655, 1.374, 1.6154]   # [m] 1.114 * WD/0.6
+root_depth_b2          = [0.422301, 0.422301, 0.422301, 0.422301]   # [-] MEDS default (ED2 IALLOM 1)
+root_beta              = [0.001, 0.002, 0.005, 0.01]   # [-] deeper profiles with wood density (the default 0.1
+                                                       #     would put half the roots below 51 cm)
+specific_root_length   = 20000.0   # [m/kgC]
+fine_root_radius       = 0.00025   # [m]
 
 #----- Phenology (MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md §6.1): one water-only set for all four PFTs. -----#
 [phenology]

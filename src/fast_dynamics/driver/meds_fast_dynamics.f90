@@ -153,8 +153,8 @@ contains
    !  horizontally uniform -- the reference climate used when no forcing file is           !
    !  configured. The static column config `col_config` is assembled here FROM THE RUN     !
    !  CONFIG: the soil column comes from [soil], the respiration factors and canopy        !
-   !  optics are per-PFT traits, and the plant-hydraulics constants come from              !
-   !  [hydraulics]. Nothing in this routine is a hard-coded model parameter.               !
+   !  optics are per-PFT traits, and so are the plant hydraulics (the PFT file's           !
+   !  [hydraulics]). Nothing in this routine is a hard-coded model parameter.              !
    !=======================================================================================!
    subroutine build_fast_context(cfg, ctx)
       type(meds_config_t),  intent(in)  :: cfg
@@ -162,11 +162,10 @@ contains
       !----- The physical soil column, from [soil]: its layers, and each layer's texture,         !
       !      one for the whole column or one per layer from the soil maps (soil_column_params). -!
       call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
-      !----- Plant hydraulics: ONE seam builds the PER-PFT table. The shared [hydraulics] block is    !
-      !      the base (cfg defaults unless a [hydraulics] block overrides); whatever per-PFT traits   !
-      !      the [pft] table supplied are laid over it, and each entry gets its vulnerability lookup  !
-      !      table (consulted only when wood_kexp is not 1 or 2). ------------------------------------!
-      call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
+      !----- Plant hydraulics: ONE seam builds the PER-PFT table from each PFT's [hydraulics]       !
+      !      record, and each entry gets its vulnerability lookup table (consulted only when          !
+      !      wood_kexp is not 1 or 2). ---------------------------------------------------------------!
+      call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
       call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!

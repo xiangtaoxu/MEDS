@@ -239,7 +239,7 @@ downregulation is a biochemistry effect, scheme-independent). $R_d$ is not scale
 
 $`\psi_{open}`$ is the PFT's leaf turgor-loss point $`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$
 and $`\psi_{close}`$ twice it, from the same pressure-volume curve the hydraulics solver stores leaf
-water on (each PFT's own `leaf_pi0` and `leaf_elastic_mod`, else the `[hydraulics]` values). A PFT
+water on (each PFT's own `[hydraulics]` `leaf_pi0` and `leaf_elastic_mod`). A PFT
 file may set `wstress_psi_open` and `wstress_psi_close` instead. A leaf keeps its capacity while it
 holds turgor and loses it as it wilts.
 

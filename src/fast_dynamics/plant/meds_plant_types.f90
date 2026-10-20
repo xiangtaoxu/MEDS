@@ -15,7 +15,7 @@
 module meds_plant_types
    use meds_kinds,          only : wp, ik
    use meds_pft_params,     only : PATH_C3, PATH_C4
-   use meds_plant_hydr_lib, only : hydro_table_t, water_curve_t
+   use meds_plant_hydr_lib, only : hydro_table_t, plant_hydraulics_t
    implicit none
    private
 
@@ -141,23 +141,8 @@ module meds_plant_types
    !     HYDRAULICS -- the per-PFT plant-water traits and the one run switch. How water moves  !
    !     is the soil-plant water solver's (meds_spac_solver).                                 !
    !=======================================================================================!
-   !----- Flat per-PFT hydraulic trait set (self-contained, filled by the seam from cfg%pft). !
-   type :: hydro_params_t
-      !----- Pressure-volume (Bartlett/Tyree-Hammel), one curve per tissue. ------------------!
-      type(water_curve_t) :: leaf_curve, wood_curve
-      !----- Xylem vulnerability (loss of conductance). -----------------------------------!
-      real(wp) :: wood_psi50 = 0.0_wp   !< [MPa, <0] potential at 50% loss
-      real(wp) :: wood_kexp  = 0.0_wp   !< [-]  vulnerability shape (a)
-      !----- Conductance: wood_kmax * sapwood area / (height * vessel_curl),                        !
-      !      docs/science/plant_hydraulics.md eq. (10). --------------------------------------------!
-      real(wp) :: wood_kmax   = 0.0_wp  !< [kg/m/s/MPa] sapwood specific conductivity
-      real(wp) :: vessel_curl = 1.0_wp  !< [-] tortuosity / path-length factor
-      !----- Roots: the depth allometry, the profile within it, and the absorbing length. ----------!
-      real(wp) :: root_beta            = 0.1_wp       !< [-] (1 - beta^(d/D)) / (1 - beta) above depth d
-      real(wp) :: root_depth_b1        = 1.1140580_wp !< [m] rooting depth = b1 * height^b2
-      real(wp) :: root_depth_b2        = 0.4223014_wp !< [-]
-      real(wp) :: specific_root_length = 2.0e4_wp     !< [m/kgC] fine-root length per unit fine-root carbon
-      real(wp) :: fine_root_radius     = 2.5e-4_wp    !< [m] fine-root radius
+   !----- A PFT's hydraulic traits (cfg%pft%hydro) and the Kirchhoff table its wood_kexp sets. !
+   type, extends(plant_hydraulics_t) :: hydro_params_t
       !----- Precomputed Kirchhoff lookup table (built from wood_kexp by build_hydro_table). It is    !
       !       consulted on the hot path ONLY for wood_kexp not in {1,2} (the quadrature regime); for   !
       !       kexp in {1,2} the solver keeps the exact closed form, so it stays dormant there. --------!
