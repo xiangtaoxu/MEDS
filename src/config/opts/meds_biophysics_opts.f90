@@ -47,7 +47,6 @@ module meds_biophysics_opts
       real(wp)    :: intercept_k     = 0.5_wp            !< [1/PAI] Beer extinction ([fast])
       real(wp)    :: dsl_dmax       = 0.015_wp           !< [m] DSL max thickness (soil evap)
       real(wp)    :: dsl_theta_init = 0.8_wp             !< DSL initiation theta_1/theta_sat
-      logical     :: debug_error = .false.               !< [fast]: a budget breach stops the run
       !----- Bare-soil optics, blended with snow where there is snow. ---------------------!
       real(wp)    :: ground_albedo_vis = 0.15_wp        !< [-] soil albedo, visible
       real(wp)    :: ground_albedo_nir = 0.30_wp        !< [-] soil albedo, near infrared

@@ -961,8 +961,6 @@ contains
       call load_soil_opts  (tm, cfg%soil)
       call load_soil_column(tm, cfg%soil_column)
       call load_energy_opts(tm, cfg%energy)
-      !----- One debug switch: the soil water's options take [fast].debug_error as well. --------------!
-      cfg%soil%debug_error = cfg%energy%debug_error
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)
 

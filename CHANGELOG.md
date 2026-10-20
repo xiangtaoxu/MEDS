@@ -530,7 +530,8 @@ holds one module per block, and the reference config describes each key in a lin
 
 - **The retired-key table** (#NNN), 280 of `meds_config_keys`' 421 lines, and the loader's
   retired-spelling branches; the keys nothing read (listed under Upgrading); the reporting-only
-  `backend` field with its `BK_*` labels; `INTERP_COSZ` and `METAVG_INSTANT`.
+  `backend` field with its `BK_*` labels; `INTERP_COSZ` and `METAVG_INSTANT`; `soil_opts_t%debug_error`,
+  a copy of `[fast].debug_error` nothing read (the budget stops read `energy_opts_t%debug_error`).
 
 - **`derive_pft_rates`, `wood_density_to_kmax`, `hydraulics_config_t` and `pft_tissue_curves`** (#461),
   with `[camac]`, `[derived]` and `[options].override_derived` (see Changed). `tissue_shared_potential`
