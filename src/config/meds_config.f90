@@ -1,11 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_config -- the run configuration, threaded read-only through the engine             !
+! meds_config -- the run configuration, threaded read-only through the engine              !
 ! (docs/configuration.md).                                                                 !
 !                                                                                          !
 ! One field per key, named as the key, in the order of meds_config_main.toml: a key of a   !
-! block with its own record is cfg%<record>%<key> (cfg%init%soil_temp, cfg%forcing%format); !
-! a key of the other blocks is cfg%<key>. The two exceptions are the [output] group, axis  !
+! block with its own record is cfg%<record>%<key> (cfg%init%soil_temp), and a key of the   !
+! other blocks is cfg%<key>. The two exceptions are the [output] group, axis               !
 ! and tier switches, which are arrays indexed by their codes, and the [hydraulics] tissue  !
 ! curves (leaf_pi0 is hydro(pft)%leaf_curve%pi0). The reference config describes each key; !
 ! a field without an initializer is a required key or a derived value (marked DERIVED).    !

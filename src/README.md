@@ -26,10 +26,12 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  enzyme rates), canopy optics                              1 916
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
-├── config/        TOML reader and loader, PFT trait table, meds_config_t,
-│                  the per-domain *_opts leaves (meds_region_opts for
-│                  the [region] block), and the soil column with the
-│                  parameters derived from it (meds_soil_column_config)      3 707
+├── config/        meds_config_t (one field per key), the TOML reader, the
+│   │              loader, and the checks of the keys and their values       2 814
+│   └── opts/      one leaf per TOML block, the records and codes a kernel
+│                  imports without meds_config: the PFT table, the soil
+│                  column and the parameters derived from it, forcing,
+│                  output, the fast loop, biophysics, sites, region, maps    1 164
 │
 │  ── STATE, one file per level of the hierarchy, each in sections ────────────
 ├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
@@ -117,8 +119,8 @@ machine precision.
 belongs in the `state/` file of the level that holds it: a patch's stores in
 `meds_patch_state_vars`, a cohort's fields in `meds_cohort_state_vars`. **Parameters are not state**: they are derived once and never
 integrated, so they live with the configuration they are derived from. The soil column's
-(`soil_params_t`, the layer grid and their builders) are in `config/meds_soil_column_config`, as
-the PFT table's derived rates are in `config/meds_pft_params`.
+(`soil_params_t`, the layer grid and their builders) are in `config/opts/meds_soil_column_config`, as
+the PFT table's derived rates are in `config/opts/meds_pft_params`.
 
 **4. Laws and operators do not touch.** `demography/` holds both the vital-rate laws
 (`meds_demography_rates`) and the operators that apply them (`update_*`, `*_fusefiss`,
@@ -133,7 +135,7 @@ Acyclic by construction, and the build enforces it. Every arrow is a `target_lin
 in [`CMakeLists.txt`](../CMakeLists.txt).
 
 ```
-  shared ──→ config ──→ state ──────────────────────→ demography ──→ io_prep
+  share  ──→ config ──→ state ──────────────────────→ demography ──→ io_prep
      │                    │                              ↑             │
      │                    ├──→ fast_kernels ──────┐      │             │
      │                    └──→ slow_kernels ──────┼──────┘             │
@@ -166,7 +168,7 @@ One edge is worth knowing because it is easy to get wrong:
 | a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_2_patches` and the new gap in `apply_patch_disturbance` |
 | a stateless constitutive curve: a physical or biological law with parameters | `share/functions/` |
 | a model-independent tool every layer needs (numerics, calendar, checks) | `share/`, if it uses nothing outside `share/` |
-| a TOML block | `config/`, as an `*_opts` leaf so `meds_config` can carry it with no back-edge |
+| a TOML block | a leaf in `config/opts/`, so `meds_config` can carry it with no back-edge; its keys in `meds_config_main.toml`, its checks in `config/meds_config_check.f90` |
 | a prescribed time-varying input (weather, CO2) | `io/input/forcing/` |
 | a static per-cell input map (soil, a cell mask) | `io/input/maps/meds_surface_maps.f90` |
 | an output variable | one `add_variable` line in `io/output/meds_output_registry.f90` |

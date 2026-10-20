@@ -1,17 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_output_config -- the [output] configuration block for the diagnostic-aggregation    !
-! subsystem (docs/science/diagnostics.md), plus the selector codes shared by the config,   !
-! the reader, the registry, the integrators and the serializer.                            !
-!                                                                                          !
-! A config leaf (src/config, NOT src/io) so meds_config can carry output_config_t as a     !
-! plain-scalar component with no edge back to the io layer (the same rule                  !
-! meds_forcing_config follows for forcing_config_t). Pure data and parameters; links       !
-! meds_kinds only.                                                                         !
-!                                                                                          !
-! The temporal-tier (FREQ_*), variable-group (GRP_*), file-chunk (FC_*) and sync (SYNC_*)  !
-! codes live HERE because output_config_t references them; the io-only reduction/axis      !
-! codes (AGG_*/DIM_*) live with the io types in meds_output_types.                         !
+! meds_output_config -- the [output] block (docs/science/diagnostics.md) and the codes it  !
+! uses: temporal tiers (FREQ_*), variable groups (GRP_*), axes (AXIS_*), file chunks       !
+! (FC_*) and sync (SYNC_*). A config leaf (meds_kinds only), so meds_config carries        !
+! output_config_t with no edge back to the io layer; the io-only codes (AGG_*, DIM_*) are  !
+! in meds_output_types.                                                                    !
 !==========================================================================================!
 module meds_output_config
    use meds_kinds, only : wp, ik
@@ -28,9 +21,8 @@ module meds_output_config
    public :: MAX_DBH_EDGE
    public :: freq_tier_index, freq_letter
 
-   !----- Temporal tiers, as bit positions of a per-variable membership mask (ior/iand).       !
-   !      FAST = a user-set multiple of dt_fast ([output].fast_interval_steps); the tiers      !
-   !      are fast, daily, monthly and annual (docs/science/diagnostics.md §4). ---------------!
+   !----- Temporal tiers, as bits of a per-variable membership mask (ior/iand); a FAST     !
+   !      record spans fast_interval_steps sub-steps (docs/science/diagnostics.md §4). ----!
    integer(ik), parameter :: FREQ_NONE    = 0_ik
    integer(ik), parameter :: FREQ_FAST    = 1_ik
    integer(ik), parameter :: FREQ_DAILY   = 2_ik
@@ -38,34 +30,19 @@ module meds_output_config
    integer(ik), parameter :: FREQ_ANNUAL  = 8_ik
    integer(ik), parameter :: N_FREQ       = 4_ik   !< number of temporal tiers (FAST/DAILY/MONTHLY/ANNUAL)
 
-   !----- Variable GROUPS the main config's group toggles switch (docs/science/diagnostics.md §5). -!
+   !----- Variable groups (docs/science/diagnostics.md §5). -------------------------------!
    integer(ik), parameter :: GRP_STRUCTURE = 1_ik  !< demography/size: nplant, dbh, agb, patch geometry, ids
    integer(ik), parameter :: GRP_CARBON    = 2_ik  !< GPP, NPP, Ra, allocation, vegetation carbon stocks
    integer(ik), parameter :: GRP_WATER     = 3_ik  !< ET, soil moisture and potential, snow, surface water
    integer(ik), parameter :: GRP_ENERGY    = 4_ik  !< LE, H, net radiation, temperatures, canopy-air state
-   !----- NUMERICS: integrator WORK per step -- accepted/rejected substeps, sub-solver            !
-   !      substeps, non-convergence events -- and the energy and water budget residuals. Not      !
-   !      a physical group: it is the cost side of cost per unit accuracy, and the closure        !
-   !      record. Default ON. --------------------------------------------------------------------!
-   integer(ik), parameter :: GRP_NUMERICS  = 5_ik
-   !----- RADIATION and ECOPHYS are split OUT of ENERGY/CARBON deliberately: ECOPHYS is the       !
-   !      per-cohort leaf gas-exchange and hydraulics set, by far the highest-volume group,       !
-   !      and the one a production run most often wants off; RADIATION is the RT/albedo           !
-   !      family, useful for evaluation and rarely for production. BIOGEOCHEM splits the          !
-   !      soil-carbon pools out of CARBON so a run can report the vegetation carbon cycle         !
-   !      without the 7 CENTURY pools (which are identically 0 unless soil_carbon_on). -----------!
-   integer(ik), parameter :: GRP_RADIATION  = 6_ik
-   integer(ik), parameter :: GRP_ECOPHYS    = 7_ik
-   integer(ik), parameter :: GRP_BIOGEOCHEM = 8_ik
-   !----- FORCING: the atmospheric boundary the run actually used, after the reader's             !
-   !      corrections and partitions. Write-only provenance, and the one way to check the         !
-   !      sub-daily reconstruction (the shortwave's diurnal shape, the solar-time offset)         !
-   !      against observations. Default ON. ------------------------------------------------------!
-   integer(ik), parameter :: GRP_FORCING    = 9_ik
+   integer(ik), parameter :: GRP_NUMERICS  = 5_ik  !< integrator work counters and the energy and water budget residuals
+   integer(ik), parameter :: GRP_RADIATION  = 6_ik  !< albedo, absorbed SW, PAR and LW, ground radiation
+   integer(ik), parameter :: GRP_ECOPHYS    = 7_ik  !< per-cohort leaf gas exchange and hydraulics (the highest volume)
+   integer(ik), parameter :: GRP_BIOGEOCHEM = 8_ik  !< soil-carbon pools, Rh, litterfall
+   integer(ik), parameter :: GRP_FORCING    = 9_ik  !< the forcing the run used, after the reader's partitions
    integer(ik), parameter :: N_GRP          = 9_ik
 
-   !----- AXIS toggles: suppress a whole trailing dimension without naming variables. The        !
-   !      biggest single lever on output volume ("site level only, nothing per-cohort").          !
+   !----- Axes: each toggle suppresses a whole trailing dimension. ------------------------!
    integer(ik), parameter :: AXIS_COHORT     = 1_ik
    integer(ik), parameter :: AXIS_PATCH      = 2_ik
    integer(ik), parameter :: AXIS_PFT        = 3_ik
@@ -73,27 +50,24 @@ module meds_output_config
    integer(ik), parameter :: AXIS_SOIL_PATCH = 5_ik
    integer(ik), parameter :: N_AXIS          = 5_ik
 
-   !----- DBH size-class edge ceiling (n_class <= MAX_DBH_EDGE-1). ----------------------------!
+   !----- DBH size-class edge ceiling (n_class <= MAX_DBH_EDGE-1). ------------------------!
    integer(ik), parameter :: MAX_DBH_EDGE = 33_ik
 
-   !----- File-chunk buckets: how many records per file for a stream (the time-chunk). --------!
+   !----- File-chunk buckets: how many records per file for a stream (the time-chunk). ----!
    integer(ik), parameter :: FC_DAY   = 1_ik  !< one file per sim-day
    integer(ik), parameter :: FC_MONTH = 2_ik  !< one file per sim-month
    integer(ik), parameter :: FC_YEAR  = 3_ik  !< one file per sim-year
-   integer(ik), parameter :: FC_RUN   = 4_ik  !< ONE file for the whole run (annual default)
+   integer(ik), parameter :: FC_RUN   = 4_ik  !< one file for the whole run (annual default)
 
-   !----- nc_sync durability policy: never, or after every flush. -----------------------------!
+   !----- nc_sync durability policy: never, or after every flush. -------------------------!
    integer(ik), parameter :: SYNC_NEVER = 0_ik  !< no nc_sync (fastest; crash forfeits the open chunk)
    integer(ik), parameter :: SYNC_FLUSH = 1_ik  !< nc_sync after each flush (durable; default)
 
-   !==========================================================================================!
-   !  The [output] block. Plain scalars and small fixed arrays (no allocatables), so          !
-   !  meds_config carries it trivially. The per-variable overrides are NOT stored here --     !
-   !  they live in the optional meds_io_config.toml, loaded by build_output_registry          !
-   !  (docs/science/diagnostics.md §5). enabled defaults .false., so a config with no         !
-   !  [output] block emits no diagnostic stream at all. The [state] block is the restart      !
-   !  stream only; it shares no variable with this one.                                       !
-   !==========================================================================================!
+   !=======================================================================================!
+   !  The [output] block: plain scalars and fixed arrays. The per-variable overrides are   !
+   !  in meds_io_config.toml, read by build_output_registry (docs/science/diagnostics.md   !
+   !  §5).                                                                                 !
+   !=======================================================================================!
    type :: output_config_t
       logical            :: enabled     = .false.               !< master switch
       character(len=256) :: dir         = '.'                   !< output directory
@@ -103,37 +77,29 @@ module meds_output_config
       integer(ik)        :: patch_max   = 256_ik                !< patch slab size: likewise
       integer(ik)        :: sync_every  = SYNC_FLUSH            !< nc_sync policy: SYNC_NEVER | SYNC_FLUSH
       integer(ik)        :: fast_interval_steps = 4_ik          !< fast tier flushes every N*dt_fast
-      !----- Variable-GROUP toggles, in GRP_* order: STRUCTURE / CARBON / WATER / ENERGY /       !
-      !      NUMERICS / RADIATION / ECOPHYS / BIOGEOCHEM / FORCING. The seven that make a        !
-      !      run judgeable are ON -- including NUMERICS, because it carries the budget           !
-      !      residuals, and a closure nobody records is worse than one nobody looks at.          !
-      !      RADIATION and ECOPHYS are the two heavy evaluation groups and stay OFF; each is     !
-      !      one boolean away (docs/science/diagnostics.md §5). ---------------------------------!
+      !----- Group toggles, indexed by GRP_*; RADIATION and ECOPHYS off by default. -------!
       logical            :: grp_on(N_GRP) = [.true., .true., .true., .true., .true.,             &
                                              .false., .false., .true., .true.]
-      !----- Per-AXIS toggles: COHORT / PATCH / PFT / SIZE / SOIL_PATCH. The 2-D soil axis is    !
-      !      off by default (highest-volume non-cohort axis); the rest are on.  ----------------!
+      !----- Axis toggles, indexed by AXIS_*; the 2-D soil-patch axis off by default. -----!
       logical            :: axis_on(N_AXIS) = [.true., .true., .true., .true., .false.]
-      !----- Per-tier enable + records-per-file bucket (index order FAST/DAILY/MONTHLY/ANNUAL).-!
+      !----- Per-tier enable and file chunk, indexed FAST, DAILY, MONTHLY, ANNUAL. --------!
       logical            :: freq_on(N_FREQ)    = [.false., .true., .true., .true.]
       integer(ik)        :: file_chunk(N_FREQ) = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
-      !----- DBH size-class edges [cm], ascending, n_dbh_class+1 of them (DIM_SIZE). Left EMPTY  !
-      !      here; manager_setup installs DBH_EDGES_DEFAULT below when the TOML names none,       !
-      !      so the default lives in exactly one place and the type stays a plain literal.        !
+      !----- DBH class edges [cm]; empty here, manager_setup installs the default. --------!
       integer(ik)        :: n_dbh_class = 0_ik
       real(wp)           :: dbh_class_edges(MAX_DBH_EDGE) = 0.0_wp
    end type output_config_t
 
-   !----- The default DBH class edges [cm]: the common tropical forest-inventory set. Six       !
-   !      classes -> 0-10, 10-20, 20-30, 30-50, 50-70, 70+ (the last is closed at the top, so    !
-   !      the largest tree in the stand is never dropped -- see dbh_class_index).                 !
+   !----- Default DBH class edges [cm], the common tropical forest-inventory set: 0-10,    !
+   !      10-20, 20-30, 30-50, 50-70 and 70+, the last closed at the top (dbh_class_index; !
+   !      docs/science/diagnostics.md §3). ------------------------------------------------!
    integer(ik), parameter, public :: N_DBH_CLASS_DEFAULT = 6_ik
    real(wp),    parameter, public :: DBH_EDGES_DEFAULT(7) =                                      &
       [0.0_wp, 10.0_wp, 20.0_wp, 30.0_wp, 50.0_wp, 70.0_wp, 100.0_wp]
 
 contains
 
-   !----- Tier index (1..N_FREQ) of a single FREQ_* bit; 0 if not a single tier bit. ----------!
+   !----- Tier index (1..N_FREQ) of a single FREQ_* bit; 0 if not a single tier bit. ------!
    pure integer(ik) function freq_tier_index(freq_bit) result(idx)
       integer(ik), intent(in) :: freq_bit
       select case (freq_bit)
@@ -150,7 +116,7 @@ contains
       end select
    end function freq_tier_index
 
-   !----- Single-letter stream tag F/D/M/Y for a FREQ_* bit (file naming). ------------------!
+   !----- Single-letter stream tag F/D/M/Y for a FREQ_* bit (file naming). ----------------!
    pure character(len=1) function freq_letter(freq_bit) result(c)
       integer(ik), intent(in) :: freq_bit
       select case (freq_bit)

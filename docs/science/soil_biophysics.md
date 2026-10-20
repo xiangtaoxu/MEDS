@@ -32,8 +32,10 @@ capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **
 retention curves (`meds_soil_hydr_lib`). In effective saturation
 $`S_e=(\theta-\theta_{res})/(\theta_{sat}-\theta_{res})`$ and matric head $h<0$ [m], van Genuchten's
 curve is $`S_e=[1+(\alpha|h|)^n]^{-m}`$ with $`m=1-1/n`$, and Campbell's is $`h=\psi_{sat}\,S_e^{-b}`$,
-saturated between its air-entry head $`\psi_{sat}<0`$ and zero, with $`K=K_{sat}\,S_e^{2b+3}`$. The van
-Genuchten conductivity is Mualem's,
+saturated between its air-entry head $`\psi_{sat}<0`$ and zero, with $`K=K_{sat}\,S_e^{2b+3}`$. Both
+keep their parameters in one pair, `[soil].curve_par_a` and `curve_par_n` (α [m⁻¹] and $n$, or
+$`\psi_{sat}`$ [m] and $b$), so every reader of a column (the water network, the predawn seed, the
+diagnostics) evaluates the curve the column was built with. The van Genuchten conductivity is Mualem's,
 
 ```math
 K = K_{sat}\,S_e^{L}\,\big[1-(1-S_e^{1/m})^m\big]^2, \qquad L = -1 \qquad(2)

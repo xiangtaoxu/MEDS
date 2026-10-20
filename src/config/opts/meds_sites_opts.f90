@@ -1,8 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_sites_opts -- the [[sites]] tables, as a low-level config leaf: one record per site  !
-! of the polygon (docs/configuration.md, "Several sites"). A site's surface is built from  !
-! it at setup (make_site_surface, through site_config); the record itself is never state.  !
+! meds_sites_opts -- the [[sites]] tables, as a config leaf: one record per site of the    !
+! polygon (docs/configuration.md, "Several sites"). A site's surface is built from it at   !
+! setup (make_site_surface, through site_config); the record itself is never state.        !
 !==========================================================================================!
 module meds_sites_opts
    use meds_kinds,              only : wp, ik
@@ -12,9 +12,9 @@ module meds_sites_opts
 
    public :: site_spec_t
 
-   !----- One site: its share of the polygon, its terrain, the census rows it reads and, when its !
-   !      table sets any of [soil]'s column keys, its own ground, [soil]'s values for each key it  !
-   !      leaves out. -----------------------------------------------------------------------------!
+   !----- One site: its share of the polygon, terrain and census rows. A table that sets   !
+   !      any of [soil]'s column keys gives the site its own ground, with [soil]'s value   !
+   !      for each key it leaves out. -----------------------------------------------------!
    type :: site_spec_t
       real(wp)    :: area_fraction  = 0.0_wp      !< [-] its share of the polygon
       logical     :: has_elevation  = .false.     !< .false.: the polygon's elevation

@@ -113,7 +113,7 @@ happens to it there.
 | key | values | meaning |
 |---|---|---|
 | `thermal_bottom_bc` | `geothermal` (default) \| `dirichlet` | prescribed bottom flux (held at zero — an adiabatic wall that **reflects** the annual wave) vs conduction to a fixed deep temperature |
-| `deep_temp` | [K] | the anchor temperature. **Required** when `bottom_bc = "dirichlet"`; there is no default |
+| `deep_temp` | [K] | the anchor temperature. **Required** when `thermal_bottom_bc = "dirichlet"`; there is no default |
 | `deep_depth` | [m], default 3.145 | depth of the anchor plane below the surface; must lie below the bottom soil node |
 
 `deep_temp` is the mean annual soil temperature below the damping depth — close to the mean annual
@@ -130,6 +130,26 @@ the anchor does and does not fix are in [`docs/science/soil_biophysics.md`](scie
 
 Deepening the column with `[soil].depth` remains available and is the other way out, at the
 cost of layers; it also moves the root profile and the drainage, so it is not a thermal-only change.
+
+### Threads and the slow tier — `[run]`
+
+- **Threads.** `[run].n_threads` (default 1) runs a site's patches, or a region's polygons, on that
+  many OpenMP threads. Patches and polygons are independent within a step and the site's sums are
+  folded in patch order, so the output is byte-identical at any thread count: it is a wall-clock
+  setting only, bounded by the patch count and by how unevenly the patches cost. The default of 1
+  keeps a build compiled with OpenMP serial until asked; a build without OpenMP ignores the key. MEDS
+  does not read `OMP_NUM_THREADS`, so a run's config records its thread count. The
+  sub-daily probe (`[fast].fast_probe`) writes one shared CSV in order, so it needs one thread
+  ([`science/numerical_scheme.md`](science/numerical_scheme.md) §6a).
+- **`[run].slow_on = false`** skips the whole slow tier every step: growth, mortality, phenology,
+  traits, demography and soil carbon. The stand stays as it is while the fast loop runs. It is broader
+  than `[demography].demography_on`, which freezes only the restructuring.
+- **The slow ledger** (`[run].slow_ledger_on`, default on) snapshots the site's carbon, water and
+  energy stores either side of every slow-step operator, and prints at the end of the run what each
+  operator could not account for, judged against the flux it declared
+  ([`science/order_of_processes.md`](science/order_of_processes.md) §4). It writes no state and changes
+  no result, and costs about 0.3 % of the wall clock. It is the one check that sees a store jump across
+  the slow step; the fast loop's ledgers sum per-sub-step residuals and cannot.
 
 ### Cohort and patch fusion — `[demography]`
 
@@ -185,6 +205,14 @@ and a site's own census fit replaces them (example 05 does). The one exception t
 hazard is a cohort with no leaves and no storage, which dies in the step it is found
 (`science/plant_carbon_allocation.md` §2). Growth, competition and reproduction parameters are per-PFT
 but ship uniform.
+
+**Recruitment.** A PFT's recruits are a baseline external seed rain, `[pft].seed_rain_recruits`
+[plants m⁻² yr⁻¹], plus those its reproduction buys. From `min_repro_height` up, a cohort diverts
+`reproduction_investment_fraction` of its growth carbon to reproduction
+([plant_carbon_allocation](science/plant_carbon_allocation.md) §2). `recruit_carbon_efficiency` of
+that carbon (seed set, germination and seedling survival together) becomes recruits at
+`min_cohort_height`, a share that falls as exp(−`recruit_shade_decay` × patch LAI). `include_pft = 0`
+keeps a PFT from recruiting.
 
 Each PFT's height follows the curve `[allometry].height_allometry` names for it (one name for every
 PFT, or one per PFT, `["chave2014", "power", "power"]`). `"power"`, the default, is the pan-tropical

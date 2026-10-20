@@ -1,13 +1,9 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_region_opts -- the run mode and the [region] block, as a low-level config leaf      !
-! (docs/configuration.md, "Regional runs").                                                !
-!                                                                                          !
-! A site run ([run].mode = "site", the default) simulates one location from the [site]     !
-! block. A region run ([run].mode = "region") simulates every selected forcing cell of a   !
-! contiguous box as its own polygon, each at its cell's centre, and writes region files    !
-! with a `polygon` dimension, every variable and tier in them. Scattered site networks are !
-! separate site runs, not a region.                                                        !
+! meds_region_opts -- [run].mode and the [region] block, as a config leaf                  !
+! (docs/configuration.md, "Regional runs"). A site run simulates one location from [site]; !
+! a region run simulates every selected forcing cell of a box as its own polygon, at its   !
+! cell's centre.                                                                           !
 !==========================================================================================!
 module meds_region_opts
    use meds_kinds, only : wp, ik
@@ -16,19 +12,14 @@ module meds_region_opts
 
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
 
-   !----- [run].mode. ----------------------------------------------------------------------!
+   !----- [run].mode. ---------------------------------------------------------------------!
    integer(ik), parameter :: RUN_MODE_SITE   = 1_ik   !< one location, the [site] block
    integer(ik), parameter :: RUN_MODE_REGION = 2_ik   !< every selected cell of [region].box_nwse
 
    type :: region_opts_t
-      !----- [N, W, S, E] in degrees. The box may cross 0 or 180 degrees (W > E then). ---------!
-      real(wp)    :: box_nwse(4) = 0.0_wp
-      !----- Cells whose static land fraction is below this are not simulated: the forcing's     !
-      !      valid mask includes large lakes (the whole Caspian) and fractional coastal cells.  ----!
-      real(wp)    :: land_fraction_min = 0.5_wp
-      !----- The cell mask: a map on the forcing grid; a cell of the box runs where                  !
-      !      `cell_mask_var` is at least `cell_mask_min`, and is skipped where it is below or        !
-      !      the map holds no value. '' runs every selected cell of the box. ------------------------!
+      real(wp)    :: box_nwse(4) = 0.0_wp           !< [deg] N, W, S, E; W > E crosses 180 degrees
+      real(wp)    :: land_fraction_min = 0.5_wp     !< [-] cells of less static land are skipped
+      !----- Cell mask: a cell runs where cell_mask_var >= cell_mask_min ('' = all). ------!
       character(len=512) :: cell_mask     = ''
       character(len=64)  :: cell_mask_var = 'mask'
       real(wp)           :: cell_mask_min = 0.5_wp

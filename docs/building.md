@@ -31,7 +31,9 @@ language too.
 **netCDF-Fortran is deliberately not used.** MEDS writes netCDF through the C API via
 `iso_c_binding`, because netCDF-Fortran's compiled module format is gfortran-only and would not
 load under ifx or nvfortran. The C ABI is compiler-agnostic, so the same `libnetcdf` links
-identically under all three compilers.
+identically under all three compilers. For the same reason MEDS reads TOML with its own minimal
+reader (`src/config/meds_toml.f90`) rather than toml-f: a compiled Fortran module is
+compiler-specific.
 
 ## Compilers
 

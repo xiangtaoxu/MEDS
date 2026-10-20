@@ -49,7 +49,11 @@ where $A_c$ is Rubisco-limited, $A_j$ RuBP/light-limited, $A_p$ triose-phosphate
 $`\Gamma^*`$ is the CO₂ compensation point without respiration and $K_c, K_o$ the Rubisco
 Michaelis constants. The electron-transport rate $J$ follows the non-rectangular hyperbola
 $`\theta J^2 - (I_2 + J_{max})J + I_2 J_{max}=0`$ (smaller root), with
-$`I_2 = \tfrac12\,\phi_{\text{PSII}}\,\alpha_{\text{leaf}}\,\mathrm{PAR}`$.
+$`I_2 = \tfrac12\,\phi_{\text{PSII}}\,\alpha_{\text{leaf}}\,\mathrm{PAR}`$. The shipped
+$`\phi_{\text{PSII}}`$ = 0.74 makes $J$'s initial slope 0.37 electrons per absorbed photon, which at four
+electrons per CO₂ ($A_j$'s $4c_i + 8\Gamma^*$) is the measured maximum CO₂ yield of C3 leaves, 0.093 per
+absorbed photon (Long et al. 1993). Fv/Fm (0.85) in its place would fix CO₂ at the O₂-evolution yield,
+0.106 (Björkman & Demmig 1987).
 
 **$`\Gamma^*`$ is proportional to the oxygen partial pressure**, because it is set by Rubisco's
 specificity for CO₂ over O₂: $`\Gamma^* = \tfrac{1}{2} O / S_{c/o}`$. The O₂ partial pressure is

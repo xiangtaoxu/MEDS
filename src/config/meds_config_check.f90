@@ -1,18 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_config_check -- every check a configuration passes before a run starts            !
-! (docs/configuration.md).                                                                 !
-!                                                                                          !
-! Three kinds, in the order a load meets them:                                             !
-!   1. the key names: every key of a file is one its reference config lists              !
-!      (check_config_keys), with the listed key it most likely meant when it is not;       !
-!   2. the keys a setting makes inapplicable (check_key_use): a key that parses and does   !
-!      nothing is refused, as an unknown key is;                                           !
-!   3. the values (validate_config), one routine per block in the reference's order. It    !
-!      runs on the loaded configuration, again after the soil maps fill a polygon's        !
-!      ground, and for each region polygon.                                                !
-! The first two report every offending key together with the missing required ones; a     !
-! value check stops at the first setting that would corrupt the run.                       !
+! meds_config_check -- the checks a configuration passes before a run starts               !
+! (docs/configuration.md), in the order a load meets them:                                 !
+!   1. key names (check_config_keys): each key is one its reference lists, else it is      !
+!      reported with the listed key it most likely meant;                                  !
+!   2. keys a setting makes inapplicable (check_key_use), refused as unknown keys are;     !
+!   3. values (validate_config): at load, after the soil maps fill a polygon's ground,     !
+!      and for each region polygon.                                                        !
+! 1 and 2 are reported with the missing required keys; 3 stops at the first bad value.     !
 !==========================================================================================!
 module meds_config_check
    use meds_kinds,              only : wp, ik
@@ -118,9 +113,9 @@ contains
    end function table_key
 
    !----- The listed key an unknown one most likely meant. First the same name under another    !
-   !      section (a key that moved, like state.cohort_max to output.cohort_max), the closest     !
-   !      in spelling if there are several; else the closest spelling within a third of the      !
-   !      key's length (a typo). Blank when nothing is that close. ------------------------------!
+   !      section (a key in the wrong block, like state.cohort_max for output.cohort_max),      !
+   !      the closest in spelling if there are several; else the closest spelling within a      !
+   !      third of the key's length (a typo). Blank when nothing is that close. ----------------!
    pure function nearest_key(key, known) result(best)
       character(len=*), intent(in) :: key, known(:)
       character(len=KEY_LEN) :: best
@@ -606,9 +601,10 @@ contains
    end subroutine check_sites
 
    !----- [pft]: the photosynthesis curvatures lie in (0, 1], or the smoothing quadratic has no     !
-   !      root in the physical branch; reflectance + transmittance is the single-scatter albedo,     !
-   !      below 1 for a two-stream that conserves energy (docs/science/canopy_radiation_transfer.md); !
-   !      a leaf turnover rate of 0 would keep every leaf, and the plasticity slope divides by it.    !
+   !      root in the physical branch; reflectance + transmittance is the single-scatter albedo,    !
+   !      below 1 for a two-stream that conserves energy                                            !
+   !      (docs/science/canopy_radiation_transfer.md); a leaf turnover rate of 0 would keep         !
+   !      every leaf, and the plasticity slope divides by it. --------------------------------------!
    subroutine check_pft(cfg)
       type(meds_config_t), intent(in) :: cfg
       integer(ik) :: pf

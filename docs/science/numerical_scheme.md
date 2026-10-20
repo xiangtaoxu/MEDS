@@ -472,6 +472,15 @@ numerics = true                  # the work + health counters; turn this on for 
   ~10⁻⁶ J while canopy-air temperature oscillates 8 K step to step. If you change `dt_fast`, look at a
   consecutive-step trace of `cas_temp_site` and at daily GPP, not just the residuals.
 
+**The process mask.** `[fast].mask.<store>` switches one prognostic store off, to attribute a
+column's behaviour to a process or to isolate its stiffest mode (everything off but `hydraulics`). A
+store switched off is held at its start-of-step state while its kernel still runs, so its couplings
+to the other stores act as constants and no consumer reads an unset flux. Two things follow. A
+reduced column costs as much as the full one, so its work counters do not measure a cheaper system.
+And it does not conserve, because a held store's fluxes still act on its neighbours, so the budget
+halts are off unless every store is on (`mask_is_full`). Every scheme applies the mask at its one
+state-commit point (`apply_process_mask`).
+
 ---
 
 ## 6a. Multi-core: threading the patch axis
