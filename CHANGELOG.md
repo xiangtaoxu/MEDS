@@ -31,6 +31,7 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 `<input>_to_<output>`, and the Newton solvers share their step safeguards (#460). Every PFT trait is
 the PFT file's, its hydraulics among them, and the traits that follow a fitted relation are computed
 outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's potential (#461).
+`src/shared` is `src/share` (#462).
 
 **Upgrading from v0.3.5:**
 - **The PFT file's size allometry is per PFT** (#459). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
@@ -187,6 +188,8 @@ outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's
   (`plant_hydraulics_t`, in `meds_plant_hydr_lib`) in place of `cfg%hydraulics` and
   `pft_tissue_curves`. `apply_hydraulics_config` and `init_cohort` drop their hydraulics argument,
   `hydro_params_t` extends `plant_hydraulics_t`, and `pft%kplastic_vm0` is `pft%kplastic_vcmax`.
+- **`src/shared` is `src/share`, and its CMake library `meds_shared` is `meds_share`** (#462). A
+  build script or an out-of-tree target that links `meds_shared` links `meds_share`.
 - **Python: `meds.config` reads and sets one PFT of a key given for every PFT** (#461):
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's

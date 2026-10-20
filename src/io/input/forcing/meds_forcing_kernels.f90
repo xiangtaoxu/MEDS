@@ -3,7 +3,7 @@
 ! meds_forcing_kernels -- the PURE/ELEMENTAL meteorological-forcing math (docs/science/forcing.md !
 ! §3-§7 and §11): per-variable temporal interpolation, the interval-mean-conserving solar-zenith   !
 ! shortwave disaggregation, the total->4-stream shortwave partition, humidity from dewpoint / RH,  !
-! the rainfall phase split, the longwave synthesis and the grid match. Depends only on meds_shared !
+! the rainfall phase split, the longwave synthesis and the grid match. Depends only on meds_share  !
 ! (meds_kinds, meds_constants, meds_therm_lib, meds_time) and the forcing config's enumerations    !
 ! (meds_forcing_config): the saturation curve is meds_therm_lib%sat_vapor_pressure and the solar   !
 ! geometry meds_time%solar_cosz, the model's own. GPU-safe (leaf math over scalars).               !

@@ -8,7 +8,7 @@
 ! soil_params_t (the layers, the hydraulic texture and the field capacity) and             !
 ! soil_thermal_params_t (the thermal texture). They are derived from the config and never  !
 ! integrated -- parameters, not state -- so they live with the config, as the PFT table's  !
-! derived rates do (meds_pft_params). A config leaf: it uses only src/shared/, so the soil !
+! derived rates do (meds_pft_params). A config leaf: it uses only src/share/, so the soil  !
 ! kernels import it without the meds_config aggregator.                                    !
 !==========================================================================================!
 module meds_soil_column_config

@@ -4,7 +4,7 @@
 !                                                                                          !
 ! SEPARATE from meds_test_support on purpose. `build_test_config` needs the config, PFT and !
 ! demography layers; assertions need nothing but a kind. Many tests deliberately link one     !
-! narrow library each (`meds_shared`, `meds_config`, `meds_fast_kernels`, `meds_forcing`) to   !
+! narrow library each (`meds_share`, `meds_config`, `meds_fast_kernels`, `meds_forcing`) to    !
 ! keep those layers standalone-buildable, and they must be able to assert without dragging     !
 ! the whole model in. That is why this module exists and why it uses meds_kinds only.           !
 !                                                                                          !

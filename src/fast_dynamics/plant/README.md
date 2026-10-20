@@ -7,7 +7,7 @@ unit-test standalone (`cmake --build … --target meds_fast_kernels`), orthogona
 **The daily plant kernels are next door** in `src/slow_dynamics/plant/` — phenology, carbon
 allocation, trait plasticity. The vital-rate laws are demography, not ecophysiology, and live in
 `src/slow_dynamics/demography/`. Structural allometry is a shared geometric constraint reachable by
-state, demography, plant and config alike, so it lives in `src/shared/functions/meds_allometry_lib.f90`.
+state, demography, plant and config alike, so it lives in `src/share/functions/meds_allometry_lib.f90`.
 
 Every process here is a stateless per-individual kernel driven by an environment record, and all of
 them are wired into the fast loop: the pre-pass calls gas exchange and the two maintenance-respiration
@@ -26,7 +26,7 @@ Each kernel module exposes its own seams; there is no façade.
 | `meds_plant_respiration` | Non-leaf maintenance respiration: `stem_maintenance_respiration` and `fine_root_maintenance_respiration`. Growth respiration is charged in the daily allocator, on realized growth. |
 
 The shared temperature response (`meds_therm_lib`, Arrhenius and peaked deactivation) lives in
-`src/shared/functions/`, so leaf, stem and root reach one code path rather than three drifting
+`src/share/functions/`, so leaf, stem and root reach one code path rather than three drifting
 copies.
 
 The config-flattening assemblers that turn `meds_config_t` into these kernels' option records are

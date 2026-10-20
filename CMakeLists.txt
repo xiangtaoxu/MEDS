@@ -64,7 +64,7 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  It is the hardest trap here to find, so it is written down. Intel Fortran defaults to
 #  `-auto-scalar`: local SCALARS go on the stack, but local ARRAYS and DERIVED TYPES go in STATIC
 #  storage. Static locals are shared by every thread. The fast loop calls kernels in meds_fast_kernels,
-#  meds_slow_kernels, meds_shared and meds_demography, and every one with a local array or a local
+#  meds_slow_kernels, meds_share and meds_demography, and every one with a local array or a local
 #  derived type (e.g. `rad_forcing_t rf` in apply_rt_forcing -> alloc_rad_forcing) then has all
 #  threads writing the same object. It does NOT crash: it produces plausible, silently
 #  thread-count-dependent answers -- precisely what the byte-identity-at-any-thread-count requirement
@@ -128,30 +128,30 @@ function(meds_fortran_flags tgt)
    endif()
 endfunction()
 
-#----- FOUNDATION (src/shared/): the kinds, the constants, the numerics, the calendar and the      #
+#----- FOUNDATION (src/share/): the kinds, the constants, the numerics, the calendar and the       #
 #      budget checks at the top, and the stateless constitutive laws in functions/, one library    #
 #      per domain: allometry, plant hydraulics, soil hydraulics, thermodynamics (with the          #
 #      temperature response of enzyme rates) and canopy optics.                                    #
 #                                                                                                  #
-#      One folder, one library, and it links NOTHING. A module belongs in src/shared/ only if it   #
-#      `use`s nothing outside src/shared/ -- no model state, no configuration, no external         #
+#      One folder, one library, and it links NOTHING. A module belongs in src/share/ only if it    #
+#      `use`s nothing outside src/share/ -- no model state, no configuration, no external          #
 #      library. That is what lets every layer above, and the tests that link one narrow library,   #
 #      reach it freely, and it is the test that keeps this folder from becoming the place a file   #
 #      goes when no other place fits. The temperature response sits here so leaf, respiration and  #
 #      any other tissue share one code path without a plant-domain -> plant-domain library edge;   #
 #      meds_allometry_lib because it is a geometric CONSTRAINT that state, demography, plant and   #
 #      config all read.                                                                            #
-file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/functions/*.f90)
-add_library(meds_shared STATIC ${SHARED_SOURCES})
-meds_fortran_flags(meds_shared)
+file(GLOB SHARE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/share/*.f90
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/share/functions/*.f90)
+add_library(meds_share STATIC ${SHARE_SOURCES})
+meds_fortran_flags(meds_share)
 
 #----- CONFIGURATION: the PFT trait table, the per-domain option leaves (biophysics, leaf,         #
 #      biogeochemistry, maps, region, output, forcing, and the soil column with the parameters     #
 #      derived from it), the meds_config_t aggregator, the minimal TOML reader and the loader that #
 #      fills the aggregator from two TOML files. `toml` and `config_io` live here, not in src/io/: #
 #      they are configuration INPUT, not I/O of model results, and they carry no external          #
-#      dependency, unlike the netCDF output layer. Links meds_shared only; nothing here imports    #
+#      dependency, unlike the netCDF output layer. Links meds_share only; nothing here imports     #
 #      model state or a kernel.                                                                    #
 file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
@@ -164,7 +164,7 @@ meds_write_config_keys(${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
 target_include_directories(meds_config PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
-target_link_libraries(meds_config PUBLIC meds_shared)
+target_link_libraries(meds_config PUBLIC meds_share)
 meds_fortran_flags(meds_config)
 
 #----- STATE, one LAYER in five files by model hierarchy (src/README.md, rule 3). -------------#
@@ -182,7 +182,7 @@ meds_fortran_flags(meds_config)
 #  stores are config (meds_soil_column_config): a parameter is not state.                     #
 file(GLOB STATE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/*.f90)
 add_library(meds_state STATIC ${STATE_SOURCES})
-target_link_libraries(meds_state PUBLIC meds_shared meds_config)
+target_link_libraries(meds_state PUBLIC meds_share meds_config)
 meds_fortran_flags(meds_state)
 
 
@@ -282,7 +282,7 @@ endif()
 enable_language(C)
 find_package(netCDF CONFIG REQUIRED)
 add_library(meds_netcdf_c STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_c.f90)
-target_link_libraries(meds_netcdf_c PUBLIC meds_shared netCDF::netcdf)
+target_link_libraries(meds_netcdf_c PUBLIC meds_share netCDF::netcdf)
 meds_fortran_flags(meds_netcdf_c)
 
 #----- Meteorological FORCING (src/io/input/forcing): the reader + disaggregation kernels +      #
@@ -399,8 +399,8 @@ target_link_libraries(meds_main PRIVATE meds_driver)
 #      Per-subsystem independence lives at the CALL level (verbs, not libraries), not the LINK #
 #      level: `meds.plant`, `meds.canopy`, `meds.demography` and `meds.model` are sub-packages #
 #      over one backend. A kernels-only library beside a site-driver one would force every     #
-#      domain kernel library to link meds_shared ONLY, and the column state types into         #
-#      src/shared/. The accepted cost: the library links meds_model + IO, so even the leaf     #
+#      domain kernel library to link meds_share ONLY, and the column state types into          #
+#      src/share/. The accepted cost: the library links meds_model + IO, so even the leaf      #
 #      shim carries the whole model, and the wheel declares netCDF4 a runtime dependency       #
 #      rather than vendoring it.                                                               #
 #                                                                                              #
@@ -465,7 +465,7 @@ if(MEDS_BUILD_TESTS)
    #      because many tests deliberately link ONE narrow library each to keep that layer             #
    #      standalone-buildable, and they must be able to assert without linking the whole model.   #
    add_library(meds_testassert STATIC test/meds_test_assert.f90 test/meds_test_soil_grid.f90)
-   target_link_libraries(meds_testassert PUBLIC meds_shared)
+   target_link_libraries(meds_testassert PUBLIC meds_share)
    meds_fortran_flags(meds_testassert)
 
    #----- The in-code config fixture; re-exports the assertions so most tests need one `use`. ----#
@@ -474,16 +474,16 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(meds_testsupport)
 
 
-   #----- Shared numerical primitives + conservation checker (links meds_shared only). -----#
+   #----- Shared numerical primitives + conservation checker (links meds_share only). ------#
    add_executable(test_numerics test/test_numerics.f90)
-   target_link_libraries(test_numerics PRIVATE meds_shared meds_testassert)
+   target_link_libraries(test_numerics PRIVATE meds_share meds_testassert)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
    #----- Soil pedotransfer function: Hodnett & Tomasella (2002)'s worked example, Ks, coarse  #
-   #      fragments (links meds_shared only). --------------------------------------------------#
+   #      fragments (links meds_share only). ---------------------------------------------------#
    add_executable(test_pedotransfer test/test_pedotransfer.f90)
-   target_link_libraries(test_pedotransfer PRIVATE meds_shared meds_testassert)
+   target_link_libraries(test_pedotransfer PRIVATE meds_share meds_testassert)
    meds_fortran_flags(test_pedotransfer)
    add_test(NAME pedotransfer COMMAND test_pedotransfer)
 

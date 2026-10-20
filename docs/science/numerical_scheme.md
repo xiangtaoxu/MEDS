@@ -597,7 +597,7 @@ than a convergence proof.
 | error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/numerics/meds_fast_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set from config: `src/fast_dynamics/driver/meds_fast_config.f90` (`build_tol_set`) |
 | shared snow stage | `meds_fast_frozen.f90` (`advance_snow_stage`) |
 | patch loop, per-thread scratch pool, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
-| the linear solvers and the conservation test (§9) | `src/shared/meds_linear_algebra.f90`, `src/shared/meds_numerics.f90` (`conserved`) |
+| the linear solvers and the conservation test (§9) | `src/share/meds_linear_algebra.f90`, `src/share/meds_numerics.f90` (`conserved`) |
 
 ## 9. The shared numerical tools
 

@@ -19,7 +19,7 @@
 !      returned to its blending height. Pressure stays at the ground, where the canopy air, ground !
 !      and leaves use it.                                                                          !
 !                                                                                          !
-! Pure/elemental kernels over plain scalars, needing only meds_shared, the config leaf and the      !
+! Pure/elemental kernels over plain scalars, needing only meds_share, the config leaf and the       !
 ! forcing library's own kernels and types; the callers supply the heights.                         !
 !==========================================================================================!
 module meds_lapse_rate
