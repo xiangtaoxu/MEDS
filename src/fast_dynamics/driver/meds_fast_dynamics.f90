@@ -24,8 +24,7 @@ module meds_fast_dynamics
                                      par_w_2_umol,                                                            &
                                      stefan_boltzmann
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t
-   use meds_soil_column_config, only : soil_column_params, top_soil_psi
+   use meds_config,           only : meds_config_t, soil_column_params, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy, specific_humidity_to_vpd

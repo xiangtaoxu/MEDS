@@ -26,12 +26,14 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  enzyme rates), canopy optics                              1 916
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
-├── config/        meds_config_t (one field per key), the TOML reader, the
-│   │              loader, and the checks of the keys and their values       2 814
-│   └── opts/      one leaf per TOML block, the records and codes a kernel
+├── config/        meds_config_t (one field per key) and the routines that
+│   │              derive what the parameters imply (the soil column, the
+│   │              PFT table's arrays), the TOML reader, the loader, and
+│   │              the checks of the keys and their values                   3 109
+│   └── opts/      one leaf per TOML block, the types and codes a kernel
 │                  imports without meds_config: the PFT table, the soil
-│                  column and the parameters derived from it, forcing,
-│                  output, the fast loop, biophysics, sites, region, maps    1 164
+│                  column and its bundles, forcing, output, the fast loop,
+│                  biophysics, sites, region, maps                             864
 │
 │  ── STATE, one file per level of the hierarchy, each in sections ────────────
 ├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
@@ -118,9 +120,10 @@ machine precision.
 **3. A derived type lives with whoever mutates it.** If two subsystems mutate it, it is state, and
 belongs in the `state/` file of the level that holds it: a patch's stores in
 `meds_patch_state_vars`, a cohort's fields in `meds_cohort_state_vars`. **Parameters are not state**: they are derived once and never
-integrated, so they live with the configuration they are derived from. The soil column's
-(`soil_params_t`, the layer grid and their builders) are in `config/opts/meds_soil_column_config`, as
-the PFT table's derived rates are in `config/opts/meds_pft_params`.
+integrated, so they live with the configuration they are derived from: their types in
+`config/opts/` (`soil_params_t` in `meds_soil_column_config`, `pft_table_t` in `meds_pft_params`),
+and the routines that derive them in `config/meds_config` (the soil column's layer grid and
+bundles, the PFT table's leaf capacities).
 
 **4. Laws and operators do not touch.** `demography/` holds both the vital-rate laws
 (`meds_demography_rates`) and the operators that apply them (`update_*`, `*_fusefiss`,

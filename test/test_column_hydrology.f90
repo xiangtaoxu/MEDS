@@ -25,7 +25,8 @@ program test_column_hydrology
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav_head, n_soil_layer_max
    use meds_soil_types, only : chydro_forcing_t
-   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
+   use meds_soil_column_config, only : soil_params_t
+   use meds_config,             only : build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
                                     soil_theta_to_head

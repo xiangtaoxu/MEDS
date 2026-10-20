@@ -34,7 +34,7 @@ end module test_ro_support
 program test_output_roundtrip
    use iso_c_binding,         only : c_int, c_size_t, c_double
    use meds_kinds,            only : wp, ik
-   use meds_config,           only : meds_config_t
+   use meds_config,           only : meds_config_t, build_soil_hydr_params
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_output_opts,      only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
@@ -45,7 +45,7 @@ program test_output_roundtrip
    use meds_netcdf_c
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,        only : n_soil_layer_max
-   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
+   use meds_soil_column_config, only : soil_params_t
    use meds_soil_hydr_lib,    only : SOIL_RETENTION_VG
    use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close, test_pft_table

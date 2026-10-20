@@ -9,10 +9,10 @@ module meds_test_support
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : day_sec
    use meds_time,       only : meds_time_t
-   use meds_pft_params, only : pft_table_t, alloc_pft_table, PATH_C3, PATH_C4
+   use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4
    use meds_allometry_lib,  only : allometry_t
    use meds_plant_hydr_lib, only : plant_hydraulics_t, water_curve_t
-   use meds_config,     only : meds_config_t, derive_parameters, INIT_BARE
+   use meds_config,     only : meds_config_t, derive_parameters, INIT_BARE, alloc_pft_table
    use meds_fast_opts,  only : INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_therm_lib,     only : TEMP_RESPONSE_PEAKED

@@ -7,7 +7,7 @@
 ! only -- no polygon_t, no config aggregator -- so every routine here is directly unit-testable.   !
 !                                                                                          !
 ! CONTENT RULE. Anything a physics library already owns is CALLED, never re-implemented:   !
-! soil_theta_to_head lives in meds_soil_hydr_lib, tissue_water_to_psi in                   !
+! the soil's water potential lives in meds_soil_hydr_lib, tissue_water_to_psi in           !
 ! meds_plant_hydr_lib, internal_energy_to_temp and the moist-air thermodynamics in         !
 ! meds_therm_lib, the allometry in meds_allometry_lib. This module holds only diagnostics  !
 ! that no physics kernel owns. Where a thin re-export is more readable than making every   !
@@ -22,14 +22,13 @@
 !==========================================================================================!
 module meds_diagnostic_kernels
    use meds_kinds,         only : wp, ik
-   use meds_constants,     only : tiny_num, gsw_2_gsc, grav_head
+   use meds_constants,     only : tiny_num, gsw_2_gsc
    use meds_therm_lib,     only : sat_vapor_pressure, air_vpd, specific_humidity_to_vpd
-   use meds_soil_hydr_lib, only : soil_theta_to_head
    implicit none
    private
 
    public :: cohort_lai, cohort_npp_per_plant, cohort_gsc, cohort_wue, cohort_ci_ca
-   public :: soil_wetness, soil_matric_potential, air_vpd, specific_humidity_to_vpd
+   public :: soil_wetness, air_vpd, specific_humidity_to_vpd
    public :: bowen_ratio, safe_ratio
    public :: dbh_class_index
 
@@ -94,20 +93,6 @@ contains
       w = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
       w = min(max(w, 0.0_wp), 1.0_wp)
    end function soil_wetness
-
-   !----- Soil matric potential [MPa] from volumetric moisture. A thin re-export of            !
-   !      meds_soil_hydr_lib's curve (which returns metres of head) with the unit               !
-   !      conversion the output layer wants, so a caller needs one `use`, not two.              !
-   !      head [m] -> MPa via the shared `grav_head` (rho_w*g), the SAME constant plant           !
-   !      hydraulics uses -- so a soil psi reported here and a psi_soil the roots saw are on one   !
-   !      scale by construction, not by two independent unit conversions agreeing.                 !
-   pure elemental real(wp) function soil_matric_potential(retention, theta, theta_sat,         &
-                                    theta_res, par_a, par_n) result(psi_mpa)
-      integer(ik), intent(in) :: retention
-      real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n
-      psi_mpa = grav_head * soil_theta_to_head(retention, theta, theta_sat, theta_res,       &
-                                                par_a, par_n)
-   end function soil_matric_potential
 
    !=======================================================================================!
    !  Atmosphere / canopy air: air_vpd and specific_humidity_to_vpd are meds_therm_lib's,    !

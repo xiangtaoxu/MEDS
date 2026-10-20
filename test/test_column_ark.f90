@@ -14,7 +14,8 @@
 program test_column_ark
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
-   use meds_config,              only : meds_config_t
+   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
+                                        build_soil_therm_params
    use meds_fast_opts,           only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,   &
@@ -27,7 +28,6 @@ program test_column_ark
    use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts

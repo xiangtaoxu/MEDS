@@ -38,7 +38,8 @@ program test_spac_solver
                                     soil_theta_to_head
    use meds_plant_types,   only : hydro_params_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
-   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params
+   use meds_soil_column_config, only : soil_params_t
+   use meds_config,             only : build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_types,    only : chydro_forcing_t
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_DRAIN

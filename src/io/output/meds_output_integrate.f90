@@ -28,8 +28,8 @@ module meds_output_integrate
                                        patch_diag_slow_row, polygon_diag_value, N_SI_ROWS, site_diag_value
    use meds_state_defaults,     only : is_unset_positive
    use meds_constants,     only : n_soil_layer_max
-   use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
-                                       soil_matric_potential
+   use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness
+   use meds_soil_hydr_lib,      only : soil_matric_potential
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,             &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,               &
                                        reduce_patch_to_site, reduce_patch_columns_to_sites,       &

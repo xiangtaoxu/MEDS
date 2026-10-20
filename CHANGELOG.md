@@ -79,7 +79,10 @@ holds one module per block, and the reference config describes each key in a lin
   `DIST_TREEFALL` from `meds_patch_state_vars`. `meds_forcing_config` and `meds_output_config` are
   `meds_forcing_opts` and `meds_output_opts`, named like the other leaves; their types keep their
   names. `snow_cover_fraction` takes the snow roughness.
-  `BK_*`, `cfg%backend` and `INTERP_COSZ` are gone. The per-block modules are in `src/config/opts/`.
+  `BK_*`, `cfg%backend` and `INTERP_COSZ` are gone. The per-block modules are in `src/config/opts/`,
+  and hold types and codes: the soil column's builders (`soil_column_params`, `soil_column_layers`,
+  `build_soil_hydr_params`, `top_soil_psi`, …) and `alloc_pft_table` and `derive_leaf_params` come
+  from `meds_config`. `soil_matric_potential` comes from `meds_soil_hydr_lib`.
 - **The PFT file's size allometry is per PFT** (#459). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
   `sapwood_area_b1`, `sapwood_area_b2` and `aboveground_frac` move to `[allometry]`, and every
   `[allometry]` key takes one value, for every PFT, or an array with one per PFT; `height_allometry`
@@ -242,9 +245,11 @@ holds one module per block, and the reference config describes each key in a lin
 ### Changed
 
 - **`src/config` is the configuration and its checks** (#464): `meds_config` (the aggregate, one field
-  per key, grouped by block in the reference's order), `meds_config_io` (the loader), `meds_config_check`
-  and `meds_toml`. `src/config/opts/` holds one leaf per block, the record and selector codes the
-  kernels import without `meds_config`: the PFT table, the soil column, forcing, output, the fast loop
+  per key, grouped by block in the reference's order, and the routines that derive what the parameters
+  imply: the soil column's layers and bundles, the PFT table's arrays and leaf capacities),
+  `meds_config_io` (the loader), `meds_config_check` and `meds_toml`. `src/config/opts/` holds one leaf
+  per block, the types and selector codes the kernels import without `meds_config`: the PFT table, the
+  soil column, forcing, output, the fast loop
   (`meds_fast_opts`, new), biophysics, leaf, biogeochemistry, maps, region and sites
   (`meds_sites_opts`, new). The loader reads every selector through one reader, which replaces eleven
   hand-written parsers, and the value checks are one routine per block.

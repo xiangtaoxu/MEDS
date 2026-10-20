@@ -20,8 +20,7 @@ module meds_patch_state_vars
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, expand_patch_diag, reorder_patch_diag
    use meds_state_defaults,   only : UNSET_POSITIVE, is_unset_positive, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
-   use meds_config,           only : meds_config_t
-   use meds_soil_column_config, only : top_soil_psi
+   use meds_config,           only : meds_config_t, top_soil_psi
    use meds_site_state_vars,    only : site_surface_t
    implicit none
    private

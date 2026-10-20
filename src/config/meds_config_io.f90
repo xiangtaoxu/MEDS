@@ -10,10 +10,11 @@
 module meds_config_io
    use meds_kinds,      only : wp, ik
    use meds_allometry_lib, only : HEIGHT_POWER, HEIGHT_CHAVE
-   use meds_config,     only : meds_config_t, derive_parameters, INIT_CENSUS, INIT_RESTART
+   use meds_config,     only : meds_config_t, derive_parameters, alloc_pft_table, INIT_CENSUS,        &
+                               INIT_RESTART, pft_stomata_psi_onset, pft_wstress_psi_open,             &
+                               pft_wstress_psi_close
    use meds_fast_opts,  only : INTEG_ARK, INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE,                &
                                CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_config,     only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    use meds_soil_column_config, only : soil_column_config_t
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION
    use meds_maps_opts, only : soil_maps_on
@@ -36,7 +37,6 @@ module meds_config_io
                                    GRP_ENERGY, GRP_NUMERICS, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
                                    FC_RUN
    use meds_time,       only : meds_time_t, string_to_time
-   use meds_pft_params, only : alloc_pft_table
    use meds_biophysics_opts, only : ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
                                     SOIL_BC_DRAIN, SOIL_BC_AQUIFER

@@ -16,7 +16,7 @@ module meds_pft_params
    implicit none
    private
 
-   public :: pft_table_t, phenology_traits_t, alloc_pft_table, derive_leaf_params
+   public :: pft_table_t, phenology_traits_t
    public :: HYD_UNSET
    public :: PATH_C3, PATH_C4
 
@@ -158,76 +158,5 @@ module meds_pft_params
    !----- Sentinel of an optional stomatal stress point the PFT file leaves out: large and !
    !      negative, so no leaf potential is mistaken for it. ------------------------------!
    real(wp), parameter :: HYD_UNSET = -1.0e30_wp
-
-contains
-
-   !---------------------------------------------------------------------------------------!
-   ! Allocate every trait array to n PFTs.                                                 !
-   !---------------------------------------------------------------------------------------!
-   subroutine alloc_pft_table(pft, n)
-      type(pft_table_t), intent(inout) :: pft
-      integer(ik),       intent(in)    :: n
-      pft%n = n
-      allocate(pft%allom(n), pft%hydro(n), pft%wood_density(n))
-      allocate(pft%reproduction_investment_fraction(n), pft%min_repro_height(n), pft%recruit_carbon_efficiency(n))
-      allocate(pft%recruit_shade_decay(n))
-      pft%recruit_shade_decay = 0.0_wp      ! optional key; 0 = the same share under any canopy
-      allocate(pft%nbg_init_density(n))
-      pft%nbg_init_density = 0.0_wp         ! optional key; 0 = bare ground starts empty
-      allocate(pft%stem_resp_sapwood25(n))
-      pft%stem_resp_sapwood25 = 0.0_wp      ! optional key; 0 = stem respiration by surface alone
-      allocate(pft%mort_gamma(n), pft%mort_alpha(n), pft%mort_beta(n))
-      allocate(pft%seed_rain_recruits(n), pft%include_pft(n))
-      allocate(pft%photosynthetic_pathway(n), pft%vcmax25(n), pft%jmax_vcmax_ratio(n),       &
-               pft%tpu_vcmax_ratio(n), pft%rd_vcmax_ratio(n), pft%kp25(n))
-      allocate(pft%stomatal_g0(n), pft%stomatal_g1(n), pft%stomatal_d0(n),                   &
-               pft%quantum_yield_c4(n), pft%theta_j(n), pft%theta_cj_c4(n), pft%theta_ic_c4(n),  &
-               pft%theta_cj_c3(n), pft%theta_ip_c3(n))
-      allocate(pft%katul_lambda25(n), pft%wstress_psi_open(n), pft%wstress_psi_close(n),     &
-               pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n), pft%stomata_psi_onset(n))
-      allocate(pft%leaf_surf_water_max(n), pft%wood_surf_water_max(n))
-      allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
-      allocate(pft%leaf_width(n), pft%branch_diameter(n))
-      allocate(pft%sla(n), pft%root_to_leaf_ratio(n),                                        &
-               pft%storage_cushion(n), pft%growth_resp_factor(n),                            &
-               pft%storage_turnover_rate(n), pft%retained_carbon_fraction(n),               &
-               pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
-               pft%leaf_reflect_vis(n), pft%leaf_transmit_vis(n), pft%leaf_reflect_nir(n),   &
-               pft%leaf_transmit_nir(n), pft%leaf_emissivity(n),                             &
-               pft%wood_reflect_vis(n), pft%wood_transmit_vis(n), pft%wood_reflect_nir(n),   &
-               pft%wood_transmit_nir(n), pft%wood_emissivity(n),                             &
-               pft%leaf_clumping(n), pft%wood_clumping(n),                                   &
-               pft%leaf_angle_mean(n), pft%leaf_angle_std(n),                                &
-               pft%leaf_turnover_rate_toc(n), pft%fineroot_turnover_rate(n))
-      pft%storage_turnover_rate = 0.0_wp   ! optional key; 0 = no storage maintenance
-      allocate(pft%max_relative_growth_rate(n), pft%max_absolute_growth_rate(n),                     &
-               pft%max_absolute_growth_exponent(n))
-      pft%max_relative_growth_rate     = 0.0_wp   ! optional keys; a rate of 0 = that sink limit off
-      pft%max_absolute_growth_rate     = 0.0_wp
-      pft%max_absolute_growth_exponent = 0.0_wp
-      pft%retained_carbon_fraction = 0.3_wp ! optional key; 30% of leaf and root loss resorbed
-      !----- HYD_UNSET marks a stomatal stress point the PFT file leaves out; the PFT's    !
-      !      turgor-loss point then sets it (pft_stomata_psi_onset,                        !
-      !      pft_wstress_psi_open/close). -------------------------------------------------!
-      pft%stomata_psi_onset = HYD_UNSET   ! half the PFT's turgor-loss point
-      pft%wstress_psi_open  = HYD_UNSET   ! the turgor-loss point
-      pft%wstress_psi_close = HYD_UNSET   ! twice it
-      pft%leaf_surf_water_max = 0.1_wp
-      pft%wood_surf_water_max = 0.1_wp   ! optional keys: CLM5's dewmx
-      allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
-      allocate(pft%kplastic_sla(n), pft%kplastic_vcmax(n), pft%kplastic_rd(n), pft%kplastic_leaf_turnover(n))
-      allocate(pft%pheno(n))                ! a PFT without a [phenology] block keeps the defaults
-   end subroutine alloc_pft_table
-
-   !---------------------------------------------------------------------------------------!
-   ! Derive the per-PFT leaf-photosynthesis capacities (Jmax25, TPU25, Rd25) as fixed      !
-   ! ratios of Vcmax25. Call after vcmax25 and the ratio arrays are set from the PFT file. !
-   !---------------------------------------------------------------------------------------!
-   subroutine derive_leaf_params(pft)
-      type(pft_table_t), intent(inout) :: pft
-      pft%jmax25 = pft%jmax_vcmax_ratio * pft%vcmax25
-      pft%tpu25  = pft%tpu_vcmax_ratio  * pft%vcmax25
-      pft%rd25   = pft%rd_vcmax_ratio   * pft%vcmax25
-   end subroutine derive_leaf_params
 
 end module meds_pft_params

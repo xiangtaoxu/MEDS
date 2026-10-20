@@ -17,7 +17,8 @@ program test_column_dynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : latent_heat_fusion, rho_h2o, grav, pio4, n_soil_layer_max, tissue_c_leaf, &
                                         tissue_c_wood_dry
-   use meds_config,              only : meds_config_t
+   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
+                                        build_soil_therm_params
    use meds_fast_opts,           only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, tissue_temp_to_energy,  &
@@ -29,7 +30,6 @@ program test_column_dynamics
    use meds_biophysics_opts, only : SOIL_BC_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_column_config, only : build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config, &
                                         fast_workspace_t

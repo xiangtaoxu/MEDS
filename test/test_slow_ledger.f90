@@ -22,12 +22,12 @@
 !==========================================================================================!
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
-   use meds_config,             only : meds_config_t
+   use meds_config,             only : meds_config_t, build_soil_hydr_params, soil_column_layers,     &
+                                       soil_column_params, soil_column_start_theta, top_soil_psi
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
    use meds_state_defaults,     only : UNSET_POSITIVE
-   use meds_soil_column_config, only : soil_params_t, build_soil_hydr_params, soil_column_layers,     &
-                                       soil_column_params, soil_column_start_theta, top_soil_psi
+   use meds_soil_column_config, only : soil_params_t
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_demography_cohort_fusefiss, only : terminate_cohorts

@@ -19,8 +19,7 @@ module meds_config_check
    use meds_therm_lib,          only : TEMP_RESPONSE_PEAKED
    use meds_soil_hydr_lib,      only : SOIL_RETENTION_VG
    use meds_pft_params,         only : PATH_C3, PATH_C4
-   use meds_soil_column_config, only : soil_texture_layers_t, soil_params_t, soil_column_layers,     &
-                                       soil_column_texture, soil_column_params, SOIL_LAYER_TEMPLATE
+   use meds_soil_column_config, only : soil_texture_layers_t, soil_params_t
    use meds_forcing_opts,       only : LW_SYNTHESIZE, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,   &
                                        WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL, ARCHIVE_DT_SEC, &
                                        CO2_SOURCE_CONST, CO2_SOURCE_FILE, METAVG_END, MAX_RECYCLE_YEARS
@@ -28,7 +27,9 @@ module meds_config_check
    use meds_region_opts,        only : RUN_MODE_REGION
    use meds_maps_opts,          only : soil_maps_on
    use meds_config,             only : meds_config_t, site_config, pft_wstress_psi_open,              &
-                                       pft_wstress_psi_close, INIT_CENSUS, INIT_RESTART
+                                       pft_wstress_psi_close, INIT_CENSUS, INIT_RESTART,              &
+                                       soil_column_layers, soil_column_texture, soil_column_params,   &
+                                       SOIL_LAYER_TEMPLATE
    use meds_fast_opts,          only : INTEG_ARK, INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE,        &
                                        CTRL_L2_STRICT, CTRL_I, CTRL_PI
    implicit none
