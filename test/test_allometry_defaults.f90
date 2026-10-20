@@ -63,14 +63,10 @@ program test_allometry_defaults
    call check_close(d%chave_c, -0.0340_wp, rtol, 'chave_c initializer = Chave 2014 eq. 6a')
    call check_close(d%chave_rse, 0.243_wp, rtol, 'chave_rse initializer = Chave 2014 eq. 6a')
 
-   !----- The height curve: the shipped config and the initializer are both the power law, and  !
-   !      the gMM initializers are Cano et al. (2019) eq. 7, the values the config lists. -------!
+   !----- The height curve: the shipped config and the initializer are both the power law. ---!
    call check(trim(toml_string(t, 'allometry.height_allometry', '')) == 'power',                    &
               'meds_config_pft.toml sets [allometry].height_allometry = "power"')
    call check(d%height_form == HEIGHT_POWER, 'the height-curve initializer is the power law')
-   call check_close(d%gmm_a, 58.0_wp, rtol, 'gmm_a initializer = Cano et al. (2019) eq. 7')
-   call check_close(d%gmm_b, 0.73_wp, rtol, 'gmm_b initializer = Cano et al. (2019) eq. 7')
-   call check_close(d%gmm_k, 21.8_wp, rtol, 'gmm_k initializer = Cano et al. (2019) eq. 7')
 
    print '(a)', 'test_allometry_defaults: ALL PASSED'
 

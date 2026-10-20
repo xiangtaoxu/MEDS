@@ -18,7 +18,7 @@
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
-   use meds_allometry,  only : HEIGHT_POWER, HEIGHT_GMM, HEIGHT_CHAVE
+   use meds_allometry,  only : HEIGHT_POWER, HEIGHT_CHAVE
    use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
@@ -452,8 +452,8 @@ contains
    end subroutine req_sw_partition
 
    !----- [allometry].height_allometry, one for every PFT or one per PFT: "power" (the        !
-   !      default), "gmm", whose PFTs need its three coefficients, or "chave2014", whose PFTs     !
-   !      take Chave's coefficients unless given others, and the site's stress index chave_e. ----!
+   !      default) or "chave2014", the log-quadratic, whose PFTs take Chave's coefficients        !
+   !      unless given their own fit, and the site's stress index chave_e. ------------------------!
    subroutine opt_height_allometry(t, cfg, npft, m)
       type(toml_table_t), intent(in) :: t ; type(meds_config_t), intent(inout) :: cfg
       integer(ik), intent(in) :: npft ; type(keymiss_t), intent(inout) :: m
@@ -473,16 +473,13 @@ contains
          do pf = 1_ik, npft
             select case (trim(forms(pf)))
             case ('power')     ; allom(pf)%height_form = HEIGHT_POWER
-            case ('gmm')       ; allom(pf)%height_form = HEIGHT_GMM
             case ('chave2014') ; allom(pf)%height_form = HEIGHT_CHAVE
+            case ('gmm')
+               error stop 'load_meds_config: allometry.height_allometry = "gmm" is gone: fit the '// &
+                          'log-quadratic, "chave2014" with chave_a, chave_b and chave_c, to the heights'
             case default       ; call note_missing(m, 'allometry.height_allometry')
             end select
          end do
-         if (any(allom(1:npft)%height_form == HEIGHT_GMM)) then
-            call req_pa_bcast(t, 'allometry.gmm_a', allom%gmm_a, npft, m)
-            call req_pa_bcast(t, 'allometry.gmm_b', allom%gmm_b, npft, m)
-            call req_pa_bcast(t, 'allometry.gmm_k', allom%gmm_k, npft, m)
-         end if
          if (any(allom(1:npft)%height_form == HEIGHT_CHAVE)) then
             call opt_pa_bcast(t, 'allometry.chave_a',   allom%chave_a,   npft, m)
             call opt_pa_bcast(t, 'allometry.chave_b',   allom%chave_b,   npft, m)
@@ -1531,15 +1528,15 @@ contains
            //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_leaf_turnover,'                        &
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
            //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density,'                &
-           //'height_form,b1Ht,b2Ht,gmm_a,gmm_b,gmm_k,chave_a,chave_b,chave_c,chave_rse,chave_e,'        &
+           //'height_form,b1Ht,b2Ht,chave_a,chave_b,chave_c,chave_rse,chave_e,'                          &
            //'agb_c1,agb_c2,lai_b1,lai_b2,wai_b1,wai_b2,sapwood_area_b1,sapwood_area_b2'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 80 ITEMS: i0 + 8 + i0 + 2 + i0 + 48 + i0 + 18. A format SHORTER than the value    !
+            !----- 77 ITEMS: i0 + 8 + i0 + 2 + i0 + 48 + i0 + 15. A format SHORTER than the value    !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8),",",i0,18(",",es15.8))') &
+            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8),",",i0,15(",",es15.8))') &
                  pf, p%wood_density(pf), p%allom(pf)%hgt_max,                                           &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -1563,7 +1560,6 @@ contains
                  p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
                  p%max_absolute_growth_exponent(pf), p%nbg_init_density(pf),                        &
                  p%allom(pf)%height_form, p%allom(pf)%b1Ht, p%allom(pf)%b2Ht,                         &
-                 p%allom(pf)%gmm_a, p%allom(pf)%gmm_b, p%allom(pf)%gmm_k,                             &
                  p%allom(pf)%chave_a, p%allom(pf)%chave_b, p%allom(pf)%chave_c,                       &
                  p%allom(pf)%chave_rse, p%allom(pf)%chave_e,                                          &
                  p%allom(pf)%agb_c1, p%allom(pf)%agb_c2, p%allom(pf)%lai_b1, p%allom(pf)%lai_b2,      &

@@ -154,7 +154,6 @@ def pft_params(pft_file, pft):
 
     return {"b1Ht": allom("b1Ht"), "b2Ht": allom("b2Ht"), "agb_c1": allom("agb_c1"), "agb_c2": allom("agb_c2"),
             "height_allometry": allom("height_allometry", "power"),
-            "gmm": (allom("gmm_a"), allom("gmm_b"), allom("gmm_k")),
             "chave": (allom("chave_a", 0.893), allom("chave_b", 0.760), allom("chave_c", -0.0340),
                       allom("chave_rse", 0.243), a.get("chave_e", 0.0)),
             "lai_b1": allom("lai_b1"), "lai_b2": allom("lai_b2"), "hgt_max": allom("hgt_max"),
@@ -166,10 +165,7 @@ def pft_params(pft_file, pft):
 
 def allometry(dbh_cm, pp):
     """Height [m], leaf area [m2] and AGB [kgC] per tree."""
-    if pp.get("height_allometry", "power") == "gmm":
-        a, b, k = pp["gmm"]
-        h = np.minimum(a * dbh_cm ** b / (k + dbh_cm ** b), pp["hgt_max"])
-    elif pp.get("height_allometry", "power") == "chave2014":
+    if pp.get("height_allometry", "power") == "chave2014":
         ca, cb, cc, rse, e = pp["chave"]
         x = np.log(dbh_cm)
         h = np.minimum(np.exp(ca - e + 0.5 * rse * rse + cb * x + cc * x * x), pp["hgt_max"])

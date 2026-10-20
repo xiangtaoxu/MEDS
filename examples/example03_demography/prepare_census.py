@@ -21,7 +21,7 @@ species' wood density) by PFT and size class in every census.
 A tree is described by what it is at the start of an interval: its dbh, its PFT (from its species'
 wood density) and its overtopping LAI, the leaf area of TALLER trees within 20 m of it per m2 of
 ground -- the competition index the MEDS engine computes for every cohort. Height and leaf area are
-MEDS's allometry as the example's PFT config sets it (the BCI height curve of Cano et al. 2019). A quadrat's recruits are described
+MEDS's allometry as the example's PFT config sets it (the local log-quadratic for BCI). A quadrat's recruits are described
 by the leaf area index within 20 m of the quadrat's centre, all of it and the PFT's own. Trees and
 quadrats whose 20 m circle crosses the plot's edge are not described (they still count as
 neighbours). A MEDS tree is one stem, so a tree alive with no main stem to measure has died, and is a
@@ -93,13 +93,16 @@ def basal_area_m2(dbh_cm):
 
 
 def height_m(dbh_cm, pft):
-    """MEDS's dbh_to_height: each PFT's height curve (power law or gMM), capped at its hgt_max."""
+    """MEDS's dbh_to_height: each PFT's height curve (power law or log-quadratic), capped at its hgt_max."""
     i = np.asarray(pft) - 1
-    h = np.exp(per_pft("b1Ht")[i] + per_pft("b2Ht")[i] * np.log(dbh_cm))
+    x = np.log(dbh_cm)
+    h = np.exp(per_pft("b1Ht")[i] + per_pft("b2Ht")[i] * x)
     form = per_pft("height_allometry", "power")[i]
-    if np.any(form == "gmm"):
-        a, b, k = (per_pft(n, np.nan).astype(float)[i] for n in ("gmm_a", "gmm_b", "gmm_k"))
-        h = np.where(form == "gmm", a * dbh_cm ** b / (k + dbh_cm ** b), h)
+    if np.any(form == "chave2014"):
+        a, b, c, rse = (per_pft(n, d).astype(float)[i] for n, d in
+                        (("chave_a", 0.893), ("chave_b", 0.760), ("chave_c", -0.0340), ("chave_rse", 0.243)))
+        e = float(ALLOM.get("chave_e", 0.0))
+        h = np.where(form == "chave2014", np.exp(a - e + 0.5 * rse * rse + b * x + c * x * x), h)
     return np.minimum(h, per_pft("hgt_max").astype(float)[i])
 
 

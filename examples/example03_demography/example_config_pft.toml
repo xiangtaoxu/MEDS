@@ -11,7 +11,7 @@ reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction d
 recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
-min_cohort_height       = 2.544            # [m] = dbh 1 cm on the BCI height curve; recruits born here
+min_cohort_height       = 2.435            # [m] = dbh 1 cm on the BCI height curve; recruits born here
 min_repro_height   = [20.0, 20.0, 20.0]   # [m] a cohort reproduces from this height
 # Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4). pathway: 1 = C3, 2 = C4.
 # (Used by the leaf gas-exchange model, which this example does not run: growth is a census law.)
@@ -93,18 +93,21 @@ agb_c1     = 0.03365        # [kgC] AGB scale: Chave et al. (2014) eq. 4, 0.0673
 agb_c2     = 0.976          # AGB exponent on rho and on dbh^2*h: Chave et al. (2014) eq. 4
 lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
-hgt_max            = [46.0, 46.0, 46.0]     # [m] the shipped cap; the BCI height curve stays below it (43 m at 300 cm)
+hgt_max            = [46.0, 46.0, 46.0]     # [m] the shipped cap; the BCI height curve stays below it (44.6 m at 300 cm)
 wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
 wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
 sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
 sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
 aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
-# The Barro Colorado height curve: Cano et al. (2019, Biogeosciences 16:847) eq. 7, the community-level
-# generalized Michaelis-Menten fit to 9884 trees of the Barro Colorado Nature Monument.
-height_allometry = "gmm"
-gmm_a      = 58.0           # [m] asymptotic height
-gmm_b      = 0.73           # [--] exponent on dbh
-gmm_k      = 21.8           # [cm^gmm_b] half-saturation
+# Barro Colorado's height curve: the log-quadratic fitted, uniformly in ln dbh over 1-300 cm, to Cano et
+# al. (2019, Biogeosciences 16:847)'s curve for 9884 trees of the Barro Colorado Nature Monument; within
+# 4.3 % of it everywhere. E is 0, and chave_rse 0 because the fit is to that curve, not to scattered heights.
+height_allometry = "chave2014"
+chave_a    = 0.8898
+chave_b    = 0.7908
+chave_c    = -0.04923
+chave_rse  = 0.0
+chave_e    = 0.0
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
 # mortality-hazard parameters instead of deriving them from wood density:

@@ -104,13 +104,14 @@ record per PFT), whose coefficients are the PFT file's `[allometry]` block (`doc
 PFT file"): each key one value for every PFT or one per PFT, so an understorey specialist and a canopy
 emergent can each have their own curve, cap and leaf display. With $D$ the diameter [cm], $H$ the height [m] and $\rho$ the wood density [g cm⁻³]:
 
-- **Height** follows one of three curves, each capped at the PFT's `hgt_max`: the pan-tropical power
-  law $`\ln H = b_1 + b_2 \ln D`$; the saturating generalized Michaelis–Menten curve
-  $`H = a D^{b}/(k + D^{b})`$, fitted by Cano et al. (2019) in the Barro Colorado Nature Monument; or
-  a log-quadratic, $`\ln H = a - E + b \ln D + c (\ln D)^2 + s^2/2`$, with $E$ the site's stress index
-  (the same for every PFT) and the PFT's coefficients defaulting to Chave et al. (2014) eq. 6a: $a$ =
-  0.893, $b$ = 0.760, $c$ = −0.0340 and the fit's residual standard error $s$ = 0.243. The $`s^2/2`$
-  turns the fit's log-scale median into its mean, as BIOMASS's `retrieveH` does. Height to diameter inverts the
+- **Height** follows one of two curves, each capped at the PFT's `hgt_max`: the pan-tropical power
+  law $`\ln H = b_1 + b_2 \ln D`$, or a log-quadratic, $`\ln H = a - E + b \ln D + c (\ln D)^2 + s^2/2`$,
+  with $E$ the site's stress index (the same for every PFT) and the PFT's coefficients defaulting to
+  Chave et al. (2014) eq. 6a: $a$ = 0.893, $b$ = 0.760, $c$ = −0.0340 and the fit's residual standard
+  error $s$ = 0.243. The $`s^2/2`$ turns the fit's log-scale median into its mean, as BIOMASS's
+  `retrieveH` does. A site's own heights give a local fit of $a$, $b$ and $c$: Barro Colorado's, fitted
+  uniformly in $`\ln D`$ over 1–300 cm to Cano et al. (2019)'s curve for 9884 trees of the Barro Colorado
+  Nature Monument, is $a$ = 0.8898, $b$ = 0.7908, $c$ = −0.04923 (within 4.3 % of that curve). Height to diameter inverts the
   uncapped curve; on Chave's curve that is the smaller root of the quadratic in $`\ln D`$, the rising
   branch, which holds up to a diameter of about 7×10⁴ cm.
 - **Biomass** is Chave et al. (2014) eq. 4 in carbon, $`\mathrm{AGB} = c_1\,\rho^{c_2}\,(D^2 H)^{c_2}`$
@@ -128,11 +129,7 @@ emergent can each have their own curve, cap and leaf display. With $D$ the diame
   (`wood_to_dbh`); `carbon_to_structure` derives a cohort's diameter, height, basal area, AGB and leaf
   area from its wood and leaf carbon. Under the power law the inverse is closed form,
   $`\mathrm{AGB} \propto D^{P}`$ with $`P = c_2(2 + b_2)`$ below the height cap and $`P = 2c_2`$ above it,
-  the two meeting at the cap; under Chave's curve it is the smaller root of a quadratic in $`\ln D`$.
-  The gMM curve has no closed-form inverse, so Newton's method solves
-  $`2x + \ln H(x) = \ln\!\big(\mathrm{AGB}/(c_1\rho^{c_2})\big)/c_2`$ for $`x = \ln D`$. The left side
-  rises with a slope between 2 and $`2 + b`$ and is concave (the cap only flattens it), so after its
-  first step the iteration lands at or below the root and climbs to it without overshooting.
+  the two meeting at the cap; under the log-quadratic it is the smaller root of a quadratic in $`\ln D`$.
 
 ### Sink limitation of wood growth
 

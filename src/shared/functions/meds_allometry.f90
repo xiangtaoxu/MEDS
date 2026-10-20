@@ -22,27 +22,21 @@ module meds_allometry
    public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: storage_carbon_target
    public :: dbh_to_wai, sapwood_fraction
-   public :: HEIGHT_POWER, HEIGHT_GMM, HEIGHT_CHAVE
+   public :: HEIGHT_POWER, HEIGHT_CHAVE
 
-   !----- Height curves: a power law, a saturating gMM, or the log-quadratic of Chave et   !
-   !      al. (2014) eq. 6a. -------------------------------------------------------------!
-   integer(ik), parameter :: HEIGHT_POWER = 1_ik, HEIGHT_GMM = 2_ik, HEIGHT_CHAVE = 3_ik
-   !----- Newton's method for agb -> dbh under the gMM height (agb_to_dbh_gmm). -----------!
-   integer,     parameter :: NEWTON_MAX_ITER = 50
-   real(wp),    parameter :: NEWTON_TOL      = 1.0e-12_wp    !< [ln cm] change in ln(dbh)
+   !----- Height curves: a power law, or the log-quadratic of Chave et al. (2014) eq. 6a,  !
+   !      whose coefficients a PFT may fit to its own site. ------------------------------!
+   integer(ik), parameter :: HEIGHT_POWER = 1_ik, HEIGHT_CHAVE = 2_ik
 
    !----- One PFT's allometry, from the PFT file's [allometry] block. The defaults are the  !
    !      shipped pan-tropical values, so a record made without a config (a unit test, a   !
    !      Python call) is usable. ---------------------------------------------------------!
    type :: allometry_t
       !----- Height: the curve, and the cap on every curve. ------------------------------!
-      integer(ik) :: height_form = HEIGHT_POWER   !< the height curve: power law, gMM or log-quadratic
+      integer(ik) :: height_form = HEIGHT_POWER   !< the height curve: power law or log-quadratic
       real(wp)    :: hgt_max     = 46.0_wp        !< [m]   the largest height
       real(wp)    :: b1Ht        = 1.139963_wp    !< [--]  power law: intercept of ln H on ln dbh
       real(wp)    :: b2Ht        = 0.564899_wp    !< [--]  power law: slope of ln H on ln dbh
-      real(wp)    :: gmm_a       = 58.0_wp        !< [m]   gMM (Cano et al. 2019 eq. 7): asymptotic height
-      real(wp)    :: gmm_b       = 0.73_wp        !< [--]  gMM: exponent on dbh
-      real(wp)    :: gmm_k       = 21.8_wp        !< [cm^gmm_b] gMM: half-saturation
       real(wp)    :: chave_a     = 0.893_wp       !< [--]  log-quadratic: intercept (Chave et al. 2014 eq. 6a)
       real(wp)    :: chave_b     = 0.760_wp       !< [--]  log-quadratic: slope on ln dbh
       real(wp)    :: chave_c     = -0.0340_wp     !< [--]  log-quadratic: coefficient of (ln dbh)^2
@@ -66,11 +60,8 @@ contains
    elemental pure function dbh_to_height(allom, dbh) result(h)
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: dbh
-      real(wp)                      :: h, db, x
+      real(wp)                      :: h, x
       select case (allom%height_form)
-      case (HEIGHT_GMM)
-         db = max(dbh, tiny_num) ** allom%gmm_b
-         h  = allom%gmm_a * db / (allom%gmm_k + db)
       case (HEIGHT_CHAVE)
          x  = log(max(dbh, tiny_num))
          h  = exp(chave_intercept(allom) + allom%chave_b * x + allom%chave_c * x * x)
@@ -86,8 +77,6 @@ contains
       real(wp),          intent(in) :: h
       real(wp)                      :: dbh
       select case (allom%height_form)
-      case (HEIGHT_GMM)
-         dbh = (allom%gmm_k * max(h, tiny_num) / max(allom%gmm_a - h, tiny_num)) ** (1.0_wp / allom%gmm_b)
       case (HEIGHT_CHAVE)
          dbh = exp(chave_small_root(allom%chave_c, allom%chave_b, chave_intercept(allom) - log(max(h, tiny_num))))
       case default
@@ -143,10 +132,6 @@ contains
       type(allometry_t), intent(in) :: allom
       real(wp),          intent(in) :: agb, rho
       real(wp)                      :: dbh, k_un, p_un, k_cap, p_cap, h
-      if (allom%height_form == HEIGHT_GMM) then
-         dbh = agb_to_dbh_gmm(allom, agb, rho)
-         return
-      end if
       if (allom%height_form == HEIGHT_CHAVE) then
          dbh = agb_to_dbh_chave(allom, agb, rho)
          return
@@ -161,33 +146,6 @@ contains
          dbh   = (max(agb, tiny_num) / k_cap) ** (1.0_wp / p_cap)
       end if
    end function agb_to_dbh
-
-   !----- AGB -> diameter under the gMM height, which has no closed-form inverse: Newton's !
-   !      method on x = ln(dbh). The biomass law, 2x + ln h(x) = target, is rising and     !
-   !      concave, so after one step the iterates climb to the root without overshoot. ----!
-   elemental pure function agb_to_dbh_gmm(allom, agb, rho) result(dbh)
-      type(allometry_t), intent(in) :: allom
-      real(wp),          intent(in) :: agb, rho
-      real(wp)                      :: dbh, target, x, db, h, f, slope, dx
-      integer                       :: it
-      target = log(max(agb, tiny_num) / (allom%agb_c1 * rho ** allom%agb_c2)) / allom%agb_c2
-      x = target / (2.0_wp + allom%gmm_b)
-      do it = 1, NEWTON_MAX_ITER
-         db = exp(allom%gmm_b * x)
-         h  = allom%gmm_a * db / (allom%gmm_k + db)
-         if (h < allom%hgt_max) then
-            f     = 2.0_wp * x + log(h) - target
-            slope = 2.0_wp + allom%gmm_b * allom%gmm_k / (allom%gmm_k + db)
-         else
-            f     = 2.0_wp * x + log(allom%hgt_max) - target
-            slope = 2.0_wp
-         end if
-         dx = f / slope
-         x  = x - dx
-         if (abs(dx) < NEWTON_TOL) exit
-      end do
-      dbh = exp(x)
-   end function agb_to_dbh_gmm
 
    !----- AGB -> diameter under Chave's height, in closed form: below the cap, the biomass !
    !      law 2x + ln h(x) = target is quadratic in x = ln(dbh); x is its smaller root. A  !

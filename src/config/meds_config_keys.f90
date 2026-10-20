@@ -60,6 +60,8 @@ module meds_config_keys
    !      for every PFT or an array with one per PFT. -----------------------------------------------!
    character(len=*), parameter :: ALLOM_PFT = ': each PFT''s allometry is in [allometry], whose '// &
       'keys take one value for every PFT or one per PFT'
+   character(len=*), parameter :: GMM_GONE = 'the gMM height curve is gone: fit the log-quadratic, '// &
+      'height_allometry = "chave2014" with chave_a, chave_b and chave_c, to the heights'
    type :: retired_key_t
       character(len=KEY_LEN) :: key
       character(len=320)     :: why
@@ -243,7 +245,10 @@ module meds_config_keys
                     'per PFT: the height a cohort reproduces from, worked out outside MEDS (the old '// &
                     'rule was the fraction times the height of a 100 cm tree, capped at hgt_max)'), &
       retired_key_t('pft.dbh_critical', 'a cohort''s size is limited by its height cap, '//        &
-                    '[allometry].hgt_max, and the growth sink limits pft.max_*_growth_*; delete the key') ]
+                    '[allometry].hgt_max, and the growth sink limits pft.max_*_growth_*; delete the key'), &
+      retired_key_t('allometry.gmm_a', GMM_GONE),                                              &
+      retired_key_t('allometry.gmm_b', GMM_GONE),                                              &
+      retired_key_t('allometry.gmm_k', GMM_GONE) ]
 
    !----- The [soil] keys a [[sites]] table may set, under the same names: the site's soil column !
    !      and its bottom. The ground's surface and its thermal boundary are the run's. -----------!

@@ -154,19 +154,14 @@ mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 [allometry]
 # Each PFT's size allometry (meds_allometry; docs/science/plant_carbon_allocation.md §2). Every key takes
 # one value, for every PFT, or an array with one value per PFT.
-height_allometry = "power"  # "power", "gmm" or "chave2014", or one per PFT (["gmm", "power", "power"])
+height_allometry = "power"  # "power" or "chave2014", or one per PFT (["chave2014", "power", "power"])
 hgt_max    = [46.0, 46.0, 46.0]   # [m] the largest height: the cap on every curve
 # The power law, height = exp(b1Ht + b2Ht ln dbh): pan-tropical (ED2 iallom 3).
 b1Ht       = 1.139963
 b2Ht       = 0.564899
-# The gMM curve, needed by the PFTs on "gmm": height = gmm_a*dbh^gmm_b / (gmm_k + dbh^gmm_b). These are
-# Cano et al. (2019, Biogeosciences 16:847) eq. 7, fitted to the Barro Colorado Nature Monument.
-# gmm_a = 58.0     # [m] asymptotic height
-# gmm_b = 0.73     # [--] exponent on dbh
-# gmm_k = 21.8     # [cm^gmm_b] half-saturation
 # The log-quadratic curve, for the PFTs on "chave2014": ln height = chave_a - chave_e + chave_b ln dbh
 # + chave_c (ln dbh)^2 + chave_rse^2/2 (the mean, as BIOMASS's retrieveH). The coefficients default to
-# Chave et al. (2014) eq. 6a.
+# Chave et al. (2014) eq. 6a; a site's own heights give a local fit (examples 03 and 05 fit BCI's).
 # chave_a   = 0.893     # [--] intercept
 # chave_b   = 0.760     # [--] slope on ln dbh
 # chave_c   = -0.0340   # [--] coefficient of (ln dbh)^2

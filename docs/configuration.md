@@ -176,12 +176,11 @@ dies in the step it is found (`science/plant_carbon_allocation.md` §2). Growth,
 reproduction parameters are per-PFT but ship uniform.
 
 Each PFT's height follows the curve `[allometry].height_allometry` names for it (one name for every
-PFT, or one per PFT, `["gmm", "power", "power"]`). `"power"`, the default, is the pan-tropical power law
-`exp(b1Ht + b2Ht ln dbh)`. `"gmm"` is the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`, whose
-coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s fit for Barro Colorado Island; they
-are required when a PFT uses the curve. `"chave2014"` is the log-quadratic ln H = `chave_a` − E +
+PFT, or one per PFT, `["chave2014", "power", "power"]`). `"power"`, the default, is the pan-tropical
+power law `exp(b1Ht + b2Ht ln dbh)`. `"chave2014"` is the log-quadratic ln H = `chave_a` − E +
 `chave_b` ln dbh + `chave_c` (ln dbh)² + `chave_rse`²/2, taken at its mean as BIOMASS's `retrieveH` does;
-its coefficients default to Chave et al. (2014)'s pantropical fit (0.893, 0.760, −0.0340, 0.243). E
+its coefficients default to Chave et al. (2014)'s pantropical fit (0.893, 0.760, −0.0340, 0.243), and a
+site's own heights give a local fit (examples 03 and 05 use one for Barro Colorado Island). E
 (`[allometry].chave_e`, one value) is the site's stress index from its climate (Chave's eq. 6b), the same
 for every PFT: the drier, more seasonal or hotter the site, the larger E and the shorter its trees. With
 `[maps].chave_e_map`, each polygon takes E from its own cell instead, and `chave_e` is refused

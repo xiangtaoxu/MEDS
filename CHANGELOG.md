@@ -34,6 +34,9 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   `sapwood_area_b1`, `sapwood_area_b2` and `aboveground_frac` move to `[allometry]`, and every
   `[allometry]` key takes one value, for every PFT, or an array with one per PFT; `height_allometry`
   may name a curve per PFT. A key left in `[pft]` stops the run, naming its new place.
+- **The gMM height curve is gone** (#459): `height_allometry = "gmm"` and `gmm_a`, `gmm_b`, `gmm_k`
+  stop the run. Fit the log-quadratic, `"chave2014"` with `chave_a`, `chave_b` and `chave_c`, to the
+  heights instead, as examples 03 and 05 now do for Barro Colorado Island.
 - **`[pft].reproduction_height_fraction` is `[pft].min_repro_height` [m], one per PFT** (#459): the
   height a cohort reproduces from, worked out outside MEDS. The old rule was the fraction times the
   height of a 100 cm tree on the curve, capped at `hgt_max`: 0.33 of the power law's 42.16 m is
@@ -133,6 +136,11 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
   emergent can differ in stature and leaf display. Recruits and bare-ground seedlings start at
   `min_cohort_height` on their own PFT's curve. The PFT CSV lists every PFT's allometry. With every
   PFT on one set of values, as shipped, outputs are unchanged bit for bit.
+- **Height follows the power law or the log-quadratic** (#459). Examples 03 and 05 take Barro Colorado
+  Island's height from a local log-quadratic, ln H = 0.8898 + 0.7908 ln D − 0.04923 (ln D)², fitted
+  uniformly in ln D over 1–300 cm to Cano et al. (2019)'s generalized Michaelis–Menten curve, which
+  they used before; it is within 4.3 % of that curve, and example 03's recruits enter at its 1 cm
+  height, 2.435 m (2.544 m before). Their results move with it; they have not been rerun.
 - **A cohort reproduces once it reaches its PFT's `min_repro_height`** (#459), a height in metres
   instead of a share of the height of a 100 cm tree on the curve. The shipped configs carry the heights
   their old rule gave (20 m in examples 03 and 04, 5.27 m in example 05, 11.69 m at Palo Verde) and run
@@ -357,6 +365,8 @@ is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear so
 ### Removed
 
 - **`pft.dbh_critical`** (#459), which only the C API's empirical growth read, as a cap on the diameter.
+- **The gMM height curve** (#459), `HEIGHT_GMM` with its coefficients and the Newton inverse of its
+  biomass law.
 - **`local_hmax` and `HMAX_DBH`** (#459), the height of a 100 cm tree, which only the reproduction
   threshold used.
 

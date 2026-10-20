@@ -4,7 +4,7 @@ program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
                                 dbh_to_leaf_area, allometry_t,                                &
-                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM, HEIGHT_CHAVE
+                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_CHAVE
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -84,33 +84,6 @@ program test_allometry
    wood_c = size2wood_carbon(allom, dbh, dbh_to_height(allom, dbh), rho)
    call check_close(wood_to_dbh(allom, wood_c, rho), dbh, 1.0e-8_wp, 'wood_to_dbh inverse failed (capped)')
 
-   !=== The gMM height curve (Cano et al. 2019 eq. 7) and its two inverses. ===============!
-   allom = allometry_t(height_form = HEIGHT_GMM, gmm_a = 58.0_wp, gmm_b = 0.73_wp, gmm_k = 21.8_wp,      &
-                       hgt_max = 100.0_wp)
-   call check_close(dbh_to_height(allom, 1.0_wp), 58.0_wp / 22.8_wp, 1.0e-12_wp,                              &
-                    'gMM height at 1 cm is gmm_a / (gmm_k + 1)')
-   call check_close(dbh_to_height(allom, 100.0_wp),                                                           &
-                    58.0_wp * 100.0_wp**0.73_wp / (21.8_wp + 100.0_wp**0.73_wp), 1.0e-12_wp,           &
-                    'gMM height at 100 cm follows the formula')
-   call check(dbh_to_height(allom, 300.0_wp) < 58.0_wp, 'gMM height stays below its asymptote')
-   call check_close(dbh_to_height(capped(allom, 35.0_wp), 300.0_wp), 35.0_wp, 1.0e-12_wp, 'gMM height caps at hgt_max')
-   do i = 1_ik, 3_ik
-      dbh = dvec(i)
-      call check_close(height_to_dbh(allom, dbh_to_height(allom, dbh)), dbh, 1.0e-9_wp, 'gMM dbh<->height round trip')
-   end do
-   !----- agb -> dbh by Newton's method: uncapped, and on the capped branch (hgt_max = 35 m). --!
-   do i = 1_ik, 3_ik
-      dbh = dvec(i)
-      agb = dbh_to_agb(allom, dbh, dbh_to_height(allom, dbh), rho)
-      call check_close(agb_to_dbh(allom, agb, rho), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (uncapped)')
-   end do
-   dbh = 250.0_wp
-   call check_close(dbh_to_height(capped(allom, 35.0_wp), dbh), 35.0_wp, 1.0e-12_wp, 'a 250 cm stem is at a 35 m cap')
-   agb = dbh_to_agb(allom, dbh, dbh_to_height(capped(allom, 35.0_wp), dbh), rho)
-   call check_close(agb_to_dbh(capped(allom, 35.0_wp), agb, rho), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (capped)')
-   wood_c = size2wood_carbon(allom, 80.0_wp, dbh_to_height(allom, 80.0_wp), rho)
-   call check_close(wood_to_dbh(allom, wood_c, rho), 80.0_wp, 1.0e-9_wp, 'gMM wood_to_dbh inverse')
-
    !=== Chave et al. (2014) eq. 6a at E = 0.2 and its two inverses. The expected heights are     !
    !    BIOMASS's retrieveH: exp(0.893 - E + 0.760 ln D - 0.0340 (ln D)^2 + 0.243^2/2). =========!
    allom = allometry_t(height_form = HEIGHT_CHAVE, chave_e = 0.2_wp, hgt_max = 100.0_wp)
@@ -135,13 +108,29 @@ program test_allometry
    call check(dbh_to_height(allometry_t(height_form = HEIGHT_CHAVE, chave_b = 0.6_wp), 30.0_wp) <              &
               dbh_to_height(allometry_t(height_form = HEIGHT_CHAVE), 30.0_wp), 'a smaller chave_b gives shorter trees')
 
-   !=== Each PFT has its own record: a short gMM understorey PFT and a power-law PFT keep their   !
-   !    own heights and caps side by side (elemental over the records). =====================!
-   two(1) = allometry_t(height_form = HEIGHT_GMM, gmm_a = 15.0_wp, gmm_b = 0.8_wp, gmm_k = 10.0_wp, hgt_max = 12.0_wp)
+   !=== A local log-quadratic (Barro Colorado's: chave_a, chave_b, chave_c, no E, no RSE term)   !
+   !    follows its own coefficients, and both inverses hold on it. =======================!
+   allom = allometry_t(height_form = HEIGHT_CHAVE, chave_a = 0.8898_wp, chave_b = 0.7908_wp,          &
+                       chave_c = -0.04923_wp, chave_rse = 0.0_wp, chave_e = 0.0_wp, hgt_max = 100.0_wp)
+   call check_close(dbh_to_height(allom, 1.0_wp), exp(0.8898_wp), 1.0e-12_wp, 'local fit: height at 1 cm is exp(chave_a)')
+   call check_close(dbh_to_height(allom, 100.0_wp),                                                          &
+                    exp(0.8898_wp + 0.7908_wp * log(100.0_wp) - 0.04923_wp * log(100.0_wp)**2), 1.0e-12_wp, &
+                    'local fit: height at 100 cm follows its coefficients')
+   do i = 1_ik, 3_ik
+      dbh = dvec(i)
+      call check_close(height_to_dbh(allom, dbh_to_height(allom, dbh)), dbh, 1.0e-9_wp, 'local fit: dbh<->height')
+      agb = dbh_to_agb(allom, dbh, dbh_to_height(allom, dbh), rho)
+      call check_close(agb_to_dbh(allom, agb, rho), dbh, 1.0e-9_wp, 'local fit: agb_to_dbh inverse')
+   end do
+
+   !=== Each PFT has its own record: a short log-quadratic understorey PFT and a power-law PFT     !
+   !    keep their own heights and caps side by side (elemental over the records). ============!
+   two(1) = allometry_t(height_form = HEIGHT_CHAVE, chave_a = 0.6_wp, chave_b = 0.6_wp, chave_c = -0.03_wp,  &
+                        chave_rse = 0.0_wp, hgt_max = 12.0_wp)
    two(2) = allometry_t()
    hh = dbh_to_height(two, 40.0_wp)
-   call check_close(hh(1), min(15.0_wp * 40.0_wp**0.8_wp / (10.0_wp + 40.0_wp**0.8_wp), 12.0_wp), 1.0e-12_wp,      &
-                    'PFT 1 follows its own gMM curve and cap')
+   call check_close(hh(1), min(exp(0.6_wp + 0.6_wp * log(40.0_wp) - 0.03_wp * log(40.0_wp)**2), 12.0_wp), 1.0e-12_wp, &
+                    'PFT 1 follows its own log-quadratic and cap')
    call check_close(hh(2), dbh_to_height(allometry_t(), 40.0_wp), 0.0_wp, 'PFT 2 follows the power law')
    call check(hh(1) < hh(2), 'the understorey PFT is shorter at the same diameter')
 

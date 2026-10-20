@@ -44,13 +44,13 @@ passes them to the engine's law-free apply-primitives through
 - **PFTs are wood-density classes**: species' wood density from the Global Wood Density Database
   ([`bci_wood_density.csv`](bci_wood_density.csv): neotropical entries, species → genus → family),
   split at 0.42 and 0.58 g cm⁻³ so each class holds a third of the 1985 basal area.
-- **Height follows Barro Colorado's own curve**, Cano et al. (2019)'s fit to 9884 trees of the
-  Barro Colorado Nature Monument: H = 58.0·D^0.73 / (21.8 + D^0.73) [m], 33 m at 1 m dbh and 43 m at
-  BCI's largest tree, with no cap (`[allometry] height_allometry = "gmm"`). Leaf area and biomass take
-  this height.
+- **Height follows Barro Colorado's own curve**, a log-quadratic fitted to Cano et al. (2019)'s curve
+  for 9884 trees of the Barro Colorado Nature Monument: ln H = 0.8898 + 0.7908 ln D − 0.04923 (ln D)²
+  [m], 32.7 m at 1 m dbh and 44.6 m at 3 m, within 4.3 % of Cano's curve (`[allometry]
+  height_allometry = "chave2014"`). Leaf area and biomass take this height.
 - **A tree is one stem**, as in MEDS: a tree that loses its main stem has died, and returns as a
   recruit when a stem is measured again. Recruits enter at the census's 1 cm (`min_cohort_height`
-  2.544 m on the BCI curve).
+  2.435 m on the BCI curve).
 - **Treefall** (`patch_disturbance_rate` 0.014 yr⁻¹) kills canopy trees above 10 m on the disturbed
   area. The census counts those deaths too, so the driver takes the rate off the mortality of
   cohorts tall enough to die in a gap.
