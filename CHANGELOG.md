@@ -35,7 +35,7 @@ outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's
 reads only keys it uses, checks them in one module, and names every field as its key; `src/config/params`
 holds one module per block, and the reference config describes each key in a line or two (#464).
 The configuration's leaves are the run's parameters, `src/config/params`, and a kernel's parameter
-bundle is its `*_args_t` (#NNN).
+bundle is its `*_args_t` (#465).
 
 **Upgrading from v0.3.5:**
 - **Six keys nothing read are gone** (#464): `[demography].patch_diff_age_tol`,
@@ -85,7 +85,7 @@ bundle is its `*_args_t` (#NNN).
   and hold types and codes: the soil column's builders (`soil_column_params`, `soil_column_layers`,
   `build_soil_hydr_params`, `top_soil_psi`, …) and `alloc_pft_table` and `derive_leaf_params` come
   from `meds_config`. `soil_matric_potential` comes from `meds_soil_hydr_lib`.
-- **Fortran: parameters and kernel arguments** (#NNN). The per-block modules are the run's
+- **Fortran: parameters and kernel arguments** (#465). The per-block modules are the run's
   parameters, `meds_<block>_params` in `src/config/params/`: `meds_biogeochem_opts`,
   `meds_biophysics_opts`, `meds_leaf_opts`, `meds_maps_opts` and `meds_region_opts` are `*_params`,
   as are the new `meds_fast_params` and `meds_sites_params`, and `meds_soil_column_config` is
