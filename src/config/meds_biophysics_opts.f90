@@ -9,7 +9,7 @@
 ! biophysics kernels can `use` without depending on the meds_config aggregator. The        !
 ! kernels that switch on them and the loader that reads them import this module directly.  !
 !                                                                                          !
-! (The soil_retention_* selectors stay in meds_soil_hydr_lib with the retention curves;    !
+! (The SOIL_RETENTION_* selectors stay in meds_soil_hydr_lib with the retention curves;    !
 ! the per-column soil_params_t / soil_thermal_params_t descriptors are in                  !
 ! meds_soil_column_config.)                                                                !
 !==========================================================================================!
@@ -22,7 +22,7 @@ module meds_biophysics_opts
    public :: SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    !----- Soil-energy solver selectors. ----------------------------------------------------!
    public :: ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
-   public :: annual_damping_depth
+   public :: ANNUAL_DAMPING_DEPTH
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
@@ -37,7 +37,7 @@ module meds_biophysics_opts
    !----- The annual damping depth d = sqrt(2*alpha/omega) of a mid-latitude mineral soil at theta = 0.3. !
    !      The Dirichlet anchor reflects the annual wave least at d/sqrt(2) below the bottom node: the   !
    !      default deep_depth below, and the one a soil map's column takes (meds_surface_maps). --------!
-   real(wp), parameter :: annual_damping_depth = 1.973_wp   !< [m]
+   real(wp), parameter :: ANNUAL_DAMPING_DEPTH = 1.973_wp   !< [m]
 
    !----- Soil water: the bottom boundary, the soil-plant water network's tolerances, the pond, the !
    !      canopy interception, the ground's evaporation and optics (NOT the whole config). ----!

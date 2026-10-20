@@ -60,7 +60,7 @@ module meds_fast_dynamics
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t
-   use meds_soil_hydr_lib,   only : soil_retention_vg
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : snow_params_t
    use meds_canopy_types, only : ground_optics_state_t
    use meds_canopy_radiation, only : canopy_radiation, ground_optics

@@ -65,9 +65,9 @@ contains
       type(allometry_t), parameter :: ALLOM = allometry_t(wai_b1 = 0.0096_wp, wai_b2 = 2.0947_wp,     &
                                                           sapwood_area_b1 = 1.582_wp, sapwood_area_b2 = 1.764_wp)
       !----- (dbh [cm], wood_carbon [kgC/plant], nplant [pl/m2]) : sapling -> pole -> mature ---!
-      real(wp), parameter :: dbh(4) = [  2.0_wp,   12.0_wp,  35.0_wp,  70.0_wp]
-      real(wp), parameter :: wc(4)  = [  0.5_wp,   20.0_wp, 200.0_wp,1200.0_wp]
-      real(wp), parameter :: npl(4) = [  2.0_wp,    0.3_wp,   0.06_wp,  0.015_wp]
+      real(wp), parameter :: DBH(4) = [  2.0_wp,   12.0_wp,  35.0_wp,  70.0_wp]
+      real(wp), parameter :: WC(4)  = [  0.5_wp,   20.0_wp, 200.0_wp,1200.0_wp]
+      real(wp), parameter :: NPL(4) = [  2.0_wp,    0.3_wp,   0.06_wp,  0.015_wp]
       real(wp) :: wai, f_sap, dbio_w, dbio_sap, cap, drdt, tau, tau_min, tau_max, w_end
       real(wp) :: f_sap_small, f_sap_big, sap_big
       integer(ik) :: i
@@ -75,8 +75,8 @@ contains
       tau_min = huge(1.0_wp) ; tau_max = 0.0_wp
       f_sap_small = 0.0_wp ; f_sap_big = 0.0_wp ; sap_big = 0.0_wp
       do i = 1_ik, 4_ik
-         wai    = dbh_to_wai(ALLOM, dbh(i), npl(i))
-         f_sap  = sapwood_fraction(ALLOM, dbh(i))
+         wai    = dbh_to_wai(ALLOM, DBH(i), NPL(i))
+         f_sap  = sapwood_fraction(ALLOM, DBH(i))
          !----- The two halves of the capacity take DIFFERENT masses (design decision):          !
          !        DRY tissue   -> ALL the wood. Heartwood is dead structure but still stores      !
          !                        sensible heat, and a bole-defined sapwood fraction under-counts !
@@ -86,7 +86,7 @@ contains
          !                        it heartwood.                                                   !
          !      ONE enthalpy pool at ONE temperature either way -- a bole/branch partition would  !
          !      mean two wood temperatures and is deliberately not taken. --------------------!
-         dbio_w   = wc(i) * npl(i) * C2B                                ! [kg dry/m2] all wood
+         dbio_w   = WC(i) * NPL(i) * C2B                                ! [kg dry/m2] all wood
          dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
          cap    = dbio_w * tissue_c_wood_dry                                                    &
                 + WOOD_WATER_SAT * dbio_sap / C2B * cp_liq
@@ -95,7 +95,7 @@ contains
          !----- the EXACT endpoint memory the kernel uses (eq. (4)), not backward Euler's 1/(1+x) !
          w_end  = exp(-DT_FAST / tau)
          print '(a,i0,a,f6.2,a,f6.3,a,f6.3,a,f10.1,a,f8.1,a,f7.4)', '   cohort ', i, ': dbh = ', &
-               dbh(i), '  wai = ', wai, '  f_sap = ', f_sap, '  cap = ', cap,                    &
+               DBH(i), '  wai = ', wai, '  f_sap = ', f_sap, '  cap = ', cap,                    &
                ' J/m2/K  tau = ', tau, ' s  w_end = ', w_end
          tau_min = min(tau_min, tau) ; tau_max = max(tau_max, tau)
          if (i == 1_ik) f_sap_small = f_sap
@@ -115,7 +115,7 @@ contains
       !      which is what an independent mass audit of that cohort gives. Re-pointing the dry half  !
       !      at bsap would drop it to ~27 and fire this. --------------------------------------!
       call check('largest cohort dry mass is ALL the wood (audit: 36 kg dry/m2)',                   &
-           wc(4) * npl(4) * C2B, 36.0_wp, 1.0e-9_wp)
+           WC(4) * NPL(4) * C2B, 36.0_wp, 1.0e-9_wp)
       !----- ...but its WATER is only the sapwood ring, which is strictly less. A small stem is      !
       !      entirely sapwood (the fraction saturates at 1), a 70 cm bole is not -- that contrast is !
       !      the physical content of splitting the two masses. --------------------------------!
@@ -232,17 +232,17 @@ contains
       type(cas_column_t) :: column
       type(cas_source_t) :: source
       real(wp) :: enth, shv, temp, resid, enthalpy_atm, worst, enth_new, shv_new, co2_new
-      real(wp), parameter :: cas_mass_capacity = 1.2_wp * 20.0_wp     ! rho_air * can_depth  [kg/m2]
-      real(wp), parameter :: gatm = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * temp1(c3)  [kg/m2/s]
+      real(wp), parameter :: CAS_MASS_CAPACITY = 1.2_wp * 20.0_wp     ! rho_air * can_depth  [kg/m2]
+      real(wp), parameter :: GATM = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * temp1(c3)  [kg/m2/s]
       integer(ik) :: step
       print '(a)', 'test_cas:'
       shv  = 0.012_wp
       enth = cas_temp_to_enthalpy(295.0_wp, shv)                  ! CAS starts at 295 K
       temp = 295.0_wp
       enthalpy_atm = cas_temp_to_enthalpy(300.0_wp, shv)              ! warmer atmosphere
-      column%air_mass_capacity        = cas_mass_capacity
+      column%air_mass_capacity        = CAS_MASS_CAPACITY
       column%air_molar_capacity       = 1.0_wp                    ! inert CO2 twin (avoid 0/0)
-      column%atm_conductance_enthalpy = gatm
+      column%atm_conductance_enthalpy = GATM
       column%atm_conductance_vapor    = 0.0_wp
       column%atm_conductance_co2      = 0.0_wp
       column%atm_enthalpy             = enthalpy_atm
@@ -269,24 +269,24 @@ contains
       !----- Direct unit test of veg_energy_balance's wet/dry extension (the column tests exercise it   !
       !      only through the full integration). f_wet splits the single latent pathway into a          !
       !      (1-f_wet) DRY (stomatal) share and an f_wet WET (boundary-layer film) share;               !
-      !      le_slope_dry/le_ref_dry model the former, le_slope_w/le_ref_w the latter -- two DIFFERENT  !
+      !      LE_SLOPE_DRY/LE_REF_DRY model the former, LE_SLOPE_W/LE_REF_W the latter -- two DIFFERENT  !
       !      conductances, so the three properties below are non-trivial (a bug that swapped or mixed   !
       !      them would still "look" plausible).                                                        !
       real(wp) :: dt_temp, t_store, transp, dh, drnet, film_evap
       real(wp) :: dt_temp2, t_store2, transp2, dh2, drnet2
-      real(wp), parameter :: abs_sw = 400.0_wp, abs_lw = -50.0_wp, h_coeff = 12.0_wp
-      real(wp), parameter :: lw_slope = 6.0_wp, t_cas = 298.0_wp, t_parent = 298.0_wp
-      real(wp), parameter :: le_slope_dry = 8.0_wp,  le_ref_dry = 15.0_wp   ! stomatal (dry) pathway
-      real(wp), parameter :: le_slope_w   = 20.0_wp, le_ref_w   = 40.0_wp   ! boundary-layer (wet) pathway
+      real(wp), parameter :: ABS_SW = 400.0_wp, ABS_LW = -50.0_wp, H_COEFF = 12.0_wp
+      real(wp), parameter :: LW_SLOPE = 6.0_wp, T_CAS = 298.0_wp, T_PARENT = 298.0_wp
+      real(wp), parameter :: LE_SLOPE_DRY = 8.0_wp,  LE_REF_DRY = 15.0_wp   ! stomatal (dry) pathway
+      real(wp), parameter :: LE_SLOPE_W   = 20.0_wp, LE_REF_W   = 40.0_wp   ! boundary-layer (wet) pathway
       print '(a)', 'test_veg_energy_diagnostic_wetted:'
 
       !----- 1. ABSENT f_wet must be bit-identical to explicitly passing f_wet=0 -- the contract that   !
       !      lets a caller with no film omit the wet extension. ----------------------------------------!
-      call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
-                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet)
-      call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
-                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp2, t_store2, transp2, dh2, drnet2, &
-                                 0.0_wp, le_slope_w, le_ref_w, film_evap)
+      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_DRY, LW_SLOPE, LE_REF_DRY,          &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, dh, drnet)
+      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_DRY, LW_SLOPE, LE_REF_DRY,          &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp2, t_store2, transp2, dh2, drnet2, &
+                                 0.0_wp, LE_SLOPE_W, LE_REF_W, film_evap)
       call check('f_wet=0 explicit == f_wet absent (dt_temp)', dt_temp2, dt_temp, 1.0e-14_wp)
       call check('f_wet=0 explicit == f_wet absent (transp)',  transp2,  transp,  1.0e-14_wp)
       call check_true('f_wet=0 -> film_evap = 0 exactly', film_evap == 0.0_wp, film_evap)
@@ -296,11 +296,11 @@ contains
       !      SWAP-EQUIVALENCE: this must be algebraically IDENTICAL to calling the kernel with the wet     !
       !      conductance as the PRIMARY (le_slope,le_ref) argument and no wet extension at all -- not       !
       !      just approximately equal (both reduce to the same 2-unknown linear solve). -------------------!
-      call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
-                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet,      &
-                                 1.0_wp, le_slope_w, le_ref_w, film_evap)
-      call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_w, lw_slope, le_ref_w,               &
-                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp2, t_store2, transp2, dh2, drnet2)
+      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_DRY, LW_SLOPE, LE_REF_DRY,          &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, dh, drnet,      &
+                                 1.0_wp, LE_SLOPE_W, LE_REF_W, film_evap)
+      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_W, LW_SLOPE, LE_REF_W,               &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp2, t_store2, transp2, dh2, drnet2)
       call check_true('f_wet=1: dry pathway (transp) vanishes', abs(transp) < 1.0e-14_wp, transp)
       call check('f_wet=1: film_evap == swap-equivalent transp', film_evap, transp2, 1.0e-12_wp)
       call check('f_wet=1: dt_temp == swap-equivalent dt_temp',  dt_temp,   dt_temp2, 1.0e-12_wp)
@@ -311,9 +311,9 @@ contains
       !      on to make the CAS's temperature-dependent vapour-enthalpy credit balance against a store's     !
       !      liquid-enthalpy debit (for transpiration the leaf pays the full vapour enthalpy itself; the     !
       !      surface-water accounting does the same for film_evap). -----------------------------------------!
-      call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
-                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet,      &
-                                 0.4_wp, le_slope_w, le_ref_w, film_evap)
+      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_DRY, LW_SLOPE, LE_REF_DRY,          &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, dh, drnet,      &
+                                 0.4_wp, LE_SLOPE_W, LE_REF_W, film_evap)
       call check('partial f_wet: energy balance closes (drnet = dh + latent)', drnet,                  &
                  dh + (transp + film_evap) * latent_heat_vap, 1.0e-9_wp)
       call check_true('partial f_wet: film_evap > 0 (wet pathway active)', film_evap > 0.0_wp, film_evap)

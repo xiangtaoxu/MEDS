@@ -36,10 +36,10 @@ module meds_slow_ledger
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry_lib,      only : min_cohort_carbon
-   use meds_budget_check,       only : budget_rtol_flux
+   use meds_budget_check,       only : BUDGET_RTOL_FLUX
    use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name,          &
                                        pack_pool_vector
-   use meds_biogeochem_types,   only : n_soil_pool
+   use meds_biogeochem_types,   only : N_SOIL_POOL
    implicit none
    private
 
@@ -251,7 +251,7 @@ contains
       type(slow_ledger_t), intent(inout) :: ledger
       type(polygon_t),     intent(in)    :: poly
       integer(ik),         intent(in)    :: phase
-      real(wp)    :: x(n_soil_pool)
+      real(wp)    :: x(N_SOIL_POOL)
       integer(ik) :: ip, k
       do ip = 1_ik, poly%patch%n
          k = soil_carbon_bad_pool(poly%patch%soil_carbon(ip))
@@ -516,7 +516,7 @@ contains
          real(wp),    intent(in) :: resid, gross, atol_per_mark, store
          integer(ik), intent(in) :: nmark
          real(wp) :: tol
-         tol = budget_rtol_flux * abs(gross)                                                       &
+         tol = BUDGET_RTOL_FLUX * abs(gross)                                                       &
              + real(nmark, wp) * (atol_per_mark + SLOW_ROUNDOFF_FRAC * abs(store))
          fails = 0_ik
          if (abs(resid) > tol) fails = 1_ik

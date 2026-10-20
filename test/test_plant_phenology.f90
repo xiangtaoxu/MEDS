@@ -31,7 +31,7 @@ program test_plant_phenology
    use meds_phenology,       only : phenology_kernel, leaf_turnover_step, turnover_gate
    implicit none
 
-   real(wp), parameter :: twopi = 6.283185307179586_wp
+   real(wp), parameter :: TWOPI = 6.283185307179586_wp
    real(wp), parameter :: LAT   = 42.5_wp                 ! Harvard Forest
 
    call test_no_cues()
@@ -51,7 +51,7 @@ contains
    !----- Annual air temperature (northern hemisphere; warmest ~ doy 201). -----------------!
    pure real(wp) function annual_temp(doy) result(t)
       integer(ik), intent(in) :: doy
-      t = 283.15_wp + 12.0_wp * cos(twopi * real(doy - 201_ik, wp) / 365.0_wp)
+      t = 283.15_wp + 12.0_wp * cos(TWOPI * real(doy - 201_ik, wp) / 365.0_wp)
    end function annual_temp
 
    !----- A temperate deciduous PFT (warmth x light, cold x short days). The tests feed the   !

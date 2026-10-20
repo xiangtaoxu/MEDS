@@ -31,9 +31,9 @@ module meds_surface_maps
    use meds_maps_opts,     only : maps_opts_t, soil_maps_on
    use meds_constants,        only : n_soil_layer_max
    use meds_soil_column_config, only : soil_params_t, soil_column_layers, soil_column_params
-   use meds_soil_hydr_lib,    only : soil_texture_t, soil_texture_to_hydraulics, soil_retention_vg
+   use meds_soil_hydr_lib,    only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,        only : soil_texture_to_thermal
-   use meds_biophysics_opts,  only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, annual_damping_depth
+   use meds_biophysics_opts,  only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
    implicit none
    private
 
@@ -264,7 +264,7 @@ contains
    !  * The bottom water boundary is the map's: drainage with f = 1 on a free-draining base, the  !
    !    map's f_leak on a leaky one and 0 on a sealed one, or the aquifer                          !
    !    (docs/science/soil_biophysics.md §Boundary conditions).                                   !
-   !  * The Dirichlet thermal anchor sits at the map's deep temperature, annual_damping_depth /  !
+   !  * The Dirichlet thermal anchor sits at the map's deep temperature, ANNUAL_DAMPING_DEPTH /  !
    !    sqrt(2) below the bottom node, where it reflects the annual wave least                    !
    !    (docs/science/soil_biophysics.md eq. (13)).                                               !
    !  * The Chave height allometry takes the cell's E.                                          !
@@ -281,7 +281,7 @@ contains
       if (inp%soil) then
          associate (sc => cfg%soil_column)
             sc%depth = inp%soil_depth(k) ; sc%n_layer_bottoms = 0_ik
-            sc%retention = soil_retention_vg
+            sc%retention = SOIL_RETENTION_VG
             call soil_column_layers(sc, bottoms, n)
             top = 0.0_wp
             do l = 1_ik, n
@@ -304,7 +304,7 @@ contains
          end select
          call soil_column_params(cfg%soil_column, soil)
          cfg%energy%deep_temp  = inp%deep_temp(k)
-         cfg%energy%deep_depth = abs(soil%z_node(soil%n_active)) + annual_damping_depth / sqrt(2.0_wp)
+         cfg%energy%deep_depth = abs(soil%z_node(soil%n_active)) + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)
       end if
       if (inp%chave) cfg%pft%allom(:)%chave_e = inp%chave_e(k)
    end subroutine apply_map_inputs

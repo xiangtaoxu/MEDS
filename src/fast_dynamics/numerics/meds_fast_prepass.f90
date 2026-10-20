@@ -31,7 +31,7 @@ module meds_fast_prepass
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
    use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, hydro_params_table_t, hydro_opts_t, &
                                 wood_params_t, root_params_t
-   use meds_biogeochem_types, only : n_soil_pool
+   use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
@@ -373,7 +373,7 @@ contains
       real(wp),              intent(in)    :: t_ground, soil_temp_root, theta_mean
       real(wp),              intent(out)   :: rh              !< [umol/m2/s]
       type(column_budget_t), intent(inout) :: budget
-      real(wp) :: xi(n_soil_pool), a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
+      real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
       if (cfg%soil_carbon_on) then
          call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_config%soil%theta_res(1),      &

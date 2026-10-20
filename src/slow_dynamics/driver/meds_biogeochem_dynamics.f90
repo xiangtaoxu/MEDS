@@ -20,7 +20,7 @@ module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_seam_t, n_soil_pool,       &
+   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_seam_t, N_SOIL_POOL,       &
                                      IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND,                     &
                                      IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_soil_biogeochem,  only : build_litter_input, soil_carbon_step
@@ -57,7 +57,7 @@ contains
       !      told to ignore. Rh is not declared: it leaves the CENTURY pools into the canopy air,   !
       !      and BOTH are stores this ledger carries, so it is an internal transfer. ---------------!
       type(slow_ledger_t), optional, intent(inout) :: ledger
-      real(wp)             :: u(n_soil_pool), lignin_in(2), xi_int(n_soil_pool), rh_today
+      real(wp)             :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh_today
       type(soilc_audit_t)  :: audit
       integer(ik)          :: ip
 

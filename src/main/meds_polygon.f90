@@ -29,7 +29,7 @@ module meds_polygon
    use meds_slow_dynamics,          only : refresh_canopy_depth
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_fast_config,            only : acclimate_leaf_photo_table
-   use meds_biogeochem_types,       only : litter_input_t, n_soil_pool, soilc_seam_t
+   use meds_biogeochem_types,       only : litter_input_t, N_SOIL_POOL, soilc_seam_t
    use meds_patch_state_vars,       only : soil_carbon_t
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input, soil_carbon_bad_pool,             &
@@ -49,7 +49,7 @@ module meds_polygon
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
    use meds_constants,              only : n_soil_layer_max
-   use meds_allometry_lib,          only : height_chave
+   use meds_allometry_lib,          only : HEIGHT_CHAVE
    use meds_biophysics_opts,        only : SOIL_BC_AQUIFER
    use meds_forcing_types,          only : met_cells_t
    use meds_toml,                   only : toml_table_t, toml_parse_file
@@ -463,8 +463,8 @@ contains
       logical,              intent(in)    :: verbose
       type(soil_carbon_t)  :: pools0, pools_ss
       type(litter_input_t) :: lit
-      real(wp)    :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      real(wp)    :: xi_bar(n_soil_pool), u_bar(n_soil_pool), lignin_bar(2)
+      real(wp)    :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
+      real(wp)    :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL), lignin_bar(2)
       integer(ik) :: ipp
       pools0 = soil_carbon_t()                          ! zero-carbon reference (f_lignin=0)
       call assemble_transfer_matrix(pools0, cfg%soil_carbon, a_mat, k_diag, er)
@@ -501,7 +501,7 @@ contains
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
       call manager_set_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
-                                any(cfg%pft%allom(1:cfg%pft%n)%height_form == height_chave))
+                                any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE))
       call manager_finalize(files)
    end subroutine open_output_files
 
