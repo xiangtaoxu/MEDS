@@ -284,9 +284,8 @@ contains
                  * lg%decl_gross(SLOW_PHASE_TISSUE_WATER)%energy, 'tissue water (c): and its energy residual')
 
       !----- (d) A bare cohort re-flushes from storage: its new leaves take their water from the  !
-      !      wood, at the potential the two share at rest, so the leaves start where the stem is   !
-      !      (less the crown's gravity head) rather than at the dry end of their curve, and the    !
-      !      plant's water is unchanged. --------------------------------------------------------!
+      !      wood, at the wood's potential less the crown's gravity head, rather than starting at  !
+      !      the dry end of their curve, and the plant's water is unchanged. ---------------------!
       call check_reflush_water()
    end subroutine check_tissue_water_ledger
 
@@ -323,8 +322,9 @@ contains
       w_plant1 = st%cohort%leaf_water_mass(1) + st%cohort%wood_water_mass(1)
       call check_close(w_plant1, w_plant0, 1.0e-14_wp, 'reflush: the plant''s water is unchanged')
       psi_leaf = tissue_water_to_psi(st%cohort%leaf_water_mass(1), leaf_curve, st%cohort%leaf_carbon(1))
-      psi_wood = tissue_water_to_psi(st%cohort%wood_water_mass(1), wood_curve,                   &
-                                        st%cohort%sapwood_carbon(1) + st%cohort%fineroot_carbon(1))
+      !----- The wood's potential before it gave the leaves their water. ------------------------!
+      psi_wood = tissue_water_to_psi(st%cohort%wood_water_mass(1) + st%cohort%leaf_water_mass(1), wood_curve,  &
+                                     st%cohort%sapwood_carbon(1) + st%cohort%fineroot_carbon(1))
       call check(psi_wood < -0.1_wp, 'reflush: the fixture''s stem is drier than the birth potential')
       call check(abs(psi_leaf - (psi_wood - grav_head * st%cohort%height(1))) <= 1.0e-9_wp,        &
                  'reflush: the new leaves start at the wood''s potential less the crown head')

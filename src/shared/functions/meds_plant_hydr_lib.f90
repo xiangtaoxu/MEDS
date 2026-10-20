@@ -25,7 +25,6 @@ module meds_plant_hydr_lib
    public :: water_curve_t
    public :: tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi
    public :: tissue_psi_to_water, tissue_capacitance, tissue_water_to_psi, tissue_capped_water
-   public :: tissue_shared_potential
    public :: tissue_water_relations, tissue_rwc_to_unknown, tissue_water_to_rwc
    !----- Vulnerability curve and Kirchhoff potential. ------------------------------------!
    public :: conductance_retained_fraction, kirchhoff_potential, hydro_table_t, build_hydro_table
@@ -61,10 +60,6 @@ module meds_plant_hydr_lib
    !----- [-] Floor on the symplastic relative water content in the read-offs; the         !
    !      solver's relations have none. ---------------------------------------------------!
    real(wp), parameter :: RWC_FLOOR = 1.0e-4_wp
-   !----- Cap on tissue_shared_potential's halvings. The loop stops when its bracket is as !
-   !      narrow as the arithmetic resolves, about 70 halvings for a root near -1 MPa;     !
-   !      only a root at 0, where that width has no floor, reaches the cap. ---------------!
-   integer(ik), parameter :: BISECTION_STEPS_MAX = 200_ik
 
    !----- The Kirchhoff lookup table for a general vulnerability exponent: G(r) on a       !
    !      uniform grid (docs/science/plant_hydraulics.md §3). A fixed-size record, so a    !
@@ -188,46 +183,6 @@ contains
       rwc   = (w - curve%apoplast_frac*w_sat) / max((1.0_wp - curve%apoplast_frac)*w_sat, tiny_num)
       psi   = tissue_rwc_to_psi(rwc, curve%pi0, curve%elastic_mod)
    end function tissue_water_to_psi
-
-   !----- The potential [MPa] at which two tissues holding w_total [kg] between them are   !
-   !      at rest, a at psi and b at psi - head_b (docs/science/plant_hydraulics.md eq.    !
-   !      (2) with no flow), by bisection between the curves' dry floor and a's            !
-   !      saturation; a total outside returns the nearer end. The caller moves water by    !
-   !      the curves at the result, so what it moves is exact whatever the residual. ------!
-   elemental real(wp) function tissue_shared_potential(w_total, curve_a, biomass_a, curve_b, biomass_b, head_b)  &
-                                                       result(psi)
-      real(wp),            intent(in) :: w_total               !< [kg] the water the two hold together
-      type(water_curve_t), intent(in) :: curve_a, curve_b
-      real(wp),            intent(in) :: biomass_a, biomass_b  !< [kgC]
-      real(wp),            intent(in) :: head_b                !< [MPa] gravity head of b above a: at rest psi_b = psi_a - head_b
-      real(wp)    :: lo, hi
-      integer(ik) :: k
-      lo = min(curve_a%pi0, curve_b%pi0 + head_b) / RWC_FLOOR
-      hi = 0.0_wp
-      if (w_total <= held(lo)) then
-         psi = lo
-         return
-      end if
-      if (w_total >= held(hi)) then
-         psi = hi
-         return
-      end if
-      do k = 1_ik, BISECTION_STEPS_MAX
-         psi = 0.5_wp * (lo + hi)
-         if (held(psi) < w_total) then
-            lo = psi
-         else
-            hi = psi
-         end if
-         if (hi - lo <= epsilon(psi) * max(abs(lo), abs(hi))) exit
-      end do
-      psi = 0.5_wp * (lo + hi)
-   contains
-      pure real(wp) function held(p)
-         real(wp), intent(in) :: p
-         held = tissue_psi_to_water(p, curve_a, biomass_a) + tissue_psi_to_water(p - head_b, curve_b, biomass_b)
-      end function held
-   end function tissue_shared_potential
 
    !----- Tissue water [kg per plant] capped at saturation, water_sat * biomass, for a     !
    !      store that lost biomass without its water; the caller sheds the excess (w -      !

@@ -6,12 +6,12 @@
 !   1. PV CURVE       : turgor-loss point matches Bartlett eqn 1; psi<->RWC round-trips;        !
 !                       capacitance C matches a finite-difference dW/dpsi.                        !
 !   2. KIRCHHOFF EDGE : the integrated conductance uses <plc> in (plc(leaf), plc(wood)); the      !
-!                       |dpsi|->0 limit reduces to the pointwise value; table and quadrature.      !
-!   3. SAPWOOD        : the intact xylem conductance is the sapwood's; wood_kmax from density.   !
+!                       |dpsi|->0 limit reduces to the pointwise value; the table and a Simpson    !
+!                       reference.                                                                 !
+!   3. SAPWOOD        : the intact xylem conductance is the sapwood's.                             !
 !   4. ROOTS          : ED2's root profile and rooting depth; Gardner's root conductance.        !
 !   5. SEAM           : growth at conserved water lowers psi; the capacity clamp on a shrink.    !
 !   6. LEAFLESS       : a leafless cohort's leaf node sits at the wood less the crown head.      !
-!   7. AT REST        : the potential two tissues share at rest holds exactly their water.       !
 ! The laws are docs/science/plant_hydraulics.md §2-§4 (eqs. (3)-(15)).                     !
 !==========================================================================================!
 program test_plant_hydraulics
@@ -22,8 +22,7 @@ program test_plant_hydraulics
                                    build_hydro_table, root_fraction_profile,                                     &
                                    xylem_max_conductance, rhizosphere_conductance, xylem_sapflow,                &
                                    tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi, tissue_psi_to_water,    &
-                                   tissue_capacitance, tissue_water_to_psi, tissue_capped_water, water_curve_t,  &
-                                   tissue_shared_potential
+                                   tissue_capacitance, tissue_water_to_psi, tissue_capped_water, water_curve_t
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_plant_hydraulics, only : cohort_root_depth, cohort_root_profile
@@ -39,7 +38,6 @@ program test_plant_hydraulics
    call test_seam_capacity_clamp()
    call test_leafless_leaf_psi()
    call test_kirchhoff_far_tail()
-   call test_shared_potential()
 
    call test_report('test_plant_hydraulics')
 
@@ -327,34 +325,6 @@ contains
       call check('with leaves: the leaf curve', psi_l, tissue_water_to_psi(w_leaf, p%leaf_curve, bleaf), 0.0_wp)
       call check('with leaves: -0.8 MPa recovered', psi_l, -0.8_wp, 1.0e-9_wp)
    end subroutine test_leafless_leaf_psi
-
-   !=======================================================================================!
-   ! Two tissues at rest share one potential, the second a head below the first: the water each  !
-   ! holds there sums to what they hold together, on either branch of the curves, and a total    !
-   ! beyond the curves' reach returns the nearer end of the bracket.                             !
-   !=======================================================================================!
-   subroutine test_shared_potential()
-      type(hydro_params_t) :: p ; type(hydro_opts_t) :: o
-      real(wp), parameter :: bwood = 7.0_wp, bleaf = 0.8_wp, head = 0.2_wp
-      real(wp) :: w_total, psi, psi_set(3)
-      integer  :: k
-      print '(a)', '-- Two tissues at rest: the shared potential --'
-      call defaults(p, o)
-      psi_set = [-0.3_wp, -2.5_wp, -40.0_wp]          ! turgid, flaccid, deep in the flaccid tail
-      do k = 1, 3
-         w_total = tissue_psi_to_water(psi_set(k), p%wood_curve, bwood)                                    &
-                 + tissue_psi_to_water(psi_set(k) - head, p%leaf_curve, bleaf)
-         psi = tissue_shared_potential(w_total, p%wood_curve, bwood, p%leaf_curve, bleaf, head)
-         call check('at rest: the shared potential is recovered', psi, psi_set(k), 1.0e-9_wp * abs(psi_set(k)))
-         call check('at rest: the two hold the total', tissue_psi_to_water(psi, p%wood_curve, bwood)          &
-                    + tissue_psi_to_water(psi - head, p%leaf_curve, bleaf), w_total, 1.0e-12_wp * w_total)
-      end do
-      psi = tissue_shared_potential(10.0_wp * (p%wood_curve%water_sat * bwood + p%leaf_curve%water_sat * bleaf), &
-                             p%wood_curve, bwood, p%leaf_curve, bleaf, head)
-      call check('at rest: more than saturation returns the wet end', psi, 0.0_wp, 0.0_wp)
-      psi = tissue_shared_potential(0.0_wp, p%wood_curve, bwood, p%leaf_curve, bleaf, head)
-      call check_true('at rest: nothing at all returns the dry end', psi < -1.0e3_wp)
-   end subroutine test_shared_potential
 
    !=======================================================================================!
    ! Far beyond the table (a leaf dried to the apoplastic floor reads about pi0 * 1e4 MPa), the     !

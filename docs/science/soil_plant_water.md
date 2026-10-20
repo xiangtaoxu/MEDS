@@ -70,10 +70,10 @@ Each store is solved in the unknown in which its curve is best behaved:
 - **Between slow steps** a tissue keeps its water **mass**, not its potential: a change in biomass leaves
   the water as it is, and the potential is read again on the new capacity (grown wood reads as a
   slightly lower $R$). **New leaves are the exception.** When a cohort's leaf carbon grows, the new
-  leaf tissue is filled with water moved from the cohort's wood store, at the potential the two then
-  share at rest, the leaf the crown's gravity head below the wood
-  ([plant_hydraulics](plant_hydraulics.md) eq. (2); `fill_new_leaf_water`). The plant's water is
-  unchanged, and a canopy that re-flushes from bare starts at its stem's potential, not at the dry end
+  leaf tissue is filled, with water moved from the cohort's wood store, to the wood's potential less
+  the crown's gravity head ([plant_hydraulics](plant_hydraulics.md) eq. (2); `fill_new_leaf_water`).
+  The wood ends a little drier than the leaves at rest, and the next fast step evens them out. The
+  plant's water is unchanged, and a canopy that re-flushes from bare starts at its stem's potential, not at the dry end
   of its pressure–volume curve (about −1.5×10⁴ MPa), which would close its stomata for the first
   step. A cohort is born in its patch's state (`patch_physical_state`): at the canopy-air temperature,
   holding the water its tissues hold at the potential of the patch's top soil layer, the one the

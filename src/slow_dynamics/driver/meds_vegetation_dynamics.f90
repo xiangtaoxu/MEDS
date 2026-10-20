@@ -17,7 +17,7 @@ module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, yr_day, grav_head
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
-   use meds_plant_hydr_lib,       only : water_curve_t, tissue_psi_to_water, tissue_capped_water, tissue_shared_potential
+   use meds_plant_hydr_lib,       only : water_curve_t, tissue_psi_to_water, tissue_water_to_psi, tissue_capped_water
    use meds_therm_lib,            only : internal_energy_liquid
    use meds_allometry_lib,        only : size_to_leaf_carbon, carbon_to_structure, min_cohort_carbon,  &
                                          storage_carbon_target
@@ -872,16 +872,15 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! New leaves take their water from the wood. When a cohort's leaf carbon grows, the     !
-   ! new leaf tissue is filled with the water it holds at rest with the wood store,        !
-   ! moved from that store, so the plant's water is unchanged: the new tissue and the      !
-   ! wood end at the potential they share (tissue_shared_potential), the leaf the          !
-   ! crown's gravity head below the wood, as the network holds them with no flow           !
-   ! (docs/science/plant_hydraulics.md eqs. (2), (5)). New tissue that started empty       !
-   ! would read at the dry end of its pressure-volume curve: a canopy re-flushing from     !
-   ! bare would start the next fast step near -1.5e4 MPa, its stomata shut for that step   !
-   ! and the canopy's mean leaf potential dragged with it. The water moved is bounded by   !
-   ! what the wood holds. Runs right after the commit, on the leaf carbon it added         !
-   ! (docs/science/soil_plant_water.md §2).                                                !
+   ! new leaf tissue is filled, with water moved from the wood store, to the wood's        !
+   ! potential less the crown's gravity head, so the plant's water is unchanged and the    !
+   ! new leaves start where the stem is (docs/science/soil_plant_water.md §2). The wood    !
+   ! ends a little drier than the leaves at rest; the next fast step evens the two out.    !
+   ! New tissue that started empty would read at the dry end of its pressure-volume curve: !
+   ! a canopy re-flushing from bare would start the next fast step near -1.5e4 MPa, its    !
+   ! stomata shut for that step and the canopy's mean leaf potential dragged with it. The  !
+   ! water moved is bounded by what the wood holds. Runs right after the commit, on the    !
+   ! leaf carbon it added.                                                                 !
    !---------------------------------------------------------------------------------------!
    subroutine fill_new_leaf_water(poly, cfg, leaf_carbon_before)
       type(polygon_t),     intent(inout) :: poly
@@ -898,9 +897,8 @@ contains
             leaf_curve = cfg%pft%hydro(cohort%pft(i))%leaf_curve
             wood_curve = cfg%pft%hydro(cohort%pft(i))%wood_curve
             head     = grav_head * cohort%height(i)          ! the crown above the wood datum [MPa]
-            psi_wood = tissue_shared_potential(cohort%wood_water_mass(i), wood_curve,                       &
-                          cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)), &
-                          leaf_curve, grown, head)
+            psi_wood = tissue_water_to_psi(cohort%wood_water_mass(i), wood_curve,                           &
+                          cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
             moved    = min(tissue_psi_to_water(psi_wood - head, leaf_curve, grown), cohort%wood_water_mass(i))
             cohort%leaf_water_mass(i) = cohort%leaf_water_mass(i) + moved
             cohort%wood_water_mass(i) = cohort%wood_water_mass(i) - moved
