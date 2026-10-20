@@ -2,10 +2,10 @@
 !==========================================================================================!
 ! meds_pft_params -- plant functional type (PFT) trait table.                              !
 !                                                                                          !
-! Structure-of-arrays: one allocatable array per trait, indexed by PFT. The size           !
-! allometry's coefficients are shared by every PFT (meds_allometry); the per-PFT           !
-! allometric inputs are `hgt_max` (the height cap), `dbh_critical` (the maximum diameter)  !
-! and `wood_density` (rho, which enters AGB).                                              !
+! Structure-of-arrays: one allocatable array per trait, indexed by PFT. Each PFT's size    !
+! allometry is one record, allom(pft) (meds_allometry): its height curve and cap, biomass, !
+! leaf area, wood area, sapwood and the share of its wood above ground. Wood density (rho) !
+! enters its biomass and is a trait of its own.                                            !
 !                                                                                          !
 ! The PFTs carry the parameters of the vital rates (meds_demography_rates, called from     !
 ! meds_vegetation_dynamics):                                                               !
@@ -18,12 +18,12 @@
 ! external `seed_rain_recruits` plus the recruits bought by the carbon diverted to         !
 ! reproduction (recruit_carbon_efficiency).                                                !
 !                                                                                          !
-! Two shared height thresholds: `min_cohort_height` (the smallest tracked cohort; recruits !
-! are born here) and `reproduction_height_fraction` (a cohort reproduces from that share   !
-! of the local maximum height, meds_allometry::local_hmax).                                !
+! Two height thresholds: `min_cohort_height`, shared, the smallest tracked cohort, where    !
+! recruits are born; and each PFT's `min_repro_height`, the height it reproduces from.      !
 !==========================================================================================!
 module meds_pft_params
-   use meds_kinds, only : wp, ik
+   use meds_kinds,     only : wp, ik
+   use meds_allometry, only : allometry_t
    implicit none
    private
 
@@ -40,13 +40,13 @@ module meds_pft_params
    !---------------------------------------------------------------------------------------!
    type :: pft_table_t
       integer(ik) :: n = 0_ik
-      !----- Size limits + the wood-density axis (allometry itself is global). ------------!
-      real(wp), allocatable :: dbh_critical(:)   !< [cm]    maximum diameter (growth clamp)
-      real(wp), allocatable :: hgt_max(:)        !< [m]     asymptotic max height (per-PFT allometry cap)
+      !----- The size allometry and the wood-density axis. -------------------------------------!
+      type(allometry_t), allocatable :: allom(:) !< each PFT's allometry ([allometry])
       real(wp), allocatable :: wood_density(:)   !< [g/cm3] rho: AGB + mortality anchor
       !----- Reproductive allocation and recruitment (carbon path). An empirical growth law is     !
       !      not a trait here; it lives in the Python example. ------------------------------------!
       real(wp), allocatable :: reproduction_investment_fraction(:) !< [--] growth fraction diverted to reproduction
+      real(wp), allocatable :: min_repro_height(:)                 !< [m]  the height a cohort reproduces from
       real(wp), allocatable :: recruit_carbon_efficiency(:)        !< [--] share of reproduction carbon that becomes
                                                                    !<      recruits: seed set, germination and seedling
                                                                    !<      survival up to min_cohort_height together
@@ -70,7 +70,6 @@ module meds_pft_params
       integer(ik), allocatable :: include_pft(:)        !< 1 = PFT may recruit, 0 = excluded
       !----- Shared height thresholds. ----------------------------------------------------!
       real(wp) :: min_cohort_height          !< [m] smallest tracked cohort; recruits born here
-      real(wp) :: reproduction_height_fraction  !< [-] share of the local maximum height to reproduce
       !----- Leaf photosynthesis / stomatal traits (per PFT; docs/science/leaf_gas_exchange.md). -!
       integer(ik), allocatable :: photosynthetic_pathway(:) !< PATH_C3 | PATH_C4
       real(wp), allocatable :: vcmax25(:)            !< [umol/m2/s] max carboxylation at 25 degC
@@ -117,25 +116,8 @@ module meds_pft_params
       real(wp), allocatable :: rd25(:)               !< [umol/m2/s] DERIVED = rd_vcmax_ratio   * vcmax25
       !----- Carbon-allocation per-PFT traits (meds_plant_carbon_allocation;                       !
       !      docs/science/plant_carbon_allocation.md). All state is CARBON; every                  !
-      !      biomass<->carbon conversion is folded into these traits at init. The size-target      !
-      !      allometry size2leaf_carbon / size2wood_carbon uses sla / aboveground_frac. -----------!
+      !      biomass<->carbon conversion is folded into these traits at init. -------------------!
       real(wp),    allocatable :: sla(:)                    !< [m2/kgC] specific leaf area (un-folds SLA from lai_b1)
-      !----- WOOD AREA INDEX allometry (ED2 b1WAI/b2WAI): wai = nplant*b1wai*dbh**b2wai. Wood       !
-      !      area follows the stem, not the leaf area, and it sizes the wood's heat capacity        !
-      !      (docs/science/vegetation_energy_dynamics.md eq. (8)). ---------------------------------!
-      real(wp),    allocatable :: wai_b1(:)                 !< [--] WAI intercept  (ED2 b1WAI)
-      real(wp),    allocatable :: wai_b2(:)                 !< [--] WAI exponent   (ED2 b2WAI)
-      !----- SAPWOOD-AREA allometry (ED2 b1SA/b2SA, dbh2sf): sapwood area = b1sa*dbh**b2sa, and     !
-      !      the sapwood FRACTION of basal area, f_sap = min(1, A_sap/A_basal), sets bsap: the      !
-      !      sapwood ring holds the wood's internal water                                           !
-      !      (docs/science/vegetation_energy_dynamics.md eq. (8)) and its hydraulic                 !
-      !      capacitance. With the shipped b1SA = 1.582, b2SA = 1.764, A_sap/A_basal =              !
-      !      2.014*dbh**(-0.236), so f_sap saturates at 1.0 below dbh ~ 19.4 cm -- all sapwood,     !
-      !      no heartwood -- and falls to 0.84 at 40 cm and 0.68 at 100 cm. That is ED2's own       !
-      !      behaviour (dbh2sf applies the identical clamp); it does mean the sapwood allometry     !
-      !      is inert across a young stand. --------------------------------------------------------!
-      real(wp),    allocatable :: sapwood_area_b1(:)        !< [cm2/cm^b2] sapwood-area intercept (ED2 b1SA)
-      real(wp),    allocatable :: sapwood_area_b2(:)        !< [--]        sapwood-area exponent  (ED2 b2SA)
       !----- Canopy-element geometry the aerodynamic boundary layers read                          !
       !      (docs/science/canopy_aerodynamics.md §4). Per PFT, because leaf size is one of        !
       !      the strongest interspecific axes there is. -------------------------------------------!
@@ -143,7 +125,6 @@ module meds_pft_params
       real(wp),    allocatable :: branch_diameter(:)        !< [m]  characteristic branch diameter (wood boundary layer)
       real(wp),    allocatable :: root_to_leaf_ratio(:)     !< [--]     fine-root:leaf target ratio (ED2 q)
       real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
-      real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
       real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf + fine-root target
       !----- STORAGE MAINTENANCE. Fractional turnover of the non-structural pool [1/yr], charged as
       !      respiration and taken from the pool -- ED2's growth_balive.f90 form, with no temperature
@@ -205,8 +186,8 @@ module meds_pft_params
       !----- Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter;      !
       !      docs/science/soil_carbon.md §5). Consumed wherever plant carbon dies (leaf/fine-       !
       !      root turnover shed, continuous background mortality, cull-termination, treefall        !
-      !      disturbance) to route it into the per-patch soil_carbon pools. aboveground_frac        !
-      !      (above) splits the wood and storage streams above/below ground; leaves and             !
+      !      disturbance) to route it into the per-patch soil_carbon pools. The allometry's         !
+      !      aboveground_frac splits the wood and storage streams above/below ground; leaves and    !
       !      reproduction are all above, fine roots all below. -------------------------------------!
       !< [--] labile (vs structural) fraction of leaf/storage/fine-root necromass
       real(wp),    allocatable :: f_labile_leaf(:)
@@ -268,8 +249,8 @@ contains
       type(pft_table_t), intent(inout) :: pft
       integer(ik),       intent(in)    :: n
       pft%n = n
-      allocate(pft%dbh_critical(n), pft%hgt_max(n), pft%wood_density(n))
-      allocate(pft%reproduction_investment_fraction(n), pft%recruit_carbon_efficiency(n))
+      allocate(pft%allom(n), pft%wood_density(n))
+      allocate(pft%reproduction_investment_fraction(n), pft%min_repro_height(n), pft%recruit_carbon_efficiency(n))
       allocate(pft%recruit_shade_decay(n))
       pft%recruit_shade_decay = 0.0_wp      ! optional key; 0 = the same share under any canopy
       allocate(pft%nbg_init_density(n))
@@ -287,10 +268,9 @@ contains
                pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n), pft%stomata_psi_onset(n))
       allocate(pft%leaf_surf_water_max(n), pft%wood_surf_water_max(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
-      allocate(pft%wai_b1(n), pft%wai_b2(n), pft%sapwood_area_b1(n), pft%sapwood_area_b2(n))
       allocate(pft%leaf_width(n), pft%branch_diameter(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
-               pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
+               pft%storage_cushion(n), pft%growth_resp_factor(n),                            &
                pft%storage_turnover_rate(n), pft%retained_carbon_fraction(n),               &
                pft%hyd_leaf_pi0(n), pft%hyd_leaf_elastic_mod(n), pft%hyd_leaf_apoplast_frac(n), &
                pft%hyd_leaf_water_sat(n), pft%hyd_wood_pi0(n), pft%hyd_wood_elastic_mod(n),     &
@@ -313,7 +293,6 @@ contains
       pft%max_absolute_growth_rate     = 0.0_wp
       pft%max_absolute_growth_exponent = 0.0_wp
       pft%retained_carbon_fraction = 0.3_wp ! optional key; 30% of leaf and root loss resorbed
-      pft%reproduction_height_fraction = 0.33_wp ! optional key; within Thomas (1996)'s 0.20-0.75
       !----- HYD_UNSET marks "no per-PFT value given"; the table builder then takes the            !
       !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here,       !
       !      because alloc_pft_table runs before the [hydraulics] block is read. ------------------!

@@ -146,21 +146,29 @@ def pft_params(pft_file, pft):
         t = tomllib.load(fh)
     a, p, k = t["allometry"], t["pft"], int(pft) - 1
     pick = lambda name: float(p[name][k])        # noqa: E731
-    return {"b1Ht": a["b1Ht"], "b2Ht": a["b2Ht"], "agb_c1": a["agb_c1"], "agb_c2": a["agb_c2"],
-            "height_allometry": a.get("height_allometry", "power"),
-            "gmm": (a.get("gmm_a"), a.get("gmm_b"), a.get("gmm_k")),
-            "lai_b1": a["lai_b1"], "lai_b2": a["lai_b2"], "hgt_max": pick("hgt_max"),
+
+    def allom(name, default=None):
+        """An [allometry] value of this PFT: one value for every PFT, or one per PFT."""
+        v = a.get(name, default)
+        return v[k] if isinstance(v, list) else v
+
+    return {"b1Ht": allom("b1Ht"), "b2Ht": allom("b2Ht"), "agb_c1": allom("agb_c1"), "agb_c2": allom("agb_c2"),
+            "height_allometry": allom("height_allometry", "power"),
+            "chave": (allom("chave_a", 0.893), allom("chave_b", 0.760), allom("chave_c", -0.0340),
+                      allom("chave_rse", 0.243), a.get("chave_e", 0.0)),
+            "lai_b1": allom("lai_b1"), "lai_b2": allom("lai_b2"), "hgt_max": allom("hgt_max"),
             "rho": pick("wood_density"), "sla": pick("sla"), "root_to_leaf": pick("root_to_leaf_ratio"),
-            "aboveground_frac": pick("aboveground_frac"), "leaf_turnover": pick("leaf_turnover_rate_toc"),
+            "aboveground_frac": allom("aboveground_frac"), "leaf_turnover": pick("leaf_turnover_rate_toc"),
             "fineroot_turnover": pick("fineroot_turnover_rate"), "f_labile_leaf": pick("f_labile_leaf"),
             "f_labile_stem": pick("f_labile_stem")}
 
 
 def allometry(dbh_cm, pp):
     """Height [m], leaf area [m2] and AGB [kgC] per tree."""
-    if pp.get("height_allometry", "power") == "gmm":
-        a, b, k = pp["gmm"]
-        h = np.minimum(a * dbh_cm ** b / (k + dbh_cm ** b), pp["hgt_max"])
+    if pp.get("height_allometry", "power") == "chave2014":
+        ca, cb, cc, rse, e = pp["chave"]
+        x = np.log(dbh_cm)
+        h = np.minimum(np.exp(ca - e + 0.5 * rse * rse + cb * x + cc * x * x), pp["hgt_max"])
     else:
         h = np.minimum(np.exp(pp["b1Ht"] + pp["b2Ht"] * np.log(dbh_cm)), pp["hgt_max"])
     x = dbh_cm * dbh_cm * h

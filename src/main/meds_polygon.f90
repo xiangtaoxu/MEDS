@@ -501,7 +501,7 @@ contains
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
       call manager_set_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
-                                cfg%allom%height_form == HEIGHT_CHAVE)
+                                any(cfg%pft%allom(1:cfg%pft%n)%height_form == HEIGHT_CHAVE))
       call manager_finalize(files)
    end subroutine open_output_files
 
@@ -536,7 +536,8 @@ contains
             files%site_deep_temp(is, p)    = surf%deep_temp
          end associate
       end do
-      if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = poly%cohort%allom%chave_e
+      !----- E is the polygon's, the same in every PFT's record. -----------------------------!
+      if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = poly%cohort%pft_table%allom(1)%chave_e
    end subroutine attach_output
 
    !----- Apply the optional meds_io_config.toml per-variable override table to the manager's   !

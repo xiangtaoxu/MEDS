@@ -81,10 +81,11 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Cumulative-LAI LIGHT profile for one patch (ED2 patch-fusion scheme): the light         !
-   ! fraction reaching the top of each height layer, light(ihgt) = exp(-light_ext *          !
-   ! LAI_at-or-above(ihgt)). Layer 1 is the ground (most overlying LAI -> darkest), layer     !
-   ! n_height_layers is the canopy top. Two patches with a similar light profile (and the     !
-   ! same disturbance type) are fused. Mirrors ED2 patch_pft_size_profile + new_fuse_patches. !
+   ! fraction reaching the top of each height layer, light(ihgt) = exp(-k LAI_at-or-above), !
+   ! with k = [demography].light_ext_coeff_fusefiss. Layer 1 is the ground (most overlying   !
+   ! LAI -> darkest), layer n_height_layers is the canopy top. Two patches with a similar     !
+   ! light profile (and the same disturbance type) are fused. Mirrors ED2                     !
+   ! patch_pft_size_profile + new_fuse_patches.                                               !
    !---------------------------------------------------------------------------------------!
    subroutine patch_light_profile(poly, cfg, ip, light)
       type(polygon_t),       intent(in)  :: poly
@@ -106,7 +107,7 @@ contains
          cum_lai(ihgt) = cum_lai(ihgt) + cum_lai(ihgt + 1_ik)
       end do
       do ihgt = 1_ik, nl
-         light(ihgt) = exp(-poly%cohort%allom%light_ext * cum_lai(ihgt))
+         light(ihgt) = exp(-cfg%light_ext_coeff_fusefiss * cum_lai(ihgt))
       end do
    end subroutine patch_light_profile
 
@@ -547,7 +548,8 @@ contains
                                  lost_density * cohort%wood_carbon(i),                                   &
                                  lost_density * cohort%nonstructural_carbon(i),                          &
                                  cfg%pft%f_labile_leaf(pf), cfg%pft%f_labile_stem(pf),                   &
-                                 cfg%pft%aboveground_frac(pf), cfg%pft%struct_lignin_frac(pf),           &
+                                 cohort%pft_table%allom(pf)%aboveground_frac,                           &
+                                 cfg%pft%struct_lignin_frac(pf),                                         &
                                  lab_g, lab_s, str_g, str_s, lig_g, lig_s)
                         patch%soil_carbon(newp)%fast_grnd_carbon   = patch%soil_carbon(newp)%fast_grnd_carbon   + lab_g
                         patch%soil_carbon(newp)%fast_soil_carbon   = patch%soil_carbon(newp)%fast_soil_carbon   + lab_s

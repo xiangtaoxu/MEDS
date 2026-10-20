@@ -81,7 +81,7 @@ contains
          !----- Canopy-element geometry and respiration traits (the PFT's, from the block's table). !
          cc%leaf_width(j)    = pft%leaf_width(pf)
          cc%branch_diam(j)   = pft%branch_diameter(pf)
-         cc%aboveground_frac(j) = pft%aboveground_frac(pf)
+         cc%aboveground_frac(j) = pft%allom(pf)%aboveground_frac
          cc%is_woody(j)           = pft%is_woody(pf)
          cc%stem_resp_factor25(j) = pft%stem_resp_factor25(pf)
          cc%stem_resp_sapwood25(j) = pft%stem_resp_sapwood25(pf)

@@ -286,6 +286,7 @@ max_patch                 = 12       # patch-count target; patch_light_tol_max c
 n_patch_fusion_iter       = 6
 patch_light_tol           = 0.10     # mean light-profile distance to fuse two patches (first pass)
 patch_light_tol_max       = 0.15     # ceiling of that tolerance: no fusion beyond it, even above max_patch
+# light_ext_coeff_fusefiss  = 0.5      # [-] extinction of the light profiles fusion compares, exp(-k LAI above)
 patch_light_maxdev_factor = 1.5      # max single-layer deviation multiplier
 patch_diff_age_tol        = 1.0      # [yr] same-age phase window
 min_patch_area            = 1.0e-4   # cull patches below this area fraction

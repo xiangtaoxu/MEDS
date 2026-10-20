@@ -81,8 +81,8 @@ program test_carbon_growth
    block
       real(wp) :: wa_fresh, fs_fresh
       associate (pft => poly%cohort%pft_table, pf => poly%cohort%pft(1))
-         wa_fresh = dbh_to_wai(poly%cohort%dbh(1), 1.0_wp, pft%wai_b1(pf), pft%wai_b2(pf))
-         fs_fresh = sapwood_fraction(poly%cohort%dbh(1), pft%sapwood_area_b1(pf), pft%sapwood_area_b2(pf))
+         wa_fresh = dbh_to_wai(pft%allom(pf), poly%cohort%dbh(1), 1.0_wp)
+         fs_fresh = sapwood_fraction(pft%allom(pf), poly%cohort%dbh(1))
       end associate
       call check(wa_fresh > 0.0_wp, 'wood-geometry fixture is degenerate (zero wood area)')
       call check_close(poly%cohort%wood_area(1), wa_fresh, 1.0e-13_wp,                           &
@@ -206,10 +206,9 @@ program test_carbon_growth
       call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%negligible_nplant)
       call check(poly%cohort%leaf_carbon(1) == 0.0_wp, 'applier: a full shed leaves no leaf carbon')
       call check(poly%cohort%leaf_area(1) == 0.0_wp, 'applier: and exactly no leaf area')
-      call carbon_to_structure(poly%cohort%allom, poly%cohort%wood_carbon(1), poly%cohort%leaf_carbon(1),              &
-                               cfg%pft%wood_density(poly%cohort%pft(1)), cfg%pft%hgt_max(poly%cohort%pft(1)), &
-                               cfg%pft%aboveground_frac(poly%cohort%pft(1)), poly%cohort%sla(1),    &
-                               dbh_c, h_c, ba_c, agb_c, la_c)
+      call carbon_to_structure(poly%cohort%pft_table%allom(poly%cohort%pft(1)), poly%cohort%wood_carbon(1),        &
+                               poly%cohort%leaf_carbon(1), cfg%pft%wood_density(poly%cohort%pft(1)),     &
+                               poly%cohort%sla(1), dbh_c, h_c, ba_c, agb_c, la_c)
       call check(poly%cohort%dbh(1) == dbh_c .and. poly%cohort%height(1) == h_c                     &
                  .and. poly%cohort%agb(1) == agb_c, 'applier: geometry is the allometry of the carbon')
 

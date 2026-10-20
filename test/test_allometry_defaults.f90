@@ -14,11 +14,10 @@
 ! against both.                                                                                   !
 !==========================================================================================!
 program test_allometry_defaults
-   use meds_kinds,        only : wp
-   use meds_toml,         only : toml_table_t, toml_parse_file, toml_has, toml_real, toml_string
+   use meds_kinds,        only : wp, ik
+   use meds_toml,         only : toml_table_t, toml_parse_file, toml_has, toml_real, toml_string, toml_real_array
    use meds_allometry,    only : allometry_t, HEIGHT_POWER
    use meds_test_support, only : banner, check, check_close
-   use meds_pft_params,   only : pft_table_t, alloc_pft_table
    implicit none
 
    real(wp), parameter :: c2b              = 2.0_wp          ! ED2 C2B, carbon -> biomass
@@ -27,7 +26,6 @@ program test_allometry_defaults
    real(wp), parameter :: ed2_bl_xx_scale  = 0.46769540_wp   ! ED2 c14f15_bl_xx(1)
    real(wp), parameter :: rtol             = 1.0e-12_wp
    type(toml_table_t)  :: t
-   type(pft_table_t)   :: pft
    character(len=512)  :: arg
    logical             :: ok
    type(allometry_t)   :: d          ! a record at its initializers
@@ -52,23 +50,23 @@ program test_allometry_defaults
    call same('agb_c2', d%agb_c2)
    call same('lai_b1', d%lai_b1)
    call same('lai_b2', d%lai_b2)
-   call same('light_ext', d%light_ext)
+   !----- The keys the shipped config lists per PFT: every entry equals the initializer. --!
+   call same_per_pft('hgt_max',          d%hgt_max)
+   call same_per_pft('wai_b1',           d%wai_b1)
+   call same_per_pft('wai_b2',           d%wai_b2)
+   call same_per_pft('sapwood_area_b1',  d%sapwood_area_b1)
+   call same_per_pft('sapwood_area_b2',  d%sapwood_area_b2)
+   call same_per_pft('aboveground_frac', d%aboveground_frac)
+   !----- The log-quadratic initializers are Chave et al. (2014) eq. 6a. -----------------!
+   call check_close(d%chave_a, 0.893_wp, rtol, 'chave_a initializer = Chave 2014 eq. 6a')
+   call check_close(d%chave_b, 0.760_wp, rtol, 'chave_b initializer = Chave 2014 eq. 6a')
+   call check_close(d%chave_c, -0.0340_wp, rtol, 'chave_c initializer = Chave 2014 eq. 6a')
+   call check_close(d%chave_rse, 0.243_wp, rtol, 'chave_rse initializer = Chave 2014 eq. 6a')
 
-   !----- The height curve: the shipped config and the initializer are both the power law, and  !
-   !      the gMM initializers are Cano et al. (2019) eq. 7, the values the config lists. -------!
+   !----- The height curve: the shipped config and the initializer are both the power law. ---!
    call check(trim(toml_string(t, 'allometry.height_allometry', '')) == 'power',                    &
               'meds_config_pft.toml sets [allometry].height_allometry = "power"')
    call check(d%height_form == HEIGHT_POWER, 'the height-curve initializer is the power law')
-   call check_close(d%gmm_a, 58.0_wp, rtol, 'gmm_a initializer = Cano et al. (2019) eq. 7')
-   call check_close(d%gmm_b, 0.73_wp, rtol, 'gmm_b initializer = Cano et al. (2019) eq. 7')
-   call check_close(d%gmm_k, 21.8_wp, rtol, 'gmm_k initializer = Cano et al. (2019) eq. 7')
-
-   !----- Reproduction: the shipped config omits the optional fraction, so it takes the table's  !
-   !      default, 0.33 of the local maximum height. ---------------------------------------------!
-   call check(.not. toml_has(t, 'pft.reproduction_height_fraction'),                              &
-              'meds_config_pft.toml leaves pft.reproduction_height_fraction at its default')
-   call alloc_pft_table(pft, 1)
-   call check_close(pft%reproduction_height_fraction, 0.33_wp, rtol, 'reproduction_height_fraction default = 0.33')
 
    print '(a)', 'test_allometry_defaults: ALL PASSED'
 
@@ -81,5 +79,16 @@ contains
       call check_close(toml_real(t, 'allometry.'//key, -huge(1.0_wp)), initializer, rtol,         &
                        'meds_config_pft.toml [allometry].'//key//' equals the meds_allometry initializer')
    end subroutine same
+
+   subroutine same_per_pft(key, initializer)
+      character(len=*), intent(in) :: key
+      real(wp),         intent(in) :: initializer
+      real(wp)    :: buf(64)
+      integer(ik) :: n
+      call toml_real_array(t, 'allometry.'//key, buf, n)
+      call check(n > 0, 'meds_config_pft.toml lists [allometry].'//key//' per PFT')
+      call check(all(abs(buf(1:n) - initializer) <= rtol * abs(initializer)),                         &
+                 'meds_config_pft.toml [allometry].'//key//' equals the meds_allometry initializer for every PFT')
+   end subroutine same_per_pft
 
 end program test_allometry_defaults

@@ -20,7 +20,7 @@ module meds_vegetation_dynamics
    use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential
    use meds_therm_lib,            only : internal_energy_liquid
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
-                                         storage_carbon_target, local_hmax
+                                         storage_carbon_target
    use meds_cohort_state_vars,    only : cohort_deriv_alloc, set_cohort_size_from_carbon, cohort_wood_store_carbon, &
                                          hold_cohort_tissue_temps, cohort_water_enthalpy
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
@@ -451,10 +451,8 @@ contains
             !----- FLIP the geometry from the tentative pools (dbh from wood_carbon, leaf_area    !
             !      from leaf_carbon) into locals, for the growth rate the ring buffer and the     !
             !      diagnostics report; update_cohort_states commits the same flip. ---------------!
-            call carbon_to_structure(cohort%allom, wc_new, lc_new,                                  &
-                                     cohort%pft_table%wood_density(cohort%pft(i)),                  &
-                                     cohort%pft_table%hgt_max(cohort%pft(i)),                       &
-                                     cohort%pft_table%aboveground_frac(cohort%pft(i)), cohort%sla(i), &
+            call carbon_to_structure(cohort%pft_table%allom(cohort%pft(i)), wc_new, lc_new,          &
+                                     cohort%pft_table%wood_density(cohort%pft(i)), cohort%sla(i),   &
                                      dbh_new, height_new, ba_new, agb_new, la_new)
             !----- Back out the pools' tendencies + advance the ring buffer with the REALIZED dbh !
             !      rate (fill_cohort_deriv, which the C-API's empirical path shares). -------------!
@@ -503,7 +501,8 @@ contains
       associate (cohort => poly%cohort, pft => cfg%pft)
          allocate(carbon_min(npft))
          do pf = 1_ik, npft
-            carbon_min(pf) = min_cohort_carbon(cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
+            carbon_min(pf) = min_cohort_carbon(cohort%pft_table%allom(pf), pft%min_cohort_height,      &
+                                               pft%wood_density(pf))
          end do
          !----- Baseline external seed rain (independent of structure). --------------------!
          do ip = 1_ik, np
@@ -515,9 +514,8 @@ contains
             pf = cohort%pft(j)
             ip = cohort%owner_patch(j)
             !----- Prospective carbon dbh-increment rate (the mortality instantaneous term). --!
-            dbh_rate = npp_to_growth(cohort%allom, cohort%wood_carbon(j), npp_wood(j), cohort%dbh(j),  &
-                                     dt_yr, pft%wood_density(pf), pft%hgt_max(pf),               &
-                                     pft%aboveground_frac(pf))
+            dbh_rate = npp_to_growth(cohort%pft_table%allom(pf), cohort%wood_carbon(j), npp_wood(j),  &
+                                     cohort%dbh(j), dt_yr, pft%wood_density(pf))
             mortality(j) = camac_mortality(cohort%growth_avg(j), dbh_rate,                          &
                                            cohort%growth_count(j) > 0_ik,                           &
                                            pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
@@ -614,7 +612,8 @@ contains
             r2l = pft%root_to_leaf_ratio(pf)
             !----- Leaf-AREA-conserving target: uses the cohort's (plastic) SLA, so a shaded canopy  !
             !      reaches the same allometric leaf area with less leaf carbon. --------------------!
-            leaf_target  = size2leaf_carbon(cohort%allom, cohort%dbh(j), cohort%height(j), cohort%sla(j))
+            leaf_target  = size2leaf_carbon(cohort%pft_table%allom(pf), cohort%dbh(j), cohort%height(j), &
+                                            cohort%sla(j))
             leaf_turn    = cohort%leaf_turnover_rate(j)   ! baseline leaf turnover [1/yr]
             !----- STORAGE MAINTENANCE (docs/science/plant_carbon_allocation.md eq. (2)), charged        !
             !      BEFORE the demand and the allocation, which is ED2's ordering (apply_maintenance      !
@@ -645,12 +644,10 @@ contains
 
             store_demand = max(0.0_wp, storage_carbon_target(pft%storage_cushion(pf), leaf_target,      &
                                                              r2l * leaf_target) - store_post)
-            !----- Reproduction starts at a share of the local maximum height, so where the local   !
-            !      allometry makes trees short they mature short (Thomas 1996's relative size at     !
-            !      onset of maturity). --------------------------------------------------------------!
+            !----- Reproduction starts at the PFT's min_repro_height                                 !
+            !      (docs/science/plant_carbon_allocation.md §2). ------------------------------------!
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
-                                 cohort%height(j) >= pft%reproduction_height_fraction                &
-                                                     * local_hmax(cohort%allom, pft%hgt_max(pf)))
+                                 cohort%height(j) >= pft%min_repro_height(pf))
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
             !      capped growth demands (the single per-cohort "how much carbon, how much litter"  !
             !      computation, isolated from the surrounding orchestration). ----------------------!
@@ -684,10 +681,9 @@ contains
                      npp_store=npp_store, growth_repro=g_repro, growth_resp=growth_resp,          &
                      deficit=deficit, starving=starving,                                           &
                      wood_growth_max=growth_sink_limitation(                                       &
-                        allom=cohort%allom,                                                          &
+                        allom=cohort%pft_table%allom(pf),                                            &
                         wood_carbon=cohort%wood_carbon(j), dbh=cohort%dbh(j),                       &
-                        wood_density=pft%wood_density(pf), hgt_max=pft%hgt_max(pf),                 &
-                        aboveground_frac=pft%aboveground_frac(pf),                                  &
+                        wood_density=pft%wood_density(pf),                                          &
                         max_relative_growth_rate=pft%max_relative_growth_rate(pf),                  &
                         max_absolute_growth_rate=pft%max_absolute_growth_rate(pf),                  &
                         max_absolute_growth_exponent=pft%max_absolute_growth_exponent(pf),          &
@@ -758,7 +754,7 @@ contains
             call add_necromass(lit(ip), (leaf_shed_c - leaf_retained_c) * cohort%nplant(j),       &
                      (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j), 0.0_wp, 0.0_wp,   &
                      seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                       &
-                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf))
+                     cohort%pft_table%allom(pf)%aboveground_frac, pft%struct_lignin_frac(pf))
             !----- ROOT EXUDATE: the carbon the growth sink could not use enters the soil as     !
             !      labile, below-ground carbon, where the microbes respire it. -------------------!
             lit(ip)%labile_soil = lit(ip)%labile_soil + exudate * cohort%nplant(j)
@@ -1025,7 +1021,8 @@ contains
             do pf = 1_ik, poly%n_pft
                patch%recruit_pool(pf, ip) = patch%recruit_pool(pf, ip) + recruitment(pf, ip) * dt_yr
                if (pft%include_pft(pf) /= 1_ik) cycle
-               c_min = min_cohort_carbon(poly%cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
+               c_min = min_cohort_carbon(poly%cohort%pft_table%allom(pf), pft%min_cohort_height,          &
+                                         pft%wood_density(pf))
                seed_rain_carbon = seed_rain_carbon                                                 &
                                 + patch_polygon_area(poly, ip) * pft%seed_rain_recruits(pf) * dt_yr * c_min
             end do
@@ -1081,7 +1078,7 @@ contains
                      died_nplant * cohort%fineroot_carbon(j), died_nplant * cohort%wood_carbon(j),  &
                      died_nplant * cohort%nonstructural_carbon(j), 0.0_wp,                         &
                      pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                                 &
-                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf))
+                     cohort%pft_table%allom(pf)%aboveground_frac, pft%struct_lignin_frac(pf))
          end do
       end associate
    end subroutine accumulate_mortality_litter
@@ -1258,7 +1255,8 @@ contains
             !----- SLA rose => leaf_carbon now exceeds the (lower) allometric leaf target: resorb   !
             !      the excess to storage so displayed leaf AREA stays at allometry (leaf-area-       !
             !      conserving). An UNshaded step lowers sla => a deficit, filled by normal growth.  !
-            leaf_target = size2leaf_carbon(cohort%allom, cohort%dbh(j), cohort%height(j), cohort%sla(j))
+            leaf_target = size2leaf_carbon(cohort%pft_table%allom(cohort%pft(j)), cohort%dbh(j), cohort%height(j), &
+                                           cohort%sla(j))
             if (cohort%leaf_carbon(j) > leaf_target) then
                excess = cohort%leaf_carbon(j) - leaf_target
                cohort%leaf_carbon(j)          = leaf_target

@@ -198,7 +198,7 @@ program test_fusion_cohort
       pf = poly%cohort%pft(j)
       call check_close(poly%cohort%leaf_carbon(j) * cfg%pft%sla(pf), poly%cohort%leaf_area(j),        &
                        1.0e-9_wp, 'leaf_carbon*sla(pft) /= leaf_area after reorder (trait mis-threaded?)')
-      call check_close(poly%cohort%wood_carbon(j) * cfg%pft%aboveground_frac(pf), poly%cohort%agb(j), &
+      call check_close(poly%cohort%wood_carbon(j) * cfg%pft%allom(pf)%aboveground_frac, poly%cohort%agb(j), &
                        1.0e-9_wp, 'wood_carbon*aboveground_frac(pft) /= agb after reorder')
    end do
 

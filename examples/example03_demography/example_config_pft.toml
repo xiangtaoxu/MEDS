@@ -6,16 +6,13 @@
 
 [pft]
 wood_density       = [0.36, 0.50, 0.68]    # [g/cm3] basal-area means of the BCI wood-density classes
-dbh_critical       = [300.0, 300.0, 300.0] # [cm] maximum diameter: above BCI's largest tree, so no cap
-hgt_max            = [46.0, 46.0, 46.0]     # [m] the shipped cap; the BCI height curve stays below it (43 m at 300 cm)
 # The four reproduction keys are required by the loader and unused here: recruitment is a census law.
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
-min_cohort_height       = 2.544            # [m] = dbh 1 cm on the BCI height curve; recruits born here
-reproduction_height_fraction = 0.6054780462022479    # [--] reproduce from this share of the local maximum height
-                                                     #      (20 m: the BCI gMM curve's 100 cm tree is 33.03 m)
+min_cohort_height       = 2.435            # [m] = dbh 1 cm on the BCI height curve; recruits born here
+min_repro_height   = [20.0, 20.0, 20.0]   # [m] a cohort reproduces from this height
 # Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4). pathway: 1 = C3, 2 = C4.
 # (Used by the leaf gas-exchange model, which this example does not run: growth is a census law.)
 photosynthetic_pathway = [1, 1, 2]                  # pioneer C3, climax C3, a C4 grass
@@ -37,7 +34,6 @@ katul_lambda25     = [600.0, 800.0, 350.0]          # [umol CO2/mol H2O] Katul m
 wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-stress exponent
 wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity
                                                     #      (beta_stomata=exp(sref*(psi-psi_onset)), psi=predawn leaf psi)
-
 
 #----- Required by the loader; most belong to processes this example does not run: per-PFT
 #      respiration and canopy optics, the wood geometry, the carbon-allocation and litter traits.
@@ -61,15 +57,10 @@ wood_clumping      = [0.50, 0.50, 0.50]    # [--] wood clumping factor in (0,1]
 leaf_angle_mean    = [45.0, 45.0, 45.0]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0, 20.0, 20.0]   # [deg] its standard deviation
 sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf area (pioneer high -> climax low)
-wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
-wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
-sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
-sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
 leaf_width         = [0.04, 0.04, 0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02, 0.02, 0.02]     # [m]  characteristic branch diameter
 root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
-aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
 storage_cushion        = [0.5, 0.5, 0.5]  # [--] storage target, x (leaf + fine-root target):
                                           #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
@@ -95,21 +86,28 @@ mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 
 [allometry]
 # Pan-tropical (ED2 iallom==3) size allometry. height = exp(b1Ht + b2Ht*ln dbh) capped at the
-# per-PFT [pft].hgt_max; agb = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2; leaf_area = lai_b1 * (dbh^2*h)^lai_b2;
-# the light a cohort gets is exp(-light_ext * overtopping_LAI).
+# PFT's hgt_max; agb = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2; leaf_area = lai_b1 * (dbh^2*h)^lai_b2;
 b1Ht       = 1.139963
 b2Ht       = 0.564899
 agb_c1     = 0.03365        # [kgC] AGB scale: Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
 agb_c2     = 0.976          # AGB exponent on rho and on dbh^2*h: Chave et al. (2014) eq. 4
 lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
-light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
-# The Barro Colorado height curve: Cano et al. (2019, Biogeosciences 16:847) eq. 7, the community-level
-# generalized Michaelis-Menten fit to 9884 trees of the Barro Colorado Nature Monument.
-height_allometry = "gmm"
-gmm_a      = 58.0           # [m] asymptotic height
-gmm_b      = 0.73           # [--] exponent on dbh
-gmm_k      = 21.8           # [cm^gmm_b] half-saturation
+hgt_max            = [46.0, 46.0, 46.0]     # [m] the shipped cap; the BCI height curve stays below it (44.6 m at 300 cm)
+wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
+wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
+sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
+sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
+aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
+# Barro Colorado's height curve: the log-quadratic fitted, uniformly in ln dbh over 1-300 cm, to Cano et
+# al. (2019, Biogeosciences 16:847)'s curve for 9884 trees of the Barro Colorado Nature Monument; within
+# 4.3 % of it everywhere. E is 0, and chave_rse 0 because the fit is to that curve, not to scattered heights.
+height_allometry = "chave2014"
+chave_a    = 0.8898
+chave_b    = 0.7908
+chave_c    = -0.04923
+chave_rse  = 0.0
+chave_e    = 0.0
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
 # mortality-hazard parameters instead of deriving them from wood density:

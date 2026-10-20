@@ -108,8 +108,8 @@ slowly than BCI's litterfall implies, and it sheds no branches, so the carbon go
 To redo it (example 03's census files first: `python ../example03_demography/prepare_census.py DIR`),
 `python calibrate_growth.py check` (about 7 minutes on 8 threads). The same script can also search
 three parameters against the census (`design`, `run`, `fit` and `final`; its docstring says how): it
-fitted the reproduction onset height, 5.27 m (0.160 of the local maximum height, the 33.0 m of a
-100 cm tree on BCI's height curve). [`calibrate_recruitment.py`](calibrate_recruitment.py)
+fitted the reproduction onset height, `min_repro_height` = 5.27 m.
+[`calibrate_recruitment.py`](calibrate_recruitment.py)
 counts the model's ingrowth past 1 cm against the census's.
 
 ### The model and its parameters
@@ -147,7 +147,7 @@ Set for this example:
   volume, at rates that give the census stand the field's 5.5–5.8 (roots) and 4.2–5.1 (stems) MgC
   ha⁻¹ yr⁻¹.
 - **Recruitment**: seed rain of one sapling per m² a year, shared by the PFTs, at 1.5 m; trees above
-  5.27 m (0.160 of the local maximum height) put 10 % of their growth into reproduction.
+  5.27 m put 10 % of their growth into reproduction.
 
 ### Run
 

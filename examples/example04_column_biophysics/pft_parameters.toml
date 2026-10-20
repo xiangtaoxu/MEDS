@@ -7,24 +7,16 @@
 
 [pft]
 wood_density       = [0.60]      # [g/cm3] mid-successional
-# Wood area and sapwood allometry (ED2 ed_params.f90, tropical broadleaf).
-wai_b1             = [0.0096]    # [--] ED2 b1WAI = 0.0192*0.5
-wai_b2             = [2.0947]    # [--] ED2 b2WAI
-sapwood_area_b1    = [1.582]     # [cm2/cm^b2] ED2 b1SA
-sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
 
 #----- Canopy-element geometry for the aerodynamic boundary layers.
 leaf_width         = [0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02]     # [m]  characteristic branch diameter
-dbh_critical       = [100.0]     # [cm] maximum diameter
-hgt_max            = [46.0]      # [m] asymptotic max height (allometry cap)
 reproduction_investment_fraction = [0.3]
 recruit_carbon_efficiency          = [1.0e-3]
 seed_rain_recruits = [0.01]      # [plant/m2/yr]
 include_pft        = [1]
 min_cohort_height       = 2.0    # [m] shared scalar (recruit/birth size)
-reproduction_height_fraction = 0.47440838365101196   # [--] reproduce from this share of the local maximum height
-                                                     #      (20 m: the power curve's 100 cm tree is 42.16 m)
+min_repro_height   = [20.0]   # [m] a cohort reproduces from this height
 # Leaf photosynthesis / stomatal traits (C3).
 photosynthetic_pathway = [1]
 vcmax25            = [45.0]
@@ -48,7 +40,6 @@ wstress_sref_stomata = [2.0]     # [1/MPa] Sabot stomatal-stress sensitivity
 sla                    = [13.0]
 root_to_leaf_ratio     = [1.0]
 huber_value            = [1.5e-4]
-aboveground_frac       = [0.7]
 
 #----- Non-leaf maintenance respiration (leaf Rd is rd_vcmax_ratio above).
 is_woody           = [1]     # 1 = woody (0 = grass: no stem respiration)
@@ -102,7 +93,12 @@ agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry
 agb_c2     = 0.976          # Chave et al. (2014) eq. 4
 lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
-light_ext  = 0.5
+hgt_max            = [46.0]      # [m] asymptotic max height (allometry cap)
+wai_b1             = [0.0096]    # [--] ED2 b1WAI = 0.0192*0.5
+wai_b2             = [2.0947]    # [--] ED2 b2WAI
+sapwood_area_b1    = [1.582]     # [cm2/cm^b2] ED2 b1SA
+sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
+aboveground_frac       = [0.7]
 
 # No [phenology] section: without it every PFT always flushes and never senesces, losing leaves to
 # background turnover alone, which is what a single evergreen tropical PFT needs.

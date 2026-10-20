@@ -56,6 +56,12 @@ module meds_config_keys
    character(len=*), parameter :: CROWN_AREA = 'every crown closes over its patch (crown area 1, '// &
       'ED2''s closed-crown path), so the crown-area allometry and the crown fraction are gone; the '// &
       'in-canopy wind attenuates by leaf area alone: delete the key'
+   !----- Each PFT's size allometry is one [allometry] record: every key there takes one value  !
+   !      for every PFT or an array with one per PFT. -----------------------------------------------!
+   character(len=*), parameter :: ALLOM_PFT = ': each PFT''s allometry is in [allometry], whose '// &
+      'keys take one value for every PFT or one per PFT'
+   character(len=*), parameter :: GMM_GONE = 'the gMM height curve is gone: fit the log-quadratic, '// &
+      'height_allometry = "chave2014" with chave_a, chave_b and chave_c, to the heights'
    type :: retired_key_t
       character(len=KEY_LEN) :: key
       character(len=320)     :: why
@@ -225,7 +231,24 @@ module meds_config_keys
       retired_key_t('pft.crown_area_frac', CROWN_AREA),                                         &
       retired_key_t('region.detail_polygons', 'the region files hold every variable and tier for '// &
                     'every polygon, cohort, patch and sub-daily output included; choose the '//      &
-                    'variables with [output].io_config') ]
+                    'variables with [output].io_config'),                                        &
+      retired_key_t('pft.hgt_max', 'moved to allometry.hgt_max'//ALLOM_PFT),                    &
+      retired_key_t('pft.wai_b1', 'moved to allometry.wai_b1'//ALLOM_PFT),                      &
+      retired_key_t('pft.wai_b2', 'moved to allometry.wai_b2'//ALLOM_PFT),                      &
+      retired_key_t('pft.sapwood_area_b1', 'moved to allometry.sapwood_area_b1'//ALLOM_PFT),    &
+      retired_key_t('pft.sapwood_area_b2', 'moved to allometry.sapwood_area_b2'//ALLOM_PFT),    &
+      retired_key_t('pft.aboveground_frac', 'moved to allometry.aboveground_frac'//ALLOM_PFT),  &
+      retired_key_t('allometry.light_ext', 'renamed demography.light_ext_coeff_fusefiss, in the '// &
+                    'main config (default 0.5): the extinction of the light profiles patch fusion '// &
+                    'compares, which is all it ever set'),                                       &
+      retired_key_t('pft.reproduction_height_fraction', 'replaced by pft.min_repro_height [m], one '// &
+                    'per PFT: the height a cohort reproduces from, worked out outside MEDS (the old '// &
+                    'rule was the fraction times the height of a 100 cm tree, capped at hgt_max)'), &
+      retired_key_t('pft.dbh_critical', 'a cohort''s size is limited by its height cap, '//        &
+                    '[allometry].hgt_max, and the growth sink limits pft.max_*_growth_*; delete the key'), &
+      retired_key_t('allometry.gmm_a', GMM_GONE),                                              &
+      retired_key_t('allometry.gmm_b', GMM_GONE),                                              &
+      retired_key_t('allometry.gmm_k', GMM_GONE) ]
 
    !----- The [soil] keys a [[sites]] table may set, under the same names: the site's soil column !
    !      and its bottom. The ground's surface and its thermal boundary are the run's. -----------!

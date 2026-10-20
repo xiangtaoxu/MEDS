@@ -386,7 +386,8 @@ The curves in `src/shared/functions` state MEDS's own rationale in their comment
 pages; what they take from ED2 is listed here.
 
 - **Allometry** (`meds_allometry`). The pan-tropical curves are ED2's `iallom = 3` (`ed_params.f90`,
-  `utils/allometry.f90`), with one coefficient set for every PFT. The leaf-area coefficient
+  `utils/allometry.f90`). MEDS ships one coefficient set for every PFT; a PFT file may give each PFT its
+  own curve and coefficients. The leaf-area coefficient
   `lai_b1` = 0.4677/2 comes from ED2's `size2bl` leaf fit,
   bleaf = `c14f15_bl_xx(1)`/(SLA·C2B)·(D²H)^0.6410495: SLA·bleaf, the leaf area, does not depend on
   SLA, so MEDS uses it directly. The wood area index is ED2's `cpatch%wai` form, b1·D^b2, and the

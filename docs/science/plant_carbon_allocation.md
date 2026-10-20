@@ -90,26 +90,28 @@ kernel funds, in order:
 3. **reproduction** — a fraction $`f_{\mathrm{repro}}`$ of the post-storage residual (zero below the maturity height);
 4. **wood** — the residual sink: everything left becomes structural growth.
 
-Wood needs no explicit demand (it simply absorbs the remainder), and any cohort below the maturity height
-sets $`f_{\mathrm{repro}}=0`$. The maturity height is a share, `reproduction_height_fraction` (default 0.33), of the **local maximum
-height** $`H_{\max}`$, the height of a 100 cm tree on the run's height curve, capped at `hgt_max`
-(`meds_allometry::local_hmax`). Where the local allometry makes trees short, they mature short: this is
-the relative size at onset of maturity of Thomas (1996), whose 37 Malaysian species matured at 0.20–0.75
-of their asymptotic height, 0.42 on average. Under Chave et al. (2014)'s curve the stress index E scales
-every height by the same factor, so a given share of $`H_{\max}`$ falls at the same diameter at every site.
+Wood needs no explicit demand (it simply absorbs the remainder), and any cohort below its PFT's maturity
+height, `min_repro_height` [m], sets $`f_{\mathrm{repro}}=0`$. The height is set outside MEDS, one per
+PFT. Thomas (1996)'s relative size at onset of maturity is a guide: his 37 Malaysian species matured at
+0.20–0.75 of their asymptotic height, 0.42 on average, so a PFT's `min_repro_height` can be that share of
+the height it reaches on its own curve. The height is the same at every site: where Chave et al.
+(2014)'s stress index E makes trees short, a cohort reaches it at a larger diameter, or not at all.
 
 ### The size allometry
 
-The targets and every cohort's geometry come from one size allometry (`meds_allometry`), whose
-coefficients (`[allometry]` in the PFT file; `docs/configuration.md`, "The PFT file") are the same for
-every PFT. With $D$ the diameter [cm], $H$ the height [m] and $\rho$ the wood density [g cm⁻³]:
+The targets and every cohort's geometry come from its PFT's size allometry (`meds_allometry`, one
+record per PFT), whose coefficients are the PFT file's `[allometry]` block (`docs/configuration.md`, "The
+PFT file"): each key one value for every PFT or one per PFT, so an understorey specialist and a canopy
+emergent can each have their own curve, cap and leaf display. With $D$ the diameter [cm], $H$ the height [m] and $\rho$ the wood density [g cm⁻³]:
 
-- **Height** follows one of three curves, each capped at the PFT's `hgt_max`: the pan-tropical power
-  law $`\ln H = b_1 + b_2 \ln D`$; the saturating generalized Michaelis–Menten curve
-  $`H = a D^{b}/(k + D^{b})`$, fitted by Cano et al. (2019) in the Barro Colorado Nature Monument; or
-  Chave et al. (2014) eq. 6a, $`\ln H = 0.893 - E + 0.760 \ln D - 0.0340 (\ln D)^2 + s^2/2`$, with $E$
-  the site's stress index and $`s = 0.243`$ the fit's residual standard error. The $`s^2/2`$ turns the
-  fit's log-scale median into its mean, as BIOMASS's `retrieveH` does. Height to diameter inverts the
+- **Height** follows one of two curves, each capped at the PFT's `hgt_max`: the pan-tropical power
+  law $`\ln H = b_1 + b_2 \ln D`$, or a log-quadratic, $`\ln H = a - E + b \ln D + c (\ln D)^2 + s^2/2`$,
+  with $E$ the site's stress index (the same for every PFT) and the PFT's coefficients defaulting to
+  Chave et al. (2014) eq. 6a: $a$ = 0.893, $b$ = 0.760, $c$ = −0.0340 and the fit's residual standard
+  error $s$ = 0.243. The $`s^2/2`$ turns the fit's log-scale median into its mean, as BIOMASS's
+  `retrieveH` does. A site's own heights give a local fit of $a$, $b$ and $c$: Barro Colorado's, fitted
+  uniformly in $`\ln D`$ over 1–300 cm to Cano et al. (2019)'s curve for 9884 trees of the Barro Colorado
+  Nature Monument, is $a$ = 0.8898, $b$ = 0.7908, $c$ = −0.04923 (within 4.3 % of that curve). Height to diameter inverts the
   uncapped curve; on Chave's curve that is the smaller root of the quadratic in $`\ln D`$, the rising
   branch, which holds up to a diameter of about 7×10⁴ cm.
 - **Biomass** is Chave et al. (2014) eq. 4 in carbon, $`\mathrm{AGB} = c_1\,\rho^{c_2}\,(D^2 H)^{c_2}`$
@@ -127,11 +129,7 @@ every PFT. With $D$ the diameter [cm], $H$ the height [m] and $\rho$ the wood de
   (`wood_to_dbh`); `carbon_to_structure` derives a cohort's diameter, height, basal area, AGB and leaf
   area from its wood and leaf carbon. Under the power law the inverse is closed form,
   $`\mathrm{AGB} \propto D^{P}`$ with $`P = c_2(2 + b_2)`$ below the height cap and $`P = 2c_2`$ above it,
-  the two meeting at the cap; under Chave's curve it is the smaller root of a quadratic in $`\ln D`$.
-  The gMM curve has no closed-form inverse, so Newton's method solves
-  $`2x + \ln H(x) = \ln\!\big(\mathrm{AGB}/(c_1\rho^{c_2})\big)/c_2`$ for $`x = \ln D`$. The left side
-  rises with a slope between 2 and $`2 + b`$ and is concave (the cap only flattens it), so after its
-  first step the iteration lands at or below the root and climbs to it without overshooting.
+  the two meeting at the cap; under the log-quadratic it is the smaller root of a quadratic in $`\ln D`$.
 
 ### Sink limitation of wood growth
 
@@ -255,7 +253,7 @@ litter, from which the soil-carbon pools and $`R_h`$ follow (`soil_carbon.md`).
 | $`c_s`$ | `storage_cushion` | storage target as a multiple of the leaf + fine-root target |
 | $q$ | `root_to_leaf_ratio` | fine-root : leaf target ratio |
 | $`f_{\mathrm{repro}}`$ | `reproduction_investment_fraction` | fraction of the residual → reproduction (above maturity) |
-| — | `reproduction_height_fraction` (scalar, optional, default 0.33) | maturity height as a share of the local maximum height |
+| — | `min_repro_height` [m] | the height a cohort reproduces from |
 | $`k_s`$ | `storage_turnover_rate` (optional, default 0 = off) | storage maintenance, eq. (2) [yr⁻¹] |
 | $`f_r`$ | `retained_carbon_fraction` (optional, default 0.3) | share of leaf and fine-root loss resorbed to storage, eq. (3) |
 | $`r_{\max}`$ | `max_relative_growth_rate` (optional, default 0 = off) | sink limit on wood growth per unit wood carbon [yr⁻¹]; the residual above it is exuded |

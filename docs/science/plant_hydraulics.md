@@ -242,7 +242,7 @@ flows themselves, so the plant and soil water budgets close to round-off.
 | $`b_{1Rd}, b_{2Rd}`$ | `root_depth_b1`, `root_depth_b2` | rooting depth $`b_{1Rd}\,h^{b_{2Rd}}`$ [m], capped at the soil column (ED2 IALLOM 1) |
 | SRL | `specific_root_length` | fine-root length per unit fine-root carbon [m kgC⁻¹] |
 | $`r_{\text{root}}`$ | `fine_root_radius` | absorbing-root radius [m] |
-| $`b_{1SA}, b_{2SA}`$ | `pft.sapwood_area_b1`, `pft.sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which with the fine roots is the wood water store, and alone holds the wood thermal store's internal water |
+| $`b_{1SA}, b_{2SA}`$ | `allometry.sapwood_area_b1`, `allometry.sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which with the fine roots is the wood water store, and alone holds the wood thermal store's internal water |
 
 ## References
 - Xu, Medvigy, Powers, Becknell & Guan (2016), *New Phytologist* — X16 hydraulics.

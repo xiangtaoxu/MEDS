@@ -37,7 +37,6 @@ program test_output_roundtrip
    use meds_config,           only : meds_config_t
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
-   use meds_allometry,        only : allometry_t
    use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_registry,  only : manager_alloc
@@ -67,7 +66,7 @@ program test_output_roundtrip
    call banner('output_roundtrip')
 
    !----- A fixed 1-cohort / 1-patch site (constant slot set). -----!
-   call alloc_polygon(poly, 1_ik, 16_ik, 4_ik, 4_ik, allometry_t(), test_pft_table())
+   call alloc_polygon(poly, 1_ik, 16_ik, 4_ik, 4_ik, test_pft_table())
    poly%cohort%n = 1_ik ; poly%patch%n = 1_ik
    poly%cohort%nplant(1) = 1.0_wp ; poly%cohort%dbh(1) = 5.0_wp
    poly%cohort%height(1) = 4.0_wp ; poly%cohort%basal_area(1) = 19.6_wp

@@ -20,6 +20,7 @@ module meds_toml
 
    public :: toml_table_t, toml_parse_file
    public :: toml_has, toml_has_section, toml_int, toml_real, toml_logical, toml_string, toml_real_array
+   public :: toml_is_array, toml_string_array
    public :: toml_table_count
    public :: toml_write_record, toml_record_reset
 
@@ -276,6 +277,50 @@ contains
    end function toml_string
 
    !----- Parse `[a, b, c]` into out(:) reals; nout = count read (0 if absent). ------------!
+   !----- True when the key's value is an array literal, [...]. -----------------------------!
+   pure logical function toml_is_array(t, key) result(yes)
+      type(toml_table_t), intent(in) :: t
+      character(len=*),   intent(in) :: key
+      integer(ik) :: idx
+      yes = .false.
+      idx = find_key(t, key)
+      if (idx /= 0_ik) yes = index(adjustl(t%val(idx)), '[') == 1
+   end function toml_is_array
+
+   !----- A string array, ["a", "b", ...], or one string, which counts as one entry. ------!
+   subroutine toml_string_array(t, key, out, nout)
+      type(toml_table_t), intent(in)  :: t
+      character(len=*),   intent(in)  :: key
+      character(len=*),   intent(out) :: out(:)
+      integer(ik),        intent(out) :: nout
+      integer(ik) :: idx, lb, rb, q1, q2
+      character(len=VALLEN) :: s
+      nout = 0_ik
+      out  = ''
+      idx = find_key(t, key)
+      if (idx == 0_ik) return
+      if (.not. toml_is_array(t, key)) then
+         nout = 1_ik
+         out(1) = toml_string(t, key, '')
+         return
+      end if
+      s  = adjustl(t%val(idx))
+      lb = index(s, '[') ; rb = index(s, ']', back=.true.)
+      if (rb <= lb) call toml_parse_error(key, t%val(idx), 'string array (expected [..] literal)')
+      s = s(lb+1:rb-1)
+      do
+         q1 = index(s, '"')
+         if (q1 == 0) exit
+         q2 = index(s(q1+1:), '"')
+         if (q2 == 0) call toml_parse_error(key, t%val(idx), 'string array (unclosed quote)')
+         nout = nout + 1_ik
+         if (nout > size(out, kind=ik)) call toml_parse_error(key, t%val(idx), 'string array (too many entries)')
+         out(nout) = s(q1+1:q1+q2-1)
+         call record_value(t, key, nout, .true., out(nout))
+         s = s(q1+q2+1:)
+      end do
+   end subroutine toml_string_array
+
    subroutine toml_real_array(t, key, out, nout)
       type(toml_table_t), intent(in)  :: t
       character(len=*),   intent(in)  :: key
