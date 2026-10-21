@@ -52,7 +52,7 @@ module meds_output_extract
    public :: SRC_PY_WORK_RK45_RESCUE, SRC_PY_WORK_CLAMP_STAGE
    !----- FAST-tier sources (5000-5999): read from the fast loop's staging. ------------------!
    public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
-   public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0
+   public :: SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0
    public :: SRC_F_PY0, SRC_F_PA0
    !----- Per-site fields (6000-6999). -------------------------------------------------------!
    public :: FLD_SI_GROWTH_TEMP, FLD_SI_DIAG0
@@ -180,7 +180,6 @@ module meds_output_extract
    integer(ik), parameter :: SRC_F_PA0           = 5200_ik
    integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
    integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
-   integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_GPP       = 5021_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_HEIGHT    = 5022_ik  !< DIM_COHORT
    !----- The per-cohort diagnostic block's rows at the FAST tier, SRC_F_CO0 + CO_*, DIM_COHORT: the  !
@@ -496,7 +495,7 @@ contains
    !  mean_agb_co, mean_agb_pa, mean_agb_py, mean_agb_pft_py and mean_agb_size_py all read FLD_C_AGB. Extract each  !
    !  variable once per step (the nvfortran trap above).                                      !
    !=======================================================================================!
-   subroutine extract_variable(poly, setup, v, scalar_out, slab_out, valid_out, n_out)
+   subroutine extract_variable(poly, setup, v, scalar_out, slab_out, valid_out, n_out, cohort_x)
       type(polygon_t),     intent(in)  :: poly
       type(diag_setup_t),  intent(in)  :: setup
       type(var_desc_t),    intent(in)  :: v
@@ -504,6 +503,8 @@ contains
       real(wp),            intent(out) :: slab_out(:)
       logical,             intent(out) :: valid_out(:)
       integer(ik),         intent(out) :: n_out
+      real(wp), optional,  intent(in)  :: cohort_x(:)   !< a cohort field to reduce in place of the live one
+                                                         !  (a staged sub-step's row, for a snapshot)
       real(wp)    :: x(max(poly%cohort%n, poly%patch%n, 1_ik))
       real(wp)    :: col(n_soil_layer_max, max(poly%patch%n, 1_ik))
       integer(ik) :: nf, kcls
@@ -516,6 +517,15 @@ contains
       if (not_simulated(poly, v%source_id)) then
          scalar_out = MISSING_VALUE
          return
+      end if
+      !----- A cohort field reduced to a coarser axis: the live field, or the one given. ----------!
+      if (kcls == SRCK_COHORT .and. v%dim /= DIM_COHORT) then
+         if (present(cohort_x)) then
+            nf = size(cohort_x, kind=ik)
+            x(1:nf) = cohort_x
+         else
+            call cohort_source_field(poly, v%source_id, x, nf)
+         end if
       end if
 
       select case (v%dim)
@@ -530,7 +540,6 @@ contains
       !----- Patch axis: either a per-patch field verbatim, or a cohort field reduced to it. -!
       case (DIM_PATCH)
          if (kcls == SRCK_COHORT) then
-            call cohort_source_field(poly, v%source_id, x, nf)
             call reduce_cohort_to_patch(poly, x, v%weight, v%mean, slab_out, valid_out, n_out, &
                                         scale=v%scale)
          else
@@ -541,13 +550,11 @@ contains
 
       !----- PFT axis (run-time length; empty PFTs are a true 0 for sums, see the reducer). --!
       case (DIM_PFT)
-         call cohort_source_field(poly, v%source_id, x, nf)
          call reduce_cohort_to_pft(poly, x, v%weight, v%mean, setup%n_pft, slab_out, valid_out,   &
                                    n_out, scale=v%scale)
 
       !----- DBH size class: each cohort whole in the class of its mean dbh. ----------------!
       case (DIM_SIZE)
-         call cohort_source_field(poly, v%source_id, x, nf)
          call reduce_cohort_to_size(poly, x, v%weight, v%mean, setup%dbh_edges, setup%n_dbh_class,   &
                                     slab_out, valid_out, n_out, scale=v%scale)
 
@@ -580,7 +587,6 @@ contains
       case default
          select case (kcls)
          case (SRCK_COHORT)
-            call cohort_source_field(poly, v%source_id, x, nf)
             call reduce_cohort_to_polygon(poly, x, v%weight, v%mean, scalar_out, ok, scale=v%scale)
          case (SRCK_PATCH)
             call patch_source_field(poly, v%source_id, x, nf)

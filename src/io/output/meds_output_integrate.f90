@@ -15,11 +15,11 @@ module meds_output_integrate
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,                  &
                                    pending_record_t, record_queue_t, AGG_MEAN, AGG_RATE, AGG_LAST, AGG_TMEAN,     &
                                    DIM_SCALAR, DIM_COHORT, DIM_PATCH,                                             &
-                                   DIM_SOIL, DIM_SOIL_PATCH, MISSING_VALUE
+                                   DIM_SOIL, DIM_SOIL_PATCH, MISSING_VALUE, slab_col
    use meds_polygon_state_vars, only : polygon_t
    use meds_constants,     only : n_soil_layer_max
-   use meds_output_extract, only : SRC_F_CO0, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_COH_LEAF_TEMP, SRC_F_PA0,    &
-                                   SRC_F_SOIL_WATER, extract_fast_scalar, extract_variable
+   use meds_output_extract, only : SRC_F_CO0, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_PA0,                         &
+                                   SRC_F_SOIL_WATER, SRC_NONE, FLD_C_DIAG0, extract_fast_scalar, extract_variable
    implicit none
    private
 
@@ -42,8 +42,9 @@ contains
       buf%var_id = 0_ik      ! set by the caller (registry index)
       buf%freq   = freq
       buf%agg    = v%agg
-      !----- The F tier folds staged sub-step samples, rates and states alike: their dt-weighted mean. --!
-      if (freq == FREQ_FAST) buf%agg = AGG_TMEAN
+      !----- The F tier folds staged sub-step samples, rates and states alike: a mean variable their  !
+      !      dt-weighted mean, a snapshot the last. ------------------------------------------------!
+      if (freq == FREQ_FAST .and. v%agg /= AGG_LAST) buf%agg = AGG_TMEAN
       buf%dim    = v%dim
       buf%active = .true.
       if (v%dim /= DIM_SCALAR) then
@@ -225,7 +226,11 @@ contains
          if (.not. bufs%has_data(t)) bufs%t_open(t) = prev
          do j = 1_ik, files%reg%nidx(t)
             k = files%reg%idx_freq(j, t)
-            call extract_variable(poly, bufs%diag, files%reg%var(k), scal, slab, vslab, n_out)
+            if (files%reg%var(k)%snap_staged) then
+               call staged_snapshot(bufs, poly, files%reg%var(k), scal, slab, vslab, n_out)
+            else
+               call extract_variable(poly, bufs%diag, files%reg%var(k), scal, slab, vslab, n_out)
+            end if
             if (files%reg%var(k)%dim == DIM_SCALAR) then
                call integrate_scalar(bufs%buf(k,t), scal, dt)
             else
@@ -254,7 +259,7 @@ contains
       type(output_files_t),   intent(in)    :: files
       type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: t
-      integer(ik) :: j, k, ns, nsl
+      integer(ik) :: j, k, c, ns, nsl
       integer(ik) :: slab_k(files%reg%nidx(t))
       logical     :: soil_patch(files%reg%nidx(t))
       bufs%pending(t)%used   = .true.
@@ -270,8 +275,9 @@ contains
          if (files%reg%var(k)%dim == DIM_SCALAR) then
             call normalize_scalar(bufs%buf(k,t), bufs%pending(t)%sval(k), bufs%pending(t)%svalid(k))
          else
-            call normalize_slab(bufs%buf(k,t), bufs%pending(t)%slab(:,k),                          &
-                                bufs%pending(t)%slabvalid(:,k), ns)
+            c = slab_col(bufs%pending(t), k)
+            call normalize_slab(bufs%buf(k,t), bufs%pending(t)%slab(:,c),                          &
+                                bufs%pending(t)%slabvalid(:,c), ns)
             bufs%pending(t)%nslab(k) = ns
             !----- The record's axis lengths. A soil-by-patch slab is patch-major, strided by the  !
             !      layer ceiling, so it holds ns / n_soil_layer_max patches. ---------------------!
@@ -344,8 +350,8 @@ contains
          r%col = 0_ik
          do c = 1_ik, ncol
             r%col(slab_k(c)) = c
-            r%slab(1:rows, c) = src%slab(1:rows, slab_k(c))
-            r%slabvalid(1:rows, c) = src%slabvalid(1:rows, slab_k(c))
+            r%slab(1:rows, c) = src%slab(1:rows, slab_col(src, slab_k(c)))
+            r%slabvalid(1:rows, c) = src%slabvalid(1:rows, slab_col(src, slab_k(c)))
          end do
       end associate
    end subroutine enqueue_record
@@ -360,7 +366,10 @@ contains
       type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: isub
       real(wp),               intent(in)    :: dt
-      integer(ik) :: j, k, src, np, nsp, nss
+      integer(ik) :: j, k, n
+      real(wp)    :: scal
+      real(wp)    :: slab(max(files%max_slab, 1_ik))
+      logical     :: valid(max(files%max_slab, 1_ik))
       if (.not. files%enabled) return
       if (files%reg%nidx(TIER_FAST) == 0_ik) return
       !----- The staging follows the stand; the slabs are output.cohort_max and patch_max long. The  !
@@ -369,52 +378,96 @@ contains
          call cap_exceeded('cohort', bufs%fast_n_cohort, files%cohort_max)
       if (files%patch_axis .and. bufs%fast_n_patch > files%patch_max)                              &
          call cap_exceeded('patch', bufs%fast_n_patch, files%patch_max)
-      np  = bufs%fast_n_patch
-      nsp = np * n_soil_layer_max
-      nss = bufs%fast_n_site * n_soil_layer_max
       if (.not. bufs%has_data(TIER_FAST)) bufs%t_open(TIER_FAST) = bufs%fast_time(isub)
       do j = 1_ik, files%reg%nidx(TIER_FAST)
-         k   = files%reg%idx_freq(j, TIER_FAST)
-         src = files%reg%var(k)%source_fast
-         select case (files%reg%var(k)%dim)
-         case (DIM_SCALAR)
-            call integrate_scalar(bufs%buf(k,TIER_FAST), extract_fast_scalar(src, bufs%fast_site(:, isub),        &
-                                                                     bufs%fast_forcing(:, isub)), dt)
-         case (DIM_PATCH)
-            call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_patch(src - SRC_F_PA0, 1:np, isub), np, dt)
-         case (DIM_SOIL)
-            if (src == SRC_F_SOIL_WATER) then
-               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_soil_water(1:nss,isub), nss, dt,              &
-                                   bufs%fast_soil_live(1:nss))
-            else
-               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_soil_temp(1:nss,isub), nss, dt,               &
-                                   bufs%fast_soil_live(1:nss))
-            end if
-         case (DIM_SOIL_PATCH)
-            if (src == SRC_F_SOIL_WATER) then
-               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_soil_water_patch(1:nsp,isub), nsp, dt,        &
-                                   bufs%fast_soil_patch_live(1:nsp))
-            else
-               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_soil_temp_patch(1:nsp,isub), nsp, dt,         &
-                                   bufs%fast_soil_patch_live(1:nsp))
-            end if
-         case (DIM_COHORT)
-            select case (src)
-            case (SRC_F_COH_GPP)
-               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_cohort_gpp(:,isub), bufs%fast_n_cohort, dt)
-            case (SRC_F_COH_HEIGHT)
-               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_cohort_height(:,isub), bufs%fast_n_cohort, dt)
-            case (SRC_F_COH_LEAF_TEMP)
-               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_cohort_leaf_temp(:,isub), bufs%fast_n_cohort, dt)
-            case default   ! SRC_F_CO0 + CO_*: a row of the per-cohort diagnostic block
-               !----- staged only while the block is on (a fast loop that ran); else it reads as missing
-               if (allocated(bufs%fast_cohort_diag))                                                    &
-                  call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_cohort_diag(:, src - SRC_F_CO0, isub),   &
-                                      bufs%fast_n_cohort, dt)
-            end select
-         end select
+         k = files%reg%idx_freq(j, TIER_FAST)
+         call staged_value(bufs, files%reg%var(k)%source_fast, files%reg%var(k)%dim, isub, scal, slab, valid, n)
+         if (files%reg%var(k)%dim == DIM_SCALAR) then
+            call integrate_scalar(bufs%buf(k,TIER_FAST), scal, dt)
+         else
+            call integrate_slab(bufs%buf(k,TIER_FAST), slab, n, dt, valid)
+         end if
       end do
       bufs%has_data(TIER_FAST) = .true.
    end subroutine output_integrate_fast
+
+   !----- One staged source's value in sub-step isub, on the variable's axis: the polygon mean of  !
+   !      the patch rows or a forcing row, each patch's row, a soil column, or the per-cohort      !
+   !      values. Every slot is valid but a layer below its column. A per-cohort diagnostic row    !
+   !      is staged only while the block is on (a fast loop that ran); else it has no slots. ------!
+   subroutine staged_value(bufs, src, dm, isub, scal, slab, valid, n)
+      type(output_buffers_t), intent(in)  :: bufs
+      integer(ik),            intent(in)  :: src, dm, isub
+      real(wp),               intent(out) :: scal, slab(:)
+      logical,                intent(out) :: valid(:)
+      integer(ik),            intent(out) :: n
+      scal = MISSING_VALUE
+      n = 0_ik
+      select case (dm)
+      case (DIM_SCALAR)
+         scal = extract_fast_scalar(src, bufs%fast_site(:, isub), bufs%fast_forcing(:, isub))
+      case (DIM_PATCH)
+         n = bufs%fast_n_patch
+         slab(1:n)  = bufs%fast_patch(src - SRC_F_PA0, 1:n, isub)
+         valid(1:n) = .true.
+      case (DIM_SOIL)
+         n = bufs%fast_n_site * n_soil_layer_max
+         if (src == SRC_F_SOIL_WATER) then
+            slab(1:n) = bufs%fast_soil_water(1:n, isub)
+         else
+            slab(1:n) = bufs%fast_soil_temp(1:n, isub)
+         end if
+         valid(1:n) = bufs%fast_soil_live(1:n)
+      case (DIM_SOIL_PATCH)
+         n = bufs%fast_n_patch * n_soil_layer_max
+         if (src == SRC_F_SOIL_WATER) then
+            slab(1:n) = bufs%fast_soil_water_patch(1:n, isub)
+         else
+            slab(1:n) = bufs%fast_soil_temp_patch(1:n, isub)
+         end if
+         valid(1:n) = bufs%fast_soil_patch_live(1:n)
+      case (DIM_COHORT)
+         n = bufs%fast_n_cohort
+         select case (src)
+         case (SRC_F_COH_GPP)
+            slab(1:n) = bufs%fast_cohort_gpp(1:n, isub)
+         case (SRC_F_COH_HEIGHT)
+            slab(1:n) = bufs%fast_cohort_height(1:n, isub)
+         case default   ! SRC_F_CO0 + CO_*: a row of the per-cohort diagnostic block
+            if (allocated(bufs%fast_cohort_diag)) then
+               slab(1:n) = bufs%fast_cohort_diag(1:n, src - SRC_F_CO0, isub)
+            else
+               n = 0_ik
+            end if
+         end select
+         valid(1:n) = .true.
+      end select
+   end subroutine staged_value
+
+   !----- A snapshot of a fast-loop diagnostic: its value over the last fast step of the slow step  !
+   !      just taken, the last staged sub-step (docs/science/diagnostics.md §3). A per-cohort row   !
+   !      reduced to a coarser axis is that sub-step's row, reduced as its mean is. With nothing    !
+   !      staged this step (no fast loop) it is missing, and the period keeps its last value. -----!
+   subroutine staged_snapshot(bufs, poly, v, scal, slab, valid, n)
+      type(output_buffers_t), intent(in)  :: bufs
+      type(polygon_t),        intent(in)  :: poly
+      type(var_desc_t),       intent(in)  :: v
+      real(wp),               intent(out) :: scal, slab(:)
+      logical,                intent(out) :: valid(:)
+      integer(ik),            intent(out) :: n
+      integer(ik) :: isub, nc
+      scal = MISSING_VALUE
+      n = 0_ik
+      if (.not. bufs%fast_ready) return
+      isub = bufs%n_fast_sub
+      if (v%source_fast /= SRC_NONE) then
+         call staged_value(bufs, v%source_fast, v%dim, isub, scal, slab, valid, n)
+      else if (allocated(bufs%fast_cohort_diag)) then
+         nc = bufs%fast_n_cohort
+         if (nc == poly%cohort%n)                                                                    &
+            call extract_variable(poly, bufs%diag, v, scal, slab, valid, n,                          &
+                                  cohort_x=bufs%fast_cohort_diag(1:nc, v%source_id - FLD_C_DIAG0, isub))
+      end if
+   end subroutine staged_snapshot
 
 end module meds_output_integrate

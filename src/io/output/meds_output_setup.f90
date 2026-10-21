@@ -17,12 +17,12 @@ module meds_output_setup
    use meds_output_params,  only : N_FREQ, TIER_FAST, N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT, FREQ_NONE
    use meds_output_types,   only : output_files_t, output_buffers_t, MAX_DBH_CLASS, DIM_COHORT, DIM_PATCH,        &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, MISSING_VALUE,          &
-                                   MISSING_INT
+                                   MISSING_INT, DIM_SCALAR
    use meds_constants,         only : n_soil_layer_max
    use meds_output_registry,  only : build_output_registry, freq_bit, apply_variable_override, parse_stream_mask, &
                                      build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_output_integrate, only : alloc_integ_buffer
-   use meds_output_extract,   only : FLD_C_DIAG0, FLD_P_DIAG0, FLD_PY_DIAG0, FLD_SI_DIAG0, SRC_F_CO0
+   use meds_output_extract,   only : FLD_C_DIAG0, FLD_P_DIAG0, FLD_PY_DIAG0, FLD_SI_DIAG0, SRC_F_CO0, SRC_NONE
    use meds_allometry_lib,    only : HEIGHT_CHAVE
    use meds_soil_params,      only : SOIL_BC_AQUIFER
    use meds_toml,             only : toml_table_t, toml_parse_file
@@ -283,12 +283,33 @@ contains
             end if
          end do
       end do
+      !----- Each tier's scratch record: every variable's scalar, and a slab column for each of the  !
+      !      tier's live slab variables only, so a variable nobody writes costs nothing here. --------!
       do t = 1_ik, N_FREQ
+         bit = freq_bit(t)
          allocate(bufs%pending(t)%sval(nv), bufs%pending(t)%svalid(nv), bufs%pending(t)%nslab(nv))
-         allocate(bufs%pending(t)%slab(files%max_slab, nv), bufs%pending(t)%slabvalid(files%max_slab, nv))
+         allocate(bufs%pending(t)%col(nv), source=0_ik)
+         cap = 0_ik
+         do k = 1_ik, nv
+            if (files%reg%var(k)%enabled .and. iand(files%reg%var(k)%streams, bit) /= 0_ik .and.     &
+                files%reg%var(k)%dim /= DIM_SCALAR) then
+               cap = cap + 1_ik
+               bufs%pending(t)%col(k) = cap
+            end if
+         end do
+         allocate(bufs%pending(t)%slab(files%max_slab, max(cap, 1_ik)),                              &
+                  bufs%pending(t)%slabvalid(files%max_slab, max(cap, 1_ik)))
          bufs%pending(t)%used = .false.
       end do
-      bufs%fast_on = files%enabled .and. files%reg%nidx(TIER_FAST) > 0_ik
+      !----- The fast loop stages its sub-steps for the F tier and for the snapshots the coarse     !
+      !      tiers take from the last one. ---------------------------------------------------------!
+      bufs%fast_on = files%reg%nidx(TIER_FAST) > 0_ik
+      do t = TIER_FAST + 1_ik, N_FREQ
+         do k = 1_ik, files%reg%nidx(t)
+            if (files%reg%var(files%reg%idx_freq(k, t))%snap_staged) bufs%fast_on = .true.
+         end do
+      end do
+      bufs%fast_on = bufs%fast_on .and. files%enabled
       bufs%diag = files%diag
    end subroutine alloc_output_buffers
 
@@ -353,8 +374,12 @@ contains
          do t = 1_ik, N_FREQ
             do j = 1_ik, files%reg%nidx(t)
                k   = files%reg%idx_freq(j, t)
+               !----- The F tier, and a snapshot that reads the staging, need the block that stages  !
+               !      their source, not the one the coarse means accumulate in. -----------------------!
                src = files%reg%var(k)%source_id
-               if (t == TIER_FAST) src = files%reg%var(k)%source_fast
+               if (t == TIER_FAST .or. (files%reg%var(k)%snap_staged .and.                           &
+                                        files%reg%var(k)%source_fast /= SRC_NONE))                   &
+                  src = files%reg%var(k)%source_fast
                if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) need_c = .true.
                if (src > SRC_F_CO0 .and. src <= SRC_F_CO0 + N_CO_FAST_ROWS) need_c = .true.
                if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) need_p = .true.

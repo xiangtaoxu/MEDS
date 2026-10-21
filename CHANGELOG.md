@@ -49,15 +49,17 @@ holds every variable and names its layout, and the reader refuses one an older M
 filling in what it lacks (#471). Every output value is a mean over its record's period: the fast loop's
 carbon and water totals are mean rates, and the solvers' work counters means per fast step (#472).
 Every variable of the diagnostic and restart files is named `[mean_]<quantity>[_<breakdown>]_<level>`, one
-name at every tier, each fast twin merged into its daily variable (#473).
+name at every tier, each fast twin merged into its daily variable (#473). Every mean has its snapshot,
+its value at the period's end, under the name without `mean_`, off until an `io_config` names its tiers
+(#474).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
   `_co`, `_pa`, `_si` or `_py`; the breakdown `_pft`, `_size` or `_layer`; `mean_` for a mean over the
   record's period, none for its value at the end (`docs/science/diagnostics.md` §3). A variable and its
   `*_fast` twin are one variable, written on F and on D, M and Y; `gpp_rate_site` and `et_rate_site`
-  are `mean_gpp_py` and `mean_et_py`; `leaf_temp_cohort_fast` goes (its end-of-step value returns as
-  a snapshot). `docs/output_renames.md` maps every variable, the per-site statics (`site_area` is
+  are `mean_gpp_py` and `mean_et_py`; `leaf_temp_cohort_fast` goes (on the F tier the per-cohort
+  leaf temperature is `mean_leaf_temp_co`'s, the one each step's leaf solve used). `docs/output_renames.md` maps every variable, the per-site statics (`site_area` is
   `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) to its old names.
   - An `io_config` names each variable by its new name, and a variable that had a twin once, with the
     tiers both lines gave; a line for one of the two now sets them all. `meds_main --dump-io-config`
@@ -66,6 +68,11 @@ name at every tier, each fast twin merged into its daily variable (#473).
     calibration and `meds.canopy` do.
   - The restart file is `restart_format = "2"`: a state file this release wrote before the rename does
     not restart either.
+- **An `io_config`'s `true` needs a variable with default tiers** (#474). The snapshots (#474) are off by
+  default, and `cas_temp_py = true` stops the run, saying so: name the tiers, `cas_temp_py = "D M"`.
+  `meds_main --dump-io-config` lists such a variable as `false`.
+- **The F tier writes with forcing off** (#474). A run with `[output.fast].enabled = true` and
+  `[forcing].forcing_on = false` wrote no F records; it writes the sub-steps under the reference climate.
 - **The diagnostic files' totals are mean rates** (#472). Each is a mean over its record's period, so
   one variable has one unit at every tier:
   - `gpp_*`, `npp_*`, `leaf_resp_site`, `stem_resp_site`, `root_resp_site` and `rh_*`: kgC m⁻² per
@@ -310,6 +317,12 @@ name at every tier, each fast twin merged into its daily variable (#473).
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
   `hydraulics.root_beta`.
+- **Fortran: the output registry's snapshots** (#474): `var_desc_t%snap_staged` marks a snapshot the D,
+  M and Y tiers read from the last staged sub-step; `add_variable` derives `source_fast` from a fast-loop
+  row (`FLD_C_DIAG0 + CO_*`, `FLD_P_DIAG0 + PA_*`, `FLD_PY_DIAG0 + PY_*`), so `fast_source=` names only
+  another source; `append_variable` stores a built descriptor; `check_fast_tier` takes the descriptor;
+  `extract_variable` takes an optional `cohort_x`, a cohort field to reduce in place of the live one.
+  `SRC_F_COH_LEAF_TEMP` and `output_buffers_t%fast_cohort_leaf_temp` are gone.
 - **Fortran: the output registry** (#473): `add_variable` takes the F tier's source as `fast_source=`
   beside the D, M and Y tiers' (`SRC_NONE` for none), held as `var_desc_t%source_fast`; `FAST_ONLY` is
   `FAST`. A variable's F records are the dt-weighted mean of its staged samples whatever its coarse
@@ -385,6 +398,18 @@ name at every tier, each fast twin merged into its daily variable (#473).
 
 ### Changed
 
+- **A snapshot for every mean** (#474). Each `mean_<x>` has its `<x>` (`AGG_LAST`, `time: point`), off
+  by default, and the states written as snapshots (`nplant_co`, `area_pa`, `age_pa`, `n_cohort_py`,
+  `n_patch_py`) their means: 452 variables, 216 of them snapshots. A state's snapshot is the state as
+  the period's last step left it; a fast-loop diagnostic's, a flux included, its value over the
+  period's last fast step, the last sub-step its mean averages, read from the staging, so on an F tier
+  one sub-step long the two are one series (to the mean's last bit). The totals the fast loop keeps only per slow step and each
+  site's forcing stay mean-only (`docs/science/diagnostics.md` §4, Snapshots). Every fast-loop row is
+  staged, so its variable may be on the F tier: `mean_gsw_co`, `mean_w_surface_py`, `mean_rough_pa` and
+  the rest of the cohort and patch rows gain it. The fast loop stages its sub-steps when the F tier or
+  a staged snapshot reads them. Six long names lose "mean rate" and "mean signed": the prefix and
+  `cell_methods` say mean. A tier's scratch record holds a slab column for each live slab variable
+  only, so the variables nobody writes cost no memory.
 - **`src/io` by folder, one module per job** (#469). `io/init/` holds the starts, one module each
   (bare ground, a census, a restart file), and `init_polygon`, which runs the one `[init].init_mode`
   names and its own finishing (a census stand's restructuring and acclimation, a restart's
@@ -773,6 +798,8 @@ name at every tier, each fast twin merged into its daily variable (#473).
 
 ### Removed
 
+- **The per-cohort leaf-temperature staging** (#474), which nothing read since the F twins merged
+  (#473): the fast loop filled it every sub-step.
 - **The `"const"` forcing backend** (#469), with `MET_BACKEND_CONST` and its test, and `met_cursor_t`'s
   built-in location (Ithaca's), which `met_cursor_init` always set. `met_forcing_t` keeps its reference
   climate, which a run without forcing still reads where the fast loop sets no value.

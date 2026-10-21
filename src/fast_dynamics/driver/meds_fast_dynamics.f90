@@ -390,9 +390,10 @@ contains
       allocate(site_col(poly%site%n))
       call site_column_configs(ctx, poly, site_col)
 
-      !----- FAST (sub-daily) output staging: fill it only when the tier is active and a diurnal    !
-      !      signal exists (forcing on). Serialize stays in main.                                    !
-      do_fast = present(out_bufs) .and. do_forcing
+      !----- FAST (sub-daily) output staging: fill it only when something reads it, the F tier or a  !
+      !      snapshot of a fast-loop value; with forcing off the sub-steps see the reference climate. !
+      !      Serialize stays in main.                                                                !
+      do_fast = present(out_bufs)
       if (do_fast) do_fast = out_bufs%fast_on
       !----- The per-cohort / per-patch diagnostic capture runs only when the registry actually   !
       !      asked for it (main sets `active` from the live variable list). Everything downstream !
@@ -435,7 +436,7 @@ contains
          out_bufs%fast_n_patch  = npatch
          out_bufs%fast_site = 0.0_wp
          out_bufs%fast_soil_temp = 0.0_wp ; out_bufs%fast_soil_water = 0.0_wp
-         out_bufs%fast_cohort_leaf_temp = 0.0_wp ; out_bufs%fast_cohort_gpp = 0.0_wp ; out_bufs%fast_cohort_height = 0.0_wp
+         out_bufs%fast_cohort_gpp = 0.0_wp ; out_bufs%fast_cohort_height = 0.0_wp
          if (do_cdiag) out_bufs%fast_cohort_diag = 0.0_wp
       end if
 
@@ -775,7 +776,6 @@ contains
                out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub) = biophys%soil_water%theta(1:nl)
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
-                  out_bufs%fast_cohort_leaf_temp(i,isub)  = biophys%leaf_temp(j)
                   out_bufs%fast_cohort_gpp(i,isub)    = gpp_coh(j)
                   out_bufs%fast_cohort_height(i,isub) = col_cohort%height(j)
                   if (do_cdiag) out_bufs%fast_cohort_diag(i, :, isub) = cdiag_buf(:, j)
@@ -948,7 +948,7 @@ contains
          if (present(run_water_budget))  call budget_merge(run_water_budget,  site_water_budget,  1.0_wp)
          if (present(run_face_budget))   call budget_merge(run_face_budget,   site_face_budget,   1.0_wp)
       end if
-      if (do_fast) out_bufs%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
+      if (do_fast) out_bufs%fast_ready = .true.   ! signal main: the staging holds this slow step
    end subroutine fast_dynamics
 
    !----- Each site's column configuration: the polygon's, with the site's soil column, the        !
@@ -1326,18 +1326,18 @@ contains
          allocate(b%fast_patch(N_PA_ROWS, np, nsub), b%fast_soil_temp_patch(nl * np, nsub),           &
                   b%fast_soil_water_patch(nl * np, nsub), b%fast_soil_patch_live(nl * np))
       nc = max(ncohort, 1_ik)
-      if (allocated(b%fast_cohort_leaf_temp)) then
-         if (size(b%fast_cohort_leaf_temp, 1, kind=ik) < nc) then
-            nc = max(nc, 2_ik * size(b%fast_cohort_leaf_temp, 1, kind=ik))
-            deallocate(b%fast_cohort_leaf_temp, b%fast_cohort_gpp, b%fast_cohort_height)
+      if (allocated(b%fast_cohort_gpp)) then
+         if (size(b%fast_cohort_gpp, 1, kind=ik) < nc) then
+            nc = max(nc, 2_ik * size(b%fast_cohort_gpp, 1, kind=ik))
+            deallocate(b%fast_cohort_gpp, b%fast_cohort_height)
          end if
       end if
-      if (.not. allocated(b%fast_cohort_leaf_temp))                                                       &
-         allocate(b%fast_cohort_leaf_temp(nc, nsub), b%fast_cohort_gpp(nc, nsub), b%fast_cohort_height(nc, nsub))
+      if (.not. allocated(b%fast_cohort_gpp))                                                      &
+         allocate(b%fast_cohort_gpp(nc, nsub), b%fast_cohort_height(nc, nsub))
       !----- The diagnostic block's rows, staged only while the block is on: its FAST-tier variables  !
       !      (SRC_F_CO0 + CO_*) are what turn it on, so a run that reports none allocates nothing. ----!
       if (with_cdiag) then
-         nc = size(b%fast_cohort_leaf_temp, 1, kind=ik)
+         nc = size(b%fast_cohort_gpp, 1, kind=ik)
          if (allocated(b%fast_cohort_diag)) then
             if (size(b%fast_cohort_diag, 1, kind=ik) < nc) deallocate(b%fast_cohort_diag)
          end if

@@ -38,15 +38,15 @@ program test_output_integrate
                                      normalize_scalar, normalize_slab, output_integrate_fast, close_tier,         &
                                      output_integrate
    use meds_output_extract,   only : extract_variable, extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PA0,    &
-                                     SRC_F_PY0
-   use meds_diag_vars,        only : alloc_cohort_diag, CO_LEAF_TEMP, N_PY_ROWS, PY_TAIR, PY_CO2, N_PA_ROWS, PA_CAS_TEMP, PA_LE, &
-                                     PA_H, PA_GPP, PA_SW_UP, PA_LW_UP
+                                     SRC_F_PY0, SRC_F_CO0, SRC_NONE
+   use meds_diag_vars,        only : alloc_cohort_diag, CO_LEAF_TEMP, CO_GSW, N_PY_ROWS, PY_TAIR, PY_CO2, N_PA_ROWS,       &
+                                     N_CO_FAST_ROWS, PA_CAS_TEMP, PA_LE, PA_H, PA_GPP, PA_SW_UP, PA_LW_UP, PA_RECO
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_setup,     only : alloc_output_set, alloc_output_buffers, setup_output_files,                  &
                                      finalize_output_files
    use meds_output_registry,  only : find_var_index, build_freq_index, apply_variable_override, OVR_MASK
    use meds_output_reduce, only : W_NPLANT, W_LEAF_AREA
-   use meds_output_params,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
+   use meds_output_params,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_DAILY, FREQ_NONE
    use meds_constants,        only : n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, test_pft_table, check, check_close
    implicit none
@@ -60,6 +60,8 @@ program test_output_integrate
    call test_soil_patch_record()
    call test_two_buffers()
    call test_boundary_step()
+   call test_snapshot_registry()
+   call test_snapshots()
    write(*,'(a)') 'test_output_integrate: ALL PASSED'
 
 contains
@@ -204,7 +206,7 @@ contains
       type(output_files_t)   :: files
       type(output_buffers_t) :: bufs
       real(wp)    :: f0(N_PY_ROWS), s(N_PA_ROWS)
-      integer(ik) :: k_cas, k_soil, k_air, k_hgt, k_cas_p, k_soil_p, nl
+      integer(ik) :: k_cas, k_soil, k_air, k_hgt, k_cas_p, k_soil_p, nl, c_soil, c_hgt, c_cas_p, c_soil_p
       real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
 
       !----- extract_fast_scalar: a patch-block id reads its row of the sub-step's site mean, and a  !
@@ -247,8 +249,6 @@ contains
       bufs%fast_soil_temp_patch(1:2,2)       = [282.0_wp, 283.0_wp]
       bufs%fast_soil_temp_patch(nl+1:nl+2,1) = [290.0_wp, 291.0_wp]         ! patch 2: 291, 292
       bufs%fast_soil_temp_patch(nl+1:nl+2,2) = [292.0_wp, 293.0_wp]
-      bufs%fast_cohort_leaf_temp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
-      bufs%fast_cohort_leaf_temp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
       bufs%fast_cohort_height(1:2,1) = [10.0_wp, 12.0_wp]                      ! slot1=10, slot2=12 (constant)
       bufs%fast_cohort_height(1:2,2) = [10.0_wp, 12.0_wp]
 
@@ -264,10 +264,11 @@ contains
       call check_close(bufs%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp TMEAN')
       !----- Soil-column slab path: mean_soil_temp_layer_si slot means. -----!
       k_soil = find_var_index(files%reg, 'mean_soil_temp_layer_si')
-      call check(bufs%pending(1)%nslab(k_soil) == nl .and. bufs%pending(1)%slabvalid(2,k_soil)          &
-                 .and. .not. bufs%pending(1)%slabvalid(3,k_soil), 'FAST soil slab: the site''s 2 layers of nl')
-      call check_close(bufs%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
-      call check_close(bufs%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
+      c_soil = slab_col(bufs%pending(1), k_soil)
+      call check(bufs%pending(1)%nslab(k_soil) == nl .and. bufs%pending(1)%slabvalid(2,c_soil)          &
+                 .and. .not. bufs%pending(1)%slabvalid(3,c_soil), 'FAST soil slab: the site''s 2 layers of nl')
+      call check_close(bufs%pending(1)%slab(1,c_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
+      call check_close(bufs%pending(1)%slab(2,c_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
       !----- Per-cohort slab path: n_cohort (the slots are checked on mean_height_co below). -----!
       call check(bufs%pending(1)%n_cohort == 2_ik, 'FAST n_cohort = 2')
       !----- Forcing air-temp scalar path + per-cohort HEIGHT slab path (tallest-cohort post-proc). -----!
@@ -275,23 +276,26 @@ contains
       call check(k_air > 0_ik, 'mean_air_temp_py registered')
       call check_close(bufs%pending(1)%sval(k_air), 301.0_wp, 1.0e-10_wp, 'FAST air_temp TMEAN')
       k_hgt = find_var_index(files%reg, 'mean_height_co')
+      c_hgt = slab_col(bufs%pending(1), k_hgt)
       call check(k_hgt > 0_ik, 'mean_height_co registered')
-      call check_close(bufs%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
-      call check_close(bufs%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
+      call check_close(bufs%pending(1)%slab(1,c_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
+      call check_close(bufs%pending(1)%slab(2,c_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
       !----- The patch axis: each patch's own mean, and each patch's soil column in the            !
       !      soil-by-patch layout, with the inactive layers as fill. -----!
       k_cas_p = find_var_index(files%reg, 'mean_cas_temp_pa')
+      c_cas_p = slab_col(bufs%pending(1), k_cas_p)
       call check(k_cas_p > 0_ik, 'mean_cas_temp_pa registered')
       call check(bufs%pending(1)%n_patch == 2_ik, 'FAST n_patch = 2')
-      call check_close(bufs%pending(1)%slab(1,k_cas_p), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 1')
-      call check_close(bufs%pending(1)%slab(2,k_cas_p), 302.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 2')
+      call check_close(bufs%pending(1)%slab(1,c_cas_p), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 1')
+      call check_close(bufs%pending(1)%slab(2,c_cas_p), 302.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 2')
       k_soil_p = find_var_index(files%reg, 'mean_soil_temp_layer_pa')
+      c_soil_p = slab_col(bufs%pending(1), k_soil_p)
       call check(k_soil_p > 0_ik, 'mean_soil_temp_layer_pa registered')
-      call check_close(bufs%pending(1)%slab(1,k_soil_p),    281.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 1')
-      call check_close(bufs%pending(1)%slab(2,k_soil_p),    282.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 2')
-      call check_close(bufs%pending(1)%slab(nl+1,k_soil_p), 291.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 1')
-      call check_close(bufs%pending(1)%slab(nl+2,k_soil_p), 292.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 2')
-      call check(.not. bufs%pending(1)%slabvalid(3,k_soil_p), 'FAST soil patch 1 layer 3 is fill (inactive)')
+      call check_close(bufs%pending(1)%slab(1,c_soil_p),    281.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 1')
+      call check_close(bufs%pending(1)%slab(2,c_soil_p),    282.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 2')
+      call check_close(bufs%pending(1)%slab(nl+1,c_soil_p), 291.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 1')
+      call check_close(bufs%pending(1)%slab(nl+2,c_soil_p), 292.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 2')
+      call check(.not. bufs%pending(1)%slabvalid(3,c_soil_p), 'FAST soil patch 1 layer 3 is fill (inactive)')
    end subroutine test_fast_tier
 
    !----- The driver's order: setup_output_files, then an [output].io_config override that switches on a  !
@@ -415,7 +419,7 @@ contains
       type(output_buffers_t) :: bufs
       type(polygon_t)        :: poly
       type(meds_time_t)      :: jan30, jan31, feb1
-      integer(ik) :: k_s, k_c, k_n
+      integer(ik) :: k_s, k_c, k_n, c_c
       real(wp), parameter :: DT = 86400.0_wp
       cfg = build_test_config(DT)
       cfg%output%enabled    = .true.
@@ -426,6 +430,7 @@ contains
       call alloc_output_set(files, bufs, cfg)
       k_s = find_var_index(files%reg, 'mean_agb_py')
       k_c = find_var_index(files%reg, 'mean_agb_co')
+      c_c = slab_col(bufs%pending(3), k_c)
       k_n = find_var_index(files%reg, 'n_cohort_py')
       call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
 
@@ -450,7 +455,7 @@ contains
       call check_close(bufs%pending(3)%sval(k_s), 11.0_wp, 1.0e-12_wp,                             &
                        'January''s site mean includes its last step: (10 + 12) / 2')
       call check(bufs%pending(3)%nslab(k_c) == 1_ik, 'January''s cohort slab: its one slot set')
-      call check_close(bufs%pending(3)%slab(1,k_c), 11.0_wp, 1.0e-12_wp,                           &
+      call check_close(bufs%pending(3)%slab(1,c_c), 11.0_wp, 1.0e-12_wp,                           &
                        'January''s cohort slab includes its last step too')
       call check(.not. bufs%has_data(3), 'nothing of the boundary step is left for February')
 
@@ -462,10 +467,118 @@ contains
       call close_tier(files, bufs, 3_ik)
       call check_close(bufs%pending(3)%sval(k_s), 25.0_wp, 1.0e-12_wp, 'February''s site mean: its own step')
       call check(bufs%pending(3)%nslab(k_c) == 2_ik, 'February''s cohort slab: the new slot set')
-      call check_close(bufs%pending(3)%slab(2,k_c), 5.0_wp, 1.0e-12_wp, 'February''s recruit')
+      call check_close(bufs%pending(3)%slab(2,c_c), 5.0_wp, 1.0e-12_wp, 'February''s recruit')
       call check_close(bufs%pending(3)%sval(k_n), 2.0_wp, 1.0e-12_wp, 'February''s cohort count')
       call free_polygon(poly)
    end subroutine test_boundary_step
+
+   !----- The snapshots (docs/science/diagnostics.md §3): each mean_<x> has its <x>, off by default, but  !
+   !      a total the fast loop keeps only per slow step; a state's snapshot reads the state, a fast-loop  !
+   !      diagnostic's the staging; and a fast-loop row is staged, so it may be on the F tier. ----------!
+   subroutine test_snapshot_registry()
+      type(meds_config_t)  :: cfg
+      type(output_files_t) :: files
+      integer(ik) :: k
+      cfg = build_test_config(86400.0_wp)
+      cfg%output%enabled = .true.
+      call setup_output_files(files, cfg)
+      k = find_var_index(files%reg, 'gpp_py')
+      call check(k > 0_ik, 'mean_gpp_py has its snapshot gpp_py')
+      if (k > 0_ik) then
+         call check(files%reg%var(k)%agg == AGG_LAST .and. files%reg%var(k)%streams == FREQ_NONE        &
+                    .and. files%reg%var(k)%snap_staged, 'gpp_py: a snapshot, off, read from the staging')
+      end if
+      k = find_var_index(files%reg, 'dbh_co')
+      call check(k > 0_ik, 'mean_dbh_co has its snapshot dbh_co')
+      if (k > 0_ik) call check(.not. files%reg%var(k)%snap_staged, 'dbh_co, a state: read from the state')
+      k = find_var_index(files%reg, 'height_co')
+      if (k > 0_ik) call check(.not. files%reg%var(k)%snap_staged,                                    &
+                               'height_co: the state at the step''s end, though its F tier is staged')
+      call check(find_var_index(files%reg, 'leaf_resp_py') == 0_ik .and.                               &
+                 find_var_index(files%reg, 'air_temp_si') == 0_ik,                                     &
+                 'a per-slow-step total and a site''s forcing stay mean-only')
+      call check(find_var_index(files%reg, 'mean_nplant_co') > 0_ik .and.                              &
+                 find_var_index(files%reg, 'mean_area_pa') > 0_ik, 'a state snapshot has its mean')
+      k = find_var_index(files%reg, 'mean_gsw_co')
+      call check(files%reg%var(k)%source_fast == SRC_F_CO0 + CO_GSW,                                  &
+                 'a fast-loop cohort row is staged, so the F tier reads it')
+      k = find_var_index(files%reg, 'reco_py')
+      call check(k > 0_ik, 'an F-only mean has a snapshot')
+      if (k > 0_ik) call check(files%reg%var(k)%source_id == SRC_NONE .and. files%reg%var(k)%snap_staged, &
+                               'reco_py reads the staging on every tier')
+   end subroutine test_snapshot_registry
+
+   !----- Snapshots on the tiers. Daily: the last staged sub-step of the step, for a polygon value  !
+   !      (cas_temp_py), a patch slab (cas_temp_pa), an F-only flux (reco_py) and a cohort row      !
+   !      reduced as its mean is (leaf_temp_py, leaf-area-weighted); a step with nothing staged     !
+   !      reads as fill. F: a snapshot keeps the last sub-step where its mean averages them. ------!
+   subroutine test_snapshots()
+      type(meds_config_t)    :: cfg
+      type(output_files_t)   :: files
+      type(output_buffers_t) :: bufs
+      type(polygon_t)        :: poly
+      type(meds_time_t)      :: day1
+      integer(ik) :: k_t, k_tp, k_r, k_lt, k_m, c_tp
+      logical     :: found
+      real(wp), parameter :: DT = 86400.0_wp
+      cfg = build_test_config(DT)
+      cfg%output%enabled    = .true.
+      cfg%output%freq_on    = [.true., .true., .false., .false.]     ! F + daily
+      cfg%output%grp_on     = .false.
+      cfg%output%axis_on    = .true.
+      cfg%output%cohort_max = 8_ik
+      call setup_output_files(files, cfg)
+      call apply_variable_override(files%reg, 'cas_temp_py', OVR_MASK, ior(FREQ_FAST, FREQ_DAILY), found)
+      call apply_variable_override(files%reg, 'mean_cas_temp_py', OVR_MASK, FREQ_FAST, found)
+      call apply_variable_override(files%reg, 'cas_temp_pa', OVR_MASK, FREQ_DAILY, found)
+      call apply_variable_override(files%reg, 'reco_py', OVR_MASK, FREQ_DAILY, found)
+      call apply_variable_override(files%reg, 'leaf_temp_py', OVR_MASK, FREQ_DAILY, found)
+      call check(found, 'the snapshots are registry variables')
+      call build_freq_index(files%reg)
+      call finalize_output_files(files)
+      call alloc_output_buffers(files, bufs)
+      call check(bufs%fast_on, 'a snapshot read from the staging turns the staging on')
+      k_t  = find_var_index(files%reg, 'cas_temp_py')
+      k_m  = find_var_index(files%reg, 'mean_cas_temp_py')
+      k_tp = find_var_index(files%reg, 'cas_temp_pa')
+      k_r  = find_var_index(files%reg, 'reco_py')
+      k_lt = find_var_index(files%reg, 'leaf_temp_py')
+
+      !----- One patch, two cohorts of leaf area 1 and 3, the cohort block on; two staged sub-steps. -!
+      call alloc_polygon(poly, 2_ik, 8_ik, 8_ik, 4_ik, cfg%pft)
+      poly%patch%n = 1_ik ; poly%patch%area(1) = 1.0_wp ; poly%patch%cohort_offset(1) = 1_ik
+      call set_cohorts(poly, [10.0_wp, 20.0_wp])
+      poly%cohort%leaf_area(1:2) = [1.0_wp, 3.0_wp]
+      call alloc_cohort_diag(poly%cohort%diag, 8_ik, .true.)
+      poly%cohort%diag%n = 2_ik
+      call stage_cas(bufs, [290.0_wp, 294.0_wp])
+      bufs%fast_n_cohort = 2_ik
+      bufs%fast_site(PA_RECO, :) = [1.0_wp, 3.0_wp]
+      allocate(bufs%fast_cohort_diag(8, N_CO_FAST_ROWS, 2), source=0.0_wp)
+      bufs%fast_cohort_diag(1:2, CO_LEAF_TEMP, 2) = [290.0_wp, 298.0_wp]
+      bufs%fast_ready = .true.
+
+      call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
+      call output_integrate_fast(files, bufs, 2_ik, 900.0_wp)
+      call close_tier(files, bufs, 1_ik)
+      call check_close(bufs%pending(1)%sval(k_t), 294.0_wp, 1.0e-12_wp, 'F: the snapshot keeps the last sub-step')
+      call check_close(bufs%pending(1)%sval(k_m), 292.0_wp, 1.0e-12_wp, 'F: the mean averages them')
+
+      day1 = meds_time_t(year=2000_ik, month=1_ik, day=1_ik)
+      call output_integrate(files, bufs, poly, day1, DT, .true., .false., .false.)
+      call check_close(bufs%pending(2)%sval(k_t), 294.0_wp, 1.0e-12_wp, 'D: a polygon value''s last sub-step')
+      c_tp = slab_col(bufs%pending(2), k_tp)
+      call check(bufs%pending(2)%nslab(k_tp) == 1_ik, 'D: the patch snapshot has the staged patch')
+      call check_close(bufs%pending(2)%slab(1,c_tp), 294.0_wp, 1.0e-12_wp, 'D: a patch slab''s last sub-step')
+      call check_close(bufs%pending(2)%sval(k_r), 3.0_wp, 1.0e-12_wp, 'D: an F-only flux''s last sub-step')
+      call check_close(bufs%pending(2)%sval(k_lt), 296.0_wp, 1.0e-12_wp,                             &
+                       'D: a cohort row''s last sub-step, leaf-area-weighted as its mean is')
+
+      bufs%fast_ready = .false.
+      call output_integrate(files, bufs, poly, time_advance_days(day1, 1_ik), DT, .true., .false., .false.)
+      call check(.not. bufs%pending(2)%svalid(k_t), 'D: a step with nothing staged has no snapshot')
+      call free_polygon(poly)
+   end subroutine test_snapshots
 
    !----- One patch holding `agb`'s cohorts, one plant each. ------------------------------------!
    subroutine set_cohorts(poly, agb)
@@ -487,7 +600,7 @@ contains
       bufs%fast_site(PA_CAS_TEMP, :) = cas
       bufs%fast_patch(PA_CAS_TEMP, 1, :) = cas
       bufs%fast_soil_temp = 280.0_wp ; bufs%fast_soil_temp_patch = 280.0_wp
-      bufs%fast_cohort_leaf_temp = 285.0_wp ; bufs%fast_cohort_height = 10.0_wp
+      bufs%fast_cohort_height = 10.0_wp
    end subroutine stage_cas
 
    !----- One polygon's FAST staging as fast_dynamics sizes it (size_fast_staging): nsub sub-steps, !
@@ -508,11 +621,11 @@ contains
       do ip = 1_ik, np
          bufs%fast_soil_patch_live((ip - 1_ik) * nl + 1_ik:(ip - 1_ik) * nl + n_soil) = .true.
       end do
-      allocate(bufs%fast_cohort_leaf_temp(nc, nsub), bufs%fast_cohort_gpp(nc, nsub), bufs%fast_cohort_height(nc, nsub))
+      allocate(bufs%fast_cohort_gpp(nc, nsub), bufs%fast_cohort_height(nc, nsub))
       bufs%fast_forcing = 0.0_wp ; bufs%fast_site = 0.0_wp ; bufs%fast_patch = 0.0_wp
       bufs%fast_soil_temp = 0.0_wp ; bufs%fast_soil_water = 0.0_wp
       bufs%fast_soil_temp_patch = 0.0_wp ; bufs%fast_soil_water_patch = 0.0_wp
-      bufs%fast_cohort_leaf_temp = 0.0_wp ; bufs%fast_cohort_gpp = 0.0_wp ; bufs%fast_cohort_height = 0.0_wp
+      bufs%fast_cohort_gpp = 0.0_wp ; bufs%fast_cohort_height = 0.0_wp
       bufs%n_fast_sub = nsub ; bufs%fast_n_patch = np
    end subroutine alloc_fast_staging
 
