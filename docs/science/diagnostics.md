@@ -3,9 +3,8 @@
 How MEDS reports itself: what a variable means, how it is aggregated across the demographic
 hierarchy and across time, and how to ask for the ones you want.
 
-Implementation: `src/io/output/` (`meds_diagnostic_kernels`, `meds_output_reduce`,
-`meds_output_{types,registry,integrate,stream,manager}`) plus the per-cohort / per-patch
-accumulators in `src/state/meds_diag_vars.f90`. Design and rationale:
+Implementation: `src/io/output/` (`meds_output_{types,registry,setup,extract,reduce,integrate,stream}`)
+plus the per-cohort / per-patch accumulators in `src/state/meds_diag_vars.f90`. Design and rationale:
 `docs/dev_plans/MEDS_IO_V01_PLAN.md`; the temporal-aggregation engine underneath is
 `docs/dev_plans/MEDS_IO_DESIGN.md`.
 
@@ -16,7 +15,7 @@ accumulators in `src/state/meds_diag_vars.f90`. Design and rationale:
 ```
   raw prognostic state (cohort SoA, patch reservoirs, site scalars)
       │
-  [1] DERIVE      meds_diagnostic_kernels     quantities that are a closed-form function of state
+  [1] DERIVE      meds_output_extract         quantities that are a closed-form function of state
       │                                       (LAI, gsc, WUE, soil psi/wetness, CAS VPD, DBH class)
       │
   [2] CAPTURE     meds_diag_vars              dt-weighted accumulators for everything the fast loop
@@ -407,8 +406,8 @@ Two coupled edits, as designed:
 1. a `call add_variable(...)` line in the matching `register_*` routine
    (`meds_output_registry`), naming the field, units, dim, `agg`, group, default streams, and —
    if it is aggregated — the weight kind and mean/sum flag;
-2. a `case` in the matching field accessor (`meds_output_integrate`) that copies the value out of
-   live state.
+2. a `case` in the matching field accessor (`meds_output_extract`) that copies the value out of
+   live state, under a new source id there.
 
 Because the reduction is **data** (`dim` + `weight` + `mean` + `scale`) rather than code, a field
 that already has an accessor case emits its patch, site, PFT and size-class twins for **one more

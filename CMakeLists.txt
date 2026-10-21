@@ -323,7 +323,10 @@ add_library(meds_slow STATIC ${SLOW_SOURCES})
 target_link_libraries(meds_slow PUBLIC meds_demography meds_slow_kernels meds_fast_kernels)
 meds_fortran_flags(meds_slow)
 
-#----- Initial-community builders (bare ground, add_cohort, census). ------------------------#
+#----- The initial state (src/io/init): bare ground, a census or a restart file, and           #
+#      init_polygon, which starts a polygon from the one [init].init_mode names. It links       #
+#      meds_slow for a census stand's restructuring and trait acclimation, and the netCDF        #
+#      bindings for the restart file, which the checkpoints write.                               #
 file(GLOB INIT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/init/*.f90)
 add_library(meds_init STATIC ${INIT_SOURCES})
 target_link_libraries(meds_init PUBLIC meds_demography meds_slow meds_config meds_netcdf_c)

@@ -95,7 +95,8 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 
 - **State is a flat site-wide structure of arrays**; adding a per-cohort field means adding it to its
   section of `cohort_block` and of **each lockstep list** in `meds_cohort_state_vars` (one section
-  order throughout), every creation site, and the fusion policy. Patch fields: the same, in
+  order throughout), every creation site, the fusion policy, and, if it persists, the same section
+  of the restart file (`meds_init_restart`: define, write, read). Patch fields: the same, in
   `meds_patch_state_vars`.
 - **Persistent ids** are stamped at creation and carried through every sort, fusion and compaction.
   Never reused.

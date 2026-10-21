@@ -175,8 +175,8 @@ contains
 
       !----- A restart (init_mode = 2): each polygon's row of the state file, by its id. A file may  !
       !      hold more polygons than the run: a region whose cell failed resumes with that cell      !
-      !      masked out. A one-polygon run also reads a state file without a polygon axis, as every   !
-      !      site run wrote one before runs became regions. -----------------------------------------!
+      !      masked out. A one-polygon run also reads a state file without a polygon axis, which     !
+      !      holds one site. --------------------------------------------------------------------------!
       allocate(slot(n), source=0_ik)
       if (cfg%init%init_mode == INIT_RESTART) then
          call restart_file_slots(trim(cfg%init%restart_file), ids, slot, msg)

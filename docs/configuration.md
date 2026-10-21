@@ -325,11 +325,12 @@ each patch one cohort of every PFT with a positive value. That many plants per m
 
 A census is how you start from a field inventory; see
 [`data/census_example.csv`](../data/census_example.csv)
-and `init_from_census` in [`../src/io/init/meds_init.f90`](../src/io/init/meds_init.f90).
+and `init_from_census` in [`../src/io/init/meds_init_census.f90`](../src/io/init/meds_init_census.f90).
 
-**A census or state file that cannot start the run stops it**, naming the mode and the file: one
-that cannot be opened, a census with no row for the site, or a state file without a row for each of
-the run's polygons (a region's, given to a site run). Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
+**A census or state file that cannot start the run stops it**, naming the mode, the file and what
+is wrong with it: one that cannot be opened, a census with no row for the site or a malformed
+column or row, or a state file without a row for each of the run's polygons (a region's, given to
+a site run) or with a PFT, site or soil-layer count unlike the run's. Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
 from bare ground instead. `meds_main` stops, and `meds.model.Run` raises `RuntimeError`.
 
 **The initial soil state** is `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³], both optional:

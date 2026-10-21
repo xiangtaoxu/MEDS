@@ -153,7 +153,7 @@ consumers live outside it.
 | per-cohort trait state + fusion weighting | `meds_cohort_state_vars` (SoA `sla/vcmax25/rd25/leaf_turnover_rate`); `meds_demography_cohort_fusefiss`: `fuse_2_cohorts` |
 | slow-loop orchestration + SLA-overshoot resorption | `meds_vegetation_dynamics`: `advance_plant_traits` |
 | carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `cohort%leaf_turnover_rate`); `meds_leaf_gas_exchange`: `leaf_gas_exchange_batch`, `leaf_params_at_capacity` (`vcmax25`/`rd25`) |
-| state persistence + census instant | `meds_init_restart`: `restart_file_write`/`read_restart_file`; `meds_region`: `region_open` (census start); `meds_vegetation_dynamics`: `reacclimate_plant_traits` |
+| state persistence + census instant | `meds_init_restart`: `restart_file_write`/`read_restart_file`; `meds_init`: `init_polygon` (census start); `meds_vegetation_dynamics`: `reacclimate_plant_traits` |
 
 ## References
 - **Ma, Y., Moorcroft, P. R., Wright, S. J., Rogers, A., Lamour, J., Davidson, K. J., Serbin, S. P.,
