@@ -23,10 +23,10 @@ program test_met_driver
                                     WIND_EXPOSURE_LOCAL
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
    use meds_numerics,    only : linear_interpolate
-   use meds_forcing_kernels, only : cosz_reconstruct_factor, disaggregate_sw
+   use meds_met,             only : cosz_reconstruct_factor, disaggregate_sw, cas_top_wind_factor,                &
+                                    met_to_cas_top, met_open, met_cursor_init, met_advance, met_instant,          &
+                                    met_close
    use meds_met_grid,        only : great_circle_distance, nearest_grid_index
-   use meds_met,             only : cas_top_wind_factor, met_to_cas_top, met_open, met_cursor_init,               &
-                                    met_advance, met_instant, met_close
    use meds_constants,       only : grav, cp_air
    use meds_met_share, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                 &
                               MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH,             &
