@@ -19,11 +19,12 @@ program test_met_tower
    use meds_constants,       only : grav, cp_air
    use meds_time,            only : meds_time_t, time_advance_seconds, solar_cosz_utc
    use meds_therm_lib,       only : sat_vapor_pressure, specific_humidity_to_vpd
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX,  &
-                                    METAVG_END, METAVG_BEGIN, HEIGHT_ABOVE_GROUND,              &
-                                    HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL, LW_SYNTHESIZE
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, METAVG_END, METAVG_BEGIN,           &
+                                    HEIGHT_ABOVE_GROUND, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL,            &
+                                    LW_SYNTHESIZE
+   use meds_radiation_lib,   only : SWPART_CLEARIDX, clearness_index
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
-   use meds_forcing_kernels, only : rh_to_specific_humidity, dewpoint_to_specific_humidity, clearness_index
+   use meds_forcing_kernels, only : rh_to_specific_humidity, dewpoint_to_specific_humidity
    use meds_lapse_rate,      only : met_to_cas_top
    use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
    use meds_met_share, only : MET_OK, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, MET_ERR_ATTR_MISMATCH

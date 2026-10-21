@@ -8,6 +8,7 @@
 !==========================================================================================!
 module meds_forcing_params
    use meds_kinds, only : wp, ik
+   use meds_radiation_lib, only : SWPART_CLEARIDX, LW_CLEAR_BRUTSAERT
    use meds_time,  only : meds_time_t
    implicit none
    private
@@ -16,8 +17,7 @@ module meds_forcing_params
    public :: MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND
    public :: MET_PATH_LEN, ARCHIVE_DT_SEC, MAX_RECYCLE_YEARS
    public :: METAVG_END, METAVG_BEGIN, METAVG_CENTER
-   public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_CLEARIDX
-   public :: LW_FILE, LW_SYNTHESIZE, LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
+   public :: LW_FILE, LW_SYNTHESIZE
    public :: CLAMP_ERROR, CLAMP_HOLD
    public :: GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    public :: CO2_SOURCE_CONST, CO2_SOURCE_FILE
@@ -38,17 +38,9 @@ module meds_forcing_params
    integer(ik), parameter :: METAVG_BEGIN   = 2_ik   !< mean over the interval beginning at the stamp
    integer(ik), parameter :: METAVG_CENTER  = 3_ik   !< mean over the interval centred on the stamp
 
-   !----- sw_partition: total SW into four streams (docs/science/forcing.md §6). ----------!
-   integer(ik), parameter :: SWPART_PASSTHROUGH  = 0_ik   !< file already carries the four streams
-   integer(ik), parameter :: SWPART_CLEARIDX     = 1_ik   !< clearness-index (Erbs) split, eq. (7)
-   integer(ik), parameter :: SWPART_WEISS_NORMAN = 2_ik   !< Weiss-Norman (1985) band-specific split, eqs. (8)-(10)
-
    !----- Downwelling longwave source (docs/science/forcing.md §11). ----------------------!
    integer(ik), parameter :: LW_FILE       = 0_ik   !< read from file (ERA5-Land has strd)
    integer(ik), parameter :: LW_SYNTHESIZE = 1_ik   !< Brutsaert/Idso clear-sky synthesis (source lacking LW)
-   !----- Clear-sky emissivity forms of that synthesis. -----------------------------------!
-   integer(ik), parameter :: LW_CLEAR_BRUTSAERT = 0_ik   !< Brutsaert (1975), vapour-pressure power law
-   integer(ik), parameter :: LW_CLEAR_IDSO      = 1_ik   !< Idso & Jackson (1969), temperature only
 
    !----- Model-start-before-first-record policy. -----------------------------------------!
    integer(ik), parameter :: CLAMP_ERROR = 0_ik   !< hard stop
@@ -91,7 +83,7 @@ module meds_forcing_params
       integer(ik)        :: sw_partition = SWPART_CLEARIDX        !< SWPART_*; ERA5-Land carries total SW only
       integer(ik)        :: lwdown_source = LW_FILE              !< file (ERA5-Land strd) | synthesize
       !----- LW synthesis (docs/science/forcing.md §11, eq. (17)). ------------------------!
-      integer(ik)        :: lw_clear_form = 0_ik                  !< LW_CLEAR_BRUTSAERT | LW_CLEAR_IDSO
+      integer(ik)        :: lw_clear_form = LW_CLEAR_BRUTSAERT    !< LW_CLEAR_BRUTSAERT | LW_CLEAR_IDSO
       real(wp)           :: lw_cloud_a    = 0.22_wp               !< [-] a of the cloud term (1 + a(1-kt)); 0: clear sky only
       integer(ik)        :: co2_source   = CO2_SOURCE_CONST      !< "const" | "file"
       real(wp)           :: co2_const    = 420.0_wp              !< [umol/mol] co2_source = "const"

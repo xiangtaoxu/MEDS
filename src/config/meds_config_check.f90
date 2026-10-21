@@ -20,9 +20,10 @@ module meds_config_check
    use meds_soil_hydr_lib,      only : SOIL_RETENTION_VG
    use meds_pft_params,         only : PATH_C3, PATH_C4
    use meds_soil_params,        only : soil_texture_layers_t, soil_params_t, ENERGY_BC_DIRICHLET
-   use meds_forcing_params,     only : LW_SYNTHESIZE, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,   &
-                                       WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL, ARCHIVE_DT_SEC, &
-                                       CO2_SOURCE_CONST, CO2_SOURCE_FILE, METAVG_END, MAX_RECYCLE_YEARS
+   use meds_forcing_params,     only : LW_SYNTHESIZE, MET_BACKEND_ED_ERA5LAND, WIND_EXPOSURE_OPEN_TERRAIN,        &
+                                       WIND_EXPOSURE_LOCAL, ARCHIVE_DT_SEC, CO2_SOURCE_CONST, CO2_SOURCE_FILE,    &
+                                       METAVG_END, MAX_RECYCLE_YEARS
+   use meds_radiation_lib,      only : SWPART_PASSTHROUGH
    use meds_region_params,      only : RUN_MODE_REGION
    use meds_maps_params,        only : soil_maps_on
    use meds_config,             only : meds_config_t, site_config, pft_wstress_psi_open,              &

@@ -16,16 +16,17 @@ module meds_met
    use meds_therm_lib, only : air_density
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string, solar_cosz_utc
    use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
-                                   METAVG_END, METAVG_BEGIN, METAVG_CENTER, SWPART_PASSTHROUGH, CLAMP_ERROR,      &
-                                   LW_SYNTHESIZE, CO2_SOURCE_FILE
+                                   METAVG_END, METAVG_BEGIN, METAVG_CENTER, CLAMP_ERROR, LW_SYNTHESIZE,           &
+                                   CO2_SOURCE_FILE
+   use meds_radiation_lib,  only : SWPART_PASSTHROUGH, lapse_longwave, partition_shortwave, clearness_index,      &
+                                   synthesize_lwdown
    use meds_met_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
                                   met_cells_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, MEDS_FIELD
-   use meds_lapse_rate, only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,         &
-                               lapse_specific_humidity, lapse_longwave
+   use meds_lapse_rate, only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,                         &
+                               lapse_specific_humidity
    use meds_met_co2, only : co2_series_read, co2_series_at, co2_series_covers,                 &
                                co2_series_end, co2_series_free
    use meds_forcing_kernels, only : interpolate_wind_energy, cosz_reconstruct_factor, disaggregate_sw,            &
-                                    partition_shortwave, clearness_index, synthesize_lwdown,                      &
                                     dewpoint_to_specific_humidity, rh_to_specific_humidity
    use meds_netcdf_c, only : nc_close, nc_check
    use meds_met_share, only : MET_OK, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, file_lookup_sec,    &

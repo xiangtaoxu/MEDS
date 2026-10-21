@@ -48,7 +48,8 @@ module meds_fast_dynamics
    use meds_constants,     only : n_soil_layer_max
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_met_types,    only : met_source_t, met_cursor_t, met_forcing_t
-   use meds_forcing_kernels,  only : precip_phase, slope_beam_factor
+   use meds_forcing_kernels,  only : precip_phase
+   use meds_radiation_lib,    only : slope_beam_factor
    use meds_met,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top, met_at_site
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction

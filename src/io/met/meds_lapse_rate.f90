@@ -13,13 +13,14 @@ module meds_lapse_rate
    use meds_constants,       only : grav, r_dry, cp_air
    use meds_therm_lib,       only : sat_vapor_pressure, air_density
    use meds_forcing_params,  only : forcing_config_t, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_OPEN_TERRAIN
-   use meds_forcing_kernels, only : clear_sky_emissivity, rh_to_specific_humidity
+   use meds_forcing_kernels, only : rh_to_specific_humidity
+   use meds_radiation_lib,   only : lapse_longwave
    use meds_met_types,   only : met_forcing_t
    implicit none
    private
 
    public :: lapse_air_temperature, lapse_pressure
-   public :: monthly_lapse_rate, lapse_specific_humidity, lapse_longwave
+   public :: monthly_lapse_rate, lapse_specific_humidity
    public :: cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
    public :: met_at_site
 
@@ -67,18 +68,6 @@ contains
       rh     = e / sat_vapor_pressure(t_grid)
       q_site = rh_to_specific_humidity(rh, t_site, p_site)
    end function lapse_specific_humidity
-
-   !----- File longwave at the site: scaled by the clear-sky emission eps*T^4 at the site over the   !
-   !      cell (NLDAS; docs/science/forcing.md eq. (14)), with the same clear-sky emissivity the    !
-   !      longwave synthesis uses.                                                                  !
-   pure function lapse_longwave(lw_grid, form, t_grid, q_grid, p_grid, t_site, q_site, p_site) result(lw_site)
-      real(wp),    intent(in) :: lw_grid                   !< [W/m2] downward longwave at the cell
-      integer(ik), intent(in) :: form                      !< LW_CLEAR_BRUTSAERT | LW_CLEAR_IDSO
-      real(wp),    intent(in) :: t_grid, q_grid, p_grid, t_site, q_site, p_site
-      real(wp) :: lw_site
-      lw_site = lw_grid * (clear_sky_emissivity(form, t_site, q_site, p_site) * t_site**4)      &
-                        / (clear_sky_emissivity(form, t_grid, q_grid, p_grid) * t_grid**4)
-   end function lapse_longwave
 
    !----- A site within its polygon (docs/science/forcing.md §8): the polygon's sample taken by the   !
    !      terrain step to the site's elevation, dz above the polygon's, when the run lapses its       !

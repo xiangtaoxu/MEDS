@@ -13,8 +13,8 @@ module meds_met_share
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, is_leap_year,        &
                          time_to_string, whole_years_between
-   use meds_forcing_params, only : MET_BACKEND_ED_DEFAULT, METAVG_BEGIN, SWPART_PASSTHROUGH,      &
-                                   HEIGHT_ABOVE_GROUND, MAX_RECYCLE_YEARS
+   use meds_forcing_params, only : MET_BACKEND_ED_DEFAULT, METAVG_BEGIN, HEIGHT_ABOVE_GROUND, MAX_RECYCLE_YEARS
+   use meds_radiation_lib,  only : SWPART_PASSTHROUGH
    use meds_met_types, only : met_source_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, FLD_QAIR,          &
                                   FLD_RHAIR, FLD_TDEW
    use meds_netcdf_c, only : nc_inq_varid_f, nc_get_att_text_f, nc_get_att_double_f, NC_NOERR,    &

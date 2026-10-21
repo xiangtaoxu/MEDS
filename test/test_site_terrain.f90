@@ -19,7 +19,7 @@ program test_site_terrain
    use meds_therm_lib,       only : sat_vapor_pressure, air_density
    use meds_forcing_params,  only : forcing_config_t
    use meds_met_types,   only : met_forcing_t
-   use meds_forcing_kernels, only : slope_beam_factor
+   use meds_radiation_lib,   only : slope_beam_factor
    use meds_lapse_rate,      only : met_at_site
    implicit none
 

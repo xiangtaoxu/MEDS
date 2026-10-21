@@ -12,21 +12,21 @@ program test_met_driver
    use meds_time,            only : meds_time_t, seconds_between, seconds_into_day, time_advance_seconds,         &
                                     solar_cosz_utc
    use meds_therm_lib,          only : sat_vapor_pressure, air_density
-   use meds_forcing_params,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX,                    &
-                                    SWPART_WEISS_NORMAN, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,            &
+   use meds_radiation_lib,   only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
+                                    SWPART_PASSTHROUGH, partition_shortwave, clearness_index,                     &
+                                    clear_sky_emissivity, synthesize_lwdown, lapse_longwave
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, METAVG_END, METAVG_BEGIN,           &
                                     CLAMP_HOLD, CLAMP_ERROR, GRIDMATCH_NEAREST, CO2_SOURCE_FILE,                  &
                                     HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN,     &
                                     WIND_EXPOSURE_LOCAL
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
    use meds_numerics,    only : linear_interpolate
    use meds_forcing_kernels, only : dewpoint_to_specific_humidity, rh_to_specific_humidity, precip_phase,         &
-                                    partition_shortwave, cosz_reconstruct_factor, disaggregate_sw,                &
-                                    clearness_index, clear_sky_emissivity, synthesize_lwdown
+                                    cosz_reconstruct_factor, disaggregate_sw
    use meds_met_grid,        only : great_circle_distance, nearest_grid_index
-   use meds_lapse_rate,      only : lapse_air_temperature, lapse_pressure,        &
-                                    monthly_lapse_rate, lapse_specific_humidity, lapse_longwave,    &
-                                    cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
+   use meds_lapse_rate,      only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,                    &
+                                    lapse_specific_humidity, cas_top_wind_factor, cas_top_air_temperature,        &
+                                    met_to_cas_top
    use meds_constants,       only : grav, cp_air
    use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
    use meds_met_share, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                 &
