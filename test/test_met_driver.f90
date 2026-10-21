@@ -9,8 +9,8 @@ program test_met_driver
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : t_3ple
-   use meds_time,            only : meds_time_t, seconds_between, seconds_into_day,             &
-                                    time_advance_seconds
+   use meds_time,            only : meds_time_t, seconds_between, seconds_into_day, time_advance_seconds,         &
+                                    solar_cosz_utc
    use meds_therm_lib,          only : sat_vapor_pressure, air_density
    use meds_forcing_params,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX,                    &
@@ -20,9 +20,8 @@ program test_met_driver
                                     WIND_EXPOSURE_LOCAL
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
    use meds_numerics,    only : linear_interpolate
-   use meds_forcing_kernels, only : dewpoint_to_specific_humidity,         &
-                                    rh_to_specific_humidity, precip_phase, partition_shortwave, &
-                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
+   use meds_forcing_kernels, only : dewpoint_to_specific_humidity, rh_to_specific_humidity, precip_phase,         &
+                                    partition_shortwave, cosz_reconstruct_factor, disaggregate_sw,                &
                                     clearness_index, clear_sky_emissivity, synthesize_lwdown
    use meds_met_grid,        only : great_circle_distance, nearest_grid_index
    use meds_lapse_rate,      only : lapse_air_temperature, lapse_pressure,        &
@@ -220,7 +219,7 @@ contains
       fsum = 0.0_wp ; secz_sum = 0.0_wp
       do i = 1_ik, n
          sec  = win_start + (real(i,wp)-0.5_wp)*dt_sub
-         cosz = met_solar_cosz(t, sec, LAT, LON)
+         cosz = solar_cosz_utc(t, sec, LAT, LON)
          fsum = fsum + disaggregate_sw(f_avg, cosz, factor)
          secz_sum = secz_sum + 1.0_wp/max(cosz, 0.03_wp)          ! <sec z> = <1/cosz> (ED2 mean_daysecz, clamped)
       end do
@@ -230,7 +229,7 @@ contains
       fsum = 0.0_wp
       do i = 1_ik, n
          sec  = win_start + (real(i,wp)-0.5_wp)*dt_sub
-         cosz = met_solar_cosz(t, sec, LAT, LON)
+         cosz = solar_cosz_utc(t, sec, LAT, LON)
          fsum = fsum + f_avg*cosz*(secz_sum/real(n,wp))
       end do
       mean_secz = fsum/real(n,wp)
@@ -321,10 +320,10 @@ contains
       search: do il = 0, 60
          lon = -76.5_wp - 0.25_wp * real(il, wp)                     ! one minute of sun time per step
          do h = 2, 24                                                  ! the hour ending at stamp h (UTC)
-            cz_mid = met_solar_cosz(base, (real(h, wp) - 0.5_wp) * 3600.0_wp, LAT, lon)
+            cz_mid = solar_cosz_utc(base, (real(h, wp) - 0.5_wp) * 3600.0_wp, LAT, lon)
             factor = cosz_reconstruct_factor(base, real(h - 1, wp) * 3600.0_wp, 360.0_wp, 3600.0_wp, LAT, lon)
             if (cz_mid <= 1.0e-3_wp .and. factor > 0.0_wp .and. &
-                met_solar_cosz(base, real(h, wp) * 3600.0_wp, LAT, lon) > 0.02_wp) then
+                solar_cosz_utc(base, real(h, wp) * 3600.0_wp, LAT, lon) > 0.02_wp) then
                hsun = h ; exit search
             end if
          end do

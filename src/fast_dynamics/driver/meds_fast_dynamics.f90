@@ -31,7 +31,8 @@ module meds_fast_dynamics
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_plant_types, only : leaf_photo_table_t
    use meds_column_view, only : copy_column_cohort
-   use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string, seconds_into_day
+   use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string, seconds_into_day,         &
+                                     slope_incidence_cosz
    use meds_output_types,     only : output_buffers_t
    use meds_diag_vars,        only : N_CO_FAST_ROWS, N_PA_ROWS, patch_diag_block, polygon_diag_block, PA_LE, PA_H, &
                                      PA_RNET, PA_SW_GROUND, &
@@ -47,7 +48,7 @@ module meds_fast_dynamics
    use meds_constants,     only : n_soil_layer_max
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_met_types,    only : met_source_t, met_cursor_t, met_forcing_t
-   use meds_forcing_kernels,  only : precip_phase, slope_incidence_cosz, slope_beam_factor
+   use meds_forcing_kernels,  only : precip_phase, slope_beam_factor
    use meds_met,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top, met_at_site
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction

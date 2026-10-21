@@ -1,26 +1,26 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_forcing_kernels -- the pure and elemental meteorological-forcing math                       !
-! (docs/science/forcing.md §3-§8 and §11): the energy-form wind, the solar zenith at apparent       !
-! solar time, the interval-mean-conserving shortwave disaggregation, the four-stream shortwave      !
-! partition, humidity from dewpoint or RH, the rain/snow split, the longwave synthesis and the sun  !
-! on a slope. Uses only meds_share and the forcing config's enumerations, so the saturation curve   !
-! and the solar geometry are the model's own. Device-safe.                                          !
+! (docs/science/forcing.md §3, §5-§8 and §11): the energy-form wind, the interval-mean-conserving   !
+! shortwave disaggregation, the four-stream shortwave partition, humidity from dewpoint or RH, the  !
+! rain/snow split, the longwave synthesis and the beam on a slope. Uses only meds_share and the     !
+! forcing config's enumerations, so the saturation curve and the solar geometry (meds_time) are the !
+! model's own. Device-safe.                                                                         !
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan_boltzmann, day_sec, deg_to_rad
+   use meds_constants,      only : t_3ple, tiny_num, p_std, stefan_boltzmann
    use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO,                                       &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN
    use meds_therm_lib,      only : sat_vapor_pressure
-   use meds_time,           only : meds_time_t, solar_cosz, day_of_year, solar_declination
+   use meds_time,           only : meds_time_t, mean_solar_cosz
    implicit none
    private
 
    public :: interpolate_wind_energy
    public :: clearness_index, clear_sky_emissivity, synthesize_lwdown
-   public :: met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw
-   public :: slope_incidence_cosz, slope_beam_factor
+   public :: cosz_reconstruct_factor, disaggregate_sw
+   public :: slope_beam_factor
    public :: partition_shortwave, dewpoint_to_specific_humidity, rh_to_specific_humidity
    public :: precip_phase
 
@@ -59,36 +59,6 @@ contains
    end function interpolate_wind_energy
 
    !=======================================================================================!
-   !  SOLAR TIME + ZENITH. Every forcing clock is UTC, so local apparent solar seconds are the    !
-   !  UTC seconds plus longitude*240 s/deg plus the equation of time (docs/science/forcing.md     !
-   !  eqs. (2)-(4)).                                                                              !
-   !=======================================================================================!
-   pure function equation_of_time(t) result(eot_sec)
-      type(meds_time_t), intent(in) :: t
-      real(wp) :: eot_sec, b
-      b = 2.0_wp * pi * real(day_of_year(t) - 1_ik, wp) / 365.0_wp        ! Spencer 1971
-      eot_sec = 229.18_wp * ( 0.000075_wp + 0.001868_wp*cos(b) - 0.032077_wp*sin(b)             &
-                            - 0.014615_wp*cos(2.0_wp*b) - 0.040849_wp*sin(2.0_wp*b) ) * 60.0_wp
-   end function equation_of_time
-
-   pure function apparent_solar_seconds(t, sec_utc, longitude_deg) result(s)
-      type(meds_time_t), intent(in) :: t              !< record/model time (for declination + EoT via doy)
-      real(wp),          intent(in) :: sec_utc        !< [s] seconds into the UTC day
-      real(wp),          intent(in) :: longitude_deg
-      real(wp) :: s
-      s = sec_utc + longitude_deg * 240.0_wp + equation_of_time(t)
-   end function apparent_solar_seconds
-
-   !----- cos(solar zenith) at a sub-daily UTC cursor (converts to solar time first). ---------!
-   pure function met_solar_cosz(t, sec_utc, latitude_deg, longitude_deg) result(cosz)
-      type(meds_time_t), intent(in) :: t
-      real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg
-      real(wp) :: cosz, sec_solar
-      sec_solar = apparent_solar_seconds(t, sec_utc, longitude_deg)
-      cosz = solar_cosz(t, sec_solar, latitude_deg)
-   end function met_solar_cosz
-
-   !=======================================================================================!
    !  SHORTWAVE DISAGGREGATION (docs/science/forcing.md eqs. (5)-(6)): the factor 1/<cosz>_win  !
    !  that turns an interval mean F_avg into F(now) = F_avg*cosz(now)*factor, whose mean over the !
    !  same window is F_avg. It is the reciprocal of the mean cosine (night sub-samples as 0), not  !
@@ -99,16 +69,8 @@ contains
       type(meds_time_t), intent(in) :: t
       real(wp),          intent(in) :: win_start_sec, dt_sub, dt_win
       real(wp),          intent(in) :: latitude_deg, longitude_deg
-      real(wp)    :: factor, cosz_sum, cosz_bar, sec, ci
-      integer(ik) :: nsub, i
-      nsub = max(1_ik, nint(dt_win / max(dt_sub, tiny_num), ik))
-      cosz_sum = 0.0_wp
-      do i = 1_ik, nsub                                   ! midpoint rule over the FULL window
-         sec = win_start_sec + (real(i, wp) - 0.5_wp) * (dt_win / real(nsub, wp))
-         ci  = met_solar_cosz(t, sec, latitude_deg, longitude_deg)
-         cosz_sum = cosz_sum + max(ci, 0.0_wp)            ! night sub-samples contribute exactly 0
-      end do
-      cosz_bar = cosz_sum / real(nsub, wp)
+      real(wp)    :: factor, cosz_bar
+      cosz_bar = mean_solar_cosz(t, win_start_sec, dt_sub, dt_win, latitude_deg, longitude_deg)
       if (cosz_bar > COSZ_BAR_MIN) then
          factor = 1.0_wp / cosz_bar
       else
@@ -332,27 +294,6 @@ contains
       rainf = frac_liq * precip_total
       snowfall = precip_total - rainf
    end subroutine precip_phase
-
-   !----- The sun on a slope (docs/science/forcing.md §8): the cosine of its incidence on a            !
-   !      surface tilted `slope_deg` from horizontal and facing `aspect_deg` (clockwise from north),   !
-   !      cos i = cos z cos s + sin z sin s cos(A - aspect), with A the sun's azimuth, also clockwise  !
-   !      from north. 0 with the sun below the horizon or behind the slope. ---------------------------!
-   pure real(wp) function slope_incidence_cosz(t, sec_utc, latitude_deg, longitude_deg, slope_deg,     &
-                                               aspect_deg) result(cosi)
-      type(meds_time_t), intent(in) :: t
-      real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg, slope_deg, aspect_deg
-      real(wp) :: lat, decl, hour_angle, cosz, sinz, azimuth, slope
-      lat        = latitude_deg * deg_to_rad
-      decl       = solar_declination(day_of_year(t))
-      hour_angle = 2.0_wp * pi * (apparent_solar_seconds(t, sec_utc, longitude_deg) / day_sec - 0.5_wp)
-      cosz       = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hour_angle)
-      cosi       = 0.0_wp
-      if (cosz <= 0.0_wp) return
-      sinz    = sqrt(max(0.0_wp, 1.0_wp - cosz * cosz))
-      azimuth = atan2(-cos(decl) * sin(hour_angle), sin(decl) * cos(lat) - cos(decl) * sin(lat) * cos(hour_angle))
-      slope   = slope_deg * deg_to_rad
-      cosi    = max(0.0_wp, cosz * cos(slope) + sinz * sin(slope) * cos(azimuth - aspect_deg * deg_to_rad))
-   end function slope_incidence_cosz
 
    !----- The factor the direct beam takes on a slope: the beam normal to the sun, beam / cos z,       !
    !      times cos i, over the beam on level ground. The beam normal is held at most the solar        !

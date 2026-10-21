@@ -1,14 +1,15 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_time -- the calendar. A run goes from a start date to an end date on the proleptic  !
-! Gregorian calendar, leap years included, and every output record carries its date. This  !
-! module does the date arithmetic, through the Julian Day Number, and the solar geometry   !
-! that follows from the date: the declination, the zenith cosine and the daylength         !
-! (docs/science/forcing.md §4).                                                            !
+! meds_time -- calendar time and the sun's position. A run goes from a start date to an    !
+! end date on the proleptic Gregorian calendar, leap years included, and every output      !
+! record carries its date. This module does the date arithmetic, through the Julian Day    !
+! Number, and the solar geometry that follows from the date and the clock: the             !
+! declination, the zenith cosine at local solar or UTC time, its mean over a window, the   !
+! sun on a slope and the daylength (docs/science/forcing.md §4).                           !
 !==========================================================================================!
 module meds_time
    use meds_kinds,     only : wp, ik, lk
-   use meds_constants, only : pi
+   use meds_constants, only : pi, day_sec, deg_to_rad, tiny_num
    implicit none
    private
 
@@ -20,6 +21,7 @@ module meds_time
    public :: time_lt, time_eq, time_valid
    public :: string_to_time, time_units_base, time_to_string, time_to_stamp, time_to_decimal_year
    public :: solar_cosz, daylength, doy_effective, solar_declination
+   public :: solar_cosz_utc, utc_to_solar_seconds, mean_solar_cosz, slope_incidence_cosz
 
    !----- A calendar instant; the defaults make meds_time_t() a valid date. ---------------!
    type :: meds_time_t
@@ -82,11 +84,81 @@ contains
       deg2rad   = pi / 180.0_wp
       lat       = latitude_deg * deg2rad
       decl      = solar_declination(day_of_year(t))
-      frac_day  = t_sec / 86400.0_wp                  ! 0 at midnight, 0.5 at solar noon
+      frac_day  = t_sec / day_sec                  ! 0 at midnight, 0.5 at solar noon
       hourangle = 2.0_wp * pi * (frac_day - 0.5_wp)   ! -pi (midnight) .. 0 (noon) .. +pi
       cosz      = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hourangle)
       cosz      = max(cosz, 0.0_wp)
    end function solar_cosz
+
+   !----- The equation of time [s], Spencer (1971) (docs/science/forcing.md eq. (2)). -----!
+   pure function equation_of_time(t) result(eot_sec)
+      type(meds_time_t), intent(in) :: t
+      real(wp) :: eot_sec, b
+      b = 2.0_wp * pi * real(day_of_year(t) - 1_ik, wp) / 365.0_wp        ! Spencer 1971
+      eot_sec = 229.18_wp * ( 0.000075_wp + 0.001868_wp*cos(b) - 0.032077_wp*sin(b)             &
+                            - 0.014615_wp*cos(2.0_wp*b) - 0.040849_wp*sin(2.0_wp*b) ) * 60.0_wp
+   end function equation_of_time
+
+   !----- Local apparent solar seconds into the day at a UTC instant: the UTC seconds, plus    !
+   !      240 s per degree of longitude, plus the equation of time (docs/science/forcing.md    !
+   !      eqs. (2)-(3)). Every forcing clock is UTC. -------------------------------------------!
+   pure function utc_to_solar_seconds(t, sec_utc, longitude_deg) result(s)
+      type(meds_time_t), intent(in) :: t              !< record/model time (for declination + EoT via doy)
+      real(wp),          intent(in) :: sec_utc        !< [s] seconds into the UTC day
+      real(wp),          intent(in) :: longitude_deg
+      real(wp) :: s
+      s = sec_utc + longitude_deg * 240.0_wp + equation_of_time(t)
+   end function utc_to_solar_seconds
+
+   !----- cos(solar zenith) at a UTC instant, through its apparent solar time. -------------!
+   pure function solar_cosz_utc(t, sec_utc, latitude_deg, longitude_deg) result(cosz)
+      type(meds_time_t), intent(in) :: t
+      real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg
+      real(wp) :: cosz, sec_solar
+      sec_solar = utc_to_solar_seconds(t, sec_utc, longitude_deg)
+      cosz = solar_cosz(t, sec_solar, latitude_deg)
+   end function solar_cosz_utc
+
+   !----- The mean of max(cos z, 0) over a window of UTC seconds [win_start_sec, win_start_sec +  !
+   !      dt_win), by the midpoint rule on about dt_win / dt_sub sub-samples: night counts as 0    !
+   !      (docs/science/forcing.md eq. (6)). ------------------------------------------------------!
+   pure real(wp) function mean_solar_cosz(t, win_start_sec, dt_sub, dt_win, latitude_deg, longitude_deg)  &
+                                          result(cosz_bar)
+      type(meds_time_t), intent(in) :: t
+      real(wp),          intent(in) :: win_start_sec, dt_sub, dt_win
+      real(wp),          intent(in) :: latitude_deg, longitude_deg
+      real(wp)    :: cosz_sum, sec, ci
+      integer(ik) :: nsub, i
+      nsub = max(1_ik, nint(dt_win / max(dt_sub, tiny_num), ik))
+      cosz_sum = 0.0_wp
+      do i = 1_ik, nsub                                   ! midpoint rule over the FULL window
+         sec = win_start_sec + (real(i, wp) - 0.5_wp) * (dt_win / real(nsub, wp))
+         ci  = solar_cosz_utc(t, sec, latitude_deg, longitude_deg)
+         cosz_sum = cosz_sum + max(ci, 0.0_wp)            ! night sub-samples contribute exactly 0
+      end do
+      cosz_bar = cosz_sum / real(nsub, wp)
+   end function mean_solar_cosz
+
+   !----- The sun on a slope (docs/science/forcing.md §8): the cosine of its incidence on a            !
+   !      surface tilted `slope_deg` from horizontal and facing `aspect_deg` (clockwise from north),   !
+   !      cos i = cos z cos s + sin z sin s cos(A - aspect), with A the sun's azimuth, also clockwise  !
+   !      from north. 0 with the sun below the horizon or behind the slope. ---------------------------!
+   pure real(wp) function slope_incidence_cosz(t, sec_utc, latitude_deg, longitude_deg, slope_deg,     &
+                                               aspect_deg) result(cosi)
+      type(meds_time_t), intent(in) :: t
+      real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg, slope_deg, aspect_deg
+      real(wp) :: lat, decl, hour_angle, cosz, sinz, azimuth, slope
+      lat        = latitude_deg * deg_to_rad
+      decl       = solar_declination(day_of_year(t))
+      hour_angle = 2.0_wp * pi * (utc_to_solar_seconds(t, sec_utc, longitude_deg) / day_sec - 0.5_wp)
+      cosz       = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hour_angle)
+      cosi       = 0.0_wp
+      if (cosz <= 0.0_wp) return
+      sinz    = sqrt(max(0.0_wp, 1.0_wp - cosz * cosz))
+      azimuth = atan2(-cos(decl) * sin(hour_angle), sin(decl) * cos(lat) - cos(decl) * sin(lat) * cos(hour_angle))
+      slope   = slope_deg * deg_to_rad
+      cosi    = max(0.0_wp, cosz * cos(slope) + sinz * sin(slope) * cos(azimuth - aspect_deg * deg_to_rad))
+   end function slope_incidence_cosz
 
    !----- Daylength [h], 24/pi acos(-tan(lat) tan(decl)): 0 in the polar night, 24 in the  !
    !      polar day. ----------------------------------------------------------------------!
@@ -210,7 +282,7 @@ contains
       type(meds_time_t) :: t2
       integer(lk) :: total, ndays, rem
       total = sec_of_day(t) + nint(dsec, lk)             ! seconds from midnight of t's day
-      ndays = int(floor(real(total, wp) / 86400.0_wp), lk)
+      ndays = int(floor(real(total, wp) / day_sec), lk)
       rem   = total - ndays * 86400_lk                   ! 0 .. 86399, also when total < 0
       t2 = time_advance_days(t, int(ndays, ik))
       t2%hour   = int(rem / 3600_lk, ik)
@@ -348,7 +420,7 @@ contains
       type(meds_time_t), intent(in) :: t
       real(wp) :: frac
       frac = (real(day_of_year(t) - 1_ik, wp)                                                &
-              + real(sec_of_day(t), wp) / 86400.0_wp) / real(days_in_year(t%year), wp)
+              + real(sec_of_day(t), wp) / day_sec) / real(days_in_year(t%year), wp)
       yr = real(t%year, wp) + frac
    end function time_to_decimal_year
 

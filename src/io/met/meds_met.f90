@@ -14,7 +14,7 @@ module meds_met
    use meds_kinds, only : wp, ik
    use meds_numerics, only : linear_interpolate
    use meds_therm_lib, only : air_density
-   use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string
+   use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string, solar_cosz_utc
    use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
                                    METAVG_END, METAVG_BEGIN, METAVG_CENTER, SWPART_PASSTHROUGH, CLAMP_ERROR,      &
                                    LW_SYNTHESIZE, CO2_SOURCE_FILE
@@ -24,11 +24,9 @@ module meds_met
                                lapse_specific_humidity, lapse_longwave
    use meds_met_co2, only : co2_series_read, co2_series_at, co2_series_covers,                 &
                                co2_series_end, co2_series_free
-   use meds_forcing_kernels, only : interpolate_wind_energy,                 &
-                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,     &
-                                    partition_shortwave, clearness_index,                         &
-                                    synthesize_lwdown, dewpoint_to_specific_humidity,             &
-                                    rh_to_specific_humidity
+   use meds_forcing_kernels, only : interpolate_wind_energy, cosz_reconstruct_factor, disaggregate_sw,            &
+                                    partition_shortwave, clearness_index, synthesize_lwdown,                      &
+                                    dewpoint_to_specific_humidity, rh_to_specific_humidity
    use meds_netcdf_c, only : nc_close, nc_check
    use meds_met_share, only : MET_OK, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, file_lookup_sec,    &
                               humidity_field, add_line
@@ -226,7 +224,7 @@ contains
       real(wp) :: cosz_now, sw_total, kt
       type(met_record_t) :: r
       r = interval_mean_record(src, cur)
-      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
+      cosz_now = solar_cosz_utc(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
       sw_total = r%par_beam + r%par_diffuse + r%nir_beam + r%nir_diffuse
       kt = clearness_index(sw_total, cosz_now)
       if (kt >= 0.0_wp) cur%kt_last_day = kt         ! negative = night: keep dusk's value
@@ -262,8 +260,8 @@ contains
       real(wp) :: now_sec, tprev, tnext, w_next, cosz_now, factor, win_start_sec
       associate (f => src%fcfg, p => cur%rec_prev, n => cur%rec_next)
 
-      !----- The solar zenith at `now` (met_solar_cosz turns UTC into apparent solar time). ---!
-      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
+      !----- The solar zenith at `now` (solar_cosz_utc turns UTC into apparent solar time). ---!
+      cosz_now = solar_cosz_utc(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
       met%cosz = cosz_now
 
       !----- CO2 on model time, one way for every backend (docs/science/forcing.md eq. (18)). ----!
@@ -477,7 +475,7 @@ contains
       case (METAVG_CENTER)
          start_sec = stamp_sec - 0.5_wp * src%dt_forcing
       case default
-         cosz = met_solar_cosz(when, stamp_sec, cur%latitude_deg, cur%longitude_deg)
+         cosz = solar_cosz_utc(when, stamp_sec, cur%latitude_deg, cur%longitude_deg)
          return
       end select
       factor = cosz_reconstruct_factor(when, start_sec, src%dt_forcing / real(N_COSZ_SUB, wp),       &

@@ -17,14 +17,13 @@ program test_met_tower
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : grav, cp_air
-   use meds_time,            only : meds_time_t, time_advance_seconds
+   use meds_time,            only : meds_time_t, time_advance_seconds, solar_cosz_utc
    use meds_therm_lib,       only : sat_vapor_pressure, specific_humidity_to_vpd
    use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX,  &
                                     METAVG_END, METAVG_BEGIN, HEIGHT_ABOVE_GROUND,              &
                                     HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL, LW_SYNTHESIZE
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
-   use meds_forcing_kernels, only : rh_to_specific_humidity, dewpoint_to_specific_humidity,        &
-                                    clearness_index, met_solar_cosz
+   use meds_forcing_kernels, only : rh_to_specific_humidity, dewpoint_to_specific_humidity, clearness_index
    use meds_lapse_rate,      only : met_to_cas_top
    use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
    use meds_met_share, only : MET_OK, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, MET_ERR_ATTR_MISMATCH
@@ -346,7 +345,7 @@ contains
       call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, t0 + 0.4_wp * DT)
       call check('the remembered clearness is the containing interval''s', cur%kt_last_day,              &
-                 clearness_index(sw_at(k_sw), met_solar_cosz(time_advance_seconds(base, t0 + 0.4_wp * DT),  &
+                 clearness_index(sw_at(k_sw), solar_cosz_utc(time_advance_seconds(base, t0 + 0.4_wp * DT),  &
                                  t0 + 0.4_wp * DT, fc%latitude, fc%longitude)), 1.0e-12_wp)
       call met_close(src)
    end subroutine test_flux_interval
