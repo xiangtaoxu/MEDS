@@ -163,14 +163,21 @@ same ceiling.
 
 ## 4. Aggregation across time
 
+**Every value is a mean over its record's period**, but for the few that are its value at the
+period's end (`AGG_LAST`): the ids and the axes' bookkeeping, and each cohort's density and each
+patch's area and age. A flux is its mean rate, so one variable has one unit at every tier, and a
+period's total is the mean times the period's length.
+
 | `agg` | `cell_methods` | meaning |
 |---|---|---|
 | `AGG_TMEAN` | `time: mean` | dt-weighted mean — the default for a physical state or a mean rate |
 | `AGG_MEAN` | `time: mean` | equal-weight mean |
-| `AGG_SUM` | `time: sum` | period total (accumulator variables and count tallies) |
-| `AGG_LAST` | `time: point` | end-of-period snapshot (ids, CSR, PFT index) |
-| `AGG_MIN` / `AGG_MAX` | `time: minimum` / `maximum` | period extremum |
-| `AGG_FLUXSUM` | `time: sum` | dt-weighted integral of a rate (period total) |
+| `AGG_RATE` | `time: mean` | mean rate of a per-step amount (the fast loop's carbon and water, a count): the period's amounts over the time they took |
+| `AGG_LAST` | `time: point` | end-of-period snapshot (ids, CSR, PFT index, cohort density, patch area and age) |
+
+The fast loop's carbon fluxes are in µmol CO₂ m⁻² s⁻¹ (per plant for a cohort), water in kg m⁻² s⁻¹,
+energy in W m⁻²; the slow step's rates (allocation, growth, litterfall, mortality) keep their
+per-year units. The solvers' work counters are means per fast step, over the polygon's patches.
 
 Four tiers — `F` fast, `D` daily, `M` monthly, `Y` annual — each writing its own file family
 `<prefix>-<letter>[-<stamp>].nc`. Each tier integrates raw state independently; for these operators
@@ -361,6 +368,9 @@ monotonically climbing count is a config bug. `canopy_height_site` — stand dev
 \qquad
 \frac{\mathrm{d}\,\text{soilc}}{\mathrm{d}t} \approx \sum \text{litter}_* - \text{rh\_site} \qquad(4)
 ```
+
+with `rh_site` [µmol CO₂ m⁻² s⁻¹] taken to kgC m⁻² yr⁻¹, as the litter rates are (× 1.20107 × 10⁻⁸
+kgC µmol⁻¹ × the year's seconds).
 
 ### The carbon seam
 

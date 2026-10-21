@@ -33,8 +33,7 @@ program test_output_integrate
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,  &
                                      diag_setup_t, slab_col,                                      &
                                      MISSING_VALUE,                                               &
-                                     AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
-                                     AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT
+                                     AGG_MEAN, AGG_RATE, AGG_LAST, AGG_TMEAN, DIM_SCALAR, DIM_COHORT
    use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar, integrate_slab,          &
                                      normalize_scalar, normalize_slab, output_integrate_fast, close_tier,         &
                                      output_integrate
@@ -91,17 +90,9 @@ contains
       !----- TMEAN on NON-uniform dt (17.5, not the plain mean 15). -----!
       call run_scalar(AGG_TMEAN, [10.0_wp,20.0_wp], [1.0_wp,3.0_wp], out, valid)
       call check_close(out, 17.5_wp, 1.0e-12_wp, 'AGG_TMEAN dt-weighted')
-      !----- FLUXSUM: constant rate 5 over 6 s -> 30. -----!
-      call run_scalar(AGG_FLUXSUM, [5.0_wp,5.0_wp,5.0_wp], [2.0_wp,2.0_wp,2.0_wp], out, valid)
-      call check_close(out, 30.0_wp, 1.0e-12_wp, 'AGG_FLUXSUM integral')
-      !----- SUM (count-like). -----!
-      call run_scalar(AGG_SUM, [1.0_wp,2.0_wp,3.0_wp], [1.0_wp,1.0_wp,1.0_wp], out, valid)
-      call check_close(out, 6.0_wp, 1.0e-12_wp, 'AGG_SUM')
-      !----- MIN / MAX. -----!
-      call run_scalar(AGG_MIN, [3.0_wp,1.0_wp,2.0_wp], [1.0_wp,1.0_wp,1.0_wp], out, valid)
-      call check_close(out, 1.0_wp, 1.0e-12_wp, 'AGG_MIN')
-      call run_scalar(AGG_MAX, [3.0_wp,1.0_wp,2.0_wp], [1.0_wp,1.0_wp,1.0_wp], out, valid)
-      call check_close(out, 3.0_wp, 1.0e-12_wp, 'AGG_MAX')
+      !----- RATE: amounts 1, 2 and 3 over steps of 1, 1 and 2 s -> 6 per 4 s, 1.5 per s. -----!
+      call run_scalar(AGG_RATE, [1.0_wp,2.0_wp,3.0_wp], [1.0_wp,1.0_wp,2.0_wp], out, valid)
+      call check_close(out, 1.5_wp, 1.0e-12_wp, 'AGG_RATE: the amounts over the time they took')
       !----- LAST. -----!
       call run_scalar(AGG_LAST, [7.0_wp,8.0_wp,9.0_wp], [1.0_wp,1.0_wp,1.0_wp], out, valid)
       call check_close(out, 9.0_wp, 1.0e-12_wp, 'AGG_LAST')
@@ -118,12 +109,11 @@ contains
       call normalize_scalar(buf, out, valid)
       call check(.not. valid, 'zero-sample -> invalid')
       call check(out == MISSING_VALUE, 'zero-sample -> MISSING')
-      !----- MIN re-seed after reset is +huge (no leak). -----!
-      v%agg = AGG_MIN ; call alloc_integ_buffer(buf, v, FREQ_MONTHLY, 1_ik)
+      !----- A RATE buffer that saw no step reports nothing, not a 0/0. -----!
+      v%agg = AGG_RATE ; call alloc_integ_buffer(buf, v, FREQ_MONTHLY, 1_ik)
       call reset_buffer(buf)
-      call check(buf%scal == huge(1.0_wp), 'MIN re-seeds to +huge')
       call normalize_scalar(buf, out, valid)
-      call check(.not. valid .and. out == MISSING_VALUE, 'still-seeded MIN -> MISSING')
+      call check(.not. valid .and. out == MISSING_VALUE, 'a RATE with no step -> MISSING')
    end subroutine test_zero_sample_guard
 
    subroutine test_slab_and_extract()
