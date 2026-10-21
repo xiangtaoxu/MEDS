@@ -94,6 +94,7 @@ module meds_output_types
       integer(ik) :: xtype           = XTYPE_DOUBLE !< XTYPE_DOUBLE | XTYPE_INT
       integer(ik) :: source_id       = 0_ik         !< the field the D, M and Y tiers read (0: none)
       integer(ik) :: source_fast     = 0_ik         !< the staged sub-step value the F tier reads (0: none)
+      logical     :: flux            = .false.      !< a flux or a rate: written as its mean only, no snapshot
       logical     :: coord           = .false.      !< the axis's bookkeeping (ids, CSR): written with the axis,
                                                     !  not selected (resolve_streams)
       logical     :: snap_staged     = .false.      !< a snapshot the D, M and Y tiers read from the last staged
