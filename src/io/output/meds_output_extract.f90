@@ -26,7 +26,7 @@ module meds_output_extract
    private
 
    public :: extract_variable, extract_fast_scalar
-   public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_POLYGON, SRCK_FAST, SRCK_SITE
+   public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_POLYGON, SRCK_FAST, SRCK_SITE, SRC_NONE
    !----- Cohort fields (1000-1999). ---------------------------------------------------------!
    public :: FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA
    public :: FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID
@@ -68,6 +68,7 @@ module meds_output_extract
    integer(ik), parameter :: SRCK_LAYER  = 3_ik   !< 3000-3999 : per-soil-layer field (per patch)
    integer(ik), parameter :: SRCK_POLYGON   = 4_ik   !< 4000-4999 : the polygon's own scalar (no reduction)
    integer(ik), parameter :: SRCK_FAST   = 5_ik   !< 5000-5999 : FAST-tier staged sample
+   integer(ik), parameter :: SRC_NONE    = 0_ik   !< no source: a variable without a value on those tiers
    integer(ik), parameter :: SRCK_SITE  = 6_ik   !< 6000-6999 : one value per site of the polygon
 
    !----- Cohort fields (SRCK_COHORT). Raw SoA columns first, then derived ones. --------------!
@@ -310,7 +311,7 @@ contains
          x(1:n) = poly%cohort%nplant(1:n) * poly%cohort%wood_area(1:n)
       case (FLD_C_NPP_ACCUM)
          !----- Gross GPP less the three maintenance respirations; growth respiration is charged in !
-         !      the slow step's allocation (growth_resp_site), so subtracting it here would count  !
+         !      the slow step's allocation (mean_growth_resp_py), so subtracting it here would count  !
          !      it twice. ---------------------------------------------------------------------!
          x(1:n) = poly%cohort%gpp_accum(1:n) - poly%cohort%leaf_resp_accum(1:n)                     &
                   - poly%cohort%stem_resp_accum(1:n) - poly%cohort%root_resp_accum(1:n)
@@ -492,7 +493,7 @@ contains
    !=======================================================================================!
    !  The dispatcher: one variable -> one scalar or slab, its field reduced to the scale its  !
    !  dim names with its descriptor's weight, mean and scale. One field serves every scale:   !
-   !  agb_cohort, agb_patch, agb_site, agb_pft and agb_size all read FLD_C_AGB. Extract each  !
+   !  mean_agb_co, mean_agb_pa, mean_agb_py, mean_agb_pft_py and mean_agb_size_py all read FLD_C_AGB. Extract each  !
    !  variable once per step (the nvfortran trap above).                                      !
    !=======================================================================================!
    subroutine extract_variable(poly, setup, v, scalar_out, slab_out, valid_out, n_out)

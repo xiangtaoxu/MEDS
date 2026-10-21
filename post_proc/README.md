@@ -58,8 +58,8 @@ understory, and no cast-shadow artefacts.
 of it there is: composition by PFT, and structure by DBH class. Six panels — biomass and leaf area
 by PFT over time, the size distribution first-against-last, biomass by class stacked over the run,
 and the vital rates against size. It is the reference consumer for the PFT and size axes, so it also
-prints the closure identities those axes promise (`Σ_pft agb_pft == agb_site`,
-`Σ_class agb_size == agb_site`) before drawing anything: a figure built on axes that do not
+prints the closure identities those axes promise (`Σ_pft mean_agb_pft_py == mean_agb_py`,
+`Σ_class mean_agb_size_py == mean_agb_py`) before drawing anything: a figure built on axes that do not
 partition the stand is a picture of a bug.
 
 **`animate_landscape_growth.py`** — that landscape over the whole run, as a GIF. Every cohort is
@@ -85,7 +85,7 @@ conventions worth knowing:
 - **Which variables exist depends on the config.** Run `meds_main --dump-io-config` against your
   run's config to list every available name.
 - **Read the coordinates, not your memory of the setup.** Soil depths come from the file's own
-  `soil_z` coordinate and the reference CO₂ from `atm_co2_fast`, so a figure stays correct if a run
+  `soil_z` coordinate and the reference CO₂ from `mean_atm_co2_py`, so a figure stays correct if a run
   changes its soil grid or its forcing. The biophysics example carries a cautionary note about what
   happens when a figure assumes a number instead.
 

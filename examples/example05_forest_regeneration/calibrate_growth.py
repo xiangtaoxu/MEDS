@@ -160,13 +160,13 @@ def run_trial(cfg, out):
 
 
 #: the stand totals a trial keeps, the mean of its years 2-5 [kgC/m2/yr]
-BUDGET = ("gpp_site", "leaf_resp_site", "stem_resp_site", "root_resp_site", "growth_resp_site",
-          "npp_leaf_site", "npp_fineroot_site", "npp_wood_site", "npp_repro_site", "npp_storage_site",
-          "root_exudate_site")
+BUDGET = ("mean_gpp_py", "mean_leaf_resp_py", "mean_stem_resp_py", "mean_root_resp_py", "mean_growth_resp_py",
+          "mean_npp_leaf_py", "mean_npp_fineroot_py", "mean_npp_wood_py", "mean_npp_repro_py", "mean_npp_storage_py",
+          "mean_root_exudate_py")
 
 
 #: the fast loop's carbon fluxes, which the files give as mean rates [umol CO2 m-2 s-1]
-UMOL_RATES = ("gpp_site", "leaf_resp_site", "stem_resp_site", "root_resp_site")
+UMOL_RATES = ("mean_gpp_py", "mean_leaf_resp_py", "mean_stem_resp_py", "mean_root_resp_py")
 UMOL_TO_KGC = 1.20107e-8                              # [kgC/umol CO2], meds_constants' umol_2_kgc
 
 
@@ -187,15 +187,15 @@ def shares(b):
     shares of reproduction and fine roots in it; GPP; and the roots' autotrophic respiration
     [kgC/m2/yr]: the fine roots' maintenance, the coarse roots' share of stem respiration, and the
     construction cost of fine- and coarse-root growth."""
-    npp = sum(float(b[k]) for k in ("npp_leaf_site", "npp_fineroot_site", "npp_wood_site",
-                                    "npp_repro_site", "npp_storage_site"))
-    g = float(b["gpp_site"])
-    root_resp = (float(b["root_resp_site"]) + (1 - AGF) * float(b["stem_resp_site"])
-                 + GRF * (float(b["npp_fineroot_site"]) + (1 - AGF) * float(b["npp_wood_site"])))
-    return {"cue": npp / g, "repro": float(b["npp_repro_site"]) / npp, "repro_c": float(b["npp_repro_site"]),
-            "fineroot": float(b["npp_fineroot_site"]) / npp, "gpp": g, "root_resp": root_resp,
-            "stem_resp_above": AGF * float(b["stem_resp_site"]), "leaf_npp": float(b["npp_leaf_site"]),
-            "wood_npp_above": AGF * float(b["npp_wood_site"]), "exudate": float(b["root_exudate_site"])}
+    npp = sum(float(b[k]) for k in ("mean_npp_leaf_py", "mean_npp_fineroot_py", "mean_npp_wood_py",
+                                    "mean_npp_repro_py", "mean_npp_storage_py"))
+    g = float(b["mean_gpp_py"])
+    root_resp = (float(b["mean_root_resp_py"]) + (1 - AGF) * float(b["mean_stem_resp_py"])
+                 + GRF * (float(b["mean_npp_fineroot_py"]) + (1 - AGF) * float(b["mean_npp_wood_py"])))
+    return {"cue": npp / g, "repro": float(b["mean_npp_repro_py"]) / npp, "repro_c": float(b["mean_npp_repro_py"]),
+            "fineroot": float(b["mean_npp_fineroot_py"]) / npp, "gpp": g, "root_resp": root_resp,
+            "stem_resp_above": AGF * float(b["mean_stem_resp_py"]), "leaf_npp": float(b["mean_npp_leaf_py"]),
+            "wood_npp_above": AGF * float(b["mean_npp_wood_py"]), "exudate": float(b["mean_root_exudate_py"])}
 
 
 # ----- scoring ----------------------------------------------------------------------------------------

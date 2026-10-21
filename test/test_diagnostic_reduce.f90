@@ -77,10 +77,10 @@ contains
       integer(ik) :: n
       call build_fixture(poly)
 
-      !----- EXTENSIVE: agb_site = SUM area*nplant*agb                                        !
+      !----- EXTENSIVE: mean_agb_py = SUM area*nplant*agb                                        !
       !      = 0.75*(2*10 + 1*20) + 0.25*(4*30) = 0.75*40 + 0.25*120 = 30 + 30 = 60.  --------!
       call reduce_cohort_to_polygon(poly, poly%cohort%agb, W_NPLANT, .false., v, ok)
-      call check_close(v, 60.0_wp, 1.0e-12_wp, 'agb_site = weighted SUM over nplant')
+      call check_close(v, 60.0_wp, 1.0e-12_wp, 'mean_agb_py = weighted SUM over nplant')
       call check(ok, 'extensive reduction is always valid')
       call check_close(total_agb(poly), 60.0_wp, 1.0e-12_wp, 'total_agb wrapper agrees')
 
@@ -107,15 +107,15 @@ contains
 
       !----- W_NONE + SUM is the stem-density contract: 0.75*(2+1) + 0.25*4 = 2.25 + 1 = 3.25. !
       call reduce_cohort_to_polygon(poly, poly%cohort%nplant, W_NONE, .false., v, ok)
-      call check_close(v, 3.25_wp, 1.0e-12_wp, 'nplant_site = plain area-weighted sum')
+      call check_close(v, 3.25_wp, 1.0e-12_wp, 'mean_nplant_py = plain area-weighted sum')
       call check_close(total_nplant(poly), 3.25_wp, 1.0e-12_wp, 'total_nplant wrapper agrees')
 
       !----- PATCH axis carries NO area factor (a patch value is per m2 of its OWN ground):    !
       !      patch 1 agb = 2*10 + 1*20 = 40 ; patch 2 = 4*30 = 120.  -------------------------!
       call reduce_cohort_to_patch(poly, poly%cohort%agb, W_NPLANT, .false., out, vld, n)
       call check(n == 2_ik, 'patch reduction length')
-      call check_close(out(1),  40.0_wp, 1.0e-12_wp, 'agb_patch(1) has no area factor')
-      call check_close(out(2), 120.0_wp, 1.0e-12_wp, 'agb_patch(2) has no area factor')
+      call check_close(out(1),  40.0_wp, 1.0e-12_wp, 'mean_agb_pa(1) has no area factor')
+      call check_close(out(2), 120.0_wp, 1.0e-12_wp, 'mean_agb_pa(2) has no area factor')
 
       call free_polygon(poly)
    end subroutine test_extensive_vs_intensive
@@ -136,25 +136,25 @@ contains
       call reduce_cohort_to_polygon(poly, poly%cohort%agb, W_NPLANT, .false., site_val, ok)
       call reduce_cohort_to_pft (poly, poly%cohort%agb, W_NPLANT, .false., 3_ik, pft_out, vld, n)
       call check(n == 3_ik, 'pft axis length = n_pft')
-      call check_close(sum(pft_out(1:3)), site_val, 1.0e-12_wp, 'sum over PFTs == agb_site')
+      call check_close(sum(pft_out(1:3)), site_val, 1.0e-12_wp, 'sum over PFTs == mean_agb_py')
 
       call reduce_cohort_to_size(poly, poly%cohort%agb, W_NPLANT, .false., edges, 4_ik,          &
                                  size_out, vld, n)
       call check(n == 4_ik, 'size axis length = n_class')
-      call check_close(sum(size_out(1:4)), site_val, 1.0e-12_wp, 'sum over DBH classes == agb_site')
+      call check_close(sum(size_out(1:4)), site_val, 1.0e-12_wp, 'sum over DBH classes == mean_agb_py')
 
       !----- The stem count must be conserved by the binning too: no cohort split, none dropped. !
       call reduce_cohort_to_polygon(poly, poly%cohort%nplant, W_NONE, .false., site_val, ok)
       call reduce_cohort_to_size(poly, poly%cohort%nplant, W_NONE, .false., edges, 4_ik,         &
                                  size_out, vld, n)
-      call check_close(sum(size_out(1:4)), site_val, 1.0e-12_wp, 'sum over classes == nplant_site')
+      call check_close(sum(size_out(1:4)), site_val, 1.0e-12_wp, 'sum over classes == mean_nplant_py')
       !----- Each cohort landed in exactly ONE bin (dbh 5, 15, 45 -> classes 1, 2, 4).  -------!
       call check(size_out(3) == 0.0_wp, 'the empty class-3 bin holds nothing')
 
       !----- LAI closes on both axes as well (a second field, so the test is not agb-specific). !
       call reduce_cohort_to_polygon(poly, poly%cohort%leaf_area, W_NPLANT, .false., site_val, ok)
       call reduce_cohort_to_pft (poly, poly%cohort%leaf_area, W_NPLANT, .false., 3_ik, pft_out, vld, n)
-      call check_close(sum(pft_out(1:3)), site_val, 1.0e-12_wp, 'sum over PFTs == lai_site')
+      call check_close(sum(pft_out(1:3)), site_val, 1.0e-12_wp, 'sum over PFTs == mean_lai_py')
       call check_close(total_lai(poly), site_val, 1.0e-12_wp, 'total_lai wrapper agrees')
 
       call free_polygon(poly)

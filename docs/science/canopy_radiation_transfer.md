@@ -246,9 +246,9 @@ it:
 
 | variable | meaning |
 |---|---|
-| `sw_in_vis_site`, `sw_in_nir_site` | incident shortwave at canopy top, per band |
-| `sw_up_vis_site`, `sw_up_nir_site` | upwelling shortwave leaving the canopy top |
-| `lw_up_site` | upwelling longwave, **surface emission included** |
+| `mean_sw_in_vis_py`, `mean_sw_in_nir_py` | incident shortwave at canopy top, per band |
+| `mean_sw_up_vis_py`, `mean_sw_up_nir_py` | upwelling shortwave leaving the canopy top |
+| `mean_lw_up_py` | upwelling longwave, **surface emission included** |
 
 **These are fluxes, not a time-averaged albedo, deliberately.** A period-mean albedo is the mean of
 a *ratio*, which is not the ratio of the means — and at night the shortwave ratio is 0/0. The albedo
@@ -263,7 +263,7 @@ over whatever period they choose. A mean albedo would be a number that looks rig
 Measured on a spun-up Ithaca stand, annual sums: **VIS 0.083, NIR 0.320, broadband 0.208**. The
 VIS/NIR contrast is the vegetation red-edge — chlorophyll absorbs the visible and leaves scatter the
 near-infrared — and it is the signal every vegetation index is built on. Winter months rise to 0.23
-(VIS) and 0.45 (NIR) as the snow albedo ramps in, and `lw_up_site` runs 305–468 W m⁻², consistent
+(VIS) and 0.45 (NIR) as the snow albedo ramps in, and `mean_lw_up_py` runs 305–468 W m⁻², consistent
 with $`\sigma T^4`$ across the annual surface-temperature range.
 
 ## Code map

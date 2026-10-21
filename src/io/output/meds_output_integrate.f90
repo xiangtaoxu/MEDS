@@ -11,7 +11,7 @@
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
    use meds_time,           only : meds_time_t
-   use meds_output_params,      only : N_FREQ, TIER_FAST, TIER_DAILY, TIER_MONTHLY, TIER_ANNUAL
+   use meds_output_params,      only : N_FREQ, FREQ_FAST, TIER_FAST, TIER_DAILY, TIER_MONTHLY, TIER_ANNUAL
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,                  &
                                    pending_record_t, record_queue_t, AGG_MEAN, AGG_RATE, AGG_LAST, AGG_TMEAN,     &
                                    DIM_SCALAR, DIM_COHORT, DIM_PATCH,                                             &
@@ -42,6 +42,8 @@ contains
       buf%var_id = 0_ik      ! set by the caller (registry index)
       buf%freq   = freq
       buf%agg    = v%agg
+      !----- The F tier folds staged sub-step samples, rates and states alike: their dt-weighted mean. --!
+      if (freq == FREQ_FAST) buf%agg = AGG_TMEAN
       buf%dim    = v%dim
       buf%active = .true.
       if (v%dim /= DIM_SCALAR) then
@@ -373,7 +375,7 @@ contains
       if (.not. bufs%has_data(TIER_FAST)) bufs%t_open(TIER_FAST) = bufs%fast_time(isub)
       do j = 1_ik, files%reg%nidx(TIER_FAST)
          k   = files%reg%idx_freq(j, TIER_FAST)
-         src = files%reg%var(k)%source_id
+         src = files%reg%var(k)%source_fast
          select case (files%reg%var(k)%dim)
          case (DIM_SCALAR)
             call integrate_scalar(bufs%buf(k,TIER_FAST), extract_fast_scalar(src, bufs%fast_site(:, isub),        &

@@ -33,20 +33,20 @@ program test_output_registry
    !      presence checks below carry the real meaning.  ---------------------------------------!
    call check(reg%nvar > 80_ik .and. reg%nvar <= MAX_OUTPUT_VARS,                                 &
               'registry populated and within MAX_OUTPUT_VARS')
-   call check(find_var_index(reg, 'agb_cohort') > 0_ik, 'agb_cohort present')
-   call check(find_var_index(reg, 'agb_site')   > 0_ik, 'agb_site present')
-   call check(find_var_index(reg, 'gpp_site')   > 0_ik, 'gpp_site (carbon) present')
-   call check(find_var_index(reg, 'soilc_slow_site') > 0_ik, 'soilc_slow_site (carbon) present')
-   call check(find_var_index(reg, 'rh_site')         > 0_ik, 'rh_site (carbon) present')
-   call check(find_var_index(reg, 'soil_temp_site') > 0_ik, 'soil_temp_site (energy) present')
+   call check(find_var_index(reg, 'mean_agb_co') > 0_ik, 'mean_agb_co present')
+   call check(find_var_index(reg, 'mean_agb_py')   > 0_ik, 'mean_agb_py present')
+   call check(find_var_index(reg, 'mean_gpp_py')   > 0_ik, 'mean_gpp_py (carbon) present')
+   call check(find_var_index(reg, 'mean_soilc_slow_py') > 0_ik, 'mean_soilc_slow_py (carbon) present')
+   call check(find_var_index(reg, 'mean_rh_py')         > 0_ik, 'mean_rh_py (carbon) present')
+   call check(find_var_index(reg, 'mean_soil_temp_layer_si') > 0_ik, 'mean_soil_temp_layer_si (energy) present')
    call check(find_var_index(reg, 'nope')       == 0_ik, 'unknown name -> 0')
    !----- The default groups (docs/science/diagnostics.md §5): all ON but radiation + ecophys,    !
    !      the two heavy evaluation groups. Assert BOTH directions of the toggle, so a default     !
    !      flip cannot pass by accident. ----------------------------------------------------------!
-   call check(in_tier(reg, 'soil_temp_site', 3_ik), 'energy ON by default -> soil_temp_site in MONTHLY')
+   call check(in_tier(reg, 'mean_soil_temp_layer_si', 3_ik), 'energy ON by default -> mean_soil_temp_layer_si in MONTHLY')
    cfg%output%grp_on(4) = .false.       ! GRP_ENERGY off
    call build_output_registry(reg, cfg)
-   call check(.not. in_tier(reg, 'soil_temp_site', 3_ik), 'energy off -> soil_temp_site in no tier')
+   call check(.not. in_tier(reg, 'mean_soil_temp_layer_si', 3_ik), 'energy off -> mean_soil_temp_layer_si in no tier')
    cfg%output%grp_on(4) = .true.
    call build_output_registry(reg, cfg)
 
@@ -60,22 +60,22 @@ program test_output_registry
    !----- The AXIS toggles suppress a whole trailing dimension without naming variables. -----!
    cfg%output%axis_on(1) = .false.                     ! AXIS_COHORT off
    call build_output_registry(reg, cfg)
-   call check(.not. in_tier(reg, 'agb_cohort', 2_ik), 'axes_cohort=false -> agb_cohort in no tier')
-   call check(in_tier(reg, 'agb_site', 2_ik),         'axes_cohort=false leaves site scalars alone')
+   call check(.not. in_tier(reg, 'mean_agb_co', 2_ik), 'axes_cohort=false -> mean_agb_co in no tier')
+   call check(in_tier(reg, 'mean_agb_py', 2_ik),         'axes_cohort=false leaves site scalars alone')
    cfg%output%axis_on(1) = .true.
    call build_output_registry(reg, cfg)
 
    !----- PFT + DBH-size axes are registered and live at the monthly cadence. -----!
-   call check(find_var_index(reg, 'agb_pft')  > 0_ik, 'agb_pft present')
-   call check(find_var_index(reg, 'agb_size') > 0_ik, 'agb_size present')
-   call check(in_tier(reg, 'agb_pft',  3_ik), 'agb_pft in MONTHLY')
-   call check(in_tier(reg, 'agb_size', 3_ik), 'agb_size in MONTHLY')
-   call check(in_tier(reg, 'agb_pft',  4_ik), 'agb_pft in ANNUAL (site-level axis, allowed)')
+   call check(find_var_index(reg, 'mean_agb_pft_py')  > 0_ik, 'mean_agb_pft_py present')
+   call check(find_var_index(reg, 'mean_agb_size_py') > 0_ik, 'mean_agb_size_py present')
+   call check(in_tier(reg, 'mean_agb_pft_py',  3_ik), 'mean_agb_pft_py in MONTHLY')
+   call check(in_tier(reg, 'mean_agb_size_py', 3_ik), 'mean_agb_size_py in MONTHLY')
+   call check(in_tier(reg, 'mean_agb_pft_py',  4_ik), 'mean_agb_pft_py in ANNUAL (site-level axis, allowed)')
 
-   call check(in_tier(reg, 'agb_cohort', 2_ik),        'agb_cohort in DAILY')
-   call check(.not. in_tier(reg, 'agb_cohort', 4_ik),  'agb_cohort NOT in ANNUAL (no cohort dim annually)')
-   call check(in_tier(reg, 'agb_site', 4_ik),          'agb_site in ANNUAL')
-   call check(in_tier(reg, 'gpp_site', 4_ik),          'gpp_site in ANNUAL')
+   call check(in_tier(reg, 'mean_agb_co', 2_ik),        'mean_agb_co in DAILY')
+   call check(.not. in_tier(reg, 'mean_agb_co', 4_ik),  'mean_agb_co NOT in ANNUAL (no cohort dim annually)')
+   call check(in_tier(reg, 'mean_agb_py', 4_ik),          'mean_agb_py in ANNUAL')
+   call check(in_tier(reg, 'mean_gpp_py', 4_ik),          'mean_gpp_py in ANNUAL')
 
    !----- Per-tier enable: turn DAILY off -> DAILY empties, MONTHLY unaffected. -----!
    cfg%output%freq_on(2) = .false.
@@ -84,35 +84,35 @@ program test_output_registry
    call check(reg%nidx(3) > 0_ik,  'MONTHLY still populated')
    cfg%output%freq_on(2) = .true.
 
-   !----- Group toggle: CARBON off -> gpp_site/npp_site vanish, structure stays. -----!
+   !----- Group toggle: CARBON off -> mean_gpp_py/mean_npp_py vanish, structure stays. -----!
    cfg%output%grp_on(2) = .false.          ! GRP_CARBON
    call build_output_registry(reg, cfg)
-   call check(.not. in_tier(reg, 'gpp_site', 3_ik), 'carbon off -> gpp_site absent from MONTHLY')
-   call check(in_tier(reg, 'agb_cohort', 2_ik),     'carbon off -> structure agb_cohort still present')
+   call check(.not. in_tier(reg, 'mean_gpp_py', 3_ik), 'carbon off -> mean_gpp_py absent from MONTHLY')
+   call check(in_tier(reg, 'mean_agb_co', 2_ik),     'carbon off -> structure mean_agb_co still present')
    cfg%output%grp_on(2) = .true.
    !----- Structure OFF -> no GRP_STRUCTURE variable survives anywhere, and the other groups     !
    !      are untouched. Stated as an invariant over the group field rather than a count.  -----!
    cfg%output%grp_on(1) = .false.
    call build_output_registry(reg, cfg)
    call check(group_absent(reg, GRP_STRUCTURE), 'structure off -> no structure var in any tier')
-   call check(in_tier(reg, 'gpp_site', 4_ik),   'structure off leaves carbon alone')
+   call check(in_tier(reg, 'mean_gpp_py', 4_ik),   'structure off leaves carbon alone')
    cfg%output%grp_on(1) = .true.
 
    !----- Per-variable override: OFF removes it from every tier. -----!
    call build_output_registry(reg, cfg)
-   call apply_variable_override(reg, 'growth_avg_cohort', OVR_FALSE, 0_ik, found)
-   call check(found, 'override found growth_avg_cohort')
+   call apply_variable_override(reg, 'mean_growth_avg_co', OVR_FALSE, 0_ik, found)
+   call check(found, 'override found mean_growth_avg_co')
    call build_freq_index(reg)
-   call check(.not. in_tier(reg, 'growth_avg_cohort', 3_ik), 'growth_avg_cohort OFF -> absent from MONTHLY')
+   call check(.not. in_tier(reg, 'mean_growth_avg_co', 3_ik), 'mean_growth_avg_co OFF -> absent from MONTHLY')
 
-   !----- Per-variable override: MASK re-targets streams (basal_area_cohort M -> D M). -----!
+   !----- Per-variable override: MASK re-targets streams (mean_basal_area_co M -> D M). -----!
    call build_output_registry(reg, cfg)
-   call check(.not. in_tier(reg, 'basal_area_cohort', 2_ik), 'basal_area_cohort default NOT in DAILY')
+   call check(.not. in_tier(reg, 'mean_basal_area_co', 2_ik), 'mean_basal_area_co default NOT in DAILY')
    call parse_stream_mask('D M', mask, status, bad)
    call check(status == 0_ik, 'parse_stream_mask("D M") ok')
-   call apply_variable_override(reg, 'basal_area_cohort', OVR_MASK, mask, found)
+   call apply_variable_override(reg, 'mean_basal_area_co', OVR_MASK, mask, found)
    call build_freq_index(reg)
-   call check(in_tier(reg, 'basal_area_cohort', 2_ik), 'basal_area_cohort override -> now in DAILY')
+   call check(in_tier(reg, 'mean_basal_area_co', 2_ik), 'mean_basal_area_co override -> now in DAILY')
 
    !----- Unknown-key trap: a typo matches no registry variable. -----!
    call apply_variable_override(reg, 'grwoth_avg_cohort', OVR_FALSE, 0_ik, found)

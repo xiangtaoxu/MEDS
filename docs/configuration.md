@@ -257,11 +257,11 @@ A polygon is one site unless `[[sites]]` divides it, in a site run. Each `[[site
 - **The terrain.** Each sub-step the polygon's forcing is moved to each site: to its elevation, by the
   run's lapse (`[site].apply_elevation_lapse`), and its direct beam onto its slope
   ([forcing](science/forcing.md) §8, Each site of a polygon). Each site's daily-mean air temperature
-  drives its phenology and growth temperature, and its forcing is reported as `*_by_site`.
+  drives its phenology and growth temperature, and its forcing is reported as `mean_*_si`.
 - **What a site is.** Each site has its own patches, made at the start (`init_mode = 0`, the same
   number per site) or from its census rows; the patch operators work within a site
   ([order of processes](science/order_of_processes.md)), so no area moves between sites. The output
-  reports each site's soil column and properties on a `site` axis, and every `_site` scalar is the
+  reports each site's soil column and properties on a `site` axis, and every `_py` variable is the
   polygon's ([diagnostics](science/diagnostics.md) §2–3).
 - **A restart** reads the sites back from the state file, which must hold as many as the config and,
   for each, as many soil layers.
@@ -480,13 +480,13 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   holds each site's layer node depths, and its CF bounds `soil_z_bnds (polygon, site, soil, nv)` each
   layer's top and bottom, so the bottom layer ends at that site's own soil depth. Both are negative
   downward, and the fill value below the site's bottom layer, as its soil variables are. Each file
-  also carries each site's area and terrain, `site_area` (its fraction of the polygon),
-  `site_elevation` [m], `site_slope` and `site_aspect` [degrees], and the inputs the cell's maps gave
-  it, as it runs them, all `(polygon, site)`: `site_n_soil` (its layer count), `site_soil_depth` [m],
-  `site_bottom_bc` (`flag_values` 1, 2 for drain, aquifer), `site_drain_factor` (the drainage factor
+  also carries each site's area and terrain, `area_si` (its fraction of the polygon),
+  `elevation_si` [m], `slope_si` and `aspect_si` [degrees], and the inputs the cell's maps gave
+  it, as it runs them, all `(polygon, site)`: `n_soil_si` (its layer count), `soil_depth_si` [m],
+  `bottom_bc_si` (`flag_values` 1, 2 for drain, aquifer), `drain_factor_si` (the drainage factor
   $f$ of the bottom flux $`q = f\,K`$: 1 on a free-draining base, the cell's `f_leak` on a leaky one,
-  0 on a sealed one; the fill value on an aquifer) and `site_deep_temp` [K], under the same names as
-  in the restart file; with `height_allometry = "chave2014"`, `chave_e (polygon)`.
+  0 on a sealed one; the fill value on an aquifer) and `deep_temp_si` [K], under the same names as
+  in the restart file; with `height_allometry = "chave2014"`, `chave_e_py (polygon)`.
 - **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its

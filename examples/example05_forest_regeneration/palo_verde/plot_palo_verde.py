@@ -51,10 +51,10 @@ def read(path):
         t = v("year") + (v("month") - 1.0) / 12.0 if "month" in ds.variables else v("year")
         lower = v("dbh_lower")
         yr = year_seconds(v("year"))                                    # a mean rate times this: per year
-        return {"age": t - t[0], "agb": v("agb_pft") * 10.0, "ba": v("basal_area_pft") * 1e4,   # MgC/ha, m2/ha
-                "lai": v("lai_pft"), "gpp": v("gpp_site") * UMOL_TO_KGC * yr * 10.0,            # MgC/ha/yr
-                "et": v("et_site") * yr,                                                         # mm/yr
-                "stems10": v("nplant_size")[:, lower >= 10.0].sum(axis=1) * 1e4}
+        return {"age": t - t[0], "agb": v("mean_agb_pft_py") * 10.0, "ba": v("mean_basal_area_pft_py") * 1e4,   # MgC/ha, m2/ha
+                "lai": v("mean_lai_pft_py"), "gpp": v("mean_gpp_py") * UMOL_TO_KGC * yr * 10.0,            # MgC/ha/yr
+                "et": v("mean_et_py") * yr,                                                         # mm/yr
+                "stems10": v("mean_nplant_size_py")[:, lower >= 10.0].sum(axis=1) * 1e4}
 
 
 def inventory():

@@ -77,21 +77,21 @@ def main(argv=None):
     t, f = t[keep], {k: v[keep] for k, v in f.items()}
 
     #----- The patch that covers the most ground, and its tallest cohort at each half hour --------#
-    p = int(np.nanargmax(d["area_patch"][0]))
+    p = int(np.nanargmax(d["area_pa"][0]))
     first, count = int(d["cohort_offset"][0, p]) - 1, int(d["cohort_count"][0, p])
     slots = np.arange(first, first + count)
-    top = slots[np.nanargmax(f["height_cohort_fast"][:, slots], axis=1)]
+    top = slots[np.nanargmax(f["mean_height_co"][:, slots], axis=1)]
     rows = np.arange(len(t))
-    leaf_temp = f["leaf_temp_cohort_fast"][rows, top] - 273.15
-    leaf_psi = f["gx_psi_leaf_cohort_fast"][rows, top]
+    leaf_temp = f["mean_leaf_temp_co"][rows, top] - 273.15
+    leaf_psi = f["mean_psi_leaf_co"][rows, top]
     layer = [int(np.nanargmin(np.abs(-soil_z - z))) for z in DEPTHS]
-    soil_w = f["soil_water_layer_patch_fast"][:, p, :]
+    soil_w = f["mean_soil_water_layer_pa"][:, p, :]
     edges = np.zeros(len(soil_z) + 1)                           # layer edges from the nodes (midpoints)
     for k, z in enumerate(-soil_z):
         edges[k + 1] = 2 * z - edges[k] if np.isfinite(z) else edges[k]
     over = np.clip(np.minimum(edges[1:], SENSOR) - edges[:-1], 0, None)   # each layer's share of 0-15 cm
     sensor_w = np.nansum(soil_w * over, axis=1) / over.sum()
-    soil_t = f["soil_temp_layer_patch_fast"][:, p, :] - 273.15
+    soil_t = f["mean_soil_temp_layer_pa"][:, p, :] - 273.15
 
     #----- The tower's soil water content, on the same local clock -----------------------------#
     raw = pd.read_csv(site.input_path, usecols=[site.timestamp, "SWC"], na_values=site.missing)
@@ -102,31 +102,31 @@ def main(argv=None):
                          "ytick.color": MUTED, "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.6,
                          "axes.spines.top": False, "axes.spines.right": False, "axes.axisbelow": True})
     fig, ax = plt.subplots(6, 1, figsize=(11, 13), sharex=True)
-    night = f["sw_in_fast"] < 1.0
+    night = f["mean_sw_in_py"] < 1.0
     for a in ax:                                                # shade the nights
         for start, end in zip(t[np.flatnonzero(np.diff(np.r_[0, night.astype(int)]) == 1)],
                               t[np.flatnonzero(np.diff(np.r_[night.astype(int), 0]) == -1)]):
             a.axvspan(start, end + pd.Timedelta(minutes=30), color=NIGHT, lw=0, zorder=0)
 
     a = ax[0]
-    a.plot(t, f["sw_in_fast"], color=MUTED, lw=1)
+    a.plot(t, f["mean_sw_in_py"], color=MUTED, lw=1)
     a.set_ylabel("shortwave\n[W m⁻²]")
     r = a.twinx()
-    r.bar(t, f["precip_fast"] * 1800.0, width=1 / 48, align="edge", color=CAS)
+    r.bar(t, f["mean_precip_py"] * 1800.0, width=1 / 48, align="edge", color=CAS)
     r.set_ylabel("rain [mm per\nhalf hour]", color=CAS)
     r.tick_params(axis="y", colors=CAS)
     r.grid(False)
 
     a = ax[1]
-    a.plot(t, f["air_temp_fast"] - 273.15, color=AIR, lw=1, label="air at 41 m (forcing)")
-    a.plot(t, f["cas_temp_patch_fast"][:, p] - 273.15, color=CAS, lw=1.2, label="canopy air")
+    a.plot(t, f["mean_air_temp_py"] - 273.15, color=AIR, lw=1, label="air at 41 m (forcing)")
+    a.plot(t, f["mean_cas_temp_pa"][:, p] - 273.15, color=CAS, lw=1.2, label="canopy air")
     a.plot(t, leaf_temp, color=LEAF, lw=1.2, label="top cohort's leaves")
     a.plot(t, soil_t[:, layer[0]], color=SOIL, lw=1.2, label=f"soil at {-soil_z[layer[0]] * 100:.0f} cm")
     a.set_ylabel("temperature\n[°C]")
     a.legend(loc="upper left", ncol=4, frameon=False, fontsize=8.5)
 
     a = ax[2]
-    a.plot(t, f["cas_co2_patch_fast"][:, p], color=CAS, lw=1.2)
+    a.plot(t, f["mean_cas_co2_pa"][:, p], color=CAS, lw=1.2)
     a.set_ylabel("canopy-air CO₂\n[µmol mol⁻¹]")
 
     a = ax[3]
@@ -151,9 +151,9 @@ def main(argv=None):
     a.set_xlim(t[0], t[-1] + pd.Timedelta(minutes=30))
     a.set_xlabel(f"local time (UTC{site.utc_offset:+g}); shaded: night")
 
-    lai = d["lai_patch"][0, p]
+    lai = d["mean_lai_pa"][0, p]
     fig.suptitle(f"Ten days in one patch at Barro Colorado Island, every half hour ({t[0]:%d} to "
-                 f"{t[-1]:%d %B %Y}; the patch covers {100 * d['area_patch'][0, p]:.0f} % of the site, LAI {lai:.1f})",
+                 f"{t[-1]:%d %B %Y}; the patch covers {100 * d['area_pa'][0, p]:.0f} % of the site, LAI {lai:.1f})",
                  color=INK, fontsize=11)
     fig.align_ylabels(ax)
     fig.tight_layout()

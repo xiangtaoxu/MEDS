@@ -48,8 +48,24 @@ the air. The restart and the diagnostic files name each site's statics alike (#4
 holds every variable and names its layout, and the reader refuses one an older MEDS wrote instead of
 filling in what it lacks (#471). Every output value is a mean over its record's period: the fast loop's
 carbon and water totals are mean rates, and the solvers' work counters means per fast step (#472).
+Every variable of the diagnostic and restart files is named `[mean_]<quantity>[_<breakdown>]_<level>`, one
+name at every tier, each fast twin merged into its daily variable (#473).
 
 **Upgrading from v0.3.5:**
+- **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
+  `_co`, `_pa`, `_si` or `_py`; the breakdown `_pft`, `_size` or `_layer`; `mean_` for a mean over the
+  record's period, none for its value at the end (`docs/science/diagnostics.md` §3). A variable and its
+  `*_fast` twin are one variable, written on F and on D, M and Y; `gpp_rate_site` and `et_rate_site`
+  are `mean_gpp_py` and `mean_et_py`; `leaf_temp_cohort_fast` goes (its end-of-step value returns as
+  a snapshot). `docs/output_renames.md` maps every variable, the per-site statics (`site_area` is
+  `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) to its old names.
+  - An `io_config` names each variable by its new name, and a variable that had a twin once, with the
+    tiers both lines gave; a line for one of the two now sets them all. `meds_main --dump-io-config`
+    lists every variable.
+  - A script that reads the files by name takes the new names, as the examples, `post_proc`, the fast
+    calibration and `meds.canopy` do.
+  - The restart file is `restart_format = "2"`: a state file this release wrote before the rename does
+    not restart either.
 - **The diagnostic files' totals are mean rates** (#472). Each is a mean over its record's period, so
   one variable has one unit at every tier:
   - `gpp_*`, `npp_*`, `leaf_resp_site`, `stem_resp_site`, `root_resp_site` and `rh_*`: kgC m⁻² per
@@ -294,6 +310,10 @@ carbon and water totals are mean rates, and the solvers' work counters means per
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
   `hydraulics.root_beta`.
+- **Fortran: the output registry** (#473): `add_variable` takes the F tier's source as `fast_source=`
+  beside the D, M and Y tiers' (`SRC_NONE` for none), held as `var_desc_t%source_fast`; `FAST_ONLY` is
+  `FAST`. A variable's F records are the dt-weighted mean of its staged samples whatever its coarse
+  operator.
 - **Fortran: the restart reader** (#471): `read_restart_file` takes the polygon's row as a required
   argument and loses `fast_found`, and `init_polygon` loses `fast_found`: a restart always restores
   the fast reservoirs, and the region keeps them for every restart.
@@ -393,6 +413,12 @@ carbon and water totals are mean rates, and the solvers' work counters means per
   unknown, repeated or missing column, a malformed row or a non-positive value, or a restart file with
   a PFT, site or soil-layer count unlike the run's, stops it with the reason. A forcing file the
   reader cannot read at open is `MET_ERR_FILE`, with the netCDF library's text.
+- **One name per variable, at every tier** (#473). The registry's 294 entries are 244 variables: the 47
+  fast twins (the leaf solve's `gx_*` rows among them, which are the ecophysiology variables on the F
+  tier) merge into their coarse variable through a second source, and the duplicates go. The leaf
+  solve's PAR, canopy-air CO₂, pressure, molar boundary-layer conductance and predawn potential gain
+  the D and M tiers from the daily block. The guard checks each tier against its own source ("has no
+  sub-daily value", "exists only sub-daily"). The polygon scalars' long names say polygon.
 - **Every output value a mean over its period** (#472). `AGG_RATE`, the period's per-step amounts over
   the time they took, replaces the sum; the unused minimum, maximum and flux-integral operators go;
   every flux's `cell_methods` is `time: mean`. A variable's unit factor is applied on every path it is

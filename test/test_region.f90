@@ -328,16 +328,16 @@ program test_region
    call refused('a fast-tier window may not straddle two slow steps',                               &
                 '[output]'//nl()//'fast_interval_steps = 5'//nl()//site_block(1_ik), .false., .false., &
                 'output.fast_interval_steps must divide')
-   !----- An io_config override is held to the FAST guard as the defaults are: a variable         !
-   !      without a FAST-staged source on the F stream, and a FAST-staged one on a coarse tier. ------!
-   call write_text(trim(work)//'/io_f_coarse.toml', '[variables]'//nl()//'anet_cohort = "F D"')
+   !----- An io_config override is held to the tiers' sources as the defaults are: a variable    !
+   !      with no sub-daily value on the F stream, and one that exists only sub-daily on a coarse tier. !
+   call write_text(trim(work)//'/io_f_coarse.toml', '[variables]'//nl()//'mean_anet_co = "F D"')
    call refused('an io_config override may not put a coarse variable on the F stream',            &
                 '[output]'//nl()//'io_config = "'//trim(work)//'/io_f_coarse.toml"'//nl()//          &
-                site_block(1_ik), .false., .false., 'is not a FAST-staged variable')
-   call write_text(trim(work)//'/io_fast_daily.toml', '[variables]'//nl()//'cas_temp_patch_fast = "D"')
+                site_block(1_ik), .false., .false., 'has no sub-daily value')
+   call write_text(trim(work)//'/io_fast_daily.toml', '[variables]'//nl()//'mean_reco_pa = "D"')
    call refused('an io_config override may not put a FAST-staged variable on a coarse tier',      &
                 '[output]'//nl()//'io_config = "'//trim(work)//'/io_fast_daily.toml"'//nl()//        &
-                site_block(1_ik), .false., .false., 'is FAST-staged and can only be on the F stream')
+                site_block(1_ik), .false., .false., 'exists only sub-daily')
    call refused('a cell mask must be on the forcing grid', '[region]'//nl()//'cell_mask = "'//            &
                 trim(work)//'/archive/offgrid.nc"'//nl()//'cell_mask_var = "keep"'//nl()//region_block(),  &
                 .true., .false., 'is not on the forcing grid')
@@ -656,7 +656,7 @@ contains
       ncid = open_nc(path)
       nt = dim_len(ncid, 'time')
       call check_true('a failed month writes every day the other polygons closed', nt == 5_ik)
-      call read_var(ncid, 'cas_temp_site', [nt, NP], x, found)
+      call read_var(ncid, 'mean_cas_temp_py', [nt, NP], x, found)
       call check_true('polygons 1 and 3 hold their five days, polygon 2 its first',                  &
                       found .and. all(x(1:5*NP:NP) < 1.0e30_c_double) .and. all(x(3:5*NP:NP) < 1.0e30_c_double) &
                       .and. x(2) < 1.0e30_c_double)
@@ -823,13 +823,13 @@ contains
       nc = dim_len(ncid, 'cohort') ; np_ = dim_len(ncid, 'patch') ; nsoil = dim_len(ncid, 'soil_layer')
       call read_var(ncid, 'meta_int',         [NP, 11_ik],       meta,   found(1))
       call read_var(ncid, 'global_cohort_id', [NP, nc],          gid,    found(2))
-      call read_var(ncid, 'nplant',           [NP, nc],          nplant, found(3))
-      call read_var(ncid, 'dbh',              [NP, nc],          dbh,    found(4))
-      call read_var(ncid, 'leaf_carbon',      [NP, nc],          leafc,  found(5))
-      call read_var(ncid, 'wood_carbon',      [NP, nc],          woodc,  found(6))
+      call read_var(ncid, 'nplant_co',           [NP, nc],          nplant, found(3))
+      call read_var(ncid, 'dbh_co',              [NP, nc],          dbh,    found(4))
+      call read_var(ncid, 'leaf_carbon_co',      [NP, nc],          leafc,  found(5))
+      call read_var(ncid, 'wood_carbon_co',      [NP, nc],          woodc,  found(6))
       call read_var(ncid, 'global_patch_id',  [NP, np_],         pgid,   found(7))
-      call read_var(ncid, 'patch_area',       [NP, np_],         area,   found(8))
-      call read_var(ncid, 'soil_theta',       [NP, np_, nsoil],  theta,  found(9))
+      call read_var(ncid, 'area_pa',       [NP, np_],         area,   found(8))
+      call read_var(ncid, 'soil_theta_layer_pa',       [NP, np_, nsoil],  theta,  found(9))
       call nc_check(nc_close(ncid), 'close')
       same = all(found)
       if (.not. same) return
@@ -915,10 +915,10 @@ contains
       ncid = open_nc(path)
       nt = dim_len(ncid, 'time')
       call check_true('a run of two sites has a site axis of two', dim_len(ncid, 'site') == 2_ik)
-      call read_var(ncid, 'air_temp_by_site', [nt, 1_ik, 2_ik], t, ft)
-      call read_var(ncid, 'air_temp_site', [nt, 1_ik], tp, ftp)
-      call read_var(ncid, 'psurf_by_site', [nt, 1_ik, 2_ik], p, fp)
-      call read_var(ncid, 'lwdown_by_site', [nt, 1_ik, 2_ik], lw, flw)
+      call read_var(ncid, 'mean_air_temp_si', [nt, 1_ik, 2_ik], t, ft)
+      call read_var(ncid, 'mean_air_temp_py', [nt, 1_ik], tp, ftp)
+      call read_var(ncid, 'mean_psurf_si', [nt, 1_ik, 2_ik], p, fp)
+      call read_var(ncid, 'mean_lwdown_si', [nt, 1_ik, 2_ik], lw, flw)
       call check_true('the flat site at the cell has the polygon''s air temperature exactly',        &
                       ft .and. ftp .and. all(t(1::2) == tp))
       call check_true('the site 500 m up is 3.25 K colder',                                          &
@@ -945,10 +945,10 @@ contains
       call check_true('each polygon has one site', dim_len(ncid, 'site') == 1_ik)
       call read_var(ncid, 'soil_z', [NP, 1_ik, ns], z, fz)
       call read_var(ncid, 'soil_z_bnds', [NP, 1_ik, ns, 2_ik], b, fb)
-      call read_var(ncid, 'site_soil_depth', [NP, 1_ik], depth, fd)
-      call read_var(ncid, 'site_bottom_bc', [NP, 1_ik], bc, fc)
-      call read_var(ncid, 'site_deep_temp', [NP, 1_ik], tdeep, ft)
-      call read_var(ncid, 'site_drain_factor', [NP, 1_ik], drain, fr)
+      call read_var(ncid, 'soil_depth_si', [NP, 1_ik], depth, fd)
+      call read_var(ncid, 'bottom_bc_si', [NP, 1_ik], bc, fc)
+      call read_var(ncid, 'deep_temp_si', [NP, 1_ik], tdeep, ft)
+      call read_var(ncid, 'drain_factor_si', [NP, 1_ik], drain, fr)
       same_z = fz .and. ns == n_soil_layer_max
       edges  = fb .and. fd .and. ns == n_soil_layer_max
       do p = 1_ik, NP
@@ -980,7 +980,7 @@ contains
                       'on an aquifer', fr .and. drain(1) == 0.0_c_double .and.                        &
                       drain(2) == real(f_leak_at(ROW(2), COL(2)), c_double) .and. drain(3) > 1.0e30_c_double)
       call check_true('no chave_e without the Chave height allometry',                               &
-                      nc_inq_varid_f(ncid, 'chave_e', vid) /= NC_NOERR)
+                      nc_inq_varid_f(ncid, 'chave_e_py', vid) /= NC_NOERR)
       call nc_check(nc_close(ncid), 'close')
    end subroutine check_polygon_inputs
 

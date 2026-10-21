@@ -10,44 +10,42 @@
 # Each variable is pinned to one stream: the sub-daily series to "F" (hourly), the patch fields
 # that identify the closed-canopy patch to "D".
 #
-# NOTE ON THE `_fast` SUFFIX. The FAST tier is replayed from per-sub-step samples STAGED inside the
-# fast loop, because sub-daily resolution exists nowhere else -- by the time the coarse tiers run,
-# site state is the end-of-slow-step snapshot. So a sub-daily variable and its daily/monthly
-# namesake are DIFFERENT registry entries: `cas_temp_fast` reads the staging, `cas_temp_site` reads
-# live state. Putting either on the wrong stream is rejected at start-up rather than silently
+# The F tier is replayed from per-sub-step samples STAGED inside the fast loop, because sub-daily
+# resolution exists nowhere else; a variable reads those samples on F and live state on D, M and Y,
+# under one name. A tier a variable has no value on is rejected at start-up rather than silently
 # writing a file full of _FillValue. Run `meds_main --dump-io-config` for the full list.
 
 [variables]
 # --- energy: the air, canopy-air, leaf and soil temperatures -------------------------------------
-air_temp_fast         = "F"   # the forcing's air temperature, at its own height
-cas_temp_fast         = "F"   # canopy-air-space temperature (the prognostic CAS twin)
-leaf_temp_cohort_fast = "F"   # per-cohort leaf temperature
-soil_temp_top_fast    = "F"   # soil top-layer temperature (the model's surface temperature)
+mean_air_temp_py         = "F D"   # the forcing's air temperature, at its own height
+mean_cas_temp_py         = "F D"   # canopy-air-space temperature (the prognostic CAS twin)
+mean_leaf_temp_co        = "F D"   # per-cohort leaf temperature
+mean_soil_temp_top_py    = "F D"   # soil top-layer temperature (the model's surface temperature)
 
 # --- needed to identify WHICH cohort is the tallest, per record ---------------------------------
-height_cohort_fast    = "F"
+mean_height_co           = "F D"
 
 # --- needed to identify WHICH PATCH is the closed-canopy one, and which cohorts are in it -------
 #     The FAST tier is site-mean; these daily patch fields pick the patch.
-lai_patch             = "D"   # patch leaf area index -- the selector
-area_patch            = "D"   # patch area fraction
-cohort_offset         = "D"   # first global cohort slot of each patch
-cohort_count          = "D"   # number of cohorts in each patch
+mean_lai_pa              = "D"     # patch leaf area index -- the selector
+area_pa                  = "D"     # patch area fraction
+cohort_offset            = "D"     # first global cohort slot of each patch
+cohort_count             = "D"     # number of cohorts in each patch
 
 # --- the radiation and turbulent fluxes, the context for sanity-checking the run -----------------
-sw_in_fast            = "F"   # incoming shortwave -- the diurnal driver
-rnet_fast             = "F"   # net radiation at the surface
-le_flux_fast          = "F"   # latent heat flux
-h_flux_fast           = "F"   # sensible heat flux
+mean_sw_in_py            = "F D"   # incoming shortwave -- the diurnal driver
+mean_rnet_py             = "F D"   # net radiation at the surface
+mean_le_py               = "F D"   # latent heat flux
+mean_h_py                = "F D"   # sensible heat flux
 
 # --- carbon: the site fluxes and the canopy-air CO2 they act on ---------------------------------
-gpp_rate_fast         = "F"   # gross primary productivity
-npp_rate_fast         = "F"   # GPP net of autotrophic MAINTENANCE respiration
-reco_fast             = "F"   # ecosystem respiration (autotrophic + heterotrophic)
-nee_fast              = "F"   # net ecosystem exchange, positive to the atmosphere
-cas_co2_fast          = "F"   # canopy-air CO2 -- the state the two fluxes above act on
-atm_co2_fast          = "F"   # the FORCING's free-atmosphere CO2, beside the canopy-air CO2
+mean_gpp_py              = "F D"   # gross primary productivity
+mean_npp_py              = "F D"   # GPP net of autotrophic MAINTENANCE respiration
+mean_reco_py             = "F"     # ecosystem respiration (autotrophic + heterotrophic)
+mean_nee_py              = "F D"   # net ecosystem exchange, positive to the atmosphere
+mean_cas_co2_py          = "F D"   # canopy-air CO2 -- the state the two fluxes above act on
+mean_atm_co2_py          = "F D"   # the FORCING's free-atmosphere CO2, beside the canopy-air CO2
 
 # --- soil: the full area-weighted profiles at hourly resolution ---------------------------------
-soil_water_site_fast  = "F"   # volumetric soil moisture, all layers
-soil_temp_site_fast   = "F"   # soil temperature profile
+mean_soil_water_layer_si = "F D"   # volumetric soil moisture, all layers
+mean_soil_temp_layer_si  = "F D"   # soil temperature profile

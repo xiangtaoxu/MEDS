@@ -13,8 +13,11 @@ outside the model computes what the fast loop computes:
     r = c.radiation(cosz, vis_beam, vis_diff, nir_beam, nir_diff,
                     pft, height, lai, wai)              # one patch, many hours
 
-The leaf drivers are those the model reports per cohort as the `gx_*_cohort_fast` outputs; the
-stand's geometry is its restart state plus the `wai_cohort` output.
+The leaf drivers are those the model's leaf solve uses, which it reports per cohort on the fast
+tier: `mean_leaf_par_co`, `mean_leaf_temp_co`, `mean_leaf_vpd_co`, `mean_ca_co`, `mean_pressure_co`,
+`mean_psi_leaf_co`, `mean_gb_mol_co` and `mean_psi_predawn_co` (with `[output].fast_interval_steps
+= 1`, each record is one sub-step's solve); the stand's geometry is its restart state plus the
+`mean_wai_co` output.
 
 The library holds ONE configuration at a time. A Canopy reads its configuration's files when it is
 made, and again before a call when another Canopy has been opened since, so several can be used in

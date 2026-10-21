@@ -120,7 +120,7 @@ contains
             !----- Whole-dt_fast rollback, not a resume from the point of failure. A resume would        !
             !      save redoing the sub-steps RK45 had already accepted, but there is no work to save on !
             !      the reference workload: over a full simulated year at Ithaca on rk45 at dt_fast =     !
-            !      900 s the rescue fires ZERO times (work_rk45_rescue_site = 0, against 70 577          !
+            !      900 s the rescue fires ZERO times (mean_work_rk45_rescue_py = 0, against 70 577          !
             !      integrator sub-steps on the same run, so the counter is live and the zero is real).   !
             !                                                                                            !
             !      A resume is also not free. Retaining part of RK45's boundary-flux accumulation while  !

@@ -37,8 +37,8 @@ from meds.config import RunConfig, read_record
 from workers import Task
 
 #: the fast variables a trial writes: every target's model side (targets.py)
-TRIAL_VARIABLES = ("sw_in_fast", "sw_up_fast", "lw_up_fast", "rnet_fast", "le_flux_fast",
-                   "h_flux_fast", "gpp_rate_fast", "nee_fast", "ustar_fast")
+TRIAL_VARIABLES = ("mean_sw_in_py", "mean_sw_up_py", "mean_lw_up_py", "mean_rnet_py", "mean_le_py",
+                   "mean_h_py", "mean_gpp_py", "mean_nee_py", "mean_ustar_py")
 PREFIX = "t"
 #: the runner that runs a config through the Python API instead of an executable
 PYTHON_RUNNER = "python"

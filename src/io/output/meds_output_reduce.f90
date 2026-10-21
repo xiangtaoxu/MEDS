@@ -400,7 +400,7 @@ contains
    !----- 1-based DBH class of a dbh (docs/science/diagnostics.md §3). Over n_class+1 ascending !
    !      edges, bin k is [edges(k), edges(k+1)); the last bin also takes every dbh above its  !
    !      top edge, and a dbh below edges(1) falls in bin 1, so no plant is dropped and        !
-   !      sum(nplant_size) == nplant_site holds. ----------------------------------------------!
+   !      sum(mean_nplant_size_py) == mean_nplant_py holds. ----------------------------------------------!
    pure integer(ik) function dbh_class_index(dbh, edges, n_class) result(k)
       real(wp),    intent(in) :: dbh
       real(wp),    intent(in) :: edges(:)   !< (n_class+1) ascending

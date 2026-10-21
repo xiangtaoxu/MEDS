@@ -225,10 +225,10 @@ Each is a mean per fast step over the record's period.
 
 | Output | Counts |
 |---|---|
-| `work_water_nsub_site` | accepted sub-steps |
-| `work_water_newton_site` | Newton iterations |
-| `work_water_reject_site` | sub-steps rejected and retried shorter |
-| `work_water_nfail_site` | sub-steps taken at the shortest length although unconverged or over tolerance |
+| `mean_work_water_nsub_py` | accepted sub-steps |
+| `mean_work_water_newton_py` | Newton iterations |
+| `mean_work_water_reject_py` | sub-steps rejected and retried shorter |
+| `mean_work_water_nfail_py` | sub-steps taken at the shortest length although unconverged or over tolerance |
 
 ## Code map
 

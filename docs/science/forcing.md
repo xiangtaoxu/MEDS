@@ -388,7 +388,7 @@ temperature its enthalpy is valued at. It is a linear ramp across a 1 K half-wid
 triple point (ED2's Jin 1999 form, simplified), mass-conserving by construction, on the *interpolated*
 sub-step temperature rather than the record value — so the phase follows the diurnal cycle within an
 interval straddling freezing. The forcing outputs report the split the patches received, area-weighted
-(`rainf_fast`, `snowfall_fast`, `snowfall_site`), beside the total (`precip_fast`, `precip_site`).
+(`mean_rainf_py`, `mean_snowfall_py`, `mean_snowfall_py`), beside the total (`mean_precip_py`, `mean_precip_py`).
 
 ```math
 f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qquad
@@ -518,10 +518,10 @@ canopy-air top, and its temperature 0.11 K warmer.
 difference, about ±1 K between day and night. Correcting it needs fluxes ERA5-Land does not carry, and its
 2 m value describes a clearing, so inverting similarity theory from it would add error.
 
-**In the output**, the polygon's forcing echo (`air_temp_site`, `wind_site`, …) is the forcing after the
-terrain lapse, at its own heights; each patch's forcing is `wind_cas_top_patch` and
-`air_temp_cas_top_patch`, with the inputs that produced it — `cas_depth_patch` ($`z_c`$), `rough_patch`
-and `displace_patch`.
+**In the output**, the polygon's forcing echo (`mean_air_temp_py`, `mean_wind_py`, …) is the forcing after the
+terrain lapse, at its own heights; each patch's forcing is `mean_wind_cas_top_pa` and
+`mean_air_temp_cas_top_pa`, with the inputs that produced it — `mean_cas_depth_pa` ($`z_c`$), `mean_rough_pa`
+and `mean_displace_pa`.
 
 **What it changes** (Ithaca): moving the forcing to the canopy-air top raises the friction
 velocity by 33 % over an established stand in the annual mean and by 21 % over regrowth in July; the

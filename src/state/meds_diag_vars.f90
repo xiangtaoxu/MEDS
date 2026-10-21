@@ -239,7 +239,7 @@ module meds_diag_vars
    integer(ik), parameter, public :: PA_LITTER_LEAF       = 33_ik  !< [kgC/m2/yr] leaf litterfall (after resorption)
    integer(ik), parameter, public :: PA_LITTER_FINEROOT   = 34_ik  !< [kgC/m2/yr] fine-root litter (after resorption)
    !----- Litter by the tissue it came from, completing PA_LITTER_LEAF / PA_LITTER_FINEROOT:     !
-   !      with root_exudate_site they sum to the carbon entering the soil pools                  !
+   !      with mean_root_exudate_py they sum to the carbon entering the soil pools                  !
    !      (docs/science/soil_carbon.md §5). -----------------------------------------------------!
    integer(ik), parameter, public :: PA_LITTER_WOOD       = 35_ik  !< [kgC/m2/yr] wood + storage of dead plants
    integer(ik), parameter, public :: PA_LITTER_REPRO      = 36_ik  !< [kgC/m2/yr] fruit and seed that made no recruit

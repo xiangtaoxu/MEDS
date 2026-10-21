@@ -396,7 +396,7 @@ contains
          !      through an empirical Q10 form would not be a coarser approximation of the CENTURY      !
          !      path -- it would be carbon created from nothing: the seven pools are identically zero  !
          !      and receive no litter when the feature is off, so nothing would be debited for the     !
-         !      CO2 leaving the column, and `rh_site`, which reads the CENTURY matrix, would report 0. !
+         !      CO2 leaving the column, and `mean_rh_py`, which reads the CENTURY matrix, would report 0. !
          !      Turn [soil_carbon].soil_carbon_on on to model soil respiration. -----------------------!
          rh = 0.0_wp
       end if

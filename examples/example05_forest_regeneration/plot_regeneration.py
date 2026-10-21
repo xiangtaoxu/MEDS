@@ -50,12 +50,12 @@ def read(path):
             return x.take(0, axis=dims.index("polygon")) if "polygon" in dims else x
         lower = v("dbh_lower")
         yr = year_seconds(v("year"))                                    # a mean rate times this: per year
-        return {"year": v("year"), "agb": v("agb_pft") * 10.0,                 # kgC/m2 -> MgC/ha
-                "ba": v("basal_area_pft") * 1e4, "lai": v("lai_pft"),          # m2/m2 -> m2/ha
-                "gpp": v("gpp_site") * UMOL_TO_KGC * yr * 10.0,                # umol/m2/s -> MgC/ha/yr
-                "npp": v("npp_site") * UMOL_TO_KGC * yr * 10.0, "rh": v("rh_site") * UMOL_TO_KGC * yr * 10.0,
-                "et": v("et_site") * yr,                                       # kg/m2/s -> mm/yr
-                "stems10": v("nplant_size")[:, lower >= 10.0].sum(axis=1) * 1e4}
+        return {"year": v("year"), "agb": v("mean_agb_pft_py") * 10.0,                 # kgC/m2 -> MgC/ha
+                "ba": v("mean_basal_area_pft_py") * 1e4, "lai": v("mean_lai_pft_py"),          # m2/m2 -> m2/ha
+                "gpp": v("mean_gpp_py") * UMOL_TO_KGC * yr * 10.0,                # umol/m2/s -> MgC/ha/yr
+                "npp": v("mean_npp_py") * UMOL_TO_KGC * yr * 10.0, "rh": v("mean_rh_py") * UMOL_TO_KGC * yr * 10.0,
+                "et": v("mean_et_py") * yr,                                       # kg/m2/s -> mm/yr
+                "stems10": v("mean_nplant_size_py")[:, lower >= 10.0].sum(axis=1) * 1e4}
 
 
 def census():

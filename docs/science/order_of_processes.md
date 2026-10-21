@@ -283,6 +283,10 @@ every file an older MEDS wrote is, is refused with the reason. One adaptation re
 growth window (`[demography].growth_memory_days`, [allocation](plant_carbon_allocation.md)) is
 another length than its file's fills the ring buffer with the saved `growth_avg`.
 
+Its variables are named by level as the diagnostic files' are ([diagnostics](diagnostics.md) §3):
+`leaf_carbon_co`, `area_pa`, `soil_theta_layer_pa`, `t_growth_avg_si`, … Each is the state at the
+file's instant, so none carries `mean_`.
+
 ---
 
 ## 7. Code map

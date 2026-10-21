@@ -77,9 +77,9 @@ program test_output_roundtrip
    call rebuild_patch_map(poly)
 
    !----- Constant carbon + soil sources (fast loop is off in this unit test, so set them here    !
-   !      via opaque setters, as the fast loop would). gpp_accum=2 kgC/m2 a day -> daily gpp_site,  !
+   !      via opaque setters, as the fast loop would). gpp_accum=2 kgC/m2 a day -> daily mean_gpp_py,  !
    !      its mean rate, 2 kgC/m2/day in umol/m2/s;                                                 !
-   !      soil_temp=290 -> daily AGG_TMEAN soil_temp_site=290 per layer.                            !
+   !      soil_temp=290 -> daily AGG_TMEAN mean_soil_temp_layer_si=290 per layer.                            !
    call set_site_gpp(poly, 2.0_wp)
    call set_site_soil_temp(poly, 290.0_wp)
 
@@ -143,7 +143,7 @@ contains
       c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false., .false.]
    end function build_cfg
 
-   !----- Daily file: 3 records, agb_site = [10,20,30], n_cohort=1, agb_cohort slab = [10,20,30], !
+   !----- Daily file: 3 records, mean_agb_py = [10,20,30], n_cohort=1, mean_agb_co slab = [10,20,30], !
    !      each behind the file's one polygon. ---------------------------------------------------!
    subroutine check_daily(path)
       character(len=*), intent(in) :: path
@@ -154,12 +154,12 @@ contains
       call nc_check(nc_open_f(trim(path), NC_NOWRITE, ncid), 'open daily')
       call nc_check(nc_inq_dimlen_f(ncid, 'time', nt), 'daily time len')
       call check(int(nt, ik) == 3_ik, 'daily has 3 records')
-      call nc_check(nc_inq_varid_f(ncid, 'agb_site', vid), 'daily agb_site id')
+      call nc_check(nc_inq_varid_f(ncid, 'mean_agb_py', vid), 'daily mean_agb_py id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], agbs), &
-                    'get agb_site')
-      call check_close(real(agbs(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_site day1')
-      call check_close(real(agbs(2), wp), 20.0_wp, 1.0e-9_wp, 'daily agb_site day2')
-      call check_close(real(agbs(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_site day3')
+                    'get mean_agb_py')
+      call check_close(real(agbs(1), wp), 10.0_wp, 1.0e-9_wp, 'daily mean_agb_py day1')
+      call check_close(real(agbs(2), wp), 20.0_wp, 1.0e-9_wp, 'daily mean_agb_py day2')
+      call check_close(real(agbs(3), wp), 30.0_wp, 1.0e-9_wp, 'daily mean_agb_py day3')
       !----- Each record is stamped with the day its step started: the step from 1 to 2            !
       !      January is the 1 January record, not the 2 January one. ------------------------------!
       call nc_check(nc_inq_varid_f(ncid, 'day', vid), 'daily day id')
@@ -169,22 +169,22 @@ contains
       call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], ncoh), &
                     'get n_cohort')
       call check(all(ncoh == 1_c_int), 'daily n_cohort == 1')
-      call nc_check(nc_inq_varid_f(ncid, 'agb_cohort', vid), 'daily agb_cohort id')
+      call nc_check(nc_inq_varid_f(ncid, 'mean_agb_co', vid), 'daily mean_agb_co id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t],               &
-                    [3_c_size_t, 1_c_size_t, 1_c_size_t], agbc), 'get agb_cohort')
-      call check_close(real(agbc(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_cohort day1 slot1')
-      call check_close(real(agbc(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_cohort day3 slot1')
-      !----- Carbon: gpp_site, 2 kgC/m2 a day as its mean rate [umol/m2/s]. -----!
-      call nc_check(nc_inq_varid_f(ncid, 'gpp_site', vid), 'daily gpp_site id')
+                    [3_c_size_t, 1_c_size_t, 1_c_size_t], agbc), 'get mean_agb_co')
+      call check_close(real(agbc(1), wp), 10.0_wp, 1.0e-9_wp, 'daily mean_agb_co day1 slot1')
+      call check_close(real(agbc(3), wp), 30.0_wp, 1.0e-9_wp, 'daily mean_agb_co day3 slot1')
+      !----- Carbon: mean_gpp_py, 2 kgC/m2 a day as its mean rate [umol/m2/s]. -----!
+      call nc_check(nc_inq_varid_f(ncid, 'mean_gpp_py', vid), 'daily mean_gpp_py id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], gpp), &
-                    'get gpp_site')
+                    'get mean_gpp_py')
       call check_close(real(gpp(2), wp), 2.0_wp * kgc_2_umol / day_sec, 1.0e-9_wp,                   &
-                       'daily gpp_site = 2 kgC/m2/day as umol/m2/s')
-      !----- Soil (DIM_SOIL): soil_temp_site(time, polygon, site, soil) AGG_TMEAN = 290 K per layer. -!
-      call nc_check(nc_inq_varid_f(ncid, 'soil_temp_site', vid), 'daily soil_temp_site id')
+                       'daily mean_gpp_py = 2 kgC/m2/day as umol/m2/s')
+      !----- Soil (DIM_SOIL): mean_soil_temp_layer_si(time, polygon, site, soil) AGG_TMEAN = 290 K per layer. -!
+      call nc_check(nc_inq_varid_f(ncid, 'mean_soil_temp_layer_si', vid), 'daily mean_soil_temp_layer_si id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t, 0_c_size_t],   &
                     [3_c_size_t, 1_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_temp')
-      call check_close(real(soilt(1), wp), 290.0_wp, 1.0e-9_wp, 'daily soil_temp_site layer1 = 290')
+      call check_close(real(soilt(1), wp), 290.0_wp, 1.0e-9_wp, 'daily mean_soil_temp_layer_si layer1 = 290')
 
       !----- ...and the INACTIVE tail is fill, not data. The source array is 290 K in every       !
       !      slot including the padding, so if the writer emitted the full ceiling this would read  !
@@ -193,7 +193,7 @@ contains
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t, int(N_ACTIVE, c_size_t)], &
                     [1_c_size_t, 1_c_size_t, 1_c_size_t, 1_c_size_t], soilt), 'get soil_temp padding')
       call check_close(real(soilt(1), wp), MISSING_VALUE, 1.0e-9_wp,                              &
-                       'soil_temp_site padding slot is _FillValue, not data')
+                       'mean_soil_temp_layer_si padding slot is _FillValue, not data')
 
       !----- The coordinate must describe the same number of layers. A soil_z running on past the  !
       !      active column with 0.0 m node depths reads as extra layers at the surface.  -----------!
@@ -205,7 +205,7 @@ contains
       call nc_check(nc_close(ncid), 'close daily')
    end subroutine check_daily
 
-   !----- Annual file: 1 record, site-level ONLY (no cohort dim), agb_site = mean(10,20,30)=20. --!
+   !----- Annual file: 1 record, site-level ONLY (no cohort dim), mean_agb_py = mean(10,20,30)=20. --!
    subroutine check_annual(path)
       character(len=*), intent(in) :: path
       integer(c_int)    :: ncid, vid, st
@@ -214,13 +214,13 @@ contains
       call nc_check(nc_open_f(trim(path), NC_NOWRITE, ncid), 'open annual')
       call nc_check(nc_inq_dimlen_f(ncid, 'time', nt), 'annual time len')
       call check(int(nt, ik) == 1_ik, 'annual has 1 record')
-      call nc_check(nc_inq_varid_f(ncid, 'agb_site', vid), 'annual agb_site id')
+      call nc_check(nc_inq_varid_f(ncid, 'mean_agb_py', vid), 'annual mean_agb_py id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [1_c_size_t, 1_c_size_t], agbs), &
-                    'get annual agb_site')
-      call check_close(real(agbs(1), wp), 20.0_wp, 1.0e-9_wp, 'annual agb_site = mean(10,20,30)')
-      !----- annual is site-level only: agb_cohort must NOT exist. -----!
-      st = nc_inq_varid_f(ncid, 'agb_cohort', vid)
-      call check(st /= NC_NOERR, 'annual has NO agb_cohort (site-level only)')
+                    'get annual mean_agb_py')
+      call check_close(real(agbs(1), wp), 20.0_wp, 1.0e-9_wp, 'annual mean_agb_py = mean(10,20,30)')
+      !----- annual is site-level only: mean_agb_co must NOT exist. -----!
+      st = nc_inq_varid_f(ncid, 'mean_agb_co', vid)
+      call check(st /= NC_NOERR, 'annual has NO mean_agb_co (site-level only)')
       call nc_check(nc_close(ncid), 'close annual')
    end subroutine check_annual
 

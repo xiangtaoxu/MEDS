@@ -354,6 +354,7 @@ contains
             do j = 1_ik, files%reg%nidx(t)
                k   = files%reg%idx_freq(j, t)
                src = files%reg%var(k)%source_id
+               if (t == TIER_FAST) src = files%reg%var(k)%source_fast
                if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) need_c = .true.
                if (src > SRC_F_CO0 .and. src <= SRC_F_CO0 + N_CO_FAST_ROWS) need_c = .true.
                if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) need_p = .true.
