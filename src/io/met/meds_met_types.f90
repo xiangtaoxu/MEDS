@@ -11,7 +11,7 @@
 module meds_met_types
    use meds_kinds,          only : wp, sp, ik
    use meds_time,           only : meds_time_t
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_CONST, MET_PATH_LEN
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_PATH_LEN
    implicit none
    private
 
@@ -43,8 +43,9 @@ module meds_met_types
    !==========================================================================================!
    !  met_forcing_t -- the instantaneous atmospheric state the fast loop reads: a polygon's       !
    !  sample, or a site's or a patch's after the vertical moves (docs/science/forcing.md §8).     !
-   !  Plain scalars, so it copies cheaply. The defaults are the CONST backend's reference climate  !
-   !  (the four streams sum to 400 W/m2, fast_context_t%rad_sw_top's default).                    !
+   !  Plain scalars, so it copies cheaply. The defaults are a reference climate: a run without    !
+   !  forcing keeps those the fast loop's reference_met does not set (the four streams sum to     !
+   !  400 W/m2, fast_context_t%rad_sw_top's default).                                             !
    !==========================================================================================!
    type :: met_forcing_t
       real(wp) :: tair_k       = 288.0_wp     !< [K]        air temperature at reference height
@@ -139,7 +140,7 @@ module meds_met_types
    !==========================================================================================!
    type :: met_source_t
       type(forcing_config_t)  :: fcfg                       !< [forcing]/[site] config
-      integer(ik) :: backend    = MET_BACKEND_CONST         !< ED_DEFAULT | ED_ERA5LAND | CONST
+      integer(ik) :: backend    = MET_BACKEND_ED_DEFAULT    !< MET_BACKEND_*: ED_DEFAULT | ED_ERA5LAND
       integer(ik) :: humidity   = HUMIDITY_TDEW             !< the humidity the source carries (HUMIDITY_*)
       integer(ik) :: ncid       = -1_ik                     !< NetCDF handle (via meds_netcdf_c), -1 if closed
       integer(ik) :: grid_index = 1_ik                      !< MEDS forcing file: the location (1..ngrid) read
@@ -185,10 +186,10 @@ module meds_met_types
    !==========================================================================================!
    type :: met_cursor_t
       integer(ik) :: cell = 1_ik                            !< this polygon's cell in the source (1 for a site run)
-      real(wp)    :: latitude_deg     = 42.44_wp            !< [deg +N] solar geometry
-      real(wp)    :: longitude_deg    = -76.50_wp           !< [deg +E] local solar time from the UTC clock
-      real(wp)    :: elevation_m      = 320.0_wp            !< [m] the polygon's elevation (lapse target)
-      real(wp)    :: grid_elevation_m = 320.0_wp            !< [m] forcing-cell elevation (lapse origin)
+      real(wp)    :: latitude_deg     = 0.0_wp              !< [deg +N] solar geometry
+      real(wp)    :: longitude_deg    = 0.0_wp              !< [deg +E] local solar time from the UTC clock
+      real(wp)    :: elevation_m      = 0.0_wp              !< [m] the polygon's elevation (lapse target)
+      real(wp)    :: grid_elevation_m = 0.0_wp              !< [m] forcing-cell elevation (lapse origin)
       integer(ik) :: irec_prev  = 0_ik                      !< cursor: index of the "previous" bracketing record
       type(met_record_t) :: rec_prev, rec_next              !< the two records bracketing the model time
       logical     :: at_wrap_seam    = .false.              !< current bracket is the cycle-boundary seam (last -> first)

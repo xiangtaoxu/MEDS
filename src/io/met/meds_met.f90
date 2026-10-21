@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_met -- the meteorological-forcing reader (docs/science/forcing.md §1-§3, §10-§12).   !
-! met_open opens a MEDS forcing file, the ED_ERA5land archive or the no-file CONST backend into the !
+! met_open opens a MEDS forcing file or the ED_ERA5land archive into the                            !
 ! met_source_t a run shares; met_cursor_init binds a polygon's met_cursor_t to it; met_prefetch     !
 ! loads what a step reads; met_advance and met_instant step and sample a cursor with no file        !
 ! access. read_record is the one ingest for both file sources (meds_met_default,                !
@@ -14,7 +14,7 @@ module meds_met
    use meds_kinds, only : wp, ik
    use meds_therm_lib, only : air_density
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,   &
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT,                      &
                                    MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN, METAVG_CENTER, &
                                    SWPART_PASSTHROUGH, CLAMP_ERROR, INTERP_LINEAR,                &
                                    LW_SYNTHESIZE, CO2_SOURCE_FILE
@@ -45,7 +45,7 @@ module meds_met
 contains
 
    !=======================================================================================!
-   !  OPEN: the CO2, then the backend: CONST (the reference climate), a MEDS forcing file     !
+   !  OPEN: the CO2, then the source: a MEDS forcing file                                     !
    !  (default_file_open) or the archive (era5land_open). A rejection prints the reader's    !
    !  reason, then returns its code with `stat` present, so the tests can exercise it, and    !
    !  stops the run without.                                                                 !
@@ -73,9 +73,6 @@ contains
       call open_co2(src, run_start, run_end, vstat, why)
       if (vstat == MET_OK) then
          select case (fcfg%format)
-         case (MET_BACKEND_CONST)                                  ! the reference climate: no file
-            src%ngrid = 1_ik
-            src%nrec = 0_ik
          case (MET_BACKEND_ED_ERA5LAND)
             call era5land_open(src, vstat, why, run_start, run_end, cells)
          case default                                              ! MET_BACKEND_ED_DEFAULT
@@ -144,11 +141,6 @@ contains
       cur%elevation_m  = elevation_m
       cur%grid_elevation_m = src%fcfg%grid_elevation
       if (src%backend == MET_BACKEND_ED_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
-      if (src%backend == MET_BACKEND_CONST) then
-         cur%rec_prev = met_record_t()
-         cur%rec_next = met_record_t()
-         return
-      end if
       call load_bracket(src, cur, src%rec_first)
    end subroutine met_cursor_init
 
@@ -173,8 +165,6 @@ contains
       type(meds_time_t),  intent(in)    :: now
       real(wp)    :: now_sec
       integer(ik) :: i
-
-      if (src%backend == MET_BACKEND_CONST) return
 
       !----- The same recycle-mapped seconds on the file axis that met_instant uses. ----------!
       now_sec = file_lookup_sec(src, now)
@@ -283,54 +273,51 @@ contains
          met%co2 = f%co2_const
       end if
 
-      !----- CONST keeps the type's defaults; a file backend interpolates its bracket. ----------!
-      if (src%backend /= MET_BACKEND_CONST) then
-         !----- The weight within the bracket, on the same recycle-mapped seconds as met_advance. -!
-         now_sec = file_lookup_sec(src, now)
-         if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
-            tprev = src%time_sec(src%irec_cycle_last)
-            tnext = tprev + src%dt_forcing
-         else
-            tprev = src%time_sec(cur%irec_prev)
-            tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
-         end if
-         if (tnext > tprev) then
-            w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
-         else
-            w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
-         end if
-
-         !----- States linear; wind in energy form (docs/science/forcing.md eq. (1)). ----------!
-         met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
-         met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
-         met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
-         met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
-         met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next)   ! floored at aerodynamics.ubmin where used
-         !----- The vector interpolates linearly, which keeps its direction; never floored. --------!
-         if (src%has_wind_vector) then
-            met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
-            met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
-            met%has_wind_vector = .true.
-         end if
-
-         !----- Rain and shortwave both come from the record whose interval contains `now`. -----!
-         mean_rec = interval_mean_record(src, cur)
-
-         !----- Precipitation: the interval's total rate, held across it; each patch splits it. -!
-         met%precip = mean_rec%rainf
-
-         !----- Shortwave: each mean stream times cosz(now)/<cosz>_win (docs/science/forcing.md      !
-         !      eq. (5)), the window anchored on the model calendar (mws), so both see the same sun. !
-         mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
-         win_start_sec = seconds_into_day(mws)
-         factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
-                                          (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
-                                          cur%latitude_deg, cur%longitude_deg)
-         met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
-         met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
-         met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
-         met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
+      !----- The weight within the bracket, on the same recycle-mapped seconds as met_advance. -!
+      now_sec = file_lookup_sec(src, now)
+      if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
+         tprev = src%time_sec(src%irec_cycle_last)
+         tnext = tprev + src%dt_forcing
+      else
+         tprev = src%time_sec(cur%irec_prev)
+         tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
       end if
+      if (tnext > tprev) then
+         w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
+      else
+         w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
+      end if
+
+      !----- States linear; wind in energy form (docs/science/forcing.md eq. (1)). ----------!
+      met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
+      met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
+      met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
+      met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
+      met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next)   ! floored at aerodynamics.ubmin where used
+      !----- The vector interpolates linearly, which keeps its direction; never floored. --------!
+      if (src%has_wind_vector) then
+         met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
+         met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
+         met%has_wind_vector = .true.
+      end if
+
+      !----- Rain and shortwave both come from the record whose interval contains `now`. -----!
+      mean_rec = interval_mean_record(src, cur)
+
+      !----- Precipitation: the interval's total rate, held across it; each patch splits it. -!
+      met%precip = mean_rec%rainf
+
+      !----- Shortwave: each mean stream times cosz(now)/<cosz>_win (docs/science/forcing.md      !
+      !      eq. (5)), the window anchored on the model calendar (mws), so both see the same sun. !
+      mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
+      win_start_sec = seconds_into_day(mws)
+      factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
+                                       (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
+                                       cur%latitude_deg, cur%longitude_deg)
+      met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
+      met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
+      met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
+      met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
 
       !----- The longwave synthesis (docs/science/forcing.md §11), after the shortwave: this      !
       !      instant's clearness index by day, the remembered one after dark. ----------------------!

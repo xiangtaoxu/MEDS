@@ -49,7 +49,7 @@ demography or state layer — so a prescribed driver stays low in the library gr
   (dewpoint, relative humidity or specific humidity, exactly one) becomes specific humidity through
   the model's own saturation curve, and the wind components become the speed, at each stamp;
   shortwave is partitioned at ingest. Rain and shortwave come from the record whose interval
-  contains the instant. Also the no-file constant-climate backend (`format = "const"`).
+  contains the instant.
 - **`meds_met_co2`** — the prescribed CO₂: reads a MEDS CO₂ file (format 1, a plain-text
   list of period means at a declared `timestep`) and looks it up at a model instant, linear between
   period middles. `met_open` reads it once and `met_instant` sets `met%co2` from it, or from

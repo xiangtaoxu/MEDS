@@ -25,11 +25,9 @@ module meds_config_io
    use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
    use meds_forcing_params, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
-   use meds_forcing_params, only : forcing_config_t,                                            &
-                                   MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, &
-                                   METAVG_END, METAVG_BEGIN,                                     &
-                                   SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
-                                   LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
+                                   METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH, SWPART_CLEARIDX,                 &
+                                   SWPART_WEISS_NORMAN, LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,          &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_output_params, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
                                  GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_FORCING,        &
@@ -469,8 +467,8 @@ contains
       cfg%forcing = forcing_config_t()                                  ! Ithaca/ERA5-Land defaults
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! off by default
       if (.not. cfg%forcing%forcing_on) return
-      call req_choice(t, 'forcing.format', [character(len=NAME_LEN) :: 'ED_default', 'ED_ERA5land', 'const'],    &
-                      [MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, MET_BACKEND_CONST], cfg%forcing%format, m)
+      call req_choice(t, 'forcing.format', [character(len=NAME_LEN) :: 'ED_default', 'ED_ERA5land'],             &
+                      [MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND], cfg%forcing%format, m)
       !----- The archive (format = "ED_ERA5land"; docs/science/forcing.md §1) finds the site's cell  !
       !      and its orography itself; a forcing file is named, with its grid slot. -----------------!
       if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
