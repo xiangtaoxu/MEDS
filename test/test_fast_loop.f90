@@ -28,7 +28,8 @@ program test_fast_loop
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds
-   use meds_forcing_params,      only : MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX, METAVG_END
+   use meds_forcing_params,      only : MET_BACKEND_ED_DEFAULT, METAVG_END
+   use meds_radiation_lib,       only : SWPART_CLEARIDX
    use meds_met_types,       only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t

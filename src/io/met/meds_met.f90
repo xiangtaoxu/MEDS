@@ -1,10 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met -- the meteorological-forcing reader (docs/science/forcing.md §1-§3, §10-§12).   !
+! meds_met -- the meteorological-forcing reader (docs/science/forcing.md §1-§3, §8, §10-§12).   !
 ! met_open opens a MEDS forcing file or the ED_ERA5land archive into the                            !
 ! met_source_t a run shares; met_cursor_init binds a polygon's met_cursor_t to it; met_prefetch     !
 ! loads what a step reads; met_advance and met_instant step and sample a cursor with no file        !
-! access. read_record is the one ingest for both file sources (meds_met_default,                !
+! access; met_at_site moves a sample to a site and met_to_cas_top to a patch's canopy-air top.      !
+! read_record is the one ingest for both file sources (meds_met_default,                !
 ! meds_met_era5land): it checks, converts, lapses and partitions a record, and a missing      !
 ! value stops the run. CO2 comes from [forcing].co2_source on model time, never from the met file.  !
 !==========================================================================================!
@@ -12,23 +13,20 @@ module meds_met
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
-   use meds_therm_lib, only : air_density
-   use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT,                      &
-                                   MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN, METAVG_CENTER, &
-                                   SWPART_PASSTHROUGH, CLAMP_ERROR, INTERP_LINEAR,                &
-                                   LW_SYNTHESIZE, CO2_SOURCE_FILE
+   use meds_numerics, only : linear_interpolate
+   use meds_therm_lib, only : air_density, lapse_air_temperature, lapse_pressure, lapse_specific_humidity,        &
+                              dry_adiabat_temperature, sat_specific_humidity, rh_to_specific_humidity
+   use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string, solar_cosz_utc,     &
+                         mean_solar_cosz
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
+                                   METAVG_END, METAVG_BEGIN, METAVG_CENTER, CLAMP_ERROR, LW_SYNTHESIZE,           &
+                                   CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_OPEN_TERRAIN
+   use meds_radiation_lib,  only : COSZ_MIN, SWPART_PASSTHROUGH, lapse_longwave, partition_shortwave, clearness_index,      &
+                                   synthesize_lwdown
    use meds_met_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
                                   met_cells_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, MEDS_FIELD
-   use meds_lapse_rate, only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,         &
-                               lapse_specific_humidity, lapse_longwave
    use meds_met_co2, only : co2_series_read, co2_series_at, co2_series_covers,                 &
                                co2_series_end, co2_series_free
-   use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,                 &
-                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,     &
-                                    partition_shortwave, clearness_index,                         &
-                                    synthesize_lwdown, dewpoint_to_specific_humidity,             &
-                                    rh_to_specific_humidity
    use meds_netcdf_c, only : nc_close, nc_check
    use meds_met_share, only : MET_OK, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, file_lookup_sec,    &
                               humidity_field, add_line
@@ -39,8 +37,11 @@ module meds_met
    private
 
    public :: met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
+   public :: met_at_site, met_to_cas_top, cas_top_wind_factor
+   public :: cosz_reconstruct_factor, disaggregate_sw
 
-   integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
+   integer(ik), parameter :: N_COSZ_SUB   = 10_ik      !< sub-samples per forcing interval for <cosz>_win
+   real(wp),    parameter :: COSZ_BAR_MIN = 1.0e-3_wp  !< [-] window-mean-cosz floor for a valid reconstruction
 
 contains
 
@@ -226,7 +227,7 @@ contains
       real(wp) :: cosz_now, sw_total, kt
       type(met_record_t) :: r
       r = interval_mean_record(src, cur)
-      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
+      cosz_now = solar_cosz_utc(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
       sw_total = r%par_beam + r%par_diffuse + r%nir_beam + r%nir_diffuse
       kt = clearness_index(sw_total, cosz_now)
       if (kt >= 0.0_wp) cur%kt_last_day = kt         ! negative = night: keep dusk's value
@@ -262,8 +263,8 @@ contains
       real(wp) :: now_sec, tprev, tnext, w_next, cosz_now, factor, win_start_sec
       associate (f => src%fcfg, p => cur%rec_prev, n => cur%rec_next)
 
-      !----- The solar zenith at `now` (met_solar_cosz turns UTC into apparent solar time). ---!
-      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
+      !----- The solar zenith at `now` (solar_cosz_utc turns UTC into apparent solar time). ---!
+      cosz_now = solar_cosz_utc(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
       met%cosz = cosz_now
 
       !----- CO2 on model time, one way for every backend (docs/science/forcing.md eq. (18)). ----!
@@ -289,15 +290,15 @@ contains
       end if
 
       !----- States linear; wind in energy form (docs/science/forcing.md eq. (1)). ----------!
-      met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
-      met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
-      met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
-      met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
+      met%tair_k   = linear_interpolate(p%tair_k,   n%tair_k,   w_next)
+      met%qair     = linear_interpolate(p%qair,     n%qair,     w_next)
+      met%psurf_pa = linear_interpolate(p%psurf_pa, n%psurf_pa, w_next)
+      met%lwdown   = linear_interpolate(p%lwdown,   n%lwdown,   w_next)
       met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next)   ! floored at aerodynamics.ubmin where used
       !----- The vector interpolates linearly, which keeps its direction; never floored. --------!
       if (src%has_wind_vector) then
-         met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
-         met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
+         met%wind_u = linear_interpolate(p%wind_u, n%wind_u, w_next)
+         met%wind_v = linear_interpolate(p%wind_v, n%wind_v, w_next)
          met%has_wind_vector = .true.
       end if
 
@@ -335,6 +336,128 @@ contains
       met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)
       end associate
    end function met_instant
+
+   !----- Wind interpolates as its square, so its kinetic energy varies linearly              !
+   !      (docs/science/forcing.md eq. (1)). No floor here: the aerodynamics floors the speed  !
+   !      at aerodynamics.ubmin where it uses it. --------------------------------------------!
+   elemental function interpolate_wind_energy(prev, next, w_next) result(u)
+      real(wp), intent(in) :: prev, next, w_next
+      real(wp) :: u
+      u = sqrt(max((1.0_wp - w_next) * prev * prev + w_next * next * next, 0.0_wp))
+   end function interpolate_wind_energy
+
+   !=======================================================================================!
+   !  SHORTWAVE DISAGGREGATION (docs/science/forcing.md eqs. (5)-(6)): the factor 1/<cosz>_win  !
+   !  that turns an interval mean F_avg into F(now) = F_avg*cosz(now)*factor, whose mean over the !
+   !  same window is F_avg. It is the reciprocal of the mean cosine (night sub-samples as 0), not  !
+   !  the mean secant, which is biased high at low sun. A fully night window returns 0.           !
+   !=======================================================================================!
+   pure function cosz_reconstruct_factor(t, win_start_sec, dt_sub, dt_win,                      &
+                                         latitude_deg, longitude_deg) result(factor)
+      type(meds_time_t), intent(in) :: t
+      real(wp),          intent(in) :: win_start_sec, dt_sub, dt_win
+      real(wp),          intent(in) :: latitude_deg, longitude_deg
+      real(wp)    :: factor, cosz_bar
+      cosz_bar = mean_solar_cosz(t, win_start_sec, dt_sub, dt_win, latitude_deg, longitude_deg)
+      if (cosz_bar > COSZ_BAR_MIN) then
+         factor = 1.0_wp / cosz_bar
+      else
+         factor = 0.0_wp                                  ! fully-night window; F_avg is 0 too
+      end if
+   end function cosz_reconstruct_factor
+
+   !----- Instantaneous SW stream from its interval mean: F_now = F_avg*cosz(now)*factor. ------!
+   !      Night (cosz(now) <= COSZ_MIN) -> 0 automatically; factor already 0 for a night window. !
+   elemental function disaggregate_sw(f_avg, cosz_now, factor) result(f_now)
+      real(wp), intent(in) :: f_avg, cosz_now, factor
+      real(wp) :: f_now
+      if (cosz_now > COSZ_MIN) then
+         f_now = f_avg * cosz_now * factor
+      else
+         f_now = 0.0_wp
+      end if
+   end function disaggregate_sw
+
+   !=======================================================================================!
+   !  AT A SITE (docs/science/forcing.md §8): the polygon's sample taken by the terrain step to a  !
+   !  site dz above the polygon, when the run lapses its forcing, and its direct beam scaled by     !
+   !  beam_factor (slope_beam_factor) to the site's slope. The diffuse light, the wind and the      !
+   !  precipitation are the polygon's.                                                             !
+   !=======================================================================================!
+   pure function met_at_site(met, f, month, dz, beam_factor) result(site)
+      type(met_forcing_t),    intent(in) :: met
+      type(forcing_config_t), intent(in) :: f
+      integer(ik),            intent(in) :: month
+      real(wp),               intent(in) :: dz            !< [m] site above polygon
+      real(wp),               intent(in) :: beam_factor   !< [-] slope_beam_factor
+      type(met_forcing_t) :: site
+      real(wp) :: gamma
+      site = met
+      if (f%apply_elevation_lapse .and. dz /= 0.0_wp) then
+         gamma         = f%lapse_rate_tair(month)
+         site%psurf_pa = lapse_pressure(met%psurf_pa, met%tair_k, dz, gamma)
+         site%tair_k   = lapse_air_temperature(met%tair_k, dz, gamma)
+         site%qair     = lapse_specific_humidity(met%qair, met%tair_k, met%psurf_pa, site%tair_k, site%psurf_pa)
+         site%lwdown   = lapse_longwave(met%lwdown, f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,     &
+                                        site%tair_k, site%qair, site%psurf_pa)
+         site%rho_air  = air_density(site%tair_k, site%psurf_pa, site%qair)
+      end if
+      site%par_beam = met%par_beam * beam_factor
+      site%nir_beam = met%nir_beam * beam_factor
+   end function met_at_site
+
+   !=======================================================================================!
+   !  AT A PATCH'S CANOPY-AIR TOP (docs/science/forcing.md §8, eq. (15)): from the forcing's own  !
+   !  heights, per patch and sub-step.                                                             !
+   !=======================================================================================!
+   !----- The factor taking the forcing's wind to z_top over a patch of roughness z0 and          !
+   !      displacement d: an open-terrain wind is first returned to its blending height z_b, then  !
+   !      the patch's neutral log profile carries it to z_top, heights above d floored at 2 z0. ---!
+   pure real(wp) function cas_top_wind_factor(f, z_top, displace, rough) result(factor)
+      type(forcing_config_t), intent(in) :: f
+      real(wp),               intent(in) :: z_top      !< [m] canopy-air top, above the ground
+      real(wp),               intent(in) :: displace   !< [m] zero-plane displacement
+      real(wp),               intent(in) :: rough      !< [m] roughness length (> 0)
+      real(wp) :: z_b, h_b, h_top
+      factor = 1.0_wp
+      z_b = f%wind_height
+      if (f%wind_exposure == WIND_EXPOSURE_OPEN_TERRAIN) then
+         factor = log(f%wind_blending_height / f%wind_exposure_z0) / log(f%wind_height / f%wind_exposure_z0)
+         z_b    = f%wind_blending_height
+      end if
+      h_b = z_b
+      if (f%height_above /= HEIGHT_ABOVE_ZERO_PLANE) h_b = z_b - displace
+      h_b    = max(h_b, 2.0_wp * rough)
+      h_top  = max(z_top - displace, 2.0_wp * rough)
+      factor = factor * log(h_top / rough) / log(h_b / rough)
+   end function cas_top_wind_factor
+
+   !----- A forcing record at a patch's canopy-air top: wind (and its vector) by the patch's factor, !
+   !      temperature along the dry adiabat from the forcing's temperature height (a reanalysis's    !
+   !      is above d), so the aerodynamics' theta is exactly the forcing's; air density re-derived.  !
+   !      Humidity is conserved and the radiation, precipitation and pressure are unchanged; the     !
+   !      rain/snow split is made from this record's temperature where the column's forcing is      !
+   !      filled (fill_forcing).                                                                     !
+   pure function met_to_cas_top(met, f, z_top, displace, rough) result(top)
+      type(met_forcing_t),    intent(in) :: met
+      type(forcing_config_t), intent(in) :: f
+      real(wp),               intent(in) :: z_top      !< [m] canopy-air top, above the ground
+      real(wp),               intent(in) :: displace   !< [m] zero-plane displacement
+      real(wp),               intent(in) :: rough      !< [m] roughness length (> 0)
+      type(met_forcing_t) :: top
+      real(wp) :: factor, z_t
+      top    = met
+      factor = cas_top_wind_factor(f, z_top, displace, rough)
+      top%wind = factor * met%wind
+      if (met%has_wind_vector) then
+         top%wind_u = factor * met%wind_u
+         top%wind_v = factor * met%wind_v
+      end if
+      z_t = f%tq_height
+      if (f%height_above == HEIGHT_ABOVE_ZERO_PLANE) z_t = displace + f%tq_height
+      top%tair_k  = dry_adiabat_temperature(met%tair_k, z_top - z_t)
+      top%rho_air = air_density(top%tair_k, top%psurf_pa, top%qair)
+   end function met_to_cas_top
 
    !=======================================================================================!
    !  CLOSE.                                                                                     !
@@ -413,7 +536,7 @@ contains
       case (HUMIDITY_RHAIR)
          rec%qair = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
       case (HUMIDITY_TDEW)
-         rec%qair = dewpoint_to_specific_humidity(humidity_value, rec%psurf_pa)
+         rec%qair = sat_specific_humidity(humidity_value, rec%psurf_pa)
       case default
          rec%qair = humidity_value
       end select
@@ -428,7 +551,7 @@ contains
          block
             real(wp) :: dz, gamma, t_grid, p_grid, q_grid
             dz     = cur%elevation_m - cur%grid_elevation_m       ! + when the polygon is higher
-            gamma  = monthly_lapse_rate(src%fcfg%lapse_rate_tair, rec%when%month)
+            gamma  = src%fcfg%lapse_rate_tair(rec%when%month)
             t_grid = rec%tair_k
             p_grid = rec%psurf_pa
             q_grid = rec%qair   ! before it is overwritten
@@ -477,7 +600,7 @@ contains
       case (METAVG_CENTER)
          start_sec = stamp_sec - 0.5_wp * src%dt_forcing
       case default
-         cosz = met_solar_cosz(when, stamp_sec, cur%latitude_deg, cur%longitude_deg)
+         cosz = solar_cosz_utc(when, stamp_sec, cur%latitude_deg, cur%longitude_deg)
          return
       end select
       factor = cosz_reconstruct_factor(when, start_sec, src%dt_forcing / real(N_COSZ_SUB, wp),       &

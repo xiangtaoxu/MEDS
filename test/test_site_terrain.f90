@@ -15,12 +15,12 @@
 program test_site_terrain
    use meds_test_assert,     only : check_true, test_report
    use meds_kinds,           only : wp
-   use meds_time,            only : meds_time_t, seconds_into_day
+   use meds_time,            only : meds_time_t, seconds_into_day, solar_cosz_utc, slope_incidence_cosz
    use meds_therm_lib,       only : sat_vapor_pressure, air_density
    use meds_forcing_params,  only : forcing_config_t
    use meds_met_types,   only : met_forcing_t
-   use meds_forcing_kernels, only : met_solar_cosz, slope_incidence_cosz, slope_beam_factor
-   use meds_lapse_rate,      only : met_at_site
+   use meds_radiation_lib,   only : slope_beam_factor
+   use meds_met,             only : met_at_site
    implicit none
 
    real(wp), parameter :: LAT = 45.0_wp, LON = 0.0_wp, S0 = 1361.0_wp
@@ -33,7 +33,7 @@ program test_site_terrain
    noon      = meds_time_t(year=2021, month=12, day=21, hour=12)
    morning   = meds_time_t(year=2021, month=12, day=21, hour=10)
    afternoon = meds_time_t(year=2021, month=12, day=21, hour=14)
-   cosz  = met_solar_cosz(noon, seconds_into_day(noon), LAT, LON)
+   cosz  = solar_cosz_utc(noon, seconds_into_day(noon), LAT, LON)
    flat  = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, 0.0_wp, 0.0_wp)
    south = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, 30.0_wp, 180.0_wp)
    north = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, 30.0_wp, 0.0_wp)

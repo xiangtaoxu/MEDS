@@ -9,7 +9,8 @@ module meds_met_default
    use iso_c_binding, only : c_int, c_size_t
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_units_base, seconds_between
-   use meds_forcing_params, only : SWPART_PASSTHROUGH, GRIDMATCH_NEAREST, LW_SYNTHESIZE
+   use meds_radiation_lib,  only : SWPART_PASSTHROUGH
+   use meds_forcing_params, only : GRIDMATCH_NEAREST, LW_SYNTHESIZE
    use meds_met_types, only : met_record_t, met_source_t, HUMIDITY_QAIR, HUMIDITY_RHAIR,      &
                                   HUMIDITY_TDEW, N_MEDS_FIELD, MEDS_FIELD, FLD_TAIR, FLD_RHAIR,   &
                                   FLD_PSURF, FLD_WIND, FLD_U10, FLD_V10, FLD_RAINF, FLD_LWDOWN,   &

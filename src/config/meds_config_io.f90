@@ -22,12 +22,13 @@ module meds_config_io
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_params,   only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_therm_lib,     only : TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED
-   use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
-   use meds_forcing_params, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
-                                   WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
+   use meds_radiation_lib,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_PASSTHROUGH, SWPART_CLEARIDX,        &
+                                   SWPART_WEISS_NORMAN
+   use meds_forcing_params, only : CO2_SOURCE_CONST, CO2_SOURCE_FILE
+   use meds_forcing_params, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN,      &
+                                   WIND_EXPOSURE_LOCAL
    use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
-                                   METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH, SWPART_CLEARIDX,                 &
-                                   SWPART_WEISS_NORMAN, LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,          &
+                                   METAVG_END, METAVG_BEGIN, LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,     &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_output_params, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
                                  GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_FORCING,        &

@@ -9,26 +9,25 @@ program test_met_driver
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : t_3ple
-   use meds_time,            only : meds_time_t, seconds_between, seconds_into_day,             &
-                                    time_advance_seconds
-   use meds_therm_lib,          only : sat_vapor_pressure, air_density
-   use meds_forcing_params,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT,                                     &
-                                    SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR, INTERP_STEP,             &
-                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH, CLAMP_HOLD, CLAMP_ERROR,        &
-                                    GRIDMATCH_NEAREST, CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE,                  &
-                                    HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
+   use meds_time,            only : meds_time_t, seconds_between, seconds_into_day, time_advance_seconds,         &
+                                    solar_cosz_utc
+   use meds_therm_lib,          only : sat_vapor_pressure, air_density, sat_specific_humidity,                    &
+                                       rh_to_specific_humidity, precip_phase, lapse_air_temperature,              &
+                                       lapse_pressure, lapse_specific_humidity
+   use meds_radiation_lib,   only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
+                                    SWPART_PASSTHROUGH, partition_shortwave, clearness_index,                     &
+                                    clear_sky_emissivity, synthesize_lwdown, lapse_longwave
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, METAVG_END, METAVG_BEGIN,           &
+                                    CLAMP_HOLD, CLAMP_ERROR, GRIDMATCH_NEAREST, CO2_SOURCE_FILE,                  &
+                                    HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN,     &
+                                    WIND_EXPOSURE_LOCAL
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
-   use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
-                                    rh_to_specific_humidity, precip_phase, partition_shortwave, &
-                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
-                                    clearness_index, clear_sky_emissivity, synthesize_lwdown
+   use meds_numerics,    only : linear_interpolate
+   use meds_met,             only : cosz_reconstruct_factor, disaggregate_sw, cas_top_wind_factor,                &
+                                    met_to_cas_top, met_open, met_cursor_init, met_advance, met_instant,          &
+                                    met_close
    use meds_met_grid,        only : great_circle_distance, nearest_grid_index
-   use meds_lapse_rate,      only : lapse_air_temperature, lapse_pressure,        &
-                                    monthly_lapse_rate, lapse_specific_humidity, lapse_longwave,    &
-                                    cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
    use meds_constants,       only : grav, cp_air
-   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
    use meds_met_share, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                 &
                               MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH,             &
                               MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE
@@ -122,12 +121,11 @@ contains
 
 
 
-   !----- 1. temporal interpolation policies. ---------------------------------------------!
+   !----- 1. temporal interpolation: states are linear between the bracketing records. -----!
    subroutine test_interpolation()
       print '(a)', '-- test 1: interpolation --'
-      call check('linear midpoint', interpolate_forcing(INTERP_LINEAR, 10.0_wp, 20.0_wp, 0.5_wp), 15.0_wp, 1.0e-12_wp)
-      call check('linear at prev',  interpolate_forcing(INTERP_LINEAR, 10.0_wp, 20.0_wp, 0.0_wp), 10.0_wp, 1.0e-12_wp)
-      call check('step holds prev', interpolate_forcing(INTERP_STEP,   10.0_wp, 20.0_wp, 0.9_wp), 10.0_wp, 1.0e-12_wp)
+      call check('linear midpoint', linear_interpolate(10.0_wp, 20.0_wp, 0.5_wp), 15.0_wp, 1.0e-12_wp)
+      call check('linear at prev',  linear_interpolate(10.0_wp, 20.0_wp, 0.0_wp), 10.0_wp, 1.0e-12_wp)
    end subroutine test_interpolation
 
    !----- 2. humidity from dewpoint (matches independent Bolton). --------------------------!
@@ -135,7 +133,7 @@ contains
       real(wp) :: q, e, td, p
       print '(a)', '-- test 2: humidity --'
       td = 285.0_wp ; p = 98000.0_wp
-      q  = dewpoint_to_specific_humidity(td, p)
+      q  = sat_specific_humidity(td, p)
       e  = sat_vapor_pressure(td)
       call check('q from dewpoint == 0.622 e/(p-0.378e)', q, 0.622_wp*e/(p-0.378_wp*e), 1.0e-14_wp)
       call check_true('q in physical range', q > 0.001_wp .and. q < 0.02_wp, q)
@@ -220,7 +218,7 @@ contains
       fsum = 0.0_wp ; secz_sum = 0.0_wp
       do i = 1_ik, n
          sec  = win_start + (real(i,wp)-0.5_wp)*dt_sub
-         cosz = met_solar_cosz(t, sec, LAT, LON)
+         cosz = solar_cosz_utc(t, sec, LAT, LON)
          fsum = fsum + disaggregate_sw(f_avg, cosz, factor)
          secz_sum = secz_sum + 1.0_wp/max(cosz, 0.03_wp)          ! <sec z> = <1/cosz> (ED2 mean_daysecz, clamped)
       end do
@@ -230,7 +228,7 @@ contains
       fsum = 0.0_wp
       do i = 1_ik, n
          sec  = win_start + (real(i,wp)-0.5_wp)*dt_sub
-         cosz = met_solar_cosz(t, sec, LAT, LON)
+         cosz = solar_cosz_utc(t, sec, LAT, LON)
          fsum = fsum + f_avg*cosz*(secz_sum/real(n,wp))
       end do
       mean_secz = fsum/real(n,wp)
@@ -321,10 +319,10 @@ contains
       search: do il = 0, 60
          lon = -76.5_wp - 0.25_wp * real(il, wp)                     ! one minute of sun time per step
          do h = 2, 24                                                  ! the hour ending at stamp h (UTC)
-            cz_mid = met_solar_cosz(base, (real(h, wp) - 0.5_wp) * 3600.0_wp, LAT, lon)
+            cz_mid = solar_cosz_utc(base, (real(h, wp) - 0.5_wp) * 3600.0_wp, LAT, lon)
             factor = cosz_reconstruct_factor(base, real(h - 1, wp) * 3600.0_wp, 360.0_wp, 3600.0_wp, LAT, lon)
             if (cz_mid <= 1.0e-3_wp .and. factor > 0.0_wp .and. &
-                met_solar_cosz(base, real(h, wp) * 3600.0_wp, LAT, lon) > 0.02_wp) then
+                solar_cosz_utc(base, real(h, wp) * 3600.0_wp, LAT, lon) > 0.02_wp) then
                hsun = h ; exit search
             end if
          end do
@@ -647,9 +645,8 @@ contains
    !----- The terrain lapse's humidity, longwave and monthly rate (docs/science/forcing.md §8). ---!
    subroutine test_terrain_lapse()
       real(wp), parameter :: T0 = 285.0_wp, P0 = 95000.0_wp, Q0 = 0.007_wp, DZ = -500.0_wp, G = 0.0065_wp
-      real(wp) :: t1, p1, q1, e0, e1, lw1, gm(12)
-      integer  :: k
-      print '(a)', '-- test: terrain lapse (RH-held humidity, longwave, monthly rate) --'
+      real(wp) :: t1, p1, q1, e0, e1, lw1
+      print '(a)', '-- test: terrain lapse (RH-held humidity, longwave) --'
       t1 = lapse_air_temperature(T0, DZ, G) ; p1 = lapse_pressure(P0, T0, DZ, G)
       q1 = lapse_specific_humidity(Q0, T0, P0, t1, p1)
       e0 = Q0 * P0 / (0.622_wp + 0.378_wp * Q0) ; e1 = q1 * p1 / (0.622_wp + 0.378_wp * q1)
@@ -663,9 +660,6 @@ contains
       call check_true('the warmer, moister site gets more longwave', lw1 > 300.0_wp, lw1 - 300.0_wp)
       call check('dz = 0 leaves longwave unchanged',                                               &
                  lapse_longwave(300.0_wp, LW_CLEAR_IDSO, T0, Q0, P0, T0, Q0, P0), 300.0_wp, 1.0e-9_wp)
-      gm = [(0.001_wp * real(k, wp), k = 1, 12)]
-      call check('monthly rate: July', monthly_lapse_rate(gm, 7_ik), 0.007_wp, 1.0e-15_wp)
-      call check('monthly rate: December', monthly_lapse_rate(gm, 12_ik), 0.012_wp, 1.0e-15_wp)
    end subroutine test_terrain_lapse
 
    !----- The move to a patch's canopy-air top (docs/science/forcing.md §8). A 25 m canopy:         !
@@ -683,17 +677,18 @@ contains
       call check('ERA5 wind: open-terrain step, then the patch profile', fac,                     &
                  log(40.0_wp/0.03_wp) / log(10.0_wp/0.03_wp) * log((ZC - D)/Z0) / log(40.0_wp/Z0), 1.0e-12_wp)
       call check('ERA5 wind: ~0.73 u10 at the top of a 25 m canopy', fac, 0.729_wp, 1.0e-3_wp)
-      call check('temperature conserves theta from d + 2 m', cas_top_air_temperature(f, 290.0_wp, ZC, D), &
-                 290.0_wp - GC * (ZC - (D + 2.0_wp)), 1.0e-12_wp)
+      m%tair_k = 290.0_wp
+      top = met_to_cas_top(m, f, ZC, D, Z0)
+      call check('temperature conserves theta from d + 2 m', top%tair_k, 290.0_wp - GC * (ZC - (D + 2.0_wp)), 1.0e-12_wp)
       call check('theta at the top equals theta at the forcing height',                            &
-                 cas_top_air_temperature(f, 290.0_wp, ZC, D) + GC * ZC, 290.0_wp + GC * (D + 2.0_wp), 1.0e-9_wp)
+                 top%tair_k + GC * ZC, 290.0_wp + GC * (D + 2.0_wp), 1.0e-9_wp)
       !----- A flux tower: local wind at 40 m above the ground; the 2 z0 floor on a tall stand. --!
       f%height_above = HEIGHT_ABOVE_GROUND ; f%wind_exposure = WIND_EXPOSURE_LOCAL
       f%tq_height = 40.0_wp ; f%wind_height = 40.0_wp
       call check('tower wind: the patch profile from 40 m above the ground', cas_top_wind_factor(f, ZC, D, Z0), &
                  log((ZC - D)/Z0) / log((40.0_wp - D)/Z0), 1.0e-12_wp)
-      call check('tower temperature: along the dry adiabat from 40 m', cas_top_air_temperature(f, 290.0_wp, ZC, D), &
-                 290.0_wp + GC * 10.0_wp, 1.0e-12_wp)
+      top = met_to_cas_top(m, f, ZC, D, Z0)
+      call check('tower temperature: along the dry adiabat from 40 m', top%tair_k, 290.0_wp + GC * 10.0_wp, 1.0e-12_wp)
       call check('tower at the top: no change', cas_top_wind_factor(f, 40.0_wp, D, Z0), 1.0_wp, 1.0e-15_wp)
       call check('heights floored at 2 z0 above d', cas_top_wind_factor(f, D + 1.0_wp, D, Z0),       &
                  log(2.0_wp) / log((40.0_wp - D)/Z0), 1.0e-12_wp)
@@ -707,7 +702,7 @@ contains
       call check('record: wind speed scaled', top%wind, 5.0_wp * fac, 1.0e-12_wp)
       call check('record: vector scaled (u)', top%wind_u, 3.0_wp * fac, 1.0e-12_wp)
       call check('record: vector scaled (v)', top%wind_v, -4.0_wp * fac, 1.0e-12_wp)
-      call check('record: temperature moved', top%tair_k, cas_top_air_temperature(f, 290.0_wp, ZC, D), 1.0e-12_wp)
+      call check('record: temperature moved', top%tair_k, 290.0_wp - GC * (ZC - (D + 2.0_wp)), 1.0e-12_wp)
       call check('record: humidity conserved', top%qair, 0.009_wp, 1.0e-15_wp)
       call check('record: pressure stays at the ground', top%psurf_pa, 98000.0_wp, 1.0e-12_wp)
       call check('record: shortwave unchanged', top%swdown(), m%swdown(), 1.0e-12_wp)

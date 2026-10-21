@@ -327,7 +327,7 @@ contains
       allocate(files%site_area(ns, n), files%site_elevation(ns, n), files%site_slope(ns, n),        &
                files%site_aspect(ns, n), files%site_soil_depth(ns, n), files%site_drain_factor(ns, n), &
                files%site_deep_temp(ns, n), source=MISSING_VALUE)
-      allocate(files%site_n_soil(ns, n), source=0_ik)
+      allocate(files%site_n_soil(ns, n), source=MISSING_INT)
       allocate(files%site_bottom_bc(ns, n), source=MISSING_INT)
       allocate(files%site_soil_z(n_soil_layer_max, ns, n), source=0.0_wp)
       allocate(files%site_soil_face(n_soil_layer_max + 1_ik, ns, n), source=0.0_wp)

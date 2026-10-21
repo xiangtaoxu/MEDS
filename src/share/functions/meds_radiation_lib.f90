@@ -1,35 +1,35 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_forcing_kernels -- the pure and elemental meteorological-forcing math                       !
-! (docs/science/forcing.md §3-§8 and §11): temporal interpolation, the solar zenith at apparent     !
-! solar time, the interval-mean-conserving shortwave disaggregation, the four-stream shortwave      !
-! partition, humidity from dewpoint or RH, the rain/snow split, the longwave synthesis and the sun  !
-! on a slope. Uses only meds_share and the forcing config's enumerations, so the saturation curve   !
-! and the solar geometry are the model's own. Device-safe.                                          !
+! meds_radiation_lib -- the radiation above the canopy: the clearness index, the total     !
+! shortwave split into beam and diffuse PAR and NIR (Erbs et al. 1982; Weiss & Norman      !
+! 1985), the clear-sky emissivity, the longwave synthesis and its lapse, and the beam on   !
+! a slope (docs/science/forcing.md §6, §8 and §11). Stateless laws over plain scalars,     !
+! with their selector codes (SWPART_*, LW_CLEAR_*), which [forcing] takes.                 !
 !==========================================================================================!
-module meds_forcing_kernels
-   use meds_kinds,          only : wp, ik
-   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan_boltzmann, day_sec, deg_to_rad
-   use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, INTERP_LINEAR, INTERP_STEP,          &
-                                   SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN
-   use meds_therm_lib,      only : sat_vapor_pressure
-   use meds_time,           only : meds_time_t, solar_cosz, day_of_year, solar_declination
+module meds_radiation_lib
+   use meds_kinds,     only : wp, ik
+   use meds_constants, only : t_3ple, tiny_num, p_std, stefan_boltzmann
+   use meds_therm_lib, only : specific_humidity_to_vapor_pressure
    implicit none
    private
 
-   public :: interpolate_forcing, interpolate_wind_energy
-   public :: clearness_index, clear_sky_emissivity, synthesize_lwdown
-   public :: met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw
-   public :: slope_incidence_cosz, slope_beam_factor
-   public :: partition_shortwave, dewpoint_to_specific_humidity, rh_to_specific_humidity
-   public :: precip_phase
+   public :: clearness_index, partition_shortwave, clear_sky_emissivity, synthesize_lwdown
+   public :: lapse_longwave, slope_beam_factor
+   public :: SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN, LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
+   public :: COSZ_MIN
+
+   !----- sw_partition: total SW into four streams (docs/science/forcing.md §6). ----------!
+   integer(ik), parameter :: SWPART_PASSTHROUGH  = 0_ik   !< file already carries the four streams
+   integer(ik), parameter :: SWPART_CLEARIDX     = 1_ik   !< clearness-index (Erbs) split, eq. (7)
+   integer(ik), parameter :: SWPART_WEISS_NORMAN = 2_ik   !< Weiss-Norman (1985) band-specific split, eqs. (8)-(10)
+   !----- The clear-sky emissivity's forms ([forcing].lw_clear_form). -----------------------------------!
+   integer(ik), parameter :: LW_CLEAR_BRUTSAERT = 0_ik   !< Brutsaert (1975), vapour-pressure power law
+   integer(ik), parameter :: LW_CLEAR_IDSO      = 1_ik   !< Idso & Jackson (1969), temperature only
 
    real(wp), parameter :: SOLAR_CONSTANT = 1361.0_wp   !< [W/m2] TOA normal irradiance (mean; eccentricity ~+-3% ignored)
    real(wp), parameter :: COSZ_MIN       = 1.0e-3_wp   !< [-] cosz floor: below this it is night (SW = 0)
-   real(wp), parameter :: COSZ_BAR_MIN   = 1.0e-3_wp   !< [-] window-mean-cosz floor for a valid reconstruction
    real(wp), parameter :: FPAR_BEAM      = 0.43_wp     !< [-] PAR fraction of direct-beam SW energy
    real(wp), parameter :: FPAR_DIFFUSE   = 0.52_wp     !< [-] PAR fraction of diffuse SW energy (diffuse is PAR-enriched)
-   real(wp), parameter :: PHASE_BAND_K   = 1.0_wp      !< [K] half-width of the rain/snow phase-transition band
 
    !----- The Weiss & Norman (1985) partition's constants, as WN85 publish them. With them the     !
    !      scheme's PPFD is within 4 % of three towers' quantum sensors (docs/science/forcing.md §6). !
@@ -48,101 +48,6 @@ module meds_forcing_kernels
    real(wp), parameter :: WN_COSZ_MIN  = 0.017452406437_wp  !< cos(89 deg): below this the sun is grazing -> all diffuse
 
 contains
-
-   !=======================================================================================!
-   !  TEMPORAL INTERPOLATION between the two bracketing records (weight w_next in [0,1];       !
-   !  docs/science/forcing.md §3).                                                             !
-   !=======================================================================================!
-   elemental function interpolate_forcing(policy, prev, next, w_next) result(val)
-      integer(ik), intent(in) :: policy        !< INTERP_LINEAR | INTERP_STEP
-      real(wp),    intent(in) :: prev, next, w_next
-      real(wp) :: val
-      select case (policy)
-      case (INTERP_STEP)                        ! step-constant: hold the previous value across the interval
-         val = prev
-      case default                              ! INTERP_LINEAR
-         val = (1.0_wp - w_next) * prev + w_next * next
-      end select
-   end function interpolate_forcing
-
-   !----- Wind interpolates as its square, so its kinetic energy varies linearly              !
-   !      (docs/science/forcing.md eq. (1)). No floor here: the aerodynamics floors the speed  !
-   !      at aerodynamics.ubmin where it uses it. --------------------------------------------!
-   elemental function interpolate_wind_energy(prev, next, w_next) result(u)
-      real(wp), intent(in) :: prev, next, w_next
-      real(wp) :: u
-      u = sqrt(max((1.0_wp - w_next) * prev * prev + w_next * next * next, 0.0_wp))
-   end function interpolate_wind_energy
-
-   !=======================================================================================!
-   !  SOLAR TIME + ZENITH. Every forcing clock is UTC, so local apparent solar seconds are the    !
-   !  UTC seconds plus longitude*240 s/deg plus the equation of time (docs/science/forcing.md     !
-   !  eqs. (2)-(4)).                                                                              !
-   !=======================================================================================!
-   pure function equation_of_time(t) result(eot_sec)
-      type(meds_time_t), intent(in) :: t
-      real(wp) :: eot_sec, b
-      b = 2.0_wp * pi * real(day_of_year(t) - 1_ik, wp) / 365.0_wp        ! Spencer 1971
-      eot_sec = 229.18_wp * ( 0.000075_wp + 0.001868_wp*cos(b) - 0.032077_wp*sin(b)             &
-                            - 0.014615_wp*cos(2.0_wp*b) - 0.040849_wp*sin(2.0_wp*b) ) * 60.0_wp
-   end function equation_of_time
-
-   pure function apparent_solar_seconds(t, sec_utc, longitude_deg) result(s)
-      type(meds_time_t), intent(in) :: t              !< record/model time (for declination + EoT via doy)
-      real(wp),          intent(in) :: sec_utc        !< [s] seconds into the UTC day
-      real(wp),          intent(in) :: longitude_deg
-      real(wp) :: s
-      s = sec_utc + longitude_deg * 240.0_wp + equation_of_time(t)
-   end function apparent_solar_seconds
-
-   !----- cos(solar zenith) at a sub-daily UTC cursor (converts to solar time first). ---------!
-   pure function met_solar_cosz(t, sec_utc, latitude_deg, longitude_deg) result(cosz)
-      type(meds_time_t), intent(in) :: t
-      real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg
-      real(wp) :: cosz, sec_solar
-      sec_solar = apparent_solar_seconds(t, sec_utc, longitude_deg)
-      cosz = solar_cosz(t, sec_solar, latitude_deg)
-   end function met_solar_cosz
-
-   !=======================================================================================!
-   !  SHORTWAVE DISAGGREGATION (docs/science/forcing.md eqs. (5)-(6)): the factor 1/<cosz>_win  !
-   !  that turns an interval mean F_avg into F(now) = F_avg*cosz(now)*factor, whose mean over the !
-   !  same window is F_avg. It is the reciprocal of the mean cosine (night sub-samples as 0), not  !
-   !  the mean secant, which is biased high at low sun. A fully night window returns 0.           !
-   !=======================================================================================!
-   pure function cosz_reconstruct_factor(t, win_start_sec, dt_sub, dt_win,                      &
-                                         latitude_deg, longitude_deg) result(factor)
-      type(meds_time_t), intent(in) :: t
-      real(wp),          intent(in) :: win_start_sec, dt_sub, dt_win
-      real(wp),          intent(in) :: latitude_deg, longitude_deg
-      real(wp)    :: factor, cosz_sum, cosz_bar, sec, ci
-      integer(ik) :: nsub, i
-      nsub = max(1_ik, nint(dt_win / max(dt_sub, tiny_num), ik))
-      cosz_sum = 0.0_wp
-      do i = 1_ik, nsub                                   ! midpoint rule over the FULL window
-         sec = win_start_sec + (real(i, wp) - 0.5_wp) * (dt_win / real(nsub, wp))
-         ci  = met_solar_cosz(t, sec, latitude_deg, longitude_deg)
-         cosz_sum = cosz_sum + max(ci, 0.0_wp)            ! night sub-samples contribute exactly 0
-      end do
-      cosz_bar = cosz_sum / real(nsub, wp)
-      if (cosz_bar > COSZ_BAR_MIN) then
-         factor = 1.0_wp / cosz_bar
-      else
-         factor = 0.0_wp                                  ! fully-night window; F_avg is 0 too
-      end if
-   end function cosz_reconstruct_factor
-
-   !----- Instantaneous SW stream from its interval mean: F_now = F_avg*cosz(now)*factor. ------!
-   !      Night (cosz(now) <= COSZ_MIN) -> 0 automatically; factor already 0 for a night window. !
-   elemental function disaggregate_sw(f_avg, cosz_now, factor) result(f_now)
-      real(wp), intent(in) :: f_avg, cosz_now, factor
-      real(wp) :: f_now
-      if (cosz_now > COSZ_MIN) then
-         f_now = f_avg * cosz_now * factor
-      else
-         f_now = 0.0_wp
-      end if
-   end function disaggregate_sw
 
    !=======================================================================================!
    !  SHORTWAVE PARTITION: total SWdown -> the four (beam/diffuse) x (PAR/NIR) streams           !
@@ -280,9 +185,7 @@ contains
          dt  = t_3ple - tair_k
          eps = 1.0_wp - 0.261_wp * exp(-7.77e-4_wp * dt * dt)
       case default                                      ! LW_CLEAR_BRUTSAERT
-         !----- Vapour pressure [hPa] from specific humidity: e = q P / (0.622 + 0.378 q). ----!
-         e_hpa = 0.01_wp * max(qair, 0.0_wp) * psurf_pa                                        &
-               / max(0.622_wp + 0.378_wp * max(qair, 0.0_wp), tiny_num)
+         e_hpa = 0.01_wp * specific_humidity_to_vapor_pressure(max(qair, 0.0_wp), psurf_pa)   ! [hPa]
          eps   = 1.24_wp * (max(e_hpa, tiny_num) / max(tair_k, tiny_num)) ** (1.0_wp / 7.0_wp)
       end select
       eps = min(1.0_wp, max(0.5_wp, eps))   ! clamp-ok: the formulas give >~0.6; 0.5 only guards malformed input
@@ -315,60 +218,17 @@ contains
       fd = min(1.0_wp, max(0.0_wp, fd))
    end function erbs_diffuse_fraction
 
-   !=======================================================================================!
-   !  HUMIDITY (docs/science/forcing.md eq. (11)). Both forms use meds_therm_lib%sat_vapor_pressure !
-   !  over liquid water (Bolton 1980), the curve of the rest of MEDS and of the flux-tower         !
-   !  formatter, so the reader adds no saturation curve of its own.                               !
-   !=======================================================================================!
-   !----- Specific humidity from dewpoint: the actual e is e_sat at the dewpoint. -------------!
-   elemental function dewpoint_to_specific_humidity(td_k, p_pa) result(q)
-      real(wp), intent(in) :: td_k, p_pa
-      real(wp) :: q, e
-      e = sat_vapor_pressure(td_k)
-      q = 0.622_wp * e / max(p_pa - 0.378_wp * e, tiny_num)
-   end function dewpoint_to_specific_humidity
-
-   !----- Specific humidity from relative humidity (fraction) + temperature + pressure. ------!
-   elemental function rh_to_specific_humidity(rh, t_k, p_pa) result(q)
-      real(wp), intent(in) :: rh, t_k, p_pa
-      real(wp) :: q, e
-      e = min(1.0_wp, max(0.0_wp, rh)) * sat_vapor_pressure(t_k)
-      q = 0.622_wp * e / max(p_pa - 0.378_wp * e, tiny_num)
-   end function rh_to_specific_humidity
-
-   !=======================================================================================!
-   !  PRECIP PHASE (docs/science/forcing.md eq. (12)): a linear rain/snow ramp across a 2 K band  !
-   !  centred on the triple point. Mass-conserving: rainf + snowfall = total.                     !
-   !=======================================================================================!
-   elemental subroutine precip_phase(precip_total, tair_k, rainf, snowfall)
-      real(wp), intent(in)  :: precip_total, tair_k
-      real(wp), intent(out) :: rainf, snowfall
-      real(wp) :: frac_liq
-      frac_liq = min(1.0_wp, max(0.0_wp, (tair_k - (t_3ple - PHASE_BAND_K)) / (2.0_wp * PHASE_BAND_K)))
-      rainf = frac_liq * precip_total
-      snowfall = precip_total - rainf
-   end subroutine precip_phase
-
-   !----- The sun on a slope (docs/science/forcing.md §8): the cosine of its incidence on a            !
-   !      surface tilted `slope_deg` from horizontal and facing `aspect_deg` (clockwise from north),   !
-   !      cos i = cos z cos s + sin z sin s cos(A - aspect), with A the sun's azimuth, also clockwise  !
-   !      from north. 0 with the sun below the horizon or behind the slope. ---------------------------!
-   pure real(wp) function slope_incidence_cosz(t, sec_utc, latitude_deg, longitude_deg, slope_deg,     &
-                                               aspect_deg) result(cosi)
-      type(meds_time_t), intent(in) :: t
-      real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg, slope_deg, aspect_deg
-      real(wp) :: lat, decl, hour_angle, cosz, sinz, azimuth, slope
-      lat        = latitude_deg * deg_to_rad
-      decl       = solar_declination(day_of_year(t))
-      hour_angle = 2.0_wp * pi * (apparent_solar_seconds(t, sec_utc, longitude_deg) / day_sec - 0.5_wp)
-      cosz       = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hour_angle)
-      cosi       = 0.0_wp
-      if (cosz <= 0.0_wp) return
-      sinz    = sqrt(max(0.0_wp, 1.0_wp - cosz * cosz))
-      azimuth = atan2(-cos(decl) * sin(hour_angle), sin(decl) * cos(lat) - cos(decl) * sin(lat) * cos(hour_angle))
-      slope   = slope_deg * deg_to_rad
-      cosi    = max(0.0_wp, cosz * cos(slope) + sinz * sin(slope) * cos(azimuth - aspect_deg * deg_to_rad))
-   end function slope_incidence_cosz
+   !----- File longwave at the site: scaled by the clear-sky emission eps*T^4 at the site over the   !
+   !      cell (NLDAS; docs/science/forcing.md eq. (14)), with the same clear-sky emissivity the    !
+   !      longwave synthesis uses.                                                                  !
+   pure function lapse_longwave(lw_grid, form, t_grid, q_grid, p_grid, t_site, q_site, p_site) result(lw_site)
+      real(wp),    intent(in) :: lw_grid                   !< [W/m2] downward longwave at the cell
+      integer(ik), intent(in) :: form                      !< LW_CLEAR_BRUTSAERT | LW_CLEAR_IDSO
+      real(wp),    intent(in) :: t_grid, q_grid, p_grid, t_site, q_site, p_site
+      real(wp) :: lw_site
+      lw_site = lw_grid * (clear_sky_emissivity(form, t_site, q_site, p_site) * t_site**4)      &
+                        / (clear_sky_emissivity(form, t_grid, q_grid, p_grid) * t_grid**4)
+   end function lapse_longwave
 
    !----- The factor the direct beam takes on a slope: the beam normal to the sun, beam / cos z,       !
    !      times cos i, over the beam on level ground. The beam normal is held at most the solar        !
@@ -383,4 +243,4 @@ contains
       f = min(cosi / cosz, SOLAR_CONSTANT * cosi / beam)
    end function slope_beam_factor
 
-end module meds_forcing_kernels
+end module meds_radiation_lib

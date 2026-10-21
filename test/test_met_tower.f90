@@ -17,16 +17,16 @@ program test_met_tower
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : grav, cp_air
-   use meds_time,            only : meds_time_t, time_advance_seconds
-   use meds_therm_lib,       only : sat_vapor_pressure, specific_humidity_to_vpd
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX,  &
-                                    METAVG_END, METAVG_BEGIN, HEIGHT_ABOVE_GROUND,              &
-                                    HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL, LW_SYNTHESIZE
+   use meds_time,            only : meds_time_t, time_advance_seconds, solar_cosz_utc
+   use meds_therm_lib,       only : sat_vapor_pressure, specific_humidity_to_vpd, rh_to_specific_humidity,        &
+                                    sat_specific_humidity
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, METAVG_END, METAVG_BEGIN,           &
+                                    HEIGHT_ABOVE_GROUND, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL,            &
+                                    LW_SYNTHESIZE
+   use meds_radiation_lib,   only : SWPART_CLEARIDX, clearness_index
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
-   use meds_forcing_kernels, only : rh_to_specific_humidity, dewpoint_to_specific_humidity,        &
-                                    clearness_index, met_solar_cosz
-   use meds_lapse_rate,      only : met_to_cas_top
-   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
+   use meds_met,             only : met_to_cas_top, met_open, met_cursor_init, met_advance, met_instant,          &
+                                    met_close
    use meds_met_share, only : MET_OK, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, MET_ERR_ATTR_MISMATCH
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
@@ -211,8 +211,8 @@ contains
       call check_true('a Tdew file opens', st == MET_OK, real(st, wp))
       call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, stamp_seconds(K))
-      call check('Tdew -> q by dewpoint_to_specific_humidity', met%qair,                              &
-                 dewpoint_to_specific_humidity(tair_at(K) - 3.0_wp, PSURF), 1.0e-15_wp)
+      call check('Tdew -> q by sat_specific_humidity', met%qair,                              &
+                 sat_specific_humidity(tair_at(K) - 3.0_wp, PSURF), 1.0e-15_wp)
       call met_close(src)
 
       call write_tower_file('begin', 'Qair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
@@ -346,7 +346,7 @@ contains
       call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, t0 + 0.4_wp * DT)
       call check('the remembered clearness is the containing interval''s', cur%kt_last_day,              &
-                 clearness_index(sw_at(k_sw), met_solar_cosz(time_advance_seconds(base, t0 + 0.4_wp * DT),  &
+                 clearness_index(sw_at(k_sw), solar_cosz_utc(time_advance_seconds(base, t0 + 0.4_wp * DT),  &
                                  t0 + 0.4_wp * DT, fc%latitude, fc%longitude)), 1.0e-12_wp)
       call met_close(src)
    end subroutine test_flux_interval

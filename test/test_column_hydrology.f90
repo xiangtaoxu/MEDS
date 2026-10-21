@@ -34,7 +34,7 @@ program test_column_hydrology
    use meds_spac_solver,    only : spac_solver_t, spac_allocate, spac_set_state,     &
                                      spac_advance, POND
    use meds_plant_types,      only : hydro_args_table_t
-   use meds_therm_lib,        only : internal_energy_liquid
+   use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp
    use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
 
@@ -315,7 +315,6 @@ contains
    end subroutine test_pond_subfreezing_inflow
 
    real(wp) function temp_of_liquid(u)
-      use meds_therm_lib, only : liquid_energy_to_temp
       real(wp), intent(in) :: u
       temp_of_liquid = liquid_energy_to_temp(u)
    end function temp_of_liquid

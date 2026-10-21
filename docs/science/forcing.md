@@ -397,8 +397,9 @@ f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qqu
 
 ## 8. Vertical corrections: the terrain, then the canopy-air top
 
-Every vertical correction lives in one module, `meds_lapse_rate`, and runs in two steps: the **terrain**
-lapse per record as it is read, then the move to **each patch's canopy-air top** per patch and sub-step.
+Every vertical correction runs in two steps: the **terrain** lapse per record as it is read, then the
+move to **each patch's canopy-air top** per patch and sub-step. The laws are `meds_therm_lib`'s and
+`meds_radiation_lib`'s; `meds_met` applies them (see [Where the code is](#where-the-code-is)).
 Between them, a polygon of several sites moves the forcing to **each site's** elevation and slope.
 
 **What the forcing's heights mean.** For ERA5-Land, which is what MEDS reads today:
@@ -726,14 +727,14 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 
 | Concept | Routine / file |
 |---|---|
-| interpolation, wind energy form | `meds_forcing_kernels`: `interpolate_forcing`, `interpolate_wind_energy` |
-| apparent solar time, zenith | `meds_forcing_kernels`: `met_solar_cosz` over `meds_time%solar_cosz`, with the private `apparent_solar_seconds` and `equation_of_time` |
-| SW disaggregation | `meds_forcing_kernels`: `cosz_reconstruct_factor`, `disaggregate_sw` |
-| SW partition | `meds_forcing_kernels`: `partition_shortwave`, `erbs_diffuse_fraction`, `weiss_norman_partition` |
-| humidity, precip phase | `meds_forcing_kernels`: `dewpoint_to_specific_humidity`, `rh_to_specific_humidity`, `precip_phase` |
-| longwave synthesis | `meds_forcing_kernels`: `clearness_index`, `clear_sky_emissivity`, `synthesize_lwdown`; `meds_met`: `remember_clearness` (the night's $`k_t`$) |
+| interpolation, wind energy form | `meds_numerics`: `linear_interpolate`; `meds_met`: `interpolate_wind_energy` |
+| apparent solar time, zenith | `meds_time`: `solar_cosz_utc` over `solar_cosz`, with `utc_to_solar_seconds` and the private `equation_of_time`; the window mean `mean_solar_cosz` |
+| SW disaggregation | `meds_met`: `cosz_reconstruct_factor`, `disaggregate_sw` |
+| SW partition | `meds_radiation_lib`: `partition_shortwave`, `erbs_diffuse_fraction`, `weiss_norman_partition` |
+| humidity, precip phase | `meds_therm_lib`: `sat_specific_humidity` (at the dewpoint), `rh_to_specific_humidity`, `vapor_pressure_to_specific_humidity`, `specific_humidity_to_vapor_pressure`, `precip_phase` |
+| longwave synthesis | `meds_radiation_lib`: `clearness_index`, `clear_sky_emissivity`, `synthesize_lwdown`; `meds_met`: `remember_clearness` (the night's $`k_t`$) |
 | the grid and its cells | `meds_met_grid`: `select_site_cell`, `select_box_cells`, `keep_cells`, `same_grid`, `great_circle_distance`, `nearest_grid_index`; the archive's grid, `meds_met_era5land`: `era5land_grid` |
-| vertical corrections (§8) | `meds_lapse_rate`: terrain `lapse_air_temperature`, `lapse_pressure`, `lapse_specific_humidity`, `lapse_longwave`, `monthly_lapse_rate` (called by `read_record`); each site `met_at_site`, with `slope_incidence_cosz` and `slope_beam_factor` from `meds_forcing_kernels`; canopy-air top `cas_top_wind_factor`, `cas_top_air_temperature`, `met_to_cas_top` (called per patch by `fast_dynamics`, with `canopy_roughness` from `meds_canopy_aerodynamics`) |
+| vertical corrections (§8) | the laws: `meds_therm_lib`: `lapse_air_temperature`, `lapse_pressure`, `lapse_specific_humidity`, `dry_adiabat_temperature`; `meds_radiation_lib`: `lapse_longwave`. The terrain lapse in `read_record`; each site `meds_met`: `met_at_site`, with `slope_incidence_cosz` (`meds_time`) and `slope_beam_factor` (`meds_radiation_lib`); canopy-air top `meds_met`: `cas_top_wind_factor`, `met_to_cas_top` (called per patch by `fast_dynamics`, with `canopy_roughness` from `meds_canopy_aerodynamics`) |
 | the reader | `meds_met`: `met_open`, `met_cursor_init`, `met_prefetch`, `met_advance`, `met_instant`, `met_close`; the one ingest `read_record`, `assert_finite` |
 | the two file sources | `meds_met_default`: `default_file_open`, `default_file_record`, `read_series`, `detect_humidity`; `meds_met_era5land`: `era5land_open`, `era5land_prefetch`, `era5land_record`, `open_archive`, `load_axis_month`, `locate_record`, `keep_window_head` |
 | the archive's files | `meds_met_era5land`: `era5land_path`, `era5land_month_hours`, `era5land_load_month` |

@@ -299,7 +299,7 @@ left. Films without a `units` attribute are per m² of ground.
 | one slow step | `polygon_step` | `meds_polygon` |
 | fast loop + slow dynamics | `advance_one_step` | `meds_stepper` |
 | the fast loop | `fast_dynamics` | `meds_fast_dynamics` |
-| vertical corrections: the terrain lapse at ingest, the move to each patch's canopy-air top | `read_record`; `met_to_cas_top` | `meds_met`, `meds_lapse_rate` |
+| vertical corrections: the terrain lapse at ingest, the move to each patch's canopy-air top | `read_record`; `met_to_cas_top` | `meds_met` |
 | one sub-step of one patch | `column_fast_step` | `meds_fast_step` |
 | the slow dynamics | `advance_slow_dynamics` | `meds_slow_dynamics` |
 | the cohorts' day | `vegetation_dynamics` | `meds_vegetation_dynamics` |

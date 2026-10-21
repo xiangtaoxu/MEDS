@@ -128,10 +128,11 @@ function(meds_fortran_flags tgt)
    endif()
 endfunction()
 
-#----- FOUNDATION (src/share/): the kinds, the constants, the numerics, the calendar and the       #
-#      budget checks at the top, and the stateless constitutive laws in functions/, one library    #
-#      per domain: allometry, plant hydraulics, soil hydraulics, thermodynamics (with the          #
-#      temperature response of enzyme rates) and canopy optics.                                    #
+#----- FOUNDATION (src/share/): the kinds, the constants, the numerics, the calendar and the sun's #
+#      position, and the budget checks at the top, and the stateless constitutive laws in         #
+#      functions/, one library per domain: allometry, plant hydraulics, soil hydraulics,           #
+#      thermodynamics (moist air and its lapse, with the temperature response of enzyme rates),    #
+#      canopy optics and the radiation above the canopy.                                           #
 #                                                                                                  #
 #      One folder, one library, and it links NOTHING. A module belongs in src/share/ only if it    #
 #      `use`s nothing outside src/share/ -- no model state, no configuration, no external          #
@@ -282,9 +283,10 @@ add_library(meds_netcdf_c STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_
 target_link_libraries(meds_netcdf_c PUBLIC meds_share netCDF::netcdf)
 meds_fortran_flags(meds_netcdf_c)
 
-#----- Meteorological FORCING (src/io/met): the reader + disaggregation kernels +      #
-#      runtime types. Links meds_config + the netCDF bindings ONLY (NOT demography): a           #
-#      prescribed external driver, low in the DAG. The science: docs/science/forcing.md.         #
+#----- Meteorological FORCING (src/io/met): the reader, its samples at a site and at a patch's   #
+#      canopy-air top, the grid and the runtime types; the laws are share/'s. Links meds_config   #
+#      + the netCDF bindings ONLY (NOT demography): a prescribed external driver, low in the DAG. #
+#      The science: docs/science/forcing.md.                                                     #
 file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/met/*.f90)
 add_library(meds_met STATIC ${FORCING_SOURCES})
 target_link_libraries(meds_met PUBLIC meds_config meds_netcdf_c)

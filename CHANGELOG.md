@@ -40,7 +40,11 @@ their output reduces to, write one statement per line and keep their longer expl
 pages, with no change to any result (#468). `src/io` holds every file a run reads or writes in four
 folders, `init/`, `met/`, `maps/` and `output/`: each start is a module of `init/`, the restart file is
 laid out by level, the met grid serves any gridded product, the maps only read, the output is a module
-per stage, and a reader that refuses a file says why, with no change to any result (#469).
+per stage, and a reader that refuses a file says why, with no change to any result (#469). The
+forcing's physics joins the model's other laws in `src/share`: the sun's position in `meds_time`, the
+radiation above the canopy in a new `meds_radiation_lib`, the humidity conversions, the rain/snow split
+and the air at another height in `meds_therm_lib`; `src/io/met` keeps the reader and where it samples
+the air. The restart and the diagnostic files name each site's statics alike (#470).
 
 **Upgrading from v0.3.5:**
 - **`[forcing].format = "const"` is gone** (#469). It opened no file and drove the run with a fixed
@@ -48,6 +52,12 @@ per stage, and a reader that refuses a file says why, with no change to any resu
   run without forcing sets `forcing_on = false`.
 - **`[output].io_config` takes TOML's `true` and `false` only** (#469), as every reader takes only the
   names it lists: `.true.`, `True` and `TRUE` (and their `false` twins) stop the run.
+- **The diagnostic files name each site's map inputs as the restart file does** (#470): `soil_depth`,
+  `bottom_bc`, `drain_factor` and `deep_temp` are `site_soil_depth`, `site_bottom_bc`,
+  `site_drain_factor` and `site_deep_temp`, and the files gain `site_n_soil`, each site's layer count.
+  A script that reads them by name takes the new names, as `examples/example06_regional_run/
+  summarize_regions.py` does. The restart file gains `site_bottom_bc`, `site_drain_factor` and
+  `site_deep_temp`; an older restart file reads as before.
 - **Six keys nothing read are gone** (#464): `[demography].patch_diff_age_tol`,
   `patch_min_area_remain` and `enable_patch_fission`, `[snow].snow_stab_thresh`, and `[pft].huber_value`
   and `wood_carbon_density`. Delete them; a config that keeps one stops the run. The PFT CSV loses
@@ -264,6 +274,24 @@ per stage, and a reader that refuses a file says why, with no change to any resu
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
   `hydraulics.root_beta`.
+- **Fortran: the forcing's physics in `src/share`** (#470), for code built against MEDS's modules.
+  `meds_forcing_kernels` and `meds_lapse_rate` are gone:
+  - `meds_numerics`: `linear_interpolate(a, b, w)` replaces `interpolate_forcing` and its
+    `INTERP_LINEAR` / `INTERP_STEP` codes;
+  - `meds_time`: `solar_cosz_utc` (was `met_solar_cosz`), `utc_to_solar_seconds` (was the private
+    `apparent_solar_seconds`), `mean_solar_cosz` and `slope_incidence_cosz`;
+  - `meds_radiation_lib` (new): `clearness_index`, `partition_shortwave`, `clear_sky_emissivity`,
+    `synthesize_lwdown`, `lapse_longwave`, `slope_beam_factor`, `COSZ_MIN`, and the `SWPART_*` and
+    `LW_CLEAR_*` codes, which `meds_forcing_params` no longer exports;
+  - `meds_therm_lib`: `vapor_pressure_to_specific_humidity`, `specific_humidity_to_vapor_pressure`,
+    `rh_to_specific_humidity`, `precip_phase`, `lapse_air_temperature`, `lapse_pressure`,
+    `lapse_specific_humidity` and `dry_adiabat_temperature`; `dewpoint_to_specific_humidity` is gone
+    (a dewpoint's humidity is `sat_specific_humidity` at the dewpoint);
+  - `meds_met`: `met_at_site`, `met_to_cas_top`, `cas_top_wind_factor`, `cosz_reconstruct_factor` and
+    `disaggregate_sw`; `cas_top_air_temperature` (`dry_adiabat_temperature`) and `monthly_lapse_rate`
+    (an index into `lapse_rate_tair`) are gone;
+  - `meds_netcdf_write`: `define_site_statics` and `write_site_statics`; `meds_netcdf_c`:
+    `NC_FILL_DOUBLE` and `NC_FILL_INT`.
 - **Fortran: `src/io` by folder** (#469), for code built against MEDS's modules. `src/init` is
   `src/io/init`, and `src/io/input/{forcing,maps}` are `src/io/met` and `src/io/maps`. Libraries:
   `meds_forcing` is `meds_met`, `meds_io_prep` is `meds_output` and `meds_io_stream` is
@@ -342,6 +370,32 @@ per stage, and a reader that refuses a file says why, with no change to any resu
   unknown, repeated or missing column, a malformed row or a non-positive value, or a restart file with
   a PFT, site or soil-layer count unlike the run's, stops it with the reason. A forcing file the
   reader cannot read at open is `MET_ERR_FILE`, with the netCDF library's text.
+- **The forcing's physics is in `src/share`, beside the model's other laws** (#470). The solar
+  geometry is `meds_time`'s; the shortwave partition, the clearness index, the clear-sky emissivity,
+  the longwave synthesis and its lapse, and the beam on a slope are `meds_radiation_lib`'s; the
+  humidity conversions (water's molar-mass ratio named once), the rain/snow split and the air at
+  another height (the terrain lapse of temperature, pressure and humidity, and the dry adiabat) are
+  `meds_therm_lib`'s; the linear interpolation is `meds_numerics`'. `meds_met` samples the forcing in
+  one section per place: at the forcing's height (`met_instant`, with the wind's energy form and the
+  shortwave disaggregation), at a site (`met_at_site`) and at a patch's canopy-air top
+  (`met_to_cas_top`). With gfortran every result is unchanged by the moves. With ifx, whose inlining
+  follows the modules, a run without forcing is unchanged, and a forced run starts apart by round-off,
+  after which the adaptive integrators accept other steps within their tolerance: a month at the BCI
+  tower moves by at most 5e-9 of a value's range, a year from bare ground by 7e-5 in its annual totals
+  and 2e-2 in a daily value, and the Palo Verde dry-forest region by up to a tenth of its daily NEE's
+  range (NEE is the small difference of two large fluxes).
+- **One vapour-pressure formula** (#470): Brutsaert's clear-sky emissivity takes `e` from
+  `specific_humidity_to_vapor_pressure`, the conversion the rest of the model and the flux-tower
+  tool's Python copy use, in place of its own copy. The products are taken in another order, so a run
+  whose longwave is synthesized or lapsed with the Brutsaert form starts apart by round-off. With
+  gfortran, a month at the BCI tower with synthesized longwave moves by at most 8e-10 of a value's
+  range, and a year from bare ground with the terrain lapse on, whose new stand grows the difference,
+  by 4e-4 in its annual totals and 1.5e-2 in a daily value. No shipped example synthesizes or lapses
+  longwave.
+- **Each site's statics, one definition for both files** (#470): `define_site_statics` and
+  `write_site_statics` (`meds_netcdf_write`) define and write a site's area, terrain, layer count and
+  map inputs, with their units, `long_name`s and fill values, for the restart and the diagnostic files
+  alike.
 - **The output layer names the polygon it reduces to** (#468). A polygon holds several sites, and a
   scalar reduction weights each patch by its share of the polygon, so the reductions, the source family
   of the polygon's own scalars (`SRCK_POLYGON`, `SRC_PY_*`) and the diagnostic activation say polygon;

@@ -27,11 +27,13 @@ module meds_fast_dynamics
    use meds_config,           only : meds_config_t, soil_column_params, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy, specific_humidity_to_vpd
+   use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy,                            &
+                                        specific_humidity_to_vpd, precip_phase
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_plant_types, only : leaf_photo_table_t
    use meds_column_view, only : copy_column_cohort
-   use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string, seconds_into_day
+   use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string, seconds_into_day,         &
+                                     slope_incidence_cosz
    use meds_output_types,     only : output_buffers_t
    use meds_diag_vars,        only : N_CO_FAST_ROWS, N_PA_ROWS, patch_diag_block, polygon_diag_block, PA_LE, PA_H, &
                                      PA_RNET, PA_SW_GROUND, &
@@ -47,9 +49,8 @@ module meds_fast_dynamics
    use meds_constants,     only : n_soil_layer_max
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_met_types,    only : met_source_t, met_cursor_t, met_forcing_t
-   use meds_forcing_kernels,  only : precip_phase, slope_incidence_cosz, slope_beam_factor
-   use meds_met,       only : met_advance, met_instant
-   use meds_lapse_rate,       only : met_to_cas_top, met_at_site
+   use meds_radiation_lib,    only : slope_beam_factor
+   use meds_met,       only : met_advance, met_instant, met_to_cas_top, met_at_site
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
    use meds_cohort_state_vars, only : set_cohort_tissue_water, hold_cohort_tissue_temps, cohort_tissue_temps, &
                                       set_cohort_tissue_temps
@@ -622,7 +623,7 @@ contains
          call ensure_aero_out_capacity(aero, ncoh)
 
          !----- This patch's canopy-air top and roughness. Every forcing sample is moved to that top  !
-         !      along the patch's own log profile (meds_lapse_rate, docs/science/forcing.md §8), and    !
+         !      along the patch's own log profile (met_to_cas_top, docs/science/forcing.md §8), and     !
          !      the aerodynamics runs from there. Both are fixed for the day: the canopy height and the !
          !      canopy-air depth change only on a slow step. -------------------------------------------!
          z_top = biophys%cas%can_depth

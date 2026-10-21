@@ -15,7 +15,8 @@ module meds_met_era5land
    use meds_constants,      only : day_sec
    use meds_time,           only : meds_time_t, time_advance_seconds, seconds_between, seconds_into_day,    &
                                    time_to_string, days_in_month, time_units_base
-   use meds_forcing_params, only : MET_PATH_LEN, ARCHIVE_DT_SEC, SWPART_PASSTHROUGH, forcing_config_t
+   use meds_forcing_params, only : MET_PATH_LEN, ARCHIVE_DT_SEC, forcing_config_t
+   use meds_radiation_lib,  only : SWPART_PASSTHROUGH
    use meds_met_types,      only : met_record_t, met_source_t, met_cursor_t, met_grid_t, met_cells_t,       &
                                    met_month_t, HUMIDITY_TDEW
    use meds_met_grid,       only : select_site_cell, GRID_OK, GRID_ERR_OPEN, GRID_ERR_NO_CELL
