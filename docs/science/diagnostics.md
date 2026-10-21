@@ -192,16 +192,16 @@ that is identical to chaining.
 
 #### Snapshots
 
-Every mean has its snapshot, off by default (`--dump-io-config` lists it as `false`), and the states
-that are snapshots by default (`nplant_co`, `area_pa`, `age_pa`, `n_cohort_py`, `n_patch_py`) have
-their means. What the end of the period means depends on where the value comes from:
+Every state's mean has its snapshot, off by default (`--dump-io-config` lists it as `false`), and the
+states that are snapshots by default (`nplant_co`, `area_pa`, `age_pa`, `n_cohort_py`, `n_patch_py`)
+have their means. What the end of the period means depends on where the state comes from:
 
-- **A state** is read as the period's last step left it: the daily `dbh_co` stamped 31 July is the
-  diameter at 1 August 00:00 (Which steps a record holds, below), and the monthly one stamped July
-  is the same value.
-- **A fast-loop diagnostic** — a flux, the canopy air, a leaf's conductance — is its value over the
-  period's last fast step, as the fast loop recorded it: the last of the sub-step samples its mean
-  averages. On an F tier one sub-step long (`[output].fast_interval_steps = 1`) `cas_temp_py` and
+- **A state of the slow step** is read as the period's last step left it: the daily `dbh_co` stamped
+  31 July is the diameter at 1 August 00:00 (Which steps a record holds, below), and the monthly one
+  stamped July is the same value.
+- **A state the fast loop records each sub-step** — the canopy air, a leaf's temperature, potential or
+  conductance — is its value at the period's last fast step, as the fast loop recorded it: the last
+  of the sub-step samples its mean averages. On an F tier one sub-step long (`[output].fast_interval_steps = 1`) `cas_temp_py` and
   `mean_cas_temp_py` are one series, to the mean's last bit, and the daily `cas_temp_py` is the F
   `cas_temp_py` of its day's last sub-step.
   A per-cohort row reduced to the patch or the polygon (`leaf_temp_py`) is that sub-step's
@@ -209,11 +209,12 @@ their means. What the end of the period means depends on where the value comes f
   variable or such a snapshot is written, with forcing off too (the sub-steps then see the
   reference climate).
 
-Two kinds of variable have no end-of-period value and are mean-only: the totals the fast loop keeps
-only per slow step (`mean_leaf_resp_py`, `mean_stem_resp_py`, `mean_root_resp_py`, `mean_npp_co`,
-the GPP and NPP by PFT, `mean_et_py`, the runoff and drainage, `mean_rh_py` and `mean_rh_pa`, and the
-work counters), and each site's forcing (`mean_air_temp_si` … `mean_nir_beam_si`). The ids and the axes'
-bookkeeping are snapshot-only.
+**A flux or a rate is a mean only**: the energy, water and carbon fluxes, the radiation, the solvers'
+work, and the slow step's growth, allocation, litter, mortality, recruitment and disturbance rates. Its
+value at an instant is the last fast step's, before midnight UTC for a daily record, which says little
+a mean does not; on an F tier one sub-step long the mean is that value anyway. Each site's forcing
+(`mean_air_temp_si` … `mean_nir_beam_si`) is a mean only too: the fast loop keeps no sub-step of it.
+The ids and the axes' bookkeeping are snapshot-only.
 
 #### Which steps a record holds
 
@@ -281,7 +282,7 @@ drops them all (§5).
 ### A caveat worth stating plainly
 
 **A FAST-tier `mean_` variable is a mean over the fast output window, not an instantaneous sub-step
-value**, and its snapshot is the window's last sub-step. At `[output].fast_interval_steps = 1` the
+value**, and a state's snapshot is the window's last sub-step. At `[output].fast_interval_steps = 1` the
 two coincide; at the default `4` a mean is a four-sub-step mean. This matters when comparing against
 a flux tower at sub-hourly resolution.
 
@@ -304,9 +305,9 @@ a sub-daily variable read from it would write end-of-step values on a sub-daily 
 A variable therefore has two sources: the staged sample its F records read, and the live field its
 D, M and Y records read. Every row the fast loop records each sub-step (the per-cohort and per-patch
 diagnostic rows, the forcing) is staged, so a variable on one has both, under one name. A few patch
-fluxes (`mean_reco_py`, `mean_sw_up_py`, …) have only the first, and their snapshots, the last
-sub-step's value, go on any tier; the slow step's quantities and the fast loop's per-slow-step totals
-have only the second. A tier a variable has no source for would write `_FillValue` for the whole run,
+values (`mean_reco_py`, `mean_sw_up_py`, `mean_ustar_pa`, `mean_cas_co2_pa`, …) have only the first;
+a state among them has a snapshot, the last sub-step's value, on any tier. The slow step's quantities
+and the fast loop's per-slow-step totals have only the second. A tier a variable has no source for would write `_FillValue` for the whole run,
 so the registry checks every default and every override at start-up and refuses to start, naming the
 variable: a diagnostic that quietly reports nothing is worse than one that refuses to start.
 
@@ -440,21 +441,21 @@ things. They are written whatever `soil_carbon_on` says, since they are demograp
 
 ## 7. Variable inventory
 
-452 registered variables, 236 means and 216 snapshots. Run `meds_main --dump-io-config` for the
-authoritative list with units, groups, axes and default streams — it is generated from the registry,
-so it cannot drift.
+373 registered variables: 236 means, 131 snapshots and the axes' 6 bookkeeping variables. Run
+`meds_main --dump-io-config` for the authoritative list with units, groups, axes and default streams —
+it is generated from the registry, so it cannot drift.
 
 | group | count | | axis | count |
 |---|---|---|---|---|
-| structure | 130 | | polygon | 216 |
-| energy | 78 | | cohort | 112 |
-| ecophys | 58 | | patch | 66 |
-| carbon | 54 | | pft | 16 |
-| forcing | 48 | | dbh_class | 12 |
-| biogeochem | 32 | | soil | 10 |
-| water | 30 | | (patch, soil) | 10 |
-| numerics | 12 | | site | 10 |
-| radiation | 10 | | | |
+| structure | 114 | | polygon | 166 |
+| energy | 64 | | cohort | 98 |
+| ecophys | 50 | | patch | 55 |
+| forcing | 39 | | pft | 14 |
+| carbon | 37 | | dbh_class | 10 |
+| water | 28 | | soil | 10 |
+| biogeochem | 26 | | (patch, soil) | 10 |
+| numerics | 10 | | site | 10 |
+| radiation | 5 | | | |
 
 ---
 

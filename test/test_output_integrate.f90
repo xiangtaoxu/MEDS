@@ -40,7 +40,7 @@ program test_output_integrate
    use meds_output_extract,   only : extract_variable, extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PA0,    &
                                      SRC_F_PY0, SRC_F_CO0, SRC_NONE
    use meds_diag_vars,        only : alloc_cohort_diag, CO_LEAF_TEMP, CO_GSW, N_PY_ROWS, PY_TAIR, PY_CO2, N_PA_ROWS,       &
-                                     N_CO_FAST_ROWS, PA_CAS_TEMP, PA_LE, PA_H, PA_GPP, PA_SW_UP, PA_LW_UP, PA_RECO
+                                     N_CO_FAST_ROWS, PA_CAS_TEMP, PA_LE, PA_H, PA_GPP, PA_SW_UP, PA_LW_UP, PA_CAS_CO2
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_setup,     only : alloc_output_set, alloc_output_buffers, setup_output_files,                  &
                                      finalize_output_files
@@ -470,9 +470,9 @@ contains
       call free_polygon(poly)
    end subroutine test_boundary_step
 
-   !----- The snapshots (docs/science/diagnostics.md §3): each mean_<x> has its <x>, off by default, but  !
-   !      a total the fast loop keeps only per slow step; a state's snapshot reads the state, a fast-loop  !
-   !      diagnostic's the staging; and a fast-loop row is staged, so it may be on the F tier. ----------!
+   !----- The snapshots (docs/science/diagnostics.md §4): each state's mean_<x> has its <x>, off by       !
+   !      default, and a flux or a rate none; a slow-step state's snapshot reads the state, a fast-loop    !
+   !      state's the staging; and a fast-loop row is staged, so it may be on the F tier. ----------------!
    subroutine test_snapshot_registry()
       type(meds_config_t)  :: cfg
       type(output_files_t) :: files
@@ -480,11 +480,11 @@ contains
       cfg = build_test_config(86400.0_wp)
       cfg%output%enabled = .true.
       call setup_output_files(files, cfg)
-      k = find_var_index(files%reg, 'gpp_py')
-      call check(k > 0_ik, 'mean_gpp_py has its snapshot gpp_py')
+      k = find_var_index(files%reg, 'cas_temp_py')
+      call check(k > 0_ik, 'mean_cas_temp_py has its snapshot cas_temp_py')
       if (k > 0_ik) then
          call check(files%reg%var(k)%agg == AGG_LAST .and. files%reg%var(k)%streams == FREQ_NONE        &
-                    .and. files%reg%var(k)%snap_staged, 'gpp_py: a snapshot, off, read from the staging')
+                    .and. files%reg%var(k)%snap_staged, 'cas_temp_py: a snapshot, off, read from the staging')
       end if
       k = find_var_index(files%reg, 'dbh_co')
       call check(k > 0_ik, 'mean_dbh_co has its snapshot dbh_co')
@@ -492,22 +492,23 @@ contains
       k = find_var_index(files%reg, 'height_co')
       if (k > 0_ik) call check(.not. files%reg%var(k)%snap_staged,                                    &
                                'height_co: the state at the step''s end, though its F tier is staged')
-      call check(find_var_index(files%reg, 'leaf_resp_py') == 0_ik .and.                               &
+      call check(find_var_index(files%reg, 'gpp_py') == 0_ik .and. find_var_index(files%reg, 'le_py') == 0_ik &
+                 .and. find_var_index(files%reg, 'mort_rate_co') == 0_ik .and.                            &
                  find_var_index(files%reg, 'air_temp_si') == 0_ik,                                     &
-                 'a per-slow-step total and a site''s forcing stay mean-only')
+                 'a flux, a rate and a site''s forcing are means only')
       call check(find_var_index(files%reg, 'mean_nplant_co') > 0_ik .and.                              &
                  find_var_index(files%reg, 'mean_area_pa') > 0_ik, 'a state snapshot has its mean')
       k = find_var_index(files%reg, 'mean_gsw_co')
       call check(files%reg%var(k)%source_fast == SRC_F_CO0 + CO_GSW,                                  &
                  'a fast-loop cohort row is staged, so the F tier reads it')
-      k = find_var_index(files%reg, 'reco_py')
-      call check(k > 0_ik, 'an F-only mean has a snapshot')
+      k = find_var_index(files%reg, 'cas_co2_pa')
+      call check(k > 0_ik, 'an F-only state has a snapshot')
       if (k > 0_ik) call check(files%reg%var(k)%source_id == SRC_NONE .and. files%reg%var(k)%snap_staged, &
-                               'reco_py reads the staging on every tier')
+                               'cas_co2_pa reads the staging on every tier')
    end subroutine test_snapshot_registry
 
    !----- Snapshots on the tiers. Daily: the last staged sub-step of the step, for a polygon value  !
-   !      (cas_temp_py), a patch slab (cas_temp_pa), an F-only flux (reco_py) and a cohort row      !
+   !      (cas_temp_py), a patch slab (cas_temp_pa), an F-only state (cas_co2_pa) and a cohort row  !
    !      reduced as its mean is (leaf_temp_py, leaf-area-weighted); a step with nothing staged     !
    !      reads as fill. F: a snapshot keeps the last sub-step where its mean averages them. ------!
    subroutine test_snapshots()
@@ -528,7 +529,7 @@ contains
       call apply_variable_override(files%reg, 'cas_temp_py', OVR_MASK, ior(FREQ_FAST, FREQ_DAILY), found)
       call apply_variable_override(files%reg, 'mean_cas_temp_py', OVR_MASK, FREQ_FAST, found)
       call apply_variable_override(files%reg, 'cas_temp_pa', OVR_MASK, FREQ_DAILY, found)
-      call apply_variable_override(files%reg, 'reco_py', OVR_MASK, FREQ_DAILY, found)
+      call apply_variable_override(files%reg, 'cas_co2_pa', OVR_MASK, FREQ_DAILY, found)
       call apply_variable_override(files%reg, 'leaf_temp_py', OVR_MASK, FREQ_DAILY, found)
       call check(found, 'the snapshots are registry variables')
       call resolve_streams(files%reg)
@@ -538,7 +539,7 @@ contains
       k_t  = find_var_index(files%reg, 'cas_temp_py')
       k_m  = find_var_index(files%reg, 'mean_cas_temp_py')
       k_tp = find_var_index(files%reg, 'cas_temp_pa')
-      k_r  = find_var_index(files%reg, 'reco_py')
+      k_r  = find_var_index(files%reg, 'cas_co2_pa')
       k_lt = find_var_index(files%reg, 'leaf_temp_py')
 
       !----- One patch, two cohorts of leaf area 1 and 3, the cohort block on; two staged sub-steps. -!
@@ -550,7 +551,7 @@ contains
       poly%cohort%diag%n = 2_ik
       call stage_cas(bufs, [290.0_wp, 294.0_wp])
       bufs%fast_n_cohort = 2_ik
-      bufs%fast_site(PA_RECO, :) = [1.0_wp, 3.0_wp]
+      bufs%fast_patch(PA_CAS_CO2, 1, :) = [400.0_wp, 410.0_wp]
       allocate(bufs%fast_cohort_diag(8, N_CO_FAST_ROWS, 2), source=0.0_wp)
       bufs%fast_cohort_diag(1:2, CO_LEAF_TEMP, 2) = [290.0_wp, 298.0_wp]
       bufs%fast_ready = .true.
@@ -567,7 +568,8 @@ contains
       c_tp = slab_col(bufs%pending(2), k_tp)
       call check(bufs%pending(2)%nslab(k_tp) == 1_ik, 'D: the patch snapshot has the staged patch')
       call check_close(bufs%pending(2)%slab(1,c_tp), 294.0_wp, 1.0e-12_wp, 'D: a patch slab''s last sub-step')
-      call check_close(bufs%pending(2)%sval(k_r), 3.0_wp, 1.0e-12_wp, 'D: an F-only flux''s last sub-step')
+      call check_close(bufs%pending(2)%slab(1, slab_col(bufs%pending(2), k_r)), 410.0_wp, 1.0e-12_wp,     &
+                       'D: an F-only state''s last sub-step')
       call check_close(bufs%pending(2)%sval(k_lt), 296.0_wp, 1.0e-12_wp,                             &
                        'D: a cohort row''s last sub-step, leaf-area-weighted as its mean is')
 

@@ -331,8 +331,8 @@ and `init_from_census` in [`../src/io/init/meds_init_census.f90`](../src/io/init
 is wrong with it: one that cannot be opened, a census with no row for the site or a malformed
 column or row, or a state file an older MEDS wrote, without a row for each of the run's polygons
 (a region's, given to a site run) or with a PFT, site or soil-layer count unlike the run's. A state
-file names its layout in its global attribute `restart_format`, and MEDS reads only its own: a
-file from an older MEDS does not restart, so start that run again from its census or bare ground. Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
+file must hold every variable this MEDS reads: one from an older MEDS stops the run at the first it
+lacks, so start that run again from its census or bare ground. Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
 from bare ground instead. `meds_main` stops, and `meds.model.Run` raises `RuntimeError`.
 
 **The initial soil state** is `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³], both optional:
@@ -352,8 +352,8 @@ soil water's potential, and is re-seeded from its patch once the patch is seeded
 
 Two streams, both set in `[output]`:
 
-- **Diagnostic timeseries** — the `[output]` subsystem. 452 variables, each a mean over its
-  record's period (`mean_<x>`) or its value at the period's end (`<x>`), at four timescales
+- **Diagnostic timeseries** — the `[output]` subsystem. 373 variables: each a mean over its
+  record's period (`mean_<x>`), and a state also its value at the period's end (`<x>`), at four timescales
   (sub-daily, daily, monthly, annual). `[output].io_config` chooses them by name or pattern
   (`"*_co" = false`, `"mean_*_py" = "M Y"`); `meds_main --dump-io-config` lists every variable. See
   [`science/diagnostics.md`](science/diagnostics.md) §5.

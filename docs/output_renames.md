@@ -6,9 +6,9 @@ variable, with every name it replaces (a fast `*_fast` twin merged into its dail
 dropped duplicate), its default tiers and its dimensions. Three variables go without a successor:
 `gpp_rate_site` and `et_rate_site`, duplicates of `mean_gpp_py` and `mean_et_py`, and
 `leaf_temp_cohort_fast`, the leaf temperature at each step's end: on the F tier the per-cohort leaf
-temperature is `mean_leaf_temp_co`, the one each step's leaf solve used. Each `mean_` variable also has
-a snapshot, its name without the prefix ([diagnostics](science/diagnostics.md) §4), which this page
-does not list.
+temperature is `mean_leaf_temp_co`, the one each step's leaf solve used. Each state's `mean_` variable
+also has a snapshot, its name without the prefix ([diagnostics](science/diagnostics.md) §4), which this
+page does not list.
 
 ## structure
 
@@ -314,7 +314,7 @@ does not list.
 | `soil_depth_si` | `site_soil_depth` |
 | `chave_e_py` | `chave_e` |
 
-## The restart file (`restart_format = "3"`)
+## The restart file
 
 Every variable is the state at the file's instant, so none carries `mean_`. Unchanged: `n_cohort`,
 `n_patch`, `n_site`, `n_window`, `meta_int`, `meta_real`, `global_cohort_id`, `owner_patch`,

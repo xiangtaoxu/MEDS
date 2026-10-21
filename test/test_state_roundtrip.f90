@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !----- State restart round-trip: the per-cohort PLASTIC leaf traits (sla/vcmax25/rd25 and the ----!
 !----- leaf turnover rate) must be written to and recovered from a state checkpoint, not reset ----!
-!----- to top-of-canopy, and a file an older MEDS wrote (no restart_format) is refused. ----------!
+!----- to top-of-canopy. -----------------------------------------------------------------------!
 program test_state_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
@@ -11,19 +11,8 @@ program test_state_roundtrip
    use meds_init_restart,               only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
                                      read_restart_file
    use meds_time,             only : meds_time_t
-   use meds_netcdf_c,     only : NC_NOERR, NC_GLOBAL, nc_open_f, nc_close, cstr
    use meds_test_support, only : banner, build_test_config, check, check_close
-   use iso_c_binding,     only : c_int, c_char
    implicit none
-
-   integer(c_int), parameter :: NC_WRITE = 1_c_int        ! netcdf.h: open for writing
-   interface
-      integer(c_int) function nc_del_att(ncid, varid, name) bind(c, name="nc_del_att")
-         import :: c_int, c_char
-         integer(c_int), value, intent(in) :: ncid, varid
-         character(kind=c_char), intent(in) :: name(*)
-      end function nc_del_att
-   end interface
 
    type(meds_config_t) :: cfg
    type(polygon_t)     :: poly, poly2
@@ -178,20 +167,6 @@ program test_state_roundtrip
    call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
    call check(found .and. .not. poly2%restructure_pending .and. .not. poly2%restructure_new_year,          &
               'a checkpoint with nothing owed reads so')
-
-   !----- A file without restart_format, as an older MEDS wrote it, is refused, saying so. ---------!
-   block
-      integer(c_int)                :: ncid
-      character(kind=c_char)        :: att(15)
-      character(len=:), allocatable :: why
-      call check(nc_open_f('./test_sr-S-20000101000000.nc', NC_WRITE, ncid) == NC_NOERR,             &
-                 'the state file opens for writing')
-      att = cstr('restart_format')
-      call check(nc_del_att(ncid, NC_GLOBAL, att) == NC_NOERR, 'its restart_format is removed')
-      call check(nc_close(ncid) == NC_NOERR, 'the state file closes')
-      call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, why=why)
-      call check(.not. found .and. index(why, 'older MEDS') > 0, 'a file of an older MEDS is refused, saying why')
-   end block
 
    write(*,'(a)') '   PASS'
 

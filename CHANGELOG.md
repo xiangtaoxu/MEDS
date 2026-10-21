@@ -45,13 +45,13 @@ forcing's physics joins the model's other laws in `src/share`: the sun's positio
 radiation above the canopy in a new `meds_radiation_lib`, the humidity conversions, the rain/snow split
 and the air at another height in `meds_therm_lib`; `src/io/met` keeps the reader and where it samples
 the air. The restart and the diagnostic files name each site's statics alike (#470). A state file
-holds every variable and names its layout, and the reader refuses one an older MEDS wrote instead of
-filling in what it lacks (#471). Every output value is a mean over its record's period: the fast loop's
+holds every variable, and the reader requires each one instead of filling in what an older file
+lacks (#471, #477). Every output value is a mean over its record's period: the fast loop's
 carbon and water totals are mean rates, and the solvers' work counters means per fast step (#472).
 Every variable of the diagnostic and restart files is named `[mean_]<quantity>[_<breakdown>]_<level>`, one
-name at every tier, each fast twin merged into its daily variable (#473). Every mean has its snapshot,
-its value at the period's end, under the name without `mean_`, off until an `io_config` names its tiers
-(#474). An `io_config` line names a variable or a pattern (`"*_co" = false`, `"mean_*_py" = "M Y"`), the
+name at every tier, each fast twin merged into its daily variable (#473). Every state's mean has its
+snapshot, its value at the period's end, under the name without `mean_`, off until an `io_config` names
+its tiers; a flux or a rate is a mean only (#474, #477). An `io_config` line names a variable or a pattern (`"*_co" = false`, `"mean_*_py" = "M Y"`), the
 most specific line winning, and `[output]`'s group and axis switches go (#475). The state files are
 `[output]`'s too (`state_write`, `state_interval` in days, months or years, `state_file_dir`,
 `state_file_prefix`), and `[forcing].format` is `"default"` or `"ERA5land"` (#476).
@@ -69,8 +69,7 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
     lists every variable.
   - A script that reads the files by name takes the new names, as the examples, `post_proc`, the fast
     calibration and `meds.canopy` do.
-  - The restart file is `restart_format = "2"`: a state file this release wrote before the rename does
-    not restart either.
+  - A state file this release wrote before the rename does not restart either.
 - **`[state]` is gone: the state files are `[output]`'s** (#476). Rename the keys, and move them into
   `[output]`; a `[state]` key stops the run as unknown:
 
@@ -87,8 +86,8 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
   do.
 - **`[forcing].format` is `"default"` or `"ERA5land"`** (#476): `"ED_default"` and `"ED_ERA5land"`
   stop the run. `"ERA5land"` still reads the ED_ERA5land archive that `scripts/prepare_era5` builds.
-- **State files are `restart_format = "3"`** (#476): they carry the forcing reader's night-time
-  clearness. A state file written before does not restart.
+- **State files carry the forcing reader's night-time clearness** (#476), so a state file written
+  before does not restart.
 - **`[output]`'s group and axis switches are gone** (#475): `structure`, `carbon`, `water`, `energy`,
   `biogeochem`, `numerics`, `forcing`, `radiation`, `ecophys` and `axes_cohort`, `axes_patch`,
   `axes_pft`, `axes_size`, `axes_soil_patch` stop the run as unknown keys; delete them. The defaults
@@ -103,7 +102,7 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
     `global_patch_id`, `patch_site`) is written with its axis, at each tier a variable on the axis is,
     and naming it stops the run: delete such a line;
   - `[output.<tier>].enabled = false` writes nothing at that tier, whatever `io_config` says.
-- **An `io_config`'s `true` needs a variable with default tiers** (#474). The snapshots (#474) are off by
+- **An `io_config`'s `true` needs a variable with default tiers** (#474). The snapshots are off by
   default, and `cas_temp_py = true` stops the run, saying so: name the tiers, `cas_temp_py = "D M"`.
   `meds_main --dump-io-config` lists such a variable as `false`.
 - **The F tier writes with forcing off** (#474). A run with `[output.fast].enabled = true` and
@@ -119,14 +118,14 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
   the record's seconds. A script that added up records multiplies each by its length first, as
   examples 05's and 06's do. The slow step's rates (allocation, litterfall, growth, mortality) keep
   their per-year units.
-- **State files written before this release do not restart** (#471). A state file names its layout in
-  the global attribute `restart_format`, and the reader refuses a file without it, saying so, where it
-  used to fill in what an older file lacked: the polygon axis, the carbon pools, the tissue water and
+- **State files written before this release do not restart** (#471, #477). The reader requires every
+  variable, and a file without one stops the run, naming it, where the reader used to fill in what an
+  older file lacked: the polygon axis, the carbon pools, the tissue water and
   energies, the fast reservoirs, the soil carbon, a leaf lifespan (`llspan`), films per m² of ground,
   and the rest. Start such a run again from its census or bare ground. v0.3.5's archived example
   state files no longer restart.
 - **`[forcing].format = "const"` is gone** (#469). It opened no file and drove the run with a fixed
-  reference climate; no shipped config used it. `format` takes `"ED_default"` or `"ED_ERA5land"`, and a
+  reference climate; no shipped config used it. `format` takes `"default"` or `"ERA5land"` (#476), and a
   run without forcing sets `forcing_on = false`.
 - **`[output].io_config` takes TOML's `true` and `false` only** (#469), as every reader takes only the
   names it lists: `.true.`, `True` and `TRUE` (and their `false` twins) stop the run.
@@ -363,8 +362,9 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
   (a name or pattern, `OVR_TRUE`/`OVR_FALSE`/`OVR_MASK` and the tiers), `resolve_streams` clears the
   tiers switched off (`output_registry_t%tier_on`) and sets the bookkeeping's (`var_desc_t%coord`), and
   `usable_tiers` and `glob_match` are public; `alloc_output_set` takes an optional selection.
-- **Fortran: the output registry's snapshots** (#474): `var_desc_t%snap_staged` marks a snapshot the D,
-  M and Y tiers read from the last staged sub-step; `add_variable` derives `source_fast` from a fast-loop
+- **Fortran: the output registry's snapshots** (#474, #477): `var_desc_t%snap_staged` marks a snapshot
+  the D, M and Y tiers read from the last staged sub-step, and `var_desc_t%flux` (`add_variable`'s
+  `flux=`, implied by `AGG_RATE`) a flux or a rate, which has none; `add_variable` derives `source_fast` from a fast-loop
   row (`FLD_C_DIAG0 + CO_*`, `FLD_P_DIAG0 + PA_*`, `FLD_PY_DIAG0 + PY_*`), so `fast_source=` names only
   another source; `append_variable` stores a built descriptor; `check_fast_tier` takes the descriptor;
   `extract_variable` takes an optional `cohort_x`, a cohort field to reduce in place of the live one.
@@ -459,13 +459,15 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
   `io_config` files start from `"*" = false` and keep the budget residuals, so they no longer write the
   daily soil carbon, Rh and work counters the old switches left on, and they gain the patch bookkeeping
   with their patch variables.
-- **A snapshot for every mean** (#474). Each `mean_<x>` has its `<x>` (`AGG_LAST`, `time: point`), off
-  by default, and the states written as snapshots (`nplant_co`, `area_pa`, `age_pa`, `n_cohort_py`,
-  `n_patch_py`) their means: 452 variables, 216 of them snapshots. A state's snapshot is the state as
-  the period's last step left it; a fast-loop diagnostic's, a flux included, its value over the
-  period's last fast step, the last sub-step its mean averages, read from the staging, so on an F tier
-  one sub-step long the two are one series (to the mean's last bit). The totals the fast loop keeps only per slow step and each
-  site's forcing stay mean-only (`docs/science/diagnostics.md` §4, Snapshots). Every fast-loop row is
+- **A snapshot for every state** (#474, #477). Each state's `mean_<x>` has its `<x>` (`AGG_LAST`,
+  `time: point`), off by default, and the states written as snapshots (`nplant_co`, `area_pa`,
+  `age_pa`, `n_cohort_py`, `n_patch_py`) their means: 373 variables, 131 of them snapshots. A slow-step
+  state's snapshot is the state as the period's last step left it; one the fast loop records each
+  sub-step (the canopy air, a leaf's temperature, potential or conductance), its value at the period's
+  last fast step, the last sub-step its mean averages, read from the staging, so on an F tier one
+  sub-step long the two are one series (to the mean's last bit). A flux or a rate (energy, water and
+  carbon fluxes, radiation, growth, allocation, litter, mortality and recruitment) is a mean only, and
+  so is each site's forcing (`docs/science/diagnostics.md` §4, Snapshots). Every fast-loop row is
   staged, so its variable may be on the F tier: `mean_gsw_co`, `mean_w_surface_py`, `mean_rough_pa` and
   the rest of the cohort and patch rows gain it. The fast loop stages its sub-steps when the F tier or
   a staged snapshot reads them. Six long names lose "mean rate" and "mean signed": the prefix and
@@ -511,9 +513,8 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
   read on (the raw cohort, patch and site fields and the polygon's own scalars, as well as the
   reductions). The generated `meds_io_config.toml` is regenerated: its group labels had also drifted
   since the polygon renames (#468).
-- **One restart-file layout** (#471). The writer marks each state file `restart_format = "1"`; the
-  reader reads every variable and refuses a file of another layout, and its dozen fill-in branches for
-  older files go (`order_of_processes.md` §6). A run whose growth window is another length than its
+- **One restart-file layout** (#471, #477). The reader reads every variable, and its dozen fill-in
+  branches for older files go (`order_of_processes.md` §6); the file carries no layout number. A run whose growth window is another length than its
   file's still fills the ring buffer with the saved `growth_avg`.
 - **The forcing's physics is in `src/share`, beside the model's other laws** (#470). The solar
   geometry is `meds_time`'s; the shortwave partition, the clearness index, the clear-sky emissivity,
