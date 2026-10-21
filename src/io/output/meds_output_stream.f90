@@ -5,8 +5,9 @@
 ! and roll to a new file at a chunk boundary (write_record). Every file has a polygon axis     !
 ! after time; a record is packed over the polygons, with the fill value for a polygon without  !
 ! it (one that failed earlier in the month) and past a polygon's live cohort and patch counts  !
-! (docs/science/diagnostics.md §1, §3). The only diagnostic module that calls netCDF, from the !
-! I/O phase only. Design record: MEDS_IO_DESIGN.md §5.                                         !
+! (docs/science/diagnostics.md §1, §3). output_serialize drains the queued records in the     !
+! run's I/O phase, and output_close writes the final partial periods and closes the files. The !
+! only diagnostic module that calls netCDF. Design record: MEDS_IO_DESIGN.md §5.               !
 !==========================================================================================!
 module meds_output_stream
    use iso_c_binding, only : c_int, c_size_t, c_double, c_char
@@ -19,7 +20,8 @@ module meds_output_stream
                              nc_put_att_int, nc_put_att_int_f, nc_put_att_text_f, nc_put_var1_double,             &
                              nc_put_vara_double, nc_put_vara_int, nc_sync, NC_CHUNKED, NC_CLOBBER, NC_DOUBLE,     &
                              NC_GLOBAL, NC_INT, NC_NETCDF4, NC_UNLIMITED
-   use meds_output_params, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter, TIER_FAST
+   use meds_output_params, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter, TIER_FAST, N_FREQ
+   use meds_output_integrate, only : close_tier
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
                                   output_files_t, output_buffers_t,                                  &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
@@ -30,7 +32,7 @@ module meds_output_stream
    implicit none
    private
 
-   public :: write_record, stream_close_file
+   public :: output_serialize, output_close
 
    character(len=*), parameter :: TITLE = 'MEDS diagnostic aggregation output'
    integer(c_int),   parameter :: DEFLATE_LEVEL = 4_c_int   !< the variables' zlib level
@@ -798,5 +800,54 @@ contains
       vv = [val]
       call nc_check(nc_put_vara_int(ncid, int(vid_ik, c_int), st, cn, vv), 'put int rec')
    end subroutine put_int_rec
+
+
+   !----- Drain every polygon's queued records to the per-tier files, in closing order, then empty  !
+   !      the queues; called from the I/O phase at month boundaries and at the end of the run.     !
+   !      Record i of tier t is one period across the polygons. A polygon that failed earlier in   !
+   !      the month closed fewer, so the longest queue sets the count and the others get the fill  !
+   !      value: a failure loses no other polygon's month. ----------------------------------------!
+   subroutine output_serialize(files, bufs)
+      type(output_files_t),   intent(inout) :: files
+      type(output_buffers_t), intent(inout) :: bufs(:)
+      integer(ik) :: t, i, p, nrec
+      if (.not. files%enabled) return
+      do t = 1_ik, N_FREQ
+         nrec = 0_ik
+         do p = 1_ik, size(bufs, kind=ik)
+            nrec = max(nrec, bufs(p)%queue(t)%n)
+         end do
+         do i = 1_ik, nrec
+            call write_record(files, bufs, t, i)
+         end do
+         do p = 1_ik, size(bufs, kind=ik)
+            bufs(p)%queue(t)%n = 0_ik
+         end do
+      end do
+   end subroutine output_serialize
+
+   !----- End of run: optionally close every polygon's final partial windows (the FAST tier's too) !
+   !      and write them, then close the files. ------------------------------------------------!
+   subroutine output_close(files, bufs, flush_partial)
+      type(output_files_t),   intent(inout) :: files
+      type(output_buffers_t), intent(inout) :: bufs(:)
+      logical, optional,      intent(in)    :: flush_partial
+      logical     :: fp
+      integer(ik) :: t, p
+      if (.not. files%enabled) return
+      fp = .true.
+      if (present(flush_partial)) fp = flush_partial
+      if (fp) then
+         do p = 1_ik, size(bufs, kind=ik)
+            do t = 1_ik, N_FREQ
+               if (bufs(p)%has_data(t)) call close_tier(files, bufs(p), t)
+            end do
+         end do
+         call output_serialize(files, bufs)
+      end if
+      do t = 1_ik, N_FREQ
+         call stream_close_file(files%stream(t))
+      end do
+   end subroutine output_close
 
 end module meds_output_stream

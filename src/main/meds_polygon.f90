@@ -41,24 +41,14 @@ module meds_polygon
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
-   use meds_output_types,           only : output_files_t, output_buffers_t, MISSING_VALUE
+   use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_params,          only : TIER_FAST
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
-   use meds_output_registry,        only : setup_output_files, finalize_output_files, alloc_output_buffers, &
-                                           set_output_polygons,                                  &
-                                           activate_polygon_diag, apply_variable_override,          &
-                                           parse_stream_mask, build_freq_index, OVR_TRUE,         &
-                                           OVR_FALSE, OVR_MASK
-   use meds_constants,              only : n_soil_layer_max
-   use meds_allometry_lib,          only : HEIGHT_CHAVE
-   use meds_soil_params,            only : SOIL_BC_AQUIFER
-   use meds_met_types,          only : met_cells_t
-   use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
    private
 
    public :: polygon_run_t, polygon_prepare, polygon_step, polygon_report
-   public :: open_output_files, attach_output, ensure_output_dir
+   public :: ensure_output_dir
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
 
    !----- Step and run status codes. OK/DONE are normal; the ERR codes are failures, returned as a  !
@@ -482,110 +472,6 @@ contains
          pools_ss%struct_soil_carbon + pools_ss%microbial_carbon + pools_ss%slow_carbon +        &
          pools_ss%passive_carbon, ' kgC/m2'
    end subroutine soil_carbon_steady
-
-   !---------------------------------------------------------------------------------------!
-   ! open_output_files -- lay out one output file set: the registry from the config, the   !
-   ! per-variable overrides of [output].io_config, and the polygon axis with each          !
-   ! polygon's cell and site count. Each polygon that writes into the set then calls       !
-   ! attach_output, which gives the files that polygon's own sites.                        !
-   !---------------------------------------------------------------------------------------!
-   subroutine open_output_files(cfg, files, verbose, cells, polygon_id, n_site)
-      type(meds_config_t),  intent(in)    :: cfg
-      type(output_files_t), intent(inout) :: files
-      logical,              intent(in)    :: verbose
-      type(met_cells_t),    intent(in)    :: cells          !< the run's cells, one per polygon ...
-      integer(ik),          intent(in)    :: polygon_id(:)  !< ... their polygon ids ...
-      integer(ik),          intent(in)    :: n_site(:)      !< ... and their site counts
-      call setup_output_files(files, cfg)
-      if (len_trim(cfg%output%io_config) > 0)                                                     &
-         call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
-      call set_output_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
-                                any(cfg%pft%allom(1:cfg%pft%n)%height_allometry == HEIGHT_CHAVE))
-      call finalize_output_files(files)
-   end subroutine open_output_files
-
-   !----- A polygon's share of an output file set: its buffers, which read the soil diagnostics   !
-   !      when its fast loop runs, the diagnostic blocks it must accumulate for the set's         !
-   !      variables, and its row of the per-polygon variables: each site's area, terrain, layers  !
-   !      and soil column, and the height allometry's site index its cell's map gave it. ---------!
-   subroutine attach_output(cfg, files, bufs, poly, run)
-      type(meds_config_t),    intent(in)    :: cfg
-      type(output_files_t),   intent(inout) :: files
-      type(output_buffers_t), intent(inout) :: bufs
-      type(polygon_t),        intent(inout) :: poly
-      type(polygon_run_t),    intent(in)    :: run
-      integer(ik) :: p, is
-      call alloc_output_buffers(files, bufs)
-      bufs%diag%soil_ready = cfg%fast_biophysics_on
-      call activate_polygon_diag(files, poly)
-      p = run%cell
-      do is = 1_ik, poly%site%n
-         associate (surf => poly%site%surface(is))
-            files%site_area(is, p)         = poly%site%area(is)
-            files%site_elevation(is, p)    = surf%elevation_m
-            files%site_slope(is, p)        = surf%slope_deg
-            files%site_aspect(is, p)       = surf%aspect_deg
-            files%site_n_soil(is, p)       = surf%soil%n_active
-            files%site_soil_z(:, is, p)    = surf%soil%z_node
-            files%site_soil_face(:, is, p) = surf%soil%soil_layer_z
-            files%site_soil_depth(is, p)   = surf%soil_column%depth
-            files%site_bottom_bc(is, p)    = surf%water_bottom_bc
-            files%site_drain_factor(is, p) = merge(MISSING_VALUE, surf%drain_factor,                &
-                                                   surf%water_bottom_bc == SOIL_BC_AQUIFER)
-            files%site_deep_temp(is, p)    = surf%deep_temp
-         end associate
-      end do
-      !----- E is the polygon's, the same in every PFT's record. -----------------------------!
-      if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = poly%cohort%pft_table%allom(1)%chave_e
-   end subroutine attach_output
-
-   !----- Apply the optional meds_io_config.toml per-variable override table to the manager's   !
-   !      registry (value grammar and unknown-name trap: docs/science/diagnostics.md §5). Each  !
-   !      `variables.<name> = <value>` entry: a bool force-enables / disables everywhere; a     !
-   !      quoted "F D M Y" string replaces the stream mask. A name matching no registry         !
-   !      variable is a hard error.                                                             !
-   subroutine apply_io_overrides(files, tomlpath, verbose)
-      type(output_files_t),   intent(inout) :: files
-      character(len=*),       intent(in)    :: tomlpath
-      logical,                intent(in)    :: verbose
-      type(toml_table_t) :: tt
-      logical            :: ok, found
-      integer(ik)        :: i, mask, status
-      character(len=256) :: raw, sval
-      character(len=64)  :: name
-      character(len=8)   :: bad
-      call toml_parse_file(tomlpath, tt, ok)
-      if (.not. ok) error stop 'meds_polygon: cannot read [output].io_config = '//trim(tomlpath)
-      do i = 1_ik, tt%n
-         if (len_trim(tt%key(i)) <= 10) cycle
-         if (tt%key(i)(1:10) /= 'variables.') cycle
-         name = trim(tt%key(i)(11:))
-         raw  = adjustl(tt%val(i))
-         select case (trim(raw))
-         case ('true', '.true.', 'True', 'TRUE')
-            call apply_variable_override(files%reg, trim(name), OVR_TRUE, 0_ik, found)
-         case ('false', '.false.', 'False', 'FALSE')
-            call apply_variable_override(files%reg, trim(name), OVR_FALSE, 0_ik, found)
-         case default
-            if (raw(1:1) == '"') then                    ! quoted stream string "F D M Y"
-               sval = raw(2:index(raw(2:), '"'))
-               call parse_stream_mask(trim(sval), mask, status, bad)
-               if (status /= 0_ik)                                                               &
-                  error stop 'meds_polygon: io_config unknown stream token "'//trim(bad)//        &
-                             '" for variable '//trim(name)
-               call apply_variable_override(files%reg, trim(name), OVR_MASK, mask, found)
-            else
-               error stop 'meds_polygon: io_config bad value for '//trim(name)//                  &
-                          ' (expected true|false or a quoted "F D M Y" string)'
-            end if
-         end select
-         if (.not. found)                                                                        &
-            error stop 'meds_polygon: io_config variable "'//trim(name)//                         &
-                       '" matches no registry variable (typo?)'
-      end do
-      call build_freq_index(files%reg)
-      if (verbose) write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
-   end subroutine apply_io_overrides
 
    !----- Create the output directory if it does not exist (a run-level convenience). The engine   !
    !      and the kernel libraries never touch the filesystem.                                      !

@@ -47,11 +47,12 @@ module meds_region
    use meds_met_era5land,           only : era5land_grid
    use meds_output_reduce,      only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
-                                           open_output_files, attach_output, ensure_output_dir,   &
+                                           ensure_output_dir,                                     &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
                                            DRIVER_ERR_BOUNDS
    use meds_output_types,           only : output_files_t, output_buffers_t
-   use meds_output_manager,         only : output_serialize, output_close
+   use meds_output_stream,          only : output_serialize, output_close
+   use meds_output_setup,           only : open_output_files, attach_output
    use meds_toml,                   only : toml_write_record
    implicit none
    private
@@ -265,9 +266,10 @@ contains
       !      rest of each axis empty; the files carry each polygon's own layer depths and inputs. -----!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
-         call open_output_files(cfg, reg%out_files, reg%verbose, cells, ids, reg%poly(:)%site%n)
+         call open_output_files(cfg, reg%out_files, reg%verbose, ids, reg%poly(:)%site%n, cells%lat, cells%lon, &
+                                cells%row, cells%col)
          do p = 1_ik, n
-            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p))
+            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p)%cell)
          end do
          if (reg%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if

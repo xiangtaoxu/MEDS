@@ -39,9 +39,9 @@ program test_output_roundtrip
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_output_params,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
-   use meds_output_registry,  only : alloc_output_set
+   use meds_output_setup,     only : alloc_output_set
    use meds_output_integrate, only : output_integrate
-   use meds_output_manager,   only : output_serialize, output_close
+   use meds_output_stream,   only : output_serialize, output_close
    use meds_netcdf_c
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,        only : n_soil_layer_max

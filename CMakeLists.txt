@@ -234,20 +234,14 @@ add_library(meds_demography STATIC ${DEMOGRAPHY_SOURCES})
 target_link_libraries(meds_demography PUBLIC meds_state meds_slow_kernels)
 meds_fortran_flags(meds_demography)
 
-#----- Output PREP (src/io/output): the netCDF-FREE half of the output subsystem -- the site-level        #
-#      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
-#      the extract switchboard. Links meds_demography (polygon_t + reductions) ONLY -- NO netCDF --  #
-#      the stepper edge that ticks the integrators pulls no C dependency (src/README.md, "The       #
-#      library graph"). The netCDF serializer half lives in meds_output_stream (below). The stages:     #
-#      docs/science/diagnostics.md §1.                                                              #
-#      NOTE: this is an EXPLICIT file list, not a file(GLOB) -- adding a diagnostic module here is  #
-#      a required manual edit (unlike the libraries above, which glob their folders).               #
-add_library(meds_output STATIC
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_diagnostic_kernels.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_reduce.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_types.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_integrate.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_registry.f90)
+#----- Diagnostic output (src/io/output), its netCDF-free half: every module of the folder but the  #
+#      writer -- the types, the registry, the file set's setup, the extract, the reductions and the  #
+#      per-tier integrators. Links meds_demography only, so the stepper edge that ticks the          #
+#      integrators pulls no C dependency (src/README.md, "The library graph"). The writer is         #
+#      meds_output_stream (below). The stages: docs/science/diagnostics.md §1.                      #
+file(GLOB OUTPUT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/*.f90)
+list(REMOVE_ITEM OUTPUT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_stream.f90)
+add_library(meds_output STATIC ${OUTPUT_SOURCES})
 target_link_libraries(meds_output PUBLIC meds_demography)
 meds_fortran_flags(meds_output)
 
@@ -368,13 +362,12 @@ else()
    message(STATUS "MEDS: serial build; [run].n_threads has no effect")
 endif()
 
-#----- Output layer (src/io and src/io/output): the netCDF state/diagnostic writer. Links the promoted netCDF        #
-#      bindings (meds_netcdf_c, above) + demography (state serialization). netCDF is always         #
-#      compiled. (The C-binding layer passes array temporaries to the netCDF C `(*)` dummies --      #
+#----- Diagnostic output's writer (src/io/output/meds_output_stream.f90): the netCDF files. Links  #
+#      the netCDF bindings (meds_netcdf_c, above). netCDF is always compiled.                        #
+#      (The C-binding layer passes array temporaries to the netCDF C `(*)` dummies --                #
 #      correct for interop, but Intel Debug `-check all` emits a harmless arg_temp_created warning   #
 #      per call; build Release (-DCMAKE_BUILD_TYPE=Release) for clean output.)                       #
-add_library(meds_output_stream STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_stream.f90
-                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_manager.f90)
+add_library(meds_output_stream STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_stream.f90)
 target_link_libraries(meds_output_stream PUBLIC meds_demography meds_netcdf_c meds_output)
 meds_fortran_flags(meds_output_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")

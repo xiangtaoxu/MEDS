@@ -12,7 +12,6 @@ module meds_output_reduce
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, cm2_to_m2, n_soil_layer_max
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area, patch_polygon_areas
-   use meds_diagnostic_kernels, only : dbh_class_index
    use meds_output_types,       only : MISSING_VALUE
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan, ieee_is_finite
    implicit none
@@ -27,6 +26,7 @@ module meds_output_reduce
    !      API, the tests). ------------------------------------------------------------------!
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area
    public :: has_nan, print_summary
+   public :: dbh_class_index
 
    !=======================================================================================!
    !  Weight kinds: a per-cohort weight w_i. Patch area enters only at the patch -> polygon   !
@@ -428,5 +428,24 @@ contains
          '  N=', total_nplant(poly), '  LAI=', total_lai(poly),                            &
          '  AGB=', total_agb(poly), '  Dmean=', mean_dbh(poly)
    end subroutine print_summary
+
+   !----- 1-based DBH class of a dbh (docs/science/diagnostics.md §3). Over n_class+1 ascending !
+   !      edges, bin k is [edges(k), edges(k+1)); the last bin also takes every dbh above its  !
+   !      top edge, and a dbh below edges(1) falls in bin 1, so no plant is dropped and        !
+   !      sum(nplant_size) == nplant_site holds. ----------------------------------------------!
+   pure integer(ik) function dbh_class_index(dbh, edges, n_class) result(k)
+      real(wp),    intent(in) :: dbh
+      real(wp),    intent(in) :: edges(:)   !< (n_class+1) ascending
+      integer(ik), intent(in) :: n_class
+      integer(ik) :: j
+      k = 1_ik
+      if (n_class <= 0_ik) return
+      do j = n_class, 1_ik, -1_ik
+         if (dbh >= edges(j)) then
+            k = j
+            return
+         end if
+      end do
+   end function dbh_class_index
 
 end module meds_output_reduce

@@ -3,77 +3,72 @@
 ! meds_output_registry -- the one registration list of diagnostic variables (register_*) and   !
 ! the config resolution that turns it into each tier's live variables: the defaults, checked by !
 ! the annual and fast guards, then the axis, group and tier switches, and the per-variable     !
-! overrides after (docs/science/diagnostics.md §5). Also the file set's setup, one polygon's   !
-! buffers, the diagnostic blocks' switch (activate_polygon_diag) and dump_io_config.           !
-! netCDF-free. Adding a variable: docs/science/diagnostics.md §8. Design record:               !
-! MEDS_IO_DESIGN.md §3, §6.                                                                    !
+! overrides after (docs/science/diagnostics.md §5); and dump_io_config, the list of names the  !
+! overrides accept. netCDF-free. Adding a variable: docs/science/diagnostics.md §8. Design     !
+! record: MEDS_IO_DESIGN.md §3, §6.                                                            !
 !==========================================================================================!
 module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
-   use meds_forcing_params, only : MET_BACKEND_ED_ERA5LAND
-   use meds_polygon_state_vars, only : polygon_t
-   use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, alloc_cohort_diag, alloc_patch_diag, &
-                                       N_SI_ROWS, alloc_site_diag, SI_SW_IN, SI_PAR_BEAM, SI_NIR_BEAM, SI_LWDOWN, &
-                                       SI_TAIR, SI_QAIR, SI_PSURF, SI_RHO_AIR
-   use meds_output_params,  only : output_config_t, N_FREQ, N_GRP, N_AXIS, TIER_FAST,                       &
-                                   N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
-                                   FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
-                                   GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY,              &
-                                   GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,      &
+   use meds_diag_vars,          only : SI_SW_IN, SI_PAR_BEAM, SI_NIR_BEAM, SI_LWDOWN, SI_TAIR, SI_QAIR,           &
+                                       SI_PSURF, SI_RHO_AIR
+   use meds_output_params,  only : output_config_t, N_FREQ, N_GRP, N_AXIS, TIER_FAST, FREQ_FAST, FREQ_DAILY,      &
+                                   FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,    &
+                                   GRP_ENERGY, GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,          &
                                    GRP_FORCING
-   use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
-                                   MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
-                                   AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
-                                   DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, &
-                                   XTYPE_DOUBLE, XTYPE_INT, MISSING_VALUE, MISSING_INT, ragged_dim
+   use meds_output_types,   only : var_desc_t, output_registry_t, MAX_OUTPUT_VARS, AGG_MEAN, AGG_LAST,            &
+                                   AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,      &
+                                   DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, XTYPE_DOUBLE, XTYPE_INT, ragged_dim
    use meds_output_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
-   use meds_constants,         only : cm2_to_m2, n_soil_layer_max
-   use meds_output_integrate, only : alloc_integ_buffer, src_class, SRCK_FAST,                                         &
-        FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA,     &
-        FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI, FLD_C_WAI,   &
-        FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON, FLD_C_NONSTRUCTURAL_CARBON,       &
-        FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER_RATE,  &
-        FLD_C_OVERTOPPING_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP,   &
-        FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_LEAF_FLUSH_TENDENCY, FLD_C_LEAF_SHED_TENDENCY,               &
-        FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT,         &
-        FLD_P_GLOBAL_ID, FLD_P_SITE, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH,               &
-        FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND,                   &
-        FLD_P_SOILC_STRUCT_SOIL, FLD_P_SOILC_MICROBIAL, FLD_P_SOILC_SLOW,                        &
-        FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH,                                        &
-        FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ,  &
-        SRC_PY_ET, SRC_PY_N_COHORT, SRC_PY_N_PATCH, SRC_PY_CANOPY_HEIGHT,                            &
-        SRC_PY_RUNOFF, SRC_PY_RUNOFF_SURF, SRC_PY_DRAINAGE,                                         &
-        SRC_PY_WORK_STEPS, SRC_PY_WORK_REJ, SRC_PY_WORK_WATER_NSUB, SRC_PY_WORK_WATER_NEWTON,           &
-        SRC_PY_WORK_WATER_NFAIL, SRC_PY_WORK_WATER_REJECT, SRC_PY_WORK_RK45_RESCUE,                     &
-        SRC_PY_WORK_CLAMP_STAGE,                                                                  &
-        SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PA0,                                &
-        SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0, FLD_C_DIAG0, FLD_P_DIAG0, &
-        FLD_PY_DIAG0, FLD_SI_DIAG0, FLD_SI_GROWTH_TEMP
-   use meds_diag_vars,       only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_TRANSP, CO_BETA_STOM, &
-                                    CO_BETA_NONSTOM, CO_LEAF_VPD, CO_PSI_LEAF, CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE, &
-                                    CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_LEAF_TEMP, &
-                                    CO_WOOD_TEMP, CO_LEAF_PAR, CO_GB_MOL, CO_PSI_PREDAWN, CO_CA, CO_PRESSURE, PA_LE, PA_H, &
-                                    PA_RNET, PA_SW_GROUND, PA_LW_GROUND, PA_SW_IN_VIS, PA_SW_IN_NIR, PA_SW_UP_VIS, PA_SW_UP_NIR, &
-                                    PA_LW_UP, PA_USTAR, PA_GGNET, PA_ROUGH, PA_DISPLACE, PA_GPP, PA_NEE, PA_TRANSP, &
-                                    PA_SOIL_TEMP_TOP, PA_RESID_ENERGY, PA_CAS_VPD, PA_W_SURFACE, PA_CAS_TEMP, PA_CAS_SHV, &
-                                    PA_CAS_CO2, PA_WIND_CAS_TOP, PA_TAIR_CAS_TOP, PA_Z_CAS_TOP, PA_RESID_WATER, PA_NPP, PA_RECO, &
-                                    PA_SW_UP, PA_SKIN_TEMP, PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND, PY_LWDOWN, &
-                                    PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM, PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, &
-                                    PY_RHO_AIR, PY_RAINF, N_PY_ROWS, CO_DDBH_DT, CO_DAGB_DT, CO_MORT_RATE, CO_NPP_LEAF, &
-                                    CO_NPP_FINEROOT, CO_NPP_WOOD, CO_NPP_STORAGE, CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP, &
-                                    CO_EXUDATE, PA_LITTER_LEAF, PA_LITTER_FINEROOT, PA_MORT_C_BACKGROUND, PA_MORT_C_CULL, &
-                                    PA_MORT_C_DISTURB, PA_LITTER_STRUCT, PA_LITTER_WOOD, PA_LITTER_REPRO, PA_RECRUIT_NPLANT, &
-                                    PA_DISTURB_AREA
+   use meds_constants,         only : cm2_to_m2
+   use meds_output_extract,   only : src_class, SRCK_FAST, FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT,                 &
+                                     FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA, FLD_C_GROWTH_AVG, FLD_C_PFT,   &
+                                     FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI, FLD_C_WAI,                    &
+                                     FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON,                 &
+                                     FLD_C_NONSTRUCTURAL_CARBON, FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA,          &
+                                     FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER_RATE,                         &
+                                     FLD_C_OVERTOPPING_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP,    &
+                                     FLD_C_STEM_RESP, FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF,                       &
+                                     FLD_C_LEAF_FLUSH_TENDENCY, FLD_C_LEAF_SHED_TENDENCY, FLD_P_AREA,             &
+                                     FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT,         &
+                                     FLD_P_GLOBAL_ID, FLD_P_SITE, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH,   &
+                                     FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND,       &
+                                     FLD_P_SOILC_STRUCT_SOIL, FLD_P_SOILC_MICROBIAL, FLD_P_SOILC_SLOW,            &
+                                     FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH, FLD_L_SOIL_TEMP,           &
+                                     FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ,       &
+                                     SRC_PY_ET, SRC_PY_N_COHORT, SRC_PY_N_PATCH, SRC_PY_CANOPY_HEIGHT,            &
+                                     SRC_PY_RUNOFF, SRC_PY_RUNOFF_SURF, SRC_PY_DRAINAGE, SRC_PY_WORK_STEPS,       &
+                                     SRC_PY_WORK_REJ, SRC_PY_WORK_WATER_NSUB, SRC_PY_WORK_WATER_NEWTON,           &
+                                     SRC_PY_WORK_WATER_NFAIL, SRC_PY_WORK_WATER_REJECT,                           &
+                                     SRC_PY_WORK_RK45_RESCUE, SRC_PY_WORK_CLAMP_STAGE, SRC_F_SOIL_TEMP,           &
+                                     SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PA0, SRC_F_COH_LEAF_TEMP,                 &
+                                     SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0, FLD_C_DIAG0, FLD_P_DIAG0,        &
+                                     FLD_PY_DIAG0, FLD_SI_DIAG0, FLD_SI_GROWTH_TEMP
+   use meds_diag_vars,       only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_TRANSP,           &
+                                    CO_BETA_STOM, CO_BETA_NONSTOM, CO_LEAF_VPD, CO_PSI_LEAF, CO_PSI_WOOD,         &
+                                    CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW,         &
+                                    CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_LEAF_TEMP, CO_WOOD_TEMP,            &
+                                    CO_LEAF_PAR, CO_GB_MOL, CO_PSI_PREDAWN, CO_CA, CO_PRESSURE, PA_LE, PA_H,      &
+                                    PA_RNET, PA_SW_GROUND, PA_LW_GROUND, PA_SW_IN_VIS, PA_SW_IN_NIR,              &
+                                    PA_SW_UP_VIS, PA_SW_UP_NIR, PA_LW_UP, PA_USTAR, PA_GGNET, PA_ROUGH,           &
+                                    PA_DISPLACE, PA_GPP, PA_NEE, PA_TRANSP, PA_SOIL_TEMP_TOP, PA_RESID_ENERGY,    &
+                                    PA_CAS_VPD, PA_W_SURFACE, PA_CAS_TEMP, PA_CAS_SHV, PA_CAS_CO2,                &
+                                    PA_WIND_CAS_TOP, PA_TAIR_CAS_TOP, PA_Z_CAS_TOP, PA_RESID_WATER, PA_NPP,       &
+                                    PA_RECO, PA_SW_UP, PA_SKIN_TEMP, PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR,       &
+                                    PY_PSURF, PY_WIND, PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,       &
+                                    PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR, PY_RAINF,           &
+                                    CO_DDBH_DT, CO_DAGB_DT, CO_MORT_RATE, CO_NPP_LEAF, CO_NPP_FINEROOT,           &
+                                    CO_NPP_WOOD, CO_NPP_STORAGE, CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP,   &
+                                    CO_EXUDATE, PA_LITTER_LEAF, PA_LITTER_FINEROOT, PA_MORT_C_BACKGROUND,         &
+                                    PA_MORT_C_CULL, PA_MORT_C_DISTURB, PA_LITTER_STRUCT, PA_LITTER_WOOD,          &
+                                    PA_LITTER_REPRO, PA_RECRUIT_NPLANT, PA_DISTURB_AREA
    implicit none
    private
 
    public :: build_output_registry, build_freq_index, find_var_index, parse_stream_mask
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
-   public :: alloc_output_set, setup_output_files, finalize_output_files, alloc_output_buffers
-   public :: set_output_polygons
-   public :: activate_polygon_diag, dump_io_config
+   public :: dump_io_config
 
    !----- Named default stream masks. None includes the fast bit: the fast tier is always opt-in. !
    integer(ik), parameter :: DAY_MON    = ior(FREQ_DAILY, FREQ_MONTHLY)
@@ -1122,201 +1117,6 @@ contains
       end do
    end subroutine parse_stream_mask
 
-   !=======================================================================================!
-   !  Build a file set's registry and settings, with no buffers yet, so a caller can apply the !
-   !  meds_io_config.toml overrides (which change the buffers needed) before                   !
-   !  finalize_output_files and alloc_output_buffers.                                          !
-   !=======================================================================================!
-   subroutine setup_output_files(files, cfg)
-      type(output_files_t),   intent(out) :: files
-      type(meds_config_t),    intent(in)  :: cfg
-      integer(ik) :: ne
-      files%enabled = cfg%output%enabled
-      files%fast_loop_on = cfg%fast_biophysics_on
-      call build_output_registry(files%reg, cfg)
-      files%cohort_max = cfg%output%cohort_max
-      files%patch_max  = cfg%output%patch_max
-      files%dir        = cfg%output%dir
-      files%prefix     = cfg%output%prefix
-      files%file_chunk = cfg%output%file_chunk
-      files%sync_every = cfg%output%sync_every
-      files%fast_interval_steps = cfg%output%fast_interval_steps
-      if (cfg%forcing%forcing_on .and. cfg%forcing%format == MET_BACKEND_ED_ERA5LAND)                &
-         files%forcing_qair = 'computed by MEDS from the ED_ERA5land 2 m dewpoint Td and surface '//         &
-                            'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
-                            'liquid-water saturation vapour pressure of meds_therm_lib'
-
-      !----- The derived diagnostics' parameters (diag_setup_t). n_pft is the run-time PFT count,  !
-      !      so the files carry a pft coordinate (docs/science/diagnostics.md §3). ---------------!
-      files%diag%n_pft  = cfg%pft%n
-      !----- DBH size classes: TOML edges if given, else the built-in inventory set. -----------!
-      if (cfg%output%n_dbh_class > 0_ik) then
-         files%diag%n_dbh_class = min(cfg%output%n_dbh_class, MAX_DBH_CLASS)
-         ne = files%diag%n_dbh_class + 1_ik
-         files%diag%dbh_edges(1:ne) = cfg%output%dbh_class_edges(1:ne)
-      else
-         files%diag%n_dbh_class = N_DBH_CLASS_DEFAULT
-         files%diag%dbh_edges(1:N_DBH_CLASS_DEFAULT + 1_ik) = DBH_EDGES_DEFAULT
-      end if
-      call check_dbh_edges(files%diag%dbh_edges, files%diag%n_dbh_class)
-      !----- attach_output sets soil_ready on a polygon's buffers when its fast loop runs; until !
-      !      then the psi/wetness diagnostics emit _FillValue. ----------------------------------!
-      files%diag%soil_ready = .false.
-   end subroutine setup_output_files
-
-   !----- Largest slab length any live variable can produce (see finalize_output_files). ------------!
-   pure integer(ik) function live_max_slab(files) result(cap)
-      type(output_files_t),   intent(in) :: files
-      integer(ik) :: k
-      cap = 1_ik
-      do k = 1_ik, files%reg%nvar
-         if (.not. files%reg%var(k)%enabled)      cycle
-         if (files%reg%var(k)%streams == FREQ_NONE) cycle
-         cap = max(cap, dim_capacity(files, files%reg%var(k)%dim))
-      end do
-   end function live_max_slab
-
-   !----- Slab capacity of one axis. ---------------------------------------------------------!
-   pure integer(ik) function dim_capacity(files, dm) result(cap)
-      type(output_files_t),   intent(in) :: files
-      integer(ik),            intent(in) :: dm
-      select case (dm)
-      case (DIM_COHORT)
-         cap = files%cohort_max
-      case (DIM_PATCH)
-         cap = files%patch_max
-      case (DIM_SOIL)
-         cap = files%site_max * n_soil_layer_max
-      case (DIM_PFT)
-         cap = max(files%diag%n_pft, 1_ik)
-      case (DIM_SIZE)
-         cap = max(files%diag%n_dbh_class, 1_ik)
-      case (DIM_SOIL_PATCH)
-         cap = files%patch_max * n_soil_layer_max
-      case (DIM_SITE)
-         cap = files%site_max
-      case default
-         cap = 0_ik
-      end select
-   end function dim_capacity
-
-   !----- The size-class edges must be strictly ascending, or dbh_class_index mis-bins without a !
-   !      word and the closure of docs/science/diagnostics.md eq. (3) fails; stop at start-up. --!
-   subroutine check_dbh_edges(edges, n_class)
-      real(wp),    intent(in) :: edges(:)
-      integer(ik), intent(in) :: n_class
-      integer(ik) :: j
-      do j = 1_ik, n_class
-         if (.not. (edges(j+1_ik) > edges(j)))                                                   &
-            error stop 'meds_output_registry: [output].dbh_class_edges must be strictly ascending'
-      end do
-   end subroutine check_dbh_edges
-
-   !----- Finish the file set once the registry is final (after setup_output_files and any       !
-   !      per-variable overrides): the per-tier stream handles and the slab size. -------------------!
-   subroutine finalize_output_files(files)
-      type(output_files_t),  intent(inout) :: files
-      integer(ik) :: t
-      do t = 1_ik, N_FREQ
-         files%stream(t)%freq  = freq_bit(t)
-         allocate(files%stream(t)%vid(files%reg%nvar))
-         files%stream(t)%vid = -1_ik
-      end do
-      !----- Size the records' slab to the largest live axis, not the largest that exists, so a  !
-      !      run pays no memory for an axis it switched off. It is sized here, after every         !
-      !      override, since an override can switch on a longer slab variable. -----------------!
-      files%max_slab = live_max_slab(files)
-      !----- Whether the cohort and patch caps bind: only a live variable on that axis fills a slab of  !
-      !      that size. ------------------------------------------------------------------------------!
-      files%cohort_axis = live_axis(files, [DIM_COHORT])
-      files%patch_axis  = live_axis(files, [DIM_PATCH, DIM_SOIL_PATCH])
-   end subroutine finalize_output_files
-
-   !----- Does any live variable have one of these axes? ---------------------------------------!
-   pure logical function live_axis(files, dims) result(yes)
-      type(output_files_t), intent(in) :: files
-      integer(ik),          intent(in) :: dims(:)
-      integer(ik) :: k
-      yes = .false.
-      do k = 1_ik, files%reg%nvar
-         if (.not. files%reg%var(k)%enabled)        cycle
-         if (files%reg%var(k)%streams == FREQ_NONE) cycle
-         if (any(dims == files%reg%var(k)%dim)) then
-            yes = .true.
-            return
-         end if
-      end do
-   end function live_axis
-
-   !----- Allocate one polygon's buffers for a finalized file set: the integrator buffers of       !
-   !      every live (variable, tier) pair and the per-tier scratch records. ------------------------!
-   subroutine alloc_output_buffers(files, bufs)
-      type(output_files_t),  intent(in)  :: files
-      type(output_buffers_t), intent(out) :: bufs
-      integer(ik) :: t, k, nv, cap, bit
-      nv = files%reg%nvar
-      allocate(bufs%buf(nv, N_FREQ))
-      do t = 1_ik, N_FREQ
-         bit = freq_bit(t)
-         do k = 1_ik, nv
-            if (files%reg%var(k)%enabled .and. iand(files%reg%var(k)%streams, bit) /= 0_ik) then
-               cap = dim_capacity(files, files%reg%var(k)%dim)
-               call alloc_integ_buffer(bufs%buf(k,t), files%reg%var(k), bit, cap)
-               bufs%buf(k,t)%var_id = k
-            end if
-         end do
-      end do
-      do t = 1_ik, N_FREQ
-         allocate(bufs%pending(t)%sval(nv), bufs%pending(t)%svalid(nv), bufs%pending(t)%nslab(nv))
-         allocate(bufs%pending(t)%slab(files%max_slab, nv), bufs%pending(t)%slabvalid(files%max_slab, nv))
-         bufs%pending(t)%used = .false.
-      end do
-      bufs%fast_on = files%enabled .and. files%reg%nidx(TIER_FAST) > 0_ik
-      bufs%diag = files%diag
-   end subroutine alloc_output_buffers
-
-   !----- Convenience: registry, stream handles and one polygon's buffers in one call (no       !
-   !      overrides). ---------------------------------------------------------------------------!
-   subroutine alloc_output_set(files, bufs, cfg)
-      type(output_files_t),  intent(out) :: files
-      type(output_buffers_t), intent(out) :: bufs
-      type(meds_config_t),   intent(in)  :: cfg
-      call setup_output_files(files, cfg)
-      call set_output_polygons(files, [0_ik], [1_ik], [0.0_wp], [0.0_wp], [0_ik], [0_ik], .false.)
-      call finalize_output_files(files)
-      call alloc_output_buffers(files, bufs)
-   end subroutine alloc_output_set
-
-   !----- The file set's polygon and site axes: one row per polygon, its id, location, grid indices !
-   !      and site count; the site axis is the largest polygon's. The rest of a row -- its sites'   !
-   !      areas, terrain and soil columns -- is filled when the polygon attaches to the set         !
-   !      (attach_output); a polygon's missing sites keep the fill value. --------------------------!
-   subroutine set_output_polygons(files, polygon_id, n_site, lat, lon, row, col, with_chave_e)
-      type(output_files_t), intent(inout) :: files
-      integer(ik),          intent(in)    :: polygon_id(:), n_site(:), row(:), col(:)
-      real(wp),             intent(in)    :: lat(:), lon(:)
-      logical,              intent(in)    :: with_chave_e   !< the Chave height allometry's index E, per polygon
-      integer(ik) :: n, ns
-      n  = size(polygon_id, kind=ik)
-      ns = max(maxval(n_site), 1_ik)
-      files%n_polygon      = n
-      files%site_max       = ns
-      files%polygon_id     = polygon_id
-      files%polygon_n_site = n_site
-      files%polygon_row    = row
-      files%polygon_col    = col
-      files%polygon_lat    = lat
-      files%polygon_lon    = lon
-      allocate(files%site_area(ns, n), files%site_elevation(ns, n), files%site_slope(ns, n),        &
-               files%site_aspect(ns, n), files%site_soil_depth(ns, n), files%site_drain_factor(ns, n), &
-               files%site_deep_temp(ns, n), source=MISSING_VALUE)
-      allocate(files%site_n_soil(ns, n), source=0_ik)
-      allocate(files%site_bottom_bc(ns, n), source=MISSING_INT)
-      allocate(files%site_soil_z(n_soil_layer_max, ns, n), source=0.0_wp)
-      allocate(files%site_soil_face(n_soil_layer_max + 1_ik, ns, n), source=0.0_wp)
-      if (with_chave_e) allocate(files%polygon_chave_e(n), source=0.0_wp)
-   end subroutine set_output_polygons
-
    !----- Last: precompute, per tier, the list of live (enabled + in-tier) variable indices. -!
    subroutine build_freq_index(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -1333,53 +1133,6 @@ contains
          end do
       end do
    end subroutine build_freq_index
-
-   !=======================================================================================!
-   !  Switch each diagnostic block (cohort, slow cohort, patch, polygon, site) on iff a live  !
-   !  variable of the final registry reads it. A block that is off stays unallocated and its  !
-   !  meds_diag_vars entry points do nothing, so a run pays nothing for what it does not report. !
-   !=======================================================================================!
-   subroutine activate_polygon_diag(files, poly)
-      type(output_files_t),   intent(in)    :: files
-      type(polygon_t),        intent(inout) :: poly
-      logical     :: need_c, need_p, need_s, need_y, need_si
-      integer(ik) :: t, j, k, src
-      need_c = .false.
-      need_p = .false.
-      need_s = .false.
-      need_y = .false.
-      need_si = .false.
-      if (files%enabled) then
-         do t = 1_ik, N_FREQ
-            do j = 1_ik, files%reg%nidx(t)
-               k   = files%reg%idx_freq(j, t)
-               src = files%reg%var(k)%source_id
-               if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) need_c = .true.
-               if (src > SRC_F_CO0 .and. src <= SRC_F_CO0 + N_CO_FAST_ROWS) need_c = .true.
-               if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) need_p = .true.
-               if (src > FLD_C_DIAG0 + N_CO_FAST_ROWS .and. src <= FLD_C_DIAG0 + N_CO_ROWS) need_s = .true.
-               if (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PY_ROWS) need_y = .true.
-               if (src > FLD_SI_DIAG0 .and. src <= FLD_SI_DIAG0 + N_SI_ROWS) need_si = .true.
-            end do
-         end do
-      end if
-      !----- Only the fast loop fills the per-cohort and polygon blocks, and the fast rows of the     !
-      !      patch block: in a slow-only run they stay off, and their variables read as missing. -----!
-      need_c = need_c .and. files%fast_loop_on
-      need_y = need_y .and. files%fast_loop_on
-      need_si = (need_si .and. files%fast_loop_on) .or. poly%site%diag%active
-      poly%patch%diag%fast_rows = files%fast_loop_on
-      !----- Additive: a block already on stays on. -----------------------------------------------!
-      need_c = need_c .or. poly%cohort%diag%active
-      need_s = need_s .or. poly%cohort%sdiag%active
-      need_p = need_p .or. poly%patch%diag%active
-      need_y = need_y .or. poly%diag%active
-      call alloc_cohort_diag(poly%cohort%diag,  max(poly%cohort%cap, 1_ik), need_c)
-      call alloc_cohort_diag(poly%cohort%sdiag, max(poly%cohort%cap, 1_ik), need_s, slow_rows=.true.)
-      call alloc_patch_diag (poly%patch%diag,   max(poly%patch%cap,  1_ik), need_p)
-      poly%diag%active = need_y                    ! the polygon block: fixed size, nothing to allocate
-      call alloc_site_diag(poly%site%diag, poly%site%n, need_si)
-   end subroutine activate_polygon_diag
 
    !=======================================================================================!
    !  Write a commented-out meds_io_config.toml listing every registered variable with its    !

@@ -22,7 +22,7 @@ module meds_soil_hydr_lib
    public :: soil_texture_t, soil_texture_to_hydraulics
    !----- Retention curve: theta(head), head(theta) and potential(theta) read-offs. -------!
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
-   public :: soil_head_to_theta, soil_theta_to_head, soil_matric_potential
+   public :: soil_head_to_theta, soil_theta_to_head, soil_matric_potential, soil_theta_to_saturation
    !----- The water relations the soil-plant water solver uses, in the variable it solves  !
    !      for: a soil layer's saturation (dry) or potential (wet), the pond's head. -------!
    public :: SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH
@@ -173,6 +173,16 @@ contains
       theta = theta_res + (theta_sat - theta_res) * se
    end function soil_head_to_theta
 
+   !----- Relative saturation [-] of a layer holding theta [m3/m3]: where it sits between    !
+   !      residual and saturation, in [0, 1], so a solver excursion outside the curve's domain  !
+   !      reads as exactly dry or saturated. ---------------------------------------------------!
+   elemental function soil_theta_to_saturation(theta, theta_sat, theta_res) result(se)
+      real(wp), intent(in) :: theta, theta_sat, theta_res
+      real(wp)             :: se
+      se = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
+      se = min(max(se, 0.0_wp), 1.0_wp)
+   end function soil_theta_to_saturation
+
    !----- Matric head [m, <= 0] of a layer holding theta [m3/m3], its saturation floored   !
    !      at SE_MIN; zero at saturation. --------------------------------------------------!
    elemental function soil_theta_to_head(retention, theta, theta_sat, theta_res, par_a, par_n) &
@@ -180,8 +190,7 @@ contains
       integer(ik), intent(in) :: retention
       real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n
       real(wp)                :: head, se, dse_dhead
-      se = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
-      se = min(max(se, SE_MIN), 1.0_wp)
+      se = max(soil_theta_to_saturation(theta, theta_sat, theta_res), SE_MIN)
       if (se >= 1.0_wp) then
          head = 0.0_wp
          return
