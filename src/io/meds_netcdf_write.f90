@@ -123,19 +123,19 @@ contains
       integer(c_int)    :: v
       chunk(1) = 1_c_size_t
       call nc_check(nc_inq_dimlen(ncid, d_site, chunk(2)), 'dimlen site')
-      call def_static('site_area',       NC_DOUBLE, '1', 'site area fraction of the polygon')
-      call def_static('site_elevation',  NC_DOUBLE, 'm', 'site elevation')
-      call def_static('site_slope',      NC_DOUBLE, 'degree', 'site slope')
-      call def_static('site_aspect',     NC_DOUBLE, 'degree', 'site aspect, clockwise from north')
-      call def_static('site_n_soil',     NC_INT,    '1', 'the site''s active soil layers')
-      call def_static('site_soil_depth', NC_DOUBLE, 'm', 'soil column depth, the bottom of the deepest layer')
-      call def_static('site_bottom_bc',  NC_INT,    '1',                                                    &
+      call def_static('area_si',       NC_DOUBLE, '1', 'site area fraction of the polygon')
+      call def_static('elevation_si',  NC_DOUBLE, 'm', 'site elevation')
+      call def_static('slope_si',      NC_DOUBLE, 'degree', 'site slope')
+      call def_static('aspect_si',     NC_DOUBLE, 'degree', 'site aspect, clockwise from north')
+      call def_static('n_soil_si',     NC_INT,    '1', 'the site''s active soil layers')
+      call def_static('soil_depth_si', NC_DOUBLE, 'm', 'soil column depth, the bottom of the deepest layer')
+      call def_static('bottom_bc_si',  NC_INT,    '1',                                                    &
                       'bottom water boundary as run: drainage at site_drain_factor, or aquifer')
       call put_int_atts(ncid, v, 'flag_values', bc_codes)
       call put_text_att(ncid, v, 'flag_meanings', bc_names)
-      call def_static('site_drain_factor', NC_DOUBLE, '1', 'drainage factor f of the bottom flux q = f K: 1 free '// &
+      call def_static('drain_factor_si', NC_DOUBLE, '1', 'drainage factor f of the bottom flux q = f K: 1 free '// &
                       'drainage, the map''s f_leak on a leaky base, 0 sealed (fill on an aquifer)')
-      call def_static('site_deep_temp',  NC_DOUBLE, 'K', 'deep soil temperature, the thermal anchor below the column')
+      call def_static('deep_temp_si',  NC_DOUBLE, 'K', 'deep soil temperature, the thermal anchor below the column')
    contains
       subroutine def_static(name, xtype, units, lname)
          character(len=*), intent(in) :: name, units, lname
@@ -167,15 +167,15 @@ contains
       integer(c_size_t) :: st(2), ct(2)
       st = [int(row0, c_size_t), 0_c_size_t]
       ct = [int(size(area, 2), c_size_t), int(size(area, 1), c_size_t)]
-      call put_dbl('site_area', area)
-      call put_dbl('site_elevation', elevation)
-      call put_dbl('site_slope', slope)
-      call put_dbl('site_aspect', aspect)
-      call put_int('site_n_soil', n_soil)
-      call put_dbl('site_soil_depth', soil_depth)
-      call put_int('site_bottom_bc', bottom_bc)
-      call put_dbl('site_drain_factor', drain_factor)
-      call put_dbl('site_deep_temp', deep_temp)
+      call put_dbl('area_si', area)
+      call put_dbl('elevation_si', elevation)
+      call put_dbl('slope_si', slope)
+      call put_dbl('aspect_si', aspect)
+      call put_int('n_soil_si', n_soil)
+      call put_dbl('soil_depth_si', soil_depth)
+      call put_int('bottom_bc_si', bottom_bc)
+      call put_dbl('drain_factor_si', drain_factor)
+      call put_dbl('deep_temp_si', deep_temp)
    contains
       !----- Each through a named array: no function result goes straight into a call (CLAUDE.md). -!
       subroutine put_dbl(name, x)

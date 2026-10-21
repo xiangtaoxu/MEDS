@@ -82,7 +82,7 @@ module meds_output_types
    ! One diagnostic variable: plain data, no pointers into the state.                         !
    !==========================================================================================!
    type :: var_desc_t
-      character(len=32) :: name      = ''          !< netCDF variable name (scale-suffixed, e.g. 'agb_cohort')
+      character(len=32) :: name      = ''          !< netCDF variable name (scale-suffixed, e.g. 'mean_agb_co')
       character(len=96) :: long_name = ''          !< CF long_name attribute
       character(len=24) :: units     = ''          !< CF units attribute
       integer(ik) :: dim             = DIM_SCALAR   !< DIM_* : the trailing axis

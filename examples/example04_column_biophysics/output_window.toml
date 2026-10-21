@@ -3,17 +3,17 @@
 # half-hourly records): each patch's canopy air and soil column and each cohort's leaf, beside the
 # forcing that drives them. Tiers: F = sub-daily (half-hourly here), D = daily. Every stamp is UTC.
 [variables]
-sw_in_fast                  = "F"   # incoming shortwave
-precip_fast                 = "F"   # precipitation
-air_temp_fast               = "F"   # air temperature at the tower height (41 m)
-cas_temp_patch_fast         = "F"   # canopy-air temperature, per patch
-cas_co2_patch_fast          = "F"   # canopy-air CO2, per patch
-soil_temp_layer_patch_fast  = "F"   # soil temperature, per patch and layer
-soil_water_layer_patch_fast = "F"   # soil moisture, per patch and layer
-height_cohort_fast          = "F"   # cohort height: the top cohort is a patch's tallest
-leaf_temp_cohort_fast       = "F"   # leaf temperature, per cohort
-gx_psi_leaf_cohort_fast     = "F"   # leaf water potential, per cohort
-area_patch                  = "D"   # patch area (fraction of the site)
-lai_patch                   = "D"   # patch leaf area index
-cohort_offset               = "D"   # a patch's first cohort slot
-cohort_count                = "D"   # and its number of cohorts
+mean_sw_in_py            = "F"   # incoming shortwave
+mean_precip_py           = "F"   # precipitation
+mean_air_temp_py         = "F"   # air temperature at the tower height (41 m)
+mean_cas_temp_pa         = "F"   # canopy-air temperature, per patch
+mean_cas_co2_pa          = "F"   # canopy-air CO2, per patch
+mean_soil_temp_layer_pa  = "F"   # soil temperature, per patch and layer
+mean_soil_water_layer_pa = "F"   # soil moisture, per patch and layer
+mean_height_co           = "F"   # cohort height: the top cohort is a patch's tallest
+mean_leaf_temp_co        = "F"   # leaf temperature, per cohort
+mean_psi_leaf_co         = "F"   # leaf water potential, per cohort
+area_pa                  = "D"   # patch area (fraction of the site)
+mean_lai_pa              = "D"   # patch leaf area index
+cohort_offset            = "D"   # a patch's first cohort slot
+cohort_count             = "D"   # and its number of cohorts

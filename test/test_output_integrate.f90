@@ -137,7 +137,7 @@ contains
       poly%patch%cohort_count(1)  = 3_ik
 
       !----- extract_variable returns the live cohort slab + count. -----!
-      v_agb_c%name = 'agb_cohort' ; v_agb_c%dim = DIM_COHORT ; v_agb_c%agg = AGG_TMEAN
+      v_agb_c%name = 'mean_agb_co' ; v_agb_c%dim = DIM_COHORT ; v_agb_c%agg = AGG_TMEAN
       v_agb_c%source_id = FLD_C_AGB
       call extract_variable(poly, dp, v_agb_c, scal, slab, vslab, n_out)
       call check(n_out == 3_ik, 'extract cohort n')
@@ -166,7 +166,7 @@ contains
       call set_cohort_agb(poly, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)
       !----- The site twin is the SAME field with a different dim + weight: agb is EXTENSIVE, so   !
       !      it reduces as a weighted SUM over nplant (W_NPLANT), landing in kgC/m2 ground.  --------!
-      v_agb_s%name = 'agb_site' ; v_agb_s%dim = DIM_SCALAR ; v_agb_s%agg = AGG_MEAN
+      v_agb_s%name = 'mean_agb_py' ; v_agb_s%dim = DIM_SCALAR ; v_agb_s%agg = AGG_MEAN
       v_agb_s%source_id = FLD_C_AGB ; v_agb_s%weight = W_NPLANT ; v_agb_s%mean = .false.
       call extract_variable(poly, dp, v_agb_s, scal, slab, vslab, n_out)
       call check(n_out == 0_ik, 'scalar extract n_out=0')
@@ -180,12 +180,12 @@ contains
       poly%cohort%leaf_area(1:3) = 1.0_wp
       poly%cohort%diag%v(CO_LEAF_TEMP, 1:2) = [300.0_wp, 310.0_wp] * 900.0_wp
       poly%cohort%diag%w(1:2) = 900.0_wp ; poly%cohort%diag%w(3) = 0.0_wp
-      v_lt%name = 'leaf_temp_cohort' ; v_lt%dim = DIM_COHORT ; v_lt%agg = AGG_TMEAN
+      v_lt%name = 'mean_leaf_temp_co' ; v_lt%dim = DIM_COHORT ; v_lt%agg = AGG_TMEAN
       v_lt%source_id = FLD_C_DIAG0 + CO_LEAF_TEMP
       call extract_variable(poly, dp, v_lt, scal, slab, vslab, n_out)
       call check(n_out == 3_ik .and. vslab(1) .and. vslab(2) .and. .not. vslab(3),               &
                  'a cohort with no samples is fill on the cohort axis')
-      v_lt%name = 'leaf_temp_site' ; v_lt%dim = DIM_SCALAR ; v_lt%weight = W_LEAF_AREA ; v_lt%mean = .true.
+      v_lt%name = 'mean_leaf_temp_py' ; v_lt%dim = DIM_SCALAR ; v_lt%weight = W_LEAF_AREA ; v_lt%mean = .true.
       call extract_variable(poly, dp, v_lt, scal, slab, vslab, n_out)
       call check_close(scal, 305.0_wp, 1.0e-12_wp, 'the site leaf temperature leaves it out')
       poly%cohort%diag%w(1:2) = 0.0_wp
@@ -204,7 +204,7 @@ contains
       type(output_files_t)   :: files
       type(output_buffers_t) :: bufs
       real(wp)    :: f0(N_PY_ROWS), s(N_PA_ROWS)
-      integer(ik) :: k_cas, k_soil, k_leaf, k_air, k_hgt, k_cas_p, k_soil_p, nl
+      integer(ik) :: k_cas, k_soil, k_air, k_hgt, k_cas_p, k_soil_p, nl
       real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
 
       !----- extract_fast_scalar: a patch-block id reads its row of the sub-step's site mean, and a  !
@@ -256,41 +256,37 @@ contains
       call output_integrate_fast(files, bufs, 2_ik, DT)
       call close_tier(files, bufs, 1_ik)
 
-      !----- Scalar path: cas_temp_fast = TMEAN(290,294) = 292. The FAST-tier variables are        !
-      !      DISTINCT registry entries from their coarse-tier namesakes (cas_temp_site), because    !
-      !      they read the staged sub-step samples rather than live site state.  -------------------!
-      k_cas = find_var_index(files%reg, 'cas_temp_fast')
-      call check(k_cas > 0_ik, 'cas_temp_fast registered')
+      !----- Scalar path: mean_cas_temp_py = TMEAN(290,294) = 292. On the F tier a variable reads its   !
+      !      fast source, the staged sub-step samples, where the coarse tiers read live state. ---------!
+      k_cas = find_var_index(files%reg, 'mean_cas_temp_py')
+      call check(k_cas > 0_ik, 'mean_cas_temp_py registered')
       call check(bufs%pending(1)%svalid(k_cas), 'FAST cas_temp valid after close')
       call check_close(bufs%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp TMEAN')
-      !----- Soil-column slab path: soil_temp_site slot means. -----!
-      k_soil = find_var_index(files%reg, 'soil_temp_site_fast')
+      !----- Soil-column slab path: mean_soil_temp_layer_si slot means. -----!
+      k_soil = find_var_index(files%reg, 'mean_soil_temp_layer_si')
       call check(bufs%pending(1)%nslab(k_soil) == nl .and. bufs%pending(1)%slabvalid(2,k_soil)          &
                  .and. .not. bufs%pending(1)%slabvalid(3,k_soil), 'FAST soil slab: the site''s 2 layers of nl')
       call check_close(bufs%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
       call check_close(bufs%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
-      !----- Per-cohort slab path: leaf_temp_cohort_fast slot means + n_cohort. -----!
-      k_leaf = find_var_index(files%reg, 'leaf_temp_cohort_fast')
+      !----- Per-cohort slab path: n_cohort (the slots are checked on mean_height_co below). -----!
       call check(bufs%pending(1)%n_cohort == 2_ik, 'FAST n_cohort = 2')
-      call check_close(bufs%pending(1)%slab(1,k_leaf), 289.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 1')
-      call check_close(bufs%pending(1)%slab(2,k_leaf), 290.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 2')
       !----- Forcing air-temp scalar path + per-cohort HEIGHT slab path (tallest-cohort post-proc). -----!
-      k_air = find_var_index(files%reg, 'air_temp_fast')
-      call check(k_air > 0_ik, 'air_temp_fast registered')
+      k_air = find_var_index(files%reg, 'mean_air_temp_py')
+      call check(k_air > 0_ik, 'mean_air_temp_py registered')
       call check_close(bufs%pending(1)%sval(k_air), 301.0_wp, 1.0e-10_wp, 'FAST air_temp TMEAN')
-      k_hgt = find_var_index(files%reg, 'height_cohort_fast')
-      call check(k_hgt > 0_ik, 'height_cohort_fast registered')
+      k_hgt = find_var_index(files%reg, 'mean_height_co')
+      call check(k_hgt > 0_ik, 'mean_height_co registered')
       call check_close(bufs%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
       call check_close(bufs%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
       !----- The patch axis: each patch's own mean, and each patch's soil column in the            !
       !      soil-by-patch layout, with the inactive layers as fill. -----!
-      k_cas_p = find_var_index(files%reg, 'cas_temp_patch_fast')
-      call check(k_cas_p > 0_ik, 'cas_temp_patch_fast registered')
+      k_cas_p = find_var_index(files%reg, 'mean_cas_temp_pa')
+      call check(k_cas_p > 0_ik, 'mean_cas_temp_pa registered')
       call check(bufs%pending(1)%n_patch == 2_ik, 'FAST n_patch = 2')
       call check_close(bufs%pending(1)%slab(1,k_cas_p), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 1')
       call check_close(bufs%pending(1)%slab(2,k_cas_p), 302.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 2')
-      k_soil_p = find_var_index(files%reg, 'soil_temp_layer_patch_fast')
-      call check(k_soil_p > 0_ik, 'soil_temp_layer_patch_fast registered')
+      k_soil_p = find_var_index(files%reg, 'mean_soil_temp_layer_pa')
+      call check(k_soil_p > 0_ik, 'mean_soil_temp_layer_pa registered')
       call check_close(bufs%pending(1)%slab(1,k_soil_p),    281.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 1')
       call check_close(bufs%pending(1)%slab(2,k_soil_p),    282.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 2')
       call check_close(bufs%pending(1)%slab(nl+1,k_soil_p), 291.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 1')
@@ -320,8 +316,8 @@ contains
       end do
       call check(n_live_slab == 0_ik, 'override test premise: setup leaves no slab variable live')
 
-      call apply_variable_override(files%reg, 'soil_temp_site_fast', OVR_MASK, FREQ_FAST, found)
-      call check(found, 'soil_temp_site_fast is a registry variable')
+      call apply_variable_override(files%reg, 'mean_soil_temp_layer_si', OVR_MASK, FREQ_FAST, found)
+      call check(found, 'mean_soil_temp_layer_si is a registry variable')
       call build_freq_index(files%reg)             ! what apply_io_overrides does after its overrides
       call finalize_output_files(files)
       call alloc_output_buffers(files, bufs)
@@ -333,7 +329,7 @@ contains
       call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
       call close_tier(files, bufs, 1_ik)
 
-      k = find_var_index(files%reg, 'soil_temp_site_fast')
+      k = find_var_index(files%reg, 'mean_soil_temp_layer_si')
       associate (r => bufs%queue(1)%rec(bufs%queue(1)%n))
          c = slab_col(r, k)
          call check(r%nslab(k) == nl, 'the queued soil slab has every layer')
@@ -359,8 +355,8 @@ contains
       cfg%output%freq_on(1) = .true.               ! FAST tier on
       cfg%output%grp_on     = .false.              ! every group off: no slab variable is live yet
       call setup_output_files(files, cfg)
-      call apply_variable_override(files%reg, 'soil_temp_layer_patch_fast', OVR_MASK, FREQ_FAST, found)
-      call check(found, 'soil_temp_layer_patch_fast is a registry variable')
+      call apply_variable_override(files%reg, 'mean_soil_temp_layer_pa', OVR_MASK, FREQ_FAST, found)
+      call check(found, 'mean_soil_temp_layer_pa is a registry variable')
       call build_freq_index(files%reg)
       call finalize_output_files(files)
       call alloc_output_buffers(files, bufs)
@@ -368,7 +364,7 @@ contains
       bufs%fast_soil_temp_patch(:,1) = 285.0_wp
       call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
       call close_tier(files, bufs, 1_ik)
-      k = find_var_index(files%reg, 'soil_temp_layer_patch_fast')
+      k = find_var_index(files%reg, 'mean_soil_temp_layer_pa')
       associate (r => bufs%queue(1)%rec(bufs%queue(1)%n))
          call check(r%n_patch == 3_ik, 'a soil-by-patch-only record counts its patches')
          call check(r%nslab(k) == 3_ik * nl, 'the soil-by-patch slab holds every patch''s column')
@@ -398,7 +394,7 @@ contains
       call output_integrate_fast(files, b, 1_ik, DT)
       call output_integrate_fast(files, a, 2_ik, DT)
       call close_tier(files, a, 1_ik)
-      k_cas = find_var_index(files%reg, 'cas_temp_fast')
+      k_cas = find_var_index(files%reg, 'mean_cas_temp_py')
       call check_close(a%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'polygon a: its own mean')
       call check(a%queue(1)%n == 1_ik .and. b%queue(1)%n == 0_ik, 'closing polygon a''s window queues only a''s record')
       call check(b%has_data(1) .and. .not. a%has_data(1), 'polygon b''s window stays open')
@@ -428,9 +424,9 @@ contains
       cfg%output%grp_on(1)  = .true.                                 ! structure
       cfg%output%cohort_max = 8_ik
       call alloc_output_set(files, bufs, cfg)
-      k_s = find_var_index(files%reg, 'agb_site')
-      k_c = find_var_index(files%reg, 'agb_cohort')
-      k_n = find_var_index(files%reg, 'n_cohort_site')
+      k_s = find_var_index(files%reg, 'mean_agb_py')
+      k_c = find_var_index(files%reg, 'mean_agb_co')
+      k_n = find_var_index(files%reg, 'n_cohort_py')
       call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
 
       call alloc_polygon(poly, 2_ik, 8_ik, 8_ik, 4_ik, cfg%pft)

@@ -4,7 +4,7 @@
 MODIS comparison. From every region's monthly files (output/region*/*-M.nc: one per run, or more when the region was
 restarted from a state file; joined by month, the later-starting file's months taking precedence; 1800 months, June
 1871 - May 2021), each polygon's:
-  agb_traj  [cell, 150]  annual mean AGB of each June-May stand year [dry Mg/ha] (agb_pft summed, x 20)
+  agb_traj  [cell, 150]  annual mean AGB of each June-May stand year [dry Mg/ha] (mean_agb_pft_py summed, x 20)
   agb20                  the stand's 20th year (months 229-240) [dry Mg/ha]
   last ten stand years (June 2011 - May 2021):
     gpp, et, runoff      annual GPP [kgC m-2 yr-1], evapotranspiration and runoff [mm yr-1]
@@ -109,24 +109,24 @@ def main(argv=None):
             continue
         lower = np.asarray(d["dbh_lower"][:])                                 # the classes' lower edges [cm]
         for k, v in (("polygon_id", "polygon_id"), ("lat", "lat"), ("lon", "lon"), ("row", "row"), ("col", "col"),
-                     ("soil_depth", "site_soil_depth"), ("bottom_bc", "site_bottom_bc"), ("chave_e", "chave_e")):
+                     ("soil_depth", "soil_depth_si"), ("bottom_bc", "bottom_bc_si"), ("chave_e", "chave_e_py")):
             x = np.asarray(d[v][:])
             out[k].append(x[:, 0] if x.ndim == 2 else x)                     # a site variable: the cell's one site
-        agb_pft = d["agb_pft"][:].filled(np.nan) * 20.0                       # kgC/m2 -> dry Mg/ha
-        agb = agb_pft.sum(axis=2)                                             # (time, polygon)
+        mean_agb_pft_py = d["mean_agb_pft_py"][:].filled(np.nan) * 20.0                       # kgC/m2 -> dry Mg/ha
+        agb = mean_agb_pft_py.sum(axis=2)                                             # (time, polygon)
         with np.errstate(invalid="ignore"):
-            wd = (agb_pft[LAST] * wd_pft).sum(axis=2) / agb_pft[LAST].sum(axis=2)
+            wd = (mean_agb_pft_py[LAST] * wd_pft).sum(axis=2) / mean_agb_pft_py[LAST].sum(axis=2)
         per_year = lambda x: x[LAST].reshape(10, 12, -1)                      # (year, month, polygon)
-        lai = per_year(d["lai_site"][:].filled(np.nan))
+        lai = per_year(d["mean_lai_py"][:].filled(np.nan))
         out["agb_traj"].append(agb.reshape(150, 12, -1).mean(axis=1).T)
         out["agb20"].append(agb[228:240].mean(axis=0))
-        for k, v, unit in (("gpp", "gpp_site", UMOL_TO_KGC), ("et", "et_site", 1.0), ("runoff", "runoff_site", 1.0)):
+        for k, v, unit in (("gpp", "mean_gpp_py", UMOL_TO_KGC), ("et", "mean_et_py", 1.0), ("runoff", "mean_runoff_py", 1.0)):
             total = d[v][:].filled(np.nan) * MONTH_SECONDS[:, None] * unit          # each month's total
             out[k].append(per_year(total).sum(axis=1).mean(axis=0))
         out["agb"].append(agb[LAST].mean(axis=0))
-        out["height"].append(np.nanmean(d["canopy_height_site"][:].filled(np.nan)[LAST], axis=0))
+        out["height"].append(np.nanmean(d["mean_canopy_height_py"][:].filled(np.nan)[LAST], axis=0))
         out["wd"].append(np.nanmean(wd, axis=0))
-        nplant = d["nplant_size"][:].filled(np.nan)[LAST]                     # (month, polygon, class) [plant/m2]
+        nplant = d["mean_nplant_size_py"][:].filled(np.nan)[LAST]                     # (month, polygon, class) [plant/m2]
         for k, edge in (("n1", 1.0), ("n10", 10.0)):
             out[k].append(np.nanmean(nplant[:, :, lower >= edge].sum(axis=2), axis=0) * 1e4)
         out["lai_max"].append(lai.max(axis=1).mean(axis=0))

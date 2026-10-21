@@ -93,7 +93,7 @@ CO₂ source is folded implicit, so the explicit tableau is empty (`f_E == 0`).
 Fully explicit over the canopy air and the column's energy, through the whole-column tendency
 `column_derivs` (`meds_fast_time_derivs`); soil and plant water move at the water network's rates,
 as on `ark`. When a step cannot be resolved (stiff cold-canopy nights) the driver discards it and
-redoes that `dt_fast` on `ark`; the counter `work_rk45_rescue_site` reports how often, and it must be
+redoes that `dt_fast` on `ark`; the counter `mean_work_rk45_rescue_py` reports how often, and it must be
 read before any RK45 result.
 
 Whichever integrator runs, **every store closes its residual** and the whole-column ledger closes to

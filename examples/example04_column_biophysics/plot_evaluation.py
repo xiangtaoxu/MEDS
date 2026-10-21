@@ -49,11 +49,11 @@ MIN_MONTH_HOURS = 240          # a calendar month needs at least ten days of hou
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
 MODEL, TOWER, CALIBRATED = "#2a78d6", INK, "#d4661c"
 #        model variable    tower flux  group      name             units
-PAIRS = [("gpp_rate_fast", "GPP",   "carbon", "GPP",             "µmol m⁻² s⁻¹"),
-         ("nee_fast",      "NEE",   "carbon", "NEE",             "µmol m⁻² s⁻¹"),
-         ("le_flux_fast",  "LE",    "water",  "latent heat",     "W m⁻²"),
-         ("h_flux_fast",   "H",     "energy", "sensible heat",   "W m⁻²"),
-         ("rnet_fast",     "Rnet",  "energy", "net radiation",   "W m⁻²")]
+PAIRS = [("mean_gpp_py", "GPP",   "carbon", "GPP",             "µmol m⁻² s⁻¹"),
+         ("mean_nee_py",      "NEE",   "carbon", "NEE",             "µmol m⁻² s⁻¹"),
+         ("mean_le_py",  "LE",    "water",  "latent heat",     "W m⁻²"),
+         ("mean_h_py",   "H",     "energy", "sensible heat",   "W m⁻²"),
+         ("mean_rnet_py",     "Rnet",  "energy", "net radiation",   "W m⁻²")]
 MONTHS = "JFMAMJJASOND"
 
 

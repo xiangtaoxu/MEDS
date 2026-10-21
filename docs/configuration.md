@@ -480,13 +480,13 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   holds each site's layer node depths, and its CF bounds `soil_z_bnds (polygon, site, soil, nv)` each
   layer's top and bottom, so the bottom layer ends at that site's own soil depth. Both are negative
   downward, and the fill value below the site's bottom layer, as its soil variables are. Each file
-  also carries each site's area and terrain, `site_area` (its fraction of the polygon),
-  `site_elevation` [m], `site_slope` and `site_aspect` [degrees], and the inputs the cell's maps gave
-  it, as it runs them, all `(polygon, site)`: `site_n_soil` (its layer count), `site_soil_depth` [m],
-  `site_bottom_bc` (`flag_values` 1, 2 for drain, aquifer), `site_drain_factor` (the drainage factor
+  also carries each site's area and terrain, `area_si` (its fraction of the polygon),
+  `elevation_si` [m], `slope_si` and `aspect_si` [degrees], and the inputs the cell's maps gave
+  it, as it runs them, all `(polygon, site)`: `n_soil_si` (its layer count), `soil_depth_si` [m],
+  `bottom_bc_si` (`flag_values` 1, 2 for drain, aquifer), `drain_factor_si` (the drainage factor
   $f$ of the bottom flux $`q = f\,K`$: 1 on a free-draining base, the cell's `f_leak` on a leaky one,
-  0 on a sealed one; the fill value on an aquifer) and `site_deep_temp` [K], under the same names as
-  in the restart file; with `height_allometry = "chave2014"`, `chave_e (polygon)`.
+  0 on a sealed one; the fill value on an aquifer) and `deep_temp_si` [K], under the same names as
+  in the restart file; with `height_allometry = "chave2014"`, `chave_e_py (polygon)`.
 - **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its

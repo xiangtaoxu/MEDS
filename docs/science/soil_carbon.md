@@ -131,8 +131,8 @@ demographic operators call it. Each tissue goes where it is:
 `aboveground_frac` is the woody split (ED2 `agf_bs`), so it applies to wood and storage only. Only the
 structural streams carry lignin — `struct_lignin_frac` of each. The slow driver calls it through
 `add_necromass`, which also records the carbon by the tissue it came from; those are the litter outputs
-(`litter_leaf_site`, `litter_fineroot_site`, `litter_wood_site`, `litter_repro_site`, each after
-resorption), and with `root_exudate_site` they sum to the carbon entering pools 1–4.
+(`mean_litter_leaf_py`, `mean_litter_fineroot_py`, `mean_litter_wood_py`, `mean_litter_repro_py`, each after
+resorption), and with `mean_root_exudate_py` they sum to the carbon entering pools 1–4.
 
 `build_litter_input` maps those six numbers onto the matrix source term — four carbon streams into $u$,
 two lignin fluxes alongside — and does **no** chemistry of its own, since the splits are per-cohort
@@ -318,7 +318,7 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 | daily driver, seam guard, ledger | `meds_biogeochem_dynamics`: `advance_biogeochem_dynamics` |
 | litter accumulation | `meds_vegetation_dynamics`; kills in `meds_demography_{cohort,patch}_fusefiss` |
 | sub-daily $`R_h`$ + $`\xi`$ accumulation | `meds_fast_prepass`: `patch_heterotrophic_respiration`; `meds_fast_dynamics` |
-| output; tests | `soilc_*_site`, `soilc_total_patch`, `rh_site` (`GRP_CARBON`); `test/test_soil_biogeochem.f90`, `test/test_biogeochem_dynamics.f90`, `test/test_column_co2.f90` |
+| output; tests | `soilc_*_site`, `mean_soilc_total_pa`, `mean_rh_py` (`GRP_CARBON`); `test/test_soil_biogeochem.f90`, `test/test_biogeochem_dynamics.f90`, `test/test_column_co2.f90` |
 
 ## References
 - ED2 `../ED2/ED/src/`: `dynamics/soil_respiration.f90` (environmental scalars, sub-daily

@@ -92,7 +92,7 @@ patch's own* ground, which is what makes a gap-versus-closed-canopy comparison m
 
 **A `_site` scalar is the polygon's.** In a polygon of several sites, `a_p` in eq. (2) is the
 patch's share of the polygon: its site's area times its own area within the site. The soil columns
-are the exception: `soil_water_site` and its kin are each site's column, on that site's own layers,
+are the exception: `mean_soil_water_layer_si` and its kin are each site's column, on that site's own layers,
 its patches weighted by their areas within the site.
 
 **Empty sets.** A patch with no cohorts, or a **mean** with nothing to average, emits
@@ -134,14 +134,14 @@ instead, and report their values.
 | `dbh_class` | from `[output].dbh_class_edges` | carries `dbh_lower` / `dbh_upper` coordinates |
 | `(patch, soil)` | 2-D | per-patch soil profiles; `axes_soil_patch = true` |
 | `polygon` | every file; length 1 in a site run | after `time`; coordinates `polygon_id`, `lat`, `lon`, `row`, `col` ([configuration](../configuration.md), Regional runs) |
-| `site` | every file; the largest polygon's site count | after `polygon`; `n_site`, `site_area`, the terrain and the soil column of each site; `patch_site` gives each patch's site |
+| `site` | every file; the largest polygon's site count | after `polygon`; `n_site`, `area_si`, the terrain and the soil column of each site; `patch_site` gives each patch's site |
 
 **DBH classes are a size class of *plants*, ED2-style.** A cohort is assigned whole to the bin
 containing its mean `dbh` — never split — and contributes with weight `area · nplant`. Bins are
 half-open `[lo, hi)` except the last, which also takes every `dbh` at or above its upper edge, so the
 largest tree in the stand is never dropped; a `dbh` below the first edge clamps into bin 1 for the
 same reason. Both choices
-preserve the closure identity, which is what makes `nplant_size` a genuine stem-density
+preserve the closure identity, which is what makes `mean_nplant_size_py` a genuine stem-density
 distribution comparable to a forest inventory.
 
 **Cohort and patch axes may not appear on the annual stream**, and neither may the `(patch, soil)`
@@ -214,14 +214,14 @@ continuous run's.
 
 #### The skin temperature
 
-`skin_temp_site` is the skin temperature in the land-model sense, as in CLM's `TSKIN`. It also comes
-per patch (`skin_temp_patch`), sub-daily (`skin_temp_fast`) and both (`skin_temp_patch_fast`).
+`mean_skin_temp_py` is the skin temperature in the land-model sense, as in CLM's `TSKIN`. It also comes
+per patch (`mean_skin_temp_pa`), sub-daily (`mean_skin_temp_py`) and both (`mean_skin_temp_pa`).
 
 - **What it is.** The black-body temperature of the longwave leaving the canopy top, $`(L^\uparrow /
   \sigma)^{1/4}`$, taken per patch and sub-step and then averaged. It is what an infrared thermometer
   or a satellite land-surface temperature sees, and over a forest it is mostly the canopy.
 - **What it is not.** It is not the soil. MEDS has no skin layer of its own: snow-free, the ground
-  surface is the top soil layer, `soil_temp_top_site`. That layer's node sits 1.8 cm down, so its
+  surface is the top soil layer, `mean_soil_temp_top_py`. That layer's node sits 1.8 cm down, so its
   diurnal swing is damped and lagged against the air's.
 - **Why it is formed inside the step.** Because of the fourth root, the skin temperature of the mean
   longwave is not the mean skin temperature.
@@ -235,14 +235,14 @@ A site mean over a closed canopy and a gap can describe neither. In a stand with
 surface soil can run 13 K above the air at midday while the closed patch's runs 0.7 K below it. So
 each FAST quantity of the patch block also has a per-patch twin:
 
-- It is named after its coarse patch variable, plus `_fast`: `cas_temp_patch_fast`,
-  `soil_temp_top_patch_fast`, `skin_temp_patch_fast`, `le_patch_fast`, `h_patch_fast`,
-  `rnet_patch_fast`, `nee_patch_fast`.
-- A quantity with no coarse patch variable keeps its site stem: `gpp_rate_patch_fast`,
-  `sw_up_patch_fast`, `lw_up_patch_fast`, `ustar_patch_fast`, `npp_rate_patch_fast`,
-  `reco_patch_fast`, `cas_co2_patch_fast`.
-- The soil columns by layer and patch are `soil_temp_layer_patch_fast` and
-  `soil_water_layer_patch_fast`.
+- It is named after its coarse patch variable, plus `_fast`: `mean_cas_temp_pa`,
+  `mean_soil_temp_top_pa`, `mean_skin_temp_pa`, `mean_le_pa`, `mean_h_pa`,
+  `mean_rnet_pa`, `mean_nee_pa`.
+- A quantity with no coarse patch variable keeps its site stem: `mean_gpp_pa`,
+  `mean_sw_up_pa`, `mean_lw_up_pa`, `mean_ustar_pa`, `mean_npp_pa`,
+  `mean_reco_pa`, `mean_cas_co2_pa`.
+- The soil columns by layer and patch are `mean_soil_temp_layer_pa` and
+  `mean_soil_water_layer_pa`.
 
 The site `*_fast` value is the area-weighted sum of the patch values, taken in patch order, so the
 two always agree. The twins follow `axes_patch` (on by default) and `axes_soil_patch` (off), as the
@@ -275,7 +275,7 @@ The pairing is therefore closed in both directions:
 - a FAST-staged variable on a coarse tier would read live state, which does not carry it.
 
 Either would write `_FillValue` for the whole run, and either is easy to ask for by hand
-(`cas_temp_site = "F"` in `meds_io_config.toml`). The registry checks every default and every
+(`mean_cas_temp_py = "F"` in `meds_io_config.toml`). The registry checks every default and every
 override at start-up and refuses to start, naming the variable (and, for one put on F, pointing to
 its `*_fast` twin): a diagnostic that quietly reports nothing is worse than one that refuses to start.
 
@@ -296,13 +296,13 @@ by default; `radiation` and `ecophys` off. `biogeochem` keeps the soil-carbon po
 `carbon`, so a run can report the vegetation's carbon without the seven soil pools, which stay 0 with
 `soil_carbon_on = false`. `forcing` is the atmospheric boundary the run used, after
 the reader's shortwave partition, rain/snow split and optional corrections: site means at the daily,
-monthly and yearly tiers (`air_temp_site`, `qair_site`, `psurf_site`, `wind_site`, `lwdown_site`,
-the four shortwave streams `par_beam_site` … `nir_diffuse_site`, `precip_site`, `snowfall_site`,
-`atm_co2_site`, `cosz_site`, `rho_air_site`) and their sub-daily `*_fast` twins (with `rainf_fast`; rain
+monthly and yearly tiers (`mean_air_temp_py`, `mean_qair_py`, `mean_psurf_py`, `mean_wind_py`, `mean_lwdown_py`,
+the four shortwave streams `mean_par_beam_py` … `mean_nir_diffuse_py`, `mean_precip_py`, `mean_snowfall_py`,
+`mean_atm_co2_py`, `mean_cosz_py`, `mean_rho_air_py`) and their sub-daily `*_fast` twins (with `mean_rainf_py`; rain
 and snow are the split each patch made at its canopy-air top, area-weighted), and three patch rows at the daily and
-monthly tiers: the forcing each patch saw at its canopy-air top, `wind_cas_top_patch` and
-`air_temp_cas_top_patch`, and that top's height `cas_depth_patch` (with `rough_patch` and
-`displace_patch`, in `energy`, the move can be rebuilt; [`forcing.md`](forcing.md) §8). With `sw_in_*`
+monthly tiers: the forcing each patch saw at its canopy-air top, `mean_wind_cas_top_pa` and
+`mean_air_temp_cas_top_pa`, and that top's height `mean_cas_depth_pa` (with `mean_rough_pa` and
+`mean_displace_pa`, in `energy`, the move can be rebuilt; [`forcing.md`](forcing.md) §8). With `sw_in_*`
 and `precip_*`, it is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
 by far the highest-volume group and the one a production run most often wants off.
 
@@ -325,10 +325,10 @@ io_config = "meds_io_config.toml"
 
 ```toml
 [variables]
-gpp_cohort_fast = "F"     # sub-daily leaf physiology for one diagnostic run
-anet_cohort   = "D"       # ... and its daily mean
-agb_size      = "M Y"
-growth_avg_cohort = false
+mean_gpp_co = "F"     # sub-daily leaf physiology for one diagnostic run
+mean_anet_co   = "D"       # ... and its daily mean
+mean_agb_size_py      = "M Y"
+mean_growth_avg_co = false
 ```
 
 A name matching no registered variable is a hard error, not a silent no-op, and so is a variable on
@@ -341,25 +341,25 @@ else.
 
 Look at these first.
 
-**Fast-scale (14).** `sw_in_site`, `rnet_site` — is the radiation forcing physically shaped?
-`le_site`, `h_site` — the Bowen ratio, the single most diagnostic energy number.
-`gpp_rate_site` — light-response shape and magnitude. `nee_site` — night `= +Reco`, day `= −uptake`;
-the sign flip is the integration test. `et_rate_site` — closes against `le_site`, catches a
-latent-heat unit error instantly. `cas_temp_site`, `cas_vpd_site` — canopy-air coupling, the first
-thing to oscillate if `dt_fast` is too large. `cas_co2_site` — drawdown amplitude; a stuck value
-means the CO₂ twin is not coupled. `soil_temp_site`, `soil_water_site` — the diurnal thermal wave
-and the drydown shape. `ustar_site` — is the surface layer turbulent at all?
-**`resid_energy_site`, `resid_water_site` — a nonzero value invalidates everything above.**
+**Fast-scale (14).** `mean_sw_in_py`, `mean_rnet_py` — is the radiation forcing physically shaped?
+`mean_le_py`, `mean_h_py` — the Bowen ratio, the single most diagnostic energy number.
+`mean_gpp_py` — light-response shape and magnitude. `mean_nee_py` — night `= +Reco`, day `= −uptake`;
+the sign flip is the integration test. `mean_et_py` — closes against `mean_le_py`, catches a
+latent-heat unit error instantly. `mean_cas_temp_py`, `mean_cas_vpd_py` — canopy-air coupling, the first
+thing to oscillate if `dt_fast` is too large. `mean_cas_co2_py` — drawdown amplitude; a stuck value
+means the CO₂ twin is not coupled. `mean_soil_temp_layer_si`, `mean_soil_water_layer_si` — the diurnal thermal wave
+and the drydown shape. `mean_ustar_py` — is the surface layer turbulent at all?
+**`mean_resid_energy_py`, `mean_resid_water_py` — a nonzero value invalidates everything above.**
 
-**Slow-scale (18).** `agb_site`, `lai_site`, `basal_area_site`, `nplant_site` — the four
-stand-structure scalars. `agb_pft`, `lai_pft` — is PFT composition doing anything?
-`agb_size`, `nplant_size` — the size distribution, the demographic core's actual output.
-`npp_site`, `rh_site`, `nee_site` — the carbon balance; drift is the long-run sanity check.
-`leaf_resp_site` + `stem_resp_site` + `root_resp_site` — the autotrophic fraction should be roughly
-half of GPP, a strong parameter check. `agb_growth_site`, `agb_mort_site`,
-`nplant_recruit_site` — the rates that *make* the AGB trajectory. `soilc_total_site` — spinning up,
-equilibrating, or running away? `n_cohort_site`, `n_patch_site` — fuse/fission health; a
-monotonically climbing count is a config bug. `canopy_height_site` — stand development.
+**Slow-scale (18).** `mean_agb_py`, `mean_lai_py`, `mean_basal_area_py`, `mean_nplant_py` — the four
+stand-structure scalars. `mean_agb_pft_py`, `mean_lai_pft_py` — is PFT composition doing anything?
+`mean_agb_size_py`, `mean_nplant_size_py` — the size distribution, the demographic core's actual output.
+`mean_npp_py`, `mean_rh_py`, `mean_nee_py` — the carbon balance; drift is the long-run sanity check.
+`mean_leaf_resp_py` + `mean_stem_resp_py` + `mean_root_resp_py` — the autotrophic fraction should be roughly
+half of GPP, a strong parameter check. `mean_agb_growth_py`, `mean_agb_mort_py`,
+`mean_nplant_recruit_py` — the rates that *make* the AGB trajectory. `mean_soilc_total_py` — spinning up,
+equilibrating, or running away? `n_cohort_py`, `n_patch_py` — fuse/fission health; a
+monotonically climbing count is a config bug. `mean_canopy_height_py` — stand development.
 
 **Budgets you can close from the file alone:**
 
@@ -369,17 +369,17 @@ monotonically climbing count is a config bug. `canopy_height_site` — stand dev
 \frac{\mathrm{d}\,\text{soilc}}{\mathrm{d}t} \approx \sum \text{litter}_* - \text{rh\_site} \qquad(4)
 ```
 
-with `rh_site` [µmol CO₂ m⁻² s⁻¹] taken to kgC m⁻² yr⁻¹, as the litter rates are (× 1.20107 × 10⁻⁸
+with `mean_rh_py` [µmol CO₂ m⁻² s⁻¹] taken to kgC m⁻² yr⁻¹, as the litter rates are (× 1.20107 × 10⁻⁸
 kgC µmol⁻¹ × the year's seconds).
 
 ### The carbon seam
 
 The litter variables are the vegetation's carbon on its way to the soil, by the tissue it came from,
-read from the same accumulator the biogeochemistry consumes. `litter_leaf_site`,
-`litter_fineroot_site`, `litter_wood_site` and `litter_repro_site`, with `root_exudate_site`, are the
+read from the same accumulator the biogeochemistry consumes. `mean_litter_leaf_py`,
+`mean_litter_fineroot_py`, `mean_litter_wood_py` and `mean_litter_repro_py`, with `mean_root_exudate_py`, are the
 carbon that turnover and background mortality send to the soil pools. Cohorts culled below the
-tracking floor or killed by disturbance add to the pools directly (`mort_carbon_cull_site`,
-`mort_carbon_disturb_site`). With soil carbon off, all of it leaves the model. `litter_struct_site`
+tracking floor or killed by disturbance add to the pools directly (`mean_mort_carbon_cull_py`,
+`mean_mort_carbon_disturb_py`). With soil carbon off, all of it leaves the model. `mean_litter_struct_py`
 is a destination, the structural pools, so it overlaps the others.
 
 The three `mort_carbon_*_site` pathways (background, cull, disturbance) are exclusive and together

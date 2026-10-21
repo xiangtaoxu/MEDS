@@ -40,7 +40,7 @@ PV = os.path.join(ROOT, "examples", "example05_forest_regeneration", "palo_verde
 OUT = os.path.join(HERE, "output")
 MASK = os.path.join(OUT, "cell_mask.nc")
 START_YEAR = 1871
-DBH_EDGES = "[0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 1000.0]"     # [cm] the nplant_size classes
+DBH_EDGES = "[0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 1000.0]"     # [cm] the mean_nplant_size_py classes
 #----- Keys the region's cells provide (the archive: location and forcing; the maps: soil, deep temperature and,
 #      through each polygon's config, Chave's E), which a region config refuses. -----------------------------------
 FROM_CELLS = [("site", "latitude"), ("site", "longitude"), ("site", "elevation"),

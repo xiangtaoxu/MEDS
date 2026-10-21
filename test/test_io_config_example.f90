@@ -53,7 +53,7 @@ program test_io_config_example
    do k = 1_ik, reg%nvar
       !----- The dump writes one commented assignment per variable: "# <name> = ...". Matching on  !
       !      "# name = " rather than the bare name avoids a short name matching inside a longer     !
-      !      one (gpp_site inside gpp_site_something) or inside a long_name or units string.        !
+      !      one (mean_gpp_py inside gpp_site_something) or inside a long_name or units string.        !
       if (index(body, '# '//trim(reg%var(k)%name)//' = ') == 0) then
          n_missing = n_missing + 1_ik
          if (n_missing <= 10_ik) write(*,'(a)') '   MISSING: '//trim(reg%var(k)%name)

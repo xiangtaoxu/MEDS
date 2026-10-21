@@ -219,7 +219,7 @@ option is to take smaller steps.
 - **It is a hybrid, not a pure explicit scheme.** When the explicit march cannot resolve a step (a
   cold night under a closed canopy, where the leaf↔canopy-air coupling is stiff and the state rails
   against its physical bounds), the driver **discards the RK45 step and redoes that `dt_fast` on
-  `ark`**. The counter `work_rk45_rescue_site` reports how often. *Read it before reading any RK45
+  `ark`**. The counter `mean_work_rk45_rescue_py` reports how often. *Read it before reading any RK45
   result* — a run whose winter months all rescue is substantially an ARK run wearing an RK45 label.
   ARK is the rescue target because what is being rescued from *is* a coupled stiff canopy-air
   problem, which is exactly what its Newton solves.
@@ -434,7 +434,7 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 | anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
 | the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `ark`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
 | a reference solution to check anything else against | `rk45` with `rtol = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
-| ED2 comparison at the algorithmic level | `rk45` (but check `work_rk45_rescue_site` first) |
+| ED2 comparison at the algorithmic level | `rk45` (but check `mean_work_rk45_rescue_py` first) |
 
 **What the `dt_fast = 900 s` row costs.** Little: canopy-air temperature within 0.16 K of a resolved
 reference, and the latent heat within 0.2 W m⁻² in the mean and 1.9 W m⁻² in any hour of the diurnal
@@ -470,7 +470,7 @@ numerics = true                  # the work + health counters; turn this on for 
   rather than the schemes.
 - **A closed budget is not a healthy run.** With the conductances frozen (§2) every ledger closes to
   ~10⁻⁶ J while canopy-air temperature oscillates 8 K step to step. If you change `dt_fast`, look at a
-  consecutive-step trace of `cas_temp_site` and at daily GPP, not just the residuals.
+  consecutive-step trace of `mean_cas_temp_py` and at daily GPP, not just the residuals.
 
 **The process mask.** `[fast].mask.<store>` switches one prognostic store off, to attribute a
 column's behaviour to a process or to isolate its stiffest mode (everything off but `hydraulics`). A

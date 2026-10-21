@@ -311,7 +311,7 @@ contains
          x(1:n) = poly%cohort%nplant(1:n) * poly%cohort%wood_area(1:n)
       case (FLD_C_NPP_ACCUM)
          !----- Gross GPP less the three maintenance respirations; growth respiration is charged in !
-         !      the slow step's allocation (growth_resp_site), so subtracting it here would count  !
+         !      the slow step's allocation (mean_growth_resp_py), so subtracting it here would count  !
          !      it twice. ---------------------------------------------------------------------!
          x(1:n) = poly%cohort%gpp_accum(1:n) - poly%cohort%leaf_resp_accum(1:n)                     &
                   - poly%cohort%stem_resp_accum(1:n) - poly%cohort%root_resp_accum(1:n)
@@ -493,7 +493,7 @@ contains
    !=======================================================================================!
    !  The dispatcher: one variable -> one scalar or slab, its field reduced to the scale its  !
    !  dim names with its descriptor's weight, mean and scale. One field serves every scale:   !
-   !  agb_cohort, agb_patch, agb_site, agb_pft and agb_size all read FLD_C_AGB. Extract each  !
+   !  mean_agb_co, mean_agb_pa, mean_agb_py, mean_agb_pft_py and mean_agb_size_py all read FLD_C_AGB. Extract each  !
    !  variable once per step (the nvfortran trap above).                                      !
    !=======================================================================================!
    subroutine extract_variable(poly, setup, v, scalar_out, slab_out, valid_out, n_out)

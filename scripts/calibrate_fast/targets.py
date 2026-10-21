@@ -51,8 +51,8 @@ import data_rules
 
 TARGETS = ("albedo", "lw_up", "le", "h", "gpp", "ustar")
 FILTERS = ("ustar_min", "par_min", "hours", "min_solar_elevation", "snow_free_days")
-MODEL_COLUMN = {"lw_up": "lw_up_fast", "le": "le_flux_fast", "h": "h_flux_fast", "gpp": "gpp_rate_fast",
-                "ustar": "ustar_fast"}
+MODEL_COLUMN = {"lw_up": "mean_lw_up_py", "le": "mean_le_py", "h": "mean_h_py", "gpp": "mean_gpp_py",
+                "ustar": "mean_ustar_py"}
 
 
 @dataclass
@@ -181,7 +181,7 @@ def build_rows(name, index, obs: pd.DataFrame, forcing_observed: pd.Series, targ
 def model_values(t: TargetRows, df: pd.DataFrame) -> np.ndarray:
     """The model side of one target, on its rows."""
     if t.name == "albedo":
-        return df["sw_up_fast"].to_numpy()[t.rows] / df["sw_in_fast"].to_numpy()[t.rows]
+        return df["mean_sw_up_py"].to_numpy()[t.rows] / df["mean_sw_in_py"].to_numpy()[t.rows]
     return df[MODEL_COLUMN[t.name]].to_numpy()[t.rows]
 
 

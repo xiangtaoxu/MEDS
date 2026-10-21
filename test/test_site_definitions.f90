@@ -204,7 +204,7 @@ contains
       call check(nc_open_f(path, NC_NOWRITE, ncid) == NC_NOERR, 'the daily file is written')
       call check(nc_inq_dimlen_f(ncid, 'site', n) == NC_NOERR .and. n == 2_c_size_t,              &
                  'its site axis holds the two sites')
-      call nc_check(nc_inq_varid_f(ncid, 'site_area', vid), 'site_area')
+      call nc_check(nc_inq_varid_f(ncid, 'area_si', vid), 'area_si')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [1_c_size_t, 2_c_size_t], area), &
                     'get site_area')
       call check(area(1) == 0.25_c_double .and. area(2) == 0.75_c_double, 'it holds each site''s share')

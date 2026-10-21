@@ -35,7 +35,7 @@ module meds_init_restart
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    !----- The layout written and read, a global attribute of every file; a change to it counts up. -!
-   character(len=*), parameter :: RESTART_FORMAT = '1'
+   character(len=*), parameter :: RESTART_FORMAT = '2'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
    character(len=*), parameter :: FILM_UNITS  = 'kg/plant'   !< the canopy films' units attribute
 
@@ -388,13 +388,13 @@ contains
       call def_var(d, 'meta_real', NC_DOUBLE, [d%meta_real], '[area of the sites (1), decimal_year]')
       !----- 3. Calendar: the cohorts' ring-buffer slot (the restructuring owed is a global      !
       !      attribute). ----------------------------------------------------------------------!
-      call def_var(d, 'growth_hist_pos', NC_INT, [d%meta_real], 'ring-buffer write slot (element 1)')
+      call def_var(d, 'growth_hist_pos_py', NC_INT, [d%meta_real], 'ring-buffer write slot (element 1)')
       !----- The sites: 1. each one's area and 3. the surface it was made with, as the diagnostic    !
       !      files carry them (its layer count is checked on read); 4. thermal acclimation's       !
       !      running mean (docs/science/leaf_gas_exchange.md §2). ------------------------------!
       call define_site_statics(d%ncid, d%polygon, d%site, [SOIL_BC_DRAIN, SOIL_BC_AQUIFER], 'drain aquifer',    &
                                by_row=.true., deflate=RESTART_DEFLATE)
-      call def_var(d, 't_growth_avg', NC_DOUBLE, [d%site], 'the site''s running-mean growth temperature [K]')
+      call def_var(d, 't_growth_avg_si', NC_DOUBLE, [d%site], 'the site''s running-mean growth temperature [K]')
    end subroutine define_polygon_vars
 
    subroutine put_polygon_vars(r, poly, now)
@@ -415,7 +415,7 @@ contains
                                    now%second])
       call put_dbl(r, 'meta_real', [sum(poly%site%area(1:ns)), time_to_decimal_year(now)])
       !----- 3. Calendar. --------------------------------------------------------------------!
-      call put_int(r, 'growth_hist_pos', [poly%growth_hist_pos])
+      call put_int(r, 'growth_hist_pos_py', [poly%growth_hist_pos])
       !----- The sites, the surface's numbers through contiguous buffers. --------------------!
       do is = 1_ik, ns
          associate (surf => poly%site%surface(is))
@@ -431,7 +431,7 @@ contains
          end associate
       end do
       call write_site_statics(r%ncid, r%row - 1_ik, area, elev, slope, aspect, nsoil, depth, bc, drain, tdeep)
-      call put_dbl(r, 't_growth_avg', poly%site%t_growth_avg(1:ns))
+      call put_dbl(r, 't_growth_avg_si', poly%site%t_growth_avg(1:ns))
    end subroutine put_polygon_vars
 
    !----- The polygon, allocated to the file's counts, and its sites, each surface made from     !
@@ -486,10 +486,10 @@ contains
             call make_site_surface(poly%site%surface(is), cfg)
          end if
       end do
-      call get_dbl(r, 'site_area', poly%site%area(1:ns))
+      call get_dbl(r, 'area_si', poly%site%area(1:ns))
       block
          integer(ik) :: nsoil(ns)
-         call get_int(r, 'site_n_soil', nsoil)
+         call get_int(r, 'n_soil_si', nsoil)
          do is = 1_ik, ns
             if (nsoil(is) /= poly%site%surface(is)%soil%n_active) then
                write(msg, '(a,i0,a,i0,a,i0)') 'has ', nsoil(is), ' soil layers at site ', is,                &
@@ -500,7 +500,7 @@ contains
          end do
       end block
       !----- 4. Growth temperature. ----------------------------------------------------------!
-      call get_dbl(r, 't_growth_avg', poly%site%t_growth_avg(1:ns))
+      call get_dbl(r, 't_growth_avg_si', poly%site%t_growth_avg(1:ns))
    end subroutine get_polygon_vars
 
    !=======================================================================================!
@@ -510,58 +510,58 @@ contains
    subroutine define_cohort_vars(d)
       type(file_dims_t), intent(in) :: d
       !----- 1. Identity and density. --------------------------------------------------------!
-      call def_var(d, 'pft',              NC_INT,    [d%cohort], 'plant functional type index')
+      call def_var(d, 'pft_co',              NC_INT,    [d%cohort], 'plant functional type index')
       call def_var(d, 'global_cohort_id', NC_INT,    [d%cohort], 'persistent cohort id')
       call def_var(d, 'owner_patch',      NC_INT,    [d%cohort], 'owning patch index (1-based)')
-      call def_var(d, 'nplant',           NC_DOUBLE, [d%cohort], 'plant number density [plant/m2]')
+      call def_var(d, 'nplant_co',           NC_DOUBLE, [d%cohort], 'plant number density [plant/m2]')
       !----- 2. The carbon pools, as the run holds them. -------------------------------------!
-      call def_var(d, 'leaf_carbon',          NC_DOUBLE, [d%cohort], 'leaf carbon per plant [kgC]')
-      call def_var(d, 'fineroot_carbon',      NC_DOUBLE, [d%cohort], 'fine-root carbon per plant [kgC]')
-      call def_var(d, 'wood_carbon',          NC_DOUBLE, [d%cohort], 'wood carbon per plant [kgC]')
-      call def_var(d, 'nonstructural_carbon', NC_DOUBLE, [d%cohort], 'nonstructural carbon per plant [kgC]')
+      call def_var(d, 'leaf_carbon_co',          NC_DOUBLE, [d%cohort], 'leaf carbon per plant [kgC]')
+      call def_var(d, 'fineroot_carbon_co',      NC_DOUBLE, [d%cohort], 'fine-root carbon per plant [kgC]')
+      call def_var(d, 'wood_carbon_co',          NC_DOUBLE, [d%cohort], 'wood carbon per plant [kgC]')
+      call def_var(d, 'nonstructural_carbon_co', NC_DOUBLE, [d%cohort], 'nonstructural carbon per plant [kgC]')
       !----- 3. Size: the reader derives it from the pools, so dbh, height, basal_area, agb and   !
       !      leaf_area are for readers of the file; overtopping_lai is the cohort's light. -------!
-      call def_var(d, 'dbh',             NC_DOUBLE, [d%cohort], 'diameter at breast height [cm]')
-      call def_var(d, 'height',          NC_DOUBLE, [d%cohort], 'height [m]')
-      call def_var(d, 'basal_area',      NC_DOUBLE, [d%cohort], 'basal area per plant [cm2]')
-      call def_var(d, 'agb',             NC_DOUBLE, [d%cohort], 'aboveground biomass per plant [kgC]')
-      call def_var(d, 'leaf_area',       NC_DOUBLE, [d%cohort], 'leaf area per plant [m2]')
-      call def_var(d, 'overtopping_lai', NC_DOUBLE, [d%cohort], 'LAI of the taller cohorts in the patch [m2/m2]')
+      call def_var(d, 'dbh_co',             NC_DOUBLE, [d%cohort], 'diameter at breast height [cm]')
+      call def_var(d, 'height_co',          NC_DOUBLE, [d%cohort], 'height [m]')
+      call def_var(d, 'basal_area_co',      NC_DOUBLE, [d%cohort], 'basal area per plant [cm2]')
+      call def_var(d, 'agb_co',             NC_DOUBLE, [d%cohort], 'aboveground biomass per plant [kgC]')
+      call def_var(d, 'leaf_area_co',       NC_DOUBLE, [d%cohort], 'leaf area per plant [m2]')
+      call def_var(d, 'overtopping_lai_co', NC_DOUBLE, [d%cohort], 'LAI of the taller cohorts in the patch [m2/m2]')
       !----- 4. Water: the tissue water; the canopy interception films ([fast].canopy_water_on),  !
       !      per plant and marked so; the stomatal feedback's predawn potential                    !
       !      (docs/science/leaf_gas_exchange.md §4.2). ----------------------------------------!
-      call def_var(d, 'leaf_water_mass', NC_DOUBLE, [d%cohort], 'per-cohort internal leaf water [kg/plant]')
-      call def_var(d, 'wood_water_mass', NC_DOUBLE, [d%cohort], 'per-cohort internal wood water [kg/plant]')
-      call def_var(d, 'leaf_surf_water', NC_DOUBLE, [d%cohort], 'leaf interception film [kg/plant]', units=FILM_UNITS)
-      call def_var(d, 'wood_surf_water', NC_DOUBLE, [d%cohort], 'wood interception film [kg/plant]', units=FILM_UNITS)
-      call def_var(d, 'dmax_psi_leaf',   NC_DOUBLE, [d%cohort],                                                 &
+      call def_var(d, 'leaf_water_mass_co', NC_DOUBLE, [d%cohort], 'per-cohort internal leaf water [kg/plant]')
+      call def_var(d, 'wood_water_mass_co', NC_DOUBLE, [d%cohort], 'per-cohort internal wood water [kg/plant]')
+      call def_var(d, 'leaf_surf_water_co', NC_DOUBLE, [d%cohort], 'leaf interception film [kg/plant]', units=FILM_UNITS)
+      call def_var(d, 'wood_surf_water_co', NC_DOUBLE, [d%cohort], 'wood interception film [kg/plant]', units=FILM_UNITS)
+      call def_var(d, 'dmax_psi_leaf_co',   NC_DOUBLE, [d%cohort],                                                 &
                    'yesterday daily-max leaf water potential [MPa] (drives beta_stomata)')
       !----- 5. Energy: the tissue energies, with their temperatures as twins. ----------------!
-      call def_var(d, 'leaf_energy', NC_DOUBLE, [d%cohort], 'per-cohort leaf internal energy [J/plant] (prognostic)')
-      call def_var(d, 'wood_energy', NC_DOUBLE, [d%cohort], 'per-cohort wood internal energy [J/plant] (prognostic)')
-      call def_var(d, 'leaf_temp',   NC_DOUBLE, [d%cohort], 'per-cohort leaf temperature [K] (diagnosed twin)')
-      call def_var(d, 'wood_temp',   NC_DOUBLE, [d%cohort], 'per-cohort wood temperature [K] (diagnosed twin)')
+      call def_var(d, 'leaf_energy_co', NC_DOUBLE, [d%cohort], 'per-cohort leaf internal energy [J/plant] (prognostic)')
+      call def_var(d, 'wood_energy_co', NC_DOUBLE, [d%cohort], 'per-cohort wood internal energy [J/plant] (prognostic)')
+      call def_var(d, 'leaf_temp_co',   NC_DOUBLE, [d%cohort], 'per-cohort leaf temperature [K] (diagnosed twin)')
+      call def_var(d, 'wood_temp_co',   NC_DOUBLE, [d%cohort], 'per-cohort wood temperature [K] (diagnosed twin)')
       !----- 6. Plastic leaf traits. ---------------------------------------------------------!
-      call def_var(d, 'sla',                NC_DOUBLE, [d%cohort], 'specific leaf area [m2/kgC] (plastic)')
-      call def_var(d, 'vcmax25',            NC_DOUBLE, [d%cohort], 'max carboxylation @25C [umol/m2/s] (plastic)')
-      call def_var(d, 'rd25',               NC_DOUBLE, [d%cohort], 'leaf dark respiration @25C [umol/m2/s] (plastic)')
-      call def_var(d, 'leaf_turnover_rate', NC_DOUBLE, [d%cohort], 'baseline leaf turnover rate [1/yr] (plastic)')
+      call def_var(d, 'sla_co',                NC_DOUBLE, [d%cohort], 'specific leaf area [m2/kgC] (plastic)')
+      call def_var(d, 'vcmax25_co',            NC_DOUBLE, [d%cohort], 'max carboxylation @25C [umol/m2/s] (plastic)')
+      call def_var(d, 'rd25_co',               NC_DOUBLE, [d%cohort], 'leaf dark respiration @25C [umol/m2/s] (plastic)')
+      call def_var(d, 'leaf_turnover_rate_co', NC_DOUBLE, [d%cohort], 'baseline leaf turnover rate [1/yr] (plastic)')
       !----- 7. Leaf phenology: the season's cue sums and running light mean. -----------------!
-      call def_var(d, 'leaf_flush_tendency', NC_DOUBLE, [d%cohort], 'smoothed flush signal [0,1]')
-      call def_var(d, 'leaf_shed_tendency',  NC_DOUBLE, [d%cohort], 'smoothed senescence signal [0,1]')
-      call def_var(d, 'growing_degree_days', NC_DOUBLE, [d%cohort], 'warmth sum since midwinter [K day]')
-      call def_var(d, 'cold_degree_days',    NC_DOUBLE, [d%cohort], 'cold sum since midsummer [K day]')
-      call def_var(d, 'dry_psi_sum',         NC_DOUBLE, [d%cohort], 'predawn leaf psi below the TLP, summed [MPa day]')
-      call def_var(d, 'wet_psi_sum',         NC_DOUBLE, [d%cohort], 'predawn leaf psi above the TLP, summed [MPa day]')
-      call def_var(d, 'light_hours_mean',    NC_DOUBLE, [d%cohort],                                             &
+      call def_var(d, 'leaf_flush_tendency_co', NC_DOUBLE, [d%cohort], 'smoothed flush signal [0,1]')
+      call def_var(d, 'leaf_shed_tendency_co',  NC_DOUBLE, [d%cohort], 'smoothed senescence signal [0,1]')
+      call def_var(d, 'growing_degree_days_co', NC_DOUBLE, [d%cohort], 'warmth sum since midwinter [K day]')
+      call def_var(d, 'cold_degree_days_co',    NC_DOUBLE, [d%cohort], 'cold sum since midsummer [K day]')
+      call def_var(d, 'dry_psi_sum_co',         NC_DOUBLE, [d%cohort], 'predawn leaf psi below the TLP, summed [MPa day]')
+      call def_var(d, 'wet_psi_sum_co',         NC_DOUBLE, [d%cohort], 'predawn leaf psi above the TLP, summed [MPa day]')
+      call def_var(d, 'light_hours_avg_co',    NC_DOUBLE, [d%cohort],                                             &
                    'running-mean hours of light at the cohort top [h/day]')
       !----- 8. Growth history: growth_avg (the mortality predictor) and the ring buffer behind it. !
-      call def_var(d, 'growth_avg',   NC_DOUBLE, [d%cohort], 'simple moving-average growth [cm/yr] (mortality predictor)')
-      call def_var(d, 'growth_accum', NC_DOUBLE, [d%cohort], 'running sum of the growth window [cm/yr]')
-      call def_var(d, 'growth_count', NC_INT,    [d%cohort], 'samples in the growth window')
-      call def_var(d, 'growth_hist',  NC_DOUBLE, [d%cohort, d%growth_window], 'growth-rate ring buffer [cm/yr]')
+      call def_var(d, 'growth_avg_co',   NC_DOUBLE, [d%cohort], 'simple moving-average growth [cm/yr] (mortality predictor)')
+      call def_var(d, 'growth_accum_co', NC_DOUBLE, [d%cohort], 'running sum of the growth window [cm/yr]')
+      call def_var(d, 'growth_count_co', NC_INT,    [d%cohort], 'samples in the growth window')
+      call def_var(d, 'growth_hist_co',  NC_DOUBLE, [d%cohort, d%growth_window], 'growth-rate ring buffer [cm/yr]')
       !----- 9. Fast-to-slow accumulators: the day's running maximum leaf potential. -----------!
-      call def_var(d, 'dmax_psi_leaf_accum', NC_DOUBLE, [d%cohort],                                             &
+      call def_var(d, 'dmax_psi_leaf_accum_co', NC_DOUBLE, [d%cohort],                                             &
                    'running daily-max leaf water potential accumulator [MPa]')
    end subroutine define_cohort_vars
 
@@ -573,57 +573,57 @@ contains
       nwin = int(size(poly%cohort%growth_hist, 1), ik)
       associate (c => poly%cohort)
          !----- 1. Identity and density. -----------------------------------------------------!
-         call put_int(r, 'pft',              c%pft(1:ncoh))
+         call put_int(r, 'pft_co',              c%pft(1:ncoh))
          call put_int(r, 'global_cohort_id', c%global_id(1:ncoh))
          call put_int(r, 'owner_patch',      c%owner_patch(1:ncoh))
-         call put_dbl(r, 'nplant',           c%nplant(1:ncoh))
+         call put_dbl(r, 'nplant_co',           c%nplant(1:ncoh))
          !----- 2. Carbon pools. --------------------------------------------------------------!
-         call put_dbl(r, 'leaf_carbon',          c%leaf_carbon(1:ncoh))
-         call put_dbl(r, 'fineroot_carbon',      c%fineroot_carbon(1:ncoh))
-         call put_dbl(r, 'wood_carbon',          c%wood_carbon(1:ncoh))
-         call put_dbl(r, 'nonstructural_carbon', c%nonstructural_carbon(1:ncoh))
+         call put_dbl(r, 'leaf_carbon_co',          c%leaf_carbon(1:ncoh))
+         call put_dbl(r, 'fineroot_carbon_co',      c%fineroot_carbon(1:ncoh))
+         call put_dbl(r, 'wood_carbon_co',          c%wood_carbon(1:ncoh))
+         call put_dbl(r, 'nonstructural_carbon_co', c%nonstructural_carbon(1:ncoh))
          !----- 3. Size. ----------------------------------------------------------------------!
-         call put_dbl(r, 'dbh',             c%dbh(1:ncoh))
-         call put_dbl(r, 'height',          c%height(1:ncoh))
-         call put_dbl(r, 'basal_area',      c%basal_area(1:ncoh))
-         call put_dbl(r, 'agb',             c%agb(1:ncoh))
-         call put_dbl(r, 'leaf_area',       c%leaf_area(1:ncoh))
-         call put_dbl(r, 'overtopping_lai', c%overtopping_lai(1:ncoh))
+         call put_dbl(r, 'dbh_co',             c%dbh(1:ncoh))
+         call put_dbl(r, 'height_co',          c%height(1:ncoh))
+         call put_dbl(r, 'basal_area_co',      c%basal_area(1:ncoh))
+         call put_dbl(r, 'agb_co',             c%agb(1:ncoh))
+         call put_dbl(r, 'leaf_area_co',       c%leaf_area(1:ncoh))
+         call put_dbl(r, 'overtopping_lai_co', c%overtopping_lai(1:ncoh))
          !----- 4. Water. ---------------------------------------------------------------------!
-         call put_dbl(r, 'leaf_water_mass', c%leaf_water_mass(1:ncoh))
-         call put_dbl(r, 'wood_water_mass', c%wood_water_mass(1:ncoh))
-         call put_dbl(r, 'leaf_surf_water', c%leaf_surf_water(1:ncoh))
-         call put_dbl(r, 'wood_surf_water', c%wood_surf_water(1:ncoh))
-         call put_dbl(r, 'dmax_psi_leaf',   c%dmax_psi_leaf(1:ncoh))
+         call put_dbl(r, 'leaf_water_mass_co', c%leaf_water_mass(1:ncoh))
+         call put_dbl(r, 'wood_water_mass_co', c%wood_water_mass(1:ncoh))
+         call put_dbl(r, 'leaf_surf_water_co', c%leaf_surf_water(1:ncoh))
+         call put_dbl(r, 'wood_surf_water_co', c%wood_surf_water(1:ncoh))
+         call put_dbl(r, 'dmax_psi_leaf_co',   c%dmax_psi_leaf(1:ncoh))
          !----- 5. Energy. --------------------------------------------------------------------!
-         call put_dbl(r, 'leaf_energy', c%leaf_energy(1:ncoh))
-         call put_dbl(r, 'wood_energy', c%wood_energy(1:ncoh))
-         call put_dbl(r, 'leaf_temp',   c%leaf_temp(1:ncoh))
-         call put_dbl(r, 'wood_temp',   c%wood_temp(1:ncoh))
+         call put_dbl(r, 'leaf_energy_co', c%leaf_energy(1:ncoh))
+         call put_dbl(r, 'wood_energy_co', c%wood_energy(1:ncoh))
+         call put_dbl(r, 'leaf_temp_co',   c%leaf_temp(1:ncoh))
+         call put_dbl(r, 'wood_temp_co',   c%wood_temp(1:ncoh))
          !----- 6. Plastic leaf traits. -------------------------------------------------------!
-         call put_dbl(r, 'sla',                c%sla(1:ncoh))
-         call put_dbl(r, 'vcmax25',            c%vcmax25(1:ncoh))
-         call put_dbl(r, 'rd25',               c%rd25(1:ncoh))
-         call put_dbl(r, 'leaf_turnover_rate', c%leaf_turnover_rate(1:ncoh))
+         call put_dbl(r, 'sla_co',                c%sla(1:ncoh))
+         call put_dbl(r, 'vcmax25_co',            c%vcmax25(1:ncoh))
+         call put_dbl(r, 'rd25_co',               c%rd25(1:ncoh))
+         call put_dbl(r, 'leaf_turnover_rate_co', c%leaf_turnover_rate(1:ncoh))
          !----- 7. Leaf phenology. ------------------------------------------------------------!
-         call put_dbl(r, 'leaf_flush_tendency', c%leaf_flush_tendency(1:ncoh))
-         call put_dbl(r, 'leaf_shed_tendency',  c%leaf_shed_tendency(1:ncoh))
-         call put_dbl(r, 'growing_degree_days', c%growing_degree_days(1:ncoh))
-         call put_dbl(r, 'cold_degree_days',    c%cold_degree_days(1:ncoh))
-         call put_dbl(r, 'dry_psi_sum',         c%dry_psi_sum(1:ncoh))
-         call put_dbl(r, 'wet_psi_sum',         c%wet_psi_sum(1:ncoh))
-         call put_dbl(r, 'light_hours_mean',    c%light_hours_mean(1:ncoh))
+         call put_dbl(r, 'leaf_flush_tendency_co', c%leaf_flush_tendency(1:ncoh))
+         call put_dbl(r, 'leaf_shed_tendency_co',  c%leaf_shed_tendency(1:ncoh))
+         call put_dbl(r, 'growing_degree_days_co', c%growing_degree_days(1:ncoh))
+         call put_dbl(r, 'cold_degree_days_co',    c%cold_degree_days(1:ncoh))
+         call put_dbl(r, 'dry_psi_sum_co',         c%dry_psi_sum(1:ncoh))
+         call put_dbl(r, 'wet_psi_sum_co',         c%wet_psi_sum(1:ncoh))
+         call put_dbl(r, 'light_hours_avg_co',    c%light_hours_mean(1:ncoh))
          !----- 8. Growth history. ------------------------------------------------------------!
-         call put_dbl(r, 'growth_avg',   c%growth_avg(1:ncoh))
-         call put_dbl(r, 'growth_accum', c%growth_accum(1:ncoh))
-         call put_int(r, 'growth_count', c%growth_count(1:ncoh))
+         call put_dbl(r, 'growth_avg_co',   c%growth_avg(1:ncoh))
+         call put_dbl(r, 'growth_accum_co', c%growth_accum(1:ncoh))
+         call put_int(r, 'growth_count_co', c%growth_count(1:ncoh))
          if (nwin > 0_ik) then
             do ic = 1_ik, ncoh
-               call put_dbl(r, 'growth_hist', c%growth_hist(1:nwin, ic), item=ic)
+               call put_dbl(r, 'growth_hist_co', c%growth_hist(1:nwin, ic), item=ic)
             end do
          end if
          !----- 9. Fast-to-slow accumulators. -------------------------------------------------!
-         call put_dbl(r, 'dmax_psi_leaf_accum', c%dmax_psi_leaf_accum(1:ncoh))
+         call put_dbl(r, 'dmax_psi_leaf_accum_co', c%dmax_psi_leaf_accum(1:ncoh))
       end associate
    end subroutine put_cohort_vars
 
@@ -639,59 +639,59 @@ contains
       ncoh = poly%cohort%n
       associate (c => poly%cohort)
          !----- 1. Identity and density. -----------------------------------------------------!
-         call get_int(r, 'pft',              c%pft(1:ncoh))
+         call get_int(r, 'pft_co',              c%pft(1:ncoh))
          call get_int(r, 'global_cohort_id', c%global_id(1:ncoh))
          call get_int(r, 'owner_patch',      c%owner_patch(1:ncoh))
-         call get_dbl(r, 'nplant',           c%nplant(1:ncoh))
+         call get_dbl(r, 'nplant_co',           c%nplant(1:ncoh))
          !----- 2. Carbon pools. --------------------------------------------------------------!
-         call get_dbl(r, 'leaf_carbon',          c%leaf_carbon(1:ncoh))
-         call get_dbl(r, 'fineroot_carbon',      c%fineroot_carbon(1:ncoh))
-         call get_dbl(r, 'wood_carbon',          c%wood_carbon(1:ncoh))
-         call get_dbl(r, 'nonstructural_carbon', c%nonstructural_carbon(1:ncoh))
+         call get_dbl(r, 'leaf_carbon_co',          c%leaf_carbon(1:ncoh))
+         call get_dbl(r, 'fineroot_carbon_co',      c%fineroot_carbon(1:ncoh))
+         call get_dbl(r, 'wood_carbon_co',          c%wood_carbon(1:ncoh))
+         call get_dbl(r, 'nonstructural_carbon_co', c%nonstructural_carbon(1:ncoh))
          !----- 3. Size: derived from the pools in section 4; the overtopping LAI is the cohort's  !
          !      light. ---------------------------------------------------------------------------!
-         call get_dbl(r, 'overtopping_lai', c%overtopping_lai(1:ncoh))
+         call get_dbl(r, 'overtopping_lai_co', c%overtopping_lai(1:ncoh))
          !----- 4. Water. ---------------------------------------------------------------------!
-         call get_dbl(r, 'leaf_water_mass', c%leaf_water_mass(1:ncoh))
-         call get_dbl(r, 'wood_water_mass', c%wood_water_mass(1:ncoh))
-         call get_dbl(r, 'leaf_surf_water', c%leaf_surf_water(1:ncoh))
-         call get_dbl(r, 'wood_surf_water', c%wood_surf_water(1:ncoh))
-         call get_dbl(r, 'dmax_psi_leaf',   c%dmax_psi_leaf(1:ncoh))
+         call get_dbl(r, 'leaf_water_mass_co', c%leaf_water_mass(1:ncoh))
+         call get_dbl(r, 'wood_water_mass_co', c%wood_water_mass(1:ncoh))
+         call get_dbl(r, 'leaf_surf_water_co', c%leaf_surf_water(1:ncoh))
+         call get_dbl(r, 'wood_surf_water_co', c%wood_surf_water(1:ncoh))
+         call get_dbl(r, 'dmax_psi_leaf_co',   c%dmax_psi_leaf(1:ncoh))
          !----- 5. Energy. --------------------------------------------------------------------!
-         call get_dbl(r, 'leaf_energy', c%leaf_energy(1:ncoh))
-         call get_dbl(r, 'wood_energy', c%wood_energy(1:ncoh))
-         call get_dbl(r, 'leaf_temp',   c%leaf_temp(1:ncoh))
-         call get_dbl(r, 'wood_temp',   c%wood_temp(1:ncoh))
+         call get_dbl(r, 'leaf_energy_co', c%leaf_energy(1:ncoh))
+         call get_dbl(r, 'wood_energy_co', c%wood_energy(1:ncoh))
+         call get_dbl(r, 'leaf_temp_co',   c%leaf_temp(1:ncoh))
+         call get_dbl(r, 'wood_temp_co',   c%wood_temp(1:ncoh))
          !----- 6. Plastic leaf traits. -------------------------------------------------------!
-         call get_dbl(r, 'sla',                c%sla(1:ncoh))
-         call get_dbl(r, 'vcmax25',            c%vcmax25(1:ncoh))
-         call get_dbl(r, 'rd25',               c%rd25(1:ncoh))
-         call get_dbl(r, 'leaf_turnover_rate', c%leaf_turnover_rate(1:ncoh))
+         call get_dbl(r, 'sla_co',                c%sla(1:ncoh))
+         call get_dbl(r, 'vcmax25_co',            c%vcmax25(1:ncoh))
+         call get_dbl(r, 'rd25_co',               c%rd25(1:ncoh))
+         call get_dbl(r, 'leaf_turnover_rate_co', c%leaf_turnover_rate(1:ncoh))
          !----- 7. Leaf phenology. ------------------------------------------------------------!
-         call get_dbl(r, 'leaf_flush_tendency', c%leaf_flush_tendency(1:ncoh))
-         call get_dbl(r, 'leaf_shed_tendency',  c%leaf_shed_tendency(1:ncoh))
-         call get_dbl(r, 'growing_degree_days', c%growing_degree_days(1:ncoh))
-         call get_dbl(r, 'cold_degree_days',    c%cold_degree_days(1:ncoh))
-         call get_dbl(r, 'dry_psi_sum',         c%dry_psi_sum(1:ncoh))
-         call get_dbl(r, 'wet_psi_sum',         c%wet_psi_sum(1:ncoh))
-         call get_dbl(r, 'light_hours_mean',    c%light_hours_mean(1:ncoh))
+         call get_dbl(r, 'leaf_flush_tendency_co', c%leaf_flush_tendency(1:ncoh))
+         call get_dbl(r, 'leaf_shed_tendency_co',  c%leaf_shed_tendency(1:ncoh))
+         call get_dbl(r, 'growing_degree_days_co', c%growing_degree_days(1:ncoh))
+         call get_dbl(r, 'cold_degree_days_co',    c%cold_degree_days(1:ncoh))
+         call get_dbl(r, 'dry_psi_sum_co',         c%dry_psi_sum(1:ncoh))
+         call get_dbl(r, 'wet_psi_sum_co',         c%wet_psi_sum(1:ncoh))
+         call get_dbl(r, 'light_hours_avg_co',    c%light_hours_mean(1:ncoh))
          !----- 8. Growth history: the ring buffer, with the polygon's write slot, when the file's !
          !      window is this run's length. ------------------------------------------------------!
-         call get_dbl(r, 'growth_avg', c%growth_avg(1:ncoh))
+         call get_dbl(r, 'growth_avg_co', c%growth_avg(1:ncoh))
          nwin = growth_window_steps(cfg)
          call nc_check(nc_inq_dimlen_f(r%ncid, 'growth_window', nwin_file), 'inq growth_window')
          same_window = int(nwin_file, ik) == nwin .and. int(size(c%growth_hist, 1), ik) == nwin
          if (same_window) then
-            call get_dbl(r, 'growth_accum', c%growth_accum(1:ncoh))
-            call get_int(r, 'growth_count', c%growth_count(1:ncoh))
+            call get_dbl(r, 'growth_accum_co', c%growth_accum(1:ncoh))
+            call get_int(r, 'growth_count_co', c%growth_count(1:ncoh))
             do i = 1_ik, ncoh
-               call get_dbl(r, 'growth_hist', c%growth_hist(1:nwin, i), item=i)
+               call get_dbl(r, 'growth_hist_co', c%growth_hist(1:nwin, i), item=i)
             end do
-            call get_int(r, 'growth_hist_pos', gpos)
+            call get_int(r, 'growth_hist_pos_py', gpos)
             poly%growth_hist_pos = gpos(1)
          end if
          !----- 9. Fast-to-slow accumulators. -------------------------------------------------!
-         call get_dbl(r, 'dmax_psi_leaf_accum', c%dmax_psi_leaf_accum(1:ncoh))
+         call get_dbl(r, 'dmax_psi_leaf_accum_co', c%dmax_psi_leaf_accum(1:ncoh))
       end associate
    end subroutine get_cohort_vars
 
@@ -703,47 +703,47 @@ contains
       type(file_dims_t), intent(in) :: d
       !----- 1. Identity and area. -----------------------------------------------------------!
       call def_var(d, 'global_patch_id', NC_INT,    [d%patch], 'persistent patch id')
-      call def_var(d, 'dist_type',       NC_INT,    [d%patch], 'disturbance type (1=primary,2=treefall)')
+      call def_var(d, 'dist_type_pa',       NC_INT,    [d%patch], 'disturbance type (1=primary,2=treefall)')
       call def_var(d, 'owner_site',      NC_INT,    [d%patch], 'owning site index (1-based)')
-      call def_var(d, 'patch_area',      NC_DOUBLE, [d%patch], 'patch area fraction of its site')
-      call def_var(d, 'patch_age',       NC_DOUBLE, [d%patch], 'time since last disturbance [yr]')
+      call def_var(d, 'area_pa',      NC_DOUBLE, [d%patch], 'patch area fraction of its site')
+      call def_var(d, 'age_pa',       NC_DOUBLE, [d%patch], 'time since last disturbance [yr]')
       !----- 3. Recruit bank. ----------------------------------------------------------------!
-      call def_var(d, 'recruit_pool', NC_DOUBLE, [d%patch, d%pft], 'carry-forward recruit pool [plant/m2]')
+      call def_var(d, 'recruit_pool_pa', NC_DOUBLE, [d%patch, d%pft], 'carry-forward recruit pool [plant/m2]')
       !----- 4-6. The fast reservoirs (canopy air, snow, soil, pond), with their diagnosed twins. !
-      call def_var(d, 'cas_can_enthalpy', NC_DOUBLE, [d%patch], 'CAS specific enthalpy [J/kg] (prognostic)')
-      call def_var(d, 'cas_can_shv',      NC_DOUBLE, [d%patch], 'CAS specific humidity [kg/kg] (prognostic)')
-      call def_var(d, 'cas_can_co2',      NC_DOUBLE, [d%patch], 'CAS CO2 mixing ratio [umol/mol] (prognostic)')
-      call def_var(d, 'cas_can_temp',     NC_DOUBLE, [d%patch], 'CAS temperature [K] (diagnosed twin)')
-      call def_var(d, 'snow_nlayer', NC_INT,    [d%patch], 'active snow layer count (0 = no snow)')
-      call def_var(d, 'snow_swe',    NC_DOUBLE, [d%patch, d%snow_layer], 'snow water-equivalent mass [kg/m2] (prognostic)')
-      call def_var(d, 'snow_energy', NC_DOUBLE, [d%patch, d%snow_layer],                                   &
+      call def_var(d, 'cas_can_enthalpy_pa', NC_DOUBLE, [d%patch], 'CAS specific enthalpy [J/kg] (prognostic)')
+      call def_var(d, 'cas_can_shv_pa',      NC_DOUBLE, [d%patch], 'CAS specific humidity [kg/kg] (prognostic)')
+      call def_var(d, 'cas_can_co2_pa',      NC_DOUBLE, [d%patch], 'CAS CO2 mixing ratio [umol/mol] (prognostic)')
+      call def_var(d, 'cas_can_temp_pa',     NC_DOUBLE, [d%patch], 'CAS temperature [K] (diagnosed twin)')
+      call def_var(d, 'snow_nlayer_pa', NC_INT,    [d%patch], 'active snow layer count (0 = no snow)')
+      call def_var(d, 'snow_swe_layer_pa',    NC_DOUBLE, [d%patch, d%snow_layer], 'snow water-equivalent mass [kg/m2] (prognostic)')
+      call def_var(d, 'snow_energy_layer_pa', NC_DOUBLE, [d%patch, d%snow_layer],                                   &
                    'snow extensive internal energy [J/m2] (prognostic)')
-      call def_var(d, 'snow_depth',  NC_DOUBLE, [d%patch, d%snow_layer], 'snow geometric depth [m] (prognostic)')
-      call def_var(d, 'snow_temp',   NC_DOUBLE, [d%patch, d%snow_layer], 'snow temperature [K] (diagnosed twin)')
-      call def_var(d, 'snow_fliq',   NC_DOUBLE, [d%patch, d%snow_layer], 'snow liquid fraction [-] (diagnosed twin)')
-      call def_var(d, 'soil_theta',  NC_DOUBLE, [d%patch, d%soil_layer], 'soil volumetric moisture [m3/m3] (prognostic)')
-      call def_var(d, 'soil_energy', NC_DOUBLE, [d%patch, d%soil_layer],                                   &
+      call def_var(d, 'snow_depth_layer_pa',  NC_DOUBLE, [d%patch, d%snow_layer], 'snow geometric depth [m] (prognostic)')
+      call def_var(d, 'snow_temp_layer_pa',   NC_DOUBLE, [d%patch, d%snow_layer], 'snow temperature [K] (diagnosed twin)')
+      call def_var(d, 'snow_fliq_layer_pa',   NC_DOUBLE, [d%patch, d%snow_layer], 'snow liquid fraction [-] (diagnosed twin)')
+      call def_var(d, 'soil_theta_layer_pa',  NC_DOUBLE, [d%patch, d%soil_layer], 'soil volumetric moisture [m3/m3] (prognostic)')
+      call def_var(d, 'soil_energy_layer_pa', NC_DOUBLE, [d%patch, d%soil_layer],                                   &
                    'soil volumetric internal energy [J/m3] (prognostic)')
-      call def_var(d, 'soil_temp',   NC_DOUBLE, [d%patch, d%soil_layer], 'soil temperature [K] (diagnosed twin)')
-      call def_var(d, 'soil_fliq',   NC_DOUBLE, [d%patch, d%soil_layer], 'soil liquid-water fraction [-] (diagnosed twin)')
-      call def_var(d, 'soil_w_surface',      NC_DOUBLE, [d%patch], 'ponded surface water [kg/m2]')
-      call def_var(d, 'soil_w_surface_enth', NC_DOUBLE, [d%patch], 'ponded-water internal energy [J/m2]')
+      call def_var(d, 'soil_temp_layer_pa',   NC_DOUBLE, [d%patch, d%soil_layer], 'soil temperature [K] (diagnosed twin)')
+      call def_var(d, 'soil_fliq_layer_pa',   NC_DOUBLE, [d%patch, d%soil_layer], 'soil liquid-water fraction [-] (diagnosed twin)')
+      call def_var(d, 'soil_w_surface_pa',      NC_DOUBLE, [d%patch], 'ponded surface water [kg/m2]')
+      call def_var(d, 'soil_w_surface_enth_pa', NC_DOUBLE, [d%patch], 'ponded-water internal energy [J/m2]')
       !----- 7. Soil carbon (docs/science/soil_carbon.md §2). --------------------------------!
-      call def_var(d, 'soilc_fast_grnd',   NC_DOUBLE, [d%patch], 'fast/metabolic litter carbon, above-ground [kgC/m2]')
-      call def_var(d, 'soilc_fast_soil',   NC_DOUBLE, [d%patch], 'fast/metabolic litter carbon, below-ground [kgC/m2]')
-      call def_var(d, 'soilc_struct_grnd', NC_DOUBLE, [d%patch], 'structural litter + CWD carbon, above-ground [kgC/m2]')
-      call def_var(d, 'soilc_struct_soil', NC_DOUBLE, [d%patch], 'structural litter + CWD carbon, below-ground [kgC/m2]')
-      call def_var(d, 'soilc_microbial',   NC_DOUBLE, [d%patch], 'microbial SOM carbon [kgC/m2]')
-      call def_var(d, 'soilc_slow',        NC_DOUBLE, [d%patch], 'slow/humified SOM carbon [kgC/m2]')
-      call def_var(d, 'soilc_passive',     NC_DOUBLE, [d%patch], 'passive SOM carbon [kgC/m2]')
-      call def_var(d, 'soilc_lignin_grnd', NC_DOUBLE, [d%patch], 'structural litter lignin, above-ground [kgC/m2]')
-      call def_var(d, 'soilc_lignin_soil', NC_DOUBLE, [d%patch], 'structural litter lignin, below-ground [kgC/m2]')
+      call def_var(d, 'soilc_fast_grnd_pa',   NC_DOUBLE, [d%patch], 'fast/metabolic litter carbon, above-ground [kgC/m2]')
+      call def_var(d, 'soilc_fast_soil_pa',   NC_DOUBLE, [d%patch], 'fast/metabolic litter carbon, below-ground [kgC/m2]')
+      call def_var(d, 'soilc_struct_grnd_pa', NC_DOUBLE, [d%patch], 'structural litter + CWD carbon, above-ground [kgC/m2]')
+      call def_var(d, 'soilc_struct_soil_pa', NC_DOUBLE, [d%patch], 'structural litter + CWD carbon, below-ground [kgC/m2]')
+      call def_var(d, 'soilc_microbial_pa',   NC_DOUBLE, [d%patch], 'microbial SOM carbon [kgC/m2]')
+      call def_var(d, 'soilc_slow_pa',        NC_DOUBLE, [d%patch], 'slow/humified SOM carbon [kgC/m2]')
+      call def_var(d, 'soilc_passive_pa',     NC_DOUBLE, [d%patch], 'passive SOM carbon [kgC/m2]')
+      call def_var(d, 'soilc_lignin_grnd_pa', NC_DOUBLE, [d%patch], 'structural litter lignin, above-ground [kgC/m2]')
+      call def_var(d, 'soilc_lignin_soil_pa', NC_DOUBLE, [d%patch], 'structural litter lignin, below-ground [kgC/m2]')
       !----- 8. The daily slow-to-fast rates: the turnover shed water and the slow loop's CO2. --!
-      call def_var(d, 'shed_water_rate', NC_DOUBLE, [d%patch], 'turnover shed water to the ground [kg/m2/s]')
-      call def_var(d, 'shed_water_enth', NC_DOUBLE, [d%patch], 'the enthalpy that water carries [W/m2]')
-      call def_var(d, 'slow_co2_rate',   NC_DOUBLE, [d%patch], 'slow-loop CO2 flux the fast NEE adds [umol/m2/s]')
+      call def_var(d, 'shed_water_rate_pa', NC_DOUBLE, [d%patch], 'turnover shed water to the ground [kg/m2/s]')
+      call def_var(d, 'shed_water_enth_pa', NC_DOUBLE, [d%patch], 'the enthalpy that water carries [W/m2]')
+      call def_var(d, 'slow_co2_rate_pa',   NC_DOUBLE, [d%patch], 'slow-loop CO2 flux the fast NEE adds [umol/m2/s]')
       !----- 10. Solver memory: the step the fast controller last accepted, its warm start. ----!
-      call def_var(d, 'adapt_dt_last', NC_DOUBLE, [d%patch], 'fast-controller warm-start step [s] (0 = cold)')
+      call def_var(d, 'adapt_dt_last_pa', NC_DOUBLE, [d%patch], 'fast-controller warm-start step [s] (0 = cold)')
    end subroutine define_patch_vars
 
    !----- The patches. Each per-patch number of a store goes through a contiguous buffer: a     !
@@ -758,69 +758,69 @@ contains
       associate (p => poly%patch)
          !----- 1. Identity and area. ---------------------------------------------------------!
          call put_int(r, 'global_patch_id', p%global_id(1:npat))
-         call put_int(r, 'dist_type',       p%dist_type(1:npat))
+         call put_int(r, 'dist_type_pa',       p%dist_type(1:npat))
          call put_int(r, 'owner_site',      p%owner_site(1:npat))
-         call put_dbl(r, 'patch_area',      p%area(1:npat))
-         call put_dbl(r, 'patch_age',       p%age(1:npat))
+         call put_dbl(r, 'area_pa',      p%area(1:npat))
+         call put_dbl(r, 'age_pa',       p%age(1:npat))
          !----- 3. Recruit bank. --------------------------------------------------------------!
          do ip = 1_ik, npat
-            call put_dbl(r, 'recruit_pool', p%recruit_pool(1:npft, ip), item=ip)
+            call put_dbl(r, 'recruit_pool_pa', p%recruit_pool(1:npft, ip), item=ip)
          end do
          !----- 4. Canopy air. ----------------------------------------------------------------!
          buf = p%cas(1:npat)%can_enthalpy
-         call put_dbl(r, 'cas_can_enthalpy', buf)
+         call put_dbl(r, 'cas_can_enthalpy_pa', buf)
          buf = p%cas(1:npat)%can_shv
-         call put_dbl(r, 'cas_can_shv', buf)
+         call put_dbl(r, 'cas_can_shv_pa', buf)
          buf = p%cas(1:npat)%can_co2
-         call put_dbl(r, 'cas_can_co2', buf)
+         call put_dbl(r, 'cas_can_co2_pa', buf)
          buf = p%cas(1:npat)%can_temp
-         call put_dbl(r, 'cas_can_temp', buf)
+         call put_dbl(r, 'cas_can_temp_pa', buf)
          !----- 5. Snow. ----------------------------------------------------------------------!
          ibuf = p%snow(1:npat)%nlayer
-         call put_int(r, 'snow_nlayer', ibuf)
+         call put_int(r, 'snow_nlayer_pa', ibuf)
          do ip = 1_ik, npat
-            call put_dbl(r, 'snow_swe',    p%snow(ip)%swe(1:n_snow_layer_max),         item=ip)
-            call put_dbl(r, 'snow_energy', p%snow(ip)%snow_energy(1:n_snow_layer_max), item=ip)
-            call put_dbl(r, 'snow_depth',  p%snow(ip)%snow_depth(1:n_snow_layer_max),  item=ip)
-            call put_dbl(r, 'snow_temp',   p%snow(ip)%snow_temp(1:n_snow_layer_max),   item=ip)
-            call put_dbl(r, 'snow_fliq',   p%snow(ip)%snow_fliq(1:n_snow_layer_max),   item=ip)
+            call put_dbl(r, 'snow_swe_layer_pa',    p%snow(ip)%swe(1:n_snow_layer_max),         item=ip)
+            call put_dbl(r, 'snow_energy_layer_pa', p%snow(ip)%snow_energy(1:n_snow_layer_max), item=ip)
+            call put_dbl(r, 'snow_depth_layer_pa',  p%snow(ip)%snow_depth(1:n_snow_layer_max),  item=ip)
+            call put_dbl(r, 'snow_temp_layer_pa',   p%snow(ip)%snow_temp(1:n_snow_layer_max),   item=ip)
+            call put_dbl(r, 'snow_fliq_layer_pa',   p%snow(ip)%snow_fliq(1:n_snow_layer_max),   item=ip)
          end do
          !----- 6. Soil water and heat, and the pond. -----------------------------------------!
          do ip = 1_ik, npat
-            call put_dbl(r, 'soil_theta',  p%soil_water(ip)%theta(1:n_soil_layer_max),        item=ip)
-            call put_dbl(r, 'soil_energy', p%soil_energy(ip)%soil_energy(1:n_soil_layer_max), item=ip)
-            call put_dbl(r, 'soil_temp',   p%soil_energy(ip)%soil_temp(1:n_soil_layer_max),   item=ip)
-            call put_dbl(r, 'soil_fliq',   p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max),   item=ip)
+            call put_dbl(r, 'soil_theta_layer_pa',  p%soil_water(ip)%theta(1:n_soil_layer_max),        item=ip)
+            call put_dbl(r, 'soil_energy_layer_pa', p%soil_energy(ip)%soil_energy(1:n_soil_layer_max), item=ip)
+            call put_dbl(r, 'soil_temp_layer_pa',   p%soil_energy(ip)%soil_temp(1:n_soil_layer_max),   item=ip)
+            call put_dbl(r, 'soil_fliq_layer_pa',   p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max),   item=ip)
          end do
          buf = p%soil_water(1:npat)%w_surface
-         call put_dbl(r, 'soil_w_surface', buf)
+         call put_dbl(r, 'soil_w_surface_pa', buf)
          buf = p%soil_water(1:npat)%w_surface_energy
-         call put_dbl(r, 'soil_w_surface_enth', buf)
+         call put_dbl(r, 'soil_w_surface_enth_pa', buf)
          !----- 7. Soil carbon. ---------------------------------------------------------------!
          buf = p%soil_carbon(1:npat)%fast_grnd_carbon
-         call put_dbl(r, 'soilc_fast_grnd', buf)
+         call put_dbl(r, 'soilc_fast_grnd_pa', buf)
          buf = p%soil_carbon(1:npat)%fast_soil_carbon
-         call put_dbl(r, 'soilc_fast_soil', buf)
+         call put_dbl(r, 'soilc_fast_soil_pa', buf)
          buf = p%soil_carbon(1:npat)%struct_grnd_carbon
-         call put_dbl(r, 'soilc_struct_grnd', buf)
+         call put_dbl(r, 'soilc_struct_grnd_pa', buf)
          buf = p%soil_carbon(1:npat)%struct_soil_carbon
-         call put_dbl(r, 'soilc_struct_soil', buf)
+         call put_dbl(r, 'soilc_struct_soil_pa', buf)
          buf = p%soil_carbon(1:npat)%microbial_carbon
-         call put_dbl(r, 'soilc_microbial', buf)
+         call put_dbl(r, 'soilc_microbial_pa', buf)
          buf = p%soil_carbon(1:npat)%slow_carbon
-         call put_dbl(r, 'soilc_slow', buf)
+         call put_dbl(r, 'soilc_slow_pa', buf)
          buf = p%soil_carbon(1:npat)%passive_carbon
-         call put_dbl(r, 'soilc_passive', buf)
+         call put_dbl(r, 'soilc_passive_pa', buf)
          buf = p%soil_carbon(1:npat)%struct_grnd_lignin
-         call put_dbl(r, 'soilc_lignin_grnd', buf)
+         call put_dbl(r, 'soilc_lignin_grnd_pa', buf)
          buf = p%soil_carbon(1:npat)%struct_soil_lignin
-         call put_dbl(r, 'soilc_lignin_soil', buf)
+         call put_dbl(r, 'soilc_lignin_soil_pa', buf)
          !----- 8. Daily slow-to-fast rates. --------------------------------------------------!
-         call put_dbl(r, 'shed_water_rate', p%shed_water_rate(1:npat))
-         call put_dbl(r, 'shed_water_enth', p%shed_water_enth(1:npat))
-         call put_dbl(r, 'slow_co2_rate',   p%slow_co2_rate(1:npat))
+         call put_dbl(r, 'shed_water_rate_pa', p%shed_water_rate(1:npat))
+         call put_dbl(r, 'shed_water_enth_pa', p%shed_water_enth(1:npat))
+         call put_dbl(r, 'slow_co2_rate_pa',   p%slow_co2_rate(1:npat))
          !----- 10. Solver memory. ------------------------------------------------------------!
-         call put_dbl(r, 'adapt_dt_last', p%adapt_dt_last(1:npat))
+         call put_dbl(r, 'adapt_dt_last_pa', p%adapt_dt_last(1:npat))
       end associate
    end subroutine put_patch_vars
 
@@ -836,69 +836,69 @@ contains
       associate (p => poly%patch)
          !----- 1. Identity and area. ---------------------------------------------------------!
          call get_int(r, 'global_patch_id', p%global_id(1:npat))
-         call get_int(r, 'dist_type',       p%dist_type(1:npat))
+         call get_int(r, 'dist_type_pa',       p%dist_type(1:npat))
          call get_int(r, 'owner_site',      p%owner_site(1:npat))
-         call get_dbl(r, 'patch_area',      p%area(1:npat))
-         call get_dbl(r, 'patch_age',       p%age(1:npat))
+         call get_dbl(r, 'area_pa',      p%area(1:npat))
+         call get_dbl(r, 'age_pa',       p%age(1:npat))
          !----- 3. Recruit bank. --------------------------------------------------------------!
          do ip = 1_ik, npat
-            call get_dbl(r, 'recruit_pool', p%recruit_pool(1:npft, ip), item=ip)
+            call get_dbl(r, 'recruit_pool_pa', p%recruit_pool(1:npft, ip), item=ip)
          end do
          !----- 4. Canopy air. ----------------------------------------------------------------!
-         call get_dbl(r, 'cas_can_enthalpy', buf)
+         call get_dbl(r, 'cas_can_enthalpy_pa', buf)
          p%cas(1:npat)%can_enthalpy = buf
-         call get_dbl(r, 'cas_can_shv', buf)
+         call get_dbl(r, 'cas_can_shv_pa', buf)
          p%cas(1:npat)%can_shv = buf
-         call get_dbl(r, 'cas_can_co2', buf)
+         call get_dbl(r, 'cas_can_co2_pa', buf)
          p%cas(1:npat)%can_co2 = buf
-         call get_dbl(r, 'cas_can_temp', buf)
+         call get_dbl(r, 'cas_can_temp_pa', buf)
          p%cas(1:npat)%can_temp = buf
          !----- 5. Snow. ----------------------------------------------------------------------!
-         call get_int(r, 'snow_nlayer', ibuf)
+         call get_int(r, 'snow_nlayer_pa', ibuf)
          p%snow(1:npat)%nlayer = ibuf
          do ip = 1_ik, npat
-            call get_dbl(r, 'snow_swe',    p%snow(ip)%swe(1:n_snow_layer_max),         item=ip)
-            call get_dbl(r, 'snow_energy', p%snow(ip)%snow_energy(1:n_snow_layer_max), item=ip)
-            call get_dbl(r, 'snow_depth',  p%snow(ip)%snow_depth(1:n_snow_layer_max),  item=ip)
-            call get_dbl(r, 'snow_temp',   p%snow(ip)%snow_temp(1:n_snow_layer_max),   item=ip)
-            call get_dbl(r, 'snow_fliq',   p%snow(ip)%snow_fliq(1:n_snow_layer_max),   item=ip)
+            call get_dbl(r, 'snow_swe_layer_pa',    p%snow(ip)%swe(1:n_snow_layer_max),         item=ip)
+            call get_dbl(r, 'snow_energy_layer_pa', p%snow(ip)%snow_energy(1:n_snow_layer_max), item=ip)
+            call get_dbl(r, 'snow_depth_layer_pa',  p%snow(ip)%snow_depth(1:n_snow_layer_max),  item=ip)
+            call get_dbl(r, 'snow_temp_layer_pa',   p%snow(ip)%snow_temp(1:n_snow_layer_max),   item=ip)
+            call get_dbl(r, 'snow_fliq_layer_pa',   p%snow(ip)%snow_fliq(1:n_snow_layer_max),   item=ip)
          end do
          !----- 6. Soil water and heat, and the pond. -----------------------------------------!
          do ip = 1_ik, npat
-            call get_dbl(r, 'soil_theta',  p%soil_water(ip)%theta(1:n_soil_layer_max),        item=ip)
-            call get_dbl(r, 'soil_energy', p%soil_energy(ip)%soil_energy(1:n_soil_layer_max), item=ip)
-            call get_dbl(r, 'soil_temp',   p%soil_energy(ip)%soil_temp(1:n_soil_layer_max),   item=ip)
-            call get_dbl(r, 'soil_fliq',   p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max),   item=ip)
+            call get_dbl(r, 'soil_theta_layer_pa',  p%soil_water(ip)%theta(1:n_soil_layer_max),        item=ip)
+            call get_dbl(r, 'soil_energy_layer_pa', p%soil_energy(ip)%soil_energy(1:n_soil_layer_max), item=ip)
+            call get_dbl(r, 'soil_temp_layer_pa',   p%soil_energy(ip)%soil_temp(1:n_soil_layer_max),   item=ip)
+            call get_dbl(r, 'soil_fliq_layer_pa',   p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max),   item=ip)
          end do
-         call get_dbl(r, 'soil_w_surface', buf)
+         call get_dbl(r, 'soil_w_surface_pa', buf)
          p%soil_water(1:npat)%w_surface = buf
-         call get_dbl(r, 'soil_w_surface_enth', buf)
+         call get_dbl(r, 'soil_w_surface_enth_pa', buf)
          p%soil_water(1:npat)%w_surface_energy = buf
          !----- 7. Soil carbon. ---------------------------------------------------------------!
-         call get_dbl(r, 'soilc_fast_grnd', buf)
+         call get_dbl(r, 'soilc_fast_grnd_pa', buf)
          p%soil_carbon(1:npat)%fast_grnd_carbon = buf
-         call get_dbl(r, 'soilc_fast_soil', buf)
+         call get_dbl(r, 'soilc_fast_soil_pa', buf)
          p%soil_carbon(1:npat)%fast_soil_carbon = buf
-         call get_dbl(r, 'soilc_struct_grnd', buf)
+         call get_dbl(r, 'soilc_struct_grnd_pa', buf)
          p%soil_carbon(1:npat)%struct_grnd_carbon = buf
-         call get_dbl(r, 'soilc_struct_soil', buf)
+         call get_dbl(r, 'soilc_struct_soil_pa', buf)
          p%soil_carbon(1:npat)%struct_soil_carbon = buf
-         call get_dbl(r, 'soilc_microbial', buf)
+         call get_dbl(r, 'soilc_microbial_pa', buf)
          p%soil_carbon(1:npat)%microbial_carbon = buf
-         call get_dbl(r, 'soilc_slow', buf)
+         call get_dbl(r, 'soilc_slow_pa', buf)
          p%soil_carbon(1:npat)%slow_carbon = buf
-         call get_dbl(r, 'soilc_passive', buf)
+         call get_dbl(r, 'soilc_passive_pa', buf)
          p%soil_carbon(1:npat)%passive_carbon = buf
-         call get_dbl(r, 'soilc_lignin_grnd', buf)
+         call get_dbl(r, 'soilc_lignin_grnd_pa', buf)
          p%soil_carbon(1:npat)%struct_grnd_lignin = buf
-         call get_dbl(r, 'soilc_lignin_soil', buf)
+         call get_dbl(r, 'soilc_lignin_soil_pa', buf)
          p%soil_carbon(1:npat)%struct_soil_lignin = buf
          !----- 8. Daily slow-to-fast rates. --------------------------------------------------!
-         call get_dbl(r, 'shed_water_rate', p%shed_water_rate(1:npat))
-         call get_dbl(r, 'shed_water_enth', p%shed_water_enth(1:npat))
-         call get_dbl(r, 'slow_co2_rate',   p%slow_co2_rate(1:npat))
+         call get_dbl(r, 'shed_water_rate_pa', p%shed_water_rate(1:npat))
+         call get_dbl(r, 'shed_water_enth_pa', p%shed_water_enth(1:npat))
+         call get_dbl(r, 'slow_co2_rate_pa',   p%slow_co2_rate(1:npat))
          !----- 10. Solver memory. ------------------------------------------------------------!
-         call get_dbl(r, 'adapt_dt_last', p%adapt_dt_last(1:npat))
+         call get_dbl(r, 'adapt_dt_last_pa', p%adapt_dt_last(1:npat))
       end associate
    end subroutine get_patch_vars
 

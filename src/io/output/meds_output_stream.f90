@@ -283,7 +283,7 @@ contains
       !----- Each polygon's sites, as it runs them: area, terrain and soil column. ---------------!
       call define_site_statics(ncid, dpo, dsi, [SOIL_BC_DRAIN, SOIL_BC_AQUIFER], 'drain aquifer', by_row=.false.)
       if (allocated(files%polygon_chave_e)) then
-         call define_var(ncid, 'chave_e', NC_DOUBLE, dims1, v_chave, units='1',                       &
+         call define_var(ncid, 'chave_e_py', NC_DOUBLE, dims1, v_chave, units='1',                       &
                          long_name='Chave et al. (2014) environmental stress index E')
       end if
 
@@ -349,7 +349,7 @@ contains
                               files%site_drain_factor, files%site_deep_temp)
       if (allocated(files%polygon_chave_e))                                                       &
          call nc_check(nc_put_vara_double(ncid, v_chave, st1, cn1, real(files%polygon_chave_e, c_double)), &
-                       'put chave_e')
+                       'put chave_e_py')
       if (hass) call write_site_soil_coord(ncid, int(stream%v_soil_z, c_int), v_bnds, files)
       if (haspf) call write_pft_coord(ncid, stream%v_pft, setup%n_pft)
       if (hassz) call write_size_coord(ncid, stream%v_dbh_lower, stream%v_dbh_upper, setup)

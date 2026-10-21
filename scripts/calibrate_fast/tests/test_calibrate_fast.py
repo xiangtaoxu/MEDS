@@ -434,10 +434,10 @@ def rows(idx, obs, cfg, skip=0, sun=None, utc=0.0):
 
 def model_like(obs, idx, kappa=1.0):
     o = obs.reindex(idx)
-    return pd.DataFrame({"sw_in_fast": o["sw_in"], "sw_up_fast": o["sw_up"], "lw_up_fast": o["lw_up"],
-                         "rnet_fast": o["rnet"], "le_flux_fast": o["le_c"], "h_flux_fast": o["h_c"],
-                         "gpp_rate_fast": o["gpp"] + (1.0 / kappa - 1.0) * o["reco"], "nee_fast": o["nee"],
-                         "ustar_fast": o["ustar"]}, index=idx)
+    return pd.DataFrame({"mean_sw_in_py": o["sw_in"], "mean_sw_up_py": o["sw_up"], "mean_lw_up_py": o["lw_up"],
+                         "mean_rnet_py": o["rnet"], "mean_le_py": o["le_c"], "mean_h_py": o["h_c"],
+                         "mean_gpp_py": o["gpp"] + (1.0 / kappa - 1.0) * o["reco"], "mean_nee_py": o["nee"],
+                         "mean_ustar_py": o["ustar"]}, index=idx)
 
 
 def test_residual_is_zero_on_the_observations_and_rows_are_fixed():
@@ -451,7 +451,7 @@ def test_residual_is_zero_on_the_observations_and_rows_are_fixed():
     assert all(day[t.rows].all() for t in wr.targets if t.name in ("le", "h", "gpp", "ustar"))
     # a model 10 % high in LE moves only the LE rows
     m = model_like(obs, idx, kappa=0.8)
-    m["le_flux_fast"] *= 1.1
+    m["mean_le_py"] *= 1.1
     r2 = targets.residual(wr, m, {"kappa": 0.8})
     for name, s in targets.target_slices([wr]):
         assert np.any(r2[s] != 0) == (name == "le"), name
@@ -459,7 +459,7 @@ def test_residual_is_zero_on_the_observations_and_rows_are_fixed():
     t = targets.TargetRows("gpp", np.arange(4), np.full(4, 10.0), np.ones(4), reco=np.full(4, 4.0))
     four = pd.date_range("2016-01-01", periods=4, freq="30min")
     one = targets.WindowRows("w", four, [t], huber_c=100.0)
-    df = pd.DataFrame({"gpp_rate_fast": np.full(4, 12.0)}, index=four)
+    df = pd.DataFrame({"mean_gpp_py": np.full(4, 12.0)}, index=four)
     assert np.allclose(targets.residual(one, df, {"kappa": 1.0}), 2.0)
     assert np.allclose(targets.residual(one, df, {"kappa": 2.0 / 3.0}), 0.0)    # 10 + (1.5 - 1) 4 = 12
 
@@ -468,7 +468,7 @@ def test_huber_is_undone_for_the_scores_and_sigma_is_scaled_by_the_misfit():
     idx = pd.date_range("2016-01-01", periods=100, freq="1h")
     wr = targets.WindowRows("w", idx, [targets.TargetRows("h", np.arange(100), np.zeros(100), np.ones(100)),
                                        targets.TargetRows("le", np.arange(100), np.zeros(100), np.ones(100))])
-    df = pd.DataFrame({"h_flux_fast": np.r_[np.full(50, 3.0), np.full(50, -3.0)], "le_flux_fast": 0.5}, index=idx)
+    df = pd.DataFrame({"mean_h_py": np.r_[np.full(50, 3.0), np.full(50, -3.0)], "mean_le_py": 0.5}, index=idx)
     r = targets.residual(wr, df, {})
     assert np.allclose(np.abs(r[:100]), np.sqrt(2 * 2 * 3 - 4))      # Huber beyond c = 2
     assert np.allclose(targets.plain([wr], r)[:100] ** 2, 9.0)        # undone for chi^2
@@ -493,7 +493,7 @@ def test_the_effective_sample_weights_follow_the_autocorrelation():
     w = targets.set_weights([wr], x)
     assert w["w/h"] == pytest.approx((1 - 0.8) / (1 + 0.8), abs=0.03)
     assert wr.targets[0].weight == pytest.approx(np.sqrt(w["w/h"]))
-    r = targets.residual(wr, pd.DataFrame({"h_flux_fast": x}, index=idx), {})
+    r = targets.residual(wr, pd.DataFrame({"mean_h_py": x}, index=idx), {})
     assert np.allclose(r, x * wr.targets[0].weight) and np.allclose(targets.plain([wr], r), x)
 
 

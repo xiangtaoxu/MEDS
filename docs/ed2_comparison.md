@@ -361,8 +361,8 @@ This is the largest usability difference.
 | Post-processing | `post_proc/` — site time series, stand structure, a 3-D landscape, a per-PFT / per-size-class plotter, and a worked evaluation notebook that checks the conservation identities **from the file** | Community scripts |
 
 Two conventions worth knowing before you write analysis code. **Sub-daily variables are separate
-registry entries from their coarse namesakes** (`cas_temp_fast` reads staging captured inside the fast
-loop; `cas_temp_site` reads end-of-step state) — putting either on the wrong stream is rejected at
+registry entries from their coarse namesakes** (`mean_cas_temp_py` reads staging captured inside the fast
+loop; `mean_cas_temp_py` reads end-of-step state) — putting either on the wrong stream is rejected at
 start-up rather than silently writing fill. And **cohort and patch axes are forbidden on the annual
 stream**, because a window longer than a month would straddle the disturbance restructuring.
 
@@ -372,7 +372,7 @@ What the output code in `src/io/output` takes from ED2:
   folded into its window each step, normalized when the window closes, and re-seeded
   (`integrate_scalar` / `integrate_slab`, `normalize_scalar` / `normalize_slab`, `reset_buffer`).
 - **The DBH size classes** are ED2's: a class of plants, and a cohort lands whole in the class of its
-  mean diameter, never split across classes, which makes `nplant_size` a stem-density distribution
+  mean diameter, never split across classes, which makes `mean_nplant_size_py` a stem-density distribution
   comparable to a forest inventory.
 - **The relative saturation** `soil_wetness`, (θ − θr)/(θs − θr), carries ED2's name.
 
