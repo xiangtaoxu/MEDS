@@ -161,11 +161,11 @@ contains
    ! (1-based) of a file with the polygon axis, or the whole of a file without it. Each    !
    ! site's surface is made from `site_cfg` (else `cfg`) and the geometry from the carbon  !
    ! pools; the maps and sort order are rebuilt, and the restructuring owed is the file's  !
-   ! restructure_pending (docs/science/order_of_processes.md §5). found = .false. if the   !
-   ! file cannot be opened or has another layout (restart_file_slots says why); a PFT,     !
-   ! site or soil-layer count unlike the run's stops the run.                              !
+   ! restructure_pending (docs/science/order_of_processes.md §5). found = .false. and     !
+   ! `why` say the file cannot be opened, has another layout, or a PFT, site or soil-layer !
+   ! count unlike the run's.                                                               !
    !---------------------------------------------------------------------------------------!
-   subroutine read_restart_file(poly, cfg, path, restart_time, found, fast_found, polygon, site_cfg)
+   subroutine read_restart_file(poly, cfg, path, restart_time, found, fast_found, polygon, site_cfg, why)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
@@ -176,6 +176,8 @@ contains
       logical, optional,   intent(out) :: fast_found
       integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
       type(meds_config_t), optional, intent(in) :: site_cfg(:)   !< each site's configuration
+      character(len=:), allocatable, optional, intent(out) :: why  !< why found = .false.; '' when found
+      character(len=:), allocatable :: msg
       type(file_row_t)  :: r
       type(file_held_t) :: held
       integer(c_int)    :: ncid, st
@@ -183,6 +185,7 @@ contains
       found = .false.
       restart_time = meds_time_t()
       if (present(fast_found)) fast_found = .false.
+      if (present(why)) why = 'cannot be opened'
       if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) return
       r = file_row_t(ncid=ncid, has_axis=present(polygon))
       if (present(polygon)) r%row = polygon
@@ -190,14 +193,21 @@ contains
       !      of file would take the wrong elements. --------------------------------------------------!
       if (has_polygon_axis(ncid) .neqv. r%has_axis) then
          st = nc_close(ncid)
+         if (present(why)) why = 'has a polygon axis where the run reads a file without one, or none where it needs one'
          return
       end if
-      call get_polygon_vars(r, poly, cfg, restart_time, site_cfg)
+      call get_polygon_vars(r, poly, cfg, restart_time, msg, site_cfg)
+      if (len(msg) > 0) then
+         st = nc_close(ncid)
+         if (present(why)) why = msg
+         return
+      end if
       if (poly%cohort%n > 0_ik) call get_cohort_vars(r, poly, cfg, held)
       if (poly%patch%n > 0_ik)  call get_patch_vars(r, poly, held)
       call nc_check(nc_close(ncid), 'state nc_close (read)')
       call derive_after_read(poly, cfg, held)
       if (present(fast_found)) fast_found = held%fast
+      if (present(why)) why = ''
       found = .true.
    end subroutine read_restart_file
 
@@ -491,29 +501,37 @@ contains
    end subroutine put_polygon_vars
 
    !----- The polygon, allocated to the file's counts, and its sites, each surface made from     !
-   !      site_cfg (else cfg). A file without the site axis holds one site. ---------------------!
-   subroutine get_polygon_vars(r, poly, cfg, restart_time, site_cfg)
-      type(file_row_t),    intent(in)  :: r
-      type(polygon_t),     intent(out) :: poly
-      type(meds_config_t), intent(in)  :: cfg
-      type(meds_time_t),   intent(out) :: restart_time
+   !      site_cfg (else cfg). A file without the site axis holds one site. why = '' unless the  !
+   !      file's PFT, site or soil-layer count is unlike the run's. ------------------------------!
+   subroutine get_polygon_vars(r, poly, cfg, restart_time, why, site_cfg)
+      type(file_row_t),              intent(in)  :: r
+      type(polygon_t),               intent(out) :: poly
+      type(meds_config_t),           intent(in)  :: cfg
+      type(meds_time_t),             intent(out) :: restart_time
+      character(len=:), allocatable, intent(out) :: why
       type(meds_config_t), intent(in), optional :: site_cfg(:)
       character(len=16)  :: pending
       character(len=160) :: msg
       integer(ik) :: meta_i(N_META_INT), ns, is
       real(wp)    :: meta_r(N_META_REAL)
 
+      why = ''
       !----- 2. Dimensions and id counters, and the file's time. -----------------------------!
       call get_int(r, 'meta_int',  meta_i)
       call get_dbl(r, 'meta_real', meta_r)
-      if (meta_i(3) /= cfg%pft%n) error stop 'read_restart_file: PFT count in state file /= config PFT count'
+      if (meta_i(3) /= cfg%pft%n) then
+         write(msg, '(a,i0,a,i0)') 'holds ', meta_i(3), ' PFTs and the configuration ', cfg%pft%n
+         why = trim(msg)
+         return
+      end if
       ns = 1_ik
       if (file_has(r, 'n_site')) ns = get_polygon_int(r, 'n_site')
       if (present(site_cfg)) then
          if (size(site_cfg, kind=ik) /= ns) then
-            write(msg, '(a,i0,a,i0,a)') 'read_restart_file: the state file holds ', ns,                     &
-                                        ' sites and the configuration ', size(site_cfg), ' for the polygon'
-            error stop trim(msg)
+            write(msg, '(a,i0,a,i0,a)') 'holds ', ns, ' sites and the configuration ', size(site_cfg),        &
+                                        ' for the polygon'
+            why = trim(msg)
+            return
          end if
       end if
       call alloc_polygon(poly, cfg%pft%n, max(meta_i(1), 1_ik), max(meta_i(2), 1_ik), growth_window_steps(cfg), &
@@ -545,10 +563,10 @@ contains
             call get_int(r, 'site_n_soil', nsoil)
             do is = 1_ik, ns
                if (nsoil(is) /= poly%site%surface(is)%soil%n_active) then
-                  write(msg, '(a,i0,a,i0,a,i0,a)') 'read_restart_file: site ', is, ' has ', nsoil(is),       &
-                        ' soil layers in the state file and ', poly%site%surface(is)%soil%n_active,     &
-                        ' in the configuration'
-                  error stop trim(msg)
+                  write(msg, '(a,i0,a,i0,a,i0)') 'has ', nsoil(is), ' soil layers at site ', is,             &
+                        ' and the configuration ', poly%site%surface(is)%soil%n_active
+                  why = trim(msg)
+                  return
                end if
             end do
          end block

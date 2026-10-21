@@ -30,11 +30,10 @@ program test_met_driver
                                     monthly_lapse_rate, lapse_specific_humidity, lapse_longwave,    &
                                     cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
    use meds_constants,       only : grav, cp_air
-   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
-                                   MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
-                                   MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,       &
-                                   MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH, MET_ERR_CO2_FILE,  &
-                                   MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE
+   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
+   use meds_met_share, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                 &
+                              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH,             &
+                              MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
    implicit none

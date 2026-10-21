@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !----- A census the reader must refuse: run with `area` (a patch whose rows disagree on         !
-!      patch_area) or `column` (an unknown column). CTest passes it only on the refusal's message; !
-!      reaching the end means the file was accepted, which is the failure.                          !
+!      patch_area) or `column` (an unknown column). The reader returns its reason, which CTest      !
+!      matches; a census accepted is the failure.                                                    !
 program test_init_census_refuses
    use meds_kinds,            only : ik
    use meds_config,           only : meds_config_t
@@ -15,6 +15,7 @@ program test_init_census_refuses
    character(len=64)   :: path
    integer             :: u
    logical             :: found
+   character(len=:), allocatable :: why
 
    cfg = build_test_config()
    call get_command_argument(1, which)
@@ -30,7 +31,10 @@ program test_init_census_refuses
       write(u,'(a)') '1,0.5,10.0,1,0.01'
    end select
    close(u)
-   call init_from_census(poly, cfg, trim(path), found)
-   write(*,'(a)') 'NOT REFUSED: the census was accepted'
-   error stop 1
+   call init_from_census(poly, cfg, trim(path), found, why=why)
+   if (found) then
+      write(*,'(a)') 'NOT REFUSED: the census was accepted'
+      error stop 1
+   end if
+   write(*,'(4a)') 'refused: the census file ', trim(path), ' ', why
 end program test_init_census_refuses

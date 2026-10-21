@@ -576,7 +576,7 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Census files the reader must refuse: each passes only on its refusal's message. --#
+   #----- Census files the reader must refuse: each passes on the reason it returns. ------#
    add_executable(test_init_census_refuses test/test_init_census_refuses.f90)
    target_link_libraries(test_init_census_refuses PRIVATE meds_testsupport meds_model)
    meds_fortran_flags(test_init_census_refuses)
@@ -586,7 +586,7 @@ if(MEDS_BUILD_TESTS)
                         FAIL_REGULAR_EXPRESSION "NOT REFUSED")
    add_test(NAME init_census_refuses_column COMMAND test_init_census_refuses column)
    set_tests_properties(init_census_refuses_column PROPERTIES
-                        PASS_REGULAR_EXPRESSION "column \"basal\" is unknown"
+                        PASS_REGULAR_EXPRESSION "unknown column \"basal\""
                         FAIL_REGULAR_EXPRESSION "NOT REFUSED")
 
    #----- Leaf-physiology test links meds_fast + test support (assertions). ---------------#

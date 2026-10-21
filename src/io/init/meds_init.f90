@@ -53,14 +53,14 @@ contains
       case (INIT_RESTART)
          if (restart_row > 0_ik) then
             call read_restart_file(poly, cfg, trim(cfg%init%restart_file), restart_time, found,          &
-                                   fast_found=fast_found, polygon=restart_row, site_cfg=site_cfg)
+                                   fast_found=fast_found, polygon=restart_row, site_cfg=site_cfg, why=msg)
          else
             call read_restart_file(poly, cfg, trim(cfg%init%restart_file), restart_time, found,          &
-                                   fast_found=fast_found, site_cfg=site_cfg)
+                                   fast_found=fast_found, site_cfg=site_cfg, why=msg)
          end if
          if (.not. found) then
-            write(*,'(5a)') ' init  : restart (mode 2): cannot read ', trim(label),                       &
-                            ' from the state file ', trim(cfg%init%restart_file)
+            write(*,'(7a)') ' init  : restart (mode 2): cannot read ', trim(label),                       &
+                            ' from the state file ', trim(cfg%init%restart_file), ', which ', msg
             return
          end if
          now = restart_time

@@ -30,13 +30,8 @@ module meds_met
                                     synthesize_lwdown, dewpoint_to_specific_humidity,             &
                                     rh_to_specific_humidity
    use meds_netcdf_c, only : nc_close, nc_check
-   use meds_met_share, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
-                                      MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,     &
-                                      MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,              &
-                                      MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE,   &
-                                      MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE,           &
-                                      MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, file_lookup_sec,         &
-                                      humidity_field
+   use meds_met_share, only : MET_OK, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, file_lookup_sec,    &
+                              humidity_field, add_line
    use meds_met_default, only : default_file_open, default_file_record
    use meds_met_era5land, only : era5land_open, era5land_prefetch,                     &
                                        era5land_record
@@ -44,10 +39,6 @@ module meds_met
    private
 
    public :: met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
-   public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                  &
-             MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,           &
-             MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED,   &
-             MET_ERR_CO2_IN_MET_FILE, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY
 
    integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
 
@@ -55,8 +46,9 @@ contains
 
    !=======================================================================================!
    !  OPEN: the CO2, then the backend: CONST (the reference climate), a MEDS forcing file     !
-   !  (default_file_open) or the archive (era5land_open). With `stat` present a          !
-   !  rejection returns its code, so the tests can exercise it; absent, it stops the run.     !
+   !  (default_file_open) or the archive (era5land_open). A rejection prints the reader's    !
+   !  reason, then returns its code with `stat` present, so the tests can exercise it, and    !
+   !  stops the run without.                                                                 !
    !  run_start and run_end bound what a non-recycling run reads and the CO2 must cover.      !
    !=======================================================================================!
    subroutine met_open(src, fcfg, stat, run_start, run_end, cells)
@@ -66,9 +58,10 @@ contains
       type(meds_time_t), optional, intent(in) :: run_start, run_end
       type(met_cells_t), optional, intent(in) :: cells   !< a region's cells (archive only); absent: the site's
       integer(ik)       :: vstat
-      character(len=160):: why
+      character(len=:), allocatable :: why
 
       if (present(stat)) stat = MET_OK
+      why = ''
 
       src%fcfg       = fcfg
       src%backend    = fcfg%format
@@ -77,8 +70,7 @@ contains
       src%has_wind_vector = .false.
 
       !----- CO2 first, so every backend takes it the same way. ---------------------------------!
-      call open_co2(src, run_start, run_end, vstat)
-      why = 'met_open: the CO2 file cannot drive this run (see the message above)'
+      call open_co2(src, run_start, run_end, vstat, why)
       if (vstat == MET_OK) then
          select case (fcfg%format)
          case (MET_BACKEND_CONST)                                  ! the reference climate: no file
@@ -94,12 +86,12 @@ contains
          !----- Close the file first: an open netCDF handle keeps an HDF5 lock on the path, and a  !
          !      later open of the same file fails with a bare "permission denied". ---------------!
          call met_close(src)
+         write(*,'(a)') why
          if (present(stat)) then
             stat = vstat
             return
          end if
-         !----- The reason, then a fixed stop code: ifx garbles a stop code that is not a constant. -!
-         write(*,'(1x,a)') trim(why)
+         !----- A fixed stop code after the reason: ifx garbles a stop code that is not a constant. -!
          error stop 'met_open: the forcing cannot drive this run (see the messages above)'
       end if
    end subroutine met_open
@@ -107,28 +99,29 @@ contains
    !----- CO2 (docs/science/forcing.md §12): with co2_source = "file", read the MEDS CO2 file   !
    !      and check it covers the run. MEDS does not extrapolate CO2, so a run the file does not  !
    !      cover stops here rather than decades in. The run span is absent only in unit tests. ---!
-   subroutine open_co2(src, run_start, run_end, stat)
-      type(met_source_t),          intent(inout) :: src
-      type(meds_time_t), optional, intent(in)    :: run_start, run_end
-      integer(ik),                 intent(out)   :: stat
+   subroutine open_co2(src, run_start, run_end, stat, why)
+      type(met_source_t),            intent(inout) :: src
+      type(meds_time_t), optional,   intent(in)    :: run_start, run_end
+      integer(ik),                   intent(out)   :: stat
+      character(len=:), allocatable, intent(inout) :: why
       character(len=512) :: msg
       logical :: ok
       stat = MET_OK
       if (src%fcfg%co2_source /= CO2_SOURCE_FILE) return
       call co2_series_read(src%fcfg%co2_file, src%co2, ok, msg)
       if (.not. ok) then
-         write(*,'(2a)') ' met_open: [forcing].co2_file = ', trim(src%fcfg%co2_file)
-         write(*,'(2a)') '   ', trim(msg)
+         call add_line(why, ' met_open: [forcing].co2_file = '//trim(src%fcfg%co2_file))
+         call add_line(why, '   '//trim(msg))
          stat = MET_ERR_CO2_FILE
          return
       end if
       if (present(run_start) .and. present(run_end)) then
          if (.not. co2_series_covers(src%co2, run_start, run_end)) then
-            write(*,'(2a)') ' met_open: the CO2 file does not cover the run: ', trim(src%fcfg%co2_file)
-            write(*,'(4a)') '   run  ', time_to_string(run_start), ' .. ', time_to_string(run_end)
-            write(*,'(4a)') '   file ', time_to_string(src%co2%first_start), ' .. ',               &
-                            time_to_string(co2_series_end(src%co2))
-            write(*,'(a)')  '   MEDS does not extrapolate CO2: extend the file, or shorten the run.'
+            call add_line(why, ' met_open: the CO2 file does not cover the run: '//trim(src%fcfg%co2_file))
+            call add_line(why, '   run  '//time_to_string(run_start)//' .. '//time_to_string(run_end))
+            call add_line(why, '   file '//time_to_string(src%co2%first_start)//' .. '//                  &
+                               time_to_string(co2_series_end(src%co2)))
+            call add_line(why, '   MEDS does not extrapolate CO2: extend the file, or shorten the run.')
             stat = MET_ERR_CO2_NOT_COVERED
             return
          end if

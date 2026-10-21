@@ -19,9 +19,8 @@ program test_met_era5land
    use iso_c_binding,        only : c_double
    use meds_lapse_rate,      only : lapse_pressure
    use meds_therm_lib,       only : sat_vapor_pressure
-   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
-                                   met_prefetch, &
-                                    MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
+   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
+   use meds_met_share, only : MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
    use meds_met_era5land,    only : era5land_path, era5land_default_template, era5land_load_month, ERA_OK,  &
                                     ERA_ERR_NAN, ERA_ERR_FILL, ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF,      &
                                     ERA_U10, ERA_V10, ERA_LWDOWN

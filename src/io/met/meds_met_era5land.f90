@@ -24,7 +24,7 @@ module meds_met_era5land
                                    NC_NOERR, NC_NOWRITE
    use meds_met_share,      only : MET_OK, MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, REC_MATCH_TOL,             &
                                    validate_recycle_window, file_lookup_sec, first_record_after,             &
-                                   validate_file_against_config
+                                   validate_file_against_config, add_line
    implicit none
    private
 
@@ -66,19 +66,17 @@ contains
    !  and the reason; the caller closes the source.                                        !
    !=======================================================================================!
    subroutine era5land_open(src, stat, why, run_start, run_end, cells)
-      type(met_source_t),          intent(inout) :: src
-      integer(ik),                 intent(out)   :: stat
-      character(len=*),            intent(out)   :: why          !< what stops the run when stat /= MET_OK
-      type(meds_time_t), optional, intent(in)    :: run_start, run_end
-      type(met_cells_t), optional, intent(in)    :: cells        !< a region's cells; absent: the site's
+      type(met_source_t),            intent(inout) :: src
+      integer(ik),                   intent(out)   :: stat
+      character(len=:), allocatable, intent(out)   :: why    !< what stops the run when stat /= MET_OK
+      type(meds_time_t), optional,   intent(in)    :: run_start, run_end
+      type(met_cells_t), optional,   intent(in)    :: cells  !< a region's cells; absent: the site's
       why = ''
-      call open_archive(src, run_start, run_end, stat, cells)
-      if (stat == MET_OK) call validate_recycle_window(src, stat)
-      if (stat /= MET_OK) then
-         why = 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)'
-         return
-      end if
-      call load_axis_month(src, 1_ik)
+      call open_archive(src, run_start, run_end, stat, why, cells)
+      if (stat == MET_OK) call validate_recycle_window(src, stat, why)
+      if (stat /= MET_OK) return
+      call load_axis_month(src, 1_ik, stat, why)
+      if (stat /= MET_OK) return
       call keep_window_head(src)
       src%rec_first = 1_ik
    end subroutine era5land_open
@@ -115,12 +113,12 @@ contains
          if (.not. month_loaded(src, kp) .and. in_window_head(src, p)) then
             src%carry = src%head(p - src%irec_cycle_first + 1_ik, :, :)   ! a midnight anchor's record
          else
-            if (.not. month_loaded(src, kp)) call load_axis_month(src, kp)
+            if (.not. month_loaded(src, kp)) call load_month_or_stop(src, kp)
             src%carry = src%buffer%values(p - src%month_rec0(kp), :, :)
          end if
          src%carry_rec = p
       end if
-      if (.not. month_loaded(src, k)) call load_axis_month(src, k)
+      if (.not. month_loaded(src, k)) call load_month_or_stop(src, k)
    end subroutine era5land_prefetch
 
    !----- One record's values at the cursor's cell, as the archive stores them: the dewpoint    !
@@ -151,12 +149,14 @@ contains
    !  the run needs end to end as one hourly axis. Every month file is checked for existence      !
    !  here, so a gap in the archive stops the run before it starts rather than decades into it.   !
    !=======================================================================================!
-   subroutine open_archive(src, run_start, run_end, stat, cells)
-      type(met_source_t),          intent(inout)  :: src
-      type(meds_time_t), optional, intent(in)    :: run_start, run_end
-      integer(ik),                 intent(out)   :: stat
-      type(met_cells_t), optional, intent(in)    :: cells
+   subroutine open_archive(src, run_start, run_end, stat, why, cells)
+      type(met_source_t),            intent(inout) :: src
+      type(meds_time_t), optional,   intent(in)    :: run_start, run_end
+      integer(ik),                   intent(out)   :: stat
+      character(len=:), allocatable, intent(inout) :: why
+      type(met_cells_t), optional,   intent(in)    :: cells
       character(len=MET_PATH_LEN) :: path
+      character(len=MET_PATH_LEN + 160) :: buf
       real(wp)       :: distance_km, first
       integer(ik)    :: est, y0, m0, y1, m1, nmonth, k, v, h, y, m, nmiss
       integer(c_int) :: st, ncid
@@ -169,8 +169,8 @@ contains
       src%grid = era5land_grid(f)
 
       if (f%sw_partition == SWPART_PASSTHROUGH) then
-         write(*,'(a)') ' met_open: the ED_ERA5land archive carries TOTAL shortwave, but'
-         write(*,'(a)') '   [forcing].sw_partition = "passthrough" expects the four component streams.'
+         call add_line(why, ' met_open: the ED_ERA5land archive carries TOTAL shortwave, but')
+         call add_line(why, '   [forcing].sw_partition = "passthrough" expects the four component streams.')
          stat = MET_ERR_ATTR_MISMATCH
          return
       end if
@@ -185,13 +185,14 @@ contains
       if (est /= GRID_OK) then
          select case (est)
          case (GRID_ERR_NO_CELL)
-            write(*,'(a,f0.1,a,f0.4,a,f0.4,a)') ' met_open: no valid ERA5-Land cell within ',          &
+            write(buf,'(a,f0.1,a,f0.4,a,f0.4,a)') ' met_open: no valid ERA5-Land cell within ',        &
                   f%max_distance_km, ' km of the site (', f%latitude, ', ', f%longitude, ')'
+            call add_line(why, trim(buf))
          case (GRID_ERR_OPEN)
-            write(*,'(2a)') ' met_open: cannot open the ED_ERA5land static file ', trim(src%grid%static_file)
+            call add_line(why, ' met_open: cannot open the ED_ERA5land static file '//trim(src%grid%static_file))
          case default
-            write(*,'(3a)') ' met_open: the static file ', trim(src%grid%static_file),                      &
-                            ' does not hold a regular lat/lon grid with valid and elevation'
+            call add_line(why, ' met_open: the static file '//trim(src%grid%static_file)//                  &
+                            ' does not hold a regular lat/lon grid with valid and elevation')
          end select
          stat = MET_ERR_ARCHIVE
          return
@@ -212,13 +213,20 @@ contains
          call archive_month_of(f%recycle_start, .false., y0, m0)
          call archive_month_of(time_advance_seconds(f%recycle_end, -src%dt_forcing), .false., y1, m1)
       else
-         if (.not. (present(run_start) .and. present(run_end)))                                     &
-            error stop 'met_open: format = "ED_ERA5land" without recycling needs the run period'
+         if (.not. (present(run_start) .and. present(run_end))) then
+            call add_line(why, ' met_open: format = "ED_ERA5land" without recycling needs the run period')
+            stat = MET_ERR_ARCHIVE
+            return
+         end if
          call archive_month_of(run_start, .false., y0, m0)
          call archive_month_of(run_end,   .true.,  y1, m1)
       end if
       nmonth = (y1 - y0) * 12_ik + (m1 - m0) + 1_ik
-      if (nmonth < 1_ik) error stop 'met_open: the ED_ERA5land month range is empty'
+      if (nmonth < 1_ik) then
+         call add_line(why, ' met_open: the ED_ERA5land month range is empty')
+         stat = MET_ERR_ARCHIVE
+         return
+      end if
       allocate(src%month_year(nmonth), src%month_month(nmonth), src%month_rec0(nmonth))
       y = y0
       m = m0
@@ -252,12 +260,13 @@ contains
             inquire(file=trim(path), exist=exists)
             if (.not. exists) then
                nmiss = nmiss + 1_ik
-               if (nmiss == 1_ik) write(*,'(2a)') ' met_open: ED_ERA5land file missing: ', trim(path)
+               if (nmiss == 1_ik) call add_line(why, ' met_open: ED_ERA5land file missing: '//trim(path))
             end if
          end do
       end do
       if (nmiss > 0_ik) then
-         write(*,'(a,i0,a,i0,a)') '   ', nmiss, ' of ', nmonth * ERA_NVAR, ' files the run needs are missing.'
+         write(buf,'(a,i0,a,i0,a)') '   ', nmiss, ' of ', nmonth * ERA_NVAR, ' files the run needs are missing.'
+         call add_line(why, trim(buf))
          stat = MET_ERR_ARCHIVE
          return
       end if
@@ -266,11 +275,11 @@ contains
       path = era5land_path(src%file_template, f%data_path, 'Tair', y0, m0)
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) then
-         write(*,'(2a)') ' met_open: cannot open ', trim(path)
+         call add_line(why, ' met_open: cannot open '//trim(path))
          stat = MET_ERR_ARCHIVE
          return
       end if
-      call validate_file_against_config(src, ncid, stat)
+      call validate_file_against_config(src, ncid, stat, why)
       st = nc_close(ncid)
       src%buffer%year = 0_ik
       src%carry_rec = 0_ik
@@ -348,20 +357,40 @@ contains
       src%head = src%buffer%values(h1:h1 + src%n_head - 1_ik, :, :)
    end subroutine keep_window_head
 
-   !----- Read axis month k into the buffer: the only place the archive is read after open. -----!
-   subroutine load_axis_month(src, k)
-      type(met_source_t), intent(inout)  :: src
-      integer(ik),        intent(in)    :: k
+   !----- Read axis month k into the buffer: the only place the archive is read after open. A      !
+   !      month that fails its checks returns MET_ERR_ARCHIVE and the reason. -----------------------!
+   subroutine load_axis_month(src, k, stat, why)
+      type(met_source_t),            intent(inout) :: src
+      integer(ik),                   intent(in)    :: k
+      integer(ik),                   intent(out)   :: stat
+      character(len=:), allocatable, intent(inout) :: why
       character(len=MET_PATH_LEN + 128) :: message
       integer(ik) :: est
+      stat = MET_OK
       call era5land_load_month(src%file_template, src%fcfg%data_path, src%cells, src%month_year(k), &
                                src%month_month(k), src%buffer, est, message)
       if (est /= ERA_OK) then
-         write(*,'(2a)') ' met_driver: ED_ERA5land month failed its checks: ', trim(message)
-         error stop 'met_driver: an ED_ERA5land month cannot be read (MEDS does not gap-fill)'
+         call add_line(why, ' met_driver: ED_ERA5land month failed its checks: '//trim(message))
+         stat = MET_ERR_ARCHIVE
+         return
       end if
       src%n_loads = src%n_loads + 1_ik
    end subroutine load_axis_month
+
+   !----- A month a step needs, in the I/O phase: one that fails its checks stops the run, since   !
+   !      MEDS never gap-fills (docs/science/forcing.md §10). ---------------------------------------!
+   subroutine load_month_or_stop(src, k)
+      type(met_source_t), intent(inout) :: src
+      integer(ik),        intent(in)    :: k
+      character(len=:), allocatable :: why
+      integer(ik) :: stat
+      why = ''
+      call load_axis_month(src, k, stat, why)
+      if (stat /= MET_OK) then
+         write(*,'(a)') why
+         error stop 'met_driver: an ED_ERA5land month cannot be read (MEDS does not gap-fill)'
+      end if
+   end subroutine load_month_or_stop
 
    !----- Where record irec's values are: its hour h > 0 in the loaded month, h = 0 for the carried !
    !      record, h < 0 for the -h-th record of the window's first day. Anything else was not       !

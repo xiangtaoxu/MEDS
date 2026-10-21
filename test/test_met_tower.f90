@@ -26,8 +26,8 @@ program test_met_tower
    use meds_forcing_kernels, only : rh_to_specific_humidity, dewpoint_to_specific_humidity,        &
                                     clearness_index, met_solar_cosz
    use meds_lapse_rate,      only : met_to_cas_top
-   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
-                                    MET_OK, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, MET_ERR_ATTR_MISMATCH
+   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
+   use meds_met_share, only : MET_OK, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, MET_ERR_ATTR_MISMATCH
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
    implicit none

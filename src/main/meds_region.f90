@@ -40,7 +40,8 @@ module meds_region
    use meds_init,                   only : init_polygon
    use meds_met_types,              only : met_source_t, met_grid_t, met_cells_t
    use meds_forcing_params,         only : MET_BACKEND_ED_ERA5LAND
-   use meds_met,             only : met_open, met_close, met_prefetch, MET_OK
+   use meds_met,             only : met_open, met_close, met_prefetch
+   use meds_met_share,       only : MET_OK
    use meds_maps,                   only : apply_cell_mask, map_status_message, MAP_OK, read_map_inputs
    use meds_maps_params,            only : map_inputs_t
    use meds_met_grid,               only : select_box_cells, select_site_cell, GRID_OK, GRID_ERR_NO_CELL

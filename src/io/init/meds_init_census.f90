@@ -49,13 +49,14 @@ contains
    ! matched by header name: patch_id, dbh [cm], pft and nplant required; patch_area,      !
    ! site_id, cohort_id and height [m] optional. A first data line of seven numbers is     !
    ! read positionally as site_id, patch_id, cohort_id, dbh, height, pft, nplant. Blank    !
-   ! and '#' lines are skipped. opened = .false. if the file cannot be opened; an unknown, !
-   ! repeated or missing column, a malformed row or a non-positive value stops the run.    !
+   ! and '#' lines are skipped. why says what is wrong with the file, '' when it reads: it  !
+   ! cannot be opened, or has an unknown, repeated or missing column, a malformed row or a !
+   ! non-positive value.                                                                   !
    !---------------------------------------------------------------------------------------!
-   subroutine read_census_file(path, table, opened)
-      character(len=*),     intent(in)  :: path
-      type(census_table_t), intent(out) :: table
-      logical,              intent(out) :: opened
+   subroutine read_census_file(path, table, why)
+      character(len=*),              intent(in)  :: path
+      type(census_table_t),          intent(out) :: table
+      character(len=:), allocatable, intent(out) :: why
       integer,     parameter :: LINELEN = 1024
       character(len=LINELEN) :: line
       type(census_columns_t) :: cols
@@ -66,20 +67,23 @@ contains
 
       allocate(table%site_id(0), table%patch_id(0), table%pft(0), table%dbh(0), table%nplant(0),      &
                table%patch_area(0))
+      why = 'cannot be opened'
       open(newunit=u, file=path, status='old', action='read', iostat=ios)
-      opened = ios == 0
-      if (.not. opened) return
+      if (ios /= 0) return
+      why = ''
       have_layout = .false.
       do
          read(u, '(a)', iostat=ios) line
          if (ios /= 0) exit
          if (.not. is_data_line(line)) cycle
          if (.not. have_layout) then
-            call census_layout(line, path, cols)
+            call census_layout(line, cols, why)
+            if (len(why) > 0) exit
             have_layout = .true.
             if (cols%header) cycle
          end if
-         call parse_census_line(line, cols, path, sid, pid, dbh, height, ipft, nplant, area)
+         call parse_census_line(line, cols, sid, pid, dbh, height, ipft, nplant, area, why)
+         if (len(why) > 0) exit
          table%site_id    = [table%site_id, sid]
          table%patch_id   = [table%patch_id, pid]
          table%pft        = [table%pft, ipft]
@@ -98,8 +102,8 @@ contains
    ! site's patches take the file's areas normalized to the site, else equal shares. One   !
    ! site is built from use_site_id (else the first site_id seen); with site_ids, site k   !
    ! from the rows of site_ids(k), with site_cfg(k) and site_area(k). found = .false. and  !
-   ! `why` say the file cannot be opened or has no row for the site; a patch whose rows    !
-   ! disagree on patch_area, or a pft out of range, stops the run.                         !
+   ! `why` say what is wrong with the file (read_census_file), that it has no row for the  !
+   ! site, a patch whose rows disagree on patch_area, or a pft out of range.               !
    !---------------------------------------------------------------------------------------!
    subroutine init_from_census(poly, cfg, path, found, use_site_id, why, site_ids, site_cfg, site_area)
       type(polygon_t),     intent(out) :: poly
@@ -115,13 +119,15 @@ contains
       integer(ik)              :: npatch, ip, k, i, j, r
       integer(ik), allocatable :: sel(:), site_of(:), patch_id_of(:), slot_of(:), n_patch(:)
       real(wp),    allocatable :: patch_area_of(:), site_patch_area(:)
-      logical                  :: opened
+      character(len=:), allocatable :: msg
       character(len=24)        :: pid_str
 
       found = .false.
-      if (present(why)) why = 'cannot be opened'
-      call read_census_file(path, table, opened)
-      if (.not. opened) return
+      call read_census_file(path, table, msg)
+      if (len(msg) > 0) then
+         if (present(why)) why = msg
+         return
+      end if
       if (present(why)) why = 'holds no cohort for the site'
 
       !----- The census site of each site built: the given ones, or the first one the file names. -!
@@ -148,8 +154,8 @@ contains
          else if (table%has_area) then
             if (abs(table%patch_area(r) - patch_area_of(ip)) > PATCH_AREA_RTOL * patch_area_of(ip)) then
                write(pid_str, '(i0)') table%patch_id(r)
-               error stop 'meds_init_census: census patch_id '//trim(pid_str)//                        &
-                          ' has rows with two different patch_area values in '//trim(path)
+               if (present(why)) why = 'has two different patch_area values for patch_id '//trim(pid_str)
+               return
             end if
          end if
       end do
@@ -191,8 +197,10 @@ contains
          k = int(findloc(sel, table%site_id(r), dim=1), ik)
          if (k == 0_ik) cycle
          ip = census_patch(k, table%patch_id(r))
-         if (table%pft(r) < 1_ik .or. table%pft(r) > cfg%pft%n)                                       &
-            error stop 'meds_init_census: census pft index out of range in '//trim(path)
+         if (table%pft(r) < 1_ik .or. table%pft(r) > cfg%pft%n) then
+            if (present(why)) why = 'has a pft index out of range'
+            return
+         end if
          call add_cohort(poly, cfg, slot_of(ip), table%pft(r), table%nplant(r), table%dbh(r))
       end do
 
@@ -253,9 +261,10 @@ contains
    ! The file's layout, from its first data line: seven numbers are a header-less row read   !
    ! positionally; anything else is the header, and each name is mapped to its column.       !
    !---------------------------------------------------------------------------------------!
-   subroutine census_layout(line, path, cols)
-      character(len=*),       intent(in)  :: line, path
-      type(census_columns_t), intent(out) :: cols
+   subroutine census_layout(line, cols, why)
+      character(len=*),              intent(in)    :: line
+      type(census_columns_t),        intent(out)   :: cols
+      character(len=:), allocatable, intent(inout) :: why   !< what is wrong with the header ('' if nothing)
       character(len=CENSUS_FIELD_LEN) :: names(CENSUS_MAX_COLS)
       integer(ik) :: sid, pid, cid, ipft
       real(wp)    :: dbh, height, nplant
@@ -278,7 +287,10 @@ contains
       end if
       cols%header = .true.
       call split_csv(line, names, cols%n)
-      if (cols%n > CENSUS_MAX_COLS) error stop 'meds_init_census: census header has too many columns in '//trim(path)
+      if (cols%n > CENSUS_MAX_COLS) then
+         why = 'has a header with too many columns'
+         return
+      end if
       do k = 1, cols%n
          select case (lower(trim(names(k))))
          case ('site_id')
@@ -298,29 +310,31 @@ contains
          case ('patch_area')
             call claim(cols%area,   k, 'patch_area')
          case default
-            error stop 'meds_init_census: census column "'//trim(names(k))//'" is unknown in '//trim(path)
+            why = 'has an unknown column "'//trim(names(k))//'"'
          end select
+         if (len(why) > 0) return
       end do
-      if (cols%patch  == 0) error stop 'meds_init_census: census has no patch_id column: '//trim(path)
-      if (cols%dbh    == 0) error stop 'meds_init_census: census has no dbh column: '//trim(path)
-      if (cols%pft    == 0) error stop 'meds_init_census: census has no pft column: '//trim(path)
-      if (cols%nplant == 0) error stop 'meds_init_census: census has no nplant column: '//trim(path)
+      if (cols%patch  == 0) why = 'has no patch_id column'
+      if (cols%dbh    == 0) why = 'has no dbh column'
+      if (cols%pft    == 0) why = 'has no pft column'
+      if (cols%nplant == 0) why = 'has no nplant column'
    contains
       subroutine claim(slot, k, name)
          integer,          intent(inout) :: slot
          integer,          intent(in)    :: k
          character(len=*), intent(in)    :: name
-         if (slot /= 0) error stop 'meds_init_census: census column "'//name//'" appears twice in '//trim(path)
+         if (slot /= 0) why = 'has the column "'//name//'" twice'
          slot = k
       end subroutine claim
    end subroutine census_layout
 
    !----- One data row under the layout; an absent site, area or height is 1. -------------!
-   subroutine parse_census_line(line, cols, path, sid, pid, dbh, height, ipft, nplant, area)
-      character(len=*),       intent(in)  :: line, path
-      type(census_columns_t), intent(in)  :: cols
-      integer(ik),            intent(out) :: sid, pid, ipft
-      real(wp),               intent(out) :: dbh, height, nplant, area
+   subroutine parse_census_line(line, cols, sid, pid, dbh, height, ipft, nplant, area, why)
+      character(len=*),              intent(in)    :: line
+      type(census_columns_t),        intent(in)    :: cols
+      integer(ik),                   intent(out)   :: sid, pid, ipft
+      real(wp),                      intent(out)   :: dbh, height, nplant, area
+      character(len=:), allocatable, intent(inout) :: why   !< what is wrong with the row ('' if nothing)
       character(len=CENSUS_FIELD_LEN) :: f(CENSUS_MAX_COLS)
       integer(ik) :: cid
       integer     :: nf, ios
@@ -329,10 +343,16 @@ contains
       area = 1.0_wp
       if (.not. cols%header) then
          call parse_census_row(line, sid, pid, cid, dbh, height, ipft, nplant, ok)
-         if (.not. ok) error stop 'meds_init_census: malformed census row in '//trim(path)
+         if (.not. ok) then
+            why = 'has a malformed row'
+            return
+         end if
       else
          call split_csv(line, f, nf)
-         if (nf < cols%n) error stop 'meds_init_census: census row with too few columns in '//trim(path)
+         if (nf < cols%n) then
+            why = 'has a row with too few columns'
+            return
+         end if
          sid = 1_ik
          height = 1.0_wp
          ios = 0
@@ -343,10 +363,13 @@ contains
          if (ios == 0) read(f(cols%nplant), *, iostat=ios) nplant
          if (cols%height > 0 .and. ios == 0) read(f(cols%height), *, iostat=ios) height
          if (cols%area   > 0 .and. ios == 0) read(f(cols%area),   *, iostat=ios) area
-         if (ios /= 0) error stop 'meds_init_census: malformed census row in '//trim(path)
+         if (ios /= 0) then
+            why = 'has a malformed row'
+            return
+         end if
       end if
       if (dbh <= 0.0_wp .or. height <= 0.0_wp .or. nplant <= 0.0_wp .or. area <= 0.0_wp)         &
-         error stop 'meds_init_census: census row with non-positive dbh/height/nplant/patch_area in '//trim(path)
+         why = 'has a row with a non-positive dbh, height, nplant or patch_area'
    end subroutine parse_census_line
 
    !----- Parse one comma-separated census row (commas -> blanks, then list-directed read). !
