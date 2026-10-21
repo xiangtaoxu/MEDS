@@ -12,11 +12,11 @@ module meds_met
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
+   use meds_numerics, only : linear_interpolate
    use meds_therm_lib, only : air_density
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT,                      &
-                                   MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN, METAVG_CENTER, &
-                                   SWPART_PASSTHROUGH, CLAMP_ERROR, INTERP_LINEAR,                &
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
+                                   METAVG_END, METAVG_BEGIN, METAVG_CENTER, SWPART_PASSTHROUGH, CLAMP_ERROR,      &
                                    LW_SYNTHESIZE, CO2_SOURCE_FILE
    use meds_met_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
                                   met_cells_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, MEDS_FIELD
@@ -24,7 +24,7 @@ module meds_met
                                lapse_specific_humidity, lapse_longwave
    use meds_met_co2, only : co2_series_read, co2_series_at, co2_series_covers,                 &
                                co2_series_end, co2_series_free
-   use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,                 &
+   use meds_forcing_kernels, only : interpolate_wind_energy,                 &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,     &
                                     partition_shortwave, clearness_index,                         &
                                     synthesize_lwdown, dewpoint_to_specific_humidity,             &
@@ -289,15 +289,15 @@ contains
       end if
 
       !----- States linear; wind in energy form (docs/science/forcing.md eq. (1)). ----------!
-      met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
-      met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
-      met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
-      met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
+      met%tair_k   = linear_interpolate(p%tair_k,   n%tair_k,   w_next)
+      met%qair     = linear_interpolate(p%qair,     n%qair,     w_next)
+      met%psurf_pa = linear_interpolate(p%psurf_pa, n%psurf_pa, w_next)
+      met%lwdown   = linear_interpolate(p%lwdown,   n%lwdown,   w_next)
       met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next)   ! floored at aerodynamics.ubmin where used
       !----- The vector interpolates linearly, which keeps its direction; never floored. --------!
       if (src%has_wind_vector) then
-         met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
-         met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
+         met%wind_u = linear_interpolate(p%wind_u, n%wind_u, w_next)
+         met%wind_v = linear_interpolate(p%wind_v, n%wind_v, w_next)
          met%has_wind_vector = .true.
       end if
 

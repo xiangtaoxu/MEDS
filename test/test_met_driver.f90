@@ -13,13 +13,14 @@ program test_met_driver
                                     time_advance_seconds
    use meds_therm_lib,          only : sat_vapor_pressure, air_density
    use meds_forcing_params,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT,                                     &
-                                    SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR, INTERP_STEP,             &
-                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH, CLAMP_HOLD, CLAMP_ERROR,        &
-                                    GRIDMATCH_NEAREST, CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE,                  &
-                                    HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX,                    &
+                                    SWPART_WEISS_NORMAN, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,            &
+                                    CLAMP_HOLD, CLAMP_ERROR, GRIDMATCH_NEAREST, CO2_SOURCE_FILE,                  &
+                                    HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN,     &
+                                    WIND_EXPOSURE_LOCAL
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
-   use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
+   use meds_numerics,    only : linear_interpolate
+   use meds_forcing_kernels, only : dewpoint_to_specific_humidity,         &
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                     clearness_index, clear_sky_emissivity, synthesize_lwdown
@@ -122,12 +123,11 @@ contains
 
 
 
-   !----- 1. temporal interpolation policies. ---------------------------------------------!
+   !----- 1. temporal interpolation: states are linear between the bracketing records. -----!
    subroutine test_interpolation()
       print '(a)', '-- test 1: interpolation --'
-      call check('linear midpoint', interpolate_forcing(INTERP_LINEAR, 10.0_wp, 20.0_wp, 0.5_wp), 15.0_wp, 1.0e-12_wp)
-      call check('linear at prev',  interpolate_forcing(INTERP_LINEAR, 10.0_wp, 20.0_wp, 0.0_wp), 10.0_wp, 1.0e-12_wp)
-      call check('step holds prev', interpolate_forcing(INTERP_STEP,   10.0_wp, 20.0_wp, 0.9_wp), 10.0_wp, 1.0e-12_wp)
+      call check('linear midpoint', linear_interpolate(10.0_wp, 20.0_wp, 0.5_wp), 15.0_wp, 1.0e-12_wp)
+      call check('linear at prev',  linear_interpolate(10.0_wp, 20.0_wp, 0.0_wp), 10.0_wp, 1.0e-12_wp)
    end subroutine test_interpolation
 
    !----- 2. humidity from dewpoint (matches independent Bolton). --------------------------!

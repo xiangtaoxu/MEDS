@@ -2,8 +2,9 @@
 !==========================================================================================!
 ! meds_numerics -- small numerical helpers every layer shares: clamps, a smooth step, the  !
 ! smooth minimum of two limits, a rounded max(x, 0), the step-size factor, the Newton      !
-! solvers' step safeguards, weighted means, an ordering, and the test that an operator     !
-! kept what it only moves. The linear solvers are in meds_linear_algebra.                  !
+! solvers' step safeguards, linear interpolation, weighted means, an ordering, and the     !
+! test that an operator kept what it only moves. The linear solvers are in                 !
+! meds_linear_algebra.                                                                     !
 !==========================================================================================!
 module meds_numerics
    use meds_kinds,     only : wp, ik
@@ -14,7 +15,7 @@ module meds_numerics
 
    public :: quadratic_smaller_root, adaptive_step_update, smooth_max0
    public :: sufficient_decrease, fraction_to_boundary
-   public :: logistic, clamp01, clamp, weighted_mean
+   public :: logistic, clamp01, clamp, linear_interpolate, weighted_mean
    public :: ascending_order
    public :: conserved, pair_mean
 
@@ -139,6 +140,12 @@ contains
       real(wp)             :: y
       y = min(hi, max(lo, x))
    end function clamp
+
+   !----- The value a fraction w of the way from a to b: (1 - w) a + w b. -------------------!
+   elemental pure real(wp) function linear_interpolate(a, b, w) result(x)
+      real(wp), intent(in) :: a, b, w
+      x = (1.0_wp - w) * a + w * b
+   end function linear_interpolate
 
    !----- The sum of x(k) w(k) over k = 1..n, in that order: a weighted mean when the      !
    !      weights sum to one. -------------------------------------------------------------!

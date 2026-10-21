@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_forcing_kernels -- the pure and elemental meteorological-forcing math                       !
-! (docs/science/forcing.md §3-§8 and §11): temporal interpolation, the solar zenith at apparent     !
+! (docs/science/forcing.md §3-§8 and §11): the energy-form wind, the solar zenith at apparent       !
 ! solar time, the interval-mean-conserving shortwave disaggregation, the four-stream shortwave      !
 ! partition, humidity from dewpoint or RH, the rain/snow split, the longwave synthesis and the sun  !
 ! on a slope. Uses only meds_share and the forcing config's enumerations, so the saturation curve   !
@@ -10,14 +10,14 @@
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan_boltzmann, day_sec, deg_to_rad
-   use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, INTERP_LINEAR, INTERP_STEP,          &
+   use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO,                                       &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN
    use meds_therm_lib,      only : sat_vapor_pressure
    use meds_time,           only : meds_time_t, solar_cosz, day_of_year, solar_declination
    implicit none
    private
 
-   public :: interpolate_forcing, interpolate_wind_energy
+   public :: interpolate_wind_energy
    public :: clearness_index, clear_sky_emissivity, synthesize_lwdown
    public :: met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw
    public :: slope_incidence_cosz, slope_beam_factor
@@ -48,22 +48,6 @@ module meds_forcing_kernels
    real(wp), parameter :: WN_COSZ_MIN  = 0.017452406437_wp  !< cos(89 deg): below this the sun is grazing -> all diffuse
 
 contains
-
-   !=======================================================================================!
-   !  TEMPORAL INTERPOLATION between the two bracketing records (weight w_next in [0,1];       !
-   !  docs/science/forcing.md §3).                                                             !
-   !=======================================================================================!
-   elemental function interpolate_forcing(policy, prev, next, w_next) result(val)
-      integer(ik), intent(in) :: policy        !< INTERP_LINEAR | INTERP_STEP
-      real(wp),    intent(in) :: prev, next, w_next
-      real(wp) :: val
-      select case (policy)
-      case (INTERP_STEP)                        ! step-constant: hold the previous value across the interval
-         val = prev
-      case default                              ! INTERP_LINEAR
-         val = (1.0_wp - w_next) * prev + w_next * next
-      end select
-   end function interpolate_forcing
 
    !----- Wind interpolates as its square, so its kinetic energy varies linearly              !
    !      (docs/science/forcing.md eq. (1)). No floor here: the aerodynamics floors the speed  !

@@ -13,9 +13,8 @@ module meds_met_co2
    use meds_time,            only : meds_time_t, string_to_time, time_to_string, time_eq, seconds_between,  &
                                     time_advance_seconds, time_advance_days, time_advance_months,           &
                                     time_advance_years
-   use meds_forcing_params,  only : INTERP_LINEAR
    use meds_met_types,   only : co2_series_t
-   use meds_forcing_kernels, only : interpolate_forcing
+   use meds_numerics,        only : linear_interpolate
    implicit none
    private
 
@@ -194,8 +193,7 @@ contains
             hi = k
          end if
       end do
-      co2 = interpolate_forcing(INTERP_LINEAR, s%co2(lo), s%co2(hi),                               &
-                                (x - s%mid_sec(lo)) / (s%mid_sec(hi) - s%mid_sec(lo)))
+      co2 = linear_interpolate(s%co2(lo), s%co2(hi), (x - s%mid_sec(lo)) / (s%mid_sec(hi) - s%mid_sec(lo)))
    end function co2_series_at
 
    !----- Does the series cover [t0, t1] -- from the first period's start to the last one's end? --!
