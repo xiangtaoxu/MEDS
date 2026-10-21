@@ -321,7 +321,11 @@ contains
    pure integer(ik) function slab_col(pr, k) result(c)
       type(pending_record_t), intent(in) :: pr
       integer(ik),            intent(in) :: k
-      if (allocated(pr%col)) then ; c = pr%col(k) ; else ; c = k ; end if
+      if (allocated(pr%col)) then
+         c = pr%col(k)
+      else
+         c = k
+      end if
    end function slab_col
 
 

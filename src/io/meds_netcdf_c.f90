@@ -283,7 +283,8 @@ contains
       integer(c_size_t), intent(in) :: length
       character(kind=c_char) :: cname(len_trim(name) + 1)
       character(kind=c_char) :: ctp(len_trim(tp) + 1)
-      cname = cstr(name) ; ctp = cstr(tp)
+      cname = cstr(name)
+      ctp = cstr(tp)
       st = nc_put_att_text(ncid, varid, cname, length, ctp)
    end function nc_put_att_text_f
 
@@ -295,7 +296,8 @@ contains
       real(c_double),   intent(in) :: val
       character(kind=c_char) :: cname(len_trim(name) + 1)
       real(c_double)         :: opv(1)
-      cname = cstr(name) ; opv(1) = val
+      cname = cstr(name)
+      opv(1) = val
       st = nc_put_att_double(ncid, varid, cname, xtype, 1_c_size_t, opv)
    end function nc_put_att_double_f
 
@@ -305,7 +307,8 @@ contains
       integer(c_int),   intent(in) :: val
       character(kind=c_char) :: cname(len_trim(name) + 1)
       integer(c_int)         :: opv(1)
-      cname = cstr(name) ; opv(1) = val
+      cname = cstr(name)
+      opv(1) = val
       st = nc_put_att_int(ncid, varid, cname, xtype, 1_c_size_t, opv)
    end function nc_put_att_int_f
 
@@ -376,7 +379,10 @@ contains
       cname = cstr(name)
       st = nc_inq_attlen(ncid, varid, cname, alen)
       if (st /= NC_NOERR) return
-      if (alen /= 1_c_size_t) then ; st = -1_c_int ; return ; end if
+      if (alen /= 1_c_size_t) then
+         st = -1_c_int
+         return
+      end if
       st = nc_get_att_double(ncid, varid, cname, buf)
       if (st == NC_NOERR) value = buf(1)
    end function nc_get_att_double_f

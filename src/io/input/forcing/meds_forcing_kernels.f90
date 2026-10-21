@@ -172,7 +172,10 @@ contains
 
       sw = max(swdown_total, 0.0_wp)
       if (sw <= tiny_num .or. cosz <= COSZ_MIN) then          ! night / no light
-         par_beam = 0.0_wp ; par_diffuse = 0.0_wp ; nir_beam = 0.0_wp ; nir_diffuse = 0.0_wp
+         par_beam = 0.0_wp
+         par_diffuse = 0.0_wp
+         nir_beam = 0.0_wp
+         nir_diffuse = 0.0_wp
          return
       end if
 
@@ -209,8 +212,10 @@ contains
       real(wp) :: aux_par, aux_nir, fvis_beam, fnir_beam
 
       if (cosz <= WN_COSZ_MIN) then                           ! grazing sun: secant unstable -> all diffuse
-         par_beam = 0.0_wp ; nir_beam = 0.0_wp
-         par_diffuse = WN_FVIS_DIFF * sw ; nir_diffuse = WN_FNIR_DIFF * sw   ! 0.52+0.48 = 1 (conserves sw)
+         par_beam = 0.0_wp
+         nir_beam = 0.0_wp
+         par_diffuse = WN_FVIS_DIFF * sw
+         nir_diffuse = WN_FNIR_DIFF * sw   ! 0.52+0.48 = 1 (conserves sw)
          return
       end if
 
@@ -253,8 +258,10 @@ contains
                   nir_beam_pot * (1.0_wp - ((WN_NIR_ACT_A - aux_nir) / WN_NIR_ACT_B) ** WN_TWOTHIRDS) &
                   / max(nir_full_pot, tiny_num)))
 
-      par_beam    = fvis_beam * par_full ; par_diffuse = (1.0_wp - fvis_beam) * par_full
-      nir_beam    = fnir_beam * nir_full ; nir_diffuse = (1.0_wp - fnir_beam) * nir_full
+      par_beam    = fvis_beam * par_full
+      par_diffuse = (1.0_wp - fvis_beam) * par_full
+      nir_beam    = fnir_beam * nir_full
+      nir_diffuse = (1.0_wp - fnir_beam) * nir_full
    end subroutine weiss_norman_partition
 
    !=======================================================================================!
@@ -377,7 +384,8 @@ contains
    pure function great_circle_distance(lon1_deg, lat1_deg, lon2_deg, lat2_deg) result(dist_m)
       real(wp), intent(in) :: lon1_deg, lat1_deg, lon2_deg, lat2_deg
       real(wp) :: dist_m, lat1, lat2, dlon, x, y
-      lat1 = lat1_deg * deg_to_rad ; lat2 = lat2_deg * deg_to_rad
+      lat1 = lat1_deg * deg_to_rad
+      lat2 = lat2_deg * deg_to_rad
       dlon = (lon2_deg - lon1_deg) * deg_to_rad
       x = sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(dlon)
       y = sqrt( (cos(lat2) * sin(dlon)) ** 2                                                    &
@@ -423,10 +431,14 @@ contains
       real(wp), intent(in) :: site_lon, site_lat, lon(:), lat(:)
       integer(ik) :: idx, i
       real(wp) :: dmin, d
-      idx = 1_ik ; dmin = huge(1.0_wp)
+      idx = 1_ik
+      dmin = huge(1.0_wp)
       do i = 1_ik, int(size(lon), ik)
          d = great_circle_distance(site_lon, site_lat, lon(i), lat(i))
-         if (d < dmin) then ; dmin = d ; idx = i ; end if
+         if (d < dmin) then
+            dmin = d
+            idx = i
+         end if
       end do
    end function nearest_grid_index
 

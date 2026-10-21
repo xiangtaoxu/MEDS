@@ -346,8 +346,15 @@ contains
       call parse_census_row(line, sid, pid, cid, dbh, height, ipft, nplant, numeric)
       if (numeric) then
          cols%header = .false.
-         cols%n = 7 ; cols%site = 1 ; cols%patch = 2 ; cols%cohort = 3 ; cols%dbh = 4
-         cols%height = 5 ; cols%pft = 6 ; cols%nplant = 7 ; cols%area = 0
+         cols%n = 7
+         cols%site = 1
+         cols%patch = 2
+         cols%cohort = 3
+         cols%dbh = 4
+         cols%height = 5
+         cols%pft = 6
+         cols%nplant = 7
+         cols%area = 0
          return
       end if
       cols%header = .true.
@@ -355,14 +362,22 @@ contains
       if (cols%n > CENSUS_MAX_COLS) error stop 'meds_init: census header has too many columns in '//trim(path)
       do k = 1, cols%n
          select case (lower(trim(names(k))))
-         case ('site_id')    ; call claim(cols%site,   k, 'site_id')
-         case ('patch_id')   ; call claim(cols%patch,  k, 'patch_id')
-         case ('cohort_id')  ; call claim(cols%cohort, k, 'cohort_id')
-         case ('dbh')        ; call claim(cols%dbh,    k, 'dbh')
-         case ('height')     ; call claim(cols%height, k, 'height')
-         case ('pft')        ; call claim(cols%pft,    k, 'pft')
-         case ('nplant')     ; call claim(cols%nplant, k, 'nplant')
-         case ('patch_area') ; call claim(cols%area,   k, 'patch_area')
+         case ('site_id')
+            call claim(cols%site,   k, 'site_id')
+         case ('patch_id')
+            call claim(cols%patch,  k, 'patch_id')
+         case ('cohort_id')
+            call claim(cols%cohort, k, 'cohort_id')
+         case ('dbh')
+            call claim(cols%dbh,    k, 'dbh')
+         case ('height')
+            call claim(cols%height, k, 'height')
+         case ('pft')
+            call claim(cols%pft,    k, 'pft')
+         case ('nplant')
+            call claim(cols%nplant, k, 'nplant')
+         case ('patch_area')
+            call claim(cols%area,   k, 'patch_area')
          case default
             error stop 'meds_init: census column "'//trim(names(k))//'" is unknown in '//trim(path)
          end select
@@ -399,7 +414,9 @@ contains
       else
          call split_csv(line, f, nf)
          if (nf < cols%n) error stop 'meds_init: census row with too few columns in '//trim(path)
-         sid = 1_ik ; height = 1.0_wp ; ios = 0
+         sid = 1_ik
+         height = 1.0_wp
+         ios = 0
          if (cols%site   > 0 .and. ios == 0) read(f(cols%site),   *, iostat=ios) sid
          if (ios == 0) read(f(cols%patch),  *, iostat=ios) pid
          if (ios == 0) read(f(cols%dbh),    *, iostat=ios) dbh
@@ -436,7 +453,9 @@ contains
       character(len=*), intent(out) :: fields(:)
       integer,          intent(out) :: nf
       integer :: k, i0, n
-      n = len_trim(line) ; nf = 0 ; i0 = 1
+      n = len_trim(line)
+      nf = 0
+      i0 = 1
       fields = ' '
       do k = 1, n + 1
          if (k > n) then

@@ -139,7 +139,8 @@ contains
       real(wp),               intent(in) :: displace   !< [m] zero-plane displacement
       real(wp),               intent(in) :: rough      !< [m] roughness length (> 0)
       real(wp) :: z_b, h_b, h_top
-      factor = 1.0_wp ; z_b = f%wind_height
+      factor = 1.0_wp
+      z_b = f%wind_height
       if (f%wind_exposure == WIND_EXPOSURE_OPEN_TERRAIN) then
          factor = log(f%wind_blending_height / f%wind_exposure_z0) / log(f%wind_height / f%wind_exposure_z0)
          z_b    = f%wind_blending_height

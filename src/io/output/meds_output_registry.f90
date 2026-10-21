@@ -107,8 +107,11 @@ contains
       type(output_registry_t), intent(out) :: reg
       type(meds_config_t),     intent(in)  :: cfg
 
-      allocate(reg%var(MAX_OUTPUT_VARS)) ; reg%nvar = 0_ik
-      allocate(reg%idx_freq(MAX_OUTPUT_VARS, N_FREQ)) ; reg%idx_freq = 0_ik ; reg%nidx = 0_ik
+      allocate(reg%var(MAX_OUTPUT_VARS))
+      reg%nvar = 0_ik
+      allocate(reg%idx_freq(MAX_OUTPUT_VARS, N_FREQ))
+      reg%idx_freq = 0_ik
+      reg%nidx = 0_ik
 
       call register_structure_cohort(reg)
       call register_structure_patch(reg)
@@ -969,7 +972,8 @@ contains
       if (reg%nvar >= MAX_OUTPUT_VARS) error stop 'meds_output_registry: MAX_OUTPUT_VARS exceeded'
       if (find_var_index(reg, name) > 0_ik)                                                      &
          error stop 'meds_output_registry: duplicate variable name ('//trim(name)//')'
-      reg%nvar = reg%nvar + 1_ik ; k = reg%nvar
+      reg%nvar = reg%nvar + 1_ik
+      k = reg%nvar
       reg%var(k)%name            = name
       reg%var(k)%long_name       = long_name
       reg%var(k)%units           = units
@@ -980,10 +984,14 @@ contains
       reg%var(k)%streams_default = streams
       reg%var(k)%enabled         = .true.
       reg%var(k)%source_id       = source
-      reg%var(k)%xtype           = XTYPE_DOUBLE ; if (present(xtype))  reg%var(k)%xtype  = xtype
-      reg%var(k)%weight          = W_NONE       ; if (present(weight)) reg%var(k)%weight = weight
-      reg%var(k)%mean            = .false.      ; if (present(mean))   reg%var(k)%mean   = mean
-      reg%var(k)%scale           = 1.0_wp       ; if (present(scale))  reg%var(k)%scale  = scale
+      reg%var(k)%xtype           = XTYPE_DOUBLE
+      if (present(xtype))  reg%var(k)%xtype  = xtype
+      reg%var(k)%weight          = W_NONE
+      if (present(weight)) reg%var(k)%weight = weight
+      reg%var(k)%mean            = .false.
+      if (present(mean))   reg%var(k)%mean   = mean
+      reg%var(k)%scale           = 1.0_wp
+      if (present(scale))  reg%var(k)%scale  = scale
    end subroutine add_variable
 
    !----- Axis index (1..N_AXIS) of a DIM_* code, for the [output].axes_* toggles. DIM_SCALAR   !
@@ -991,12 +999,18 @@ contains
    pure integer(ik) function dim_axis_index(dm) result(a)
       integer(ik), intent(in) :: dm
       select case (dm)
-      case (DIM_COHORT)     ; a = 1_ik
-      case (DIM_PATCH)      ; a = 2_ik
-      case (DIM_PFT)        ; a = 3_ik
-      case (DIM_SIZE)       ; a = 4_ik
-      case (DIM_SOIL_PATCH) ; a = 5_ik
-      case default          ; a = 0_ik
+      case (DIM_COHORT)
+         a = 1_ik
+      case (DIM_PATCH)
+         a = 2_ik
+      case (DIM_PFT)
+         a = 3_ik
+      case (DIM_SIZE)
+         a = 4_ik
+      case (DIM_SOIL_PATCH)
+         a = 5_ik
+      case default
+         a = 0_ik
       end select
    end function dim_axis_index
 
@@ -1107,8 +1121,10 @@ contains
       found = (k > 0_ik)
       if (.not. found) return
       select case (kind)
-      case (OVR_TRUE)  ; reg%var(k)%streams = reg%var(k)%streams_default
-      case (OVR_FALSE) ; reg%var(k)%streams = FREQ_NONE
+      case (OVR_TRUE)
+         reg%var(k)%streams = reg%var(k)%streams_default
+      case (OVR_FALSE)
+         reg%var(k)%streams = FREQ_NONE
       case (OVR_MASK)
          m = mask
          if (ragged_dim(reg%var(k)%dim) .and. iand(m, FREQ_ANNUAL) /= 0_ik)                      &
@@ -1125,7 +1141,10 @@ contains
       integer(ik) :: k
       idx = 0_ik
       do k = 1_ik, reg%nvar
-         if (trim(reg%var(k)%name) == trim(name)) then ; idx = k ; return ; end if
+         if (trim(reg%var(k)%name) == trim(name)) then
+            idx = k
+            return
+         end if
       end do
    end function find_var_index
 
@@ -1138,16 +1157,25 @@ contains
       character(len=*), intent(out) :: bad_token
       integer(ik) :: i
       character(len=1) :: c
-      mask = FREQ_NONE ; status = 0_ik ; bad_token = ''
+      mask = FREQ_NONE
+      status = 0_ik
+      bad_token = ''
       do i = 1_ik, int(len_trim(s), ik)
          c = s(i:i)
          select case (c)
-         case ('F','f') ; mask = ior(mask, FREQ_FAST)
-         case ('D','d') ; mask = ior(mask, FREQ_DAILY)
-         case ('M','m') ; mask = ior(mask, FREQ_MONTHLY)
-         case ('Y','y') ; mask = ior(mask, FREQ_ANNUAL)
+         case ('F','f')
+            mask = ior(mask, FREQ_FAST)
+         case ('D','d')
+            mask = ior(mask, FREQ_DAILY)
+         case ('M','m')
+            mask = ior(mask, FREQ_MONTHLY)
+         case ('Y','y')
+            mask = ior(mask, FREQ_ANNUAL)
          case (' ')     ! separator
-         case default   ; status = 1_ik ; bad_token = c ; return
+         case default
+            status = 1_ik
+            bad_token = c
+            return
          end select
       end do
    end subroutine parse_stream_mask
@@ -1214,15 +1242,22 @@ contains
       type(output_files_t),   intent(in) :: files
       integer(ik),            intent(in) :: dm
       select case (dm)
-      case (DIM_COHORT)     ; cap = files%cohort_max
-      case (DIM_PATCH)      ; cap = files%patch_max
-      case (DIM_SOIL)       ; cap = files%site_max * n_soil_layer_max
-      case (DIM_PFT)        ; cap = max(files%diag%n_pft, 1_ik)
-      case (DIM_SIZE)       ; cap = max(files%diag%n_dbh_class, 1_ik)
-      case (DIM_SOIL_PATCH) ; cap = files%patch_max * n_soil_layer_max
+      case (DIM_COHORT)
+         cap = files%cohort_max
+      case (DIM_PATCH)
+         cap = files%patch_max
+      case (DIM_SOIL)
+         cap = files%site_max * n_soil_layer_max
+      case (DIM_PFT)
+         cap = max(files%diag%n_pft, 1_ik)
+      case (DIM_SIZE)
+         cap = max(files%diag%n_dbh_class, 1_ik)
+      case (DIM_SOIL_PATCH)
+         cap = files%patch_max * n_soil_layer_max
       case (DIM_SITE)
          cap = files%site_max
-      case default          ; cap = 0_ik
+      case default
+         cap = 0_ik
       end select
    end function dim_capacity
 
@@ -1245,7 +1280,8 @@ contains
       integer(ik) :: t
       do t = 1_ik, N_FREQ
          files%stream(t)%freq  = freq_bit(t)
-         allocate(files%stream(t)%vid(files%reg%nvar)) ; files%stream(t)%vid = -1_ik
+         allocate(files%stream(t)%vid(files%reg%nvar))
+         files%stream(t)%vid = -1_ik
       end do
       !----- SLAB SIZING. Size the shared pending-record slab to the largest axis that is        !
       !      ACTUALLY LIVE, not to the largest axis that exists. With ~66 cohort-dimensioned        !
@@ -1270,7 +1306,10 @@ contains
       do k = 1_ik, files%reg%nvar
          if (.not. files%reg%var(k)%enabled)        cycle
          if (files%reg%var(k)%streams == FREQ_NONE) cycle
-         if (any(dims == files%reg%var(k)%dim)) then ; yes = .true. ; return ; end if
+         if (any(dims == files%reg%var(k)%dim)) then
+            yes = .true.
+            return
+         end if
       end do
    end function live_axis
 
@@ -1347,7 +1386,8 @@ contains
    subroutine build_freq_index(reg)
       type(output_registry_t), intent(inout) :: reg
       integer(ik) :: t, k, bit
-      reg%idx_freq = 0_ik ; reg%nidx = 0_ik
+      reg%idx_freq = 0_ik
+      reg%nidx = 0_ik
       do t = 1_ik, N_FREQ
          bit = freq_bit(t)
          do k = 1_ik, reg%nvar
@@ -1371,7 +1411,10 @@ contains
       type(polygon_t),        intent(inout) :: poly
       logical     :: need_c, need_p, need_s, need_y, need_si
       integer(ik) :: t, j, k, src
-      need_c = .false. ; need_p = .false. ; need_s = .false. ; need_y = .false.
+      need_c = .false.
+      need_p = .false.
+      need_s = .false.
+      need_y = .false.
       need_si = .false.
       if (files%enabled) then
          do t = 1_ik, N_FREQ
@@ -1389,12 +1432,15 @@ contains
       end if
       !----- Only the fast loop fills the per-cohort and polygon blocks, and the fast rows of the     !
       !      patch block: in a slow-only run they stay off, and their variables read as missing. -----!
-      need_c = need_c .and. files%fast_loop_on ; need_y = need_y .and. files%fast_loop_on
+      need_c = need_c .and. files%fast_loop_on
+      need_y = need_y .and. files%fast_loop_on
       need_si = (need_si .and. files%fast_loop_on) .or. poly%site%diag%active
       poly%patch%diag%fast_rows = files%fast_loop_on
       !----- Additive: a block already on stays on. -----------------------------------------------!
-      need_c = need_c .or. poly%cohort%diag%active  ; need_s = need_s .or. poly%cohort%sdiag%active
-      need_p = need_p .or. poly%patch%diag%active   ; need_y = need_y .or. poly%diag%active
+      need_c = need_c .or. poly%cohort%diag%active
+      need_s = need_s .or. poly%cohort%sdiag%active
+      need_p = need_p .or. poly%patch%diag%active
+      need_y = need_y .or. poly%diag%active
       call alloc_cohort_diag(poly%cohort%diag,  max(poly%cohort%cap, 1_ik), need_c)
       call alloc_cohort_diag(poly%cohort%sdiag, max(poly%cohort%cap, 1_ik), need_s, slow_rows=.true.)
       call alloc_patch_diag (poly%patch%diag,   max(poly%patch%cap,  1_ik), need_p)
@@ -1446,27 +1492,58 @@ contains
       integer(ik), intent(in) :: mask
       character(len=8) :: s
       integer :: p
-      s = '' ; p = 0
-      if (iand(mask, FREQ_FAST)    /= 0_ik) then ; p = p+1 ; s(p:p) = 'F' ; p = p+1 ; s(p:p) = ' ' ; end if
-      if (iand(mask, FREQ_DAILY)   /= 0_ik) then ; p = p+1 ; s(p:p) = 'D' ; p = p+1 ; s(p:p) = ' ' ; end if
-      if (iand(mask, FREQ_MONTHLY) /= 0_ik) then ; p = p+1 ; s(p:p) = 'M' ; p = p+1 ; s(p:p) = ' ' ; end if
-      if (iand(mask, FREQ_ANNUAL)  /= 0_ik) then ; p = p+1 ; s(p:p) = 'Y' ; p = p+1 ; s(p:p) = ' ' ; end if
+      s = ''
+      p = 0
+      if (iand(mask, FREQ_FAST)    /= 0_ik) then
+         p = p+1
+         s(p:p) = 'F'
+         p = p+1
+         s(p:p) = ' '
+      end if
+      if (iand(mask, FREQ_DAILY)   /= 0_ik) then
+         p = p+1
+         s(p:p) = 'D'
+         p = p+1
+         s(p:p) = ' '
+      end if
+      if (iand(mask, FREQ_MONTHLY) /= 0_ik) then
+         p = p+1
+         s(p:p) = 'M'
+         p = p+1
+         s(p:p) = ' '
+      end if
+      if (iand(mask, FREQ_ANNUAL)  /= 0_ik) then
+         p = p+1
+         s(p:p) = 'Y'
+         p = p+1
+         s(p:p) = ' '
+      end if
    end function mask_to_string
 
    pure function group_name(g) result(s)
       integer(ik), intent(in) :: g
       character(len=10) :: s
       select case (g)
-      case (GRP_STRUCTURE)  ; s = 'structure'
-      case (GRP_CARBON)     ; s = 'carbon'
-      case (GRP_WATER)      ; s = 'water'
-      case (GRP_ENERGY)     ; s = 'energy'
-      case (GRP_NUMERICS)   ; s = 'numerics'
-      case (GRP_RADIATION)  ; s = 'radiation'
-      case (GRP_ECOPHYS)    ; s = 'ecophys'
-      case (GRP_BIOGEOCHEM) ; s = 'biogeochem'
-      case (GRP_FORCING)    ; s = 'forcing'
-      case default          ; s = '?'
+      case (GRP_STRUCTURE)
+         s = 'structure'
+      case (GRP_CARBON)
+         s = 'carbon'
+      case (GRP_WATER)
+         s = 'water'
+      case (GRP_ENERGY)
+         s = 'energy'
+      case (GRP_NUMERICS)
+         s = 'numerics'
+      case (GRP_RADIATION)
+         s = 'radiation'
+      case (GRP_ECOPHYS)
+         s = 'ecophys'
+      case (GRP_BIOGEOCHEM)
+         s = 'biogeochem'
+      case (GRP_FORCING)
+         s = 'forcing'
+      case default
+         s = '?'
       end select
    end function group_name
 
@@ -1474,16 +1551,24 @@ contains
       integer(ik), intent(in) :: d
       character(len=10) :: s
       select case (d)
-      case (DIM_SCALAR)     ; s = 'polygon'
-      case (DIM_COHORT)     ; s = 'cohort'
-      case (DIM_PATCH)      ; s = 'patch'
-      case (DIM_SOIL)       ; s = 'soil'
-      case (DIM_PFT)        ; s = 'pft'
-      case (DIM_SIZE)       ; s = 'dbh_class'
-      case (DIM_SOIL_PATCH) ; s = 'soil,patch'
+      case (DIM_SCALAR)
+         s = 'polygon'
+      case (DIM_COHORT)
+         s = 'cohort'
+      case (DIM_PATCH)
+         s = 'patch'
+      case (DIM_SOIL)
+         s = 'soil'
+      case (DIM_PFT)
+         s = 'pft'
+      case (DIM_SIZE)
+         s = 'dbh_class'
+      case (DIM_SOIL_PATCH)
+         s = 'soil,patch'
       case (DIM_SITE)
          s = 'by site'
-      case default          ; s = '?'
+      case default
+         s = '?'
       end select
    end function dim_name
 

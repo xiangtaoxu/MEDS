@@ -63,10 +63,12 @@ contains
       integer(ik) :: nrow, i, step_n, step_unit
       logical     :: seen_step, seen_units
 
-      ok = .false. ; msg = ''
+      ok = .false.
+      msg = ''
       open(newunit=u, file=trim(path), status='old', action='read', iostat=ios)
       if (ios /= 0) then
-         msg = 'cannot open the file' ; return
+         msg = 'cannot open the file'
+         return
       end if
 
       !----- Pass 1: count the data rows, so the series is allocated once. --------------------!
@@ -80,15 +82,21 @@ contains
          if (trim(tok) /= 'timestep' .and. trim(tok) /= 'units') nrow = nrow + 1_ik
       end do
       if (nrow < 2_ik) then
-         close(u) ; msg = 'fewer than two data rows' ; return
+         close(u)
+         msg = 'fewer than two data rows'
+         return
       end if
       allocate(s%mid_sec(nrow), s%co2(nrow))
       s%n = nrow
 
       !----- Pass 2: the keyword lines, then the rows, each checked as it is read. --------------!
       rewind(u)
-      seen_step = .false. ; seen_units = .false.
-      step_n = 0_ik ; step_unit = 0_ik ; i = 0_ik ; iline = 0
+      seen_step = .false.
+      seen_units = .false.
+      step_n = 0_ik
+      step_unit = 0_ik
+      i = 0_ik
+      iline = 0
       do
          read(u, '(a)', iostat=ios) raw
          if (ios /= 0) exit
@@ -165,7 +173,8 @@ contains
 
       ok = len_trim(msg) == 0
       if (.not. ok) then
-         call co2_series_free(s) ; return
+         call co2_series_free(s)
+         return
       end if
       s%span_end_sec = seconds_between(s%first_start, t_next)
    end subroutine co2_series_read
@@ -182,12 +191,15 @@ contains
       integer(ik) :: lo, hi, k
       x = seconds_between(s%first_start, now)
       if (x <= s%mid_sec(1)) then
-         co2 = s%co2(1) ; return
+         co2 = s%co2(1)
+         return
       end if
       if (x >= s%mid_sec(s%n)) then
-         co2 = s%co2(s%n) ; return
+         co2 = s%co2(s%n)
+         return
       end if
-      lo = 1_ik ; hi = s%n                                   ! mid_sec(lo) <= x < mid_sec(hi)
+      lo = 1_ik
+      hi = s%n                                   ! mid_sec(lo) <= x < mid_sec(hi)
       do while (hi - lo > 1_ik)
          k = (lo + hi) / 2_ik
          if (s%mid_sec(k) <= x) then
@@ -219,7 +231,8 @@ contains
       type(co2_series_t), intent(inout) :: s
       if (allocated(s%mid_sec)) deallocate(s%mid_sec)
       if (allocated(s%co2))     deallocate(s%co2)
-      s%n = 0_ik ; s%span_end_sec = 0.0_wp
+      s%n = 0_ik
+      s%span_end_sec = 0.0_wp
    end subroutine co2_series_free
 
    !----- The start of the next period: n calendar units on. --------------------------------!
@@ -228,11 +241,16 @@ contains
       integer(ik),       intent(in) :: n, unit
       type(meds_time_t) :: t2
       select case (unit)
-      case (UNIT_YEAR)  ; t2 = time_advance_years(t, n)
-      case (UNIT_MONTH) ; t2 = time_advance_months(t, n)
-      case (UNIT_DAY)   ; t2 = time_advance_days(t, n)
-      case (UNIT_HOUR)  ; t2 = time_advance_seconds(t, 3600.0_wp * real(n, wp))
-      case default      ; t2 = time_advance_seconds(t, 60.0_wp * real(n, wp))
+      case (UNIT_YEAR)
+         t2 = time_advance_years(t, n)
+      case (UNIT_MONTH)
+         t2 = time_advance_months(t, n)
+      case (UNIT_DAY)
+         t2 = time_advance_days(t, n)
+      case (UNIT_HOUR)
+         t2 = time_advance_seconds(t, 3600.0_wp * real(n, wp))
+      case default
+         t2 = time_advance_seconds(t, 60.0_wp * real(n, wp))
       end select
    end function advance_period
 
@@ -246,7 +264,10 @@ contains
       character(len=4) :: seps
       integer :: j, nsep
       logical :: prev_digit
-      ok = .false. ; seps = '' ; nsep = 0 ; prev_digit = .false.
+      ok = .false.
+      seps = ''
+      nsep = 0
+      prev_digit = .false.
       t = meds_time_t()
       do j = 1, len_trim(label)
          select case (label(j:j))
@@ -254,7 +275,9 @@ contains
             prev_digit = .true.
          case ('-', 'T', ':')
             if (.not. prev_digit .or. nsep >= len(seps)) return    ! an empty group, or too many
-            nsep = nsep + 1 ; seps(nsep:nsep) = label(j:j) ; prev_digit = .false.
+            nsep = nsep + 1
+            seps(nsep:nsep) = label(j:j)
+            prev_digit = .false.
          case default
             return
          end select
@@ -286,9 +309,11 @@ contains
       buf = adjustl(line)
       k = index(buf, ' ')
       if (k == 0) then
-         tok = buf ; rest = ''
+         tok = buf
+         rest = ''
       else
-         tok = buf(1:k-1) ; rest = adjustl(buf(k:))
+         tok = buf(1:k-1)
+         rest = adjustl(buf(k:))
       end if
    end subroutine split_token
 

@@ -54,7 +54,8 @@ contains
       logical     :: fp
       integer(ik) :: t, p
       if (.not. files%enabled) return
-      fp = .true. ; if (present(flush_partial)) fp = flush_partial
+      fp = .true.
+      if (present(flush_partial)) fp = flush_partial
       if (fp) then
          do p = 1_ik, size(bufs, kind=ik)
             do t = 1_ik, N_FREQ

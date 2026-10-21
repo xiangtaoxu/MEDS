@@ -216,9 +216,12 @@ contains
    pure real(wp) function seed_of(agg) result(s)
       integer(ik), intent(in) :: agg
       select case (agg)
-      case (AGG_MIN) ; s =  huge(1.0_wp)
-      case (AGG_MAX) ; s = -huge(1.0_wp)
-      case default   ; s =  0.0_wp
+      case (AGG_MIN)
+         s =  huge(1.0_wp)
+      case (AGG_MAX)
+         s = -huge(1.0_wp)
+      case default
+         s =  0.0_wp
       end select
    end function seed_of
 
@@ -265,13 +268,28 @@ contains
       real(wp),             intent(in)    :: x, dt
       if (x == MISSING_VALUE) return        ! nothing to report this step (see not_simulated)
       select case (buf%agg)
-      case (AGG_MEAN)   ; buf%scal = buf%scal + x       ; buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_SUM)    ; buf%scal = buf%scal + x       ; buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_MIN)    ; buf%scal = min(buf%scal, x)   ; buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_MAX)    ; buf%scal = max(buf%scal, x)   ; buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_LAST)   ; buf%scal = x                  ; buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_TMEAN)  ; buf%scal = buf%scal + x*dt    ; buf%wsum  = buf%wsum + dt
-      case (AGG_FLUXSUM); buf%scal = buf%scal + x*dt    ; buf%wsum  = buf%wsum + dt ; buf%nsamp = buf%nsamp + 1_ik
+      case (AGG_MEAN)
+         buf%scal = buf%scal + x
+         buf%nsamp = buf%nsamp + 1_ik
+      case (AGG_SUM)
+         buf%scal = buf%scal + x
+         buf%nsamp = buf%nsamp + 1_ik
+      case (AGG_MIN)
+         buf%scal = min(buf%scal, x)
+         buf%nsamp = buf%nsamp + 1_ik
+      case (AGG_MAX)
+         buf%scal = max(buf%scal, x)
+         buf%nsamp = buf%nsamp + 1_ik
+      case (AGG_LAST)
+         buf%scal = x
+         buf%nsamp = buf%nsamp + 1_ik
+      case (AGG_TMEAN)
+         buf%scal = buf%scal + x*dt
+         buf%wsum  = buf%wsum + dt
+      case (AGG_FLUXSUM)
+         buf%scal = buf%scal + x*dt
+         buf%wsum  = buf%wsum + dt
+         buf%nsamp = buf%nsamp + 1_ik
       end select
    end subroutine integrate_scalar
 
@@ -299,15 +317,20 @@ contains
          end if
          select case (buf%agg)
          case (AGG_MEAN, AGG_SUM)
-            buf%slab(i) = buf%slab(i) + x(i) ; buf%hits(i) = buf%hits(i) + 1_ik
+            buf%slab(i) = buf%slab(i) + x(i)
+            buf%hits(i) = buf%hits(i) + 1_ik
          case (AGG_MIN)
-            buf%slab(i) = min(buf%slab(i), x(i)) ; buf%hits(i) = buf%hits(i) + 1_ik
+            buf%slab(i) = min(buf%slab(i), x(i))
+            buf%hits(i) = buf%hits(i) + 1_ik
          case (AGG_MAX)
-            buf%slab(i) = max(buf%slab(i), x(i)) ; buf%hits(i) = buf%hits(i) + 1_ik
+            buf%slab(i) = max(buf%slab(i), x(i))
+            buf%hits(i) = buf%hits(i) + 1_ik
          case (AGG_LAST)
-            buf%slab(i) = x(i) ; buf%hits(i) = buf%hits(i) + 1_ik
+            buf%slab(i) = x(i)
+            buf%hits(i) = buf%hits(i) + 1_ik
          case (AGG_TMEAN, AGG_FLUXSUM)
-            buf%slab(i) = buf%slab(i) + x(i)*dt ; buf%wsum_slab(i) = buf%wsum_slab(i) + dt
+            buf%slab(i) = buf%slab(i) + x(i)*dt
+            buf%wsum_slab(i) = buf%wsum_slab(i) + dt
             buf%hits(i) = buf%hits(i) + 1_ik
          end select
       end do
@@ -320,18 +343,39 @@ contains
       type(integ_buffer_t), intent(in)  :: buf
       real(wp),             intent(out) :: out
       logical,              intent(out) :: valid
-      valid = .true. ; out = MISSING_VALUE
+      valid = .true.
+      out = MISSING_VALUE
       select case (buf%agg)
       case (AGG_MEAN)
-         if (buf%nsamp > 0_ik) then ; out = buf%scal / real(buf%nsamp, wp) ; else ; valid = .false. ; end if
+         if (buf%nsamp > 0_ik) then
+            out = buf%scal / real(buf%nsamp, wp)
+         else
+            valid = .false.
+         end if
       case (AGG_TMEAN)
-         if (buf%wsum > 0.0_wp) then ; out = buf%scal / buf%wsum ; else ; valid = .false. ; end if
+         if (buf%wsum > 0.0_wp) then
+            out = buf%scal / buf%wsum
+         else
+            valid = .false.
+         end if
       case (AGG_FLUXSUM)
-         if (buf%nsamp > 0_ik) then ; out = buf%scal ; else ; valid = .false. ; end if
+         if (buf%nsamp > 0_ik) then
+            out = buf%scal
+         else
+            valid = .false.
+         end if
       case (AGG_SUM)
-         if (buf%nsamp > 0_ik) then ; out = buf%scal ; else ; valid = .false. ; end if
+         if (buf%nsamp > 0_ik) then
+            out = buf%scal
+         else
+            valid = .false.
+         end if
       case (AGG_MIN, AGG_MAX, AGG_LAST)
-         if (buf%nsamp > 0_ik) then ; out = buf%scal ; else ; valid = .false. ; end if
+         if (buf%nsamp > 0_ik) then
+            out = buf%scal
+         else
+            valid = .false.
+         end if
       end select
    end subroutine normalize_scalar
 
@@ -352,11 +396,20 @@ contains
       do i = 1_ik, n_out
          select case (buf%agg)
          case (AGG_MEAN)
-            if (buf%hits(i) > 0_ik) then ; out(i) = buf%slab(i) / real(buf%hits(i), wp) ; valid(i) = .true. ; end if
+            if (buf%hits(i) > 0_ik) then
+               out(i) = buf%slab(i) / real(buf%hits(i), wp)
+               valid(i) = .true.
+            end if
          case (AGG_TMEAN)
-            if (buf%wsum_slab(i) > 0.0_wp) then ; out(i) = buf%slab(i) / buf%wsum_slab(i) ; valid(i) = .true. ; end if
+            if (buf%wsum_slab(i) > 0.0_wp) then
+               out(i) = buf%slab(i) / buf%wsum_slab(i)
+               valid(i) = .true.
+            end if
          case (AGG_FLUXSUM, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST)
-            if (buf%hits(i) > 0_ik) then ; out(i) = buf%slab(i) ; valid(i) = .true. ; end if
+            if (buf%hits(i) > 0_ik) then
+               out(i) = buf%slab(i)
+               valid(i) = .true.
+            end if
          end select
       end do
    end subroutine normalize_slab
@@ -399,14 +452,20 @@ contains
    !      instead of silently resolving to a neighbour's field.                                     !
    pure integer(ik) function src_class(src) result(k)
       integer(ik), intent(in) :: src
-      if      (src >= 1000_ik .and. src < 2000_ik) then ; k = SRCK_COHORT
-      else if (src >= 2000_ik .and. src < 3000_ik) then ; k = SRCK_PATCH
-      else if (src >= 3000_ik .and. src < 4000_ik) then ; k = SRCK_LAYER
-      else if (src >= 4000_ik .and. src < 5000_ik) then ; k = SRCK_POLYGON
-      else if (src >= 5000_ik .and. src < 6000_ik) then ; k = SRCK_FAST
+      if      (src >= 1000_ik .and. src < 2000_ik) then
+         k = SRCK_COHORT
+      else if (src >= 2000_ik .and. src < 3000_ik) then
+         k = SRCK_PATCH
+      else if (src >= 3000_ik .and. src < 4000_ik) then
+         k = SRCK_LAYER
+      else if (src >= 4000_ik .and. src < 5000_ik) then
+         k = SRCK_POLYGON
+      else if (src >= 5000_ik .and. src < 6000_ik) then
+         k = SRCK_FAST
       else if (src >= 6000_ik .and. src < 7000_ik) then
          k = SRCK_SITE
-      else                                              ; k = SRCK_NONE
+      else
+         k = SRCK_NONE
       end if
    end function src_class
 
@@ -424,45 +483,77 @@ contains
       n = poly%cohort%n
       if (n <= 0_ik) return
       select case (src)
-      case (FLD_C_NPLANT)          ; x(1:n) = poly%cohort%nplant(1:n)
-      case (FLD_C_DBH)             ; x(1:n) = poly%cohort%dbh(1:n)
-      case (FLD_C_HEIGHT)          ; x(1:n) = poly%cohort%height(1:n)
-      case (FLD_C_BASAL_AREA)      ; x(1:n) = poly%cohort%basal_area(1:n)
-      case (FLD_C_AGB)             ; x(1:n) = poly%cohort%agb(1:n)
-      case (FLD_C_LEAF_AREA)       ; x(1:n) = poly%cohort%leaf_area(1:n)
-      case (FLD_C_GROWTH_AVG)      ; x(1:n) = poly%cohort%growth_avg(1:n)
-      case (FLD_C_PFT)             ; x(1:n) = real(poly%cohort%pft(1:n), wp)
-      case (FLD_C_OWNER_PATCH)     ; x(1:n) = real(poly%cohort%owner_patch(1:n), wp)
-      case (FLD_C_GLOBAL_ID)       ; x(1:n) = real(poly%cohort%global_id(1:n), wp)
-      case (FLD_C_LEAF_CARBON)     ; x(1:n) = poly%cohort%leaf_carbon(1:n)
-      case (FLD_C_FINEROOT_CARBON) ; x(1:n) = poly%cohort%fineroot_carbon(1:n)
-      case (FLD_C_WOOD_CARBON)     ; x(1:n) = poly%cohort%wood_carbon(1:n)
-      case (FLD_C_NONSTRUCTURAL_CARBON)  ; x(1:n) = poly%cohort%nonstructural_carbon(1:n)
-      case (FLD_C_SLA)             ; x(1:n) = poly%cohort%sla(1:n)
-      case (FLD_C_VCMAX25)         ; x(1:n) = poly%cohort%vcmax25(1:n)
-      case (FLD_C_RD25)            ; x(1:n) = poly%cohort%rd25(1:n)
-      case (FLD_C_LEAF_TURNOVER_RATE)   ; x(1:n) = poly%cohort%leaf_turnover_rate(1:n)
-      case (FLD_C_OVERTOPPING_LAI)     ; x(1:n) = poly%cohort%overtopping_lai(1:n)
-      case (FLD_C_GPP_ACCUM)       ; x(1:n) = poly%cohort%gpp_accum(1:n)
-      case (FLD_C_LEAF_RESP)       ; x(1:n) = poly%cohort%leaf_resp_accum(1:n)
-      case (FLD_C_STEM_RESP)       ; x(1:n) = poly%cohort%stem_resp_accum(1:n)
-      case (FLD_C_ROOT_RESP)       ; x(1:n) = poly%cohort%root_resp_accum(1:n)
-      case (FLD_C_DMAX_PSI_LEAF)   ; x(1:n) = poly%cohort%dmax_psi_leaf(1:n)
-      case (FLD_C_LEAF_FLUSH_TENDENCY)     ; x(1:n) = poly%cohort%leaf_flush_tendency(1:n)
-      case (FLD_C_LEAF_SHED_TENDENCY)      ; x(1:n) = poly%cohort%leaf_shed_tendency(1:n)
+      case (FLD_C_NPLANT)
+         x(1:n) = poly%cohort%nplant(1:n)
+      case (FLD_C_DBH)
+         x(1:n) = poly%cohort%dbh(1:n)
+      case (FLD_C_HEIGHT)
+         x(1:n) = poly%cohort%height(1:n)
+      case (FLD_C_BASAL_AREA)
+         x(1:n) = poly%cohort%basal_area(1:n)
+      case (FLD_C_AGB)
+         x(1:n) = poly%cohort%agb(1:n)
+      case (FLD_C_LEAF_AREA)
+         x(1:n) = poly%cohort%leaf_area(1:n)
+      case (FLD_C_GROWTH_AVG)
+         x(1:n) = poly%cohort%growth_avg(1:n)
+      case (FLD_C_PFT)
+         x(1:n) = real(poly%cohort%pft(1:n), wp)
+      case (FLD_C_OWNER_PATCH)
+         x(1:n) = real(poly%cohort%owner_patch(1:n), wp)
+      case (FLD_C_GLOBAL_ID)
+         x(1:n) = real(poly%cohort%global_id(1:n), wp)
+      case (FLD_C_LEAF_CARBON)
+         x(1:n) = poly%cohort%leaf_carbon(1:n)
+      case (FLD_C_FINEROOT_CARBON)
+         x(1:n) = poly%cohort%fineroot_carbon(1:n)
+      case (FLD_C_WOOD_CARBON)
+         x(1:n) = poly%cohort%wood_carbon(1:n)
+      case (FLD_C_NONSTRUCTURAL_CARBON)
+         x(1:n) = poly%cohort%nonstructural_carbon(1:n)
+      case (FLD_C_SLA)
+         x(1:n) = poly%cohort%sla(1:n)
+      case (FLD_C_VCMAX25)
+         x(1:n) = poly%cohort%vcmax25(1:n)
+      case (FLD_C_RD25)
+         x(1:n) = poly%cohort%rd25(1:n)
+      case (FLD_C_LEAF_TURNOVER_RATE)
+         x(1:n) = poly%cohort%leaf_turnover_rate(1:n)
+      case (FLD_C_OVERTOPPING_LAI)
+         x(1:n) = poly%cohort%overtopping_lai(1:n)
+      case (FLD_C_GPP_ACCUM)
+         x(1:n) = poly%cohort%gpp_accum(1:n)
+      case (FLD_C_LEAF_RESP)
+         x(1:n) = poly%cohort%leaf_resp_accum(1:n)
+      case (FLD_C_STEM_RESP)
+         x(1:n) = poly%cohort%stem_resp_accum(1:n)
+      case (FLD_C_ROOT_RESP)
+         x(1:n) = poly%cohort%root_resp_accum(1:n)
+      case (FLD_C_DMAX_PSI_LEAF)
+         x(1:n) = poly%cohort%dmax_psi_leaf(1:n)
+      case (FLD_C_LEAF_FLUSH_TENDENCY)
+         x(1:n) = poly%cohort%leaf_flush_tendency(1:n)
+      case (FLD_C_LEAF_SHED_TENDENCY)
+         x(1:n) = poly%cohort%leaf_shed_tendency(1:n)
       !----- derived ------------------------------------------------------------------------!
-      case (FLD_C_ONE)             ; x(1:n) = 1.0_wp
-      case (FLD_C_LAI)             ; x(1:n) = cohort_lai(poly%cohort%nplant(1:n),               &
+      case (FLD_C_ONE)
+         x(1:n) = 1.0_wp
+      case (FLD_C_LAI)
+         x(1:n) = cohort_lai(poly%cohort%nplant(1:n),               &
                                                          poly%cohort%leaf_area(1:n))
-      case (FLD_C_WAI)             ; x(1:n) = poly%cohort%nplant(1:n) * poly%cohort%wood_area(1:n)
-      case (FLD_C_NPP_ACCUM)       ; x(1:n) = cohort_npp_per_plant(poly%cohort%gpp_accum(1:n),  &
+      case (FLD_C_WAI)
+         x(1:n) = poly%cohort%nplant(1:n) * poly%cohort%wood_area(1:n)
+      case (FLD_C_NPP_ACCUM)
+         x(1:n) = cohort_npp_per_plant(poly%cohort%gpp_accum(1:n),  &
                                                 poly%cohort%leaf_resp_accum(1:n),              &
                                                 poly%cohort%stem_resp_accum(1:n),              &
                                                 poly%cohort%root_resp_accum(1:n))
-      case (FLD_C_BGB)             ; x(1:n) = poly%cohort%fineroot_carbon(1:n)                  &
+      case (FLD_C_BGB)
+         x(1:n) = poly%cohort%fineroot_carbon(1:n)                  &
                                     + poly%cohort%wood_carbon(1:n)                             &
                                       * (1.0_wp - poly%cohort%pft_table%allom(poly%cohort%pft(1:n))%aboveground_frac)
-      case (FLD_C_VEG_CARBON)      ; x(1:n) = poly%cohort%leaf_carbon(1:n)                      &
+      case (FLD_C_VEG_CARBON)
+         x(1:n) = poly%cohort%leaf_carbon(1:n)                      &
                                     + poly%cohort%fineroot_carbon(1:n)                         &
                                     + poly%cohort%wood_carbon(1:n)                             &
                                     + poly%cohort%nonstructural_carbon(1:n)
@@ -489,33 +580,60 @@ contains
       n = poly%patch%n
       if (n <= 0_ik) return
       select case (src)
-      case (FLD_P_AREA)          ; x(1:n) = poly%patch%area(1:n)
-      case (FLD_P_AGE)           ; x(1:n) = poly%patch%age(1:n)
-      case (FLD_P_DIST_TYPE)     ; x(1:n) = real(poly%patch%dist_type(1:n), wp)
-      case (FLD_P_COHORT_OFFSET) ; x(1:n) = real(poly%patch%cohort_offset(1:n), wp)
-      case (FLD_P_COHORT_COUNT)  ; x(1:n) = real(poly%patch%cohort_count(1:n), wp)
-      case (FLD_P_GLOBAL_ID)     ; x(1:n) = real(poly%patch%global_id(1:n), wp)
+      case (FLD_P_AREA)
+         x(1:n) = poly%patch%area(1:n)
+      case (FLD_P_AGE)
+         x(1:n) = poly%patch%age(1:n)
+      case (FLD_P_DIST_TYPE)
+         x(1:n) = real(poly%patch%dist_type(1:n), wp)
+      case (FLD_P_COHORT_OFFSET)
+         x(1:n) = real(poly%patch%cohort_offset(1:n), wp)
+      case (FLD_P_COHORT_COUNT)
+         x(1:n) = real(poly%patch%cohort_count(1:n), wp)
+      case (FLD_P_GLOBAL_ID)
+         x(1:n) = real(poly%patch%global_id(1:n), wp)
       case (FLD_P_SITE)
          x(1:n) = real(poly%patch%owner_site(1:n), wp)
-      case (FLD_P_CAS_DEPTH)     ; do ip = 1_ik, n ; x(ip) = poly%patch%cas(ip)%can_depth    ; end do
+      case (FLD_P_CAS_DEPTH)
+         do ip = 1_ik, n
+            x(ip) = poly%patch%cas(ip)%can_depth
+         end do
       case (FLD_P_SWE)
-         do ip = 1_ik, n ; x(ip) = sum(poly%patch%snow(ip)%swe(:))        ; end do
+         do ip = 1_ik, n
+            x(ip) = sum(poly%patch%snow(ip)%swe(:))
+         end do
       case (FLD_P_SNOW_DEPTH)
-         do ip = 1_ik, n ; x(ip) = sum(poly%patch%snow(ip)%snow_depth(:)) ; end do
+         do ip = 1_ik, n
+            x(ip) = sum(poly%patch%snow(ip)%snow_depth(:))
+         end do
       case (FLD_P_SOILC_FAST_GRND)
-         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon   ; end do
+         do ip = 1_ik, n
+            x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon
+         end do
       case (FLD_P_SOILC_FAST_SOIL)
-         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%fast_soil_carbon   ; end do
+         do ip = 1_ik, n
+            x(ip) = poly%patch%soil_carbon(ip)%fast_soil_carbon
+         end do
       case (FLD_P_SOILC_STRUCT_GRND)
-         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%struct_grnd_carbon ; end do
+         do ip = 1_ik, n
+            x(ip) = poly%patch%soil_carbon(ip)%struct_grnd_carbon
+         end do
       case (FLD_P_SOILC_STRUCT_SOIL)
-         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%struct_soil_carbon ; end do
+         do ip = 1_ik, n
+            x(ip) = poly%patch%soil_carbon(ip)%struct_soil_carbon
+         end do
       case (FLD_P_SOILC_MICROBIAL)
-         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%microbial_carbon   ; end do
+         do ip = 1_ik, n
+            x(ip) = poly%patch%soil_carbon(ip)%microbial_carbon
+         end do
       case (FLD_P_SOILC_SLOW)
-         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%slow_carbon        ; end do
+         do ip = 1_ik, n
+            x(ip) = poly%patch%soil_carbon(ip)%slow_carbon
+         end do
       case (FLD_P_SOILC_PASSIVE)
-         do ip = 1_ik, n ; x(ip) = poly%patch%soil_carbon(ip)%passive_carbon     ; end do
+         do ip = 1_ik, n
+            x(ip) = poly%patch%soil_carbon(ip)%passive_carbon
+         end do
       case (FLD_P_SOILC_TOTAL)
          do ip = 1_ik, n
             x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon                                &
@@ -527,7 +645,9 @@ contains
                   + poly%patch%soil_carbon(ip)%passive_carbon
          end do
       case (FLD_P_RH)
-         do ip = 1_ik, n ; x(ip) = poly%patch%xi_accum(ip)%rh_fast_accum ; end do
+         do ip = 1_ik, n
+            x(ip) = poly%patch%xi_accum(ip)%rh_fast_accum
+         end do
       case default
          if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) then
             call patch_diag_value(poly%patch%diag, src - FLD_P_DIAG0, x, n)
@@ -631,12 +751,14 @@ contains
       real(wp)    :: col(n_soil_layer_max, max(poly%patch%n, 1_ik))
       integer(ik) :: nf, kcls
       logical     :: ok
-      scalar_out = 0.0_wp ; n_out = 0_ik
+      scalar_out = 0.0_wp
+      n_out = 0_ik
       kcls = src_class(v%source_id)
       !----- A source this run does not simulate reads as missing: no slab entries, and a scalar    !
       !      that integrate_scalar skips, so the whole window closes as _FillValue. ----------------!
       if (not_simulated(poly, v%source_id)) then
-         scalar_out = MISSING_VALUE ; return
+         scalar_out = MISSING_VALUE
+         return
       end if
 
       select case (v%dim)
@@ -703,7 +825,8 @@ contains
             call reduce_patch_to_polygon(poly, x, v%mean, scalar_out, ok)
             scalar_out = scalar_out * v%scale
          case default
-            scalar_out = extract_scalar_source(poly, v%source_id) ; ok = .true.
+            scalar_out = extract_scalar_source(poly, v%source_id)
+            ok = .true.
          end select
          !----- A mean over nothing (bare ground, or only cohorts with no samples) has nothing to  !
          !      report this step: missing, which integrate_scalar skips, not a 0 it would average. !
@@ -716,26 +839,40 @@ contains
       type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in) :: source_id
       select case (source_id)
-      case (SRC_PY_ET)         ; val = poly%et_accum
-      case (SRC_PY_RUNOFF)     ; val = poly%runoff_surf_accum + poly%drainage_accum
-      case (SRC_PY_RUNOFF_SURF); val = poly%runoff_surf_accum
-      case (SRC_PY_DRAINAGE)   ; val = poly%drainage_accum
-      case (SRC_PY_N_COHORT)   ; val = real(poly%cohort%n, wp)
-      case (SRC_PY_N_PATCH)    ; val = real(poly%patch%n, wp)
+      case (SRC_PY_ET)
+         val = poly%et_accum
+      case (SRC_PY_RUNOFF)
+         val = poly%runoff_surf_accum + poly%drainage_accum
+      case (SRC_PY_RUNOFF_SURF)
+         val = poly%runoff_surf_accum
+      case (SRC_PY_DRAINAGE)
+         val = poly%drainage_accum
+      case (SRC_PY_N_COHORT)
+         val = real(poly%cohort%n, wp)
+      case (SRC_PY_N_PATCH)
+         val = real(poly%patch%n, wp)
       case (SRC_PY_CANOPY_HEIGHT)
          if (poly%cohort%n > 0_ik) then
             val = maxval(poly%cohort%height(1:poly%cohort%n))
          else
             val = 0.0_wp
          end if
-      case (SRC_PY_WORK_STEPS)        ; val = poly%work_integ_steps
-      case (SRC_PY_WORK_REJ)          ; val = poly%work_integ_rej
-      case (SRC_PY_WORK_WATER_NSUB)   ; val = poly%work_water_nsub
-      case (SRC_PY_WORK_WATER_NEWTON) ; val = poly%work_water_newton
-      case (SRC_PY_WORK_WATER_NFAIL)  ; val = poly%work_water_nfail
-      case (SRC_PY_WORK_WATER_REJECT) ; val = poly%work_water_reject
-      case (SRC_PY_WORK_RK45_RESCUE)  ; val = poly%work_rk45_rescue
-      case (SRC_PY_WORK_CLAMP_STAGE)  ; val = poly%work_clamp_stage
+      case (SRC_PY_WORK_STEPS)
+         val = poly%work_integ_steps
+      case (SRC_PY_WORK_REJ)
+         val = poly%work_integ_rej
+      case (SRC_PY_WORK_WATER_NSUB)
+         val = poly%work_water_nsub
+      case (SRC_PY_WORK_WATER_NEWTON)
+         val = poly%work_water_newton
+      case (SRC_PY_WORK_WATER_NFAIL)
+         val = poly%work_water_nfail
+      case (SRC_PY_WORK_WATER_REJECT)
+         val = poly%work_water_reject
+      case (SRC_PY_WORK_RK45_RESCUE)
+         val = poly%work_rk45_rescue
+      case (SRC_PY_WORK_CLAMP_STAGE)
+         val = poly%work_clamp_stage
       case default
          if (source_id > FLD_PY_DIAG0 .and. source_id <= FLD_PY_DIAG0 + N_PY_ROWS) then
             val = MISSING_VALUE
@@ -819,7 +956,8 @@ contains
       bufs%pending(t)%used   = .true.
       bufs%pending(t)%freq   = ishft(1_ik, t - 1_ik)
       bufs%pending(t)%t_open = bufs%t_open(t)
-      bufs%pending(t)%n_cohort = 0_ik ; bufs%pending(t)%n_patch = 0_ik
+      bufs%pending(t)%n_cohort = 0_ik
+      bufs%pending(t)%n_patch = 0_ik
       bufs%pending(t)%sval(:)   = MISSING_VALUE
       bufs%pending(t)%svalid(:) = .false.
       bufs%pending(t)%nslab(:)  = 0_ik
@@ -850,7 +988,8 @@ contains
          k = files%reg%idx_freq(j, t)
          if (files%reg%var(k)%dim == DIM_SCALAR) cycle
          nsl = nsl + 1_ik
-         slab_k(nsl) = k ; soil_patch(nsl) = files%reg%var(k)%dim == DIM_SOIL_PATCH
+         slab_k(nsl) = k
+         soil_patch(nsl) = files%reg%var(k)%dim == DIM_SOIL_PATCH
       end do
       call enqueue_record(bufs%queue(t), bufs%pending(t), slab_k(1:nsl), soil_patch(1:nsl))
       bufs%pending(t)%used = .false.
@@ -874,7 +1013,8 @@ contains
          call move_alloc(grown, q%rec)
       end if
       q%n = q%n + 1_ik
-      nv = size(src%sval, kind=ik) ; ncol = size(slab_k, kind=ik)
+      nv = size(src%sval, kind=ik)
+      ncol = size(slab_k, kind=ik)
       rows = 1_ik
       do c = 1_ik, ncol
          rows = max(rows, src%nslab(slab_k(c)))
@@ -882,8 +1022,11 @@ contains
       end do
       rows = min(rows, size(src%slab, 1, kind=ik))
       associate (r => q%rec(q%n))
-         r%used = .true. ; r%freq = src%freq ; r%t_open = src%t_open
-         r%n_cohort = src%n_cohort ; r%n_patch = src%n_patch
+         r%used = .true.
+         r%freq = src%freq
+         r%t_open = src%t_open
+         r%n_cohort = src%n_cohort
+         r%n_patch = src%n_patch
          if (allocated(r%sval)) then
             if (size(r%sval) /= nv .or. size(r%slab, 1) < rows .or. size(r%slab, 2) < max(ncol, 1_ik)) &
                deallocate(r%sval, r%svalid, r%nslab, r%col, r%slab, r%slabvalid)
@@ -891,10 +1034,14 @@ contains
          if (.not. allocated(r%sval))                                                             &
             allocate(r%sval(nv), r%svalid(nv), r%nslab(nv), r%col(nv),                            &
                      r%slab(rows, max(ncol, 1_ik)), r%slabvalid(rows, max(ncol, 1_ik)))
-         r%sval = src%sval ; r%svalid = src%svalid ; r%nslab = src%nslab ; r%col = 0_ik
+         r%sval = src%sval
+         r%svalid = src%svalid
+         r%nslab = src%nslab
+         r%col = 0_ik
          do c = 1_ik, ncol
             r%col(slab_k(c)) = c
-            r%slab(1:rows, c) = src%slab(1:rows, slab_k(c)) ; r%slabvalid(1:rows, c) = src%slabvalid(1:rows, slab_k(c))
+            r%slab(1:rows, c) = src%slab(1:rows, slab_k(c))
+            r%slabvalid(1:rows, c) = src%slabvalid(1:rows, slab_k(c))
          end do
       end associate
    end subroutine enqueue_record

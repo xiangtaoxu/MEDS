@@ -146,30 +146,44 @@ contains
       j0 = min(size(lat, kind=ik) - 1_ik, max(0_ik, nint((site_lat - lat(1)) / dlat, ik)))
       row_km = great_circle_distance(0.0_wp, lat(1), 0.0_wp, lat(2)) / 1000.0_wp
       rj = ceiling(max_km / row_km, ik) + 1_ik
-      r0 = max(0_ik, j0 - rj) ; r1 = min(size(lat, kind=ik) - 1_ik, j0 + rj)
+      r0 = max(0_ik, j0 - rj)
+      r1 = min(size(lat, kind=ik) - 1_ik, j0 + rj)
       call read_2d(ncid, 'valid', r0, r1 - r0 + 1_ik, 0_ik, size(lon, kind=ik), valid, stat)
-      if (stat /= ERA_OK) then ; st = nc_close(ncid) ; return ; end if
+      if (stat /= ERA_OK) then
+         st = nc_close(ncid)
+         return
+      end if
 
-      best_j = -1_ik ; best_i = -1_ik
+      best_j = -1_ik
+      best_i = -1_ik
       do j = r0, r1
          do i = 0_ik, size(lon, kind=ik) - 1_ik
             if (valid(i + 1_ik, j - r0 + 1_ik) < 0.5_wp) cycle
             d = great_circle_distance(site_lon, site_lat, lon(i + 1_ik), lat(j + 1_ik)) / 1000.0_wp
             if (d < distance_km) then
-               distance_km = d ; best_j = j ; best_i = i
+               distance_km = d
+               best_j = j
+               best_i = i
             end if
          end do
       end do
       if (best_j < 0_ik .or. distance_km > max_km) then
-         st = nc_close(ncid) ; stat = ERA_ERR_NO_CELL ; return
+         st = nc_close(ncid)
+         stat = ERA_ERR_NO_CELL
+         return
       end if
       call read_2d(ncid, 'elevation', best_j, 1_ik, best_i, 1_ik, elev, stat)
       st = nc_close(ncid)
       if (stat /= ERA_OK) return
 
-      dom%nlat = size(lat, kind=ik) ; dom%nlon = size(lon, kind=ik) ; dom%ncell = 1_ik
-      dom%row = [best_j] ; dom%col = [best_i]
-      dom%lat = [lat(best_j + 1_ik)] ; dom%lon = [lon(best_i + 1_ik)] ; dom%elevation = [elev(1, 1)]
+      dom%nlat = size(lat, kind=ik)
+      dom%nlon = size(lon, kind=ik)
+      dom%ncell = 1_ik
+      dom%row = [best_j]
+      dom%col = [best_i]
+      dom%lat = [lat(best_j + 1_ik)]
+      dom%lon = [lon(best_i + 1_ik)]
+      dom%elevation = [elev(1, 1)]
       call group_by_chunk(dom)
    end subroutine era5land_select_site
 
@@ -196,15 +210,18 @@ contains
 
       call open_static(static_path, ncid, lat, lon, stat)
       if (stat /= ERA_OK) return
-      nlat = size(lat, kind=ik) ; nlon = size(lon, kind=ik)
-      r0 = -1_ik ; r1 = -1_ik
+      nlat = size(lat, kind=ik)
+      nlon = size(lon, kind=ik)
+      r0 = -1_ik
+      r1 = -1_ik
       do j = 0_ik, nlat - 1_ik
          if (lat(j + 1_ik) <= nwse(1) + GRID_TOL .and. lat(j + 1_ik) >= nwse(3) - GRID_TOL) then
             if (r0 < 0_ik) r0 = j
             r1 = j
          end if
       end do
-      west = wrap_longitude(nwse(2), lon(1)) ; east = wrap_longitude(nwse(4), lon(1))
+      west = wrap_longitude(nwse(2), lon(1))
+      east = wrap_longitude(nwse(4), lon(1))
       !----- The 0-based column indices are a NAMED array: nvfortran 25.11 miscompiles an implied-do  !
       !      inside a pack inside an array constructor -- wrong indices at -O2, a segfault at -O0. ---!
       col_index = [(i, i = 0_ik, nlon - 1_ik)]
@@ -214,7 +231,9 @@ contains
          cols = [pack(col_index, lon >= west - GRID_TOL), pack(col_index, lon <= east + GRID_TOL)]
       end if
       if (r0 < 0_ik .or. size(cols) == 0) then
-         st = nc_close(ncid) ; stat = ERA_ERR_NO_CELL ; return
+         st = nc_close(ncid)
+         stat = ERA_ERR_NO_CELL
+         return
       end if
       call read_2d(ncid, 'valid', r0, r1 - r0 + 1_ik, 0_ik, nlon, valid, stat)
       if (stat == ERA_OK) call read_2d(ncid, 'elevation', r0, r1 - r0 + 1_ik, 0_ik, nlon, elev, stat)
@@ -222,19 +241,27 @@ contains
       st = nc_close(ncid)
       if (stat /= ERA_OK) return
 
-      lf_min = -1.0_wp ; if (present(land_fraction_min)) lf_min = land_fraction_min
+      lf_min = -1.0_wp
+      if (present(land_fraction_min)) lf_min = land_fraction_min
       where (lfrac < lf_min) valid = 0.0_wp
       n = int(count(valid(cols + 1_ik, :) > 0.5_wp), ik)
-      if (n == 0_ik) then ; stat = ERA_ERR_NO_CELL ; return ; end if
-      dom%nlat = nlat ; dom%nlon = nlon ; dom%ncell = n
+      if (n == 0_ik) then
+         stat = ERA_ERR_NO_CELL
+         return
+      end if
+      dom%nlat = nlat
+      dom%nlon = nlon
+      dom%ncell = n
       allocate(dom%row(n), dom%col(n), dom%lat(n), dom%lon(n), dom%elevation(n), dom%land_fraction(n))
       k = 0_ik
       do j = r0, r1
          do i = 1_ik, size(cols, kind=ik)
             if (valid(cols(i) + 1_ik, j - r0 + 1_ik) < 0.5_wp) cycle
             k = k + 1_ik
-            dom%row(k) = j ; dom%col(k) = cols(i)
-            dom%lat(k) = lat(j + 1_ik) ; dom%lon(k) = lon(cols(i) + 1_ik)
+            dom%row(k) = j
+            dom%col(k) = cols(i)
+            dom%lat(k) = lat(j + 1_ik)
+            dom%lon(k) = lon(cols(i) + 1_ik)
             dom%elevation(k) = elev(cols(i) + 1_ik, j - r0 + 1_ik)
             dom%land_fraction(k) = lfrac(cols(i) + 1_ik, j - r0 + 1_ik)
          end do
@@ -269,8 +296,10 @@ contains
    subroutine era5land_keep_cells(dom, keep)
       type(met_cells_t), intent(inout) :: dom
       logical,           intent(in)    :: keep(:)
-      dom%row = pack(dom%row, keep) ; dom%col = pack(dom%col, keep)
-      dom%lat = pack(dom%lat, keep) ; dom%lon = pack(dom%lon, keep)
+      dom%row = pack(dom%row, keep)
+      dom%col = pack(dom%col, keep)
+      dom%lat = pack(dom%lat, keep)
+      dom%lon = pack(dom%lon, keep)
       dom%elevation = pack(dom%elevation, keep)
       if (allocated(dom%land_fraction)) dom%land_fraction = pack(dom%land_fraction, keep)
       dom%ncell = int(count(keep), ik)
@@ -293,7 +322,8 @@ contains
       type(met_cells_t), intent(inout) :: dom
       integer(ik), allocatable :: id(:), cnt(:), next(:)
       integer(ik) :: ncx, ncy, c, k, m
-      ncx = (dom%nlon + CHUNK - 1_ik) / CHUNK ; ncy = (dom%nlat + CHUNK - 1_ik) / CHUNK
+      ncx = (dom%nlon + CHUNK - 1_ik) / CHUNK
+      ncy = (dom%nlat + CHUNK - 1_ik) / CHUNK
       allocate(id(dom%ncell), cnt(0:ncx*ncy))
       id = (dom%row / CHUNK) * ncx + dom%col / CHUNK
       cnt = 0_ik
@@ -304,11 +334,13 @@ contains
       allocate(dom%chunk_row(dom%nchunk), dom%chunk_col(dom%nchunk), dom%chunk_first(dom%nchunk + 1_ik))
       allocate(dom%chunk_nrow(dom%nchunk), dom%chunk_ncol(dom%nchunk))
       allocate(dom%by_chunk(dom%ncell), next(0:ncx*ncy - 1_ik))
-      k = 0_ik ; m = 1_ik
+      k = 0_ik
+      m = 1_ik
       do c = 0_ik, ncx*ncy - 1_ik
          if (cnt(c) == 0_ik) cycle
          k = k + 1_ik
-         dom%chunk_first(k) = m ; next(c) = m
+         dom%chunk_first(k) = m
+         next(c) = m
          m = m + cnt(c)
       end do
       dom%chunk_first(dom%nchunk + 1_ik) = m
@@ -318,7 +350,8 @@ contains
       end do
       do k = 1_ik, dom%nchunk
          associate (cells => dom%by_chunk(dom%chunk_first(k):dom%chunk_first(k + 1_ik) - 1_ik))
-            dom%chunk_row(k)  = minval(dom%row(cells)) ; dom%chunk_col(k) = minval(dom%col(cells))
+            dom%chunk_row(k)  = minval(dom%row(cells))
+            dom%chunk_col(k) = minval(dom%col(cells))
             dom%chunk_nrow(k) = maxval(dom%row(cells)) - dom%chunk_row(k) + 1_ik
             dom%chunk_ncol(k) = maxval(dom%col(cells)) - dom%chunk_col(k) + 1_ik
          end associate
@@ -347,7 +380,8 @@ contains
       integer(ik) :: nt, v, k, m, c, nr, nc
       integer(ik) :: bad(3)
 
-      stat = ERA_OK ; message = ''
+      stat = ERA_OK
+      message = ''
       nt = era5land_month_hours(year, month)
       buf%year = 0_ik
       if (allocated(buf%values)) then
@@ -359,16 +393,21 @@ contains
          path = era5land_path(template, data_path, ERA_VAR_NAME(v), year, month)
          st = nc_open_f(trim(path), NC_NOWRITE, ncid)
          if (st /= NC_NOERR) then
-            stat = ERA_ERR_OPEN ; message = trim(path) ; return
+            stat = ERA_ERR_OPEN
+            message = trim(path)
+            return
          end if
          call check_month_file(ncid, dom, year, month, nt, stat)
          if (stat /= ERA_OK) then
-            st = nc_close(ncid) ; message = trim(path) ; return
+            st = nc_close(ncid)
+            message = trim(path)
+            return
          end if
          st = nc_inq_varid_f(ncid, trim(ERA_VAR_NAME(v)), vid)
          if (st == NC_NOERR) st = nc_get_att_text_f(ncid, vid, 'units', units)
          if (st /= NC_NOERR .or. trim(units) /= trim(ERA_VAR_UNITS(v))) then
-            st = nc_close(ncid) ; stat = ERA_ERR_UNITS
+            st = nc_close(ncid)
+            stat = ERA_ERR_UNITS
             message = trim(path)//': units "'//trim(units)//'", expected "'//trim(ERA_VAR_UNITS(v))//'"'
             return
          end if
@@ -378,20 +417,25 @@ contains
          st = nc_get_att_double_f(ncid, vid, '_FillValue', fill)
          if (st == NC_NOERR) then
             if (.not. ieee_is_nan(fill)) then
-               st = nc_close(ncid) ; stat = ERA_ERR_FILL
+               st = nc_close(ncid)
+               stat = ERA_ERR_FILL
                write(message, '(2a,es12.4,a)') trim(path), ': _FillValue is ', fill, ', not NaN'
                return
             end if
          end if
          do k = 1_ik, dom%nchunk
-            nr = dom%chunk_nrow(k) ; nc = dom%chunk_ncol(k)
+            nr = dom%chunk_nrow(k)
+            nc = dom%chunk_ncol(k)
             allocate(block(nc, nr, nt))                      ! C order [time][lat][lon]
             start3 = [0_c_size_t, int(dom%chunk_row(k), c_size_t), int(dom%chunk_col(k), c_size_t)]
             count3 = [int(nt, c_size_t), int(nr, c_size_t), int(nc, c_size_t)]
             st = nc_get_vara_float(ncid, vid, start3, count3, block)   ! the archive stores float32
             if (st /= NC_NOERR) then
-               deallocate(block) ; st = nc_close(ncid) ; stat = ERA_ERR_OPEN
-               message = trim(path)//': read failed' ; return
+               deallocate(block)
+               st = nc_close(ncid)
+               stat = ERA_ERR_OPEN
+               message = trim(path)//': read failed'
+               return
             end if
             do m = dom%chunk_first(k), dom%chunk_first(k + 1_ik) - 1_ik
                c = dom%by_chunk(m)
@@ -412,9 +456,12 @@ contains
          bad = int(findloc(merge(1, 0, ieee_is_nan(buf%values)), 1), ik)
          write(message, '(a,a,i4.4,a,i2.2,a,i0,a,f9.3,a,f9.3,a)') trim(ERA_VAR_NAME(bad(3))), ' ',         &
                year, '-', month, ' hour ', bad(1), ' at cell (', dom%lat(bad(2)), ', ', dom%lon(bad(2)), ')'
-         stat = ERA_ERR_NAN ; return
+         stat = ERA_ERR_NAN
+         return
       end if
-      buf%year = year ; buf%month = month ; buf%nt = nt
+      buf%year = year
+      buf%month = month
+      buf%nt = nt
    end subroutine era5land_load_month
 
    !----- A month file must have the static grid and exactly the month's end-stamped hours. -------!
@@ -433,16 +480,24 @@ contains
       integer(ik)        :: k
 
       stat = ERA_ERR_GRID
-      st = nc_inq_dimlen_f(ncid, 'lat', n) ; if (st /= NC_NOERR .or. int(n, ik) /= dom%nlat) return
-      st = nc_inq_dimlen_f(ncid, 'lon', n) ; if (st /= NC_NOERR .or. int(n, ik) /= dom%nlon) return
+      st = nc_inq_dimlen_f(ncid, 'lat', n)
+      if (st /= NC_NOERR .or. int(n, ik) /= dom%nlat) return
+      st = nc_inq_dimlen_f(ncid, 'lon', n)
+      if (st /= NC_NOERR .or. int(n, ik) /= dom%nlon) return
       stat = ERA_ERR_TIME
-      st = nc_inq_dimlen_f(ncid, 'time', n) ; if (st /= NC_NOERR .or. int(n, ik) /= nt) return
-      st = nc_inq_varid_f(ncid, 'time', vid) ; if (st /= NC_NOERR) return
-      st = nc_get_att_text_f(ncid, vid, 'units', units) ; if (st /= NC_NOERR) return
-      call time_units_base(units, base, ok) ; if (.not. ok) return
+      st = nc_inq_dimlen_f(ncid, 'time', n)
+      if (st /= NC_NOERR .or. int(n, ik) /= nt) return
+      st = nc_inq_varid_f(ncid, 'time', vid)
+      if (st /= NC_NOERR) return
+      st = nc_get_att_text_f(ncid, vid, 'units', units)
+      if (st /= NC_NOERR) return
+      call time_units_base(units, base, ok)
+      if (.not. ok) return
       allocate(tsec(nt))
-      start1 = 0_c_size_t ; count1 = int(nt, c_size_t)
-      st = nc_get_vara_double(ncid, vid, start1, count1, tsec) ; if (st /= NC_NOERR) return
+      start1 = 0_c_size_t
+      count1 = int(nt, c_size_t)
+      st = nc_get_vara_double(ncid, vid, start1, count1, tsec)
+      if (st /= NC_NOERR) return
       first = seconds_between(base, meds_time_t(year, month, 1_ik, 1_ik, 0_ik, 0_ik))
       do k = 1_ik, nt
          if (abs(tsec(k) - (first + ARCHIVE_DT_SEC * real(k - 1_ik, wp))) > STAMP_TOL) return
@@ -458,7 +513,8 @@ contains
       integer(ik),           intent(out) :: stat
       integer(c_int) :: st
       stat = ERA_ERR_OPEN
-      st = nc_open_f(trim(path), NC_NOWRITE, ncid) ; if (st /= NC_NOERR) return
+      st = nc_open_f(trim(path), NC_NOWRITE, ncid)
+      if (st /= NC_NOERR) return
       stat = ERA_ERR_GRID
       call read_axis(ncid, 'lat', lat, st)
       if (st == NC_NOERR) call read_axis(ncid, 'lon', lon, st)
@@ -478,10 +534,13 @@ contains
       integer(c_int),        intent(out) :: st
       integer(c_int)    :: vid
       integer(c_size_t) :: n, start1(1), count1(1)
-      st = nc_inq_dimlen_f(ncid, name, n) ; if (st /= NC_NOERR) return
-      st = nc_inq_varid_f(ncid, name, vid) ; if (st /= NC_NOERR) return
+      st = nc_inq_dimlen_f(ncid, name, n)
+      if (st /= NC_NOERR) return
+      st = nc_inq_varid_f(ncid, name, vid)
+      if (st /= NC_NOERR) return
       allocate(x(n))
-      start1 = 0_c_size_t ; count1 = n
+      start1 = 0_c_size_t
+      count1 = n
       st = nc_get_vara_double(ncid, vid, start1, count1, x)
    end subroutine read_axis
 
@@ -495,10 +554,13 @@ contains
       integer(c_int)    :: st, vid
       integer(c_size_t) :: start2(2), count2(2)
       stat = ERA_ERR_GRID
-      st = nc_inq_varid_f(ncid, name, vid) ; if (st /= NC_NOERR) return
+      st = nc_inq_varid_f(ncid, name, vid)
+      if (st /= NC_NOERR) return
       allocate(x(nc, nr))
-      start2 = [int(r0, c_size_t), int(c0, c_size_t)] ; count2 = [int(nr, c_size_t), int(nc, c_size_t)]
-      st = nc_get_vara_double(ncid, vid, start2, count2, x) ; if (st /= NC_NOERR) return
+      start2 = [int(r0, c_size_t), int(c0, c_size_t)]
+      count2 = [int(nr, c_size_t), int(nc, c_size_t)]
+      st = nc_get_vara_double(ncid, vid, start2, count2, x)
+      if (st /= NC_NOERR) return
       stat = ERA_OK
    end subroutine read_2d
 

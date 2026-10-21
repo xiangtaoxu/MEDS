@@ -48,12 +48,14 @@ contains
       character(len=256):: units
       logical           :: ok
 
-      stat = MET_OK ; why = ''
+      stat = MET_OK
+      why = ''
       st = nc_open_f(trim(src%fcfg%path), NC_NOWRITE, ncid)
       call nc_check(st, 'met_open: nc_open '//trim(src%fcfg%path))
       src%ncid = int(ncid, ik)
 
-      st = nc_inq_dimlen_f(ncid, 'grid', dlen) ; call nc_check(st, 'met_open: grid dim')
+      st = nc_inq_dimlen_f(ncid, 'grid', dlen)
+      call nc_check(st, 'met_open: grid dim')
       src%ngrid = int(dlen, ik)
       !----- bind this polygon to a grid slice: explicit index, or nearest [site] lat/lon. ------!
       if (src%fcfg%grid_match == GRIDMATCH_NEAREST) then
@@ -65,15 +67,18 @@ contains
          end if
       end if
 
-      st = nc_inq_dimlen_f(ncid, 'time', dlen) ; call nc_check(st, 'met_open: time dim')
+      st = nc_inq_dimlen_f(ncid, 'time', dlen)
+      call nc_check(st, 'met_open: time dim')
       src%nrec = int(dlen, ik)
       if (src%nrec < 1_ik) error stop 'met_open: forcing file has no time records'
 
       !----- base time from "seconds since <base>" units attribute. --------------------------!
       block
          integer(c_int) :: vid
-         st = nc_inq_varid_f(ncid, 'time', vid) ; call nc_check(st, 'met_open: time varid')
-         st = nc_get_att_text_f(ncid, vid, 'units', units) ; call nc_check(st, 'met_open: time:units')
+         st = nc_inq_varid_f(ncid, 'time', vid)
+         call nc_check(st, 'met_open: time varid')
+         st = nc_get_att_text_f(ncid, vid, 'units', units)
+         call nc_check(st, 'met_open: time:units')
          call time_units_base(units, src%base_time, ok)
          if (.not. ok) error stop 'met_open: could not parse time:units "seconds since <base>"'
       end block
@@ -92,7 +97,8 @@ contains
       !----- The humidity the file carries: exactly one of RHair, Tdew and Qair. ------------------!
       call detect_humidity(src, ncid, stat)
       if (stat /= MET_OK) then
-         why = 'met_open: the forcing file''s humidity is ambiguous or absent (see the message above)' ; return
+         why = 'met_open: the forcing file''s humidity is ambiguous or absent (see the message above)'
+         return
       end if
 
       !----- The file's own record spacing against [forcing].dt_forcing, and the global          !
@@ -101,7 +107,8 @@ contains
       !      mis-timed or mis-partitioned. ------------------------------------------------------------!
       call validate_file_against_config(src, ncid, stat)
       if (stat /= MET_OK) then
-         why = 'met_open: the forcing file contradicts [forcing] (see the message above)' ; return
+         why = 'met_open: the forcing file contradicts [forcing] (see the message above)'
+         return
       end if
 
       !----- Check the DECLARED recycle window against this file's actual record stamps. It      !
@@ -109,7 +116,8 @@ contains
       !      which is only known here. --------------------------------------------------------------!
       call validate_recycle_window(src, stat)
       if (stat /= MET_OK) then
-         why = 'met_open: forcing file does not match the declared [forcing] recycle window' ; return
+         why = 'met_open: forcing file does not match the declared [forcing] recycle window'
+         return
       end if
 
       !----- The records the run can read, into memory, so no step reads the file: the recycle     !
@@ -118,16 +126,19 @@ contains
       !      every chunk. ----------------------------------------------------------------------------!
       block
          integer(ik) :: r0, r1
-         r0 = 1_ik ; r1 = src%nrec
+         r0 = 1_ik
+         r1 = src%nrec
          if (src%fcfg%recycle .and. src%n_cycle_years >= 1_ik) then
-            r0 = max(1_ik, src%irec_cycle_first - 1_ik) ; r1 = min(src%nrec, src%irec_cycle_last + 1_ik)
+            r0 = max(1_ik, src%irec_cycle_first - 1_ik)
+            r1 = min(src%nrec, src%irec_cycle_last + 1_ik)
          else if (present(run_start) .and. present(run_end)) then
             r0 = max(1_ik, first_record_after(src, seconds_between(src%base_time, run_start)) - 2_ik)
             r1 = min(src%nrec, first_record_after(src, seconds_between(src%base_time, run_end)) + 1_ik)
          end if
          if (r1 <= r0) r1 = min(src%nrec, r0 + 1_ik)
          call read_series(src, ncid, r0, r1)
-         st = nc_close(ncid) ; src%ncid = -1_ik
+         st = nc_close(ncid)
+         src%ncid = -1_ik
          src%rec_first = r0                          ! a cursor's first bracket: the first records in range
       end block
 
@@ -140,7 +151,8 @@ contains
             if (maxval(src%series(:, j)) > RH_FRACTION_MAX) then
                write(*,'(a,f0.2,a)') ' met_open: RHair reaches ', maxval(src%series(:, j)),                &
                                      ', but it is a fraction (units "1"), not a percentage.'
-               stat = MET_ERR_HUMIDITY ; why = 'met_open: RHair is in percent (see the message above)'
+               stat = MET_ERR_HUMIDITY
+               why = 'met_open: RHair is in percent (see the message above)'
                return
             end if
          end block
@@ -194,11 +206,14 @@ contains
       integer(c_size_t) :: start1(1), count1(1)
       real(wp), allocatable :: lat_grid(:), lon_grid(:)
       allocate(lat_grid(src%ngrid), lon_grid(src%ngrid))
-      start1(1) = 0_c_size_t ; count1(1) = int(src%ngrid, c_size_t)
-      st = nc_inq_varid_f(int(src%ncid, c_int), 'latitude', vlat)  ; call nc_check(st, 'resolve_grid_index: latitude varid')
+      start1(1) = 0_c_size_t
+      count1(1) = int(src%ngrid, c_size_t)
+      st = nc_inq_varid_f(int(src%ncid, c_int), 'latitude', vlat)
+      call nc_check(st, 'resolve_grid_index: latitude varid')
       st = nc_get_vara_double(int(src%ncid, c_int), vlat, start1, count1, lat_grid)
       call nc_check(st, 'resolve_grid_index: latitude values')
-      st = nc_inq_varid_f(int(src%ncid, c_int), 'longitude', vlon) ; call nc_check(st, 'resolve_grid_index: longitude varid')
+      st = nc_inq_varid_f(int(src%ncid, c_int), 'longitude', vlon)
+      call nc_check(st, 'resolve_grid_index: longitude varid')
       st = nc_get_vara_double(int(src%ncid, c_int), vlon, start1, count1, lon_grid)
       call nc_check(st, 'resolve_grid_index: longitude values')
       src%grid_index = nearest_grid_index(src%fcfg%longitude, src%fcfg%latitude, lon_grid, lat_grid)
@@ -217,8 +232,10 @@ contains
       integer(c_size_t) :: start1(1), count1(1)
       if (allocated(src%time_sec)) deallocate(src%time_sec)
       allocate(src%time_sec(src%nrec))
-      st = nc_inq_varid_f(int(src%ncid, c_int), 'time', vid) ; call nc_check(st, 'read_time_axis: time varid')
-      start1(1) = 0_c_size_t ; count1(1) = int(src%nrec, c_size_t)
+      st = nc_inq_varid_f(int(src%ncid, c_int), 'time', vid)
+      call nc_check(st, 'read_time_axis: time varid')
+      start1(1) = 0_c_size_t
+      count1(1) = int(src%nrec, c_size_t)
       st = nc_get_vara_double(int(src%ncid, c_int), vid, start1, count1, src%time_sec)
       call nc_check(st, 'read_time_axis: time values')
    end subroutine read_time_axis
@@ -234,10 +251,12 @@ contains
       integer(ik), parameter :: FORMS(3) = [HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW]
       integer(c_int) :: vid
       integer(ik)    :: i, n
-      stat = MET_OK ; n = 0_ik
+      stat = MET_OK
+      n = 0_ik
       do i = 1_ik, size(FORMS, kind=ik)
          if (nc_inq_varid_f(ncid, trim(MEDS_FIELD(humidity_field(FORMS(i)))), vid) == NC_NOERR) then
-            n = n + 1_ik ; src%humidity = FORMS(i)
+            n = n + 1_ik
+            src%humidity = FORMS(i)
          end if
       end do
       if (n /= 1_ik) then
@@ -266,10 +285,12 @@ contains
       allocate(src%series(r0:r1, count(present_)))                   ! indexed by record number
       start2 = [int(r0 - 1_ik, c_size_t), int(src%grid_index - 1_ik, c_size_t)]    ! [time, grid]
       count2 = [int(r1 - r0 + 1_ik, c_size_t), 1_c_size_t]
-      src%series_col = 0_ik ; n = 0_ik
+      src%series_col = 0_ik
+      n = 0_ik
       do j = 1_ik, N_MEDS_FIELD
          if (.not. present_(j)) cycle
-         n = n + 1_ik ; src%series_col(j) = n
+         n = n + 1_ik
+         src%series_col(j) = n
          if (n == 1_ik) call note_one_record_chunks(ncid, vid(j), r1 - r0 + 1_ik, src%fcfg%path)
          st = nc_get_vara_double(ncid, vid(j), start2, count2, src%series(:, n))
          call nc_check(st, 'read_series: get '//trim(MEDS_FIELD(j)))
@@ -303,7 +324,10 @@ contains
       integer(ik) :: j
       j = src%series_col(fld)
       if (j == 0_ik) then
-         if (present(default)) then ; val = default ; return ; end if
+         if (present(default)) then
+            val = default
+            return
+         end if
          write(*,'(2a)') ' met_driver: the forcing file has no variable ', trim(MEDS_FIELD(fld))
          error stop 'met_driver: a required forcing variable is missing'
       end if

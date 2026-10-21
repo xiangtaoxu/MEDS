@@ -104,7 +104,8 @@ contains
       if (vstat == MET_OK) then
          select case (fcfg%format)
          case (MET_BACKEND_CONST)                                  ! the reference climate: no file
-            src%ngrid = 1_ik ; src%nrec = 0_ik
+            src%ngrid = 1_ik
+            src%nrec = 0_ik
          case (MET_BACKEND_ED_ERA5LAND)
             call archive_source_open(src, vstat, why, run_start, run_end, cells)
          case default                                              ! MET_BACKEND_ED_DEFAULT
@@ -117,7 +118,10 @@ contains
          !      path -- a later create/open of the same file then fails with a bare "permission      !
          !      denied" that points nowhere near the real cause. ------------------------------------!
          call met_close(src)
-         if (present(stat)) then ; stat = vstat ; return ; end if
+         if (present(stat)) then
+            stat = vstat
+            return
+         end if
          !----- The reason is printed, then a fixed stop code: ifx 2026 garbles a stop code that is  !
          !      not a constant (stray bytes, a truncated text, exit status 128). -----------------!
          write(*,'(1x,a)') trim(why)
@@ -140,7 +144,8 @@ contains
       if (.not. ok) then
          write(*,'(2a)') ' met_open: [forcing].co2_file = ', trim(src%fcfg%co2_file)
          write(*,'(2a)') '   ', trim(msg)
-         stat = MET_ERR_CO2_FILE ; return
+         stat = MET_ERR_CO2_FILE
+         return
       end if
       if (present(run_start) .and. present(run_end)) then
          if (.not. co2_series_covers(src%co2, run_start, run_end)) then
@@ -149,7 +154,8 @@ contains
             write(*,'(4a)') '   file ', time_to_string(src%co2%first_start), ' .. ',               &
                             time_to_string(co2_series_end(src%co2))
             write(*,'(a)')  '   MEDS does not extrapolate CO2: extend the file, or shorten the run.'
-            stat = MET_ERR_CO2_NOT_COVERED ; return
+            stat = MET_ERR_CO2_NOT_COVERED
+            return
          end if
       end if
    end subroutine open_co2
@@ -166,12 +172,14 @@ contains
       integer(ik),        intent(in)  :: cell
       real(wp),           intent(in)  :: latitude_deg, longitude_deg, elevation_m
       cur%cell = cell
-      cur%latitude_deg = latitude_deg ; cur%longitude_deg = longitude_deg
+      cur%latitude_deg = latitude_deg
+      cur%longitude_deg = longitude_deg
       cur%elevation_m  = elevation_m
       cur%grid_elevation_m = src%fcfg%grid_elevation
       if (src%backend == MET_BACKEND_ED_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
       if (src%backend == MET_BACKEND_CONST) then
-         cur%rec_prev = met_record_t() ; cur%rec_next = met_record_t()
+         cur%rec_prev = met_record_t()
+         cur%rec_next = met_record_t()
          return
       end if
       call load_bracket(src, cur, src%rec_first)
@@ -239,10 +247,18 @@ contains
       !----- incremental cursor from the current bracket (cheap for a forward march). --------!
       i = max(1_ik, cur%irec_prev)
       do while (i < src%nrec - 1_ik)
-         if (src%time_sec(i + 1_ik) <= now_sec) then ; i = i + 1_ik ; else ; exit ; end if
+         if (src%time_sec(i + 1_ik) <= now_sec) then
+            i = i + 1_ik
+         else
+            exit
+         end if
       end do
       do while (i > 1_ik)
-         if (src%time_sec(i) > now_sec) then ; i = i - 1_ik ; else ; exit ; end if
+         if (src%time_sec(i) > now_sec) then
+            i = i - 1_ik
+         else
+            exit
+         end if
       end do
       if (i /= cur%irec_prev) call load_bracket(src, cur, i)
       !----- Refresh the DAYTIME clearness memory the longwave synthesis falls back on after         !
@@ -280,8 +296,10 @@ contains
       type(met_cursor_t), intent(in) :: cur
       type(met_record_t) :: r
       select case (src%fcfg%avg_convention)
-      case (METAVG_BEGIN) ; r = cur%rec_prev
-      case default        ; r = cur%rec_next            ! METAVG_END (ERA5-Land) + fallback
+      case (METAVG_BEGIN)
+         r = cur%rec_prev
+      case default
+         r = cur%rec_next            ! METAVG_END (ERA5-Land) + fallback
       end select
    end function interval_mean_record
 
@@ -318,7 +336,8 @@ contains
          !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
          now_sec = file_lookup_sec(src, now)
          if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
-            tprev = src%time_sec(src%irec_cycle_last) ; tnext = tprev + src%dt_forcing
+            tprev = src%time_sec(src%irec_cycle_last)
+            tnext = tprev + src%dt_forcing
          else
             tprev = src%time_sec(cur%irec_prev)
             tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
@@ -395,7 +414,8 @@ contains
       type(met_source_t), intent(inout)  :: src
       integer(c_int) :: st
       if (src%backend == MET_BACKEND_ED_DEFAULT .and. src%ncid >= 0_ik) then
-         st = nc_close(int(src%ncid, c_int)) ; call nc_check(st, 'met_close: nc_close')
+         st = nc_close(int(src%ncid, c_int))
+         call nc_check(st, 'met_close: nc_close')
          src%ncid = -1_ik
       end if
       if (allocated(src%time_sec)) deallocate(src%time_sec)
@@ -406,7 +426,10 @@ contains
       if (allocated(src%series)) deallocate(src%series)
       src%series_col = 0_ik
       call co2_series_free(src%co2)
-      src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_head = 0_ik ; src%n_loads = 0_ik
+      src%buffer%year = 0_ik
+      src%carry_rec = 0_ik
+      src%n_head = 0_ik
+      src%n_loads = 0_ik
    end subroutine met_close
 
    !----- Load rec_prev = record(irec), rec_next = record(irec+1) (clamped at EOF). When the      !
@@ -458,9 +481,12 @@ contains
       !      relative humidity both go through the model's liquid-water saturation curve           !
       !      (docs/science/forcing.md eq. (11)). ---------------------------------------------------!
       select case (src%humidity)
-      case (HUMIDITY_RHAIR) ; rec%qair = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
-      case (HUMIDITY_TDEW)  ; rec%qair = dewpoint_to_specific_humidity(humidity_value, rec%psurf_pa)
-      case default          ; rec%qair = humidity_value
+      case (HUMIDITY_RHAIR)
+         rec%qair = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
+      case (HUMIDITY_TDEW)
+         rec%qair = dewpoint_to_specific_humidity(humidity_value, rec%psurf_pa)
+      case default
+         rec%qair = humidity_value
       end select
       call assert_finite(rec%wind, 'Wind', irec, src%grid_index)
       call assert_finite(rec%rainf, 'Rainf', irec, src%grid_index)
@@ -477,7 +503,9 @@ contains
             real(wp) :: dz, gamma, t_grid, p_grid, q_grid
             dz     = cur%elevation_m - cur%grid_elevation_m       ! + when site is higher
             gamma  = monthly_lapse_rate(src%fcfg%lapse_rate_tair, rec%when%month)
-            t_grid = rec%tair_k ; p_grid = rec%psurf_pa ; q_grid = rec%qair   ! capture BEFORE overwrite
+            t_grid = rec%tair_k
+            p_grid = rec%psurf_pa
+            q_grid = rec%qair   ! capture BEFORE overwrite
             rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, gamma)
             rec%tair_k   = lapse_air_temperature(t_grid, dz, gamma)
             !----- Relative humidity is held across the lapse: a measured one is used directly, and a  !
@@ -519,9 +547,12 @@ contains
       real(wp) :: stamp_sec, start_sec, factor
       stamp_sec = seconds_into_day(when)
       select case (src%fcfg%avg_convention)
-      case (METAVG_END)    ; start_sec = stamp_sec - src%dt_forcing
-      case (METAVG_BEGIN)  ; start_sec = stamp_sec
-      case (METAVG_CENTER) ; start_sec = stamp_sec - 0.5_wp * src%dt_forcing
+      case (METAVG_END)
+         start_sec = stamp_sec - src%dt_forcing
+      case (METAVG_BEGIN)
+         start_sec = stamp_sec
+      case (METAVG_CENTER)
+         start_sec = stamp_sec - 0.5_wp * src%dt_forcing
       case default
          cosz = met_solar_cosz(when, stamp_sec, cur%latitude_deg, cur%longitude_deg)
          return

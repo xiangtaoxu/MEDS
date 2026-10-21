@@ -116,11 +116,16 @@ contains
       integer(ik), intent(in)       :: stat
       character(len=:), allocatable :: msg
       select case (stat)
-      case (MAP_OK)       ; msg = 'read'
-      case (MAP_ERR_OPEN) ; msg = 'cannot be opened'
-      case (MAP_ERR_GRID) ; msg = 'is not on the forcing grid (its lat and lon must be the static file''s)'
-      case (MAP_ERR_VAR)  ; msg = 'does not hold the variable (or its layer dimension)'
-      case default        ; msg = 'cannot be read'
+      case (MAP_OK)
+         msg = 'read'
+      case (MAP_ERR_OPEN)
+         msg = 'cannot be opened'
+      case (MAP_ERR_GRID)
+         msg = 'is not on the forcing grid (its lat and lon must be the static file''s)'
+      case (MAP_ERR_VAR)
+         msg = 'does not hold the variable (or its layer dimension)'
+      case default
+         msg = 'cannot be read'
       end select
    end function map_status_message
 
@@ -142,9 +147,11 @@ contains
       msg = ''
       if (soil_maps_on(opts)) then
          inp%soil = .true.
-         call need(opts%soil_depth_map, 'soil_depth', '', v) ; if (len(msg) > 0) return
+         call need(opts%soil_depth_map, 'soil_depth', '', v)
+         if (len(msg) > 0) return
          inp%soil_depth = v(1, :)
-         call need(opts%soil_depth_map, 'bc_class', '', v) ; if (len(msg) > 0) return
+         call need(opts%soil_depth_map, 'bc_class', '', v)
+         if (len(msg) > 0) return
          inp%bc_class = v(1, :)
          do k = 1_ik, cells%ncell
             if (all(nint(inp%bc_class(k), ik) /= [MAP_BC_FREE_DRAIN, MAP_BC_LEAKY, MAP_BC_SEALED, MAP_BC_AQUIFER])) then
@@ -152,7 +159,8 @@ contains
                return
             end if
          end do
-         call need(opts%soil_depth_map, 'f_leak', '', v) ; if (len(msg) > 0) return
+         call need(opts%soil_depth_map, 'f_leak', '', v)
+         if (len(msg) > 0) return
          inp%f_leak = v(1, :)
          do k = 1_ik, cells%ncell
             if (nint(inp%bc_class(k), ik) == MAP_BC_LEAKY .and. .not. (inp%f_leak(k) > 0.0_wp .and.           &
@@ -162,7 +170,8 @@ contains
                return
             end if
          end do
-         call need(opts%soil_depth_map, 'deep_temp', '', v) ; if (len(msg) > 0) return
+         call need(opts%soil_depth_map, 'deep_temp', '', v)
+         if (len(msg) > 0) return
          inp%deep_temp = v(1, :)
 
          !----- The layers: the texture and the chemistry maps must share them. ------------------!
@@ -172,33 +181,44 @@ contains
          if (len(msg) > 0) return
          if (size(top_chem) /= size(inp%layer_top)) then
             msg = 'soil maps '//trim(opts%soil_texture_map)//' and '//trim(opts%soil_chemistry_map)// &
-                  ' do not have the same layers' ; return
+                  ' do not have the same layers'
+            return
          end if
          if (any(top_chem /= inp%layer_top) .or. any(bottom_chem /= inp%layer_bottom)) then
             msg = 'soil maps '//trim(opts%soil_texture_map)//' and '//trim(opts%soil_chemistry_map)// &
-                  ' do not have the same layers' ; return
+                  ' do not have the same layers'
+            return
          end if
          allocate(inp%texture(size(inp%layer_top), cells%ncell))
-         call need(opts%soil_texture_map, 'sand', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'sand', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%sand = v
-         call need(opts%soil_texture_map, 'silt', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'silt', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%silt = v
-         call need(opts%soil_texture_map, 'clay', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'clay', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%clay = v
-         call need(opts%soil_texture_map, 'bulk_density', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'bulk_density', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%bulk_density = v
-         call need(opts%soil_texture_map, 'coarse_fragments', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'coarse_fragments', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%coarse_frag = v
-         call need(opts%soil_chemistry_map, 'organic_carbon', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_chemistry_map, 'organic_carbon', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%org_carbon = v
-         call need(opts%soil_chemistry_map, 'cec', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_chemistry_map, 'cec', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%cec = v
-         call need(opts%soil_chemistry_map, 'ph_h2o', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_chemistry_map, 'ph_h2o', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%ph = v
       end if
       if (len_trim(opts%chave_e_map) > 0) then
          inp%chave = .true.
-         call need(opts%chave_e_map, 'chave_e', '', v) ; if (len(msg) > 0) return
+         call need(opts%chave_e_map, 'chave_e', '', v)
+         if (len(msg) > 0) return
          inp%chave_e = v(1, :)
       end if
 
@@ -211,11 +231,13 @@ contains
          integer(ik) :: st, c
          call read_cells(trim(path), var, layer_dim, static_path, cells, values, st)
          if (st /= MAP_OK) then
-            msg = 'map '//trim(path)//' '//map_status_message(st)//': '//var ; return
+            msg = 'map '//trim(path)//' '//map_status_message(st)//': '//var
+            return
          end if
          do c = 1_ik, cells%ncell
             if (any(ieee_is_nan(values(:, c)))) then
-               msg = 'map '//trim(path)//': '//var//' has no value at '//cell_name(c) ; return
+               msg = 'map '//trim(path)//': '//var//' has no value at '//cell_name(c)
+               return
             end if
          end do
       end subroutine need
@@ -234,12 +256,14 @@ contains
          if (st == NC_NOERR) st = nc_inq_varid_f(ncid, SOIL_LAYER_BOUNDS, vid)
          if (st == NC_NOERR) then
             allocate(b(2, n))
-            start2 = 0_c_size_t ; count2 = [n, 2_c_size_t]
+            start2 = 0_c_size_t
+            count2 = [n, 2_c_size_t]
             st = nc_get_vara_double(ncid, vid, start2, count2, b)
          end if
          st_close = nc_close(ncid)
          if (st /= NC_NOERR .or. st_close /= NC_NOERR) return
-         top = real(b(1, :), wp) ; bottom = real(b(2, :), wp)
+         top = real(b(1, :), wp)
+         bottom = real(b(2, :), wp)
          msg = ''
       end subroutine layer_bounds
 
@@ -282,7 +306,8 @@ contains
 
       if (inp%soil) then
          associate (sc => cfg%soil_column)
-            sc%depth = inp%soil_depth(k) ; sc%n_layer_bottoms = 0_ik
+            sc%depth = inp%soil_depth(k)
+            sc%n_layer_bottoms = 0_ik
             sc%retention = SOIL_RETENTION_VG
             call soil_column_layers(sc, bottoms, n)
             top = 0.0_wp
@@ -299,10 +324,17 @@ contains
             sc%n_layer_values = n
          end associate
          select case (nint(inp%bc_class(k), ik))
-         case (MAP_BC_AQUIFER) ; cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
-         case (MAP_BC_LEAKY)   ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
-         case (MAP_BC_SEALED)  ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
-         case default      ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 1.0_wp
+         case (MAP_BC_AQUIFER)
+            cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
+         case (MAP_BC_LEAKY)
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = inp%f_leak(k)
+         case (MAP_BC_SEALED)
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = 0.0_wp
+         case default
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = 1.0_wp
          end select
          call soil_column_params(cfg%soil_column, soil)
          cfg%energy%deep_temp  = inp%deep_temp(k)
@@ -321,8 +353,14 @@ contains
       real(wp)    :: w, wsum, hi
       integer(ik) :: m, nm
       nm = size(inp%layer_top, kind=ik)
-      tex%sand = 0.0_wp ; tex%silt = 0.0_wp ; tex%clay = 0.0_wp ; tex%org_carbon = 0.0_wp
-      tex%cec  = 0.0_wp ; tex%ph   = 0.0_wp ; tex%bulk_density = 0.0_wp ; tex%coarse_frag = 0.0_wp
+      tex%sand = 0.0_wp
+      tex%silt = 0.0_wp
+      tex%clay = 0.0_wp
+      tex%org_carbon = 0.0_wp
+      tex%cec  = 0.0_wp
+      tex%ph   = 0.0_wp
+      tex%bulk_density = 0.0_wp
+      tex%coarse_frag = 0.0_wp
       wsum = 0.0_wp
       do m = 1_ik, nm
          hi = bottom
@@ -341,9 +379,14 @@ contains
             tex%coarse_frag  = tex%coarse_frag  + w * t%coarse_frag
          end associate
       end do
-      tex%sand = tex%sand / wsum ; tex%silt = tex%silt / wsum ; tex%clay = tex%clay / wsum
-      tex%org_carbon = tex%org_carbon / wsum ; tex%cec = tex%cec / wsum ; tex%ph = tex%ph / wsum
-      tex%bulk_density = tex%bulk_density / wsum ; tex%coarse_frag = tex%coarse_frag / wsum
+      tex%sand = tex%sand / wsum
+      tex%silt = tex%silt / wsum
+      tex%clay = tex%clay / wsum
+      tex%org_carbon = tex%org_carbon / wsum
+      tex%cec = tex%cec / wsum
+      tex%ph = tex%ph / wsum
+      tex%bulk_density = tex%bulk_density / wsum
+      tex%coarse_frag = tex%coarse_frag / wsum
    end function layer_texture
 
    !=======================================================================================!
@@ -391,28 +434,42 @@ contains
       real(c_double), allocatable :: band(:,:,:)
       real(wp) :: fill, missing, scale, offset
 
-      allocate(values(1, cells%ncell)) ; values = ieee_value(1.0_wp, ieee_quiet_nan)
+      allocate(values(1, cells%ncell))
+      values = ieee_value(1.0_wp, ieee_quiet_nan)
       call era5land_same_grid(path, static_path, stat)
       if (stat /= ERA_OK) then
-         stat = merge(MAP_ERR_OPEN, MAP_ERR_GRID, stat == ERA_ERR_OPEN) ; return
+         stat = merge(MAP_ERR_OPEN, MAP_ERR_GRID, stat == ERA_ERR_OPEN)
+         return
       end if
       stat = MAP_ERR_OPEN
-      st = nc_open_f(trim(path), NC_NOWRITE, ncid) ; if (st /= NC_NOERR) return
+      st = nc_open_f(trim(path), NC_NOWRITE, ncid)
+      if (st /= NC_NOERR) return
       stat = MAP_ERR_VAR
       st = nc_inq_varid_f(ncid, trim(var), vid)
-      if (st /= NC_NOERR) then ; st = nc_close(ncid) ; return ; end if
+      if (st /= NC_NOERR) then
+         st = nc_close(ncid)
+         return
+      end if
       nlayer = 1_ik
       if (len_trim(layer_dim) > 0) then
          st = nc_inq_dimlen_f(ncid, trim(layer_dim), nlayer_c)
-         if (st /= NC_NOERR) then ; st = nc_close(ncid) ; return ; end if
+         if (st /= NC_NOERR) then
+            st = nc_close(ncid)
+            return
+         end if
          nlayer = int(nlayer_c, ik)
       end if
       if (cells%ncell == 0_ik) then
-         st = nc_close(ncid) ; deallocate(values) ; allocate(values(nlayer, 0)) ; stat = MAP_OK ; return
+         st = nc_close(ncid)
+         deallocate(values)
+         allocate(values(nlayer, 0))
+         stat = MAP_OK
+         return
       end if
 
       !----- The band of rows the cells span, every column: one hyperslab, x(lon, lat, layer). ------!
-      r0 = minval(cells%row) ; nr = maxval(cells%row) - r0 + 1_ik
+      r0 = minval(cells%row)
+      nr = maxval(cells%row) - r0 + 1_ik
       allocate(band(cells%nlon, nr, nlayer))
       if (len_trim(layer_dim) > 0) then
          start3 = [0_c_size_t, int(r0, c_size_t), 0_c_size_t]
@@ -423,14 +480,18 @@ contains
          count2 = [int(nr, c_size_t), int(cells%nlon, c_size_t)]
          st = nc_get_vara_double(ncid, vid, start2, count2, band)
       end if
-      if (st /= NC_NOERR) then ; st = nc_close(ncid) ; return ; end if
+      if (st /= NC_NOERR) then
+         st = nc_close(ncid)
+         return
+      end if
       fill    = attribute(ncid, vid, '_FillValue')
       missing = attribute(ncid, vid, 'missing_value')
       scale   = attribute(ncid, vid, 'scale_factor')
       offset  = attribute(ncid, vid, 'add_offset')
       st = nc_close(ncid)
 
-      deallocate(values) ; allocate(values(nlayer, cells%ncell))
+      deallocate(values)
+      allocate(values(nlayer, cells%ncell))
       do k = 1_ik, cells%ncell
          do l = 1_ik, nlayer
             values(l, k) = real(band(cells%col(k) + 1_ik, cells%row(k) - r0 + 1_ik, l), wp)

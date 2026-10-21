@@ -73,7 +73,9 @@ contains
 
       stat = MET_OK
       src%cycle_anchor = src%fcfg%recycle_start
-      src%n_cycle_years = 0_ik ; src%irec_cycle_first = 0_ik ; src%irec_cycle_last = 0_ik
+      src%n_cycle_years = 0_ik
+      src%irec_cycle_first = 0_ik
+      src%irec_cycle_last = 0_ik
       if (.not. src%fcfg%recycle) return
 
       !----- Whole-year span. Re-checked here (not only in validate_config) so a driver built     !
@@ -84,7 +86,8 @@ contains
          write(*,'(4a)') ' met_open: recycle window ', time_to_string(src%fcfg%recycle_start),   &
                          ' .. ', time_to_string(src%fcfg%recycle_end)
          write(*,'(a)')  '   is not an exact whole number of calendar years.'
-         stat = MET_ERR_WINDOW_NOT_WHOLE_YEARS ; return
+         stat = MET_ERR_WINDOW_NOT_WHOLE_YEARS
+         return
       end if
 
       start_sec = seconds_between(src%base_time, src%fcfg%recycle_start)
@@ -95,7 +98,8 @@ contains
       !      file stamped 01:00:00 is reported, with both values, rather than quietly re-derived.   !
       do i = 1_ik, src%nrec
          if (abs(src%time_sec(i) - start_sec) <= REC_MATCH_TOL) then
-            src%irec_cycle_first = i ; exit
+            src%irec_cycle_first = i
+            exit
          end if
       end do
       if (src%irec_cycle_first == 0_ik) then
@@ -106,14 +110,18 @@ contains
          write(*,'(a)')  '   Set recycle_start to an actual record stamp -- MEDS does not guess it. Note'
          write(*,'(a)')  '   avg_convention="end" files (ERA5-Land) stamp the END of each interval, so the'
          write(*,'(a)')  '   first record of a calendar year is 01:00:00 for hourly data, not 00:00:00.'
-         stat = MET_ERR_START_NOT_A_RECORD ; return
+         stat = MET_ERR_START_NOT_A_RECORD
+         return
       end if
 
       !----- The file must cover the whole window, i.e. hold a record in the LAST interval        !
       !      below recycle_end. Without that the cycle has a hole at its far edge and the seam      !
       !      bracket below would interpolate across it. --------------------------------------------!
       do i = src%nrec, src%irec_cycle_first, -1_ik
-         if (src%time_sec(i) < end_sec - REC_MATCH_TOL) then ; src%irec_cycle_last = i ; exit ; end if
+         if (src%time_sec(i) < end_sec - REC_MATCH_TOL) then
+            src%irec_cycle_last = i
+            exit
+         end if
       end do
       !----- NESTED, not a single .or.: Fortran does not guarantee short-circuit evaluation, so a  !
       !      combined test would index time_sec(irec_cycle_last) even when the loop above left it 0. !
@@ -125,7 +133,8 @@ contains
                          time_to_string(src%fcfg%recycle_end)
          write(*,'(2a)') '   last record in the file: ',                                         &
                          time_to_string(time_advance_seconds(src%base_time, src%time_sec(src%nrec)))
-         stat = MET_ERR_WINDOW_NOT_COVERED ; return
+         stat = MET_ERR_WINDOW_NOT_COVERED
+         return
       end if
 
       write(*,'(a,i0,4a)') ' force : recycling ', src%n_cycle_years, ' calendar year(s), ',      &
@@ -184,10 +193,15 @@ contains
       type(met_source_t), intent(in)  :: src
       real(wp),           intent(in) :: s
       integer(ik) :: lo, hi, mid
-      lo = 1_ik ; hi = src%nrec
+      lo = 1_ik
+      hi = src%nrec
       do while (lo < hi)
          mid = (lo + hi) / 2_ik
-         if (src%time_sec(mid) > s + REC_MATCH_TOL) then ; hi = mid ; else ; lo = mid + 1_ik ; end if
+         if (src%time_sec(mid) > s + REC_MATCH_TOL) then
+            hi = mid
+         else
+            lo = mid + 1_ik
+         end if
       end do
       r = lo
    end function first_record_after
@@ -196,9 +210,12 @@ contains
    pure integer(ik) function humidity_field(form) result(fld)
       integer(ik), intent(in) :: form
       select case (form)
-      case (HUMIDITY_RHAIR) ; fld = FLD_RHAIR
-      case (HUMIDITY_TDEW)  ; fld = FLD_TDEW
-      case default          ; fld = FLD_QAIR
+      case (HUMIDITY_RHAIR)
+         fld = FLD_RHAIR
+      case (HUMIDITY_TDEW)
+         fld = FLD_TDEW
+      case default
+         fld = FLD_QAIR
       end select
    end function humidity_field
 
@@ -238,13 +255,15 @@ contains
             write(*,'(a,f12.3,a)') '   but the file record spacing is ', dt_file, ' s.'
             write(*,'(a)')         '   dt_forcing places interval midpoints, disaggregates shortwave and'
             write(*,'(a)')         '   brackets the recycle seam. A wrong value mis-times all three.'
-            vstat = MET_ERR_DT_MISMATCH ; return
+            vstat = MET_ERR_DT_MISMATCH
+            return
          end if
          do i = 3_ik, src%nrec
             if (abs((src%time_sec(i) - src%time_sec(i-1)) - dt_file) > REC_MATCH_TOL) then
                write(*,'(a,i0,a)') ' met_open: forcing record spacing changes at record ', i, '.'
                write(*,'(a)')      '   MEDS assumes a uniform time axis.'
-               vstat = MET_ERR_AXIS_NOT_UNIFORM ; return
+               vstat = MET_ERR_AXIS_NOT_UNIFORM
+               return
             end if
          end do
       end if
@@ -255,7 +274,8 @@ contains
          if (trim(attr) /= trim(avg_convention_name(src%fcfg%avg_convention))) then
             write(*,'(4a)') ' met_open: file avg_convention = "', trim(attr),                     &
                             '", config = "', trim(avg_convention_name(src%fcfg%avg_convention))//'"'
-            vstat = MET_ERR_ATTR_MISMATCH ; return
+            vstat = MET_ERR_ATTR_MISMATCH
+            return
          end if
       end if
 
@@ -266,13 +286,15 @@ contains
             write(*,'(a)') ' met_open: the file carries TOTAL shortwave (sw_input_kind = "total")'
             write(*,'(a)') '   but [forcing].sw_partition = "passthrough", which expects the four'
             write(*,'(a)') '   component streams. The run would read fields the file does not have.'
-            vstat = MET_ERR_ATTR_MISMATCH ; return
+            vstat = MET_ERR_ATTR_MISMATCH
+            return
          end if
          if (trim(attr) == 'components' .and. src%fcfg%sw_partition /= SWPART_PASSTHROUGH) then
             write(*,'(a)') ' met_open: the file already carries the four shortwave components'
             write(*,'(a)') '   (sw_input_kind = "components") but [forcing].sw_partition asks for a'
             write(*,'(a)') '   split. Partitioning an already-split stream double-counts the beam.'
-            vstat = MET_ERR_ATTR_MISMATCH ; return
+            vstat = MET_ERR_ATTR_MISMATCH
+            return
          end if
       end if
 
@@ -286,7 +308,8 @@ contains
          if (trim(attr) /= 'UTC') then
             write(*,'(3a)') ' met_open: the forcing file''s time_zone attribute is "', trim(attr), '".'
             write(*,'(a)')  '   MEDS runs in UTC: build the file on a UTC clock and set time_zone = "UTC".'
-            vstat = MET_ERR_NOT_UTC ; return
+            vstat = MET_ERR_NOT_UTC
+            return
          end if
       end if
 
@@ -304,7 +327,8 @@ contains
          if (trim(attr) /= trim(height_above_name(src%fcfg%height_above))) then
             write(*,'(4a)') ' met_open: file height_above = "', trim(attr), '", config = "',        &
                             trim(height_above_name(src%fcfg%height_above))//'"'
-            vstat = MET_ERR_ATTR_MISMATCH ; return
+            vstat = MET_ERR_ATTR_MISMATCH
+            return
          end if
       end if
 
@@ -317,7 +341,8 @@ contains
             write(*,'(a)') '   [forcing].co2_source ("const" or "file"), never from the met file.'
             write(*,'(a)') '   Remove it (ncks -x -v CO2air in.nc out.nc) or rebuild the file with'
             write(*,'(a)') '   make_forcing_file.py, which does not write it.'
-            vstat = MET_ERR_CO2_IN_MET_FILE ; return
+            vstat = MET_ERR_CO2_IN_MET_FILE
+            return
          end if
       end block
    end subroutine validate_file_against_config
@@ -351,8 +376,10 @@ contains
       integer(ik), intent(in) :: code
       character(len=8) :: nm
       select case (code)
-      case (METAVG_BEGIN) ; nm = 'begin'
-      case default        ; nm = 'end'
+      case (METAVG_BEGIN)
+         nm = 'begin'
+      case default
+         nm = 'end'
       end select
    end function avg_convention_name
 

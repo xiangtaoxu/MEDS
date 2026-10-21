@@ -81,11 +81,16 @@ contains
       n = poly%cohort%n
       if (n <= 0_ik) return
       select case (wkind)
-      case (W_NPLANT)     ; w(1:n) = poly%cohort%nplant(1:n)
-      case (W_LEAF_AREA)  ; w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%leaf_area(1:n)
-      case (W_BASAL_AREA) ; w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%basal_area(1:n)
-      case (W_AGB)        ; w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%agb(1:n)
-      case default        ; w(1:n) = 1.0_wp                       ! W_NONE
+      case (W_NPLANT)
+         w(1:n) = poly%cohort%nplant(1:n)
+      case (W_LEAF_AREA)
+         w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%leaf_area(1:n)
+      case (W_BASAL_AREA)
+         w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%basal_area(1:n)
+      case (W_AGB)
+         w(1:n) = poly%cohort%nplant(1:n) * poly%cohort%agb(1:n)
+      case default
+         w(1:n) = 1.0_wp                       ! W_NONE
       end select
       where (x(1:n) == MISSING_VALUE) w(1:n) = 0.0_wp
    end subroutine cohort_weight
@@ -109,21 +114,26 @@ contains
       real(wp), optional, intent(in)  :: scale
       real(wp)    :: w(max(poly%cohort%n, 1_ik)), share(max(poly%patch%n, 1_ik)), num, den, sc
       integer(ik) :: ip, i0, i1, nw
-      sc = 1.0_wp ; if (present(scale)) sc = scale
+      sc = 1.0_wp
+      if (present(scale)) sc = scale
       call cohort_weight(poly, wkind, x, w, nw)
       call patch_polygon_areas(poly, share)
-      num = 0.0_wp ; den = 0.0_wp
+      num = 0.0_wp
+      den = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
+         i0 = poly%patch%cohort_offset(ip)
+         i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          if (i1 < i0) cycle
          num = num + share(ip) * sum(w(i0:i1) * x(i0:i1)) * sc
          if (mean) den = den + share(ip) * sum(w(i0:i1))
       end do
       if (mean) then
          valid = (abs(den) > tiny_num)
-         val   = 0.0_wp ; if (valid) val = num / den
+         val   = 0.0_wp
+         if (valid) val = num / den
       else
-         valid = .true. ; val = num
+         valid = .true.
+         val = num
       end if
    end subroutine reduce_cohort_to_polygon
 
@@ -144,19 +154,26 @@ contains
       real(wp), optional, intent(in)  :: scale
       real(wp)    :: w(max(poly%cohort%n, 1_ik)), num, den, sc
       integer(ik) :: ip, i0, i1, nw
-      sc = 1.0_wp ; if (present(scale)) sc = scale
+      sc = 1.0_wp
+      if (present(scale)) sc = scale
       call cohort_weight(poly, wkind, x, w, nw)
       n_out = poly%patch%n
-      out(1:max(n_out,1_ik)) = 0.0_wp ; valid(1:max(n_out,1_ik)) = .false.
+      out(1:max(n_out,1_ik)) = 0.0_wp
+      valid(1:max(n_out,1_ik)) = .false.
       do ip = 1_ik, n_out
-         i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
+         i0 = poly%patch%cohort_offset(ip)
+         i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          if (i1 < i0) cycle                                   ! empty patch -> _FillValue
          num = sum(w(i0:i1) * x(i0:i1)) * sc
          if (mean) then
             den = sum(w(i0:i1))
-            if (abs(den) > tiny_num) then ; out(ip) = num / den ; valid(ip) = .true. ; end if
+            if (abs(den) > tiny_num) then
+               out(ip) = num / den
+               valid(ip) = .true.
+            end if
          else
-            out(ip) = num ; valid(ip) = .true.
+            out(ip) = num
+            valid(ip) = .true.
          end if
       end do
    end subroutine reduce_cohort_to_patch
@@ -179,12 +196,15 @@ contains
       real(wp)    :: w(max(poly%cohort%n, 1_ik)), sc, aw
       real(wp)    :: num(max(n_pft,1_ik)), den(max(n_pft,1_ik))
       integer(ik) :: ip, i0, i1, i, k, nw
-      sc = 1.0_wp ; if (present(scale)) sc = scale
+      sc = 1.0_wp
+      if (present(scale)) sc = scale
       call cohort_weight(poly, wkind, x, w, nw)
       n_out = n_pft
-      num = 0.0_wp ; den = 0.0_wp
+      num = 0.0_wp
+      den = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
+         i0 = poly%patch%cohort_offset(ip)
+         i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          aw = patch_polygon_area(poly, ip)
          do i = i0, i1
             k = poly%cohort%pft(i)
@@ -196,12 +216,14 @@ contains
       do k = 1_ik, n_pft
          if (mean) then
             valid(k) = (abs(den(k)) > tiny_num)
-            out(k)   = 0.0_wp ; if (valid(k)) out(k) = num(k) / den(k)
+            out(k)   = 0.0_wp
+            if (valid(k)) out(k) = num(k) / den(k)
          else
             !----- A SUM over a PFT with no members is a true 0 (that PFT contributes nothing),  !
             !      not a missing value -- reporting _FillValue there would break the closure       !
             !      sum_pft(agb_pft) == agb_site the moment a PFT goes locally extinct.             !
-            valid(k) = .true. ; out(k) = num(k)
+            valid(k) = .true.
+            out(k) = num(k)
          end if
       end do
    end subroutine reduce_cohort_to_pft
@@ -227,12 +249,15 @@ contains
       real(wp)    :: w(max(poly%cohort%n, 1_ik)), sc, aw
       real(wp)    :: num(max(n_class,1_ik)), den(max(n_class,1_ik))
       integer(ik) :: ip, i0, i1, i, k, nw
-      sc = 1.0_wp ; if (present(scale)) sc = scale
+      sc = 1.0_wp
+      if (present(scale)) sc = scale
       call cohort_weight(poly, wkind, x, w, nw)
       n_out = n_class
-      num = 0.0_wp ; den = 0.0_wp
+      num = 0.0_wp
+      den = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
+         i0 = poly%patch%cohort_offset(ip)
+         i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          aw = patch_polygon_area(poly, ip)
          do i = i0, i1
             k = dbh_class_index(poly%cohort%dbh(i), edges, n_class)
@@ -243,9 +268,11 @@ contains
       do k = 1_ik, n_class
          if (mean) then
             valid(k) = (abs(den(k)) > tiny_num)
-            out(k)   = 0.0_wp ; if (valid(k)) out(k) = num(k) / den(k)
+            out(k)   = 0.0_wp
+            if (valid(k)) out(k) = num(k) / den(k)
          else
-            valid(k) = .true. ; out(k) = num(k)
+            valid(k) = .true.
+            out(k) = num(k)
          end if
       end do
    end subroutine reduce_cohort_to_size
@@ -270,16 +297,19 @@ contains
       real(wp)    :: share(max(poly%patch%n, 1_ik)), num, den
       integer(ik) :: ip
       call patch_polygon_areas(poly, share)
-      num = 0.0_wp ; den = 0.0_wp
+      num = 0.0_wp
+      den = 0.0_wp
       do ip = 1_ik, poly%patch%n
          num = num + share(ip) * x(ip)
          den = den + share(ip)
       end do
       if (mean) then
          valid = (den > tiny_num)
-         val   = 0.0_wp ; if (valid) val = num / den
+         val   = 0.0_wp
+         if (valid) val = num / den
       else
-         valid = (poly%patch%n > 0_ik) ; val = num
+         valid = (poly%patch%n > 0_ik)
+         val = num
       end if
    end subroutine reduce_patch_to_polygon
 

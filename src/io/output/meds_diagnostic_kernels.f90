@@ -87,7 +87,10 @@ contains
       k = 1_ik
       if (n_class <= 0_ik) return
       do j = n_class, 1_ik, -1_ik
-         if (dbh >= edges(j)) then ; k = j ; return ; end if
+         if (dbh >= edges(j)) then
+            k = j
+            return
+         end if
       end do
    end function dbh_class_index
 

@@ -341,7 +341,9 @@ contains
       integer(ik) :: ncoh, npat, npft, ip, ic, nwin, slot, ns, meta_i(N_META_INT)
       real(wp)    :: meta_r(N_META_REAL)
 
-      ncoh = poly%cohort%n ; npat = poly%patch%n ; npft = poly%n_pft
+      ncoh = poly%cohort%n
+      npat = poly%patch%n
+      npft = poly%n_pft
       ns = poly%site%n
       nwin = int(size(poly%cohort%growth_hist, 1), ik)
       slot = polygon - 1_ik
@@ -439,10 +441,14 @@ contains
                real(wp) :: fsnow(npat, n_snow_layer_max, 5_ik)
                integer(ik) :: fnl(npat)
                do ip = 1_ik, npat
-                  fc(ip,1) = p%cas(ip)%can_enthalpy ; fc(ip,2) = p%cas(ip)%can_shv
-                  fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
-                  fw(ip,1) = p%soil_water(ip)%w_surface ; fw(ip,2) = p%soil_water(ip)%w_surface_energy
-                  fw(ip,3) = p%shed_water_rate(ip) ; fw(ip,4) = p%adapt_dt_last(ip)
+                  fc(ip,1) = p%cas(ip)%can_enthalpy
+                  fc(ip,2) = p%cas(ip)%can_shv
+                  fc(ip,3) = p%cas(ip)%can_co2
+                  fc(ip,4) = p%cas(ip)%can_temp
+                  fw(ip,1) = p%soil_water(ip)%w_surface
+                  fw(ip,2) = p%soil_water(ip)%w_surface_energy
+                  fw(ip,3) = p%shed_water_rate(ip)
+                  fw(ip,4) = p%adapt_dt_last(ip)
                   fw(ip,5) = p%shed_water_enth(ip)
                   fsoil(ip,:,1) = p%soil_water(ip)%theta(1:n_soil_layer_max)
                   fsoil(ip,:,2) = p%soil_energy(ip)%soil_energy(1:n_soil_layer_max)
@@ -510,7 +516,9 @@ contains
          integer(ik),      intent(in) :: n
          integer(c_size_t) :: st(1), ct(1)
          integer(ik)       :: x(1)
-         st = int(slot, c_size_t) ; ct = 1_c_size_t ; x = n
+         st = int(slot, c_size_t)
+         ct = 1_c_size_t
+         x = n
          call nc_check(nc_put_vara_int(sf%ncid, varid(name), st, ct, x), 'put '//name)
       end subroutine put_count
       !----- One double vector into the variable `name`: its first entries (a per-cohort, per-patch !
@@ -542,8 +550,14 @@ contains
          n = 1
          st(1) = int(slot, c_size_t)
          ct(1) = 1_c_size_t
-         if (present(row)) then ; n = n + 1 ; st(n) = int(row, c_size_t) ; ct(n) = 1_c_size_t ; end if
-         n = n + 1 ; st(n) = 0_c_size_t ; ct(n) = int(nx, c_size_t)
+         if (present(row)) then
+            n = n + 1
+            st(n) = int(row, c_size_t)
+            ct(n) = 1_c_size_t
+         end if
+         n = n + 1
+         st(n) = 0_c_size_t
+         ct(n) = int(nx, c_size_t)
       end subroutine where_to
       integer(c_int) function varid(name)
          character(len=*), intent(in) :: name
@@ -572,7 +586,8 @@ contains
       if (st == NC_NOERR) st = nc_inq_dimlen_f(ncid, 'polygon', n)
       if (st == NC_NOERR) then
          allocate(polygon_id(n))
-         start1 = 0_c_size_t ; count1 = n
+         start1 = 0_c_size_t
+         count1 = n
          st = nc_get_vara_int(ncid, vid, start1, count1, polygon_id)
       end if
       found = st == NC_NOERR
@@ -643,8 +658,10 @@ contains
       logical        :: tissue_energy_ok
       integer(c_size_t) :: nwin_file
 
-      found = .false. ; restart_time = meds_time_t()
-      tissue_water_ok = .true. ; tissue_temp_ok = .true.
+      found = .false.
+      restart_time = meds_time_t()
+      tissue_water_ok = .true.
+      tissue_temp_ok = .true.
       tissue_energy_ok = .true.
       if (present(fast_found)) fast_found = .false.
       region = present(polygon)
@@ -663,7 +680,9 @@ contains
 
       call gv_int(ncid, 'meta_int',  int(N_META_INT, ik),  meta_i)
       call gv_dbl(ncid, 'meta_real', int(N_META_REAL, ik), meta_r)
-      ncoh = meta_i(1) ; npat = meta_i(2) ; npft = meta_i(3)
+      ncoh = meta_i(1)
+      npat = meta_i(2)
+      npft = meta_i(3)
       if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
 
       !----- The sites: a file without the site axis holds one. ---------------------------------!
@@ -685,13 +704,15 @@ contains
             call make_site_surface(poly%site%surface(is), cfg)
          end if
       end do
-      poly%cohort%n = ncoh ; poly%patch%n = npat
+      poly%cohort%n = ncoh
+      poly%patch%n = npat
       poly%restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
       poly%restructure_new_year = trim(pending) == 'year'
       !----- Growth temperature: OPTIONAL, so a state file without it keeps the unseeded          !
       !      sentinel alloc_polygon set and the first slow step adopts that day's mean.  ------------!
       call gv_dbl_opt(ncid, 't_growth_avg', ns, poly%site%t_growth_avg(1:ns))
-      poly%next_cohort_id = meta_i(4) ; poly%next_patch_id = meta_i(5)
+      poly%next_cohort_id = meta_i(4)
+      poly%next_patch_id = meta_i(5)
       if (nc_inq_varid_f(ncid, 'site_area', vid) == NC_NOERR) then
          call gv_dbl(ncid, 'site_area', ns, poly%site%area(1:ns))
          !----- Each site's soil state is per layer of the column it was written on. -------------!
@@ -851,13 +872,21 @@ contains
                   logical  :: pond_enth_ok, shed_ok
                   integer(ik) :: fnl(npat)
                   call gv_dbl(ncid, 'cas_can_enthalpy', npat, fc)
-                  do ip = 1_ik, npat ; p%cas(ip)%can_enthalpy = fc(ip) ; end do
+                  do ip = 1_ik, npat
+                     p%cas(ip)%can_enthalpy = fc(ip)
+                  end do
                   call gv_dbl(ncid, 'cas_can_shv',       npat, fc)
-                  do ip = 1_ik, npat ; p%cas(ip)%can_shv      = fc(ip) ; end do
+                  do ip = 1_ik, npat
+                     p%cas(ip)%can_shv      = fc(ip)
+                  end do
                   call gv_dbl(ncid, 'cas_can_co2',       npat, fc)
-                  do ip = 1_ik, npat ; p%cas(ip)%can_co2      = fc(ip) ; end do
+                  do ip = 1_ik, npat
+                     p%cas(ip)%can_co2      = fc(ip)
+                  end do
                   call gv_dbl(ncid, 'cas_can_temp',      npat, fc)
-                  do ip = 1_ik, npat ; p%cas(ip)%can_temp     = fc(ip) ; end do
+                  do ip = 1_ik, npat
+                     p%cas(ip)%can_temp     = fc(ip)
+                  end do
                   call gv_dbl(ncid, 'soil_w_surface',    npat, fw1)
                   do ip = 1_ik, npat
                      p%soil_water(ip)%w_surface = fw1(ip)
@@ -873,7 +902,9 @@ contains
                   fsh = 0.0_wp
                   if (shed_ok) call gv_dbl(ncid, 'shed_water_rate', npat, fsh)
                   if (shed_ok) then
-                     do ip = 1_ik, npat ; p%shed_water_rate(ip) = fsh(ip) ; end do
+                     do ip = 1_ik, npat
+                        p%shed_water_rate(ip) = fsh(ip)
+                     end do
                   end if
                   !----- Its enthalpy: OPTIONAL. A file without it values the rate at the patch's canopy   !
                   !      air, the nearest the file has to the temperature of the tissues it left. -------!
@@ -887,7 +918,9 @@ contains
                   !----- The controller's warm start: OPTIONAL, a file without it cold-starts it. -------!
                   call gv_dbl_opt(ncid, 'adapt_dt_last', npat, p%adapt_dt_last(1:npat))
                   call gv_int(ncid, 'snow_nlayer', npat, fnl)
-                  do ip = 1_ik, npat ; p%snow(ip)%nlayer = fnl(ip) ; end do
+                  do ip = 1_ik, npat
+                     p%snow(ip)%nlayer = fnl(ip)
+                  end do
                   do ip = 1_ik, npat
                      call gv_dbl2_row(ncid, 'soil_theta',  ip, n_soil_layer_max, p%soil_water(ip)%theta(1:n_soil_layer_max))
                      call gv_dbl2_row(ncid, 'soil_energy', ip, n_soil_layer_max, p%soil_energy(ip)%soil_energy(1:n_soil_layer_max))
@@ -960,7 +993,8 @@ contains
                call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg,                &
                                          poly%site%surface(poly%patch%owner_site(ip)), t_birth, psi_birth)
                if (.not. tissue_temp_ok) then
-                  poly%cohort%leaf_temp(i) = t_birth ; poly%cohort%wood_temp(i) = t_birth
+                  poly%cohort%leaf_temp(i) = t_birth
+                  poly%cohort%wood_temp(i) = t_birth
                end if
                if (.not. tissue_water_ok) then
                   associate (hydro => cfg%pft%hydro(poly%cohort%pft(i)))
@@ -1011,9 +1045,19 @@ contains
          integer(c_size_t),     intent(out) :: st(3), ct(3)
          integer,               intent(out) :: nd
          nd = 0
-         if (region) then ; nd = 1 ; st(1) = int(slot, c_size_t) ; ct(1) = 1_c_size_t ; end if
-         if (present(row)) then ; nd = nd + 1 ; st(nd) = int(row - 1_ik, c_size_t) ; ct(nd) = 1_c_size_t ; end if
-         nd = nd + 1 ; st(nd) = 0_c_size_t ; ct(nd) = int(n, c_size_t)
+         if (region) then
+            nd = 1
+            st(1) = int(slot, c_size_t)
+            ct(1) = 1_c_size_t
+         end if
+         if (present(row)) then
+            nd = nd + 1
+            st(nd) = int(row - 1_ik, c_size_t)
+            ct(nd) = 1_c_size_t
+         end if
+         nd = nd + 1
+         st(nd) = 0_c_size_t
+         ct(nd) = int(n, c_size_t)
       end subroutine where_from
       subroutine gv_int(nc, name, n, out)        ! read [1:n] of an int variable by name
          integer(c_int),   intent(in)  :: nc
