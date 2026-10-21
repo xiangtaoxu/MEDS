@@ -194,10 +194,9 @@ write_state           = false           # write state checkpoints
 interval_years  = 50              # [yr] between checkpoints (and one at the end)
 
 # ------------------------------------------------------------------------------------------
-# The diagnostic output: time-averaged netCDF files <prefix>-<F|D|M|Y>[-<stamp>].nc, one per tier and
-# time chunk (docs/science/diagnostics.md). `meds_main --dump-io-config` writes a meds_io_config.toml
-# listing every variable, for the per-variable choice; the switches below are the coarse one. Later
-# wins: the registry's defaults, the axes, the groups, the tiers, the per-variable file.
+# The diagnostic output: netCDF files <prefix>-<F|D|M|Y>[-<stamp>].nc, one per tier and time chunk
+# (docs/science/diagnostics.md). Each variable is written at its default tiers unless io_config says
+# otherwise; `meds_main --dump-io-config` lists every variable, its default and the tiers it can be on.
 [output]
 enabled       = false           # write the diagnostics
 dir           = "out"           # directory
