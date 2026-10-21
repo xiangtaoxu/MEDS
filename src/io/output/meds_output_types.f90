@@ -266,7 +266,6 @@ module meds_output_types
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (layer x site, n_fast_sub) [m3/m3]
       logical,             allocatable :: fast_soil_live(:)        !< (layer x site) a layer of its site
       logical,             allocatable :: fast_soil_patch_live(:)  !< (layer x patch) a layer of its patch's site
-      real(wp),            allocatable :: fast_cohort_leaf_temp(:,:)   !< (cohort, n_fast_sub) per-cohort leaf temp [K]
       real(wp),            allocatable :: fast_cohort_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
       !< (cohort, n_fast_sub) per-cohort height [m] (tallest post-proc)
       real(wp),            allocatable :: fast_cohort_height(:,:)

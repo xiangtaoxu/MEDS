@@ -249,8 +249,6 @@ contains
       bufs%fast_soil_temp_patch(1:2,2)       = [282.0_wp, 283.0_wp]
       bufs%fast_soil_temp_patch(nl+1:nl+2,1) = [290.0_wp, 291.0_wp]         ! patch 2: 291, 292
       bufs%fast_soil_temp_patch(nl+1:nl+2,2) = [292.0_wp, 293.0_wp]
-      bufs%fast_cohort_leaf_temp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
-      bufs%fast_cohort_leaf_temp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
       bufs%fast_cohort_height(1:2,1) = [10.0_wp, 12.0_wp]                      ! slot1=10, slot2=12 (constant)
       bufs%fast_cohort_height(1:2,2) = [10.0_wp, 12.0_wp]
 
@@ -602,7 +600,7 @@ contains
       bufs%fast_site(PA_CAS_TEMP, :) = cas
       bufs%fast_patch(PA_CAS_TEMP, 1, :) = cas
       bufs%fast_soil_temp = 280.0_wp ; bufs%fast_soil_temp_patch = 280.0_wp
-      bufs%fast_cohort_leaf_temp = 285.0_wp ; bufs%fast_cohort_height = 10.0_wp
+      bufs%fast_cohort_height = 10.0_wp
    end subroutine stage_cas
 
    !----- One polygon's FAST staging as fast_dynamics sizes it (size_fast_staging): nsub sub-steps, !
@@ -623,11 +621,11 @@ contains
       do ip = 1_ik, np
          bufs%fast_soil_patch_live((ip - 1_ik) * nl + 1_ik:(ip - 1_ik) * nl + n_soil) = .true.
       end do
-      allocate(bufs%fast_cohort_leaf_temp(nc, nsub), bufs%fast_cohort_gpp(nc, nsub), bufs%fast_cohort_height(nc, nsub))
+      allocate(bufs%fast_cohort_gpp(nc, nsub), bufs%fast_cohort_height(nc, nsub))
       bufs%fast_forcing = 0.0_wp ; bufs%fast_site = 0.0_wp ; bufs%fast_patch = 0.0_wp
       bufs%fast_soil_temp = 0.0_wp ; bufs%fast_soil_water = 0.0_wp
       bufs%fast_soil_temp_patch = 0.0_wp ; bufs%fast_soil_water_patch = 0.0_wp
-      bufs%fast_cohort_leaf_temp = 0.0_wp ; bufs%fast_cohort_gpp = 0.0_wp ; bufs%fast_cohort_height = 0.0_wp
+      bufs%fast_cohort_gpp = 0.0_wp ; bufs%fast_cohort_height = 0.0_wp
       bufs%n_fast_sub = nsub ; bufs%fast_n_patch = np
    end subroutine alloc_fast_staging
 

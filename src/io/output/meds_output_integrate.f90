@@ -18,7 +18,7 @@ module meds_output_integrate
                                    DIM_SOIL, DIM_SOIL_PATCH, MISSING_VALUE, slab_col
    use meds_polygon_state_vars, only : polygon_t
    use meds_constants,     only : n_soil_layer_max
-   use meds_output_extract, only : SRC_F_CO0, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_COH_LEAF_TEMP, SRC_F_PA0,    &
+   use meds_output_extract, only : SRC_F_CO0, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_PA0,                         &
                                    SRC_F_SOIL_WATER, SRC_NONE, FLD_C_DIAG0, extract_fast_scalar, extract_variable
    implicit none
    private
@@ -433,8 +433,6 @@ contains
             slab(1:n) = bufs%fast_cohort_gpp(1:n, isub)
          case (SRC_F_COH_HEIGHT)
             slab(1:n) = bufs%fast_cohort_height(1:n, isub)
-         case (SRC_F_COH_LEAF_TEMP)
-            slab(1:n) = bufs%fast_cohort_leaf_temp(1:n, isub)
          case default   ! SRC_F_CO0 + CO_*: a row of the per-cohort diagnostic block
             if (allocated(bufs%fast_cohort_diag)) then
                slab(1:n) = bufs%fast_cohort_diag(1:n, src - SRC_F_CO0, isub)

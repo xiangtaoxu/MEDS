@@ -41,7 +41,7 @@ module meds_output_registry
                                      SRC_PY_WORK_REJ, SRC_PY_WORK_WATER_NSUB, SRC_PY_WORK_WATER_NEWTON,           &
                                      SRC_PY_WORK_WATER_NFAIL, SRC_PY_WORK_WATER_REJECT,                           &
                                      SRC_PY_WORK_RK45_RESCUE, SRC_PY_WORK_CLAMP_STAGE, SRC_F_SOIL_TEMP,           &
-                                     SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PA0, SRC_F_COH_LEAF_TEMP,                 &
+                                     SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PA0,                                      &
                                      SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0, FLD_C_DIAG0, FLD_P_DIAG0,        &
                                      FLD_PY_DIAG0, FLD_SI_DIAG0, FLD_SI_GROWTH_TEMP
    use meds_diag_vars,       only : N_CO_FAST_ROWS, N_PA_FAST_ROWS, N_PY_ROWS, N_SI_ROWS,                    &

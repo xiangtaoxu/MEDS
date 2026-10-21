@@ -52,7 +52,7 @@ module meds_output_extract
    public :: SRC_PY_WORK_RK45_RESCUE, SRC_PY_WORK_CLAMP_STAGE
    !----- FAST-tier sources (5000-5999): read from the fast loop's staging. ------------------!
    public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
-   public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0
+   public :: SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0
    public :: SRC_F_PY0, SRC_F_PA0
    !----- Per-site fields (6000-6999). -------------------------------------------------------!
    public :: FLD_SI_GROWTH_TEMP, FLD_SI_DIAG0
@@ -180,7 +180,6 @@ module meds_output_extract
    integer(ik), parameter :: SRC_F_PA0           = 5200_ik
    integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
    integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
-   integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_GPP       = 5021_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_HEIGHT    = 5022_ik  !< DIM_COHORT
    !----- The per-cohort diagnostic block's rows at the FAST tier, SRC_F_CO0 + CO_*, DIM_COHORT: the  !
