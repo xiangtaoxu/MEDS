@@ -1,29 +1,19 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_surface_maps -- every static per-cell map a run reads, in one place: no other module opens  !
-! a map (docs/configuration.md, Input maps).                                                        !
-!                                                                                          !
-! A map is a variable in a netCDF file on the forcing grid: the file's lat and lon axes are the     !
-! ED_ERA5land static file's, so a cell's value sits at the cell's own (row, col) and MEDS never     !
-! regrids. A 2-D map is (lat, lon); a layered one is (layer, lat, lon). A value the map does not    !
-! hold -- the variable's _FillValue or missing_value, or a NaN -- reads as NaN: filling gaps is the  !
-! product's job, not MEDS's, and the caller decides whether a missing value is an error. Packed     !
-! values (scale_factor, add_offset) are unpacked.                                                   !
-!                                                                                          !
-! A read takes the band of rows the cells span, every column, as one hyperslab: one read per       !
-! variable for a whole region, which also serves a box that crosses 180 degrees.                   !
-!                                                                                          !
-! The surface inputs ([maps]; docs/science/soil_biophysics.md §The column from the soil maps):  !
-! read_map_inputs reads the soil maps and the Chave site index at every cell once, and          !
-! apply_map_inputs turns one cell's values into that polygon's configuration -- its soil column,  !
-! layer by layer, its bottom boundaries and its height allometry's site index. A run cell the maps !
-! leave empty is an input error naming the cell.                                                    !
+! meds_surface_maps -- every static per-cell map a run reads; no other module opens a map  !
+! (docs/configuration.md, Input maps). A map is on the forcing grid, so a cell's value     !
+! sits at its own (row, col) and MEDS never regrids; a value the map does not hold reads   !
+! as NaN. map_values_at_cells and map_layers_at_cells read one variable at a list of       !
+! cells; apply_cell_mask keeps a region's cells; read_map_inputs, apply_map_inputs and     !
+! site_map_inputs build each polygon's soil column, bottom boundaries and Chave E from the !
+! [maps] maps (docs/science/soil_biophysics.md §The column from the soil maps).            !
 !==========================================================================================!
 module meds_surface_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
    use iso_c_binding,         only : c_int, c_size_t, c_double
    use meds_kinds,            only : wp, ik
-   use meds_netcdf_c
+   use meds_netcdf_c,         only : nc_close, nc_get_att_double_f, nc_get_vara_double, nc_inq_dimlen_f,          &
+                                     nc_inq_varid_f, nc_open_f, NC_NOERR, NC_NOWRITE
    use meds_forcing_types,    only : met_cells_t
    use meds_era5land_reader,  only : era5land_same_grid, era5land_keep_cells, era5land_select_site,   &
                                      era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
@@ -50,10 +40,10 @@ module meds_surface_maps
    !----- The soil maps' layers (ED-SoilMaps v2: SoilGrids 2.0's six depths, to 2 m). ------------!
    character(len=*), parameter :: SOIL_LAYER_DIM = 'depth', SOIL_LAYER_BOUNDS = 'depth_bnds'
    !----- The bottom water boundary of the soil depth map's bc_class. ---------------------------!
-   integer(ik), parameter :: BC_FREE_DRAIN = 1_ik   !< q = K(theta)
-   integer(ik), parameter :: BC_LEAKY      = 2_ik   !< q = f_leak K(theta)
-   integer(ik), parameter :: BC_SEALED     = 3_ik   !< q = 0
-   integer(ik), parameter :: BC_AQUIFER    = 4_ik   !< a water table at the column base
+   integer(ik), parameter :: MAP_BC_FREE_DRAIN = 1_ik   !< q = K(theta)
+   integer(ik), parameter :: MAP_BC_LEAKY      = 2_ik   !< q = f_leak K(theta)
+   integer(ik), parameter :: MAP_BC_SEALED     = 3_ik   !< q = 0
+   integer(ik), parameter :: MAP_BC_AQUIFER    = 4_ik   !< a water table at the column base
 
    !----- What the [maps] maps hold at each cell of a run, read once (read_map_inputs). --!
    type :: map_inputs_t
@@ -61,7 +51,7 @@ module meds_surface_maps
       logical :: chave = .false.                          !< the chave_e map was read
       real(wp), allocatable :: layer_top(:), layer_bottom(:)   !< [m] the soil maps' layers, positive down
       real(wp), allocatable :: soil_depth(:)              !< [m] (cell) the soil column's depth
-      real(wp), allocatable :: bc_class(:)                !< [-] (cell) its bottom water boundary, BC_*
+      real(wp), allocatable :: bc_class(:)                !< [-] (cell) its bottom water boundary, MAP_BC_*
       real(wp), allocatable :: f_leak(:)                  !< [-] (cell) a leaky base's drainage factor
       real(wp), allocatable :: deep_temp(:)               !< [K] (cell) the deep soil temperature
       type(soil_texture_t), allocatable :: texture(:,:)   !< (map layer, cell) each layer's soil
@@ -92,8 +82,7 @@ contains
    end subroutine map_layers_at_cells
 
    !----- The cell mask of a region (docs/configuration.md, Regional runs): keep the cells whose    !
-   !      mask value is at least mask_min. A cell the mask leaves empty is not kept. n_dropped counts !
-   !      the cells it removes. -----------------------------------------------------------------------!
+   !      mask value is at least mask_min, not those it leaves empty; n_dropped counts the rest. ----!
    subroutine apply_cell_mask(cells, mask_path, mask_var, mask_min, static_path, n_dropped, stat)
       type(met_cells_t), intent(inout) :: cells
       character(len=*),  intent(in)    :: mask_path, mask_var, static_path
@@ -115,20 +104,25 @@ contains
       integer(ik), intent(in)       :: stat
       character(len=:), allocatable :: msg
       select case (stat)
-      case (MAP_OK)       ; msg = 'read'
-      case (MAP_ERR_OPEN) ; msg = 'cannot be opened'
-      case (MAP_ERR_GRID) ; msg = 'is not on the forcing grid (its lat and lon must be the static file''s)'
-      case (MAP_ERR_VAR)  ; msg = 'does not hold the variable (or its layer dimension)'
-      case default        ; msg = 'cannot be read'
+      case (MAP_OK)
+         msg = 'read'
+      case (MAP_ERR_OPEN)
+         msg = 'cannot be opened'
+      case (MAP_ERR_GRID)
+         msg = 'is not on the forcing grid (its lat and lon must be the static file''s)'
+      case (MAP_ERR_VAR)
+         msg = 'does not hold the variable (or its layer dimension)'
+      case default
+         msg = 'cannot be read'
       end select
    end function map_status_message
 
    !=======================================================================================!
-   !  read_map_inputs -- every [maps] map at every cell: the soil depth map's depth,      !
-   !  bottom boundary, leaky drainage factor and deep temperature, the texture and chemistry      !
-   !  maps' layers, and the Chave map's E. A map that cannot be read, or that holds no value at   !
-   !  a cell, is an error (so is a leaky base whose f_leak is outside (0, 1]):                    !
-   !  msg says which map, which variable and which cell, and is '' when every value is there.     !
+   ! read_map_inputs -- every [maps] map at every cell of a run: the soil depth map's four !
+   ! variables, the texture and chemistry maps' layers, and the Chave map's E. msg says    !
+   ! what fails, naming the map, the variable and any cell: a failed read, a gap, a        !
+   ! bc_class not 1-4, or a leaky base's f_leak outside (0, 1]; it is '' when every value  !
+   ! is there.                                                                             !
    !=======================================================================================!
    subroutine read_map_inputs(opts, static_path, cells, inp, msg)
       type(maps_opts_t),          intent(in)  :: opts
@@ -141,27 +135,31 @@ contains
       msg = ''
       if (soil_maps_on(opts)) then
          inp%soil = .true.
-         call need(opts%soil_depth_map, 'soil_depth', '', v) ; if (len(msg) > 0) return
+         call need(opts%soil_depth_map, 'soil_depth', '', v)
+         if (len(msg) > 0) return
          inp%soil_depth = v(1, :)
-         call need(opts%soil_depth_map, 'bc_class', '', v) ; if (len(msg) > 0) return
+         call need(opts%soil_depth_map, 'bc_class', '', v)
+         if (len(msg) > 0) return
          inp%bc_class = v(1, :)
          do k = 1_ik, cells%ncell
-            if (all(nint(inp%bc_class(k), ik) /= [BC_FREE_DRAIN, BC_LEAKY, BC_SEALED, BC_AQUIFER])) then
+            if (all(nint(inp%bc_class(k), ik) /= [MAP_BC_FREE_DRAIN, MAP_BC_LEAKY, MAP_BC_SEALED, MAP_BC_AQUIFER])) then
                msg = 'soil map '//trim(opts%soil_depth_map)//': bc_class is not 1-4 at '//cell_name(k)
                return
             end if
          end do
-         call need(opts%soil_depth_map, 'f_leak', '', v) ; if (len(msg) > 0) return
+         call need(opts%soil_depth_map, 'f_leak', '', v)
+         if (len(msg) > 0) return
          inp%f_leak = v(1, :)
          do k = 1_ik, cells%ncell
-            if (nint(inp%bc_class(k), ik) == BC_LEAKY .and. .not. (inp%f_leak(k) > 0.0_wp .and.           &
+            if (nint(inp%bc_class(k), ik) == MAP_BC_LEAKY .and. .not. (inp%f_leak(k) > 0.0_wp .and.           &
                                                                   inp%f_leak(k) <= 1.0_wp)) then
                msg = 'soil map '//trim(opts%soil_depth_map)//': f_leak is not in (0, 1] at '//cell_name(k)// &
                      ', whose base is leaky'
                return
             end if
          end do
-         call need(opts%soil_depth_map, 'deep_temp', '', v) ; if (len(msg) > 0) return
+         call need(opts%soil_depth_map, 'deep_temp', '', v)
+         if (len(msg) > 0) return
          inp%deep_temp = v(1, :)
 
          !----- The layers: the texture and the chemistry maps must share them. ------------------!
@@ -171,33 +169,44 @@ contains
          if (len(msg) > 0) return
          if (size(top_chem) /= size(inp%layer_top)) then
             msg = 'soil maps '//trim(opts%soil_texture_map)//' and '//trim(opts%soil_chemistry_map)// &
-                  ' do not have the same layers' ; return
+                  ' do not have the same layers'
+            return
          end if
          if (any(top_chem /= inp%layer_top) .or. any(bottom_chem /= inp%layer_bottom)) then
             msg = 'soil maps '//trim(opts%soil_texture_map)//' and '//trim(opts%soil_chemistry_map)// &
-                  ' do not have the same layers' ; return
+                  ' do not have the same layers'
+            return
          end if
          allocate(inp%texture(size(inp%layer_top), cells%ncell))
-         call need(opts%soil_texture_map, 'sand', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'sand', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%sand = v
-         call need(opts%soil_texture_map, 'silt', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'silt', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%silt = v
-         call need(opts%soil_texture_map, 'clay', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'clay', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%clay = v
-         call need(opts%soil_texture_map, 'bulk_density', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'bulk_density', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%bulk_density = v
-         call need(opts%soil_texture_map, 'coarse_fragments', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_texture_map, 'coarse_fragments', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%coarse_frag = v
-         call need(opts%soil_chemistry_map, 'organic_carbon', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_chemistry_map, 'organic_carbon', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%org_carbon = v
-         call need(opts%soil_chemistry_map, 'cec', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_chemistry_map, 'cec', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%cec = v
-         call need(opts%soil_chemistry_map, 'ph_h2o', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         call need(opts%soil_chemistry_map, 'ph_h2o', SOIL_LAYER_DIM, v)
+         if (len(msg) > 0) return
          inp%texture%ph = v
       end if
       if (len_trim(opts%chave_e_map) > 0) then
          inp%chave = .true.
-         call need(opts%chave_e_map, 'chave_e', '', v) ; if (len(msg) > 0) return
+         call need(opts%chave_e_map, 'chave_e', '', v)
+         if (len(msg) > 0) return
          inp%chave_e = v(1, :)
       end if
 
@@ -210,11 +219,13 @@ contains
          integer(ik) :: st, c
          call read_cells(trim(path), var, layer_dim, static_path, cells, values, st)
          if (st /= MAP_OK) then
-            msg = 'map '//trim(path)//' '//map_status_message(st)//': '//var ; return
+            msg = 'map '//trim(path)//' '//map_status_message(st)//': '//var
+            return
          end if
          do c = 1_ik, cells%ncell
             if (any(ieee_is_nan(values(:, c)))) then
-               msg = 'map '//trim(path)//': '//var//' has no value at '//cell_name(c) ; return
+               msg = 'map '//trim(path)//': '//var//' has no value at '//cell_name(c)
+               return
             end if
          end do
       end subroutine need
@@ -233,12 +244,14 @@ contains
          if (st == NC_NOERR) st = nc_inq_varid_f(ncid, SOIL_LAYER_BOUNDS, vid)
          if (st == NC_NOERR) then
             allocate(b(2, n))
-            start2 = 0_c_size_t ; count2 = [n, 2_c_size_t]
+            start2 = 0_c_size_t
+            count2 = [n, 2_c_size_t]
             st = nc_get_vara_double(ncid, vid, start2, count2, b)
          end if
          st_close = nc_close(ncid)
          if (st /= NC_NOERR .or. st_close /= NC_NOERR) return
-         top = real(b(1, :), wp) ; bottom = real(b(2, :), wp)
+         top = real(b(1, :), wp)
+         bottom = real(b(2, :), wp)
          msg = ''
       end subroutine layer_bounds
 
@@ -255,20 +268,12 @@ contains
    end subroutine read_map_inputs
 
    !=======================================================================================!
-   !  apply_map_inputs -- cell k's inputs into the configuration its polygon runs.         !
-   !                                                                                          !
-   !  * The soil column ends at the map's soil depth, on the default layers (soil_column_layers); !
-   !    each layer takes the map layers it overlaps, weighted by the overlap, and below the      !
-   !    deepest map layer (2 m) the deepest one. Its curve and Ks come from the pedotransfer     !
-   !    function, its thermal properties from the same texture (docs/science/soil_biophysics.md  !
-   !    §The column from the soil maps).                                                         !
-   !  * The bottom water boundary is the map's: drainage with f = 1 on a free-draining base, the  !
-   !    map's f_leak on a leaky one and 0 on a sealed one, or the aquifer                          !
-   !    (docs/science/soil_biophysics.md §Boundary conditions).                                   !
-   !  * The Dirichlet thermal anchor sits at the map's deep temperature, ANNUAL_DAMPING_DEPTH /  !
-   !    sqrt(2) below the bottom node, where it reflects the annual wave least                    !
-   !    (docs/science/soil_biophysics.md eq. (13)).                                               !
-   !  * The Chave height allometry takes the cell's E.                                          !
+   ! apply_map_inputs -- cell k's inputs into the configuration its polygon runs           !
+   ! (docs/science/soil_biophysics.md §The column from the soil maps): the soil column on  !
+   ! the default layers to the map's depth, each layer's curve, Ks and thermal properties  !
+   ! from the map layers it overlaps; the bottom water boundary from bc_class; the thermal !
+   ! anchor at deep_temp, ANNUAL_DAMPING_DEPTH / sqrt(2) below the bottom node (eq. (13)); !
+   ! and the Chave allometry's E.                                                          !
    !=======================================================================================!
    subroutine apply_map_inputs(inp, k, cfg)
       type(map_inputs_t), intent(in)    :: inp
@@ -281,7 +286,8 @@ contains
 
       if (inp%soil) then
          associate (sc => cfg%soil_column)
-            sc%depth = inp%soil_depth(k) ; sc%n_layer_bottoms = 0_ik
+            sc%depth = inp%soil_depth(k)
+            sc%n_layer_bottoms = 0_ik
             sc%retention = SOIL_RETENTION_VG
             call soil_column_layers(sc, bottoms, n)
             top = 0.0_wp
@@ -298,10 +304,17 @@ contains
             sc%n_layer_values = n
          end associate
          select case (nint(inp%bc_class(k), ik))
-         case (BC_AQUIFER) ; cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
-         case (BC_LEAKY)   ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
-         case (BC_SEALED)  ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
-         case default      ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 1.0_wp
+         case (MAP_BC_AQUIFER)
+            cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
+         case (MAP_BC_LEAKY)
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = inp%f_leak(k)
+         case (MAP_BC_SEALED)
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = 0.0_wp
+         case default
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = 1.0_wp
          end select
          call soil_column_params(cfg%soil_column, soil)
          cfg%energy%deep_temp  = inp%deep_temp(k)
@@ -320,8 +333,14 @@ contains
       real(wp)    :: w, wsum, hi
       integer(ik) :: m, nm
       nm = size(inp%layer_top, kind=ik)
-      tex%sand = 0.0_wp ; tex%silt = 0.0_wp ; tex%clay = 0.0_wp ; tex%org_carbon = 0.0_wp
-      tex%cec  = 0.0_wp ; tex%ph   = 0.0_wp ; tex%bulk_density = 0.0_wp ; tex%coarse_frag = 0.0_wp
+      tex%sand = 0.0_wp
+      tex%silt = 0.0_wp
+      tex%clay = 0.0_wp
+      tex%org_carbon = 0.0_wp
+      tex%cec  = 0.0_wp
+      tex%ph   = 0.0_wp
+      tex%bulk_density = 0.0_wp
+      tex%coarse_frag = 0.0_wp
       wsum = 0.0_wp
       do m = 1_ik, nm
          hi = bottom
@@ -340,15 +359,20 @@ contains
             tex%coarse_frag  = tex%coarse_frag  + w * t%coarse_frag
          end associate
       end do
-      tex%sand = tex%sand / wsum ; tex%silt = tex%silt / wsum ; tex%clay = tex%clay / wsum
-      tex%org_carbon = tex%org_carbon / wsum ; tex%cec = tex%cec / wsum ; tex%ph = tex%ph / wsum
-      tex%bulk_density = tex%bulk_density / wsum ; tex%coarse_frag = tex%coarse_frag / wsum
+      tex%sand = tex%sand / wsum
+      tex%silt = tex%silt / wsum
+      tex%clay = tex%clay / wsum
+      tex%org_carbon = tex%org_carbon / wsum
+      tex%cec = tex%cec / wsum
+      tex%ph = tex%ph / wsum
+      tex%bulk_density = tex%bulk_density / wsum
+      tex%coarse_frag = tex%coarse_frag / wsum
    end function layer_texture
 
    !=======================================================================================!
-   !  site_map_inputs -- a site run's [maps] inputs, at the forcing cell its [site]       !
-   !  location reads (the archive's own choice, era5land_select_site), into cfg, which is then   !
-   !  validated again. msg is '' on success, else why the inputs could not be had.               !
+   ! site_map_inputs -- a site run's [maps] inputs, at the forcing cell its [site]         !
+   ! location reads (the archive's own choice, era5land_select_site), into cfg, which is   !
+   ! then validated again. msg is '' on success, else why the inputs could not be had.     !
    !=======================================================================================!
    subroutine site_map_inputs(cfg, msg)
       type(meds_config_t),           intent(inout) :: cfg
@@ -376,8 +400,10 @@ contains
    end subroutine site_map_inputs
 
    !=======================================================================================!
-   !  The read: check the grid, read the band of rows the cells span (every column, every     !
-   !  layer), then pick each cell's values. layer_dim = '' reads a 2-D variable as one layer.   !
+   ! The read: check the grid, read the band of rows the cells span (every column and      !
+   ! layer, in one read per variable, which also serves a box across 180 degrees), then    !
+   ! pick each cell's values. _FillValue, missing_value and NaN read as NaN, and packed    !
+   ! values are unpacked. layer_dim = '' reads a 2-D variable as one layer.                !
    !=======================================================================================!
    subroutine read_cells(path, var, layer_dim, static_path, cells, values, stat)
       character(len=*),      intent(in)  :: path, var, layer_dim, static_path
@@ -390,28 +416,42 @@ contains
       real(c_double), allocatable :: band(:,:,:)
       real(wp) :: fill, missing, scale, offset
 
-      allocate(values(1, cells%ncell)) ; values = ieee_value(1.0_wp, ieee_quiet_nan)
+      allocate(values(1, cells%ncell))
+      values = ieee_value(1.0_wp, ieee_quiet_nan)
       call era5land_same_grid(path, static_path, stat)
       if (stat /= ERA_OK) then
-         stat = merge(MAP_ERR_OPEN, MAP_ERR_GRID, stat == ERA_ERR_OPEN) ; return
+         stat = merge(MAP_ERR_OPEN, MAP_ERR_GRID, stat == ERA_ERR_OPEN)
+         return
       end if
       stat = MAP_ERR_OPEN
-      st = nc_open_f(trim(path), NC_NOWRITE, ncid) ; if (st /= NC_NOERR) return
+      st = nc_open_f(trim(path), NC_NOWRITE, ncid)
+      if (st /= NC_NOERR) return
       stat = MAP_ERR_VAR
       st = nc_inq_varid_f(ncid, trim(var), vid)
-      if (st /= NC_NOERR) then ; st = nc_close(ncid) ; return ; end if
+      if (st /= NC_NOERR) then
+         st = nc_close(ncid)
+         return
+      end if
       nlayer = 1_ik
       if (len_trim(layer_dim) > 0) then
          st = nc_inq_dimlen_f(ncid, trim(layer_dim), nlayer_c)
-         if (st /= NC_NOERR) then ; st = nc_close(ncid) ; return ; end if
+         if (st /= NC_NOERR) then
+            st = nc_close(ncid)
+            return
+         end if
          nlayer = int(nlayer_c, ik)
       end if
       if (cells%ncell == 0_ik) then
-         st = nc_close(ncid) ; deallocate(values) ; allocate(values(nlayer, 0)) ; stat = MAP_OK ; return
+         st = nc_close(ncid)
+         deallocate(values)
+         allocate(values(nlayer, 0))
+         stat = MAP_OK
+         return
       end if
 
       !----- The band of rows the cells span, every column: one hyperslab, x(lon, lat, layer). ------!
-      r0 = minval(cells%row) ; nr = maxval(cells%row) - r0 + 1_ik
+      r0 = minval(cells%row)
+      nr = maxval(cells%row) - r0 + 1_ik
       allocate(band(cells%nlon, nr, nlayer))
       if (len_trim(layer_dim) > 0) then
          start3 = [0_c_size_t, int(r0, c_size_t), 0_c_size_t]
@@ -422,14 +462,18 @@ contains
          count2 = [int(nr, c_size_t), int(cells%nlon, c_size_t)]
          st = nc_get_vara_double(ncid, vid, start2, count2, band)
       end if
-      if (st /= NC_NOERR) then ; st = nc_close(ncid) ; return ; end if
+      if (st /= NC_NOERR) then
+         st = nc_close(ncid)
+         return
+      end if
       fill    = attribute(ncid, vid, '_FillValue')
       missing = attribute(ncid, vid, 'missing_value')
       scale   = attribute(ncid, vid, 'scale_factor')
       offset  = attribute(ncid, vid, 'add_offset')
       st = nc_close(ncid)
 
-      deallocate(values) ; allocate(values(nlayer, cells%ncell))
+      deallocate(values)
+      allocate(values(nlayer, cells%ncell))
       do k = 1_ik, cells%ncell
          do l = 1_ik, nlayer
             values(l, k) = real(band(cells%col(k) + 1_ik, cells%row(k) - r0 + 1_ik, l), wp)

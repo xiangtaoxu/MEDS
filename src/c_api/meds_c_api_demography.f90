@@ -31,7 +31,7 @@ module meds_c_api_demography
    use meds_polygon_state_vars,      only : polygon_t, free_polygon
    use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
-   use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
+   use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area
    use meds_allometry_lib,          only : dbh_to_height, size_to_leaf_carbon, size_to_wood_carbon,  &
                                            storage_carbon_target
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
@@ -247,7 +247,7 @@ contains
    function meds_site_n_cohort(sh) result(n) bind(c, name="meds_site_n_cohort")
       integer(c_int), value, intent(in) :: sh
       integer(c_int)                    :: n
-      n = int(count_cohorts(g_poly(sh)), c_int)
+      n = int(g_poly(sh)%cohort%n, c_int)
    end function meds_site_n_cohort
 
    function meds_site_total_agb(sh) result(v) bind(c, name="meds_site_total_agb")

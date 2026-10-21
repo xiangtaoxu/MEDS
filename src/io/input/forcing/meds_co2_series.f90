@@ -1,24 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_co2_series -- the prescribed free-atmosphere CO2: read a MEDS CO2 file into a           !
-! co2_series_t, and look the series up at a model instant.                                      !
-!                                                                                          !
-! A MEDS CO2 file, format 1 (the full definition is docs/science/forcing.md §12), is plain       !
-! text. '#' starts a comment that runs to the end of the line; blank lines are ignored. Two       !
-! keyword lines come before the first data row, each exactly once:                                !
-!     timestep  <n> <unit>     n a whole number >= 1; unit year | month | day | hour | minute       !
-!     units     umol/mol       the only unit accepted (dry-air mole fraction)                       !
-! then one row per period, `<period start>  <value>`. The start is written to the precision of    !
-! the unit -- YYYY | YYYY-MM | YYYY-MM-DD | YYYY-MM-DDThh | YYYY-MM-DDThh:mm -- in model time, and  !
-! the value is the mean over [start, start + n units). Each row starts exactly n units after the  !
-! one before it: MEDS never gap-fills, so a missing period is an error, not an interpolation.      !
-!                                                                                          !
-! The lookup places each value at the middle of its period and interpolates linearly between     !
-! the middles (docs/science/forcing.md eq. (18)).                                                 !
-! the middles. Over the first and last half-periods it holds the end value, which is still        !
-! inside the period that value is the mean of; nothing is extrapolated. A run must lie inside     !
-! the file's periods, which met_open checks once (co2_series_covers), so a lookup never leaves    !
-! them. The lookup is on MODEL time, so the CO2 keeps rising while recycled met repeats.          !
+! meds_co2_series -- the prescribed free-atmosphere CO2 (docs/science/forcing.md §12): read a     !
+! MEDS CO2 file, format 1, into a co2_series_t (co2_series_read) and look it up at a model instant !
+! (co2_series_at). Each row is a period's mean, placed at the period's middle: the lookup is       !
+! linear between middles and holds the end values over the outer half-periods (eq. (18)). A       !
+! missing period is an error, never interpolated. met_open checks once that the file covers the    !
+! run (co2_series_covers). The lookup is on model time, so the CO2 rises while recycled met repeats. !
 !==========================================================================================!
 module meds_co2_series
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
@@ -63,10 +50,12 @@ contains
       integer(ik) :: nrow, i, step_n, step_unit
       logical     :: seen_step, seen_units
 
-      ok = .false. ; msg = ''
+      ok = .false.
+      msg = ''
       open(newunit=u, file=trim(path), status='old', action='read', iostat=ios)
       if (ios /= 0) then
-         msg = 'cannot open the file' ; return
+         msg = 'cannot open the file'
+         return
       end if
 
       !----- Pass 1: count the data rows, so the series is allocated once. --------------------!
@@ -80,15 +69,21 @@ contains
          if (trim(tok) /= 'timestep' .and. trim(tok) /= 'units') nrow = nrow + 1_ik
       end do
       if (nrow < 2_ik) then
-         close(u) ; msg = 'fewer than two data rows' ; return
+         close(u)
+         msg = 'fewer than two data rows'
+         return
       end if
       allocate(s%mid_sec(nrow), s%co2(nrow))
       s%n = nrow
 
       !----- Pass 2: the keyword lines, then the rows, each checked as it is read. --------------!
       rewind(u)
-      seen_step = .false. ; seen_units = .false.
-      step_n = 0_ik ; step_unit = 0_ik ; i = 0_ik ; iline = 0
+      seen_step = .false.
+      seen_units = .false.
+      step_n = 0_ik
+      step_unit = 0_ik
+      i = 0_ik
+      iline = 0
       do
          read(u, '(a)', iostat=ios) raw
          if (ios /= 0) exit
@@ -105,8 +100,7 @@ contains
             call split_token(rest, ntok, mid)
             call split_token(mid, utok, extra)
             read(ntok, *, iostat=ios) step_n
-            !----- `utok` untrimmed: the standard compares blank-padded, but nvfortran 25.11's findloc  !
-            !      returns 0 for a value SHORTER than the elements ('year' against len-6 names). -----!
+            !----- `utok` untrimmed: findloc of a shorter value returns 0 (a compiler trap, CLAUDE.md). !
             step_unit = int(findloc(UNIT_NAME, utok, dim=1), ik)
             if (ios /= 0 .or. step_n < 1_ik .or. step_unit == 0_ik .or. len_trim(extra) > 0) then
                call line_msg(msg, iline, 'expected "timestep <n> <unit>", n a whole number >= 1 and '// &
@@ -165,7 +159,8 @@ contains
 
       ok = len_trim(msg) == 0
       if (.not. ok) then
-         call co2_series_free(s) ; return
+         call co2_series_free(s)
+         return
       end if
       s%span_end_sec = seconds_between(s%first_start, t_next)
    end subroutine co2_series_read
@@ -182,12 +177,15 @@ contains
       integer(ik) :: lo, hi, k
       x = seconds_between(s%first_start, now)
       if (x <= s%mid_sec(1)) then
-         co2 = s%co2(1) ; return
+         co2 = s%co2(1)
+         return
       end if
       if (x >= s%mid_sec(s%n)) then
-         co2 = s%co2(s%n) ; return
+         co2 = s%co2(s%n)
+         return
       end if
-      lo = 1_ik ; hi = s%n                                   ! mid_sec(lo) <= x < mid_sec(hi)
+      lo = 1_ik
+      hi = s%n                                   ! mid_sec(lo) <= x < mid_sec(hi)
       do while (hi - lo > 1_ik)
          k = (lo + hi) / 2_ik
          if (s%mid_sec(k) <= x) then
@@ -219,7 +217,8 @@ contains
       type(co2_series_t), intent(inout) :: s
       if (allocated(s%mid_sec)) deallocate(s%mid_sec)
       if (allocated(s%co2))     deallocate(s%co2)
-      s%n = 0_ik ; s%span_end_sec = 0.0_wp
+      s%n = 0_ik
+      s%span_end_sec = 0.0_wp
    end subroutine co2_series_free
 
    !----- The start of the next period: n calendar units on. --------------------------------!
@@ -228,11 +227,16 @@ contains
       integer(ik),       intent(in) :: n, unit
       type(meds_time_t) :: t2
       select case (unit)
-      case (UNIT_YEAR)  ; t2 = time_advance_years(t, n)
-      case (UNIT_MONTH) ; t2 = time_advance_months(t, n)
-      case (UNIT_DAY)   ; t2 = time_advance_days(t, n)
-      case (UNIT_HOUR)  ; t2 = time_advance_seconds(t, 3600.0_wp * real(n, wp))
-      case default      ; t2 = time_advance_seconds(t, 60.0_wp * real(n, wp))
+      case (UNIT_YEAR)
+         t2 = time_advance_years(t, n)
+      case (UNIT_MONTH)
+         t2 = time_advance_months(t, n)
+      case (UNIT_DAY)
+         t2 = time_advance_days(t, n)
+      case (UNIT_HOUR)
+         t2 = time_advance_seconds(t, 3600.0_wp * real(n, wp))
+      case default
+         t2 = time_advance_seconds(t, 60.0_wp * real(n, wp))
       end select
    end function advance_period
 
@@ -246,7 +250,10 @@ contains
       character(len=4) :: seps
       integer :: j, nsep
       logical :: prev_digit
-      ok = .false. ; seps = '' ; nsep = 0 ; prev_digit = .false.
+      ok = .false.
+      seps = ''
+      nsep = 0
+      prev_digit = .false.
       t = meds_time_t()
       do j = 1, len_trim(label)
          select case (label(j:j))
@@ -254,7 +261,9 @@ contains
             prev_digit = .true.
          case ('-', 'T', ':')
             if (.not. prev_digit .or. nsep >= len(seps)) return    ! an empty group, or too many
-            nsep = nsep + 1 ; seps(nsep:nsep) = label(j:j) ; prev_digit = .false.
+            nsep = nsep + 1
+            seps(nsep:nsep) = label(j:j)
+            prev_digit = .false.
          case default
             return
          end select
@@ -286,9 +295,11 @@ contains
       buf = adjustl(line)
       k = index(buf, ' ')
       if (k == 0) then
-         tok = buf ; rest = ''
+         tok = buf
+         rest = ''
       else
-         tok = buf(1:k-1) ; rest = adjustl(buf(k:))
+         tok = buf(1:k-1)
+         rest = adjustl(buf(k:))
       end if
    end subroutine split_token
 

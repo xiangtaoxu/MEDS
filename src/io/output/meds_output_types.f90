@@ -1,15 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_output_types -- the pure DATA descriptors of the diagnostic-aggregation subsystem:      !
-! the per-variable registry descriptor (var_desc_t), the running per-(variable,tier) reduction   !
-! buffer (integ_buffer_t), and the registry container (output_registry_t).                        !
-!                                                                                          !
-! netCDF-FREE by construction (no meds_netcdf_c): so the stepper edge that references the         !
-! integrate kernels over these types pulls no C dependency (src/README.md, The library graph).    !
-! The io-only reduction/axis codes AGG_*/DIM_* live here; the config-shared FREQ_*/GRP_*/FC_*     !
-! live in src/config/params/meds_output_params. Because the C bindings are NOT visible here,      !
-! xtype and the fill/missing sentinels are declared LOCALLY (XTYPE_*, MISSING_*) and mapped to    !
-! NC_* only in the serializer. The descriptor's design record: MEDS_IO_DESIGN.md §3.              !
+! meds_output_types -- the plain-data types of the diagnostic output: a variable's descriptor  !
+! (var_desc_t), the running reduction of one (variable, tier) pair (integ_buffer_t), the      !
+! registry, a closed record and its queue, a stream file's handles, and the run's file set    !
+! and one polygon's buffers (output_files_t, output_buffers_t); also the codes AGG_* and      !
+! DIM_* (FREQ_*, GRP_* and FC_* are in meds_output_params). netCDF-free                       !
+! (docs/science/diagnostics.md §1). Design record: MEDS_IO_DESIGN.md §3.                      !
 !==========================================================================================!
 module meds_output_types
    use meds_kinds,         only : wp, ik
@@ -25,20 +21,19 @@ module meds_output_types
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE
    public :: XTYPE_DOUBLE, XTYPE_INT
    public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS, MAX_DBH_CLASS
-   public :: agg_is_slabwise, ragged_dim
+   public :: ragged_dim, slab_col
 
    !----- Temporal reduction operators (the `agg` of a variable). -----------------------------!
    integer(ik), parameter :: AGG_MEAN    = 1_ik  !< equal-weight arithmetic mean
-   integer(ik), parameter :: AGG_SUM     = 2_ik  !< plain sum (integer count tallies ONLY)
+   integer(ik), parameter :: AGG_SUM     = 2_ik  !< plain sum (period totals of accumulators, count tallies)
    integer(ik), parameter :: AGG_MIN     = 3_ik  !< period minimum
    integer(ik), parameter :: AGG_MAX     = 4_ik  !< period maximum
    integer(ik), parameter :: AGG_LAST    = 5_ik  !< end-of-period snapshot (ids / CSR / instantaneous)
    integer(ik), parameter :: AGG_TMEAN   = 6_ik  !< dt-weighted state mean (the physical-stock default)
    integer(ik), parameter :: AGG_FLUXSUM = 7_ik  !< dt-weighted integral of a rate (period total)
 
-   !----- Trailing (per-record) axis of a variable. DIM_COHORT/DIM_PATCH are fixed WITHIN a       !
-   !      window (docs/science/diagnostics.md §4, Which steps a record holds), so all non-scalar  !
-   !      dims fold by direct slot index -- no id-keying.                                         !
+   !----- The trailing axis of a variable. The cohort and patch slots are fixed within a window     !
+   !      (docs/science/diagnostics.md §4), so every axis folds by direct slot index. -------------!
    integer(ik), parameter :: DIM_SCALAR = 0_ik
    integer(ik), parameter :: DIM_COHORT = 1_ik
    integer(ik), parameter :: DIM_PATCH  = 2_ik
@@ -46,48 +41,35 @@ module meds_output_types
    !      is below, at (is-1)*n_soil_layer_max + k, and written (time, polygon, site, soil). -------!
    integer(ik), parameter :: DIM_SOIL   = 3_ik
    integer(ik), parameter :: DIM_PFT    = 4_ik
-   integer(ik), parameter :: DIM_SIZE   = 5_ik   !< DBH size class (ED2-style; edges from TOML)
-   !----- 2-D (soil layer x patch), FLATTENED into the same 1-D slab as every other axis at        !
-   !      index = (ip-1)*n_soil_layer_max + k. The stride is the COMPILE-TIME layer ceiling, never   !
-   !      a live count -- striding by a live count would silently re-map every profile the moment     !
-   !      the active layer count differed from what a reader assumed, producing plausible shifted     !
-   !      columns rather than an error. Because it is a plain 1-D slab here, integrate_slab /         !
-   !      normalize_slab / reset_buffer serve it with NO new code; only the serializer's dim mapping   !
-   !      differs (it writes rank-3 (time, patch, soil)). docs/science/diagnostics.md §3. ------------!
+   integer(ik), parameter :: DIM_SIZE   = 5_ik   !< DBH size class (edges from [output].dbh_class_edges)
+   !----- 2-D (soil layer x patch), flattened into a 1-D slab at (ip-1)*n_soil_layer_max + k, so the  !
+   !      slab routines serve it unchanged. The stride is the layer ceiling, never a live count      !
+   !      (docs/science/diagnostics.md §3); the serializer writes it (time, polygon, patch, soil). --!
    integer(ik), parameter :: DIM_SOIL_PATCH = 6_ik
    !----- One value per site of the polygon (time, polygon, site): what differs between sites,     !
    !      their forcing after their terrain and their growth temperature. -------------------------!
    integer(ik), parameter :: DIM_SITE = 7_ik
 
-   !----- On-disk numeric type. Kept LOCAL (not NC_*) so this module stays netCDF-free; the        !
-   !      serializer maps XTYPE_DOUBLE->NC_DOUBLE, XTYPE_INT->NC_INT.                               !
+   !----- On-disk numeric type, declared here to keep the module netCDF-free; the serializer maps   !
+   !      XTYPE_DOUBLE to NC_DOUBLE and XTYPE_INT to NC_INT. -------------------------------------!
    integer(ik), parameter :: XTYPE_DOUBLE = 1_ik
    integer(ik), parameter :: XTYPE_INT    = 2_ik
 
-   !----- Fill / missing sentinels. Values MATCH netCDF NC_FILL_DOUBLE / NC_FILL_INT so a reader     !
-   !      recognizes them, but are declared here to keep the module netCDF-free.                     !
+   !----- Fill values: those of netCDF's NC_FILL_DOUBLE and NC_FILL_INT, so a reader recognizes     !
+   !      them, declared here to keep the module netCDF-free. -------------------------------------!
    real(wp),    parameter :: MISSING_VALUE = 9.9692099683868690e+36_wp
    integer(ik), parameter :: MISSING_INT   = -2147483647_ik
 
-   !----- Registry capacity: room for the registered set (docs/science/diagnostics.md §7) plus     !
-   !      headroom; the list is still short enough that a linear find_var_index is fine.            !
+   !----- Registry capacity: the registered set (docs/science/diagnostics.md §7) plus headroom; the !
+   !      list is short enough for a linear find_var_index. --------------------------------------!
    integer(ik), parameter :: MAX_OUTPUT_VARS = 512_ik
    !----- DBH size-class ceiling (DIM_SIZE). Edges come from [output].dbh_class_edges. ---------!
    integer(ik), parameter :: MAX_DBH_CLASS   = 32_ik
 
    !==========================================================================================!
-   ! The run-dependent parameters the DERIVED diagnostics need, resolved once at manager setup   !
-   ! and carried as plain data (netCDF-free, allocatable-free).                                   !
-   !                                                                                          !
-   ! WHY THIS EXISTS. extract_variable is handed the polygon and a descriptor -- it has no    !
-   ! config aggregator and no fast context. But a PFT-axis reduction needs the run's PFT      !
-   ! count, and a size-class reduction needs the class edges. Passing the whole meds_config_t !
-   ! down would drag the config aggregator into the per-step tick; passing this small bundle  !
-   ! keeps the tick's dependencies exactly as narrow as they were.                            !
-   !                                                                                          !
-   ! A soil matric potential takes the retention curve of the patch's site, from the site's   !
-   ! surface: the column the fast loop integrates, so a psi reported here and a psi the roots !
-   ! saw are the same curve by construction.                                                  !
+   ! The run-dependent parameters the derived diagnostics need (the PFT count, the DBH class  !
+   ! edges, whether the soil has a curve to read), resolved in setup_output_files and handed  !
+   ! to extract_variable as plain data, so the per-step tick does not need the configuration. !
    !==========================================================================================!
    type :: diag_setup_t
       integer(ik) :: n_pft       = 0_ik      !< run-time PFT count (the DIM_PFT axis length)
@@ -99,7 +81,7 @@ module meds_output_types
    end type diag_setup_t
 
    !==========================================================================================!
-   ! One diagnostic variable: a pure DATA descriptor, NO pointers into the SoA.                   !
+   ! One diagnostic variable: plain data, no pointers into the state.                         !
    !==========================================================================================!
    type :: var_desc_t
       character(len=32) :: name      = ''          !< netCDF variable name (scale-suffixed, e.g. 'agb_cohort')
@@ -108,28 +90,20 @@ module meds_output_types
       integer(ik) :: dim             = DIM_SCALAR   !< DIM_* : the trailing axis
       integer(ik) :: agg             = AGG_MEAN     !< AGG_* : temporal reduction operator
       integer(ik) :: group           = 1_ik         !< GRP_* : the group a high-level toggle switches
-      integer(ik) :: streams         = 0_ik         !< ior(FREQ_*) EFFECTIVE membership (after config resolution)
+      integer(ik) :: streams         = 0_ik         !< ior(FREQ_*) effective membership (after config resolution)
       integer(ik) :: streams_default = 0_ik         !< the registry default membership (restored by a `true` override)
       logical     :: enabled         = .true.       !< master per-variable on/off
       integer(ik) :: xtype           = XTYPE_DOUBLE !< XTYPE_DOUBLE | XTYPE_INT
-      integer(ik) :: source_id       = 0_ik         !< which SoA FIELD supplies it
-      !----- HOW the field is aggregated to this variable's scale. These three are what let ONE     !
-      !      per-cohort field emit its cohort / patch / site / PFT / size-class variants: the        !
-      !      reduction is data on the descriptor, not a hand-written routine per variable.           !
-      !                                                                                          !
-      !      `weight` (W_* in meds_diagnostic_reduce) and `mean` together encode the EXTENSIVE vs     !
-      !      INTENSIVE distinction, which is a physical statement and the classic place diagnostics   !
-      !      go wrong: agb is extensive (weighted SUM over nplant -> per ground area), whereas dbh     !
-      !      is intensive (basal-area-weighted MEAN) and leaf_temp is intensive (leaf-area-weighted    !
-      !      MEAN). Declaring it here means it is stated once, at registration, beside the units.      !
+      integer(ik) :: source_id       = 0_ik         !< the source id: which field supplies it
+      !----- How the field reduces to this variable's axis, so one field serves every scale. The   !
+      !      weight kind and mean together state extensive vs intensive (docs/science/diagnostics.md §2). !
       integer(ik) :: weight          = 0_ik         !< W_* per-cohort weight kind (0 = W_NONE)
-      logical     :: mean            = .false.      !< .true. weighted MEAN (intensive); .false. SUM
+      logical     :: mean            = .false.      !< .true. weighted mean (intensive); .false. sum (extensive)
       real(wp)    :: scale           = 1.0_wp       !< unit conversion applied inside the patch loop
    end type var_desc_t
 
    !==========================================================================================!
-   ! One running reduction for one (variable, tier) pair. Single addressing mode: every           !
-   ! non-scalar dim folds by direct slot index (cohort/patch fixed within a window).               !
+   ! One running reduction of one (variable, tier) pair; an axis folds by direct slot index.  !
    !==========================================================================================!
    type :: integ_buffer_t
       integer(ik) :: var_id = 0_ik          !< index into registry%var(:)
@@ -142,7 +116,7 @@ module meds_output_types
       real(wp)    :: wsum  = 0.0_wp         !< Sum(dt) weight (AGG_TMEAN/FLUXSUM)
       integer(ik) :: nsamp = 0_ik           !< equal-weight sample count (MEAN/SUM/MIN/MAX/LAST)
       real(wp)    :: seed  = 0.0_wp         !< re-seed value (MIN=+huge, MAX=-huge, else 0)
-      !----- per-index accumulators (DIM_COHORT/PATCH/SOIL/PFT), sized to the relevant cap. ------!
+      !----- per-slot accumulators of an axis variable, sized to the axis's capacity. ------------!
       real(wp),    allocatable :: slab(:)
       real(wp),    allocatable :: wsum_slab(:)
       integer(ik), allocatable :: hits(:)
@@ -150,7 +124,7 @@ module meds_output_types
    end type integ_buffer_t
 
    !==========================================================================================!
-   ! The immutable registration list + the precomputed per-tier live-variable index.              !
+   ! The registration list and, per tier, the indices of its live variables.                  !
    !==========================================================================================!
    type :: output_registry_t
       type(var_desc_t), allocatable :: var(:)      !< the registration list [1:nvar]
@@ -160,11 +134,10 @@ module meds_output_types
    end type output_registry_t
 
    !==========================================================================================!
-   ! A closed period staged for the serializer (netCDF-FREE plain data). Filled at a roll-over    !
-   ! by the stepper-side tick (output_integrate) into the tier's scratch record, then copied into   !
-   ! the tier's queue; drained by main (output_serialize) in the I/O phase at month                  !
-   ! boundaries (docs/science/order_of_processes.md §6). Payload is indexed by REGISTRY var index;  !
-   ! only variables live in the tier are filled.                                                     !
+   ! A closed period. close_tier normalizes a tier into its scratch record and copies that to    !
+   ! the tier's queue, which output_serialize drains in the I/O phase                            !
+   ! (docs/science/order_of_processes.md §6). Indexed by registry variable; only the tier's live !
+   ! variables are filled.                                                                       !
    !==========================================================================================!
    type :: pending_record_t
       logical           :: used     = .false.
@@ -181,20 +154,17 @@ module meds_output_types
       integer(ik), allocatable :: col(:)        !< (nvar) slab column of each variable (0 = none)
    end type pending_record_t
 
-   public :: slab_col
-
-   !----- The closed records of one tier waiting for the I/O phase, in closing order. A queued     !
-   !      record keeps only the slab rows the writer reads, not the scratch's max_slab rows, so a   !
-   !      month of fast-tier records costs the live cohort count, not cohort_max. Elements are       !
-   !      reused across months; `n` counts the live ones. --------------------------------------------!
+   !----- The closed records of one tier awaiting the I/O phase, in closing order. A queued record  !
+   !      keeps only the slab rows the writer reads, so a month of fast-tier records costs the live !
+   !      cohort count, not cohort_max. Elements are reused across months; `n` counts the live ones. !
    type :: record_queue_t
       integer(ik) :: n = 0_ik
       type(pending_record_t), allocatable :: rec(:)
    end type record_queue_t
 
    !==========================================================================================!
-   ! One open netCDF stream file (the serializer's per-tier handle). ncids/varids kept as plain    !
-   ! integers so this type stays netCDF-agnostic; the serializer casts to c_int.                   !
+   ! One open netCDF stream file, the serializer's per-tier handle. Its ids are plain integers  !
+   ! so the type stays netCDF-free; the serializer casts them to c_int.                         !
    !==========================================================================================!
    type :: stream_file_t
       integer(ik) :: freq         = 0_ik
@@ -212,7 +182,7 @@ module meds_output_types
       integer(ik) :: d_site = -1_ik          !< the site dimension, behind the polygon's
       integer(ik) :: v_pft = -1_ik, v_dbh_lower = -1_ik, v_dbh_upper = -1_ik  !< self-describing axis coords
       integer(ik) :: v_soil_z = -1_ik                                        !< soil layer node depths [m]
-      integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's ACTUAL trimmed cohort/patch axis length
+      integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's trimmed cohort/patch axis lengths
       integer(ik) :: v_time = -1_ik, v_year = -1_ik, v_month = -1_ik, v_day = -1_ik
       integer(ik) :: v_hour = -1_ik, v_minute = -1_ik, v_second = -1_ik   !< FAST-tier sub-daily companions
       integer(ik) :: v_ncohort = -1_ik, v_npatch = -1_ik
@@ -220,16 +190,13 @@ module meds_output_types
    end type stream_file_t
 
    !==========================================================================================!
-   ! The output manager comes in two types. Both are netCDF-FREE plain data; only output_serialize   !
-   ! touches C.                                                                                      !
-   !   output_files_t   -- the run's set of output files, one row per polygon, and                  !
-   !                       what writing them needs: registry, diagnostic parameters, file settings,  !
-   !                       stream handles. Read-only while a step runs.                              !
-   !   output_buffers_t -- one polygon's buffers for one set of files: its running reductions, open  !
-   !                       windows, closed records and fast-tier staging. The only output state a    !
-   !                       step writes. Not a cache: the reductions exist nowhere else.              !
-   ! A run has one file set and one buffer set per polygon. The run owns them; the stepper ticks the   !
-   ! buffers.                                                                                        !
+   ! The run's output, as two plain-data types (only output_serialize touches netCDF):         !
+   !   output_files_t   -- the run's one file set: a row per polygon, the registry, the        !
+   !                       diagnostic parameters, file settings and stream handles; read-only  !
+   !                       while a step runs.                                                  !
+   !   output_buffers_t -- one polygon's buffers (one set per polygon): its running reductions, !
+   !                       open windows, closed records and fast-tier staging, the only output !
+   !                       state a step writes.                                                !
    !==========================================================================================!
    type :: output_files_t
       logical                 :: enabled = .false.
@@ -242,9 +209,8 @@ module meds_output_types
       logical           :: cohort_axis = .false., patch_axis = .false.  !< a live variable has that axis
       type(stream_file_t)    :: stream(N_FREQ)
       character(len=256)     :: dir = '.', prefix = 'meds'
-      !----- Forcing provenance written as a global attribute on every output file. With the ED_ERA5land  !
-      !      archive the model computes qair itself, so a run's humidity depends on the model version and  !
-      !      the formula is recorded (docs/science/forcing.md §7); empty -> no attribute.                 !
+      !----- Forcing provenance, a global attribute on every file: from the ED_ERA5land archive the  !
+      !      model computes qair itself, so the formula is recorded (docs/science/forcing.md §7). --!
       character(len=512)     :: forcing_qair = ''
       integer(ik)           :: file_chunk(N_FREQ) = 0_ik
       integer(ik)           :: sync_every = 1_ik
@@ -281,17 +247,16 @@ module meds_output_types
       type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
       type(pending_record_t) :: pending(N_FREQ)          !< per-tier scratch that close_tier normalizes into
       type(record_queue_t)   :: queue(N_FREQ)            !< closed records awaiting the I/O phase
-      !----- FAST (sub-daily) tier staging (netCDF-free): filled per (patch, sub-step) by the fast   !
-      !      loop, replayed into buf(:,1) by main via output_integrate_fast. Each patch's sub-step    !
-      !      is the patch block's own row (PA_*) and its soil column; the site means are their        !
-      !      area-weighted sums, and the forcing is the polygon block's row (PY_*). The per-cohort   !
-      !      slabs are indexed by the site's cohort slot. The buffers follow the live patch and       !
-      !      cohort counts; the output layer checks those against output.patch_max and cohort_max.   !
+      !----- FAST-tier staging, filled per (patch, sub-step) by the fast loop and replayed into        !
+      !      buf(:, TIER_FAST) by output_integrate_fast (docs/science/diagnostics.md §4): each patch's !
+      !      row of the patch block (PA_*) and soil column, their polygon mean, the forcing (PY_*)    !
+      !      and the per-cohort rows by the polygon's cohort slot. They follow the live counts, which  !
+      !      the output layer checks against output.patch_max and cohort_max. ---------------------!
       logical              :: fast_on = .false.                !< output on and the FAST tier has live variables
       type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) each sub-step's start
       real(wp),            allocatable :: fast_forcing(:,:)     !< (PY_*, n_fast_sub) the sub-step's forcing
       real(wp),            allocatable :: fast_patch(:,:,:)     !< (PA_*, patch, n_fast_sub) each patch's row
-      real(wp),            allocatable :: fast_site(:,:)        !< (PA_*, n_fast_sub) their area-weighted sum
+      real(wp),            allocatable :: fast_site(:,:)        !< (PA_*, n_fast_sub) the polygon mean of the rows
       !----- The soil columns, per patch in the soil-by-patch slab's layout, (ip-1)*n_soil_layer_max  !
       !      + k (DIM_SOIL_PATCH), and per site, each site's patches area-weighted, at                !
       !      (is-1)*n_soil_layer_max + k (DIM_SOIL). The masks mark the layers each column has. ------!
@@ -301,15 +266,15 @@ module meds_output_types
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (layer x site, n_fast_sub) [m3/m3]
       logical,             allocatable :: fast_soil_live(:)        !< (layer x site) a layer of its site
       logical,             allocatable :: fast_soil_patch_live(:)  !< (layer x patch) a layer of its patch's site
-      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort, n_fast_sub) per-cohort leaf temp [K]
-      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
+      real(wp),            allocatable :: fast_cohort_leaf_temp(:,:)   !< (cohort, n_fast_sub) per-cohort leaf temp [K]
+      real(wp),            allocatable :: fast_cohort_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
       !< (cohort, n_fast_sub) per-cohort height [m] (tallest post-proc)
-      real(wp),            allocatable :: fast_coh_height(:,:)
+      real(wp),            allocatable :: fast_cohort_height(:,:)
       !< (cohort, CO_*, n_fast_sub) the per-cohort diagnostic block's rows, staged while it is on
-      real(wp),            allocatable :: fast_coh_cdiag(:,:,:)
+      real(wp),            allocatable :: fast_cohort_diag(:,:,:)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
       integer(ik)          :: fast_n_site  = 0_ik              !< sites in the fast soil slabs
-      integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
+      integer(ik)          :: fast_n_cohort = 0_ik             !< the polygon's live cohorts in the fast cohort slabs
       integer(ik)          :: fast_n_patch  = 0_ik             !< live patches in the fast patch rows
       logical              :: fast_ready   = .false.           !< the staging is filled and awaits replay
       !----- The diagnostic parameters this polygon's extraction reads: its file set's, with         !
@@ -323,19 +288,17 @@ contains
    pure integer(ik) function slab_col(pr, k) result(c)
       type(pending_record_t), intent(in) :: pr
       integer(ik),            intent(in) :: k
-      if (allocated(pr%col)) then ; c = pr%col(k) ; else ; c = k ; end if
+      if (allocated(pr%col)) then
+         c = pr%col(k)
+      else
+         c = k
+      end if
    end function slab_col
 
-   !----- .true. if the operator averages/weights (needs seed/wsum handling), used by callers. --!
-   pure logical function agg_is_slabwise(dim) result(yes)
-      integer(ik), intent(in) :: dim
-      yes = (dim /= DIM_SCALAR)
-   end function agg_is_slabwise
 
-   !----- The axes whose length and slots follow the stand: cohort, patch, and soil by patch. They  !
-   !      are fixed only within a month (docs/science/diagnostics.md §3), so a file of them spans   !
-   !      at most a month and the annual stream refuses them. A region file pads them to the        !
-   !      largest live count among its polygons. ---------------------------------------------------!
+   !----- The axes whose length and slots follow the stand: cohort, patch, and soil by patch. Fixed  !
+   !      only within a month (docs/science/diagnostics.md §3), so a file of them spans at most a   !
+   !      month, the annual stream refuses them, and a file pads them to its largest live count. ---!
    pure logical function ragged_dim(dim) result(yes)
       integer(ik), intent(in) :: dim
       yes = dim == DIM_COHORT .or. dim == DIM_PATCH .or. dim == DIM_SOIL_PATCH

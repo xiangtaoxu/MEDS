@@ -32,8 +32,7 @@ module meds_c_api_run
    use meds_region,            only : meds_region_t, region_open, region_step, region_finalize,  &
                                       region_free, region_done
    use meds_polygon_state_vars, only : patch_polygon_area
-   use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area,    &
-                                      count_cohorts
+   use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area
    implicit none
    private
 
@@ -185,7 +184,7 @@ contains
    function meds_run_n_cohort(h) result(v) bind(c, name="meds_run_n_cohort")
       integer(c_int), value, intent(in) :: h
       integer(c_int)                    :: v
-      v = -1_c_int ; if (live(h)) v = int(count_cohorts(g_run(h)%poly(1)), c_int)
+      v = -1_c_int ; if (live(h)) v = int(g_run(h)%poly(1)%cohort%n, c_int)
    end function meds_run_n_cohort
 
    function meds_run_total_agb(h) result(v) bind(c, name="meds_run_total_agb")

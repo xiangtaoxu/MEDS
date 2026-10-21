@@ -35,7 +35,9 @@ outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's
 reads only keys it uses, checks them in one module, and names every field as its key; `src/config/params`
 holds one module per block, and the reference config describes each key in a line or two (#464).
 The configuration's leaves are the run's parameters, `src/config/params`, and a kernel's parameter
-bundle is its `*_args_t` (#465).
+bundle is its `*_args_t` (#465). `src/init` and `src/io` drop the code nothing called, name the polygon
+their output reduces to, write one statement per line and keep their longer explanations on the science
+pages, with no change to any result (#468).
 
 **Upgrading from v0.3.5:**
 - **Six keys nothing read are gone** (#464): `[demography].patch_diff_age_tol`,
@@ -254,9 +256,43 @@ bundle is its `*_args_t` (#465).
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
   `hydraulics.root_beta`.
+- **Fortran names in the output layer** (#468), for code built against MEDS's modules:
+  `reduce_cohort_to_site` and `reduce_patch_to_site` are `reduce_cohort_to_polygon` and
+  `reduce_patch_to_polygon`, `activate_site_diag` is `activate_polygon_diag`, and `manager_setup`,
+  `manager_finalize`, `manager_alloc_buffers`, `manager_set_polygons` and `manager_alloc` are
+  `setup_output_files`, `finalize_output_files`, `alloc_output_buffers`, `set_output_polygons` and
+  `alloc_output_set`. `add_variable` takes `xtype=`, `weight=`, `mean=` and `scale=`. The convenience
+  totals `total_gpp`, `total_npp`, `mean_can_temp`, `mean_soil_temp_top`, `total_soilc_*`, `total_rh`,
+  `total_et` and `count_cohorts` are gone (read `poly%et_accum` and `poly%cohort%n`). No netCDF variable
+  name, TOML key or C API changes; the `meds_io_config.toml` that `--dump-io-config` writes labels the
+  scalar axis `polygon`.
 
 ### Changed
 
+- **The output layer names the polygon it reduces to** (#468). A polygon holds several sites, and a
+  scalar reduction weights each patch by its share of the polygon, so the reductions, the source family
+  of the polygon's own scalars (`SRCK_POLYGON`, `SRC_PY_*`) and the diagnostic activation say polygon;
+  the per-site family is `SRCK_SITE`. The tiers are `TIER_FAST`, `TIER_DAILY`, `TIER_MONTHLY` and
+  `TIER_ANNUAL` in `meds_output_params`, the cohort source codes are named after the field they read
+  (`FLD_C_NONSTRUCTURAL_CARBON`, ...), the FAST staging arrays are spelled out
+  (`fast_cohort_leaf_temp`, ...) and the maps' bottom-boundary codes are `MAP_BC_*`.
+- **The annotations of `src/init` and `src/io` are short, and their reasoning is on the science pages**
+  (#468). Module headers are 4-8 lines and routine and field comments a line or a few; whole-line
+  comments go from 1,972 to 1,411. New: `order_of_processes.md` §6 "The restart file" (why each group
+  of state is stored, and what a file without it restarts on); in `diagnostics.md`, where the stages
+  live (§1), the file chunking and the soil stride (§3), how the FAST tier is sampled (§4), the carbon
+  seam (§6) and the source ids (§8); in `forcing.md`, the record-spacing check (§1), the recycle drift
+  (§9) and the longwave synthesis (§11). The ED2 provenance of the forcing, the output and the
+  bare-ground start is in `docs/ed2_comparison.md` §4.2-§4.4. Comments that had become wrong are fixed.
+- **Named constants in the forcing and the writers** (#468): `day_sec` and `t_3ple` replace the literals
+  86400 and 273.16, `meds_constants` gains `deg_to_rad`, and the census reader's patch-area tolerance
+  and each netCDF writer's deflate level are named. The output stream compares instants with
+  `meds_time`'s `time_eq`, and every module names what it takes from `meds_netcdf_c`.
+- **No `;` statement joins in `src/init` and `src/io`** (#468), as in `src/state` and `src/config`.
+- **Two messages name what the code reads** (#468): a forcing file whose record spacing differs from
+  the config names `[forcing].timestep`, and the output's `dbh_upper` attribute says the last DBH class
+  also holds every larger plant.
+- **`meds_slow` no longer links `meds_io_prep`** (#468): no slow-loop module imports the output layer.
 - **The ctest target `biophysics_opts_config` is `biophysics_params_config`** (#466), named for the
   `meds_soil_params` and `meds_biophysics_params` records whose loaders it checks.
 - **`src/config` is the configuration and its checks** (#464): `meds_config` (the aggregate, one field
@@ -551,6 +587,11 @@ bundle is its `*_args_t` (#465).
 
 ### Removed
 
+- **Code in `src/io` nothing called** (#468): twelve convenience totals in `meds_diagnostic_reduce`,
+  the derive helpers `cohort_gsc`, `cohort_wue`, `cohort_ci_ca`, `bowen_ratio` and `safe_ratio` with the
+  two `meds_therm_lib` re-exports beside them, `agg_is_slabwise`, `slab_capacity` and
+  `met_forcing_t%rshort_diffuse`. `cohort_weight`, `mean_dbh`, `extract_scalar_source`,
+  `apparent_solar_seconds` and `era5land_default_static` are private.
 - **The retired-key table** (#464), 280 of `meds_config_keys`' 421 lines, and the loader's
   retired-spelling branches; the keys nothing read (listed under Upgrading); the reporting-only
   `backend` field with its `BK_*` labels; `INTERP_COSZ` and `METAVG_INSTANT`; `soil_opts_t%debug_error`,

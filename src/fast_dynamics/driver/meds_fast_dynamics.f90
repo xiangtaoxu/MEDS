@@ -434,8 +434,8 @@ contains
          out_bufs%fast_n_patch  = npatch
          out_bufs%fast_site = 0.0_wp
          out_bufs%fast_soil_temp = 0.0_wp ; out_bufs%fast_soil_water = 0.0_wp
-         out_bufs%fast_coh_ltemp = 0.0_wp ; out_bufs%fast_coh_gpp = 0.0_wp ; out_bufs%fast_coh_height = 0.0_wp
-         if (do_cdiag) out_bufs%fast_coh_cdiag = 0.0_wp
+         out_bufs%fast_cohort_leaf_temp = 0.0_wp ; out_bufs%fast_cohort_gpp = 0.0_wp ; out_bufs%fast_cohort_height = 0.0_wp
+         if (do_cdiag) out_bufs%fast_cohort_diag = 0.0_wp
       end if
 
       ncoh_max = 0_ik
@@ -774,10 +774,10 @@ contains
                out_bufs%fast_soil_water_patch(kb+1_ik:kb+nl, isub) = biophys%soil_water%theta(1:nl)
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
-                  out_bufs%fast_coh_ltemp(i,isub)  = biophys%leaf_temp(j)
-                  out_bufs%fast_coh_gpp(i,isub)    = gpp_coh(j)
-                  out_bufs%fast_coh_height(i,isub) = col_cohort%height(j)
-                  if (do_cdiag) out_bufs%fast_coh_cdiag(i, :, isub) = cdiag_buf(:, j)
+                  out_bufs%fast_cohort_leaf_temp(i,isub)  = biophys%leaf_temp(j)
+                  out_bufs%fast_cohort_gpp(i,isub)    = gpp_coh(j)
+                  out_bufs%fast_cohort_height(i,isub) = col_cohort%height(j)
+                  if (do_cdiag) out_bufs%fast_cohort_diag(i, :, isub) = cdiag_buf(:, j)
                end do
             end if
             !----- FOLD the per-(cohort, sub-step) and per-patch DIAGNOSTICS into the site's         !
@@ -1325,22 +1325,22 @@ contains
          allocate(b%fast_patch(N_PA_ROWS, np, nsub), b%fast_soil_temp_patch(nl * np, nsub),           &
                   b%fast_soil_water_patch(nl * np, nsub), b%fast_soil_patch_live(nl * np))
       nc = max(ncohort, 1_ik)
-      if (allocated(b%fast_coh_ltemp)) then
-         if (size(b%fast_coh_ltemp, 1, kind=ik) < nc) then
-            nc = max(nc, 2_ik * size(b%fast_coh_ltemp, 1, kind=ik))
-            deallocate(b%fast_coh_ltemp, b%fast_coh_gpp, b%fast_coh_height)
+      if (allocated(b%fast_cohort_leaf_temp)) then
+         if (size(b%fast_cohort_leaf_temp, 1, kind=ik) < nc) then
+            nc = max(nc, 2_ik * size(b%fast_cohort_leaf_temp, 1, kind=ik))
+            deallocate(b%fast_cohort_leaf_temp, b%fast_cohort_gpp, b%fast_cohort_height)
          end if
       end if
-      if (.not. allocated(b%fast_coh_ltemp))                                                       &
-         allocate(b%fast_coh_ltemp(nc, nsub), b%fast_coh_gpp(nc, nsub), b%fast_coh_height(nc, nsub))
+      if (.not. allocated(b%fast_cohort_leaf_temp))                                                       &
+         allocate(b%fast_cohort_leaf_temp(nc, nsub), b%fast_cohort_gpp(nc, nsub), b%fast_cohort_height(nc, nsub))
       !----- The diagnostic block's rows, staged only while the block is on: its FAST-tier variables  !
       !      (SRC_F_CO0 + CO_*) are what turn it on, so a run that reports none allocates nothing. ----!
       if (with_cdiag) then
-         nc = size(b%fast_coh_ltemp, 1, kind=ik)
-         if (allocated(b%fast_coh_cdiag)) then
-            if (size(b%fast_coh_cdiag, 1, kind=ik) < nc) deallocate(b%fast_coh_cdiag)
+         nc = size(b%fast_cohort_leaf_temp, 1, kind=ik)
+         if (allocated(b%fast_cohort_diag)) then
+            if (size(b%fast_cohort_diag, 1, kind=ik) < nc) deallocate(b%fast_cohort_diag)
          end if
-         if (.not. allocated(b%fast_coh_cdiag)) allocate(b%fast_coh_cdiag(nc, N_CO_FAST_ROWS, nsub))
+         if (.not. allocated(b%fast_cohort_diag)) allocate(b%fast_cohort_diag(nc, N_CO_FAST_ROWS, nsub))
       end if
    end subroutine size_fast_staging
 

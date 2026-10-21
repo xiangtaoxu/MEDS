@@ -325,7 +325,7 @@ meds_fortran_flags(meds_fast)
 #      soil biogeochemistry). It is the ONE place a demographic rate meets its application.       #
 file(GLOB SLOW_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/driver/*.f90)
 add_library(meds_slow STATIC ${SLOW_SOURCES})
-target_link_libraries(meds_slow PUBLIC meds_demography meds_slow_kernels meds_fast_kernels meds_io_prep)
+target_link_libraries(meds_slow PUBLIC meds_demography meds_slow_kernels meds_fast_kernels)
 meds_fortran_flags(meds_slow)
 
 #----- Initial-community builders (bare ground, add_cohort, census). ------------------------#

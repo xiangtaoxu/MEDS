@@ -295,16 +295,17 @@ It costs you the ability to start from a curated ED2-style PFT set — you must 
 |---|---|---|
 | Modes | Bare ground, a cohort **census** (inventory-style), or a netCDF restart | `IED_INIT_MODE` −1 … 7: bare/near-bare, ED-1.0, ED-2.0, ED-2.1 HDF5 histories, multi-file nearest-neighbour matching, lidar-compatible variants |
 | Soil state | From config | `ISOILSTATEINIT`, `SOILSTATE_DB`, or from the history file |
-| Site properties | From config (latitude, elevation, reference height, soil column) | Map databases: `VEG_DATABASE`, `SOIL_DATABASE`, `SLCOL_DATABASE`, `SOILDEPTH_DB`, `LU_DATABASE`, `THSUMS_DATABASE` |
+| Site properties | From config (latitude, elevation, reference height, soil column), or for each cell of a region from the `[maps]` maps on the forcing grid: soil depth, texture and chemistry, the bottom boundary, the deep temperature and Chave's E | Map databases: `VEG_DATABASE`, `SOIL_DATABASE`, `SLCOL_DATABASE`, `SOILDEPTH_DB`, `LU_DATABASE`, `THSUMS_DATABASE` |
 
-MEDS has no database-driven initialization at all. For a single site with known properties this is a
-simplification; for anything regional it is a wall.
+MEDS reads no vegetation database: a run starts from bare ground, a census or a restart. A bare-ground
+start's `[pft].nbg_init_density` is ED2's `init_density`: every patch gets one cohort of each PFT whose
+density is above zero, that many plants per m², at `min_cohort_height`.
 
 ### 4.3 Meteorological forcing
 
 | | MEDS | ED2 |
 |---|---|---|
-| Format | One netCDF file on a `(time, grid)` layout, or a constant-forcing backend with no file | `ED_MET_DRIVER_HEADER` pointing at HDF5 files, `IMETTYPE` |
+| Format | A MEDS forcing file of time series at a list of points (`"ED_default"`), the global ED_ERA5land archive of one netCDF file per variable per month on the 0.1° grid (`"ED_ERA5land"`, which a region requires), or a constant-forcing backend with no file | `ED_MET_DRIVER_HEADER` pointing at HDF5 files, `IMETTYPE` |
 | Gap filling | **None — a NaN in a required field is a hard error** | — |
 | Shortwave partitioning | Erbs (default), Weiss–Norman, or a clearness-index scheme. MEDS's Weiss–Norman uses the paper's 600 / 720 W m⁻² visible / NIR beam, where ED2 uses 0.43 / 0.57 of the solar constant | `IMETRAD` 0–5 (as-is, SiB, Weiss–Norman, all-diffuse, all-direct, clearness index) |
 | Sub-daily reconstruction | Interval-mean-conserving disaggregation anchored on the model sun (UTC + longitude + equation of time) | `IMETAVG` 0–3 declares the averaging convention |
@@ -322,6 +323,25 @@ Use it when your forcing has no longwave, not in preference to one that does.
 
 Recycled met keeps its sub-daily phase over multi-decade runs: the recycle window is declared in
 config and validated at open, and `test_met_driver` checks recycle phase over 29 years.
+
+What the forcing code in `src/io/input/forcing` takes from ED2:
+
+- **The sample a step reads** is ED2's `cgrid%metinput`, held in `met_forcing_t` and passed by the
+  driver rather than kept as a global. A region's polygon keeps its cell's latitude and longitude, as
+  an ED2 polygon does.
+- **Wind** interpolates as a squared speed, conserving kinetic energy, as ED2's `vels` does.
+- **The Weiss–Norman partition** follows ED2's `short_bdown_weissnorman` (`radiate_utils.f90`). MEDS
+  keeps ED2's visible diffuse term, which scales the beam it subtracts by cos z once more than other
+  implementations of WN85 eq. 3, and ED2's behaviour just above the grazing cutoff (cos z ≈
+  0.0175–0.029), where the NIR diffuse stream can go slightly negative while the four streams still
+  sum to the total ([forcing](science/forcing.md) §6).
+- **The rain/snow split** is a simplified form of ED2's Jin (1999) ramp.
+- **The grid match**: `great_circle_distance` ports ED2's `dist_gc` (`great_circle.f90`), and
+  `nearest_grid_index` the argmin loop of `match_poly_grid`.
+- **Recycling** maps a model year into the window as ED2's `year_use` substitution does, anchored on
+  the window's declared start rather than on 1 January; 29 February becomes 28 February in a non-leap
+  file year, as ED2's `read_ol_file` repeats 28 February.
+- **The temperature lapse** is ED2's `calc_met_lapse`.
 
 ### 4.4 Output
 
@@ -345,6 +365,16 @@ registry entries from their coarse namesakes** (`cas_temp_fast` reads staging ca
 loop; `cas_temp_site` reads end-of-step state) — putting either on the wrong stream is rejected at
 start-up rather than silently writing fill. And **cohort and patch axes are forbidden on the annual
 stream**, because a window longer than a month would straddle the disturbance restructuring.
+
+What the output code in `src/io/output` takes from ED2:
+
+- **The temporal reduction** follows ED2's `integrate_` / `normalize_` / `zero_` family: a variable is
+  folded into its window each step, normalized when the window closes, and re-seeded
+  (`integrate_scalar` / `integrate_slab`, `normalize_scalar` / `normalize_slab`, `reset_buffer`).
+- **The DBH size classes** are ED2's: a class of plants, and a cohort lands whole in the class of its
+  mean diameter, never split across classes, which makes `nplant_size` a stem-density distribution
+  comparable to a forest inventory.
+- **The relative saturation** `soil_wetness`, (θ − θr)/(θs − θr), carries ED2's name.
 
 ### 4.5 Build, test, scale
 

@@ -1,22 +1,21 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_init -- helpers to build the initial community a run starts from.                    !
+! meds_init -- the initial community a run starts from (docs/science/order_of_processes.md !
+! §1, setup step 2; docs/configuration.md, How a run starts).                              !
 !                                                                                          !
-! Two entry points exist: a near-bare-ground site (for spin-up demos and the test suite),  !
-! which seed_bare_ground plants with each PFT's nbg_init_density, and a start from a cohort !
-! CENSUS file (init_from_census) -- a CSV produced by a previous MEDS run or a field        !
-! inventory. add_cohort/finalize_init are the low-level builders both share.               !
+! Near-bare ground: init_bare_ground (one site) or init_bare_sites (several), then         !
+! seed_bare_ground plants each PFT's nbg_init_density. A cohort census: init_from_census,  !
+! then restructure_census_stand. add_cohort and finalize_init are the builders both share. !
 !==========================================================================================!
 module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, growth_window_steps
-   use meds_patch_state_vars, only : DIST_PRIMARY
    use meds_allometry_lib, only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
    use meds_site_state_vars,       only : make_site_surface
    use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map,      &
                                           assign_cohort_id, assign_patch_id
-   use meds_patch_state_vars,      only : patch_physical_state
+   use meds_patch_state_vars,      only : patch_physical_state, DIST_PRIMARY
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
                                                split_cohorts
    use meds_demography_patch_fusefiss,  only : sort_patches, new_fuse_patches, terminate_patches
@@ -26,8 +25,11 @@ module meds_init
    public :: init_bare_ground, init_bare_sites, seed_bare_ground, add_cohort, finalize_init, init_from_census
    public :: restructure_census_stand
 
-   !----- The census file's column layout: each index is the column's position, 0 if absent. -!
+   !----- The census file's limits: columns in the header, characters in a field. ---------!
    integer, parameter :: CENSUS_MAX_COLS = 32, CENSUS_FIELD_LEN = 64
+   !----- Two rows of one patch agree on its area within this fraction of it. -------------!
+   real(wp), parameter :: PATCH_AREA_RTOL = 1.0e-9_wp
+   !----- The census file's columns: each one's position in a row, 0 if absent. -----------!
    type :: census_columns_t
       logical :: header = .false.
       integer :: n = 0
@@ -84,9 +86,9 @@ contains
    end subroutine init_bare_sites
 
    !---------------------------------------------------------------------------------------!
-   ! A near-bare-ground start's seedlings (ED2's init_density): every patch gets one cohort of !
-   ! each PFT with nbg_init_density > 0, that many plants per m2, at min_cohort_height on the  !
-   ! PFT's own height curve, where recruits are born. All densities 0 leave the site empty.    !
+   ! A near-bare-ground start's seedlings: every patch gets one cohort of each PFT with    !
+   ! nbg_init_density > 0, that many plants per m2, at min_cohort_height on the PFT's own  !
+   ! height curve, where recruits are born. All densities 0 leave the patches empty.       !
    !---------------------------------------------------------------------------------------!
    subroutine seed_bare_ground(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
@@ -132,30 +134,17 @@ contains
    end subroutine finalize_init
 
    !---------------------------------------------------------------------------------------!
-   ! Initialize a polygon from a cohort CENSUS file: a CSV with one row per cohort, produced    !
-   ! by a previous MEDS run or from a field inventory.                                          !
-   !                                                                                          !
-   ! COLUMNS ARE MATCHED BY NAME from the header line, in any order:                           !
-   !   required  patch_id, dbh [cm], pft, nplant [plants per m2 of the patch]                  !
-   !   optional  patch_area [any unit], site_id, cohort_id, height [m]                         !
-   ! Each distinct (site_id, patch_id) is one primary patch of age 0. With patch_area a site's  !
-   ! patches take their areas normalized to fractions of the site; without it they share it     !
-   ! equally. One site is built from the rows of one site_id (`use_site_id` if present, else    !
-   ! the first one seen); with `site_ids`, site k is built from the rows of site_ids(k), with   !
-   ! its surface from site_cfg(k) and its share site_area(k) of the polygon. A file without     !
-   ! the column is one site. `dbh` drives the allometry (set_cohort_size), so `height` and      !
-   ! `cohort_id` are provenance: height, when present, must be positive.                        !
-   !                                                                                          !
-   ! A file whose first data line is seven numbers is read positionally as                    !
-   ! `site_id, patch_id, cohort_id, dbh, height, pft, nplant`, the layout of a census file    !
-   ! without a header.                                                                        !
-   !                                                                                          !
-   ! Blank lines and lines beginning with '#' are ignored. found=.false. (the site is left      !
-   ! unbuilt) if the file cannot be opened or holds no row for the selected site, and `why`     !
-   ! says which, so the caller can stop and say so. An unknown or duplicated column, a missing  !
-   ! required one, a malformed row, a non-positive value, or a patch whose rows disagree on     !
-   ! patch_area stops the run. The file is read twice (patches, then cohorts), so no row buffer !
-   ! is needed.                                                                                 !
+   ! Build a polygon from a cohort census CSV, one row per cohort (docs/configuration.md,  !
+   ! How a run starts). Columns are matched by header name: patch_id, dbh [cm], pft and    !
+   ! nplant [plants per m2 of the patch] required; patch_area [any unit], site_id,         !
+   ! cohort_id, height [m] optional. A first data line of seven numbers is read            !
+   ! positionally as site_id, patch_id, cohort_id, dbh, height, pft, nplant. Blank and '#' !
+   ! lines are skipped. Each (site_id, patch_id) is a primary patch of age 0. One site is  !
+   ! built from use_site_id (else the first site_id seen); with site_ids, site k from the  !
+   ! rows of site_ids(k), with site_cfg(k) and site_area(k). found = .false. and `why` say !
+   ! the file cannot be opened or has no row for the site; an unknown, repeated or missing !
+   ! column, a malformed row, a non-positive value, or a patch whose rows disagree on      !
+   ! patch_area stops the run. Two passes: patches, then cohorts.                          !
    !---------------------------------------------------------------------------------------!
    subroutine init_from_census(poly, cfg, path, found, use_site_id, why, site_ids, site_cfg, site_area)
       type(polygon_t),     intent(out) :: poly
@@ -258,7 +247,7 @@ contains
                   patch_id_of   = [patch_id_of, pid]
                   patch_area_of = [patch_area_of, area]
                else if (cols%area > 0) then
-                  if (abs(area - patch_area_of(ip)) > 1.0e-9_wp * patch_area_of(ip)) then
+                  if (abs(area - patch_area_of(ip)) > PATCH_AREA_RTOL * patch_area_of(ip)) then
                      write(pid_str, '(i0)') pid
                      error stop 'meds_init: census patch_id '//trim(pid_str)//                     &
                                 ' has rows with two different patch_area values in '//trim(path)
@@ -296,11 +285,10 @@ contains
    end subroutine init_from_census
 
    !---------------------------------------------------------------------------------------!
-   ! Restructure a census stand before the first step, with the slow step's own operators:    !
-   ! its monthly cohort block, then its yearly patch block, less recruitment and disturbance.  !
-   ! A census arrives with a cohort per measured size and a patch per plot cell, far more of   !
-   ! both than a step should carry, and nothing else fuses them before the first month or year !
-   ! boundary. Each block runs under the same switches as in the slow step.                    !
+   ! Restructure a census stand before the first step with the slow step's own operators   !
+   ! and switches: its monthly cohort block, then its yearly patch block, less recruitment !
+   ! and disturbance. A census carries a cohort per measured size and a patch per plot     !
+   ! cell, far more than a step should carry (docs/configuration.md, How a run starts).    !
    !---------------------------------------------------------------------------------------!
    subroutine restructure_census_stand(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
@@ -345,8 +333,15 @@ contains
       call parse_census_row(line, sid, pid, cid, dbh, height, ipft, nplant, numeric)
       if (numeric) then
          cols%header = .false.
-         cols%n = 7 ; cols%site = 1 ; cols%patch = 2 ; cols%cohort = 3 ; cols%dbh = 4
-         cols%height = 5 ; cols%pft = 6 ; cols%nplant = 7 ; cols%area = 0
+         cols%n = 7
+         cols%site = 1
+         cols%patch = 2
+         cols%cohort = 3
+         cols%dbh = 4
+         cols%height = 5
+         cols%pft = 6
+         cols%nplant = 7
+         cols%area = 0
          return
       end if
       cols%header = .true.
@@ -354,14 +349,22 @@ contains
       if (cols%n > CENSUS_MAX_COLS) error stop 'meds_init: census header has too many columns in '//trim(path)
       do k = 1, cols%n
          select case (lower(trim(names(k))))
-         case ('site_id')    ; call claim(cols%site,   k, 'site_id')
-         case ('patch_id')   ; call claim(cols%patch,  k, 'patch_id')
-         case ('cohort_id')  ; call claim(cols%cohort, k, 'cohort_id')
-         case ('dbh')        ; call claim(cols%dbh,    k, 'dbh')
-         case ('height')     ; call claim(cols%height, k, 'height')
-         case ('pft')        ; call claim(cols%pft,    k, 'pft')
-         case ('nplant')     ; call claim(cols%nplant, k, 'nplant')
-         case ('patch_area') ; call claim(cols%area,   k, 'patch_area')
+         case ('site_id')
+            call claim(cols%site,   k, 'site_id')
+         case ('patch_id')
+            call claim(cols%patch,  k, 'patch_id')
+         case ('cohort_id')
+            call claim(cols%cohort, k, 'cohort_id')
+         case ('dbh')
+            call claim(cols%dbh,    k, 'dbh')
+         case ('height')
+            call claim(cols%height, k, 'height')
+         case ('pft')
+            call claim(cols%pft,    k, 'pft')
+         case ('nplant')
+            call claim(cols%nplant, k, 'nplant')
+         case ('patch_area')
+            call claim(cols%area,   k, 'patch_area')
          case default
             error stop 'meds_init: census column "'//trim(names(k))//'" is unknown in '//trim(path)
          end select
@@ -380,7 +383,7 @@ contains
       end subroutine claim
    end subroutine census_layout
 
-   !----- One data row under the layout. Absent optional columns: site 1, no area, height 1. -!
+   !----- One data row under the layout; an absent site, area or height is 1. -------------!
    subroutine parse_census_line(line, cols, path, sid, pid, dbh, height, ipft, nplant, area)
       character(len=*),       intent(in)  :: line, path
       type(census_columns_t), intent(in)  :: cols
@@ -398,7 +401,9 @@ contains
       else
          call split_csv(line, f, nf)
          if (nf < cols%n) error stop 'meds_init: census row with too few columns in '//trim(path)
-         sid = 1_ik ; height = 1.0_wp ; ios = 0
+         sid = 1_ik
+         height = 1.0_wp
+         ios = 0
          if (cols%site   > 0 .and. ios == 0) read(f(cols%site),   *, iostat=ios) sid
          if (ios == 0) read(f(cols%patch),  *, iostat=ios) pid
          if (ios == 0) read(f(cols%dbh),    *, iostat=ios) dbh
@@ -435,7 +440,9 @@ contains
       character(len=*), intent(out) :: fields(:)
       integer,          intent(out) :: nf
       integer :: k, i0, n
-      n = len_trim(line) ; nf = 0 ; i0 = 1
+      n = len_trim(line)
+      nf = 0
+      i0 = 1
       fields = ' '
       do k = 1, n + 1
          if (k > n) then

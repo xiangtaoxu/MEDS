@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_archive_source -- the ED_ERA5land ARCHIVE source (docs/science/forcing.md §1-§2):   !
+! meds_met_archive_source -- the ED_ERA5land archive source (docs/science/forcing.md §1-§2):   !
 ! monthly files of hourly ERA5-Land fields over a grid of cells, laid end to end as one         !
 ! hourly axis over the months a run needs. It opens the archive (archive_source_open), loads   !
 ! a month before the step that reads it (archive_prefetch), and hands the shared ingest one    !
@@ -9,6 +9,7 @@
 module meds_met_archive_source
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
+   use meds_constants, only : day_sec
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, seconds_into_day,    &
                          time_to_string
    use meds_forcing_params, only : MET_PATH_LEN, ARCHIVE_DT_SEC, SWPART_PASSTHROUGH
@@ -47,7 +48,8 @@ contains
       call open_archive(src, run_start, run_end, stat, cells)
       if (stat == MET_OK) call validate_recycle_window(src, stat)
       if (stat /= MET_OK) then
-         why = 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)' ; return
+         why = 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)'
+         return
       end if
       call load_axis_month(src, 1_ik)
       call keep_window_head(src)
@@ -55,13 +57,11 @@ contains
    end subroutine archive_source_open
 
    !=======================================================================================!
-   !  PREFETCH from the archive: load what the step starting at `step_start` reads. A daily    !
-   !  step from midnight reads one archive month plus the record before it: 00:00 on the 1st,  !
-   !  which lives in the previous month's file, or the window's last record at the recycle     !
-   !  wrap. Moving into the next month, that record comes from the outgoing buffer, so a run   !
-   !  loads each month once. A step the recycle seam falls inside also reads the window's first !
-   !  day, which met_open keeps. validate_config restricts format = "ED_ERA5land" to daily      !
-   !  steps from midnight, the shape this assumes.                                              !
+   !  PREFETCH from the archive: the month the step starting at `step_start` reads, and the    !
+   !  record before it (00:00 on the 1st, or the window's last record at the recycle wrap),     !
+   !  which comes from the outgoing month, so a run loads each month once                      !
+   !  (docs/science/forcing.md §2). It assumes the daily steps from midnight validate_config   !
+   !  requires of the archive.                                                                 !
    !=======================================================================================!
    subroutine archive_prefetch(src, step_start)
       type(met_source_t), intent(inout)  :: src
@@ -75,10 +75,12 @@ contains
          wrap = s0 >= src%time_sec(src%irec_cycle_last) - REC_MATCH_TOL
       end if
       if (wrap) then                                    ! the window's first month, after its last record
-         k = axis_month_of(src, src%irec_cycle_first) ; p = src%irec_cycle_last
+         k = axis_month_of(src, src%irec_cycle_first)
+         p = src%irec_cycle_last
       else
          r = first_record_after(src, s0)                ! clamped to the axis
-         k = axis_month_of(src, r) ; p = src%month_rec0(k)
+         k = axis_month_of(src, r)
+         p = src%month_rec0(k)
       end if
       if (p > 0_ik .and. src%carry_rec /= p) then       ! the record before the month
          if (.not. allocated(src%carry)) allocate(src%carry(src%cells%ncell, ERA_NVAR))
@@ -94,11 +96,9 @@ contains
       if (.not. month_loaded(src, k)) call load_axis_month(src, k)
    end subroutine archive_prefetch
 
-   !----- One record's values at the cursor's cell, as the archive stores them: the            !
-   !      dewpoint, whose humidity comes from the model's own saturation curve in the shared    !
-   !      ingest, the wind components, whose speed is the vector's at each stamp, and the total   !
-   !      shortwave. The archive never carries the four shortwave streams (archive_source_open    !
-   !      refuses "passthrough"). -----------------------------------------------------------------!
+   !----- One record's values at the cursor's cell, as the archive stores them: the dewpoint    !
+   !      (converted in the shared ingest), the wind components with their speed, and the total  !
+   !      shortwave, never the four streams (open_archive refuses "passthrough"). ---------------!
    subroutine archive_source_record(src, cur, irec, rec, humidity_value, sw_total)
       type(met_source_t), intent(in)    :: src
       type(met_cursor_t), intent(in)    :: cur
@@ -144,7 +144,8 @@ contains
       if (f%sw_partition == SWPART_PASSTHROUGH) then
          write(*,'(a)') ' met_open: the ED_ERA5land archive carries TOTAL shortwave, but'
          write(*,'(a)') '   [forcing].sw_partition = "passthrough" expects the four component streams.'
-         stat = MET_ERR_ATTR_MISMATCH ; return
+         stat = MET_ERR_ATTR_MISMATCH
+         return
       end if
 
       !----- The cells: a region's, selected by its caller, or the site's own. -------------------!
@@ -166,9 +167,11 @@ contains
             write(*,'(3a)') ' met_open: the static file ', trim(src%static_file),                      &
                             ' does not hold a regular lat/lon grid with valid and elevation'
          end select
-         stat = MET_ERR_ARCHIVE ; return
+         stat = MET_ERR_ARCHIVE
+         return
       end if
-      src%grid_index = 1_ik ; src%ngrid = src%cells%ncell
+      src%grid_index = 1_ik
+      src%ngrid = src%cells%ncell
       src%has_wind_vector = .true.
       src%humidity = HUMIDITY_TDEW                           ! the archive stores the 2 m dewpoint
       if (present(cells)) then
@@ -191,12 +194,19 @@ contains
       nmonth = (y1 - y0) * 12_ik + (m1 - m0) + 1_ik
       if (nmonth < 1_ik) error stop 'met_open: the ED_ERA5land month range is empty'
       allocate(src%month_year(nmonth), src%month_month(nmonth), src%month_rec0(nmonth))
-      y = y0 ; m = m0 ; src%nrec = 0_ik
+      y = y0
+      m = m0
+      src%nrec = 0_ik
       do k = 1_ik, nmonth
-         src%month_year(k) = y ; src%month_month(k) = m ; src%month_rec0(k) = src%nrec
+         src%month_year(k) = y
+         src%month_month(k) = m
+         src%month_rec0(k) = src%nrec
          src%nrec = src%nrec + era5land_month_hours(y, m)
          m = m + 1_ik
-         if (m > 12_ik) then ; m = 1_ik ; y = y + 1_ik ; end if
+         if (m > 12_ik) then
+            m = 1_ik
+            y = y + 1_ik
+         end if
       end do
       src%base_time = ERA_EPOCH
       if (allocated(src%time_sec)) deallocate(src%time_sec)
@@ -222,7 +232,8 @@ contains
       end do
       if (nmiss > 0_ik) then
          write(*,'(a,i0,a,i0,a)') '   ', nmiss, ' of ', nmonth * ERA_NVAR, ' files the run needs are missing.'
-         stat = MET_ERR_ARCHIVE ; return
+         stat = MET_ERR_ARCHIVE
+         return
       end if
 
       !----- The first month file describes the archive; check it against the config. ----------!
@@ -230,11 +241,14 @@ contains
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) then
          write(*,'(2a)') ' met_open: cannot open ', trim(path)
-         stat = MET_ERR_ARCHIVE ; return
+         stat = MET_ERR_ARCHIVE
+         return
       end if
       call validate_file_against_config(src, ncid, stat)
       st = nc_close(ncid)
-      src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_loads = 0_ik
+      src%buffer%year = 0_ik
+      src%carry_rec = 0_ik
+      src%n_loads = 0_ik
       end associate
    end subroutine open_archive
 
@@ -248,9 +262,14 @@ contains
       type(meds_time_t) :: before
       real(wp) :: hours
       hours = seconds_between(ERA_EPOCH, t) / ARCHIVE_DT_SEC
-      if (round_up) then ; hours = real(ceiling(hours), wp) ; else ; hours = real(floor(hours), wp) ; end if
+      if (round_up) then
+         hours = real(ceiling(hours), wp)
+      else
+         hours = real(floor(hours), wp)
+      end if
       before = time_advance_seconds(ERA_EPOCH, hours * ARCHIVE_DT_SEC - 1.0_wp)
-      year = before%year ; month = before%month
+      year = before%year
+      month = before%month
    end subroutine archive_month_of
 
    !----- The axis month holding record irec (binary search: an axis can span decades). ----------!
@@ -258,10 +277,15 @@ contains
       type(met_source_t), intent(in)  :: src
       integer(ik),        intent(in) :: irec
       integer(ik) :: lo, hi, mid
-      lo = 1_ik ; hi = size(src%month_rec0, kind=ik)          ! month_rec0(lo) < irec always holds
+      lo = 1_ik
+      hi = size(src%month_rec0, kind=ik)          ! month_rec0(lo) < irec always holds
       do while (lo < hi)
          mid = (lo + hi + 1_ik) / 2_ik
-         if (src%month_rec0(mid) < irec) then ; lo = mid ; else ; hi = mid - 1_ik ; end if
+         if (src%month_rec0(mid) < irec) then
+            lo = mid
+         else
+            hi = mid - 1_ik
+         end if
       end do
       k = lo
    end function axis_month_of
@@ -292,13 +316,13 @@ contains
       time_of_day = seconds_into_day(src%cycle_anchor)
       src%n_head = 1_ik
       if (time_of_day > REC_MATCH_TOL)                                                            &
-         src%n_head = 1_ik + nint((86400.0_wp - time_of_day) / src%dt_forcing, ik)
+         src%n_head = 1_ik + nint((day_sec - time_of_day) / src%dt_forcing, ik)
       h1 = src%irec_cycle_first - src%month_rec0(1)
       allocate(src%head(src%n_head, src%cells%ncell, ERA_NVAR))
       src%head = src%buffer%values(h1:h1 + src%n_head - 1_ik, :, :)
    end subroutine keep_window_head
 
-   !----- Read axis month k into the buffer: the ONLY place the archive is read after open. -----!
+   !----- Read axis month k into the buffer: the only place the archive is read after open. -----!
    subroutine load_axis_month(src, k)
       type(met_source_t), intent(inout)  :: src
       integer(ik),        intent(in)    :: k

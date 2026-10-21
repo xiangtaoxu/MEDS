@@ -15,14 +15,13 @@ program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_constants,     only : n_soil_layer_max
-   use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
+   use meds_diagnostic_reduce,  only : reduce_cohort_to_polygon, reduce_cohort_to_patch,            &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,             &
-                                       reduce_patch_to_site, reduce_patch_columns_to_sites,     &
+                                       reduce_patch_to_polygon, reduce_patch_columns_to_sites,     &
                                        gather_patch_columns,                                     &
                                        W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA,             &
                                        total_agb, total_lai, total_nplant
-   use meds_diagnostic_kernels, only : dbh_class_index, soil_wetness, cohort_gsc, cohort_wue,    &
-                                       safe_ratio
+   use meds_diagnostic_kernels, only : dbh_class_index, soil_wetness
    use meds_diag_vars,          only : cohort_diag_block, alloc_cohort_diag, reorder_cohort_diag, copy_cohort_diag, &
                                        fuse_cohort_diag, clear_cohort_diag, cohort_diag_value, N_CO_FAST_ROWS, &
                                        CO_LEAF_TEMP, CO_SAPFLOW, CO_ABS_SW, CO_WOOD_TEMP, CO_GSW
@@ -79,14 +78,14 @@ contains
 
       !----- EXTENSIVE: agb_site = SUM area*nplant*agb                                        !
       !      = 0.75*(2*10 + 1*20) + 0.25*(4*30) = 0.75*40 + 0.25*120 = 30 + 30 = 60.  --------!
-      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .false., v, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%agb, W_NPLANT, .false., v, ok)
       call check_close(v, 60.0_wp, 1.0e-12_wp, 'agb_site = weighted SUM over nplant')
       call check(ok, 'extensive reduction is always valid')
       call check_close(total_agb(poly), 60.0_wp, 1.0e-12_wp, 'total_agb wrapper agrees')
 
       !----- The same call with mean=.true. is a DIFFERENT number (mean per-plant agb):        !
       !      60 / (0.75*3 + 0.25*4) = 60/3.25.  ---------------------------------------------!
-      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .true., v2, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%agb, W_NPLANT, .true., v2, ok)
       call check_close(v2, 60.0_wp/3.25_wp, 1.0e-12_wp, 'mean=.true. gives the per-plant mean')
       call check(abs(v - v2) > 1.0_wp, 'sum and mean are genuinely different (a wrong flag cannot pass)')
 
@@ -94,19 +93,19 @@ contains
       !      w = nplant*basal_area = [10, 1, 8]; area-weighted:                                 !
       !      num = 0.75*(10*5 + 1*15) + 0.25*(8*45) = 0.75*65 + 0.25*360 = 48.75 + 90 = 138.75  !
       !      den = 0.75*(10 + 1)      + 0.25*8      = 8.25 + 2 = 10.25                          !
-      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_BASAL_AREA, .true., v, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%dbh, W_BASAL_AREA, .true., v, ok)
       call check_close(v, 138.75_wp/10.25_wp, 1.0e-12_wp, 'BA-weighted mean dbh')
       !----- The STEM-weighted mean of the same field is a different number, so the weight kind  !
       !      is doing real work rather than being decorative.  -------------------------------!
-      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_NPLANT, .true., v2, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%dbh, W_NPLANT, .true., v2, ok)
       call check(abs(v - v2) > 1.0_wp, 'BA-weighted /= stem-weighted mean dbh')
 
       !----- LEAF-AREA weighting, the contract canopy temperatures and conductances use. -----!
-      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_LEAF_AREA, .true., v, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%dbh, W_LEAF_AREA, .true., v, ok)
       call check(abs(v - v2) > 0.1_wp, 'leaf-area-weighted /= stem-weighted mean dbh')
 
       !----- W_NONE + SUM is the stem-density contract: 0.75*(2+1) + 0.25*4 = 2.25 + 1 = 3.25. !
-      call reduce_cohort_to_site(poly, poly%cohort%nplant, W_NONE, .false., v, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%nplant, W_NONE, .false., v, ok)
       call check_close(v, 3.25_wp, 1.0e-12_wp, 'nplant_site = plain area-weighted sum')
       call check_close(total_nplant(poly), 3.25_wp, 1.0e-12_wp, 'total_nplant wrapper agrees')
 
@@ -133,7 +132,7 @@ contains
       call build_fixture(poly)
       edges(1:5) = [0.0_wp, 10.0_wp, 20.0_wp, 30.0_wp, 100.0_wp]     ! 4 classes
 
-      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .false., site_val, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%agb, W_NPLANT, .false., site_val, ok)
       call reduce_cohort_to_pft (poly, poly%cohort%agb, W_NPLANT, .false., 3_ik, pft_out, vld, n)
       call check(n == 3_ik, 'pft axis length = n_pft')
       call check_close(sum(pft_out(1:3)), site_val, 1.0e-12_wp, 'sum over PFTs == agb_site')
@@ -144,7 +143,7 @@ contains
       call check_close(sum(size_out(1:4)), site_val, 1.0e-12_wp, 'sum over DBH classes == agb_site')
 
       !----- The stem count must be conserved by the binning too: no cohort split, none dropped. !
-      call reduce_cohort_to_site(poly, poly%cohort%nplant, W_NONE, .false., site_val, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%nplant, W_NONE, .false., site_val, ok)
       call reduce_cohort_to_size(poly, poly%cohort%nplant, W_NONE, .false., edges, 4_ik,         &
                                  size_out, vld, n)
       call check_close(sum(size_out(1:4)), site_val, 1.0e-12_wp, 'sum over classes == nplant_site')
@@ -152,7 +151,7 @@ contains
       call check(size_out(3) == 0.0_wp, 'the empty class-3 bin holds nothing')
 
       !----- LAI closes on both axes as well (a second field, so the test is not agb-specific). !
-      call reduce_cohort_to_site(poly, poly%cohort%leaf_area, W_NPLANT, .false., site_val, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%leaf_area, W_NPLANT, .false., site_val, ok)
       call reduce_cohort_to_pft (poly, poly%cohort%leaf_area, W_NPLANT, .false., 3_ik, pft_out, vld, n)
       call check_close(sum(pft_out(1:3)), site_val, 1.0e-12_wp, 'sum over PFTs == lai_site')
       call check_close(total_lai(poly), site_val, 1.0e-12_wp, 'total_lai wrapper agrees')
@@ -194,9 +193,9 @@ contains
 
       !----- A site with no cohorts at all: the extensive sum is 0, the mean is invalid. ------!
       poly%cohort%n = 0_ik ; poly%patch%cohort_count(1:2) = 0_ik
-      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .false., v, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%agb, W_NPLANT, .false., v, ok)
       call check(v == 0.0_wp, 'bare ground: extensive site total is 0')
-      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_BASAL_AREA, .true., v, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%dbh, W_BASAL_AREA, .true., v, ok)
       call check(.not. ok,    'bare ground: weighted MEAN is invalid, not 0/0')
 
       call free_polygon(poly)
@@ -217,16 +216,16 @@ contains
       call build_fixture(poly)
       x = [300.0_wp, 310.0_wp, MISSING_VALUE]          ! cohort 3, alone in patch 2, has no samples
       !----- Leaf-area weights nplant*leaf_area = 2, 3 (patch 1, area 0.75): (600 + 930) / 5. ---!
-      call reduce_cohort_to_site(poly, x, W_LEAF_AREA, .true., v, ok)
+      call reduce_cohort_to_polygon(poly, x, W_LEAF_AREA, .true., v, ok)
       call check(ok, 'mean over the sampled cohorts is valid')
       call check_close(v, 306.0_wp, 1.0e-12_wp, 'an unsampled cohort is out of the mean, not a 0')
       call reduce_cohort_to_patch(poly, x, W_LEAF_AREA, .true., out, vld, n)
       call check(vld(1) .and. .not. vld(2), 'a patch of only unsampled cohorts reads fill')
       x = [1.0_wp, 2.0_wp, MISSING_VALUE]
-      call reduce_cohort_to_site(poly, x, W_NONE, .false., v, ok)
+      call reduce_cohort_to_polygon(poly, x, W_NONE, .false., v, ok)
       call check_close(v, 2.25_wp, 1.0e-12_wp, 'an unsampled cohort adds nothing to a sum')
       x = MISSING_VALUE
-      call reduce_cohort_to_site(poly, x, W_LEAF_AREA, .true., v, ok)
+      call reduce_cohort_to_polygon(poly, x, W_LEAF_AREA, .true., v, ok)
       call check(.not. ok, 'a mean over only unsampled cohorts is invalid')
       call free_polygon(poly)
    end subroutine test_unsampled_cohorts
@@ -321,17 +320,12 @@ contains
    end subroutine test_soil_columns
 
    !=======================================================================================!
-   !  The derived-quantity kernels, including the guarded division that keeps a night-time      !
-   !  zero denominator from poisoning a period mean with a NaN or an Inf.                       !
+   !  The derived-quantity kernels: the relative saturation, clamped to [0, 1].                 !
    !=======================================================================================!
    subroutine test_kernels()
-      call check_close(cohort_gsc(1.6_wp), 1.0_wp, 1.0e-12_wp, 'gsc = gsw / 1.6')
       call check_close(soil_wetness(0.3_wp, 0.1_wp, 0.5_wp), 0.5_wp, 1.0e-12_wp, 'relative saturation')
       call check_close(soil_wetness(0.6_wp, 0.1_wp, 0.5_wp), 1.0_wp, 1.0e-12_wp, 'oversaturated clamps to 1')
       call check_close(soil_wetness(0.0_wp, 0.1_wp, 0.5_wp), 0.0_wp, 1.0e-12_wp, 'below residual clamps to 0')
-      call check_close(safe_ratio(4.0_wp, 2.0_wp), 2.0_wp, 1.0e-12_wp, 'ordinary ratio')
-      call check(safe_ratio(4.0_wp, 0.0_wp) == 0.0_wp, 'zero denominator -> 0, not NaN/Inf')
-      call check(cohort_wue(5.0_wp, 0.0_wp) == 0.0_wp, 'night-time WUE (E=0) -> 0, not a spike')
    end subroutine test_kernels
 
    !=======================================================================================!

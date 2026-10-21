@@ -39,7 +39,7 @@ program test_output_roundtrip
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_output_params,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
-   use meds_output_registry,  only : manager_alloc
+   use meds_output_registry,  only : alloc_output_set
    use meds_output_integrate, only : output_integrate
    use meds_output_manager,   only : output_serialize, output_close
    use meds_netcdf_c
@@ -85,7 +85,7 @@ program test_output_roundtrip
    !----- Output config: daily + annual streams; enable the energy group (soil). -----!
    cfg = build_cfg()
    dt  = 86400.0_wp
-   call manager_alloc(files, bufs(1), cfg)
+   call alloc_output_set(files, bufs(1), cfg)
 
    !----- A soil column with FEWER active layers than the compile-time ceiling. That gap is the   !
    !      whole point: a soil-dimensioned variable emitted over all n_soil_layer_max slots would  !
