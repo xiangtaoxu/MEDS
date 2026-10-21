@@ -140,7 +140,7 @@ variable has one name at every tier. The axes' coordinates and bookkeeping (`n_c
 | `soil` | `n_soil_layer_max` | behind `site`: each site's column on its own layers, its patches area-weighted |
 | `pft` | **run-time** PFT count | carries a `pft` coordinate variable, so the file stays self-describing |
 | `dbh_class` | from `[output].dbh_class_edges` | carries `dbh_lower` / `dbh_upper` coordinates |
-| `(patch, soil)` | 2-D | per-patch soil profiles; `axes_soil_patch = true` |
+| `(patch, soil)` | 2-D | per-patch soil profiles; off by default |
 | `polygon` | every file; length 1 in a site run | after `time`; coordinates `polygon_id`, `lat`, `lon`, `row`, `col` ([configuration](../configuration.md), Regional runs) |
 | `site` | every file; the largest polygon's site count | after `polygon`; `n_site`, `area_si`, the terrain and the soil column of each site; `patch_site` gives each patch's site |
 
@@ -275,7 +275,8 @@ each fast quantity of the patch block is also written per patch on the F tier:
 - the soil columns by layer and patch, `mean_soil_temp_layer_pa` and `mean_soil_water_layer_pa`.
 
 The polygon's F value is the area-weighted sum of the patch values, taken in patch order, so the two
-always agree. The patch variables follow `axes_patch` (on by default) and `axes_soil_patch` (off).
+always agree. The patch variables are on by default and the soil by patch off; `"*_pa" = false`
+drops them all (§5).
 
 ### A caveat worth stating plainly
 
@@ -313,58 +314,75 @@ variable: a diagnostic that quietly reports nothing is worse than one that refus
 
 ## 5. Choosing what to write
 
-Resolution order — later wins:
-
-1. registry defaults
-2. `[output].axes_*` — suppress a whole trailing dimension
-3. `[output].<group>` — suppress a whole variable group
-4. `[output.<tier>].enabled` — suppress a whole tier
-5. `meds_io_config.toml` — per-variable, the finest granularity
-
-**Groups** (9): `structure`, `carbon`, `water`, `energy`, `biogeochem`, `numerics` and `forcing` on
-by default; `radiation` and `ecophys` off. `biogeochem` keeps the soil-carbon pools apart from
-`carbon`, so a run can report the vegetation's carbon without the seven soil pools, which stay 0 with
-`soil_carbon_on = false`. `forcing` is the atmospheric boundary the run used, after
-the reader's shortwave partition, rain/snow split and optional corrections: polygon means at every
-tier (`mean_air_temp_py`, `mean_qair_py`, `mean_psurf_py`, `mean_wind_py`, `mean_lwdown_py`,
-the four shortwave streams `mean_par_beam_py` … `mean_nir_diffuse_py`, `mean_precip_py`, `mean_snowfall_py`,
-`mean_atm_co2_py`, `mean_cosz_py`, `mean_rho_air_py`, and `mean_rainf_py`, sub-daily only; rain
-and snow are the split each patch made at its canopy-air top, area-weighted), and three patch rows at the daily and
-monthly tiers: the forcing each patch saw at its canopy-air top, `mean_wind_cas_top_pa` and
-`mean_air_temp_cas_top_pa`, and that top's height `mean_cas_depth_pa` (with `mean_rough_pa` and
-`mean_displace_pa`, in `energy`, the move can be rebuilt; [`forcing.md`](forcing.md) §8). With
-`mean_sw_in_py` and `mean_precip_py`, it is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
-by far the highest-volume group and the one a production run most often wants off.
-
-`numerics` defaults **on** because it carries the energy and water budget residuals. A closure
-nobody records is worse than one nobody looks at.
-
-**Axes** are the biggest single lever on output volume: `axes_cohort = false` removes ~66
-variables' worth of per-cohort slabs while leaving every polygon variable intact.
-
-**Per-variable control**, for debugging:
+A variable is written at its **default tiers** unless `[output].io_config` says otherwise. The
+defaults write what makes a run judgeable: the structure, carbon, water, energy, soil-carbon, forcing
+and budget variables, the means at their usual tiers. Off by default, because they are large or
+specialised: the per-cohort leaf gas exchange and hydraulics (the `ecophys` group), the absorbed
+radiation (`radiation`), the soil columns by layer and patch, and every snapshot. A tier whose
+`[output.<tier>].enabled` is false writes nothing, whatever `io_config` says.
 
 ```bash
 meds_main --dump-io-config          # writes meds_io_config.toml: every variable, ready to uncomment
 ```
 
+lists every variable under its group, with its default tiers (`false`: off) and the tiers it can be
+on: F with a sub-step value, D and M with a value at the step's end, Y as well off the cohort and patch
+axes.
+
+**`io_config`** is a TOML file of `[variables]` lines. Each names a variable, or a pattern of names
+with `*` for any run of characters (quoted, as TOML wants it), and gives it tiers, `true` (its
+default) or `false`:
+
 ```toml
 [output]
-io_config = "meds_io_config.toml"
+io_config = "my_output.toml"
 ```
 
 ```toml
 [variables]
-mean_gpp_co        = "F D"     # sub-daily and daily GPP per plant, for one diagnostic run
-mean_anet_co       = "D"       # ... and the leaf's net assimilation, daily
-mean_agb_size_py   = "M Y"
-mean_growth_avg_co = false
-soil_water_layer_si = "M"      # each site's soil moisture at the end of each month (a snapshot)
+"*"                 = false       # start from nothing
+"mean_*_py"         = "M Y"       # every polygon mean, monthly and yearly
+mean_gpp_py         = "F D M Y"   # GPP at every tier: four file families
+agb_py              = "Y"         # the stand's biomass at the end of each year
+mean_leaf_temp_co   = "F D"       # a cohort variable: F, D or M only
+soil_water_layer_si = "M"         # each site's soil moisture at the end of each month
 ```
 
-A name matching no registered variable is a hard error, not a silent no-op, and so is a variable on
-a tier it has no source for (a slow-step quantity on F, a sub-daily-only mean on D), and `true` for a
-variable off by default, which has no default tiers to restore: name them instead.
+The rules:
+
+- **The most specific line wins.** A variable takes the line of its own name over any pattern, and a
+  pattern with more literal characters over one with fewer; a variable no line matches keeps its
+  default. Above, `mean_gpp_py` is `"F D M Y"`, `mean_agb_py` is `"M Y"` and `nplant_co` is off.
+- **A name asks for exactly its tiers; a pattern for what each of its variables can take.** A name
+  on a tier it has no value for (a slow-step quantity on F, a sub-daily-only mean on D, a cohort or
+  patch variable on Y) stops the run. A pattern gives each of its variables the tiers it asks that the
+  variable can be on, so `"mean_*" = "M Y"` writes the cohort means monthly only.
+- **A line that cannot mean what it says stops the run:** two lines as specific as each other that
+  disagree on a variable, a line that matches no variable, a tier none of a line's variables can be
+  on, and `true` for a name off by default, which has no default tiers to restore.
+- **The axes' bookkeeping comes with its axis.** `owner_patch`, `global_cohort_id`, `cohort_offset`,
+  `cohort_count`, `global_patch_id` and `patch_site` are written at every tier a variable on their
+  axis is (the soil by patch counting as the patch axis), and not otherwise; naming one is refused.
+  `"*_co" = false` therefore drops the cohort axis whole.
+
+The level suffix makes the common choices one line each: `"*_co" = false` and `"*_pa" = false` drop
+the cohort and patch axes, the largest lever on output volume; `"*_pft_py"` and `"*_size_py"` select
+the PFT and size-class breakdowns; `"mean_*"` every mean, `"mean_resid_*"` the energy and water budget
+residuals. Keep those residuals: a closure nobody records is worse than one nobody looks at.
+
+**Groups** (9) head the `--dump-io-config` list: `structure`, `carbon`, `water`, `energy`,
+`numerics`, `radiation`, `ecophys`, `biogeochem` and `forcing`. `biogeochem` keeps the soil-carbon
+pools apart from `carbon`; they stay 0 with `soil_carbon_on = false`. `forcing` is the atmospheric
+boundary the run used, after the reader's shortwave partition, rain/snow split and optional
+corrections: polygon means at every tier (`mean_air_temp_py`, `mean_qair_py`, `mean_psurf_py`,
+`mean_wind_py`, `mean_lwdown_py`, the four shortwave streams `mean_par_beam_py` …
+`mean_nir_diffuse_py`, `mean_precip_py`, `mean_snowfall_py`, `mean_atm_co2_py`, `mean_cosz_py`,
+`mean_rho_air_py`, and `mean_rainf_py`, sub-daily only; rain and snow are the split each patch made at
+its canopy-air top, area-weighted), and three patch rows at the daily and monthly tiers: the forcing
+each patch saw at its canopy-air top, `mean_wind_cas_top_pa` and `mean_air_temp_cas_top_pa`, and that
+top's height `mean_cas_depth_pa` (with `mean_rough_pa` and `mean_displace_pa`, in `energy`, the move
+can be rebuilt; [`forcing.md`](forcing.md) §8). With `mean_sw_in_py` and `mean_precip_py`, it is what
+checks the sub-daily reconstruction against a tower.
 
 ---
 
