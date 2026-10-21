@@ -9,18 +9,19 @@
 ! place, in its state module's section order. Diagnostic output is meds_output_*.          !
 !==========================================================================================!
 module meds_init_restart
-   use iso_c_binding,       only : c_int, c_size_t, c_double
+   use iso_c_binding,       only : c_int, c_size_t
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : n_soil_layer_max, n_snow_layer_max
    use meds_state_defaults, only : is_unset_positive
    use meds_therm_lib,      only : internal_energy_liquid
    use meds_config,         only : meds_config_t, growth_window_steps
    use meds_time,           only : meds_time_t, time_to_stamp, time_to_decimal_year
-   use meds_netcdf_c,       only : nc_check, nc_close, nc_create_f, nc_def_dim_f, nc_def_var_f, nc_def_var_chunking, &
-                                   nc_def_var_deflate, nc_enddef, nc_get_att_text_f, nc_get_vara_double,               &
-                                   nc_get_vara_int, nc_inq_dimlen, nc_inq_dimlen_f, nc_inq_varid_f, nc_open_f,          &
-                                   nc_put_att_text_f, nc_put_vara_double, nc_put_vara_int, NC_CHUNKED, NC_CLOBBER,      &
+   use meds_netcdf_c,       only : nc_check, nc_close, nc_create_f, nc_def_dim_f, nc_enddef, nc_get_att_text_f,   &
+                                   nc_get_vara_double, nc_get_vara_int, nc_inq_dimlen, nc_inq_dimlen_f,           &
+                                   nc_inq_varid_f, nc_open_f, nc_put_vara_double, nc_put_vara_int, NC_CLOBBER,    &
                                    NC_DOUBLE, NC_GLOBAL, NC_INT, NC_NETCDF4, NC_NOERR, NC_NOWRITE
+   use meds_netcdf_write,   only : define_var, put_global_text, define_polygon_axis, write_polygon_axis,             &
+                                   RESTART_DEFLATE
    use meds_polygon_state_vars,         only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_site_state_vars,            only : make_site_surface
    use meds_patch_state_vars,           only : patch_physical_state
@@ -37,7 +38,6 @@ module meds_init_restart
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
    character(len=*), parameter :: FILM_UNITS  = 'kg/plant'   !< the canopy films' units attribute
-   integer(c_int),   parameter :: DEFLATE_LEVEL = 1_c_int    !< the variables' zlib level
 
    !----- An open state file, its polygon axis ahead of every other. --------------------------------!
    type :: restart_file_t
@@ -100,16 +100,14 @@ contains
       logical,     optional, intent(in)  :: restructure_pending, restructure_new_year
       type(file_dims_t) :: d
       character(len=5)  :: pending
-      integer(c_int)    :: ncid, v
-      integer(c_size_t) :: start1(1), count1(1)
-      real(c_double), allocatable :: coord(:)
+      integer(c_int)    :: ncid
 
       !----- The stamp is the simulated date: <prefix>-S-YYYYMMDDHHMMSS.nc. -----------------!
       sf%path = trim(dir)//'/'//trim(prefix)//'-S-'//time_to_stamp(now)//'.nc'
       call nc_check(nc_create_f(trim(sf%path), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'state nc_create')
       sf%ncid = ncid
       d%ncid = ncid
-      call nc_check(nc_def_dim_f(ncid, 'polygon', int(size(polygon_id), c_size_t), d%polygon), 'state dim polygon')
+      call define_polygon_axis(ncid, size(polygon_id, kind=ik), d%polygon)
       call nc_check(nc_def_dim_f(ncid, 'cohort', int(max(n_cohort,1_ik), c_size_t), d%cohort), 'state dim cohort')
       call nc_check(nc_def_dim_f(ncid, 'patch',  int(max(n_patch,1_ik), c_size_t), d%patch),   'state dim patch')
       call nc_check(nc_def_dim_f(ncid, 'site',   int(max(n_site,1_ik), c_size_t),  d%site),    'state dim site')
@@ -123,8 +121,7 @@ contains
       call define_polygon_vars(d)
       call define_cohort_vars(d)
       call define_patch_vars(d)
-      call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'title',                            &
-                    int(len_trim(STATE_TITLE), c_size_t), STATE_TITLE), 'state title')
+      call put_global_text(ncid, 'title', STATE_TITLE)
       pending = 'none'
       if (present(restructure_pending)) then
          if (restructure_pending) pending = 'month'
@@ -132,20 +129,9 @@ contains
             if (restructure_new_year) pending = 'year'
          end if
       end if
-      call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'restructure_pending',              &
-                    int(len_trim(pending), c_size_t), trim(pending)), 'state restructure_pending')
+      call put_global_text(ncid, 'restructure_pending', trim(pending))
       call nc_check(nc_enddef(ncid), 'state enddef')
-      !----- The polygons' ids and locations, every row at once. ------------------------------!
-      start1 = 0_c_size_t
-      count1 = int(size(polygon_id), c_size_t)
-      v = var_id(ncid, 'polygon_id')
-      call nc_check(nc_put_vara_int(ncid, v, start1, count1, polygon_id), 'put polygon_id')
-      coord = real(polygon_lat, c_double)
-      v = var_id(ncid, 'lat')
-      call nc_check(nc_put_vara_double(ncid, v, start1, count1, coord), 'put lat')
-      coord = real(polygon_lon, c_double)
-      v = var_id(ncid, 'lon')
-      call nc_check(nc_put_vara_double(ncid, v, start1, count1, coord), 'put lon')
+      call write_polygon_axis(ncid, polygon_id, polygon_lat, polygon_lon)
    end subroutine restart_file_open
 
    !---------------------------------------------------------------------------------------!
@@ -298,11 +284,8 @@ contains
       type(file_dims_t), intent(in) :: d
       character(len=*),  intent(in) :: name, lname
       integer(c_int),    intent(in) :: xtype
-      integer(c_int) :: v, dims(1)
-      dims = d%polygon
-      call nc_check(nc_def_var_f(d%ncid, name, xtype, 1_c_int, dims, v), 'state def '//name)
-      call nc_check(nc_put_att_text_f(d%ncid, v, 'long_name', int(len_trim(lname), c_size_t), lname),     &
-                    'state long_name '//name)
+      integer(c_int) :: v
+      call define_var(d%ncid, name, xtype, [d%polygon], v, long_name=lname)
    end subroutine def_polygon_var
 
    !----- A state variable on its own dimensions, behind the polygon axis, with its long_name and,  !
@@ -315,24 +298,16 @@ contains
       character(len=*),  intent(in), optional :: units
       integer(c_int)    :: v, dims(size(dimids) + 1)
       integer(c_size_t) :: chunk(size(dimids) + 1)
-      integer           :: nd, k
+      integer           :: k
       dims(1) = d%polygon
       dims(2:) = dimids
-      nd = size(dimids) + 1
-      call nc_check(nc_def_var_f(d%ncid, name, xtype, int(nd, c_int), dims(1:nd), v), 'state def '//name)
-      call nc_check(nc_put_att_text_f(d%ncid, v, 'long_name',                              &
-                    int(len_trim(lname), c_size_t), lname), 'state long_name '//name)
-      if (present(units)) call nc_check(nc_put_att_text_f(d%ncid, v, 'units',              &
-                                        int(len_trim(units), c_size_t), units), 'state units '//name)
-      if (nd > 1) then
-         chunk(1) = 1_c_size_t
-         do k = 2, nd
-            call nc_check(nc_inq_dimlen(d%ncid, dims(k), chunk(k)), 'state dimlen '//name)
-            chunk(k) = max(chunk(k), 1_c_size_t)
-         end do
-         call nc_check(nc_def_var_chunking(d%ncid, v, NC_CHUNKED, chunk(1:nd)), 'state chunk '//name)
-      end if
-      call nc_check(nc_def_var_deflate(d%ncid, v, 1_c_int, 1_c_int, DEFLATE_LEVEL), 'state deflate '//name)
+      chunk(1) = 1_c_size_t
+      do k = 2, size(dims)
+         call nc_check(nc_inq_dimlen(d%ncid, dims(k), chunk(k)), 'state dimlen '//name)
+         chunk(k) = max(chunk(k), 1_c_size_t)
+      end do
+      call define_var(d%ncid, name, xtype, dims, v, units=units, long_name=lname, chunk=chunk,     &
+                      deflate=RESTART_DEFLATE)
    end subroutine def_var
 
    !----- A per-polygon value (n_cohort, n_patch, n_site, n_window), at the polygon's row. --------!
@@ -456,10 +431,7 @@ contains
 
    subroutine define_polygon_vars(d)
       type(file_dims_t), intent(in) :: d
-      !----- 1. Identity and location. -------------------------------------------------------!
-      call def_polygon_var(d, 'polygon_id', NC_INT,    'forcing cell row-major index: row * n_lon + col')
-      call def_polygon_var(d, 'lat',        NC_DOUBLE, 'the polygon''s latitude [degrees_north]')
-      call def_polygon_var(d, 'lon',        NC_DOUBLE, 'the polygon''s longitude [degrees_east]')
+      !----- 1. Identity and location: the polygon axis (restart_file_open). ---------------------!
       !----- 2. Dimensions and id counters, with the file's time in meta_int. -----------------!
       call def_polygon_var(d, 'n_cohort',   NC_INT,    'the polygon''s live cohorts (the rest is fill)')
       call def_polygon_var(d, 'n_patch',    NC_INT,    'the polygon''s live patches (the rest is fill)')

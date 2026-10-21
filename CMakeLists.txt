@@ -277,7 +277,8 @@ endif()
 #      its CMake config pulls in HDF5 -> FindThreads, which needs the C language enabled.          #
 enable_language(C)
 find_package(netCDF CONFIG REQUIRED)
-add_library(meds_netcdf_c STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_c.f90)
+add_library(meds_netcdf_c STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_c.f90
+                                 ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_write.f90)
 target_link_libraries(meds_netcdf_c PUBLIC meds_share netCDF::netcdf)
 meds_fortran_flags(meds_netcdf_c)
 
