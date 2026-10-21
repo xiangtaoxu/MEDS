@@ -10,7 +10,7 @@ program test_fusion_cohort
                                                init_cohort, hold_cohort_tissue_temps
    use meds_polygon_state_vars,         only : polygon_t
    use meds_demography_update, only : fill_cohort_deriv
-   use meds_init,            only : init_bare_ground, add_cohort, finalize_init
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
    use meds_output_reduce, only : total_nplant, total_agb

@@ -331,7 +331,7 @@ meds_fortran_flags(meds_slow)
 #----- Initial-community builders (bare ground, add_cohort, census). ------------------------#
 file(GLOB INIT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/init/*.f90)
 add_library(meds_init STATIC ${INIT_SOURCES})
-target_link_libraries(meds_init PUBLIC meds_demography meds_config meds_netcdf_c)
+target_link_libraries(meds_init PUBLIC meds_demography meds_slow meds_config meds_netcdf_c)
 meds_fortran_flags(meds_init)
 
 #----- src/main: the master stepper (the cadence owner -- one call advances the coupled model by  #

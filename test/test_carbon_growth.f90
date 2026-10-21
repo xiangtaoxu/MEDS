@@ -13,7 +13,7 @@ program test_carbon_growth
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits, &
                                            update_cohort_derivatives, pool_change_block
-   use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_output_reduce,     only : has_nan
    use meds_test_support, only : banner, build_test_config, check, check_close

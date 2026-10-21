@@ -30,7 +30,7 @@ program test_mortality_pathways
    use meds_polygon_state_vars,  only : polygon_t
    use meds_diag_vars,           only : alloc_patch_diag, patch_diag_value, PA_MORT_C_BACKGROUND, PA_MORT_C_CULL, &
                                         PA_MORT_C_DISTURB
-   use meds_init,                only : init_bare_ground, add_cohort, finalize_init
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : apply_patch_disturbance
    use meds_slow_dynamics,       only : advance_slow_dynamics, advance_boundary_dynamics

@@ -33,8 +33,7 @@ module meds_init_restart
    private
 
    public :: read_restart_file
-   public :: restart_file_t, restart_file_open, restart_file_write, restart_file_close, restart_file_polygons
-   public :: restart_file_refusal
+   public :: restart_file_t, restart_file_open, restart_file_write, restart_file_close, restart_file_slots
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
@@ -500,6 +499,33 @@ contains
       sf%ncid = -1_c_int
       write(*,'(2a)') ' state : ', trim(sf%path)
    end subroutine restart_file_close
+
+   !----- Each polygon's row of the restart file at `path`, by its id: 0 for every polygon of a file  !
+   !      without the polygon axis (one site's). why = '' when the file can start a run of these     !
+   !      polygons, else the reason it cannot (restart_file_refusal, or a polygon it does not hold). -!
+   subroutine restart_file_slots(path, ids, slot, why)
+      character(len=*),              intent(in)  :: path
+      integer(ik),                   intent(in)  :: ids(:)
+      integer(ik), allocatable,      intent(out) :: slot(:)
+      character(len=:), allocatable, intent(out) :: why
+      integer(ik), allocatable :: file_ids(:)
+      integer(ik)       :: p
+      logical           :: found
+      character(len=24) :: id_str
+      allocate(slot(size(ids)), source=0_ik)
+      why = restart_file_refusal(path, size(ids, kind=ik))
+      if (len(why) > 0) return
+      call restart_file_polygons(path, file_ids, found)
+      if (.not. found) return
+      do p = 1_ik, size(ids, kind=ik)
+         slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
+         if (slot(p) == 0_ik) then
+            write(id_str, '(i0)') ids(p)
+            why = 'does not hold polygon '//trim(id_str)//', and must hold every polygon of the run'
+            return
+         end if
+      end do
+   end subroutine restart_file_slots
 
    !----- A state file's polygon ids, in its rows' order; found = .false. for a file without the  !
    !      polygon axis (one site's) or one that cannot be opened. -------------------------------!

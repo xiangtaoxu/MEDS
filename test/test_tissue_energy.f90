@@ -23,7 +23,7 @@ program test_tissue_energy
                                                tissue_dry_heat_capacity
    use meds_config,                     only : meds_config_t
    use meds_polygon_state_vars,         only : polygon_t
-   use meds_init,                       only : init_bare_ground, add_cohort, finalize_init
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,          only : hold_cohort_tissue_temps, cohort_tissue_temps
    use meds_demography_cohort_fusefiss, only : split_cohorts
    use meds_fast_types,                 only : tissue_coefficients_t, patch_biophys_t, alloc_patch_biophys

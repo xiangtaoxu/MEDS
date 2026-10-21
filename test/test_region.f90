@@ -234,10 +234,10 @@ program test_region
                 region_block(), .true., .false., trim(work)//'/none.nc cannot be opened')
    call refused('a site run refuses a region state file', '[init]'//nl()//'init_mode = 2'//nl()//      &
                 'restart_file = "'//trim(work)//'/state/half-S-20230101000000.nc"'//nl()//site_block(1_ik), &
-                .false., .false., 'polygon 0 is not in the state file')
+                .false., .false., 'does not hold polygon 0')
    call refused('a region refuses a site state file', '[init]'//nl()//'init_mode = 2'//nl()//          &
                 'restart_file = "'//trim(work)//'/state/site-S-20210201000000.nc"'//nl()//region_block(), &
-                .true., .false., 'polygon 35 is not in the state file')
+                .true., .false., 'does not hold polygon 35')
 
    !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !
    !      first month, so its first February step fails. The others finish the month: polygons 1     !

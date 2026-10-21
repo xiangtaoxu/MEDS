@@ -4,7 +4,7 @@ program test_patch
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t, derive_parameters
    use meds_polygon_state_vars,        only : polygon_t
-   use meds_init,           only : init_bare_ground, add_cohort, finalize_init
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_patch_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches,  &
                                               patch_light_profile
    use meds_output_reduce, only : total_nplant, total_area

@@ -6,7 +6,7 @@ program test_init_census_refuses
    use meds_kinds,            only : ik
    use meds_config,           only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
-   use meds_init,             only : init_from_census
+   use meds_init_census, only : init_from_census
    use meds_test_support,     only : build_test_config
    implicit none
    type(meds_config_t) :: cfg

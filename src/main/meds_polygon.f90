@@ -60,7 +60,6 @@ module meds_polygon
    public :: polygon_run_t, polygon_prepare, polygon_step, polygon_report
    public :: open_output_files, attach_output, ensure_output_dir
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
-   public :: N_PATCH_INIT
 
    !----- Step and run status codes. OK/DONE are normal; the ERR codes are failures, returned as a  !
    !      status rather than an `error stop` so a library caller survives them.                   !
@@ -70,7 +69,6 @@ module meds_polygon
    integer(ik), parameter :: DRIVER_ERR_AREA= 3_ik   !< patch areas do not sum to 1 (finalize only)
    integer(ik), parameter :: DRIVER_ERR_BOUNDS = 4_ik !< a cohort or soil-carbon state is outside its bounds
 
-   integer(ik), parameter :: N_PATCH_INIT = 6_ik     !< bare-ground patches when no census/restart
 
    !----- What the run needs to step and check one polygon; its state is the polygon_t beside it. --!
    type :: polygon_run_t

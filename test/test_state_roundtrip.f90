@@ -7,7 +7,7 @@ program test_state_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
-   use meds_init,             only : init_bare_ground, add_cohort, finalize_init
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars, only : hold_cohort_tissue_temps
    use meds_init_restart,               only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
                                      read_restart_file

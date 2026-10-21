@@ -17,7 +17,7 @@ program test_several_sites
    use meds_constants,            only : rho_h2o
    use meds_config,               only : meds_config_t
    use meds_polygon_state_vars,   only : polygon_t
-   use meds_init,                 only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
+   use meds_init_bare_ground, only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
    use meds_fast_dynamics,        only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_stepper,              only : advance_one_step, advance_boundary
    use meds_output_reduce,    only : total_agb, total_nplant, total_area
