@@ -1,30 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_driver -- the meteorological-forcing READER (docs/science/forcing.md §1-§3). Opens the  !
-! multi-grid forcing NetCDF (ED_default), the global ED_ERA5land archive, or the no-file CONST     !
-! backend into a met_source_t shared by every polygon of a run; each polygon has a met_cursor_t    !
-! holding its cell, its location and the two records bracketing the model time, slides that       !
-! window as the model marches, and produces an instantaneous met_forcing_t via the pure            !
-! disaggregation kernels -- the ED2 cgrid%metinput analogue, threaded by the driver, never a       !
-! global. Stepping (met_advance, met_instant) only reads the source.                                !
-!                                                                                          !
-! The file I/O is the two sources': meds_met_file_source (a MEDS forcing file) and                !
-! meds_met_archive_source (the archive), each an open and a record's values as stored; what they   !
-! share is meds_met_source_common. This module keeps what is the same for every backend: opening,  !
-! the cursor, the stepping, and the one ingest (read_record) that checks, converts, lapses and    !
-! partitions a record.                                                                              !
-!                                                                                          !
-! The archive's months form one continuous hourly axis over the months a run needs (the recycle   !
-! window, or the run period), so bracketing, recycling and the seam are the same code for both      !
-! file backends; only where a record's values come from differs (read_record).                      !
-!                                                                                          !
-! MEDS NEVER gap-fills (docs/science/forcing.md §10): a missing/NaN required value is a HARD      !
-! ERROR. netCDF is a hard dependency, so the reader is always the real thing (no stub).             !
-!                                                                                          !
-! CO2 is not meteorology (docs/science/forcing.md §12). It never comes from the met file:          !
-! [forcing].co2_source gives one value (co2_const) or a MEDS CO2 file (meds_co2_series), read at    !
-! open, looked up on MODEL time for every backend alike -- so it does not repeat when the met is    !
-! recycled.                                                                                         !
+! meds_met_driver -- the meteorological-forcing reader (docs/science/forcing.md §1-§3, §10-§12).   !
+! met_open opens a MEDS forcing file, the ED_ERA5land archive or the no-file CONST backend into the !
+! met_source_t a run shares; met_cursor_init binds a polygon's met_cursor_t to it; met_prefetch     !
+! loads what a step reads; met_advance and met_instant step and sample a cursor with no file        !
+! access. read_record is the one ingest for both file sources (meds_met_file_source,                !
+! meds_met_archive_source): it checks, converts, lapses and partitions a record, and a missing      !
+! value stops the run. CO2 comes from [forcing].co2_source on model time, never from the met file.  !
 !==========================================================================================!
 module meds_met_driver
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
@@ -72,15 +54,11 @@ module meds_met_driver
 contains
 
    !=======================================================================================!
-   !  OPEN: CONST -> the reference climate; ED_DEFAULT -> a MEDS forcing file                 !
-   !  (file_source_open); ED_ERA5land -> the archive (archive_source_open). CO2 first, the   !
-   !  same way for every backend.                                                            !
+   !  OPEN: the CO2, then the backend: CONST (the reference climate), a MEDS forcing file     !
+   !  (file_source_open) or the archive (archive_source_open). With `stat` present a          !
+   !  rejection returns its code, so the tests can exercise it; absent, it stops the run.     !
+   !  run_start and run_end bound what a non-recycling run reads and the CO2 must cover.      !
    !=======================================================================================!
-   !  `stat` (optional) reports a rejected recycle window instead of halting, so the validation    !
-   !  is exercisable from a test. Absent -> a rejection is a hard error, which is what a production  !
-   !  run wants: a forcing file that does not match its declared window must never be guessed at.   !
-   !  `run_start`/`run_end` bound the months a non-recycling ED_ERA5land run reads; a recycling    !
-   !  run reads the declared window instead, and the other backends ignore them.                  !
    subroutine met_open(src, fcfg, stat, run_start, run_end, cells)
       type(met_source_t),     intent(inout)  :: src
       type(forcing_config_t), intent(in)    :: fcfg
@@ -98,7 +76,7 @@ contains
       src%dt_forcing = fcfg%timestep
       src%has_wind_vector = .false.
 
-      !----- CO2 first, before the backends branch, so every backend takes it the same way. ------!
+      !----- CO2 first, so every backend takes it the same way. ---------------------------------!
       call open_co2(src, run_start, run_end, vstat)
       why = 'met_open: the CO2 file cannot drive this run (see the message above)'
       if (vstat == MET_OK) then
@@ -113,17 +91,14 @@ contains
          end select
       end if
       if (vstat /= MET_OK) then
-         !----- Release the file before bailing out. A `stat` return is a normal (if unhappy) exit  !
-         !      the caller may retry from, and an un-closed netCDF handle keeps an HDF5 lock on the  !
-         !      path -- a later create/open of the same file then fails with a bare "permission      !
-         !      denied" that points nowhere near the real cause. ------------------------------------!
+         !----- Close the file first: an open netCDF handle keeps an HDF5 lock on the path, and a  !
+         !      later open of the same file fails with a bare "permission denied". ---------------!
          call met_close(src)
          if (present(stat)) then
             stat = vstat
             return
          end if
-         !----- The reason is printed, then a fixed stop code: ifx 2026 garbles a stop code that is  !
-         !      not a constant (stray bytes, a truncated text, exit status 128). -----------------!
+         !----- The reason, then a fixed stop code: ifx garbles a stop code that is not a constant. -!
          write(*,'(1x,a)') trim(why)
          error stop 'met_open: the forcing cannot drive this run (see the messages above)'
       end if
@@ -162,9 +137,8 @@ contains
 
    !=======================================================================================!
    !  CURSOR: bind one polygon to the open source -- its cell and location -- and load its first  !
-   !  bracket. A site run binds cell 1 at the [site] location; a region binds each polygon at its  !
-   !  cell centre. The grid elevation (the lapse origin) is the cell's orography for the archive,  !
-   !  the configured grid_elevation for a MEDS forcing file.                                       !
+   !  bracket. The grid elevation (the lapse origin) is the cell's orography for the archive and   !
+   !  [site].grid_elevation for a MEDS forcing file.                                               !
    !=======================================================================================!
    subroutine met_cursor_init(src, cur, cell, latitude_deg, longitude_deg, elevation_m)
       type(met_source_t), intent(in)  :: src
@@ -186,9 +160,8 @@ contains
    end subroutine met_cursor_init
 
    !=======================================================================================!
-   !  PREFETCH: load what the step starting at `step_start` reads, before its compute           !
-   !  phase, so met_advance never touches a file. A MEDS forcing file was read at open; the     !
-   !  archive loads a month at a time (archive_prefetch).                                       !
+   !  PREFETCH: load what the step starting at `step_start` reads, before its compute phase.   !
+   !  A MEDS forcing file was read at open; the archive loads a month at a time.               !
    !=======================================================================================!
    subroutine met_prefetch(src, step_start)
       type(met_source_t), intent(inout)  :: src
@@ -197,9 +170,9 @@ contains
    end subroutine met_prefetch
 
    !=======================================================================================!
-   !  ADVANCE: slide this cursor's window so rec_prev%when <= now < rec_next%when.               !
-   !  Handles a start before the first record (hold or error), the recycle seam, and a run past  !
-   !  the file's last record (clamped to the last interval).                                     !
+   !  ADVANCE: slide this cursor's bracket so rec_prev%when <= now < rec_next%when: a start     !
+   !  before the first record holds or stops (start_clamp), the recycle seam wraps, and a run   !
+   !  past the last record clamps to the last interval (docs/science/forcing.md §2).            !
    !=======================================================================================!
    subroutine met_advance(src, cur, now)
       type(met_source_t), intent(in)  :: src
@@ -210,12 +183,11 @@ contains
 
       if (src%backend == MET_BACKEND_CONST) return
 
-      !----- the SAME effective (recycle-mapped) seconds on the FILE axis met_instant uses. ---!
+      !----- The same recycle-mapped seconds on the file axis that met_instant uses. ----------!
       now_sec = file_lookup_sec(src, now)
 
-      !----- start before the first record (never reached once recycle-wrapped into span). ---!
-      !      Hold: load records 1-2 and let met_instant clamp w_next=0 for now < t1 -- do NOT     !
-      !      overwrite rec_next: a stale copy there suppresses the reload once now reaches t1.    !
+      !----- A start before the first record. Hold loads records 1-2 and met_instant clamps     !
+      !      w_next to 0; rec_next is left alone, or a stale copy would stop the reload at t1. ---!
       if (now_sec < src%time_sec(1)) then
          if (src%fcfg%start_clamp == CLAMP_ERROR) then
             error stop 'met_advance: model start precedes the first forcing record (start_clamp=error)'
@@ -224,13 +196,9 @@ contains
          return
       end if
 
-      !----- CYCLE-BOUNDARY seam: the final interval of the declared window wraps back to its own  !
-      !      first record, so the cycle is exactly periodic. The seam is the WINDOW's edge, not the  !
-      !      file's -- a window may be a sub-range of a longer file, and trailing records past        !
-      !      recycle_end belong to the next file year, not to this cycle. -----------------------------!
-      !      NESTED, not one .and.: Fortran does not guarantee short-circuit evaluation, so a
-      !      combined test would index time_sec(irec_cycle_last) on a non-recycling driver, where
-      !      it is still 0.
+      !----- The recycle seam: the window's last interval wraps to its first record              !
+      !      (docs/science/forcing.md §9). The seam is the window's edge, not the file's. --------!
+      !      Nested, not one .and.: Fortran need not short-circuit, and irec_cycle_last is 0 unless recycling.
       if (src%n_cycle_years >= 1_ik .and. src%irec_cycle_last > src%irec_cycle_first) then
          if (now_sec >= src%time_sec(src%irec_cycle_last)) then
             if (.not. cur%at_wrap_seam) call load_wrap_bracket(src, cur)
@@ -238,13 +206,13 @@ contains
          end if
       end if
 
-      !----- non-recycle run past the end: clamp to the last interval (recycle wraps above). --!
+      !----- A non-recycling run past the end: clamp to the last interval. ---------------------!
       if (.not. src%fcfg%recycle .and. src%nrec >= 2_ik .and. now_sec >= src%time_sec(src%nrec)) then
          if (cur%irec_prev /= src%nrec - 1_ik) call load_bracket(src, cur, src%nrec - 1_ik)
          return
       end if
 
-      !----- incremental cursor from the current bracket (cheap for a forward march). --------!
+      !----- Search from the current bracket (cheap for a forward march). ---------------------!
       i = max(1_ik, cur%irec_prev)
       do while (i < src%nrec - 1_ik)
          if (src%time_sec(i + 1_ik) <= now_sec) then
@@ -261,19 +229,13 @@ contains
          end if
       end do
       if (i /= cur%irec_prev) call load_bracket(src, cur, i)
-      !----- Refresh the DAYTIME clearness memory the longwave synthesis falls back on after         !
-      !      dark. Done HERE, not in met_instant, for two reasons: met_instant is intent(in) and is   !
-      !      called per sub-step, and this block sits outside the patch loop, so the one scalar of    !
-      !      state cannot become a data race once the patch axis is threaded.  ------------------------!
+      !----- The daytime clearness the longwave synthesis holds after dark: updated here, outside !
+      !      the patch loop, because met_instant is intent(in) (docs/science/forcing.md §11). ----!
       if (src%fcfg%lwdown_source == LW_SYNTHESIZE) call remember_clearness(src, cur, now)
    end subroutine met_advance
 
-   !----- Update cur%kt_last_day when the sun is up. The clearness index is formed from the        !
-   !      bracketing record's TOTAL shortwave against the instantaneous TOA irradiance -- a mean    !
-   !      over an interval against an instant at its sample point. That mismatch is deliberate and  !
-   !      second-order here: the cloud term it feeds is a one-coefficient empirical correction on a !
-   !      FALLBACK synthesis, and the alternative is to rebuild the interval-mean-cosz machinery    !
-   !      for a factor that multiplies a 0.22 coefficient.  -----------------------------------------!
+   !----- Update cur%kt_last_day when the sun is up, from the interval's mean shortwave against   !
+   !      the sun at `now` (an approximation, docs/science/forcing.md §11). -----------------------!
    subroutine remember_clearness(src, cur, now)
       type(met_source_t), intent(in)  :: src
       type(met_cursor_t), intent(inout) :: cur
@@ -288,9 +250,8 @@ contains
    end subroutine remember_clearness
 
    !----- The record carrying the means over the interval that contains the model instant: the  !
-   !      later of the bracket on an avg_convention = "end" file, the earlier on a "begin" one.     !
-   !      Every consumer of an interval mean -- rain, shortwave, the clearness the longwave         !
-   !      synthesis remembers -- takes it from here, so none of them reads a neighbouring interval.  !
+   !      later of the bracket on an avg_convention = "end" file, the earlier on a "begin" one     !
+   !      (docs/science/forcing.md §3). Every interval mean is taken from here. -----------------!
    pure function interval_mean_record(src, cur) result(r)
       type(met_source_t), intent(in) :: src
       type(met_cursor_t), intent(in) :: cur
@@ -299,14 +260,14 @@ contains
       case (METAVG_BEGIN)
          r = cur%rec_prev
       case default
-         r = cur%rec_next            ! METAVG_END (ERA5-Land) + fallback
+         r = cur%rec_next            ! METAVG_END (ERA5-Land) and any other
       end select
    end function interval_mean_record
 
    !=======================================================================================!
-   !  INSTANT: interpolate/disaggregate the loaded window to the model instant `now`.           !
-   !  State vars linear; wind energy-form; rainfall step-constant then phase-split; shortwave via    !
-   !  the reciprocal-mean-cosz reconstruction of the interval-mean streams; cosz + rho_air derived. !
+   !  INSTANT: the bracket at the model instant `now` (docs/science/forcing.md §3-§5): states     !
+   !  linear, wind in energy form, precipitation held, shortwave reconstructed from the interval   !
+   !  means, cosz and rho_air derived. A pure function, so it is safe to sample ahead.             !
    !=======================================================================================!
    pure function met_instant(src, cur, now) result(met)
       type(met_source_t), intent(in)  :: src
@@ -318,22 +279,20 @@ contains
       real(wp) :: now_sec, tprev, tnext, w_next, cosz_now, factor, win_start_sec
       associate (f => src%fcfg, p => cur%rec_prev, n => cur%rec_next)
 
-      !----- solar zenith at `now` (UTC -> apparent solar seconds inside met_solar_cosz). ------!
+      !----- The solar zenith at `now` (met_solar_cosz turns UTC into apparent solar time). ---!
       cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
       met%cosz = cosz_now
 
-      !----- CO2 on MODEL time, one way for every backend (docs/science/forcing.md eq. (18)). ----!
+      !----- CO2 on model time, one way for every backend (docs/science/forcing.md eq. (18)). ----!
       if (f%co2_source == CO2_SOURCE_FILE) then
          met%co2 = co2_series_at(src%co2, now)
       else
          met%co2 = f%co2_const
       end if
 
-      !----- The reference climate (CONST) is the forcing type's defaults, held flat; a file backend  !
-      !      interpolates its bracket to `now`.                                                    !
+      !----- CONST keeps the type's defaults; a file backend interpolates its bracket. ----------!
       if (src%backend /= MET_BACKEND_CONST) then
-         !----- interpolation weight within the loaded window (SAME effective seconds as advance, !
-         !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
+         !----- The weight within the bracket, on the same recycle-mapped seconds as met_advance. -!
          now_sec = file_lookup_sec(src, now)
          if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
             tprev = src%time_sec(src%irec_cycle_last)
@@ -348,7 +307,7 @@ contains
             w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
          end if
 
-         !----- state variables: linear; wind: energy-conserving. ------------------------------!
+         !----- States linear; wind in energy form (docs/science/forcing.md eq. (1)). ----------!
          met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
          met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
          met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
@@ -361,20 +320,14 @@ contains
             met%has_wind_vector = .true.
          end if
 
-         !----- The fluxes are interval means: the interval CONTAINING now is [prev, next], whose     !
-         !      mean is rec_next's on an avg_convention = "end" file and rec_prev's on a "begin" one.    !
-         !      Rain and shortwave both come from that record, so neither lags the other.              !
+         !----- Rain and shortwave both come from the record whose interval contains `now`. -----!
          mean_rec = interval_mean_record(src, cur)
 
-         !----- precipitation: the interval's total rate, held across it (never smeared). It stays a  !
-         !      total here; each patch splits it into rain and snow at its canopy-air top.               !
+         !----- Precipitation: the interval's total rate, held across it; each patch splits it. -!
          met%precip = mean_rec%rainf
 
-         !----- shortwave: that interval's mean streams, disaggregated by cosz(now)/<cosz>_win     !
-         !      (docs/science/forcing.md §5, eq. (5)). ------------------------------------------!
-         !----- reconstruction factor anchored on the MODEL window start (mws), so <cosz>_win aligns  !
-         !      with cosz_now on the model calendar (identity = rec_prev%when when not recycling; under  !
-         !      calendar recycling it follows the model sun, so the interval-mean identity still holds).  !
+         !----- Shortwave: each mean stream times cosz(now)/<cosz>_win (docs/science/forcing.md      !
+         !      eq. (5)), the window anchored on the model calendar (mws), so both see the same sun. !
          mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
          win_start_sec = seconds_into_day(mws)
          factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
@@ -386,12 +339,8 @@ contains
          met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
       end if
 
-      !----- LONGWAVE SYNTHESIS (docs/science/forcing.md eq. (17)), for a source that carries no   !
-      !      LWdown. Placed AFTER the shortwave block so the instantaneous streams are available: by !
-      !      day the cloud term uses this instant's clearness index, and after dark it falls back to !
-      !      the last daytime value met_advance remembered. Overwrites whatever the file read, which !
-      !      is the point -- the selector says the file's longwave is not to be trusted or is not    !
-      !      there.  ---------------------------------------------------------------------------------!
+      !----- The longwave synthesis (docs/science/forcing.md §11), after the shortwave: this      !
+      !      instant's clearness index by day, the remembered one after dark. ----------------------!
       if (f%lwdown_source == LW_SYNTHESIZE) then
          block
             real(wp) :: sw_now, kt_now
@@ -432,9 +381,8 @@ contains
       src%n_loads = 0_ik
    end subroutine met_close
 
-   !----- Load rec_prev = record(irec), rec_next = record(irec+1) (clamped at EOF). When the      !
-   !      bracket slides by one record, as it does once a forcing interval, the old upper record is !
-   !      the new lower one and only the upper is read. ------------------------------------------!
+   !----- Load rec_prev = record(irec), rec_next = record(irec+1) (clamped at the end). A slide   !
+   !      by one record reuses the old upper record as the new lower one. ------------------------!
    subroutine load_bracket(src, cur, irec)
       type(met_source_t), intent(in)  :: src
       type(met_cursor_t), intent(inout) :: cur
@@ -449,8 +397,8 @@ contains
       cur%at_wrap_seam = .false.
    end subroutine load_bracket
 
-   !----- Cycle-boundary seam bracket: rec_prev = record nrec, rec_next = record 1, so the last  !
-   !      dt interval interpolates across the wrap instead of clamping to the final record.        !
+   !----- The seam bracket: rec_prev = the window's last record, rec_next = its first, so the   !
+   !      last interval interpolates across the wrap instead of clamping. -----------------------!
    subroutine load_wrap_bracket(src, cur)
       type(met_source_t), intent(in)  :: src
       type(met_cursor_t), intent(inout) :: cur
@@ -460,7 +408,8 @@ contains
       cur%at_wrap_seam = .true.
    end subroutine load_wrap_bracket
 
-   !----- Read one record at (time=irec, this polygon's cell); partition SW at ingest. --------!
+   !----- The one ingest: record irec at this polygon's cell, checked, converted, lapsed and    !
+   !      partitioned (docs/science/forcing.md §6-§8). ------------------------------------------!
    subroutine read_record(src, cur, irec, rec)
       type(met_source_t), intent(in)  :: src
       type(met_cursor_t), intent(in) :: cur
@@ -493,30 +442,25 @@ contains
       if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                                  &
          call assert_finite(rec%lwdown, 'LWdown', irec, src%grid_index)
 
-      !----- TERRAIN lapse at ingest (docs/science/forcing.md §8 Step 1, eqs. (13)-(14)), from the  !
-      !      cell's elevation to the site's: T by the month's lapse rate, P hydrostatically with the   !
-      !      same linear T(z), q at constant relative humidity, file longwave by the clear-sky eps*T^4 !
-      !      ratio. The move to each patch's canopy-air top is the fast loop's (per patch), not the    !
-      !      reader's.                                                                                 !
+      !----- The terrain lapse, from the cell's elevation to the polygon's                        !
+      !      (docs/science/forcing.md §8 Step 1, eqs. (13)-(14)). ----------------------------------!
       if (src%fcfg%apply_elevation_lapse) then
          block
             real(wp) :: dz, gamma, t_grid, p_grid, q_grid
-            dz     = cur%elevation_m - cur%grid_elevation_m       ! + when site is higher
+            dz     = cur%elevation_m - cur%grid_elevation_m       ! + when the polygon is higher
             gamma  = monthly_lapse_rate(src%fcfg%lapse_rate_tair, rec%when%month)
             t_grid = rec%tair_k
             p_grid = rec%psurf_pa
-            q_grid = rec%qair   ! capture BEFORE overwrite
+            q_grid = rec%qair   ! before it is overwritten
             rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, gamma)
             rec%tair_k   = lapse_air_temperature(t_grid, dz, gamma)
-            !----- Relative humidity is held across the lapse: a measured one is used directly, and a  !
-            !      dewpoint or specific humidity gives its own at the cell. ----------------------------!
+            !----- Relative humidity is held: a measured one is used as is, any other is formed at the cell. !
             if (src%humidity == HUMIDITY_RHAIR) then
                rec%qair  = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
             else
                rec%qair  = lapse_specific_humidity(q_grid, t_grid, p_grid, rec%tair_k, rec%psurf_pa)
             end if
-            !----- A synthesized longwave is built later from the lapsed T and q, so only a file's   !
-            !      longwave is scaled here. ------------------------------------------------------------!
+            !----- Only a file's longwave: a synthesized one is built later from the lapsed T and q. -!
             if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                           &
                rec%lwdown = lapse_longwave(rec%lwdown, src%fcfg%lw_clear_form, t_grid, q_grid, p_grid, &
                                            rec%tair_k, rec%qair, rec%psurf_pa)
@@ -537,9 +481,8 @@ contains
    end subroutine read_record
 
    !----- The sun the shortwave partition uses for one record: the mean of max(cosz, 0) over the  !
-   !      interval the record averages, so the clearness index is a ratio of interval means. A     !
-   !      sunrise or sunset interval whose midpoint is dark still has a sun, and keeps its light.  !
-   !      An instantaneous record uses the sun at its stamp. -------------------------------------!
+   !      interval it averages, or the sun at the stamp for an instantaneous record             !
+   !      (docs/science/forcing.md §6). --------------------------------------------------------!
    real(wp) function record_mean_cosz(src, cur, when) result(cosz)
       type(met_source_t), intent(in) :: src
       type(met_cursor_t), intent(in) :: cur

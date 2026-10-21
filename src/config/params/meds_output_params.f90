@@ -94,7 +94,7 @@ module meds_output_params
    end type output_config_t
 
    !----- Default DBH class edges [cm], the common tropical forest-inventory set: 0-10,    !
-   !      10-20, 20-30, 30-50, 50-70 and 70+, the last closed at the top (dbh_class_index; !
+   !      10-20, 20-30, 30-50, 50-70 and 70+, the last open at the top (dbh_class_index;   !
    !      docs/science/diagnostics.md §3). ------------------------------------------------!
    integer(ik), parameter, public :: N_DBH_CLASS_DEFAULT = 6_ik
    real(wp),    parameter, public :: DBH_EDGES_DEFAULT(7) =                                      &

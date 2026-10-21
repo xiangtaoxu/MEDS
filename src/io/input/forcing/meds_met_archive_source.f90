@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_archive_source -- the ED_ERA5land ARCHIVE source (docs/science/forcing.md §1-§2):   !
+! meds_met_archive_source -- the ED_ERA5land archive source (docs/science/forcing.md §1-§2):   !
 ! monthly files of hourly ERA5-Land fields over a grid of cells, laid end to end as one         !
 ! hourly axis over the months a run needs. It opens the archive (archive_source_open), loads   !
 ! a month before the step that reads it (archive_prefetch), and hands the shared ingest one    !
@@ -57,13 +57,11 @@ contains
    end subroutine archive_source_open
 
    !=======================================================================================!
-   !  PREFETCH from the archive: load what the step starting at `step_start` reads. A daily    !
-   !  step from midnight reads one archive month plus the record before it: 00:00 on the 1st,  !
-   !  which lives in the previous month's file, or the window's last record at the recycle     !
-   !  wrap. Moving into the next month, that record comes from the outgoing buffer, so a run   !
-   !  loads each month once. A step the recycle seam falls inside also reads the window's first !
-   !  day, which met_open keeps. validate_config restricts format = "ED_ERA5land" to daily      !
-   !  steps from midnight, the shape this assumes.                                              !
+   !  PREFETCH from the archive: the month the step starting at `step_start` reads, and the    !
+   !  record before it (00:00 on the 1st, or the window's last record at the recycle wrap),     !
+   !  which comes from the outgoing month, so a run loads each month once                      !
+   !  (docs/science/forcing.md §2). It assumes the daily steps from midnight validate_config   !
+   !  requires of the archive.                                                                 !
    !=======================================================================================!
    subroutine archive_prefetch(src, step_start)
       type(met_source_t), intent(inout)  :: src
@@ -98,11 +96,9 @@ contains
       if (.not. month_loaded(src, k)) call load_axis_month(src, k)
    end subroutine archive_prefetch
 
-   !----- One record's values at the cursor's cell, as the archive stores them: the            !
-   !      dewpoint, whose humidity comes from the model's own saturation curve in the shared    !
-   !      ingest, the wind components, whose speed is the vector's at each stamp, and the total   !
-   !      shortwave. The archive never carries the four shortwave streams (archive_source_open    !
-   !      refuses "passthrough"). -----------------------------------------------------------------!
+   !----- One record's values at the cursor's cell, as the archive stores them: the dewpoint    !
+   !      (converted in the shared ingest), the wind components with their speed, and the total  !
+   !      shortwave, never the four streams (open_archive refuses "passthrough"). ---------------!
    subroutine archive_source_record(src, cur, irec, rec, humidity_value, sw_total)
       type(met_source_t), intent(in)    :: src
       type(met_cursor_t), intent(in)    :: cur
@@ -326,7 +322,7 @@ contains
       src%head = src%buffer%values(h1:h1 + src%n_head - 1_ik, :, :)
    end subroutine keep_window_head
 
-   !----- Read axis month k into the buffer: the ONLY place the archive is read after open. -----!
+   !----- Read axis month k into the buffer: the only place the archive is read after open. -----!
    subroutine load_axis_month(src, k)
       type(met_source_t), intent(inout)  :: src
       integer(ik),        intent(in)    :: k

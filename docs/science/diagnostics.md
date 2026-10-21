@@ -39,6 +39,20 @@ Stage [2] is why per-cohort ecophysiology is available at all. `A_net`, `g_sw`, 
 fast loop's sub-step, recomputed every `dt_fast`; without the capture each value would be discarded
 at the end of its sub-step.
 
+### Where the stages live
+
+Stages [1]–[4] make no netCDF call and build apart from the writer, so the time step that ticks the
+integrators carries no C dependency; only stage [5], the writer, calls the netCDF library, and only
+from the run's I/O phase ([`src/README.md`](../../src/README.md), The library graph).
+
+Stage [1] holds only the quantities no physics library owns. What a physics library already computes
+(the soil's water potential, a tissue's water potential, a temperature from internal energy, the
+moist-air thermodynamics, the allometry) is called from that library, never re-implemented, so a
+reported value and the one the physics used cannot disagree. The stage sits above the physics in the
+library graph, so no physics routine can call a diagnostic. That is the intended direction: a
+quantity the physics turns out to need was never a diagnostic, and it belongs in the library that owns
+it.
+
 ---
 
 ## 2. Aggregation across scales — the rule that matters
@@ -125,15 +139,26 @@ instead, and report their values.
 
 **DBH classes are a size class of *plants*, ED2-style.** A cohort is assigned whole to the bin
 containing its mean `dbh` — never split — and contributes with weight `area · nplant`. Bins are
-half-open `[lo, hi)` except the last, which is closed at the top so the largest tree in the stand is
-never dropped; a `dbh` below the first edge clamps into bin 1 for the same reason. Both choices
+half-open `[lo, hi)` except the last, which also takes every `dbh` at or above its upper edge, so the
+largest tree in the stand is never dropped; a `dbh` below the first edge clamps into bin 1 for the
+same reason. Both choices
 preserve the closure identity, which is what makes `nplant_size` a genuine stem-density
 distribution comparable to a forest inventory.
 
 **Cohort and patch axes may not appear on the annual stream**, and neither may the `(patch, soil)`
 profiles. A window longer than a month would straddle the annual disturbance restructuring, so the
 slot set that was averaged would not be the slot set present at flush. The registry rejects it at
-start-up.
+start-up. For the same reason a file with a cohort or patch axis spans at most a month, whatever
+`[output].file_chunk` says (a FAST-tier one, a day). Its cohort and patch axes are as long as the
+largest live count among the polygons when it opens; `n_cohort` and `n_patch` give each polygon's
+live count per record, and the slots past it are `_FillValue`.
+
+**The soil axis has a fixed length.** It is `n_soil_layer_max` long whatever a site's layer count: a
+column fills it from the top, and the slots below the column's bottom layer are `_FillValue`. A fixed
+stride means a profile is never read shifted by a layer, as it would be if the stride were a live
+layer count that differed between sites or from what a reader assumed. Inside the model the same
+holds: a soil-by-patch or soil-by-site slab is one flat array, patch- or site-major, strided by the
+same ceiling.
 
 ---
 
@@ -226,6 +251,29 @@ not a per-sub-step array (which would be `n_cohort × n_sub × n_var`). At
 `[output].fast_interval_steps = 1` the two coincide; at the default `4` a FAST record is a
 four-sub-step mean. This matters when comparing against a flux tower at sub-hourly resolution.
 
+### How the FAST tier is sampled
+
+Sub-daily values exist only inside the fast loop. The fast loop stages each sub-step's sample: each
+patch's row of the patch block and its soil column, the forcing, and the per-cohort values. After the
+fast loop the output layer replays the staging into the FAST tier, one sub-step at a time. A
+`*_fast` value of the whole polygon is the patches' sum, each weighted by its share of the polygon; a
+site's soil column weights its patches by their areas within the site.
+
+The FAST tier shares everything else with the coarse tiers: the registry, the running reductions, the
+closing of a period and the writer. Only where it reads its values differs, and that is forced by
+when they exist: by the time the staging is replayed, the live state is the end of the slow step, so
+a sub-daily variable read from it would write end-of-step values on a sub-daily axis.
+
+The pairing is therefore closed in both directions:
+
+- a variable without a FAST-staged source on the F stream would read a staging nothing fills for it;
+- a FAST-staged variable on a coarse tier would read live state, which does not carry it.
+
+Either would write `_FillValue` for the whole run, and either is easy to ask for by hand
+(`cas_temp_site = "F"` in `meds_io_config.toml`). The registry checks every default and every
+override at start-up and refuses to start, naming the variable (and, for one put on F, pointing to
+its `*_fast` twin): a diagnostic that quietly reports nothing is worse than one that refuses to start.
+
 ---
 
 ## 5. Choosing what to write
@@ -316,6 +364,21 @@ monotonically climbing count is a config bug. `canopy_height_site` — stand dev
 \frac{\mathrm{d}\,\text{soilc}}{\mathrm{d}t} \approx \sum \text{litter}_* - \text{rh\_site} \qquad(4)
 ```
 
+### The carbon seam
+
+The litter variables are the vegetation's carbon on its way to the soil, by the tissue it came from,
+read from the same accumulator the biogeochemistry consumes. `litter_leaf_site`,
+`litter_fineroot_site`, `litter_wood_site` and `litter_repro_site`, with `root_exudate_site`, are the
+carbon that turnover and background mortality send to the soil pools. Cohorts culled below the
+tracking floor or killed by disturbance add to the pools directly (`mort_carbon_cull_site`,
+`mort_carbon_disturb_site`). With soil carbon off, all of it leaves the model. `litter_struct_site`
+is a destination, the structural pools, so it overlaps the others.
+
+The three `mort_carbon_*_site` pathways (background, cull, disturbance) are exclusive and together
+the whole-individual mortality carbon, every pool of the plant included. They are reported apart
+because a stand thinning steadily and a stand knocked over lose the same carbon and mean different
+things. They are written whatever `soil_carbon_on` says, since they are demography.
+
 ---
 
 ## 7. Variable inventory
@@ -356,7 +419,7 @@ For a quantity the fast loop computes and drops, add a row to `cohort_diag_block
 loop fills goes before `N_PA_FAST_ROWS`, and the slow driver's rows follow), one fill line in the
 capture, and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), so a
 patch row reaches the sub-daily tier with one more registry line (`SRC_F_PA0 + PA_*`), per patch
-or as a site mean. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
+or as the polygon mean. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
 array, so every permutation is a single whole-array statement that cannot omit a field.
 
 ### The one trap
@@ -371,3 +434,23 @@ unreordered, which is correct for its own consumer, since `update_cohort_states`
 immediately. Reading it from the output layer pairs tendency `i` with a different plant `i` whenever
 the stand has been reordered since it was formed. The thread-invariance test is what catches this
 mistake, because thread count perturbs which cohorts fuse. Use `cohort%sdiag`.
+
+### Source ids
+
+A registry line names its field by a source id, and the id's numeric range says which entity the
+field lives on:
+
+| range | entity |
+|---|---|
+| 1000–1999 | a cohort field (`FLD_C_*`; the cohort blocks' rows from 1100) |
+| 2000–2999 | a patch field (`FLD_P_*`; the patch block's rows from 2100) |
+| 3000–3999 | a soil-layer field of each patch (`FLD_L_*`) |
+| 4000–4999 | one of the polygon's own scalars (`SRC_PY_*`; the polygon block's rows from 4100) |
+| 5000–5999 | a FAST-tier staged sample (`SRC_F_*`) |
+| 6000–6999 | one value per site (`FLD_SI_*`) |
+
+The variable's `dim` then picks the reduction, which is why one field serves every scale. The ranges
+matter: the coarse tiers and the FAST tier read their ids in different places, and in one flat
+numbering a FAST id could equal a polygon id, so a variable read in the wrong place would fill its
+record from another field without a word. Disjoint ranges, read by one classifier (`src_class`), make
+that collision impossible.

@@ -1,12 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_source_common -- what the two forcing FILE sources share (docs/science/forcing.md   !
-! §1, §2 and §9): the reader's status codes, the file time axis with its declared recycle      !
-! window, and the check of a file against the [forcing] config that claims to describe it.     !
-!                                                                                          !
-! A MEDS forcing file (meds_met_file_source) and the ED_ERA5land archive                        !
-! (meds_met_archive_source) both lay their records on one axis of seconds since a base time,   !
-! so bracketing, recycling and the seam are one code for both (meds_met_driver).              !
+! meds_met_source_common -- what the two forcing file sources share (docs/science/forcing.md   !
+! §1, §2 and §9): the reader's status codes, the time axis with its declared recycle window     !
+! (validate_recycle_window, recycle_model_to_file), and the check of a file against the         !
+! [forcing] config that describes it (validate_file_against_config). A MEDS forcing file and    !
+! the ED_ERA5land archive both lay their records on one axis of seconds since a base time, so    !
+! meds_met_driver brackets and recycles both with one code.                                     !
 !==========================================================================================!
 module meds_met_source_common
    use iso_c_binding, only : c_int, c_double
@@ -34,7 +33,7 @@ module meds_met_source_common
    integer(ik), parameter :: MET_ERR_WINDOW_NOT_WHOLE_YEARS  = 1_ik   !< recycle_end - recycle_start /= N years
    integer(ik), parameter :: MET_ERR_START_NOT_A_RECORD      = 2_ik   !< recycle_start is not a record stamp
    integer(ik), parameter :: MET_ERR_WINDOW_NOT_COVERED      = 3_ik   !< file stops short of recycle_end
-   integer(ik), parameter :: MET_ERR_DT_MISMATCH             = 4_ik   !< dt_forcing /= the file's record spacing
+   integer(ik), parameter :: MET_ERR_DT_MISMATCH             = 4_ik   !< [forcing].timestep /= the file's record spacing
    integer(ik), parameter :: MET_ERR_AXIS_NOT_UNIFORM        = 5_ik   !< the file's time axis is ragged
    integer(ik), parameter :: MET_ERR_ATTR_MISMATCH           = 6_ik   !< a file global attribute contradicts the config
    integer(ik), parameter :: MET_ERR_ARCHIVE                 = 7_ik   !< archive: static file, site cell or a month missing
@@ -44,8 +43,8 @@ module meds_met_source_common
    integer(ik), parameter :: MET_ERR_NOT_UTC                 = 11_ik  !< the file does not say time_zone = "UTC"
    integer(ik), parameter :: MET_ERR_HUMIDITY                = 12_ik  !< no, two, or out-of-range humidity variables
 
-   !----- Tolerance for "this record stamp IS that instant" [s]. The time axis is float seconds,   !
-   !      so an exact == would be brittle; sub-second slack is far below any real forcing dt. -------!
+   !----- Tolerance for "this record stamp is that instant" [s]: the axis is float seconds, so an  !
+   !      exact == would be brittle, and half a second is far below any forcing interval. ---------!
    real(wp), parameter :: REC_MATCH_TOL = 0.5_wp
    !----- A file's declared measurement height agrees with the config within this [m]. -----------!
    real(wp), parameter :: HEIGHT_MATCH_TOL = 0.01_wp
@@ -53,16 +52,9 @@ module meds_met_source_common
 contains
 
    !=======================================================================================!
-   !  Validate the DECLARED recycle window ([forcing].recycle_start/recycle_end) against the    !
-   !  file that was just opened (docs/science/forcing.md §9). MEDS does NOT infer the window: it  !
-   !  is told where the cycle starts and how long it is, and this routine's only job is to        !
-   !  confirm the file agrees.                                                                    !
-   !                                                                                              !
-   !  Inferring the window is what this refuses to do. Wrapping a file on its own span shifts        !
-   !  hour-of-day on EVERY wrap unless the span is whole years: the real ERA5-Land record (first     !
-   !  stamp 01:00 under the end-of-interval convention) spans 366 d 22 h, and a 29-yr run wrapped    !
-   !  on it reads late May at a ~10 h offset while its daily-mean shortwave stays correct, so the    !
-   !  slow demography looks healthy and nothing surfaces the problem.                                !
+   !  Check the declared recycle window ([forcing].recycle_start/recycle_end) against the file  !
+   !  just opened. MEDS never infers the window from the file: it is told where the cycle starts  !
+   !  and how long it is, and checks that the file agrees (docs/science/forcing.md §9).          !
    !=======================================================================================!
    subroutine validate_recycle_window(src, stat)
       type(met_source_t), intent(inout)  :: src
@@ -78,8 +70,8 @@ contains
       src%irec_cycle_last = 0_ik
       if (.not. src%fcfg%recycle) return
 
-      !----- Whole-year span. Re-checked here (not only in validate_config) so a driver built     !
-      !      directly from a forcing_config_t -- as the unit tests do -- cannot bypass it. --------!
+      !----- The whole-year span, checked here as well as in validate_config, so a driver built   !
+      !      directly from a forcing_config_t (as the unit tests build one) cannot skip it. -------!
       src%n_cycle_years = whole_years_between(src%fcfg%recycle_start, src%fcfg%recycle_end,     &
                                               MAX_RECYCLE_YEARS)
       if (src%n_cycle_years < 1_ik) then
@@ -93,9 +85,8 @@ contains
       start_sec = seconds_between(src%base_time, src%fcfg%recycle_start)
       end_sec   = seconds_between(src%base_time, src%fcfg%recycle_end)
 
-      !----- recycle_start must land EXACTLY on a record stamp. This is the check that stops      !
-      !      MEDS guessing the start of the day: a config saying 00:00:00 against an ERA5-Land      !
-      !      file stamped 01:00:00 is reported, with both values, rather than quietly re-derived.   !
+      !----- recycle_start must be a record stamp: a config saying 00:00:00 against a file stamped !
+      !      01:00:00 is reported with both values, not re-derived. ----------------------------------!
       do i = 1_ik, src%nrec
          if (abs(src%time_sec(i) - start_sec) <= REC_MATCH_TOL) then
             src%irec_cycle_first = i
@@ -114,17 +105,15 @@ contains
          return
       end if
 
-      !----- The file must cover the whole window, i.e. hold a record in the LAST interval        !
-      !      below recycle_end. Without that the cycle has a hole at its far edge and the seam      !
-      !      bracket below would interpolate across it. --------------------------------------------!
+      !----- The file must hold a record in the last interval below recycle_end; otherwise the   !
+      !      seam bracket would interpolate across a hole. ----------------------------------------!
       do i = src%nrec, src%irec_cycle_first, -1_ik
          if (src%time_sec(i) < end_sec - REC_MATCH_TOL) then
             src%irec_cycle_last = i
             exit
          end if
       end do
-      !----- NESTED, not a single .or.: Fortran does not guarantee short-circuit evaluation, so a  !
-      !      combined test would index time_sec(irec_cycle_last) even when the loop above left it 0. !
+      !----- Two steps, not one .and.: Fortran need not short-circuit, and irec_cycle_last may be 0. !
       covered = src%irec_cycle_last > src%irec_cycle_first
       if (covered) covered = src%time_sec(src%irec_cycle_last) >= end_sec - src%dt_forcing - REC_MATCH_TOL
       if (.not. covered) then
@@ -141,11 +130,9 @@ contains
             time_to_string(src%fcfg%recycle_start), ' .. ', time_to_string(src%fcfg%recycle_end)
    end subroutine validate_recycle_window
 
-   !----- The effective seconds-since-base on the FILE time axis, used by BOTH bracket selection  !
-   !      (met_advance) and the interpolation weight (met_instant) so they stay consistent. Under   !
-   !      calendar recycling the model date maps into the declared window (recycle_model_to_file),   !
-   !      keeping month/day/hour so day-of-year is exact across leap boundaries; otherwise it is the !
-   !      model date itself.                                                                          !
+   !----- A model instant's seconds on the file axis, for both met_advance and met_instant so they !
+   !      agree: mapped into the declared window when recycling (recycle_model_to_file), otherwise !
+   !      the instant itself. ---------------------------------------------------------------------!
    pure function file_lookup_sec(src, now) result(s)
       type(met_source_t), intent(in)  :: src
       type(meds_time_t),  intent(in) :: now
@@ -157,14 +144,9 @@ contains
       end if
    end function file_lookup_sec
 
-   !----- Map a model instant into the declared recycle window (ED2 year_use substitution;         !
-   !      docs/science/forcing.md eq. (16)), keeping month/day/hour/minute/second EXACT, so the       !
-   !      sub-daily phase and the day-of-year survive an arbitrary number of wraps. Anchor-relative:  !
-   !         off = 1 when the model's (month,day,hh:mm:ss) falls BEFORE the window's anchor         !
-   !         yf  = anchor_year + off + modulo(model_year - anchor_year - off, n_cycle_years)        !
-   !      Without `off`, a mid-year window (or an end-of-interval file whose first stamp is 01:00)  !
-   !      maps instants OUTSIDE the window. LEAP DAY: Feb-29 -> Feb-28 when the target file year is !
-   !      non-leap (ED2 read_ol_file repeats Feb 28).                                               !
+   !----- Map a model instant into the declared recycle window by substituting the year, relative !
+   !      to the window's anchor, with month, day and time of day kept exact (docs/science/forcing.md !
+   !      eq. (16)). Feb 29 reads Feb 28 when the target file year is not a leap year. -------------!
    pure function recycle_model_to_file(src, now) result(now_file)
       type(met_source_t), intent(in)  :: src
       type(meds_time_t),  intent(in) :: now
@@ -178,8 +160,8 @@ contains
       if (now%month == 2_ik .and. now%day == 29_ik .and. .not. is_leap_year(yf)) now_file%day = 28_ik
    end function recycle_model_to_file
 
-   !----- Compare two instants on (month, day, hour, minute, second) ONLY -- i.e. their position    !
-   !      within the calendar year, ignoring which year they fall in. -------------------------------!
+   !----- Compare two instants on (month, day, hour, minute, second) only: their place in the    !
+   !      calendar year, whatever the year. --------------------------------------------------------!
    pure logical function mdhms_at_or_after(a, b) result(yes)
       type(meds_time_t), intent(in) :: a, b
       integer(ik) :: ka, kb
@@ -220,19 +202,10 @@ contains
    end function humidity_field
 
    !---------------------------------------------------------------------------------------!
-   ! validate_file_against_config -- the forcing file describes itself; the config also describes  !
-   ! it. When they disagree, the run is wrong in a way no later check can see, so stop here.        !
-   !                                                                                          !
-   ! THE SPACING CHECK IS THE IMPORTANT ONE. dt_forcing is taken verbatim from the config and used  !
-   ! to place interval midpoints, disaggregate shortwave and bracket the recycle seam, so a config   !
-   ! saying 3600 s against a half-hourly file mis-times every one of those. Checking the ACTUAL      !
-   ! record spacing is strictly stronger than checking the `timestep_seconds` attribute, which is    !
-   ! why that attribute stays provenance and this does the work.                                     !
-   !                                                                                          !
-   ! avg_convention, sw_input_kind and the heights are checked when PRESENT and skipped when absent, !
-   ! so a file without them still loads; time_zone is required (d). `elevation(grid)` stays unread  !
-   ! on purpose: site elevation is a [site] property, and the variable is provenance about the      !
-   ! source grid.                                                                                    !
+   ! validate_file_against_config -- the forcing file describes itself, and so does the config;   !
+   ! when they disagree the run is wrong in a way no later check can see, so stop here. The        !
+   ! record spacing matters most; the attributes are checked when present (docs/science/forcing.md !
+   ! §1).                                                                                           !
    !---------------------------------------------------------------------------------------!
    subroutine validate_file_against_config(src, ncid, vstat)
       type(met_source_t), intent(in)   :: src
@@ -245,9 +218,8 @@ contains
 
       vstat = MET_OK
 
-      !----- (a) record spacing. Uniform by construction for every source MEDS reads, so the first  !
-      !      interval is the file's cadence; a ragged axis is a different (unsupported) thing and    !
-      !      shows up as a mismatch on whichever interval differs. ------------------------------------!
+      !----- (a) The record spacing: the first interval against the config, then every other     !
+      !      interval against the first (MEDS reads a uniform axis only). -------------------------!
       if (src%nrec >= 2_ik) then
          dt_file = src%time_sec(2) - src%time_sec(1)
          if (abs(dt_file - src%dt_forcing) > REC_MATCH_TOL) then
@@ -268,7 +240,7 @@ contains
          end do
       end if
 
-      !----- (b) avg_convention: the file says which end of the interval its flux means belong to.  !
+      !----- (b) avg_convention: which end of the interval the file's flux means belong to. ------!
       st = nc_get_att_text_f(ncid, NC_GLOBAL, 'avg_convention', attr)
       if (st == NC_NOERR .and. len_trim(attr) > 0) then
          if (trim(attr) /= trim(avg_convention_name(src%fcfg%avg_convention))) then
@@ -298,10 +270,8 @@ contains
          end if
       end if
 
-      !----- (d) The clock. Every forcing file is in UTC (docs/science/forcing.md §1) and          !
-      !      says so. A local-time file read as UTC keeps its daily totals and moves its sun by the   !
-      !      offset, which nothing downstream notices, so the attribute is required. The archive is   !
-      !      UTC by construction and is not asked. -------------------------------------------------!
+      !----- (d) The clock: a MEDS forcing file must say time_zone = "UTC" (docs/science/forcing.md !
+      !      §1); the archive is UTC by construction. --------------------------------------------!
       if (src%backend == MET_BACKEND_ED_DEFAULT) then
          st = nc_get_att_text_f(ncid, NC_GLOBAL, 'time_zone', attr)
          if (st /= NC_NOERR) attr = '(absent)'
@@ -313,9 +283,8 @@ contains
          end if
       end if
 
-      !----- (e) The heights the file was measured at, when it states them, against the heights the  !
-      !      config moves the forcing from (docs/science/forcing.md §8). A disagreement would move   !
-      !      every sample from the wrong height. -------------------------------------------------!
+      !----- (e) The heights the file states, against those the config moves the forcing from    !
+      !      (docs/science/forcing.md §8). ------------------------------------------------------!
       call check_height_attribute(ncid, 'tq_height_m',        src%fcfg%tq_height,   vstat)
       if (vstat /= MET_OK) return
       call check_height_attribute(ncid, 'wind_height_m',      src%fcfg%wind_height, vstat)
@@ -332,8 +301,8 @@ contains
          end if
       end if
 
-      !----- (f) CO2air: CO2 comes from [forcing].co2_source, never the met file, so a file        !
-      !      carrying it would be read by nothing. Rejected rather than ignored. -------------------!
+      !----- (f) CO2air: CO2 comes from [forcing].co2_source, never the met file, so a file that  !
+      !      carries it is rejected rather than ignored (docs/science/forcing.md §12). ------------!
       block
          integer(c_int) :: vid
          if (nc_inq_varid_f(ncid, 'CO2air', vid) == NC_NOERR) then

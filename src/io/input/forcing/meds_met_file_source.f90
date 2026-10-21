@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_file_source -- the MEDS forcing FILE source (format = "ED_default",                 !
+! meds_met_file_source -- the MEDS forcing file source (format = "ED_default",                 !
 ! docs/science/forcing.md §1): a multi-grid netCDF file whose records the run needs are        !
 ! read into memory at open, so no step reads the file. It opens the file (file_source_open)   !
 ! and hands the shared ingest one record's values as stored (file_source_record).             !
@@ -57,7 +57,7 @@ contains
       st = nc_inq_dimlen_f(ncid, 'grid', dlen)
       call nc_check(st, 'met_open: grid dim')
       src%ngrid = int(dlen, ik)
-      !----- bind this polygon to a grid slice: explicit index, or nearest [site] lat/lon. ------!
+      !----- The grid column: grid_index as given, or the nearest to the [site] location. -------!
       if (src%fcfg%grid_match == GRIDMATCH_NEAREST) then
          call resolve_grid_index(src)                        ! sets src%grid_index in 1..ngrid
       else                                                   ! GRIDMATCH_EXPLICIT
@@ -72,7 +72,7 @@ contains
       src%nrec = int(dlen, ik)
       if (src%nrec < 1_ik) error stop 'met_open: forcing file has no time records'
 
-      !----- base time from "seconds since <base>" units attribute. --------------------------!
+      !----- The base time, from the "seconds since <base>" units attribute. -----------------!
       block
          integer(c_int) :: vid
          st = nc_inq_varid_f(ncid, 'time', vid)
@@ -83,11 +83,11 @@ contains
          if (.not. ok) error stop 'met_open: could not parse time:units "seconds since <base>"'
       end block
 
-      !----- cache the whole time axis (seconds since base_time). ----------------------------!
+      !----- The whole time axis (seconds since base_time). ----------------------------------!
       call read_time_axis(src)
 
-      !----- The wind VECTOR: a file carrying u10 and v10 supplies it, and the speed               !
-      !      is then derived from the components; a file with Wind alone gives the speed only.     !
+      !----- The wind vector: a file carrying u10 and v10 supplies it, and the speed comes from   !
+      !      the components; a file with Wind alone gives the speed only. -----------------------!
       block
          integer(c_int) :: vu, vv
          src%has_wind_vector = nc_inq_varid_f(ncid, 'u10', vu) == NC_NOERR .and.                  &
@@ -101,29 +101,23 @@ contains
          return
       end if
 
-      !----- The file's own record spacing against [forcing].dt_forcing, and the global          !
-      !      attributes the prep script writes against the config that claims to describe the      !
-      !      same file. A file that disagreed with its config would otherwise be silently           !
-      !      mis-timed or mis-partitioned. ------------------------------------------------------------!
+      !----- The file's record spacing and global attributes against [forcing]. -------------------!
       call validate_file_against_config(src, ncid, stat)
       if (stat /= MET_OK) then
          why = 'met_open: the forcing file contradicts [forcing] (see the message above)'
          return
       end if
 
-      !----- Check the DECLARED recycle window against this file's actual record stamps. It      !
-      !      cannot live in the config check of the whole-year span -- it needs the time axis,     !
-      !      which is only known here. --------------------------------------------------------------!
+      !----- The declared recycle window against the file's record stamps, known only here. -----!
       call validate_recycle_window(src, stat)
       if (stat /= MET_OK) then
          why = 'met_open: forcing file does not match the declared [forcing] recycle window'
          return
       end if
 
-      !----- The records the run can read, into memory, so no step reads the file: the recycle     !
-      !      window, or the run period (the whole file when neither is known, as in unit tests). Only  !
-      !      those: a file written in 1 x 1 chunks makes a whole-file read cost HDF5 metadata for      !
-      !      every chunk. ----------------------------------------------------------------------------!
+      !----- The records the run can read, into memory: the recycle window, or the run period (the  !
+      !      whole file when neither is known, as in unit tests). Only those, because a file in 1 x 1  !
+      !      chunks makes a whole-file read cost HDF5 metadata for every chunk. ----------------------!
       block
          integer(ik) :: r0, r1
          r0 = 1_ik
@@ -178,10 +172,8 @@ contains
          rec%wind   = series_value(src, FLD_WIND,  irec)
       end if
       rec%rainf    = series_value(src, FLD_RAINF, irec)              ! total rainfall rate [kg/m2/s]
-      !----- LWdown is OPTIONAL when we are synthesizing it: a source without longwave is          !
-      !      exactly the case lwdown_source = "synthesize" exists for, so demanding the variable      !
-      !      would defeat the feature. Read it when present either way -- it costs nothing and keeps  !
-      !      the record complete for diagnostics.  ---------------------------------------------------!
+      !----- LWdown is optional under lwdown_source = "synthesize", which replaces it             !
+      !      (docs/science/forcing.md §11). ------------------------------------------------------!
       if (src%fcfg%lwdown_source == LW_SYNTHESIZE) then
          rec%lwdown = series_value(src, FLD_LWDOWN, irec, default=0.0_wp)
       else

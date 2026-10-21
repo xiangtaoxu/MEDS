@@ -1,28 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_io -- the STATE (restart) stream: write the full prognostic demographic state to a     !
-! netCDF-4 checkpoint and read it back, via the netCDF C library (meds_netcdf_c).             !
-!                                                                                          !
-! RESTART ONLY. Diagnostic output is the [output] aggregation subsystem (meds_output_*), which !
-! is registry-driven -- adding a variable never means editing this file. Do not add a second     !
-! diagnostic writer here: it would collide with [output] on the `-D-` filename prefix.           !
-!                                                                                          !
-! The restart stream stays deliberately orthogonal to the diagnostic streams: a checkpoint must  !
-! be the raw prognostic state at an INSTANT, never a time-average, and a run resumed from it     !
-! must continue exactly as the run that wrote it would have. So the cohort carbon pools are       !
-! stored as the running model holds them, not re-derived from dbh: fusion leaves a cohort off the !
-! allometry, so re-deriving them would move the leaf area and reset the fine-root carbon. The     !
-! geometry is a function of the pools, and the reader re-derives it from them.                    !
-!                                                                                          !
-! A file holds every polygon of the run (docs/science/order_of_processes.md §6): each      !
-! variable has a leading `polygon` axis, and the cohort, patch and site axes are the       !
-! largest any polygon has. n_cohort, n_patch, n_site and n_window mark each polygon's live !
-! part (the first two also in its row of meta_int); the rest holds the fill value.         !
-! polygon_id, lat and lon name the rows. Each site's area and surface, and each patch's    !
-! site, are stored; a file without them is one site, its area meta_real(1). It is written  !
-! by state_file_open / state_file_put / state_file_close and read by io_read_state, a      !
-! polygon's row at a time; io_read_state also reads a file without the axis, one site's,   !
-! as every one-polygon run wrote one before runs became regions.                           !
+! meds_io -- the state (restart) file: every polygon's prognostic state at an instant, in  !
+! a netCDF-4 checkpoint a resumed run continues from exactly, through the netCDF C library !
+! (docs/science/order_of_processes.md §6, The restart file). state_file_open, _put and     !
+! _close write a file a polygon's row at a time; io_read_state reads a row, or the whole   !
+! of a file without the polygon axis (one site's); state_file_polygons and                 !
+! state_file_refusal check a file before a run starts from it. Restart only: diagnostic    !
+! output is meds_output_*.                                                                 !
 !==========================================================================================!
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
@@ -66,14 +50,16 @@ module meds_io
 contains
 
    !=======================================================================================!
-   !  STATE (restart) files                                                                 !
+   !  State (restart) files                                                                 !
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Create <dir>/<prefix>-S-YYYYMMDDHHMMSS.nc and define every dimension and variable. The    !
-   ! cohort and patch axes are n_cohort and n_patch long (at least 1), the largest of the       !
-   ! polygons'. A `polygon` axis leads every variable, `polygon_id` names its rows, and the       !
-   ! variables are compressed, since most polygons fill only part of the padded axes.            !
+   ! Create <dir>/<prefix>-S-YYYYMMDDHHMMSS.nc and define every dimension and variable.    !
+   ! The cohort and patch axes are n_cohort and n_patch long (at least 1), the largest of  !
+   ! the polygons'. A `polygon` axis leads every variable, `polygon_id` names its rows,    !
+   ! and the variables are compressed, since most polygons fill only part of the padded    !
+   ! axes. Why each group below persists: docs/science/order_of_processes.md §6, The       !
+   ! restart file.                                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine state_file_open(sf, dir, prefix, now, n_pft, n_window, n_cohort, n_patch, n_site,     &
                               polygon_id, polygon_lat, polygon_lon, restructure_pending, restructure_new_year)
@@ -90,7 +76,7 @@ contains
       integer(c_size_t) :: start1(1), count1(1)
       real(c_double), allocatable :: coord(:)
 
-      !----- The timestamp IS the simulated calendar date -> <prefix>-S-YYYYMMDDHHMMSS.nc. --!
+      !----- The stamp is the simulated date: <prefix>-S-YYYYMMDDHHMMSS.nc. -----------------!
       sf%path = trim(dir)//'/'//trim(prefix)//'-S-'//time_to_stamp(now)//'.nc'
       call nc_check(nc_create_f(trim(sf%path), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'state nc_create')
       sf%ncid = ncid
@@ -116,9 +102,7 @@ contains
       call dv('meta_int',         NC_INT,    [d_mi],                                   &
               '[n_cohort,n_patch,n_pft,next_cohort_id,next_patch_id,year,month,day,hour,minute,second]')
       call dv('meta_real',        NC_DOUBLE, [d_mr],     '[area of the sites (1), decimal_year]')
-      !----- The sites: each one's area and the surface it was made with. The surface is made again   !
-      !      from the configuration on read; its layer count must match, or the soil state would be   !
-      !      read onto another column. ---------------------------------------------------------------!
+      !----- The sites: each one's area and the surface it was made with (its layer count is checked on read). !
       call dv('site_area',        NC_DOUBLE, [d_site],   'site area fraction of the polygon')
       call dv('site_n_soil',      NC_INT,    [d_site],   'the site''s active soil layers')
       call dv('site_soil_depth',  NC_DOUBLE, [d_site],   'the site''s soil column depth [m]')
@@ -135,42 +119,18 @@ contains
       call dv('vcmax25',          NC_DOUBLE, [d_cohort], 'max carboxylation @25C [umol/m2/s] (plastic)')
       call dv('rd25',             NC_DOUBLE, [d_cohort], 'leaf dark respiration @25C [umol/m2/s] (plastic)')
       call dv('leaf_turnover_rate', NC_DOUBLE, [d_cohort], 'baseline leaf turnover rate [1/yr] (plastic)')
-      !----- Per-cohort plant-hydraulics internal water + tissue temperatures. Persisting these makes  !
-      !      a restart EXACT for the fast loop -- without them the restart starts the tissues in their   !
-      !      patch's state (patch_physical_state), whose step from the evolved state makes the             !
-      !      plant-hydraulics solve grind for a few days on a healthy high-LAI restart. OPTIONAL on read !
-      !      (gv_dbl_opt), so a state file without them still restarts, on those values. The            !
-      !      leaf-surface (interception) film is stored below with the pools. ---------------------------!
+      !----- Each cohort's tissue water, and its energies with their temperatures as twins. ---------!
       call dv('leaf_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal leaf water [kg/plant]')
       call dv('wood_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal wood water [kg/plant]')
       call dv('leaf_energy',      NC_DOUBLE, [d_cohort], 'per-cohort leaf internal energy [J/plant] (prognostic)')
       call dv('wood_energy',      NC_DOUBLE, [d_cohort], 'per-cohort wood internal energy [J/plant] (prognostic)')
       call dv('leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K] (diagnosed twin)')
       call dv('wood_temp',        NC_DOUBLE, [d_cohort], 'per-cohort wood temperature [K] (diagnosed twin)')
-      !----- Per-cohort stomatal water-stress feedback (docs/science/leaf_gas_exchange.md §4.2).      !
-      !      `dmax_psi_leaf` is YESTERDAY's completed daily-max leaf water potential and drives TODAY's !
-      !      beta_stomata; `dmax_psi_leaf_accum` is the running accumulator the fast loop fills,        !
-      !      rolled over at day end. Both must persist:                                                 !
-      !                                                                                          !
-      !        * without predawn, a restart falls back to the UNSET sentinel and re-seeds from surface-   !
-      !          layer soil psi -- which reads as unstressed, so a restart mid-drought silently re-opens  !
-      !          stomata that the running model had closed.                                                !
-      !        * without the accumulator, a restart at any time other than midnight discards the part of  !
-      !          today's maximum already seen, so the value handed to tomorrow is biased LOW (too         !
-      !          negative => too much stress) by however much of the day was replayed.                     !
-      !                                                                                          !
-      !      OPTIONAL on read like the block above, so a state file without them restarts on the        !
-      !      sentinels. NOT derivable from leaf_water_mass: predawn is a time-MAXIMUM over the previous   !
-      !      day, not a function of the instantaneous state. ---------------------------------------------!
+      !----- The stomatal feedback's predawn potential and accumulator (docs/science/leaf_gas_exchange.md §4.2). !
       call dv('dmax_psi_leaf',   NC_DOUBLE, [d_cohort], &
             'yesterday daily-max leaf water potential [MPa] (drives beta_stomata)')
       call dv('dmax_psi_leaf_accum', NC_DOUBLE, [d_cohort], 'running daily-max leaf water potential accumulator [MPa]')
-      !----- PHENOLOGY MEMORY. Without it a restart would resurrect every cohort at its birth state  !
-      !      (flushing, no senescence, empty sums): a deciduous stand restarted in January would leaf  !
-      !      out in midwinter. None of it is derivable from the rest of the file: these are time      !
-      !      integrals over the preceding season (degree-day sums, psi sums, a running mean), not     !
-      !      functions of the instantaneous state. OPTIONAL on read, so a file without them restarts  !
-      !      on the birth values.  ---------------------------------------------------------------------!
+      !----- The phenology memory: the season's cue sums and running light mean. ---------------------!
       call dv('leaf_flush_tendency', NC_DOUBLE, [d_cohort], 'smoothed flush signal [0,1]')
       call dv('leaf_shed_tendency',  NC_DOUBLE, [d_cohort], 'smoothed senescence signal [0,1]')
       call dv('growing_degree_days', NC_DOUBLE, [d_cohort], 'warmth sum since midwinter [K day]')
@@ -178,13 +138,7 @@ contains
       call dv('dry_psi_sum',         NC_DOUBLE, [d_cohort], 'predawn leaf psi below the TLP, summed [MPa day]')
       call dv('wet_psi_sum',         NC_DOUBLE, [d_cohort], 'predawn leaf psi above the TLP, summed [MPa day]')
       call dv('light_hours_mean', NC_DOUBLE, [d_cohort], 'running-mean hours of light at the cohort top [h/day]')
-      !----- The carbon pools as the running model holds them. A cohort's pools sit off the        !
-      !      allometry for its dbh (fusion, phenology), so re-deriving them from dbh on read would   !
-      !      move the leaf area (BCI: LAI 5.6380 written would read back as 5.6389). The reader      !
-      !      derives the geometry from the pools, as the run does; height/basal_area/agb/leaf_area   !
-      !      are written for the file's readers (the calibration's stand check). overtopping_lai is  !
-      !      what the plastic traits were acclimated to. OPTIONAL on read (a file without the pools  !
-      !      re-derives them from dbh). ----------------------------------------------------------!
+      !----- The carbon pools as the run holds them; height, basal_area, agb, leaf_area for readers. !
       call dv('height',               NC_DOUBLE, [d_cohort], 'height [m]')
       call dv('basal_area',           NC_DOUBLE, [d_cohort], 'basal area per plant [cm2]')
       call dv('agb',                  NC_DOUBLE, [d_cohort], 'aboveground biomass per plant [kgC]')
@@ -194,23 +148,15 @@ contains
       call dv('wood_carbon',          NC_DOUBLE, [d_cohort], 'wood carbon per plant [kgC]')
       call dv('nonstructural_carbon', NC_DOUBLE, [d_cohort], 'nonstructural carbon per plant [kgC]')
       call dv('overtopping_lai',      NC_DOUBLE, [d_cohort], 'LAI of the taller cohorts in the patch [m2/m2]')
-      !----- The canopy interception film ([fast].canopy_water_on). A dry canopy is a valid start,   !
-      !      but not the state the writing run was in. OPTIONAL on read (a file without it starts   !
-      !      dry). Per plant, and marked so: a file whose films have no `units` holds them per m2   !
-      !      of ground, as files written before did. -----------------------------------------------!
+      !----- The canopy interception films ([fast].canopy_water_on), per plant and marked so. -------!
       call dv('leaf_surf_water',      NC_DOUBLE, [d_cohort], 'leaf interception film [kg/plant]', units=FILM_UNITS)
       call dv('wood_surf_water',      NC_DOUBLE, [d_cohort], 'wood interception film [kg/plant]', units=FILM_UNITS)
-      !----- The growth-rate ring buffer behind growth_avg (the mortality predictor) and its site-wide !
-      !      write slot. OPTIONAL on read: a file without it, or one written with another window       !
-      !      length, reseeds the buffer from growth_avg. ---------------------------------------------!
+      !----- The growth-rate ring buffer behind growth_avg (the mortality predictor), its write slot. !
       call dv('growth_accum',         NC_DOUBLE, [d_cohort], 'running sum of the growth window [cm/yr]')
       call dv('growth_count',         NC_INT,    [d_cohort], 'samples in the growth window')
       call dv('growth_hist',          NC_DOUBLE, [d_cohort, d_gwin], 'growth-rate ring buffer [cm/yr]')
       call dv('growth_hist_pos',      NC_INT,    [d_mr], 'ring-buffer write slot (element 1)')
-      !----- THERMAL ACCLIMATION (docs/science/leaf_gas_exchange.md §2, Thermal acclimation), one     !
-      !      per site. Optional on read, so a file without it restarts on the unseeded sentinel --    !
-      !      which re-adopts the first day's mean rather than relaxing from an arbitrary origin over  !
-      !      a month. A file written before the sites holds the one site's at the same place. --------!
+      !----- Thermal acclimation's running mean, one per site (docs/science/leaf_gas_exchange.md §2). !
       call dv('t_growth_avg', NC_DOUBLE, [d_site], 'the site''s running-mean growth temperature [K]')
       call dv('patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction of its site')
       call dv('owner_site',       NC_INT,    [d_patch],  'owning site index (1-based)')
@@ -219,15 +165,7 @@ contains
       call dv('global_patch_id',  NC_INT,    [d_patch],  'persistent patch id')
       call dv('recruit_pool',     NC_DOUBLE, [d_patch, d_pft], 'carry-forward recruit pool [plant/m2]')
       call dv('slow_co2_rate',    NC_DOUBLE, [d_patch], 'slow-loop CO2 flux the fast NEE adds [umol/m2/s]')
-      !----- FAST reservoirs: the true evolved CAS/soil/snow state, not just its cached geometry. A     !
-      !      restart that re-seeds these generically hands an already-mature canopy a discontinuous jump  !
-      !      on day 1, which the adaptive integrators resolve only by grinding through many tiny          !
-      !      sub-steps (RK45's explicit stepper worst of all). Diagnosed twins (soil_temp/fliq,           !
-      !      snow_temp/fliq, cas_temp) are saved directly alongside their prognostic partner rather than   !
-      !      recomputed on read, so this reader needs no outside PFT/soil config (matching every other     !
-      !      read here). Always written; reading them back is optional as a whole, so a state file         !
-      !      without them falls back to the generic seed (meds_polygon, init_fast_reservoirs) with no      !
-      !      format-version bump. --------------------------------------------------------------------------!
+      !----- The fast reservoirs (canopy air, soil, pond, snow), with their diagnosed twins. ----------!
       call dv('cas_can_enthalpy', NC_DOUBLE, [d_patch], 'CAS specific enthalpy [J/kg] (prognostic)')
       call dv('cas_can_shv',      NC_DOUBLE, [d_patch], 'CAS specific humidity [kg/kg] (prognostic)')
       call dv('cas_can_co2',      NC_DOUBLE, [d_patch], 'CAS CO2 mixing ratio [umol/mol] (prognostic)')
@@ -244,17 +182,12 @@ contains
       call dv('snow_temp',        NC_DOUBLE, [d_patch, d_snowl], 'snow temperature [K] (diagnosed twin)')
       call dv('snow_fliq',        NC_DOUBLE, [d_patch, d_snowl], 'snow liquid fraction [-] (diagnosed twin)')
       call dv('snow_nlayer',      NC_INT,    [d_patch], 'active snow layer count (0 = no snow)')
-      !----- Daily leaf/root-turnover shed water handed to the ground: a slow->fast seam rate the    !
-      !      fast loop reads all day, so a restart without it would lose that day's shed water. -----!
+      !----- The turnover shed water the slow step hands the fast loop for the day. ------------------!
       call dv('shed_water_rate',  NC_DOUBLE, [d_patch], 'turnover shed water to the ground [kg/m2/s]')
       call dv('shed_water_enth',  NC_DOUBLE, [d_patch], 'the enthalpy that water carries [W/m2]')
-      !----- The fast integrators' warm start, per patch: the step the adaptive controller last        !
-      !      accepted, where the next fast step starts. Without it a resumed run cold-starts the        !
-      !      controller and takes different sub-steps from the continuous run. -------------------------!
+      !----- The fast controller's warm start: the step it last accepted in each patch. --------------!
       call dv('adapt_dt_last',    NC_DOUBLE, [d_patch], 'fast-controller warm-start step [s] (0 = cold)')
-      !----- Slow soil-carbon pools ([soil_carbon].soil_carbon_on, on by default;                      !
-      !      docs/science/soil_carbon.md §2). There are no nitrogen fields: the nitrogen cycle is not   !
-      !      built (see docs/ROADMAP.md). ----------------------------------------------------------------!
+      !----- The soil-carbon pools (docs/science/soil_carbon.md §2). ---------------------------------!
       call dv('soilc_fast_grnd',   NC_DOUBLE, [d_patch], 'fast/metabolic litter carbon, above-ground [kgC/m2]')
       call dv('soilc_fast_soil',   NC_DOUBLE, [d_patch], 'fast/metabolic litter carbon, below-ground [kgC/m2]')
       call dv('soilc_struct_grnd', NC_DOUBLE, [d_patch], 'structural litter + CWD carbon, above-ground [kgC/m2]')
@@ -296,7 +229,7 @@ contains
          call nc_check(nc_put_att_text_f(ncid, v, 'long_name', int(len_trim(lname), c_size_t), lname), &
                        'state long_name '//name)
       end subroutine coord_var
-      !----- Define a state variable on its site dimensions, behind the polygon axis, with its     !
+      !----- Define a state variable on its own dimensions, behind the polygon axis, with its      !
       !      long_name and, where the reader needs it, its units. ----------------------------------!
       subroutine dv(name, xtype, dimids, lname, units)
          character(len=*), intent(in) :: name, lname
@@ -313,11 +246,7 @@ contains
                        int(len_trim(lname), c_size_t), lname), 'state long_name '//name)
          if (present(units)) call nc_check(nc_put_att_text_f(ncid, v, 'units',              &
                                            int(len_trim(units), c_size_t), units), 'state units '//name)
-         !----- One polygon's row per chunk. Each polygon writes its own rows (state_file_put), so a   !
-         !      chunk shared by many polygons is decompressed and recompressed at each of their writes   !
-         !      once the chunks of a row outgrow HDF5's chunk cache: a 606-polygon region (example 06)   !
-         !      then takes hours per checkpoint instead of minutes. A polygon-only variable is one       !
-         !      small chunk, which the cache holds. -----------------------------------------------------!
+         !----- One polygon's row per chunk: each polygon writes its own (docs/science/order_of_processes.md §6). !
          if (nd > 1) then
             chunk(1) = 1_c_size_t
             do k = 2, nd
@@ -434,10 +363,10 @@ contains
             do ip = 1_ik, npat
                call put_dbl('recruit_pool', p%recruit_pool(1:npft, ip), ip - 1_ik)
             end do
-            block                                 ! FAST reservoirs: contiguous buffers, same
-               real(wp) :: fc(npat, 4_ik)          ! discipline as the soil-carbon block below (never a
-               real(wp) :: fw(npat, 5_ik)          ! bare derived-type component-array-section straight
-               real(wp) :: fsoil(npat, n_soil_layer_max, 4_ik)     ! into a C-bound call)
+            block                                 ! the fast reservoirs, through contiguous buffers:
+               real(wp) :: fc(npat, 4_ik)          ! no component section into a C call (CLAUDE.md, compiler traps)
+               real(wp) :: fw(npat, 5_ik)
+               real(wp) :: fsoil(npat, n_soil_layer_max, 4_ik)
                real(wp) :: fsnow(npat, n_snow_layer_max, 5_ik)
                integer(ik) :: fnl(npat)
                do ip = 1_ik, npat
@@ -483,8 +412,8 @@ contains
                   call put_dbl('snow_fliq',   fsnow(ip,:,5), ip - 1_ik)
                end do
             end block
-            block                              ! explicit contiguous buffer (never a bare derived-type
-               real(wp) :: sc(npat, 9_ik)       ! component-array-section straight into a C-bound call)
+            block                              ! the soil carbon, through a contiguous buffer as above
+               real(wp) :: sc(npat, 9_ik)
                do ip = 1_ik, npat
                   sc(ip,1) = p%soil_carbon(ip)%fast_grnd_carbon
                   sc(ip,2) = p%soil_carbon(ip)%fast_soil_carbon
@@ -572,8 +501,8 @@ contains
       write(*,'(2a)') ' state : ', trim(sf%path)
    end subroutine state_file_close
 
-   !----- A region state file's polygon ids, in its rows' order; found = .false. for a file      !
-   !      without them (a site's) or one that cannot be opened. ---------------------------------!
+   !----- A state file's polygon ids, in its rows' order; found = .false. for a file without the  !
+   !      polygon axis (one site's) or one that cannot be opened. -------------------------------!
    subroutine state_file_polygons(path, polygon_id, found)
       character(len=*),         intent(in)  :: path
       integer(ik), allocatable, intent(out) :: polygon_id(:)
@@ -595,9 +524,9 @@ contains
    end subroutine state_file_polygons
 
    !---------------------------------------------------------------------------------------!
-   ! Why the state file at `path` cannot start a run of `n_polygon` polygons, or '' when it     !
-   ! can: it cannot be opened, or it holds one site without a `polygon` axis (a file written    !
-   ! before every run had one) and the run has more than one polygon.                           !
+   ! Why the state file at `path` cannot start a run of `n_polygon` polygons, or '' when   !
+   ! it can: it cannot be opened, or it holds one site without a `polygon` axis and the    !
+   ! run has more than one polygon.                                                        !
    !---------------------------------------------------------------------------------------!
    function state_file_refusal(path, n_polygon) result(why)
       character(len=*), intent(in)  :: path
@@ -616,7 +545,7 @@ contains
          why = 'holds one site without a polygon axis; a run of several polygons needs a row for each'
    end function state_file_refusal
 
-   !----- Does the open state file hold a region's state, a `polygon` axis ahead of every other? ---!
+   !----- Does the open state file have a `polygon` axis ahead of every other? -------------------!
    logical function has_polygon_axis(ncid)
       integer(c_int), intent(in) :: ncid
       integer(c_size_t) :: n
@@ -624,17 +553,13 @@ contains
    end function has_polygon_axis
 
    !---------------------------------------------------------------------------------------!
-   ! Reconstruct a polygon from a state file written by state_file_put: with `polygon`        !
-   ! (1-based) that row of a file with the polygon axis, or the whole of an older file without !
-   ! it. Each site's surface is made from `site_cfg` (the run's `cfg` for every site when       !
-   ! absent). The geometry is re-derived from the carbon pools (set_cohort_size_from_carbon);   !
-   ! the maps and within-patch sort order are rebuilt, and the restructuring the stand owes at  !
-   ! restart_time is set on the polygon (state_file_open; a file without the attribute is an    !
-   ! older format, written AFTER its boundary's restructuring, so it owes nothing).             !
-   ! found=.false. (no error stop) if the file cannot be opened or its layout is not the one    !
-   ! `polygon` asks for (state_file_refusal says which). Errors out only on a genuine           !
-   ! inconsistency: the PFT count, the site count or a site's soil layer count differs from the !
-   ! configuration's.                                                                           !
+   ! Reconstruct a polygon from a state file written by state_file_put: row `polygon`      !
+   ! (1-based) of a file with the polygon axis, or the whole of a file without it. Each    !
+   ! site's surface is made from `site_cfg` (else `cfg`) and the geometry from the carbon  !
+   ! pools; the maps and sort order are rebuilt, and the restructuring owed is the file's  !
+   ! restructure_pending (docs/science/order_of_processes.md §5). found = .false. if the   !
+   ! file cannot be opened or has another layout (state_file_refusal says why); a PFT,     !
+   ! site or soil-layer count unlike the run's stops the run.                              !
    !---------------------------------------------------------------------------------------!
    subroutine io_read_state(poly, cfg, path, restart_time, found, fast_found, polygon, site_cfg)
       type(polygon_t),     intent(out) :: poly
@@ -642,10 +567,8 @@ contains
       character(len=*),    intent(in)  :: path
       type(meds_time_t),   intent(out) :: restart_time
       logical,             intent(out) :: found
-      !----- FAST reservoirs: .true. only when THIS file's cas/soil/snow state was actually read     !
-      !      back (always written together, so one variable's presence implies all of them); .false.  !
-      !      means a file without them -- the caller then re-seeds them generically                    !
-      !      (init_fast_reservoirs, from meds_polygon). ----------------------------------------------!
+      !----- .true. when the file's fast reservoirs were read; otherwise the caller re-seeds them   !
+      !      (init_fast_reservoirs). -----------------------------------------------------------------!
       logical, optional,   intent(out) :: fast_found
       integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
       type(meds_config_t), optional, intent(in) :: site_cfg(:)   !< each site's configuration
@@ -669,8 +592,8 @@ contains
       if (region) slot = polygon - 1_ik
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) return
-      !----- A region's variables have a polygon axis ahead of the others, so reading the other     !
-      !      kind's file would take the wrong elements. ----------------------------------------------!
+      !----- The polygon axis, where a file has it, leads every variable: reading the other kind   !
+      !      of file would take the wrong elements. --------------------------------------------------!
       if (has_polygon_axis(ncid) .neqv. region) then
          st = nc_close(ncid)
          return
@@ -708,8 +631,7 @@ contains
       poly%patch%n = npat
       poly%restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
       poly%restructure_new_year = trim(pending) == 'year'
-      !----- Growth temperature: OPTIONAL, so a state file without it keeps the unseeded          !
-      !      sentinel alloc_polygon set and the first slow step adopts that day's mean.  ------------!
+      !----- Growth temperature: a file without it keeps alloc_polygon's unseeded sentinel. -----!
       call gv_dbl_opt(ncid, 't_growth_avg', ns, poly%site%t_growth_avg(1:ns))
       poly%next_cohort_id = meta_i(4)
       poly%next_patch_id = meta_i(5)
@@ -742,8 +664,8 @@ contains
             call gv_dbl (ncid, 'growth_avg',       ncoh, c%growth_avg(1:ncoh))  ! ring buffer reseeded below
             call gv_int (ncid, 'owner_patch',      ncoh, c%owner_patch(1:ncoh))
             call gv_int (ncid, 'global_cohort_id', ncoh, c%global_id(1:ncoh))
-            !----- Plastic leaf traits: default to PFT top-of-canopy, then overwrite from the state  !
-            !       file where present (a file without them restarts at top-of-canopy). ----------!
+            !----- Plastic leaf traits: the PFT's top-of-canopy values, then the file's where it has !
+            !      them. -------------------------------------------------------------------------!
             do i = 1_ik, ncoh
                c%sla(i)     = cfg%pft%sla(c%pft(i))
                c%vcmax25(i) = cfg%pft%vcmax25(c%pft(i))
@@ -754,15 +676,12 @@ contains
             call gv_dbl_opt(ncid, 'vcmax25', ncoh, c%vcmax25(1:ncoh))
             call gv_dbl_opt(ncid, 'rd25',    ncoh, c%rd25(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_turnover_rate', ncoh, c%leaf_turnover_rate(1:ncoh))
-            !----- A state file written while this trait was a leaf lifespan [yr] holds that instead, -!
-            !      as `llspan`: the turnover rate is its reciprocal. -----------------------------------!
+            !----- A file that holds a leaf lifespan [yr], `llspan`, gives the rate as its reciprocal. -!
             if (nc_inq_varid_f(ncid, 'llspan', vid) == NC_NOERR) then
                call gv_dbl(ncid, 'llspan', ncoh, c%leaf_turnover_rate(1:ncoh))
                c%leaf_turnover_rate(1:ncoh) = 1.0_wp / c%leaf_turnover_rate(1:ncoh)
             end if
-            !----- Per-cohort hydraulics/temperature (OPTIONAL): a state file with them restores the   !
-            !      true state; without them each cohort starts in its patch's state, set once the patches !
-            !      and the pools are read (below).                                                       !
+            !----- Tissue water, temperatures, energies: what a file lacks is set below. --------------!
             tissue_water_ok = nc_inq_varid_f(ncid, 'leaf_water_mass', vid) == NC_NOERR
             tissue_temp_ok  = nc_inq_varid_f(ncid, 'leaf_temp', vid) == NC_NOERR
             tissue_energy_ok = nc_inq_varid_f(ncid, 'leaf_energy', vid) == NC_NOERR
@@ -772,13 +691,11 @@ contains
             call gv_dbl_opt(ncid, 'wood_temp',       ncoh, c%wood_temp(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_energy',     ncoh, c%leaf_energy(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_energy',     ncoh, c%wood_energy(1:ncoh))
-            !----- Stomatal feedback (OPTIONAL): alloc_polygon has already set UNSET_NEGATIVE /        !
-            !      DMAX_PSI_LEAF_ACCUM_RESET, so a state file without them seeds from the soil; one with  !
-            !      them restores the true feedback state. ------------------------------------------------!
+            !----- Stomatal feedback: a file without it keeps alloc_polygon's unset values (seeded   !
+            !      from the soil). ---------------------------------------------------------------!
             call gv_dbl_opt(ncid, 'dmax_psi_leaf',   ncoh, c%dmax_psi_leaf(1:ncoh))
             call gv_dbl_opt(ncid, 'dmax_psi_leaf_accum', ncoh, c%dmax_psi_leaf_accum(1:ncoh))
-            !----- Phenology memory (OPTIONAL): a file without it restarts on the birth values      !
-            !      alloc_polygon has already set; a file with it restores the season. --------------!
+            !----- Phenology memory: a file without it keeps the birth values alloc_polygon set. ---!
             call gv_dbl_opt(ncid, 'leaf_flush_tendency', ncoh, c%leaf_flush_tendency(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_shed_tendency',  ncoh, c%leaf_shed_tendency(1:ncoh))
             call gv_dbl_opt(ncid, 'growing_degree_days', ncoh, c%growing_degree_days(1:ncoh))
@@ -788,7 +705,7 @@ contains
             call gv_dbl_opt(ncid, 'light_hours_mean', ncoh, c%light_hours_mean(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_surf_water',    ncoh, c%leaf_surf_water(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
-            !----- A file whose films carry no units held them per m2 of ground. --------------------!
+            !----- A file whose films carry no units holds them per m2 of ground. -------------------!
             if (nc_inq_varid_f(ncid, 'leaf_surf_water', vid) == NC_NOERR) then
                if (nc_get_att_text_f(ncid, vid, 'units', units_attr) /= NC_NOERR) units_attr = ''
                if (trim(units_attr) /= FILM_UNITS) then
@@ -797,9 +714,8 @@ contains
                end if
             end if
          end associate
-         !----- The carbon pools the writing run held, and the geometry derived from them as the  !
-         !      run derives it (the file's height/agb/leaf_area are for its readers, not read back). !
-         !      A file without pools places each cohort on the allometry from its dbh. -----------!
+         !----- The carbon pools, and the geometry derived from them as the run derives it; a file !
+         !      without pools places each cohort on the allometry from its dbh. ------------------!
          pools_ok = nc_inq_varid_f(ncid, 'leaf_carbon', vid) == NC_NOERR
          if (pools_ok) then
             associate (c => poly%cohort)
@@ -818,9 +734,8 @@ contains
          end if
          olai_ok = nc_inq_varid_f(ncid, 'overtopping_lai', vid) == NC_NOERR
          if (olai_ok) call gv_dbl(ncid, 'overtopping_lai', ncoh, poly%cohort%overtopping_lai(1:ncoh))
-         !----- The growth-rate ring buffer, when the file has one of this run's window length.  !
-         !      Otherwise seed it as if it were full of the saved growth_avg; it is overwritten     !
-         !      within a window. -----------------------------------------------------------------!
+         !----- The growth-rate ring buffer, when the file has one of this run's window length; !
+         !      otherwise it is seeded full of the saved growth_avg. ----------------------------!
          nwin = growth_window_steps(cfg)
          ghist_ok = nc_inq_varid_f(ncid, 'growth_hist', vid) == NC_NOERR
          if (ghist_ok) then
@@ -861,10 +776,8 @@ contains
             do ip = 1_ik, npat
                call gv_dbl2_row(ncid, 'recruit_pool', ip, npft, p%recruit_pool(1:npft, ip))
             end do
-            !----- FAST reservoirs: OPTIONAL as a WHOLE (existence of the first variable stands for     !
-            !      all of them, always written together) -- a file without them leaves p%cas/soil_energy/      !
-            !      soil_water/snow at alloc_polygon's defaults, and the caller re-seeds them via              !
-            !      init_fast_reservoirs. -----------------------------------------------------------------!
+            !----- The fast reservoirs, written together, so the first stands for all: a file without !
+            !      them leaves alloc_polygon's defaults for the caller to re-seed. -------------------!
             fast_ok = nc_inq_varid_f(ncid, 'cas_can_enthalpy', vid) == NC_NOERR
             if (fast_ok) then
                block
@@ -891,13 +804,11 @@ contains
                   do ip = 1_ik, npat
                      p%soil_water(ip)%w_surface = fw1(ip)
                   end do
-                  !----- Pond ENTHALPY: OPTIONAL, because older state files do not carry it. Read the
-                  !      value here if present; the RECONSTRUCTION for a file without it waits until
-                  !      soil_temp is in (below).
+                  !----- Pond enthalpy, if the file has it; otherwise it is rebuilt below, from soil_temp. -!
                   pond_enth_ok = nc_inq_varid_f(ncid, 'soil_w_surface_enth', vid) == NC_NOERR
                   fw4 = 0.0_wp
                   if (pond_enth_ok) call gv_dbl(ncid, 'soil_w_surface_enth', npat, fw4)
-                  !----- shed_water_rate: OPTIONAL (older files lack it; the slow loop rewrites it daily). -!
+                  !----- Shed water: a file without it keeps zero until the slow step sets it. -----------!
                   shed_ok = nc_inq_varid_f(ncid, 'shed_water_rate', vid) == NC_NOERR
                   fsh = 0.0_wp
                   if (shed_ok) call gv_dbl(ncid, 'shed_water_rate', npat, fsh)
@@ -906,8 +817,7 @@ contains
                         p%shed_water_rate(ip) = fsh(ip)
                      end do
                   end if
-                  !----- Its enthalpy: OPTIONAL. A file without it values the rate at the patch's canopy   !
-                  !      air, the nearest the file has to the temperature of the tissues it left. -------!
+                  !----- Its enthalpy: a file without it values the rate at the canopy air's temperature. -!
                   if (nc_inq_varid_f(ncid, 'shed_water_enth', vid) == NC_NOERR) then
                      call gv_dbl(ncid, 'shed_water_enth', npat, p%shed_water_enth(1:npat))
                   else
@@ -915,7 +825,7 @@ contains
                         p%shed_water_enth(ip) = p%shed_water_rate(ip) * internal_energy_liquid(p%cas(ip)%can_temp)
                      end do
                   end if
-                  !----- The controller's warm start: OPTIONAL, a file without it cold-starts it. -------!
+                  !----- The controller's warm start: a file without it cold-starts it. ----------------!
                   call gv_dbl_opt(ncid, 'adapt_dt_last', npat, p%adapt_dt_last(1:npat))
                   call gv_int(ncid, 'snow_nlayer', npat, fnl)
                   do ip = 1_ik, npat
@@ -932,14 +842,8 @@ contains
                      call gv_dbl2_row(ncid, 'snow_temp',   ip, n_snow_layer_max, p%snow(ip)%snow_temp(1:n_snow_layer_max))
                      call gv_dbl2_row(ncid, 'snow_fliq',   ip, n_snow_layer_max, p%snow(ip)%snow_fliq(1:n_snow_layer_max))
                   end do
-                  !----- Pond ENTHALPY, committed now that soil_temp is in. When the file carries it, use  !
-                  !      it verbatim. When it does not, RECONSTRUCT from the pond mass at the top soil      !
-                  !      layer's temperature rather than defaulting to 0: such a file records a pond        !
-                  !      whose enthalpy is UNKNOWN, not empty, and seeding 0 J/m2 would restart the run     !
-                  !      ~1 MJ short per kg of ponded water -- which the energy budgets would               !
-                  !      immediately (and correctly) report as a leak. The top layer's temperature is the   !
-                  !      one the pond exchanges with, so it is the defensible equilibrium guess. A dry      !
-                  !      pond (the common case) reconstructs to exactly 0 either way. --------------------!
+                  !----- Pond enthalpy: as read, or the pond's mass at the top soil layer's temperature   !
+                  !      (docs/science/order_of_processes.md §6, The restart file). ---------------------!
                   do ip = 1_ik, npat
                      if (pond_enth_ok) then
                         p%soil_water(ip)%w_surface_energy = fw4(ip)
@@ -951,9 +855,7 @@ contains
                end block
                if (present(fast_found)) fast_found = .true.
             end if
-            !----- Slow soil-carbon pools ([soil_carbon].soil_carbon_on): OPTIONAL variables         !
-            !      (gv_dbl_opt), so a state file without them restarts the pools at the just-allocated  !
-            !      zero (bare ground), as the plastic leaf traits restart at top-of-canopy. -----------!
+            !----- Soil carbon: a file without it restarts the pools at zero. ----------------------!
             block
                real(wp) :: sc(npat, 9_ik)
                sc = 0.0_wp
@@ -980,10 +882,9 @@ contains
             end block
          end associate
       end if
-      !----- A state file without the cohorts' tissue water or temperatures starts each cohort in its  !
-      !      patch's state, as a recruit is born (patch_physical_state): the canopy air and top soil layer !
-      !      just read, or, for a file without them either, the run's starting state, from which       !
-      !      init_fast_reservoirs then re-seeds the patch and its cohorts. -----------------------------!
+      !----- A file without the tissue water or temperatures starts each cohort in its patch's state,  !
+      !      as a recruit is born: the canopy air and top soil layer just read, or, without those, the !
+      !      run's starting state, from which init_fast_reservoirs re-seeds the patch and cohorts. ----!
       if (ncoh > 0_ik .and. npat > 0_ik .and. .not. (tissue_water_ok .and. tissue_temp_ok)) then
          block
             real(wp) :: t_birth, psi_birth
@@ -1004,9 +905,9 @@ contains
             end do
          end block
       end if
-      !----- The tissue energies are the state, and their temperatures are read beside them as twins. !
-      !      A file written before the energies were the state, or one whose tissue water was         !
-      !      re-seeded above, derives them from the temperatures at the masses just read. ------------!
+      !----- The tissue energies are the state and the temperatures their twins. A file without the  !
+      !      energies, or whose tissue water was set above, derives them from the temperatures at the  !
+      !      masses; one without only the temperatures derives those from the energies. --------------!
       if (ncoh > 0_ik .and. .not. (tissue_energy_ok .and. tissue_water_ok .and. tissue_temp_ok)) then
          do i = 1_ik, ncoh
             if (tissue_energy_ok .and. tissue_water_ok) then
@@ -1037,7 +938,7 @@ contains
          call nc_check(nc_get_vara_int(ncid, v, st1, ct1, x), 'get polygon count')
          n = x(1)
       end function polygon_count
-      !----- Where a read starts: the polygon's row in a region's file, then `row` (1-based) of a   !
+      !----- Where a read starts: the polygon's row in a file with that axis, then `row` (1-based) of a !
       !      2-D variable when given, then the first n entries. ------------------------------------!
       subroutine where_from(n, row, st, ct, nd)
          integer(ik),           intent(in)  :: n

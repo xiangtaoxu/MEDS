@@ -1,15 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_output_registry -- the ONE source-defined registration list of diagnostic variables, and !
-! the config resolution that turns it into per-tier live-variable index lists                   !
-! (docs/science/diagnostics.md §5, §8).                                                         !
-!                                                                                          !
-! netCDF-FREE (links types + config + demography state + the integrate SRC_* codes). Adding a      !
-! variable is TWO coupled edits: one add_variable() line here + one case in extract_variable        !
-! (meds_output_integrate). Resolution order (docs/science/diagnostics.md §5): source defaults        !
-! (checked by the annual and fast guards) -> axis toggles -> group toggles -> per-tier enables ->    !
-! freq index; the per-variable overrides (meds_io_config.toml) are applied separately, after.       !
-! Design record: MEDS_IO_DESIGN.md §3, §6.                                                          !
+! meds_output_registry -- the one registration list of diagnostic variables (register_*) and   !
+! the config resolution that turns it into each tier's live variables: the defaults, checked by !
+! the annual and fast guards, then the axis, group and tier switches, and the per-variable     !
+! overrides after (docs/science/diagnostics.md §5). Also the file set's setup, one polygon's   !
+! buffers, the diagnostic blocks' switch (activate_polygon_diag) and dump_io_config.           !
+! netCDF-free. Adding a variable: docs/science/diagnostics.md §8. Design record:               !
+! MEDS_IO_DESIGN.md §3, §6.                                                                    !
 !==========================================================================================!
 module meds_output_registry
    use meds_kinds,          only : wp, ik
@@ -78,8 +75,7 @@ module meds_output_registry
    public :: set_output_polygons
    public :: activate_polygon_diag, dump_io_config
 
-   !----- Named default stream masks (readable `ior` combinations). DAY_MON_YR deliberately     !
-   !      EXCLUDES the fast bit -- the fast tier is always opt-in.                                !
+   !----- Named default stream masks. None includes the fast bit: the fast tier is always opt-in. !
    integer(ik), parameter :: DAY_MON    = ior(FREQ_DAILY, FREQ_MONTHLY)
    integer(ik), parameter :: MON        = FREQ_MONTHLY
    integer(ik), parameter :: MON_YR     = ior(FREQ_MONTHLY, FREQ_ANNUAL)
@@ -94,7 +90,7 @@ module meds_output_registry
 
 contains
 
-   !----- FREQ_* bit for a 1-based tier index (1=FAST,2=DAILY,3=MONTHLY,4=ANNUAL). ------------!
+   !----- FREQ_* bit for a 1-based tier index (TIER_FAST .. TIER_ANNUAL). --------------------!
    pure integer(ik) function freq_bit(tier) result(b)
       integer(ik), intent(in) :: tier
       b = ishft(1_ik, tier - 1_ik)
@@ -129,7 +125,7 @@ contains
       call register_fast(reg)
       call register_forcing(reg)
 
-      call enforce_annual_guard(reg)              ! cohort/patch var MUST NOT declare FREQ_ANNUAL (docs/science/diagnostics.md §3)
+      call enforce_annual_guard(reg)              ! no cohort or patch variable on FREQ_ANNUAL (docs/science/diagnostics.md §3)
       call enforce_fast_guard(reg)                ! FAST tier <-> FAST-staged source, both ways
       call apply_axis_toggles(reg, cfg%output)    ! whole-axis suppression (docs/science/diagnostics.md §5, step 2)
       call apply_group_toggles(reg, cfg%output)   ! high-level group toggles (docs/science/diagnostics.md §5, step 3)
@@ -138,11 +134,9 @@ contains
    end subroutine build_output_registry
 
    !=======================================================================================!
-   !  THE REGISTRATION LIST, grouped one subroutine per (group, axis) so a reviewer can diff   !
-   !  one domain at a time. Adding a variable is still TWO coupled edits: an add_variable()      !
-   !  line here + the matching FIELD case in meds_output_integrate. But because the reduction     !
-   !  is DATA (dim + weight + mean + scale), a field that already has a case emits its patch /     !
-   !  site / PFT / size-class twins for one more line EACH, with no new extraction code.           !
+   !  The registration list, one routine per (group, axis). A variable is one add_variable   !
+   !  line, plus a field case in meds_output_integrate for a new field                       !
+   !  (docs/science/diagnostics.md §8):                                                      !
    !                                                                                          !
    !  add_variable(reg, name, long_name, units, dim, agg, group, streams, source                  !
    !               [, xtype][, weight][, mean][, scale])                                           !
@@ -177,7 +171,7 @@ contains
                         DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_C_OWNER_PATCH, xtype=XTYPE_INT)
       call add_variable(reg, 'global_cohort_id', 'persistent cohort id', '-',                    &
                         DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_C_GLOBAL_ID, xtype=XTYPE_INT)
-      !----- Per-plant carbon pools (the four PARTEH-style pools the size anchor rides on). ---!
+      !----- Per-plant carbon pools (the four pools the size anchor rides on). ---------------!
       call add_variable(reg, 'leaf_carbon_cohort', 'leaf carbon per plant', 'kgC/plant',         &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_CARBON)
       call add_variable(reg, 'fineroot_carbon_cohort', 'fine-root carbon per plant', 'kgC/plant', &
@@ -201,7 +195,7 @@ contains
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_SHED_TENDENCY)
       call add_variable(reg, 'dmax_psi_leaf_cohort', 'predawn (daily-max) leaf water potential', 'MPa', &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_DMAX_PSI_LEAF)
-      !----- Slow-loop RATES off the per-step diagnostic block (poly%cohort%sdiag). -----------!
+      !----- Slow-loop rates off the per-step diagnostic block (poly%cohort%sdiag). -----------!
       call add_variable(reg, 'dbh_growth_cohort', 'diameter growth rate', 'cm/yr',               &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_DIAG0 + CO_DDBH_DT)
       call add_variable(reg, 'agb_growth_cohort', 'per-plant AGB growth rate', 'kgC/plant/yr',   &
@@ -227,9 +221,8 @@ contains
                         DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_GLOBAL_ID, xtype=XTYPE_INT)
       call add_variable(reg, 'patch_site', 'the patch''s site (1-based)', '-',                   &
                         DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_SITE, xtype=XTYPE_INT)
-      !----- Cohort fields reduced onto the patch axis. EXTENSIVE (weighted SUM over nplant),   !
-      !      so these are per m2 of THAT PATCH's ground -- the gap-vs-closed-canopy contrast the  !
-      !      site scalars average away.  -------------------------------------------------------!
+      !----- Cohort fields reduced onto the patch axis: weighted sums per m2 of that patch's own  !
+      !      ground, the gap-versus-closed-canopy contrast the polygon scalars average away. ----!
       call add_variable(reg, 'nplant_patch', 'patch plant number density', 'plant/m2',           &
                         DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_NPLANT, weight=W_NONE)
       call add_variable(reg, 'lai_patch', 'patch leaf area index', 'm2/m2',                      &
@@ -241,7 +234,7 @@ contains
                         weight=W_NPLANT, scale=cm2_to_m2)
    end subroutine register_structure_patch
 
-   !----- Site structure scalars. -----------------------------------------------------------!
+   !----- The polygon's structure scalars. --------------------------------------------------!
    subroutine register_structure_site(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'nplant_site', 'site total plant number', 'plant/m2',               &
@@ -253,9 +246,8 @@ contains
                         DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_AGB, weight=W_NPLANT)
       call add_variable(reg, 'lai_site', 'site leaf area index', 'm2/m2',                        &
                         DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_LEAF_AREA, weight=W_NPLANT)
-      !----- INTENSIVE structural means. The weight is the physical statement: dbh is basal-    !
-      !      area-weighted (the forestry convention, dominated by the trees that hold the stand), !
-      !      NOT stem-weighted, which a regenerating understory would swamp.  -------------------!
+      !----- Intensive structural means, basal-area-weighted: dominated by the trees that hold  !
+      !      the stand, not by a regenerating understory (docs/science/diagnostics.md §2). ------!
       call add_variable(reg, 'mean_dbh_site', 'basal-area-weighted mean DBH', 'cm',              &
                         DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_DBH,             &
                         weight=W_BASAL_AREA, mean=.true.)
@@ -287,8 +279,8 @@ contains
                         weight=W_BASAL_AREA, mean=.true.)
    end subroutine register_structure_pft
 
-   !----- DBH size-class axis (ED2-style, a size class of PLANTS). The demographic core's      !
-   !      actual output: a stem-density distribution directly comparable to forest inventory.   !
+   !----- DBH size-class axis: a stem-density distribution comparable to a forest inventory    !
+   !      (docs/science/diagnostics.md §3). ---------------------------------------------------!
    subroutine register_structure_size(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'nplant_size', 'plant number density by DBH class', 'plant/m2',     &
@@ -308,8 +300,8 @@ contains
    end subroutine register_structure_size
 
    !=======================================================================================!
-   !  CARBON. gpp_accum / *_resp_accum are per-slow-step accumulators the fast loop fills, so  !
-   !  AGG_SUM over the period gives a period carbon TOTAL (all 0 when the fast loop is off).    !
+   !  Carbon. gpp_accum and the *_resp_accum are per-slow-step accumulators the fast loop     !
+   !  fills, so AGG_SUM gives the period's carbon total (all 0 when the fast loop is off).   !
    !=======================================================================================!
    subroutine register_carbon(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -323,7 +315,7 @@ contains
                         DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_STEM_RESP, weight=W_NPLANT)
       call add_variable(reg, 'root_resp_site', 'site fine-root maintenance respiration (period total)', 'kgC/m2', &
                         DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_ROOT_RESP, weight=W_NPLANT)
-      !----- Vegetation carbon STOCKS (AGG_MEAN -- a stock, not a flux). ----------------------!
+      !----- Vegetation carbon stocks (AGG_MEAN: a stock, not a flux). -----------------------!
       call add_variable(reg, 'leaf_carbon_site', 'site leaf carbon', 'kgC/m2',                   &
                         DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_LEAF_CARBON, weight=W_NPLANT)
       call add_variable(reg, 'fineroot_carbon_site', 'site fine-root carbon', 'kgC/m2',          &
@@ -354,7 +346,7 @@ contains
    end subroutine register_carbon
 
    !=======================================================================================!
-   !  WATER.                                                                                 !
+   !  Water.                                                                                 !
    !=======================================================================================!
    subroutine register_water(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -398,7 +390,7 @@ contains
    end subroutine register_water
 
    !=======================================================================================!
-   !  ENERGY.                                                                                !
+   !  Energy.                                                                                !
    !=======================================================================================!
    subroutine register_energy(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -415,8 +407,7 @@ contains
       call add_variable(reg, 'soil_temp_top_site', 'site soil-top (layer 1) temperature', 'K',   &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_SOIL_TEMP_TOP)
       !----- The skin temperature (docs/science/diagnostics.md §4): what an infrared thermometer   !
-      !      or a satellite land-surface temperature sees, not the soil. Over a forest it is mostly  !
-      !      the canopy. ------------------------------------------------------------------------------!
+      !      or a satellite land-surface temperature sees, not the soil. -----------------------------!
       call add_variable(reg, 'skin_temp_site', 'skin temperature: black-body temperature of the longwave up', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_SKIN_TEMP)
       call add_variable(reg, 'soil_temp_site', 'each site''s area-weighted soil temperature', 'K', &
@@ -424,8 +415,8 @@ contains
       call add_variable(reg, 'soil_fliq_site', 'each site''s area-weighted soil liquid fraction', '-', &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_FLIQ)
 
-      !----- Canopy temperatures, LEAF-AREA-weighted (the intensive rule: a bare sapling must    !
-      !      not pull the canopy mean as hard as a closed overstory).  --------------------------!
+      !----- Canopy temperatures, leaf-area-weighted: a bare sapling does not pull the canopy   !
+      !      mean as hard as a closed overstory. ------------------------------------------------!
       call add_variable(reg, 'leaf_temp_site', 'leaf-area-weighted canopy leaf temperature', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_DIAG0 + CO_LEAF_TEMP, &
                         weight=W_LEAF_AREA, mean=.true.)
@@ -449,7 +440,7 @@ contains
    end subroutine register_energy
 
    !=======================================================================================!
-   !  BIOGEOCHEMISTRY (the CENTURY matrix pools + Rh). All 0 when soil_carbon_on is off.      !
+   !  Biogeochemistry: the CENTURY matrix pools and Rh, all 0 when soil_carbon_on is off.    !
    !=======================================================================================!
    subroutine register_biogeochem(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -478,9 +469,8 @@ contains
    end subroutine register_biogeochem
 
    !=======================================================================================!
-   !  NUMERICS: integrator WORK + health. AGG_SUM throughout -- these are counts of work done  !
-   !  over the period, so they add; a period MEAN would hide the single day that went wrong,   !
-   !  which is exactly the signal being sought.                                                !
+   !  Numerics: the integrators' work, summed over the period, since a mean would hide the   !
+   !  one day that went wrong.                                                                !
    !=======================================================================================!
    subroutine register_numerics(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -506,16 +496,9 @@ contains
 
 
    !=======================================================================================!
-   !  GRP_ECOPHYS -- the per-cohort leaf gas-exchange + hydraulics set. Every row reads the       !
-   !  fast-loop diagnostic block, so every row is a quantity the model computes ~48 times a day    !
-   !  and keeps nowhere else.                                                                       !
-   !                                                                                          !
-   !  OFF by default: this is the highest-volume group (cohort axis x ~20 variables), and it is     !
-   !  the one a production run most often wants off. `ecophys = true` is the single switch.         !
-   !                                                                                          !
-   !  The canopy-level twins (leaf-area-weighted means over the cohorts) are registered alongside    !
-   !  the raw slabs, because a leaf-area-weighted canopy gsw and a canopy-mean psi_leaf are the      !
-   !  standard flux-tower comparison quantities and a reader should not have to re-derive them.      !
+   !  Ecophysiology (GRP_ECOPHYS): the per-cohort leaf gas exchange and hydraulics, from the   !
+   !  fast loop's diagnostic block; off by default, the highest-volume group                  !
+   !  (docs/science/diagnostics.md §5). With them, their leaf-area-weighted canopy means.     !
    !=======================================================================================!
    subroutine register_ecophys(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -563,7 +546,7 @@ contains
                         DIM_COHORT, AGG_TMEAN, GRP_RADIATION, MON, FLD_C_DIAG0 + CO_ABS_LW)
       call add_variable(reg, 'wind_cohort', 'in-canopy wind speed', 'm/s',                       &
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CO_WIND)
-      !----- CANOPY-LEVEL twins: leaf-area-weighted means, the standard flux-tower comparands.  --!
+      !----- Canopy twins: leaf-area-weighted means, the standard flux-tower comparison. -------!
       call add_variable(reg, 'anet_site', 'leaf-area-weighted canopy net assimilation', 'umol/m2 leaf/s', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CO_ANET,   &
                         weight=W_LEAF_AREA, mean=.true.)
@@ -588,9 +571,9 @@ contains
    end subroutine register_ecophys
 
    !=======================================================================================!
-   !  SLOW-loop carbon allocation: where compute_carbon_allocation sends each cohort's carbon   !
-   !  on every step, captured so the carbon budget closes from an output file -- npp_site       !
-   !  reconciles against the sum of its five destinations plus growth respiration.              !
+   !  Slow-loop carbon allocation: where compute_carbon_allocation sends each cohort's carbon  !
+   !  every step, so the carbon budget closes from an output file: npp_site reconciles        !
+   !  against its five destinations plus growth respiration.                                  !
    !=======================================================================================!
    subroutine register_allocation(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -610,8 +593,8 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_STORAGE_RESP, weight=W_NPLANT)
       call add_variable(reg, 'root_exudate_site', 'root exudate: carbon the growth sink could not use', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_EXUDATE, weight=W_NPLANT)
-      !----- Site-level demographic RATES: the three terms that MAKE the AGB trajectory, so a      !
-      !      reader can check d(agb)/dt against growth - mortality directly from the file.  -------!
+      !----- The polygon's demographic rates, the terms that make the AGB trajectory: d(agb)/dt  !
+      !      against growth - mortality from the file (docs/science/diagnostics.md eq. (4)). ----!
       call add_variable(reg, 'agb_growth_site', 'site AGB growth rate', 'kgC/m2/yr',             &
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_DAGB_DT, weight=W_NPLANT)
       call add_variable(reg, 'agb_mort_site', 'site AGB mortality loss rate', 'kgC/m2/yr',       &
@@ -619,13 +602,9 @@ contains
       call add_variable(reg, 'mort_rate_site', 'nplant-weighted mortality rate', '1/yr',         &
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_MORT_RATE, &
                         weight=W_NPLANT, mean=.true.)
-      !----- Litterfall: the vegetation -> soil carbon seam, from the SAME accumulator the        !
-      !      biogeochemistry consumes, by the tissue the carbon came from. Leaf + fine root          !
-      !      + wood + fruit/seed + root_exudate_site is the carbon turnover and background mortality !
-      !      send to the soil pools; cohorts culled or killed by disturbance add to the pools        !
-      !      directly (mort_carbon_cull_site, mort_carbon_disturb_site). With soil carbon off they   !
-      !      leave the model. litter_struct_site is a destination (the structural pools), so it     !
-      !      overlaps the others. --------------------------------------------------------------------!
+      !----- Litterfall, the vegetation -> soil carbon seam, by the tissue the carbon came from,  !
+      !      read from the accumulator the biogeochemistry consumes (docs/science/diagnostics.md §6, !
+      !      The carbon seam). litter_struct_site is a destination, so it overlaps the others. ------!
       call add_variable(reg, 'litter_leaf_site', 'leaf litterfall carbon (after resorption)', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PA_LITTER_LEAF)
       call add_variable(reg, 'litter_fineroot_site', 'fine-root litter carbon (after resorption)', 'kgC/m2/yr', &
@@ -640,12 +619,9 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PA_RECRUIT_NPLANT)
       call add_variable(reg, 'disturb_area_site', 'patch area fraction disturbed', '1/yr',        &
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PA_DISTURB_AREA)
-      !----- Mortality carbon SPLIT BY PATHWAY. The three are mutually exclusive and jointly       !
-      !      exhaustive, so they sum to the whole-individual mortality carbon -- which is what makes !
-      !      them worth emitting separately: a stand thinning continuously and a stand being knocked !
-      !      over lose the same carbon and mean completely different things. Every pool (leaf, fine  !
-      !      root, wood, storage) is included, because a whole individual dies with all of it.       !
-      !      Emitted whatever [soil_carbon].soil_carbon_on says: this is demography.  ---------------!
+      !----- Mortality carbon by pathway: three exclusive parts of the whole-individual mortality   !
+      !      carbon, every pool included (docs/science/diagnostics.md §6, The carbon seam). Written  !
+      !      whatever soil_carbon_on says: this is demography. ---------------------------------------!
       call add_variable(reg, 'mort_carbon_background_site', 'mortality carbon, background hazard',  &
                         'kgC/m2/yr', DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR,                  &
                         FLD_P_DIAG0 + PA_MORT_C_BACKGROUND)
@@ -667,9 +643,8 @@ contains
    end subroutine register_allocation
 
    !=======================================================================================!
-   !  The per-PATCH fast-loop fluxes and states, and their area-weighted site twins. These are  !
-   !  the sub-daily energy / water / carbon exchange terms -- the ones a run is judged on --      !
-   !  available at EVERY tier, not only in the opt-in FAST stream.                                !
+   !  The per-patch fast-loop fluxes and states, and their polygon (_site) twins: the energy,  !
+   !  water and carbon exchange a run is judged on, at every coarse tier.                     !
    !=======================================================================================!
    subroutine register_patch_fluxes(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -680,15 +655,9 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_H)
       call add_variable(reg, 'rnet_site', 'net all-wave radiation', 'W/m2',                      &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_RNET)
-      !----- TOP-OF-CANOPY radiative fluxes. The two-stream solves these every step; with them a    !
-      !      run can be compared against a radiometer or a satellite product without re-deriving    !
-      !      them offline.                                                                          !
-      !                                                                                          !
-      !      FLUXES, not a time-averaged albedo, and deliberately so: a period-mean albedo is the    !
-      !      mean of a RATIO, which is not the ratio of the means, and at night the shortwave ratio  !
-      !      is 0/0. The albedo a reader wants -- and what a satellite product IS -- is                !
-      !      sum(up)/sum(down) over the period, which these make computable exactly                   !
-      !      (docs/science/canopy_radiation_transfer.md eq. (15)).                                     !
+      !----- Top-of-canopy radiative fluxes, for a radiometer or satellite comparison: fluxes, not  !
+      !      a mean albedo, which is a mean of ratios (docs/science/canopy_radiation_transfer.md      !
+      !      eq. (15)). ---------------------------------------------------------------------------!
       call add_variable(reg, 'sw_in_vis_site', 'incident VIS shortwave at canopy top', 'W/m2',    &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_SW_IN_VIS)
       call add_variable(reg, 'sw_in_nir_site', 'incident NIR shortwave at canopy top', 'W/m2',    &
@@ -746,9 +715,9 @@ contains
    end subroutine register_patch_fluxes
 
    !=======================================================================================!
-   !  FAST-tier (sub-daily) diagnostics. These read the STAGED per-sub-step samples, not live   !
-   !  site state, so they carry the FAST bit ONLY -- putting one on a coarse tier would read a   !
-   !  staging buffer that is not populated there.                                                 !
+   !  FAST-tier (sub-daily) diagnostics. They read the staged sub-step samples, not live      !
+   !  state, so they carry the FAST bit only (docs/science/diagnostics.md §4, How the FAST    !
+   !  tier is sampled).                                                                       !
    !=======================================================================================!
    subroutine register_fast(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -819,12 +788,8 @@ contains
                         'umol/m2/s', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, FAST_ONLY, SRC_F_CO0 + CO_AGROSS)
       call add_variable(reg, 'abs_par_cohort_fast', 'absorbed PAR (incident-equivalent, per ground area)', &
                         'W/m2', DIM_COHORT, AGG_TMEAN, GRP_RADIATION, FAST_ONLY, SRC_F_CO0 + CO_ABS_PAR)
-      !----- Per-patch twins (docs/science/diagnostics.md §4, The FAST tier by patch): the same    !
-      !      samples before the area-weighted sum over patches. A site mean over a closed canopy    !
-      !      and a gap describes neither -- at midday the two can differ in sign -- so a patchy      !
-      !      stand's sub-daily behaviour needs the patch axis. Each is its coarse patch variable's   !
-      !      name with _fast (a quantity only this tier has keeps its site stem), and each follows   !
-      !      [output].axes_patch or axes_soil_patch as the coarse ones do. --------------------------!
+      !----- Per-patch twins: the same samples before the sum over patches, named and switched as  !
+      !      docs/science/diagnostics.md §4 (The FAST tier by patch) says. -----------------------!
       call add_variable(reg, 'cas_temp_patch_fast', 'patch canopy-air-space temperature (sub-daily)', 'K', &
                         DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PA0 + PA_CAS_TEMP)
       call add_variable(reg, 'soil_temp_top_patch_fast', 'patch soil-top temperature (sub-daily)', 'K', &
@@ -860,13 +825,9 @@ contains
    end subroutine register_fast
 
    !=======================================================================================!
-   !  The FORCING the run used (docs/science/diagnostics.md §5): the atmospheric boundary after the !
-   !  reader's shortwave partition, rain/snow split and optional height and lapse corrections --   !
-   !  write-only provenance. The coarse tiers are dt-weighted means over the fast sub-steps, kept   !
-   !  once per polygon (poly%diag, PY_*) with sw_in_site and precip_site, which carry the total     !
-   !  shortwave and precipitation; the FAST tier is each record's mean of the sub-step samples,     !
-   !  which is what checks the diurnal reconstruction against a tower. cosz is 0 while the sun is   !
-   !  down, so a daily mean counts the night as zero.                                               !
+   !  The forcing the run used (docs/science/diagnostics.md §5), after the reader's partitions  !
+   !  and corrections: the coarse tiers' dt-weighted means, kept once per polygon (poly%diag,  !
+   !  PY_*; the totals are sw_in_site and precip_site), and the FAST tier's sub-step samples. !
    !=======================================================================================!
    subroutine register_forcing(reg)
       type(output_registry_t), intent(inout) :: reg
@@ -955,12 +916,9 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_RHO_AIR)
    end subroutine register_forcing
 
-   !----- Append one descriptor (the single "add a variable" registry edit).                   !
-   !                                                                                          !
-   !      weight / mean / scale are the AGGREGATION contract (see var_desc_t): the per-cohort weight kind, !
-   !      whether the reduction is a weighted MEAN (intensive) or a weighted SUM (extensive), and  !
-   !      any unit conversion. Defaults (W_NONE, sum, 1.0) are right for a raw slab, which is why  !
-   !      the cohort/patch rows above mostly omit them.                                            !
+   !----- Append one descriptor. weight, mean and scale say how the field reduces (var_desc_t);  !
+   !      their defaults (W_NONE, sum, 1.0) suit a raw slab, so the cohort and patch rows mostly  !
+   !      omit them. ----------------------------------------------------------------------------!
    subroutine add_variable(reg, name, long_name, units, dim, agg, group, streams, source, xtype, weight, mean, scale)
       type(output_registry_t), intent(inout) :: reg
       character(len=*),        intent(in)    :: name, long_name, units
@@ -994,8 +952,8 @@ contains
       if (present(scale))  reg%var(k)%scale  = scale
    end subroutine add_variable
 
-   !----- Axis index (1..N_AXIS) of a DIM_* code, for the [output].axes_* toggles. DIM_SCALAR   !
-   !      has no axis toggle (a site scalar is always available) and returns 0.                  !
+   !----- Axis index (1..N_AXIS) of a DIM_* code, for the [output].axes_* toggles; 0 for an axis !
+   !      with no toggle (a polygon scalar, a site soil column, a per-site value). --------------!
    pure integer(ik) function dim_axis_index(dm) result(a)
       integer(ik), intent(in) :: dm
       select case (dm)
@@ -1014,9 +972,8 @@ contains
       end select
    end function dim_axis_index
 
-   !----- Step 2: suppress a whole AXIS without naming variables. With ~66 cohort-dimensioned   !
-   !      variables (docs/science/diagnostics.md §7), "site level only, nothing per-cohort" is the !
-   !      most common request; it is also the single biggest lever on output volume.              !
+   !----- Step 2: suppress a whole axis without naming variables, the biggest lever on output  !
+   !      volume (docs/science/diagnostics.md §5). -------------------------------------------!
    subroutine apply_axis_toggles(reg, out_cfg)
       type(output_registry_t), intent(inout) :: reg
       type(output_config_t),   intent(in)    :: out_cfg
@@ -1029,7 +986,7 @@ contains
       end do
    end subroutine apply_axis_toggles
 
-   !----- Guard: a cohort/patch-dimensioned variable may NOT be on the annual stream          !
+   !----- Guard: no cohort- or patch-dimensioned variable on the annual stream               !
    !      (docs/science/diagnostics.md §3). ------------------------------------------------!
    subroutine enforce_annual_guard(reg)
       type(output_registry_t), intent(in) :: reg
@@ -1040,24 +997,9 @@ contains
       end do
    end subroutine enforce_annual_guard
 
-   !----- Guard: the FAST tier and the FAST-staged sources are a CLOSED PAIR, both directions.  !
-   !                                                                                          !
-   !      Sub-daily resolution exists only inside the fast loop's sub-step, so a FAST record is   !
-   !      replayed from the STAGED samples (output_integrate_fast), never from live site state --  !
-   !      which by replay time is the end-of-slow-step snapshot. Two things follow, and neither    !
-   !      announces itself if violated:                                                            !
-   !                                                                                          !
-   !        * a variable with a NON-fast source on the FAST tier resolves against a staging buffer  !
-   !          that was never filled for it, and writes _FillValue for the whole run;                 !
-   !        * a FAST-staged source on a COARSE tier resolves against live site state, which does not !
-   !          carry it, and does the same.                                                            !
-   !                                                                                          !
-   !      Both are reachable from meds_io_config.toml -- `cas_temp_site = "F"` is exactly the kind of !
-   !      thing a user writes, and unguarded it would silently produce a file full of fill. Rejecting !
-   !      the pairing at start-up, naming the offender and the variable they probably meant, is the   !
-   !      whole point: a diagnostic that quietly reports nothing is worse than one that refuses to     !
-   !      start. The meds_io_config.toml overrides are applied after this, so apply_variable_override !
-   !      runs the same check on each stream mask it sets.                                             !
+   !----- Guard: the FAST tier and the FAST-staged sources go together, in both directions, or   !
+   !      the variable writes _FillValue for the whole run (docs/science/diagnostics.md §4, How   !
+   !      the FAST tier is sampled). apply_variable_override runs the same check on each override. !
    subroutine enforce_fast_guard(reg)
       type(output_registry_t), intent(in) :: reg
       integer(ik) :: k
@@ -1108,8 +1050,8 @@ contains
       end do
    end subroutine apply_freq_enables
 
-   !----- Step 5 primitive: apply one per-variable override (from meds_io_config.toml).        !
-   !      found=.false. => the name matched no registry variable (the unknown-key trap caller). !
+   !----- Step 5: apply one per-variable override (from meds_io_config.toml). found = .false.  !
+   !      means the name matched no registered variable, which the caller makes an error. ----!
    subroutine apply_variable_override(reg, name, kind, mask, found)
       type(output_registry_t), intent(inout) :: reg
       character(len=*),        intent(in)    :: name
@@ -1181,10 +1123,9 @@ contains
    end subroutine parse_stream_mask
 
    !=======================================================================================!
-   !  Build a file set's REGISTRY + config (netCDF-free; NO buffers yet). Split from           !
-   !  allocation so a caller can apply meds_io_config.toml per-variable overrides to files%reg    !
-   !  (which change which (var,tier) buffers are needed) BEFORE finalize_output_files and             !
-   !  alloc_output_buffers.                                                                      !
+   !  Build a file set's registry and settings, with no buffers yet, so a caller can apply the !
+   !  meds_io_config.toml overrides (which change the buffers needed) before                   !
+   !  finalize_output_files and alloc_output_buffers.                                          !
    !=======================================================================================!
    subroutine setup_output_files(files, cfg)
       type(output_files_t),   intent(out) :: files
@@ -1205,10 +1146,8 @@ contains
                             'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
                             'liquid-water saturation vapour pressure of meds_therm_lib'
 
-      !----- Run-dependent parameters the DERIVED diagnostics need (diag_setup_t). n_pft is the   !
-      !      RUN-TIME PFT count, so the netCDF `pft` dimension is run-dependent -- which is why      !
-      !      the serializer also writes a `pft` coordinate variable, so a file stays self-describing !
-      !      when compared across runs with different PFT tables.                                    !
+      !----- The derived diagnostics' parameters (diag_setup_t). n_pft is the run-time PFT count,  !
+      !      so the files carry a pft coordinate (docs/science/diagnostics.md §3). ---------------!
       files%diag%n_pft  = cfg%pft%n
       !----- DBH size classes: TOML edges if given, else the built-in inventory set. -----------!
       if (cfg%output%n_dbh_class > 0_ik) then
@@ -1225,7 +1164,7 @@ contains
       files%diag%soil_ready = .false.
    end subroutine setup_output_files
 
-   !----- Largest slab length any LIVE variable can produce (see finalize_output_files). ------------!
+   !----- Largest slab length any live variable can produce (see finalize_output_files). ------------!
    pure integer(ik) function live_max_slab(files) result(cap)
       type(output_files_t),   intent(in) :: files
       integer(ik) :: k
@@ -1261,8 +1200,8 @@ contains
       end select
    end function dim_capacity
 
-   !----- The size-class edges must be strictly ascending, or dbh_class_index silently mis-bins  !
-   !      (and sum_class == site would quietly stop holding). Fail at start-up instead.          !
+   !----- The size-class edges must be strictly ascending, or dbh_class_index mis-bins without a !
+   !      word and the closure of docs/science/diagnostics.md eq. (3) fails; stop at start-up. --!
    subroutine check_dbh_edges(edges, n_class)
       real(wp),    intent(in) :: edges(:)
       integer(ik), intent(in) :: n_class
@@ -1273,7 +1212,7 @@ contains
       end do
    end subroutine check_dbh_edges
 
-   !----- Finish the file set once the registry is FINALIZED (after setup_output_files and any          !
+   !----- Finish the file set once the registry is final (after setup_output_files and any       !
    !      per-variable overrides): the per-tier stream handles and the slab size. -------------------!
    subroutine finalize_output_files(files)
       type(output_files_t),  intent(inout) :: files
@@ -1283,13 +1222,9 @@ contains
          allocate(files%stream(t)%vid(files%reg%nvar))
          files%stream(t)%vid = -1_ik
       end do
-      !----- SLAB SIZING. Size the shared pending-record slab to the largest axis that is        !
-      !      ACTUALLY LIVE, not to the largest axis that exists. With ~66 cohort-dimensioned        !
-      !      variables the pending records are the dominant memory term, and a run with            !
-      !      axes_cohort = false (or the 2-D soil axis off, the default) should not pay for the     !
-      !      axis it switched off. It is computed HERE, after every override: an [output].io_config  !
-      !      can switch on a slab variable that setup_output_files left off, and a slab sized before     !
-      !      that is too short for it. ---------------------------------------------------------!
+      !----- Size the records' slab to the largest live axis, not the largest that exists, so a  !
+      !      run pays no memory for an axis it switched off. It is sized here, after every         !
+      !      override, since an override can switch on a longer slab variable. -----------------!
       files%max_slab = live_max_slab(files)
       !----- Whether the cohort and patch caps bind: only a live variable on that axis fills a slab of  !
       !      that size. ------------------------------------------------------------------------------!
@@ -1360,7 +1295,7 @@ contains
       type(output_files_t), intent(inout) :: files
       integer(ik),          intent(in)    :: polygon_id(:), n_site(:), row(:), col(:)
       real(wp),             intent(in)    :: lat(:), lon(:)
-      logical,              intent(in)    :: with_chave_e   !< the Chave height allometry's site index
+      logical,              intent(in)    :: with_chave_e   !< the Chave height allometry's index E, per polygon
       integer(ik) :: n, ns
       n  = size(polygon_id, kind=ik)
       ns = max(maxval(n_site), 1_ik)
@@ -1400,11 +1335,9 @@ contains
    end subroutine build_freq_index
 
    !=======================================================================================!
-   !  Turn the per-cohort / per-patch fast diagnostic blocks ON iff the finalized registry has     !
-   !  at least one LIVE variable that reads them. This is what makes the capture free for a run     !
-   !  that does not report it: `active = .false.` leaves both blocks unallocated and every entry     !
-   !  point in meds_diag_vars a no-op, and the fast loop never even asks the leaf kernel for         !
-   !  the extra flux fields.                                                                         !
+   !  Switch each diagnostic block (cohort, slow cohort, patch, polygon, site) on iff a live  !
+   !  variable of the final registry reads it. A block that is off stays unallocated and its  !
+   !  meds_diag_vars entry points do nothing, so a run pays nothing for what it does not report. !
    !=======================================================================================!
    subroutine activate_polygon_diag(files, poly)
       type(output_files_t),   intent(in)    :: files
@@ -1449,12 +1382,9 @@ contains
    end subroutine activate_polygon_diag
 
    !=======================================================================================!
-   !  Write a fully-commented meds_io_config.toml listing EVERY registered variable with its    !
-   !  default stream mask, group and axis, ready to uncomment.                                  !
-   !                                                                                          !
-   !  This is how a user learns which names the per-variable overrides accept. It doubles as     !
-   !  the regression guard that the registry and its documentation cannot drift apart -- the    !
-   !  listing is GENERATED from the registry, so it is right by construction.                    !
+   !  Write a commented-out meds_io_config.toml listing every registered variable with its    !
+   !  default streams, group and axis: the names the overrides accept, generated from the     !
+   !  registry so it cannot drift from it.                                                    !
    !=======================================================================================!
    subroutine dump_io_config(reg, path)
       type(output_registry_t), intent(in) :: reg

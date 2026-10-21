@@ -1,24 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_co2_series -- the prescribed free-atmosphere CO2: read a MEDS CO2 file into a           !
-! co2_series_t, and look the series up at a model instant.                                      !
-!                                                                                          !
-! A MEDS CO2 file, format 1 (the full definition is docs/science/forcing.md §12), is plain       !
-! text. '#' starts a comment that runs to the end of the line; blank lines are ignored. Two       !
-! keyword lines come before the first data row, each exactly once:                                !
-!     timestep  <n> <unit>     n a whole number >= 1; unit year | month | day | hour | minute       !
-!     units     umol/mol       the only unit accepted (dry-air mole fraction)                       !
-! then one row per period, `<period start>  <value>`. The start is written to the precision of    !
-! the unit -- YYYY | YYYY-MM | YYYY-MM-DD | YYYY-MM-DDThh | YYYY-MM-DDThh:mm -- in model time, and  !
-! the value is the mean over [start, start + n units). Each row starts exactly n units after the  !
-! one before it: MEDS never gap-fills, so a missing period is an error, not an interpolation.      !
-!                                                                                          !
-! The lookup places each value at the middle of its period and interpolates linearly between     !
-! the middles (docs/science/forcing.md eq. (18)). Over the first and last half-periods it holds  !
-! the end value, which is still inside the period that value is the mean of; nothing is          !
-! extrapolated. A run must lie inside                                                             !
-! the file's periods, which met_open checks once (co2_series_covers), so a lookup never leaves    !
-! them. The lookup is on MODEL time, so the CO2 keeps rising while recycled met repeats.          !
+! meds_co2_series -- the prescribed free-atmosphere CO2 (docs/science/forcing.md §12): read a     !
+! MEDS CO2 file, format 1, into a co2_series_t (co2_series_read) and look it up at a model instant !
+! (co2_series_at). Each row is a period's mean, placed at the period's middle: the lookup is       !
+! linear between middles and holds the end values over the outer half-periods (eq. (18)). A       !
+! missing period is an error, never interpolated. met_open checks once that the file covers the    !
+! run (co2_series_covers). The lookup is on model time, so the CO2 rises while recycled met repeats. !
 !==========================================================================================!
 module meds_co2_series
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
@@ -113,8 +100,7 @@ contains
             call split_token(rest, ntok, mid)
             call split_token(mid, utok, extra)
             read(ntok, *, iostat=ios) step_n
-            !----- `utok` untrimmed: the standard compares blank-padded, but nvfortran 25.11's findloc  !
-            !      returns 0 for a value SHORTER than the elements ('year' against len-6 names). -----!
+            !----- `utok` untrimmed: findloc of a shorter value returns 0 (a compiler trap, CLAUDE.md). !
             step_unit = int(findloc(UNIT_NAME, utok, dim=1), ik)
             if (ios /= 0 .or. step_n < 1_ik .or. step_unit == 0_ik .or. len_trim(extra) > 0) then
                call line_msg(msg, iline, 'expected "timestep <n> <unit>", n a whole number >= 1 and '// &

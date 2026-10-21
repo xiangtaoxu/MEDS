@@ -1,26 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_lapse_rate -- every VERTICAL correction of the forcing, in one place                       !
-! (docs/science/forcing.md §8). Two steps, in this order:                                         !
-!                                                                                          !
-!   1. TERRAIN, per record at ingest (the reader): from the forcing cell's elevation to the        !
-!      polygon's.                                                                                  !
-!      Temperature by the month's environmental lapse rate, pressure hydrostatically with the same  !
-!      linear T(z), specific humidity at constant RELATIVE humidity, and file longwave by the ratio !
-!      of clear-sky emission eps*T^4 (NLDAS, Cosgrove et al. 2003; ERA5-Land's own terrain step    !
-!      also holds relative humidity). Then per sub-step (the fast loop), the same step from the    !
-!      polygon's elevation to each of its sites', and the direct beam on the site's slope          !
-!      (met_at_site).                                                                              !
-!   2. HEIGHT, per patch and sub-step (the fast loop): from the forcing's own heights to the top of !
-!      the patch's canopy air space, z_top = can_depth, which grows with the stand. Neutral surface !
-!      layer: potential temperature and specific humidity are conserved, and the wind follows the  !
-!      patch's own log profile (the one its aerodynamics starts from). An open-terrain wind        !
-!      diagnostic (ERA5's 10 m wind, made from a 40 m blending height with z0 = 0.03 m) is first   !
-!      returned to its blending height. Pressure stays at the ground, where the canopy air, ground !
-!      and leaves use it.                                                                          !
-!                                                                                          !
-! Pure/elemental kernels over plain scalars, needing only meds_share, the config leaf and the       !
-! forcing library's own kernels and types; the callers supply the heights.                         !
+! meds_lapse_rate -- every vertical correction of the forcing, in one place                        !
+! (docs/science/forcing.md §8). 1. Terrain: from the forcing cell's elevation to the polygon's,    !
+! per record at ingest (lapse_air_temperature, lapse_pressure, lapse_specific_humidity,            !
+! lapse_longwave), then from the polygon's to each site's, with the beam on the site's slope, per  !
+! sub-step (met_at_site). 2. Height: from the forcing's own heights to each patch's canopy-air top, !
+! per patch and sub-step (met_to_cas_top). Pure kernels over plain scalars; the callers supply the  !
+! heights.                                                                                          !
 !==========================================================================================!
 module meds_lapse_rate
    use meds_kinds,           only : wp, ik
@@ -39,19 +25,17 @@ module meds_lapse_rate
 
 contains
 
-   !----- Linear environmental lapse of air temperature (ED2 calc_met_lapse; docs/science/      !
-   !      forcing.md eq. (13)). dz = site - grid, gamma > 0 cools with height, so a higher site    !
-   !      is colder.                                                                                !
+   !----- Linear environmental lapse of air temperature (docs/science/forcing.md eq. (13)).    !
+   !      dz = site - grid; gamma > 0 cools with height, so a higher site is colder. ---------------!
    elemental function lapse_air_temperature(tair_grid, dz, gamma) result(tair_site)
       real(wp), intent(in) :: tair_grid, dz, gamma
       real(wp) :: tair_site
       tair_site = tair_grid - gamma * dz
    end function lapse_air_temperature
 
-   !----- Hydrostatic hypsometric pressure CONSISTENT with the same linear T(z): dP/dz=-Pg/(Rd T),  !
-   !      T(z)=T_grid-gamma*z -> P_site = P_grid*(T_site/T_grid)^(g/(Rd*gamma)); isothermal limit    !
-   !      (gamma -> 0) is the barometric exp(-g*dz/(Rd*T)). Keeps P and T ideal-gas-consistent      !
-   !      (docs/science/forcing.md eq. (13)).                                                         !
+   !----- Hypsometric pressure under the same linear T(z), so P and T stay ideal-gas consistent:   !
+   !      P_site = P_grid*(T_site/T_grid)^(g/(Rd*gamma)), or exp(-g*dz/(Rd*T)) as gamma -> 0         !
+   !      (docs/science/forcing.md eq. (13)). -------------------------------------------------------!
    elemental function lapse_pressure(psurf_grid, tair_grid, dz, gamma) result(psurf_site)
       real(wp), intent(in) :: psurf_grid, tair_grid, dz, gamma
       real(wp) :: psurf_site, tair_site
@@ -74,9 +58,8 @@ contains
       gamma = gamma_month(min(12_ik, max(1_ik, month)))
    end function monthly_lapse_rate
 
-   !----- Specific humidity at the site, holding RELATIVE humidity across the lapse             !
-   !      (docs/science/forcing.md eq. (14)). Holding q instead would dry a site below its cell    !
-   !      by ~6 % RH per K of warming (20 % over 500 m).                                          !
+   !----- Specific humidity at the site, holding relative humidity across the lapse             !
+   !      (docs/science/forcing.md eq. (14)); holding q would dry a site below its cell. ---------!
    elemental function lapse_specific_humidity(q_grid, t_grid, p_grid, t_site, p_site) result(q_site)
       real(wp), intent(in) :: q_grid, t_grid, p_grid, t_site, p_site
       real(wp) :: q_site, e, rh
@@ -126,13 +109,10 @@ contains
    !=======================================================================================!
    !  2. HEIGHT (per patch and sub-step): the forcing's own heights -> the canopy-air top.        !
    !=======================================================================================!
-   !----- The factor taking the forcing's wind to z_top over a patch of roughness z0 and zero-plane  !
-   !      displacement d. An open-terrain diagnostic is first returned to its blending height z_b,   !
-   !      then the patch's neutral log profile carries it from z_b to z_top:                        !
-   !          u(z_top) = u_m ln(z_b/z0e)/ln(z_m/z0e) * ln(h_top/z0)/ln(h_b/z0)                      !
-   !      with h the height above d (a reanalysis's heights already are; a tower's are above the    !
-   !      ground), floored at 2 z0 like the aerodynamics' own reference height                      !
-   !      (docs/science/forcing.md eq. (15)).                                                         !
+   !----- The factor taking the forcing's wind to z_top over a patch of roughness z0 and          !
+   !      displacement d: an open-terrain wind is first returned to its blending height z_b, then  !
+   !      the patch's neutral log profile carries it to z_top, heights above d floored at 2 z0     !
+   !      (docs/science/forcing.md eq. (15)). ----------------------------------------------------!
    pure real(wp) function cas_top_wind_factor(f, z_top, displace, rough) result(factor)
       type(forcing_config_t), intent(in) :: f
       real(wp),               intent(in) :: z_top      !< [m] canopy-air top, above the ground

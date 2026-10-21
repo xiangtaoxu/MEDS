@@ -4,7 +4,7 @@ Forcing is the **prescribed** half of the model's boundary: the atmospheric stat
 *read from a file* rather than evolved. Everything else in MEDS is state, advanced by a kernel that
 owns it; nothing in the model writes forcing. A run is one site, or a region of polygons each at its
 own forcing cell (`[run].mode = "region"`); either way a polygon reads one column of the forcing. The
-reader produces one **instantaneous per-site record**
+reader produces one **instantaneous record per polygon**
 (`met_forcing_t`) per `dt_fast` sub-step: air temperature, specific humidity, surface pressure, wind,
 downwelling longwave, the four (beam/diffuse)×(PAR/NIR) shortwave streams, CO₂ (prescribed on its own,
 not read from the met file, §12), plus the *derived* $`\cos z`$ and $`\rho_{air}`$ — never stored in a
@@ -76,6 +76,14 @@ height (§8).
 convention and shortwave scheme come from the TOML `[forcing]` block; the reader checks the file's
 record spacing and its `avg_convention` and `sw_input_kind` attributes against them and stops on a
 disagreement.
+
+**The record spacing is the check that matters most.** `[forcing].timestep` places the interval
+midpoints, the shortwave disaggregation window (§5) and the recycle seam (§9), so a 3600 s config on
+a half-hourly file would mis-time all three. The reader measures the spacing on the time axis itself
+and requires it uniform, which is a stronger check than reading `timestep_seconds`, so that
+attribute is provenance. The attributes are checked when the file carries them, so a file without
+them still loads. `elevation(grid)` is not read: the elevations the lapse starts from are `[site]`
+settings, or the archive's static orography, and the variable records the source grid.
 
 **The wind vector.** A file that carries `u10` and `v10` supplies the vector: the record keeps both
 components and derives the speed $`\sqrt{u_{10}^2+v_{10}^2}`$ from them, ignoring `Wind`. A file with
@@ -533,10 +541,12 @@ below `recycle_end`.
 The whole-year requirement is the substantive one. A window that is not a whole number of calendar years
 drifts **both** hour-of-day and day-of-year on every wrap — and because the shortwave reconstruction of §5
 is mean-conserving, the daily mean stays correct while the sub-daily phase and the season slide. Nothing
-downstream complains: the demography sees a plausible annual cycle over a scrambled one. Declaring the
-window, and rejecting one that cannot wrap cleanly, is the only place that error is visible. Mapping a model
-instant into the window is then a **year substitution**, anchor-relative so the cycle may begin anywhere in
-the calendar:
+downstream complains: the demography sees a plausible annual cycle over a scrambled one. A real
+ERA5-Land record whose first stamp is 01:00 (the end-of-interval convention) spans 366 d 22 h; a
+29-year run wrapped on that span reads late May at about a 10 h offset, with its daily-mean shortwave
+still correct. Declaring the window, and rejecting one that cannot wrap cleanly, is the only place
+that error is visible. Mapping a model instant into the window is then a **year substitution**,
+anchor-relative so the cycle may begin anywhere in the calendar:
 
 ```math
 \mathrm{off} = \begin{cases}
@@ -582,7 +592,8 @@ drops rather than writes — which compute a variable the source does not store 
 `lw_clear_form` picks the clear-sky emissivity — Brutsaert (1975), a power law in the screen-level
 vapour pressure, or Idso & Jackson (1969), temperature alone (the fallback when a source carries
 humidity you do not trust). $`k_t`$ is the **same** clearness index the shortwave partition uses;
-`lw_cloud_a` (default 0.22) is the cloud coefficient.
+`lw_cloud_a` (default 0.22) is the cloud coefficient. The synthesis replaces the file's longwave
+every sub-step, so a MEDS forcing file need not carry `LWdown`, and one that does goes unused.
 
 **Why the cloud term is not optional in practice.** Against the Ithaca ERA5-Land file, clear-sky
 Brutsaert alone underestimates `strd` by a mean of **−29.9 W m⁻²** (RMSE 43.6) on a file mean of
@@ -594,7 +605,12 @@ time. Setting `lw_cloud_a = 0` gives a pure clear-sky sky and that bias back.
 maximum cloud correction to every night. The driver holds the **last daytime** $`k_t`$ through the
 dark, which is dusk's cloudiness carried forward. That one scalar is updated in `met_advance`, not
 `met_instant`: `met_instant` is `intent(in)` and runs per sub-step, and the advance sits outside the
-patch loop, so the state cannot become a data race when the patch axis is threaded.
+patch loop, so the state cannot become a data race when the patch axis is threaded. The remembered
+index is formed from the bracketing record's interval-mean shortwave against the sun at the sample
+instant, a mean against an instant. That approximation is deliberate: it feeds a one-coefficient
+empirical correction in a fallback, and removing it would rebuild the interval-mean
+$`\langle\cos z\rangle_{win}`$ of §5 for a term that `lw_cloud_a` multiplies. A run that starts at
+night starts from a clear sky, $`k_t = 1`$.
 
 **It is a fallback, not a substitute.** Driving the Ithaca run from synthesis instead of the file's
 `strd` leaves the soil surface **1.37 K cooler** in the annual mean. Use the file's longwave when the
@@ -711,21 +727,22 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | Concept | Routine / file |
 |---|---|
 | interpolation, wind energy form | `meds_forcing_kernels`: `interpolate_forcing`, `interpolate_wind_energy` |
-| apparent solar time, zenith | `meds_forcing_kernels`: `apparent_solar_seconds`, `equation_of_time`, `met_solar_cosz` over `meds_time%solar_cosz` |
+| apparent solar time, zenith | `meds_forcing_kernels`: `met_solar_cosz` over `meds_time%solar_cosz`, with the private `apparent_solar_seconds` and `equation_of_time` |
 | SW disaggregation | `meds_forcing_kernels`: `cosz_reconstruct_factor`, `disaggregate_sw` |
 | SW partition | `meds_forcing_kernels`: `partition_shortwave`, `erbs_diffuse_fraction`, `weiss_norman_partition` |
 | humidity, precip phase | `meds_forcing_kernels`: `dewpoint_to_specific_humidity`, `rh_to_specific_humidity`, `precip_phase` |
+| longwave synthesis | `meds_forcing_kernels`: `clearness_index`, `clear_sky_emissivity`, `synthesize_lwdown`; `meds_met_driver`: `remember_clearness` (the night's $`k_t`$) |
 | grid match | `meds_forcing_kernels`: `great_circle_distance`, `nearest_grid_index` |
-| vertical corrections (§8) | `meds_lapse_rate`: terrain `lapse_air_temperature`, `lapse_pressure`, `lapse_specific_humidity`, `lapse_longwave`, `monthly_lapse_rate` (called by `read_record`); canopy-air top `cas_top_wind_factor`, `cas_top_air_temperature`, `met_to_cas_top` (called per patch by `fast_dynamics`, with `canopy_roughness` from `meds_canopy_aerodynamics`) |
+| vertical corrections (§8) | `meds_lapse_rate`: terrain `lapse_air_temperature`, `lapse_pressure`, `lapse_specific_humidity`, `lapse_longwave`, `monthly_lapse_rate` (called by `read_record`); each site `met_at_site`, with `slope_incidence_cosz` and `slope_beam_factor` from `meds_forcing_kernels`; canopy-air top `cas_top_wind_factor`, `cas_top_air_temperature`, `met_to_cas_top` (called per patch by `fast_dynamics`, with `canopy_roughness` from `meds_canopy_aerodynamics`) |
 | the reader | `meds_met_driver`: `met_open`, `met_cursor_init`, `met_prefetch`, `met_advance`, `met_instant`, `met_close`; the one ingest `read_record`, `assert_finite` |
 | the two file sources | `meds_met_file_source`: `file_source_open`, `file_source_record`, `read_series`, `detect_humidity`; `meds_met_archive_source`: `archive_source_open`, `archive_prefetch`, `archive_source_record`, `open_archive`, `load_axis_month`, `locate_record`, `keep_window_head` |
 | the archive's files | `meds_era5land_reader`: `era5land_path`, `era5land_select_site`, `era5land_select_box`, `era5land_load_month` |
 | recycling | `meds_met_source_common`: `validate_recycle_window`, `file_lookup_sec`, `recycle_model_to_file`; `meds_met_driver`: `load_wrap_bracket` |
 | CO₂ | `meds_co2_series`: `co2_series_read`, `co2_series_at`, `co2_series_covers`; `meds_met_driver`: `open_co2`, and `met_instant` sets `met%co2`; the `CO2air` rejection in `validate_file_against_config` (`meds_met_source_common`) |
-| types | `meds_forcing_types`: `met_forcing_t`, `met_record_t`, `met_source_t`, `met_cursor_t`, `met_month_t`, `co2_series_t` |
+| types | `meds_forcing_types`: `met_forcing_t`, `met_record_t`, `met_source_t`, `met_cursor_t`, `met_cells_t`, `met_month_t`, `co2_series_t` |
 | config + selectors | `meds_forcing_params`: `forcing_config_t`, `INTERP_*`, `SWPART_*`, `LW_*`, `CLAMP_*`, `METAVG_*`, `GRIDMATCH_*`, `CO2_SOURCE_*`; read by `meds_config_io`, checked in `meds_config_check` |
 | TOML block | `[forcing]` + `[site]` (documented in `meds_config_main.toml`) |
-| fast-loop join | `meds_fast_dynamics`: per-sub-step `met_advance`/`met_instant` sampling; `fill_forcing` and `fill_aenv` take the sampled `met_forcing_t` (`reference_met` without a forcing source) |
+| fast-loop join | `meds_fast_dynamics`: per-sub-step `met_advance`/`met_instant` sampling; `fill_forcing` and `fill_aenv` take the sampled `met_forcing_t` (`reference_met` without a forcing source); `apply_rt_forcing` hands the radiation to the canopy two-stream ([canopy radiative transfer](canopy_radiation_transfer.md) §3–§4) |
 | file production | the archive: `scripts/prepare_era5/download_era5land_gdex.py` or `download_era5land_cds.py`, then `build_era5land_archive.py`; a single file: `make_forcing_file.py`, from the archive or from `download_era5land_cds.py` and `postprocess_era5land.py` box files, or `scripts/prepare_flux_tower/make_tower_forcing.py` from flux-tower data; the shared writer: `scripts/meds_forcing_file.py`; the tower tool's Python mirror of the model's conversions: `scripts/prepare_flux_tower/tower_conversions.py`; the shipped CO₂ series: `scripts/prepare_co2/make_co2_file.py` |
 | test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, CONST backend, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years, prescribed CO₂ (format 1 at five resolutions, every rejection, CO₂ not recycled with the met, the shipped series); `test/test_met_era5land.f90` — a synthetic archive: templates, site and box selection (across 180°), month loads, the NaN rejection, the month seam, recycling across months, dewpoint and wind-vector conversion, static elevation, rejections at open; `test/test_met_tower.f90` — the flux-tower contract of an `ED_default` file: the three humidity forms and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval containing the instant under both stamp conventions, and the tower round trip (RH, VPD = 0 at saturation, the move to the canopy-air top) |
 

@@ -1,14 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_forcing_types -- the RUNTIME meteorological-forcing types (docs/science/forcing.md §2): the !
-! instantaneous per-site record met_forcing_t (a read-only boundary condition, the analogue of      !
-! rad_forcing_t / chydro_forcing_t), one raw file record met_record_t, the reader's shared state    !
-! met_source_t (one per run) and each polygon's met_cursor_t, the archive's cell list met_cells_t  !
-! and month buffer met_month_t, and the prescribed CO2 series co2_series_t.                         !
-!                                                                                          !
-! Lives in src/io/input/forcing (libmeds_forcing); uses meds_kinds, meds_time for the meds_time_t  !
-! timestamp and meds_forcing_params for the [forcing]/[site] config, nothing else. No physics        !
-! library ever names these types; the reader (meds_met_driver) owns the only mutable forcing state. !
+! meds_forcing_types -- the runtime meteorological-forcing types (docs/science/forcing.md §2):     !
+! met_forcing_t, the instantaneous atmospheric state the fast loop reads; met_record_t, one        !
+! ingested file record; met_source_t, the reader state a run shares, and met_cursor_t, each        !
+! polygon's own; met_cells_t and met_month_t, the archive's cells and month buffer; co2_series_t,  !
+! the prescribed CO2 series. Uses only meds_kinds, meds_time and meds_forcing_params; the reader   !
+! (meds_met_driver) owns the only mutable forcing state.                                           !
 !==========================================================================================!
 module meds_forcing_types
    use meds_kinds,          only : wp, sp, ik
@@ -36,34 +33,26 @@ module meds_forcing_types
       'Tair', 'Qair', 'RHair', 'Tdew', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'SWdown',     &
       'SWdown_par_beam', 'SWdown_par_diffuse', 'SWdown_nir_beam', 'SWdown_nir_diffuse']
 
-   !----- The humidity a source carries (docs/science/forcing.md §7). A file stores the quantity   !
-   !      its source measured -- relative humidity for a tower, dewpoint for ERA5-Land -- and the   !
-   !      reader converts it with the model's own saturation curve, so a tower's 100 % is           !
-   !      saturation in the model whatever curve the provider used. Qair is for a model-made source. !
+   !----- The humidity a source carries, as its source measured it, converted with the model's own !
+   !      saturation curve (docs/science/forcing.md §7). Qair is for a model-made source. ----------!
    integer(ik), parameter :: HUMIDITY_QAIR  = 0_ik          !< specific humidity [kg/kg], used as is
    integer(ik), parameter :: HUMIDITY_RHAIR = 1_ik          !< relative humidity over liquid water [1]
    integer(ik), parameter :: HUMIDITY_TDEW  = 2_ik          !< dewpoint temperature [K]
 
    !==========================================================================================!
-   !  met_forcing_t -- the instantaneous per-SITE atmospheric state the fast loop consumes.       !
-   !  Per-site scalars + four SW-band reals (no cohort-sized allocatables) -> trivially copyable,   !
-   !  GPU-mappable. All defaults are a valid "reference climate" box (the four SW streams SUM to      !
-   !  400 W/m2 = fast_context_t%rad_sw_top's default), so met_forcing_t() is usable as the CONST      !
-   !  backend value. cosz and rho_air are DERIVED each substep (not read).                             !
+   !  met_forcing_t -- the instantaneous atmospheric state the fast loop reads: a polygon's       !
+   !  sample, or a site's or a patch's after the vertical moves (docs/science/forcing.md §8).     !
+   !  Plain scalars, so it copies cheaply. The defaults are the CONST backend's reference climate  !
+   !  (the four streams sum to 400 W/m2, fast_context_t%rad_sw_top's default).                    !
    !==========================================================================================!
    type :: met_forcing_t
       real(wp) :: tair_k       = 288.0_wp     !< [K]        air temperature at reference height
       real(wp) :: qair         = 0.008_wp     !< [kg/kg]    specific humidity
       real(wp) :: psurf_pa     = 101325.0_wp  !< [Pa]       surface pressure
-      !----- TOTAL precipitation. It is split into rain and snow once, where a column's forcing is    !
-      !      filled (meds_fast_dynamics%fill_forcing), at that record's own temperature: each patch's  !
-      !      canopy-air top, the temperature the precipitation's enthalpy is valued at too. -----------!
+      !----- Total precipitation, split into rain and snow per patch (docs/science/forcing.md §7). ---!
       real(wp) :: precip       = 0.0_wp       !< [kg/m2/s]  total precipitation rate
       real(wp) :: wind         = 2.0_wp       !< [m/s]      wind speed at reference height
-      !----- The wind VECTOR (docs/science/forcing.md §1), carried beside the speed for a           !
-      !      direction-aware consumer.                                                              !
-      !      Filled only when the source supplies components (has_wind_vector); aerodynamics reads   !
-      !      `wind`, whose energy-form interpolation makes it at least the vector's length.          !
+      !----- The wind vector, when the source has components (docs/science/forcing.md §1). ----------!
       real(wp) :: wind_u       = 2.0_wp       !< [m/s]      eastward component at reference height
       real(wp) :: wind_v       = 0.0_wp       !< [m/s]      northward component at reference height
       logical  :: has_wind_vector = .false.   !< .true. when the source supplied components, not just speed
@@ -73,15 +62,14 @@ module meds_forcing_types
       real(wp) :: nir_beam     = 150.0_wp     !< [W/m2]     direct-beam NIR
       real(wp) :: nir_diffuse  = 30.0_wp      !< [W/m2]     diffuse NIR   (Sigma = 400 W/m2)
       real(wp) :: co2          = 420.0_wp     !< [umol/mol] free-atmosphere CO2 ([forcing].co2_source)
-      real(wp) :: cosz         = 0.0_wp       !< [-]        cos(solar zenith); DERIVED each substep
-      real(wp) :: rho_air      = 1.2_wp       !< [kg/m3]    DERIVED from air_temp/psurf/qair
+      real(wp) :: cosz         = 0.0_wp       !< [-]        cos(solar zenith); derived each sub-step
+      real(wp) :: rho_air      = 1.2_wp       !< [kg/m3]    derived from tair_k, psurf_pa and qair
    contains
       procedure :: swdown         => met_swdown          !< total downward SW = sum of the four streams
    end type met_forcing_t
 
-   !----- One raw timestamped record as read (pre-interpolation). The four SW streams are      !
-   !      already split at INGEST (partition_shortwave) from the file's total SWdown. No CO2: it is  !
-   !      not meteorology, and comes from co2_series_t or [forcing].co2_const on MODEL time.        !
+   !----- One record as ingested (read_record), before interpolation: converted, lapsed when the run !
+   !      lapses, its shortwave in four streams. No CO2 (docs/science/forcing.md §12). ------------!
    type :: met_record_t
       type(meds_time_t) :: when
       real(wp) :: tair_k = 288.0_wp, qair = 0.008_wp, psurf_pa = 101325.0_wp
@@ -91,11 +79,9 @@ module meds_forcing_types
    end type met_record_t
 
    !==========================================================================================!
-   !  met_cells_t -- the cells of a regular-grid archive (ED_ERA5land) that a run reads: one for  !
-   !  a site, the valid cells of a box for a region. Grid indices are 0-based, as the netCDF C    !
-   !  API counts. `by_chunk` lists the cells grouped by the archive's 16 x 16 spatial chunk,      !
-   !  `chunk_first` indexes into it (length nchunk+1), so a month load reads each touched chunk    !
-   !  column once, and only the box its cells occupy within that chunk.                            !
+   !  met_cells_t -- the ED_ERA5land cells a run reads: one for a site, a box's valid cells for a  !
+   !  region. Grid indices are 0-based, as the netCDF C API counts. The cells are grouped by the   !
+   !  archive's 16 x 16 chunk, so a month load reads each touched chunk column once.              !
    !==========================================================================================!
    type :: met_cells_t
       integer(ik) :: ncell = 0_ik
@@ -111,19 +97,17 @@ module meds_forcing_types
       integer(ik), allocatable :: by_chunk(:)               !< cell numbers grouped by chunk
    end type met_cells_t
 
-   !----- One archive month for every cell of a domain: values(hour, cell, variable), float32 as  !
-   !      the archive stores it. Hours run 01:00 on the 1st .. 00:00 on the 1st of the next month, !
-   !      the archive's end-stamped convention. ---------------------------------------------------!
+   !----- One archive month for every cell: values(hour, cell, variable), float32 as stored, from  !
+   !      01:00 on the 1st to 00:00 on the 1st of the next month (end-stamped). -------------------!
    type :: met_month_t
       integer(ik) :: year = 0_ik, month = 0_ik, nt = 0_ik
       real(sp), allocatable :: values(:,:,:)
    end type met_month_t
 
    !==========================================================================================!
-   !  co2_series_t -- a MEDS CO2 file, as read (co2_series_read). Each row is the mean over one    !
-   !  period; the value sits at the period's middle, and the lookup interpolates linearly between  !
-   !  middles on MODEL time, holding the end values over the first and last half-periods. Times   !
-   !  are seconds after the first period's start, the series' own origin.                           !
+   !  co2_series_t -- a MEDS CO2 file as read (co2_series_read): each period's mean, placed at the  !
+   !  period's middle (docs/science/forcing.md eq. (18)). Times are seconds after the first        !
+   !  period's start.                                                                              !
    !==========================================================================================!
    type :: co2_series_t
       integer(ik)       :: n = 0_ik                         !< rows (periods)
@@ -134,11 +118,10 @@ module meds_forcing_types
    end type co2_series_t
 
    !==========================================================================================!
-   !  met_source_t -- the SHARED reader state: one per run, read by every polygon                  !
-   !  (docs/science/forcing.md §2). Holds the config, the time axis and recycle window, the cells, and !
-   !  what is in memory: the archive's loaded month plus its carried record, or a MEDS forcing       !
-   !  file's series. Only met_open, met_prefetch and met_close change it, all outside the compute    !
-   !  phase, so stepping only reads it -- which is what lets polygons share it across threads.      !
+   !  met_source_t -- the reader state a run shares, read by every polygon (docs/science/forcing.md  !
+   !  §2): the config, the time axis and recycle window, the cells, and the records in memory. Only  !
+   !  met_open, met_prefetch and met_close change it, all outside the compute phase, so polygons     !
+   !  can share it across threads.                                                                    !
    !==========================================================================================!
    type :: met_source_t
       type(forcing_config_t)  :: fcfg                       !< [forcing]/[site] config
@@ -152,65 +135,51 @@ module meds_forcing_types
       real(wp)    :: dt_forcing  = 3600.0_wp                !< [s] native forcing interval
       type(meds_time_t)  :: base_time                       !< time-coordinate anchor ("seconds since base_time")
       real(wp), allocatable :: time_sec(:)                  !< [s] cached time coordinate (seconds since base_time)
-      !----- CALENDAR recycling over the window DECLARED in [forcing] (recycle_start/recycle_end)  !
-      !      and validated against this file at open (validate_recycle_window). Nothing here is     !
-      !      sniffed from the file: the anchor is the config's recycle_start, the cycle length is    !
-      !      the config's whole-year span, and a config that disagrees with the file's actual record !
-      !      timestamps is a hard error rather than a silent fallback. -------------------------------!
+      !----- The declared recycle window, checked against the file at open (docs/science/forcing.md §9). !
       type(meds_time_t) :: cycle_anchor                     !< = fcfg%recycle_start; the cycle's first instant
       integer(ik) :: n_cycle_years   = 0_ik                 !< whole calendar years the declared window spans
       integer(ik) :: irec_cycle_first = 0_ik                !< record index of cycle_anchor (exact match, 1-based)
-      integer(ik) :: irec_cycle_last  = 0_ik                !< record index of the LAST record strictly inside the window
+      integer(ik) :: irec_cycle_last  = 0_ik                !< record index of the last record strictly inside the window
       logical     :: has_wind_vector = .false.              !< the source supplies u10/v10
-      !----- ED_ERA5land archive backend. The months the run needs form one continuous hourly        !
-      !      axis (time_sec, seconds since 1970-01-01, the archive's own epoch); month k holds records !
-      !      month_rec0(k)+1 .. month_rec0(k)+hours, and one month of every cell sits in `buffer`.    !
+      !----- The archive: its months laid end to end on time_sec (seconds since 1970-01-01); month k !
+      !      holds records month_rec0(k)+1 .. month_rec0(k)+hours, and one month sits in `buffer`. ---!
       character(len=MET_PATH_LEN) :: file_template = ''     !< resolved file template
       character(len=MET_PATH_LEN) :: static_file   = ''     !< resolved static file
       type(met_cells_t) :: cells                            !< the cells read: one for a site, many for a region
       integer(ik), allocatable :: month_year(:), month_month(:), month_rec0(:)
       type(met_month_t) :: buffer                           !< the loaded month (year = 0 before the first)
-      !----- Everything a step reads is in memory before the step (docs/science/forcing.md §2):       !
-      !      the archive's loaded month plus the one record read before it (00:00 on the 1st, from the   !
-      !      previous month's file, or the window's last record at the recycle wrap), loaded by         !
-      !      met_prefetch, and the recycle window's first day, kept from open; a MEDS forcing file's    !
-      !      records for the run, read at open. --------------------------------------------------------!
+      !----- What a step reads beyond the loaded month, in memory before the step                  !
+      !      (docs/science/forcing.md §2 and §9). -----------------------------------------------!
       real(sp),    allocatable :: carry(:,:)                !< (cell, variable) the record before the loaded month
       integer(ik) :: carry_rec = 0_ik                       !< its record index on the axis (0 = none)
-      !----- The window's first record through the next midnight (recycling only), from axis month 1. !
-      !      The daily step that crosses the seam reads the window's last record and then these, and    !
-      !      the two lie in different months, so the one-month buffer cannot hold both. ---------------!
+      !----- The recycle window's first day, which a step across the seam reads after the window's !
+      !      last record, a month the buffer does not hold. -------------------------------------!
       real(sp),    allocatable :: head(:,:,:)               !< (record, cell, variable) from irec_cycle_first on
       integer(ik) :: n_head    = 0_ik                       !< records in head (0 = none)
       integer(ik) :: n_loads   = 0_ik                       !< archive month loads so far (tests: none inside a step)
       real(wp),    allocatable :: series(:,:)               !< (record, column) MEDS forcing file at grid_index
       integer(ik) :: series_col(N_MEDS_FIELD) = 0_ik        !< each MEDS_FIELD's column in series (0 = absent)
-      !----- The prescribed CO2 (co2_source = "file"), read at open. One global series for every   !
-      !      polygon, looked up on model time, so it is shared read-only like the rest. ------------!
+      !----- The prescribed CO2 (co2_source = "file"): one global series, read at open. ----------!
       type(co2_series_t) :: co2
    end type met_source_t
 
    !==========================================================================================!
-   !  met_cursor_t -- ONE polygon's reader state: its cell and location, the two records bracketing !
-   !  the model time, and the cursor. Plain scalars and records, so a region holds one per polygon   !
-   !  cheaply. The location drives solar geometry and the elevation lapse: a site run's comes from   !
-   !  [site], a region polygon's from its cell (the ED2 polygon keeps its lat/lon the same way).     !
+   !  met_cursor_t -- one polygon's reader state: its cell and location, and the two records        !
+   !  bracketing the model time. Plain scalars and records, so a region holds one per polygon       !
+   !  cheaply. The polygon's location ([site] in a site run, its cell centre in a region) drives    !
+   !  the solar geometry and the elevation lapse.                                                   !
    !==========================================================================================!
    type :: met_cursor_t
-      integer(ik) :: cell = 1_ik                            !< this polygon's cell in the source (1 for a site)
+      integer(ik) :: cell = 1_ik                            !< this polygon's cell in the source (1 for a site run)
       real(wp)    :: latitude_deg     = 42.44_wp            !< [deg +N] solar geometry
       real(wp)    :: longitude_deg    = -76.50_wp           !< [deg +E] local solar time from the UTC clock
-      real(wp)    :: elevation_m      = 320.0_wp            !< [m] site elevation (elevation lapse target)
+      real(wp)    :: elevation_m      = 320.0_wp            !< [m] the polygon's elevation (lapse target)
       real(wp)    :: grid_elevation_m = 320.0_wp            !< [m] forcing-cell elevation (lapse origin)
       integer(ik) :: irec_prev  = 0_ik                      !< cursor: index of the "previous" bracketing record
       type(met_record_t) :: rec_prev, rec_next              !< the two records bracketing the model time
       logical     :: at_wrap_seam    = .false.              !< current bracket is the cycle-boundary seam (last -> first)
-      !----- LONGWAVE SYNTHESIS (docs/science/forcing.md §11): the last DAYTIME clearness index,    !
-      !      held through the night.                                                                !
-      !      kt is undefined after dark -- there is no shortwave to divide -- and treating that as   !
-      !      kt = 0 would apply the maximum cloud correction to every night. Holding dusk's value    !
-      !      is the better guess, and the one scalar of state it needs lives here rather than in a   !
-      !      module variable. Seeded to 1 (clear) so a run that starts at night starts clear-sky.    !
+      !----- The longwave synthesis holds the last daytime clearness index through the night, from   !
+      !      clear sky at the start (docs/science/forcing.md §11). --------------------------------!
       real(wp)    :: kt_last_day    = 1.0_wp                !< [-] last daytime clearness index
    end type met_cursor_t
 

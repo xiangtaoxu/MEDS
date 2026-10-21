@@ -1,24 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_diagnostic_kernels -- pure/elemental DERIVED diagnostic quantities.                  !
-!                                                                                          !
-! Stage [1] of the diagnostic wall (docs/science/diagnostics.md §1): quantities that are not        !
-! stored anywhere in state but are a closed-form function of things that are. Plain arguments      !
-! only -- no polygon_t, no config aggregator -- so every routine here is directly unit-testable.   !
-!                                                                                          !
-! CONTENT RULE. Anything a physics library already owns is CALLED, never re-implemented:   !
-! the soil's water potential lives in meds_soil_hydr_lib, tissue_water_to_psi in           !
-! meds_plant_hydr_lib, internal_energy_to_temp and the moist-air thermodynamics in         !
-! meds_therm_lib, the allometry in meds_allometry_lib. This module holds only diagnostics  !
-! that no physics kernel owns. Where a thin re-export is more readable than making every   !
-! caller `use` two modules, the wrapper is marked as such and simply forwards.             !
-!                                                                                          !
-! PLACEMENT. src/io/ (the meds_io_prep target, which links meds_demography only -- no netCDF), NOT  !
-! src/share/functions/. Accepted consequence: nothing BELOW io in the library DAG can call these.    !
-! That is correct rather than merely tolerated -- a diagnostic is by definition something no        !
-! physics kernel needs, and putting it below the wall would be the first step toward physics        !
-! depending on its own reporting layer. If a quantity here ever turns out to be needed by physics,  !
-! that is the signal it was never a diagnostic and belongs in the owning physics library instead.   !
+! meds_diagnostic_kernels -- stage [1] of the diagnostic output: quantities stored nowhere   !
+! in the state but a closed-form function of it (cohort_lai, cohort_npp_per_plant,          !
+! soil_wetness, dbh_class_index). Plain arguments only, so each routine is unit-testable.   !
+! It holds only what no physics library owns, and sits above the physics, which cannot call !
+! it (docs/science/diagnostics.md §1, Where the stages live).                               !
 !==========================================================================================!
 module meds_diagnostic_kernels
    use meds_kinds,         only : wp, ik
@@ -41,10 +27,9 @@ contains
       lai = nplant * leaf_area
    end function cohort_lai
 
-   !----- Per-plant NPP [kgC/plant] over whatever period the accumulators span: GROSS GPP    !
-   !      minus the three autotrophic MAINTENANCE respiration terms. Growth respiration is     !
-   !      NOT included here -- it is charged inside the slow-loop allocation step, and adding   !
-   !      it would double-count against npp_*_site. Mirrors total_npp's definition exactly.     !
+   !----- Per-plant NPP [kgC/plant] over the accumulators' period: gross GPP minus the three   !
+   !      maintenance respirations. Growth respiration is charged in the slow step's          !
+   !      allocation (growth_resp_site), so subtracting it here would count it twice. --------!
    elemental real(wp) function cohort_npp_per_plant(gpp, leaf_resp, stem_resp, root_resp) &
                                     result(npp)
       real(wp), intent(in) :: gpp, leaf_resp, stem_resp, root_resp   !< [kgC/plant]
@@ -55,9 +40,9 @@ contains
    !  Soil                                                                                  !
    !=======================================================================================!
 
-   !----- Relative saturation (ED2 `soil_wetness`) [-]: where the layer sits between residual !
-   !      and saturation. Clamped to [0,1] so a solver excursion outside the constitutive       !
-   !      domain reports as exactly dry/saturated rather than as an out-of-range number.        !
+   !----- Relative saturation [-]: where the layer sits between residual and saturation.     !
+   !      Clamped to [0,1] so a solver excursion outside the constitutive domain reports as    !
+   !      exactly dry or saturated rather than as an out-of-range number. --------------------!
    elemental real(wp) function soil_wetness(theta, theta_res, theta_sat) result(w)
       real(wp), intent(in) :: theta, theta_res, theta_sat
       w = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
@@ -68,17 +53,10 @@ contains
    !  Size-class binning (DIM_SIZE)                                                          !
    !=======================================================================================!
 
-   !----- 1-based DBH class of one plant, ED2-style (docs/science/diagnostics.md §3).        !
-   !                                                                                          !
-   !      `edges` holds n_class+1 ASCENDING boundaries. Bin k is the half-open interval          !
-   !      [edges(k), edges(k+1)), EXCEPT the last, which is closed at the top so the largest      !
-   !      tree in the stand is never dropped. A dbh below edges(1) is clamped into bin 1 rather   !
-   !      than discarded -- silently losing the smallest cohorts would break the closure           !
-   !      sum(nplant_size) == nplant_site that makes this axis trustworthy.                       !
-   !                                                                                          !
-   !      A cohort is NEVER split across bins: it lands whole in the bin of its mean dbh. That     !
-   !      is the standard ED2 treatment, and it is what makes nplant_size a genuine stem-density   !
-   !      distribution comparable to a forest inventory.                                          !
+   !----- 1-based DBH class of a dbh (docs/science/diagnostics.md §3). Over n_class+1 ascending !
+   !      edges, bin k is [edges(k), edges(k+1)); the last bin also takes every dbh above its  !
+   !      top edge, and a dbh below edges(1) falls in bin 1, so no plant is dropped and        !
+   !      sum(nplant_size) == nplant_site holds. ----------------------------------------------!
    pure integer(ik) function dbh_class_index(dbh, edges, n_class) result(k)
       real(wp),    intent(in) :: dbh
       real(wp),    intent(in) :: edges(:)   !< (n_class+1) ascending

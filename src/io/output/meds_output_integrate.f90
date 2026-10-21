@@ -1,17 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_output_integrate -- the netCDF-FREE temporal-reduction engine (ED2 integrate_/normalize_/  !
-! zero_ family): pull the current value of a variable out of live state (extract_variable), fold    !
-! it into a per-(variable,tier) running reduction (integrate_scalar / integrate_slab), close a       !
-! period (normalize_*), and re-seed for the next (reset_buffer).                                      !
-!                                                                                          !
-! Links meds_output_types + meds_output_params + the demographic state/reductions ONLY -- no C        !
-! bindings, so the stepper edge that calls these pulls no netCDF (src/README.md, The library graph).  !
-!                                                                                          !
-! NO CHAINING: each ACTIVE tier integrates raw state independently every step; there is NO inter-tier  !
-! feeder map. For AGG_MEAN/TMEAN/SUM/MIN/MAX/LAST a direct dt-weighted reduction over the coarse       !
-! period equals the chained roll-up, so the result is identical (docs/science/diagnostics.md §4; the   !
-! design record is MEDS_IO_DESIGN.md §4.1).                                                            !
+! meds_output_integrate -- stage [4] of the diagnostic output, the temporal reduction: copy a  !
+! variable's value out of live state (extract_variable), fold it into its (variable, tier)     !
+! running reduction (integrate_scalar, integrate_slab), close a period (normalize_*,           !
+! close_tier) and re-seed (reset_buffer). output_integrate is the per-step tick and            !
+! output_integrate_fast the FAST tier's replay. netCDF-free. Each tier integrates raw state    !
+! on its own, which for these operators equals chaining (docs/science/diagnostics.md §1, §4;   !
+! MEDS_IO_DESIGN.md §4.1).                                                                     !
 !==========================================================================================!
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
@@ -42,7 +37,7 @@ module meds_output_integrate
    public :: extract_variable, extract_fast_scalar
    public :: output_integrate, output_integrate_fast, close_tier
    public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_POLYGON, SRCK_FAST, SRCK_SITE
-   !----- Cohort FIELDS (1000-1999). ---------------------------------------------------------!
+   !----- Cohort fields (1000-1999). ---------------------------------------------------------!
    public :: FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA
    public :: FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID
    public :: FLD_C_LAI, FLD_C_WAI, FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON
@@ -51,21 +46,21 @@ module meds_output_integrate
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
    public :: FLD_C_DMAX_PSI_LEAF, FLD_C_LEAF_FLUSH_TENDENCY, FLD_C_LEAF_SHED_TENDENCY
    public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_PY_DIAG0
-   !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
+   !----- Patch fields (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
    public :: FLD_P_GLOBAL_ID, FLD_P_SITE, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH
    public :: FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND
    public :: FLD_P_SOILC_STRUCT_SOIL, FLD_P_SOILC_MICROBIAL, FLD_P_SOILC_SLOW
    public :: FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH
-   !----- Soil LAYER fields (3000-3999). -----------------------------------------------------!
+   !----- Soil layer fields (3000-3999). -----------------------------------------------------!
    public :: FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ
-   !----- Site-only scalars (4000-4999). -----------------------------------------------------!
+   !----- The polygon's own scalars (4000-4999). ---------------------------------------------!
    public :: SRC_PY_ET, SRC_PY_N_COHORT, SRC_PY_N_PATCH, SRC_PY_CANOPY_HEIGHT
    public :: SRC_PY_RUNOFF, SRC_PY_RUNOFF_SURF, SRC_PY_DRAINAGE
    public :: SRC_PY_WORK_STEPS, SRC_PY_WORK_REJ, SRC_PY_WORK_WATER_NSUB,                              &
              SRC_PY_WORK_WATER_NEWTON, SRC_PY_WORK_WATER_NFAIL, SRC_PY_WORK_WATER_REJECT
    public :: SRC_PY_WORK_RK45_RESCUE, SRC_PY_WORK_CLAMP_STAGE
-   !----- FAST-tier instantaneous sources (5000-5999): resolved against the fast loop's staging.  !
+   !----- FAST-tier sources (5000-5999): read from the fast loop's staging. ------------------!
    public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0
    public :: SRC_F_PY0, SRC_F_PA0
@@ -73,25 +68,19 @@ module meds_output_integrate
    public :: FLD_SI_GROWTH_TEMP, FLD_SI_DIAG0
 
    !==========================================================================================!
-   !  SOURCE CODE SPACE. Each source id names a FIELD, and its NUMERIC RANGE says which entity   !
-   !  the field lives on. The dispatcher reads the range to decide which reduction applies, so a   !
-   !  variable's scale (cohort / patch / site / PFT / size) is a property of its `dim`, not of a    !
-   !  separate source id -- which is what lets one field emit every scale from one registry line.   !
-   !                                                                                          !
-   !  THE RANGES ARE LOAD-BEARING, NOT COSMETIC. Different switchboards consume the ids (the site    !
-   !  one, SRC_S_*, and the fast one, SRC_F_*); in one flat numbering a FAST id could equal a site    !
-   !  id, and a variable resolved by the wrong switchboard would fill its record silently from        !
-   !  another field. Disjoint ranges + the src_class() dispatcher make that collision impossible.     !
+   !  Source ids: an id names a field, and its numeric range the entity the field lives on, so  !
+   !  the variable's dim alone picks the reduction. The ranges are disjoint so the coarse and    !
+   !  FAST readers cannot resolve each other's ids (docs/science/diagnostics.md §8, Source ids). !
    !==========================================================================================!
    integer(ik), parameter :: SRCK_NONE   = 0_ik
    integer(ik), parameter :: SRCK_COHORT = 1_ik   !< 1000-1999 : per-cohort field
    integer(ik), parameter :: SRCK_PATCH  = 2_ik   !< 2000-2999 : per-patch field
    integer(ik), parameter :: SRCK_LAYER  = 3_ik   !< 3000-3999 : per-soil-layer field (per patch)
-   integer(ik), parameter :: SRCK_POLYGON   = 4_ik   !< 4000-4999 : site-only scalar (no reduction)
+   integer(ik), parameter :: SRCK_POLYGON   = 4_ik   !< 4000-4999 : the polygon's own scalar (no reduction)
    integer(ik), parameter :: SRCK_FAST   = 5_ik   !< 5000-5999 : FAST-tier staged sample
    integer(ik), parameter :: SRCK_SITE  = 6_ik   !< 6000-6999 : one value per site of the polygon
 
-   !----- Cohort FIELDS (SRCK_COHORT). Raw SoA columns first, then derived ones. --------------!
+   !----- Cohort fields (SRCK_COHORT). Raw SoA columns first, then derived ones. --------------!
    integer(ik), parameter :: FLD_C_NPLANT          = 1001_ik
    integer(ik), parameter :: FLD_C_DBH             = 1002_ik
    integer(ik), parameter :: FLD_C_HEIGHT          = 1003_ik
@@ -121,28 +110,29 @@ module meds_output_integrate
    !----- Leaf and wood temperature are not read here at the output tick: one sample per window,  !
    !      at the boundary's local hour, biases them. Their time means are rows of the             !
    !      cohort block (FLD_C_DIAG0 + CO_LEAF_TEMP, CO_WOOD_TEMP), sampled every sub-step. ------!
-   !----- DERIVED cohort fields (computed by meds_diagnostic_kernels / from the deriv bundle). --!
+   !----- Derived cohort fields: meds_diagnostic_kernels, or a closed form of the cohort state. -!
    integer(ik), parameter :: FLD_C_ONE             = 1050_ik !< constant 1 (stem counts on any axis)
    integer(ik), parameter :: FLD_C_LAI             = 1051_ik !< nplant*leaf_area [m2/m2]
    integer(ik), parameter :: FLD_C_NPP_ACCUM       = 1052_ik !< gpp - (leaf+stem+root) maintenance resp
    integer(ik), parameter :: FLD_C_BGB             = 1053_ik !< belowground biomass per plant
    integer(ik), parameter :: FLD_C_VEG_CARBON      = 1054_ik !< leaf+fineroot+wood+storage per plant
    integer(ik), parameter :: FLD_C_WAI             = 1055_ik !< nplant*wood_area [m2/m2]
-   !----- Per-cohort DIAGNOSTICS (1100+): the id is FLD_C_DIAG0 + the row (CO_*). The fast loop's   !
-   !      rows are read from poly%cohort%diag, the slow step's (above N_CO_FAST_ROWS) from            !
-   !      poly%cohort%sdiag -- not from poly%deriv, which is transient and NOT lockstep-reordered,    !
-   !      so at the output tick its index need not match the cohort axis. -------------------------!
+   !----- Per-cohort diagnostics (1100+): the id is FLD_C_DIAG0 + the row (CO_*). The fast loop's  !
+   !      rows are read from poly%cohort%diag, the slow step's (above N_CO_FAST_ROWS) from           !
+   !      poly%cohort%sdiag; never from poly%deriv, which is not lockstep-reordered, so at the       !
+   !      output tick its index need not match the cohort axis (docs/science/diagnostics.md §8). --!
    integer(ik), parameter :: FLD_C_DIAG0           = 1100_ik
-   !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from poly%patch%diag (PA_* + FLD_P_DIAG0). !
+   !----- Per-patch diagnostics (2100+), read from poly%patch%diag (FLD_P_DIAG0 + PA_*). ----------!
    integer(ik), parameter :: FLD_P_DIAG0           = 2100_ik
-   !----- POLYGON diagnostics (4100+, a site-scalar family), read from poly%diag (PY_* + FLD_PY_DIAG0). !
+   !----- The polygon block's rows (4100+, among the polygon's own scalars), read from poly%diag     !
+   !      (FLD_PY_DIAG0 + PY_*). -----------------------------------------------------------------!
    integer(ik), parameter :: FLD_PY_DIAG0          = 4100_ik
    !----- Per-site fields (6000+, SRCK_SITE): the growth temperature, and the site block's        !
    !      forcing rows (SI_* + FLD_SI_DIAG0). -----------------------------------------------------!
    integer(ik), parameter :: FLD_SI_GROWTH_TEMP    = 6001_ik
    integer(ik), parameter :: FLD_SI_DIAG0          = 6100_ik
 
-   !----- Patch FIELDS (SRCK_PATCH). ---------------------------------------------------------!
+   !----- Patch fields (SRCK_PATCH). ---------------------------------------------------------!
    integer(ik), parameter :: FLD_P_AREA            = 2001_ik
    integer(ik), parameter :: FLD_P_AGE             = 2002_ik
    integer(ik), parameter :: FLD_P_DIST_TYPE       = 2003_ik
@@ -150,7 +140,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_COHORT_COUNT    = 2005_ik
    integer(ik), parameter :: FLD_P_GLOBAL_ID       = 2006_ik
    integer(ik), parameter :: FLD_P_SITE            = 2007_ik   !< the patch's site (owner_site)
-   !----- The canopy-air, soil-top and surface-water STATES are not read here at the output tick:  !
+   !----- The canopy-air, soil-top and surface-water states are not read here at the output tick:  !
    !      one sample per window, at the boundary's local hour, biases them. Their time means         !
    !      are rows of the patch block (FLD_P_DIAG0 + PA_*), accumulated through the step. ---------!
    integer(ik), parameter :: FLD_P_CAS_DEPTH       = 2014_ik
@@ -166,7 +156,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_SOILC_TOTAL       = 2027_ik
    integer(ik), parameter :: FLD_P_RH                = 2028_ik
 
-   !----- Soil LAYER fields (SRCK_LAYER): per (layer, patch); reduced to each site's column    !
+   !----- Soil layer fields (SRCK_LAYER): per (layer, patch); reduced to each site's column    !
    !      for DIM_SOIL, or flattened for DIM_SOIL_PATCH. --------------------------------------!
    integer(ik), parameter :: FLD_L_SOIL_TEMP    = 3001_ik
    integer(ik), parameter :: FLD_L_SOIL_WATER   = 3002_ik
@@ -174,7 +164,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_L_SOIL_WETNESS = 3004_ik
    integer(ik), parameter :: FLD_L_SOIL_FLIQ    = 3005_ik
 
-   !----- Site-only scalars (SRCK_POLYGON): no reduction -- these ARE site quantities already. ----!
+   !----- The polygon's own scalars (SRCK_POLYGON): already polygon quantities, no reduction. ----!
    integer(ik), parameter :: SRC_PY_ET               = 4001_ik !< [kg/m2] slow-step ET accumulator
    integer(ik), parameter :: SRC_PY_N_COHORT         = 4002_ik
    integer(ik), parameter :: SRC_PY_N_PATCH          = 4003_ik
@@ -191,10 +181,10 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_PY_WORK_CLAMP_STAGE = 4036_ik
    integer(ik), parameter :: SRC_PY_WORK_WATER_REJECT = 4040_ik
 
-   !----- FAST-tier staged sources (SRCK_FAST): read from the fast loop's staging, never from      !
-   !      site state (which at replay time is the end-of-slow-step snapshot). Two are rows of the   !
-   !      blocks' own tables: the forcing echo (docs/science/diagnostics.md §5), SRC_F_PY0 + PY_*, and !
-   !      the patch block's fast rows, SRC_F_PA0 + PA_*, as a site mean or per patch by the dim. --!
+   !----- FAST-tier staged sources (SRCK_FAST): read from the fast loop's staging, never from the  !
+   !      polygon's live state, the end of the slow step by replay time. Two are rows of the        !
+   !      blocks' own tables: the forcing (docs/science/diagnostics.md §5), SRC_F_PY0 + PY_*, and   !
+   !      the patch block's fast rows, SRC_F_PA0 + PA_*, the polygon mean or per patch by the dim. !
    integer(ik), parameter :: SRC_F_PY0           = 5100_ik
    integer(ik), parameter :: SRC_F_PA0           = 5200_ik
    integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
@@ -243,7 +233,7 @@ contains
       call reset_buffer(buf)
    end subroutine alloc_integ_buffer
 
-   !----- Re-seed a buffer for the next period (ED2 zero_*). --------------------------------!
+   !----- Re-seed a buffer for the next period. ---------------------------------------------!
    subroutine reset_buffer(buf)
       type(integ_buffer_t), intent(inout) :: buf
       buf%scal  = buf%seed
@@ -293,14 +283,10 @@ contains
       end select
    end subroutine integrate_scalar
 
-   !----- Fold a slab of n samples (direct slot index; slot set fixed within a window).        !
-   !                                                                                          !
-   !      `valid` (optional) marks slots that had NOTHING to report this step -- an empty patch, !
-   !      a PFT with no members, a size class with no stems, a soil column with no texture. Those !
-   !      slots are SKIPPED, so their hits/wsum stay 0 and normalize emits _FillValue. Folding a   !
-   !      0 into them instead would be the classic diagnostics lie: an empty bin reported as a      !
-   !      real zero, which then drags a period mean toward 0 and is indistinguishable in the file    !
-   !      from a genuine measurement of zero. Absent `valid` => every slot in [1:n] is folded.       !
+   !----- Fold a slab of n samples by direct slot index. `valid` (optional) marks the slots with  !
+   !      something to report this step; the rest (an empty patch, PFT or class, a layer below the !
+   !      column) are skipped and close as _FillValue, not as a 0 a reader would take for a        !
+   !      measurement (docs/science/diagnostics.md §2). Without `valid` every slot is folded. -----!
    subroutine integrate_slab(buf, x, n, dt, valid)
       type(integ_buffer_t), intent(inout) :: buf
       real(wp),             intent(in)    :: x(:)
@@ -337,7 +323,7 @@ contains
    end subroutine integrate_slab
 
    !=======================================================================================!
-   !  Normalize (close a period). valid=.false. -> emit MISSING (no NaN, no ±huge leak).     !
+   !  Normalize (close a period). valid=.false. -> emit MISSING_VALUE (no NaN, no ±huge).     !
    !=======================================================================================!
    subroutine normalize_scalar(buf, out, valid)
       type(integ_buffer_t), intent(in)  :: buf
@@ -415,15 +401,9 @@ contains
    end subroutine normalize_slab
 
    !=======================================================================================!
-   !  Extract (copy the current value of one variable out of live state; NO pointers).      !
-   !                                                                                        !
-   !  nvfortran caveat (an optimizer trap like those in CLAUDE.md): nvfortran -O2 does not    !
-   !  always see a store to poly%<allocatable component> as affecting a subsequent             !
-   !  extract_variable(site,...) read, so it can wrongly CSE two extracts across an INLINE     !
-   !  mutation. Production is safe -- state changes happen through opaque routines            !
-   !  (vegetation_dynamics, the calendar restructuring) that the optimizer cannot see through, !
-   !  and output_integrate extracts each variable ONCE per step. Do NOT extract twice across   !
-   !  an inline component store (see test_output_integrate).                                  !
+   !  Extract: copy one variable's current value out of live state, with no pointers.       !
+   !  nvfortran -O2 can merge two extracts across an inline store to poly: extract each variable  !
+   !  once per step.                                                                          !
    !=======================================================================================!
    !----- A diagnostic-block row whose block this run does not fill: a block that is off, or a fast  !
    !      row of the patch block in a slow-only run. Its variables read as missing, not as a        !
@@ -446,10 +426,8 @@ contains
       end if
    end function not_simulated
 
-   !----- Which entity a source id names, from its numeric range (see the SOURCE CODE SPACE     !
-   !      block at the top). This one function is what makes the id ranges enforceable rather      !
-   !      than a convention -- every dispatch below asks it, so a mis-ranged id fails loudly here   !
-   !      instead of silently resolving to a neighbour's field.                                     !
+   !----- Which entity a source id names, from its range (the Source ids block above). Every    !
+   !      dispatch asks it, so an id outside the ranges is SRCK_NONE, never a neighbour's field. !
    pure integer(ik) function src_class(src) result(k)
       integer(ik), intent(in) :: src
       if      (src >= 1000_ik .and. src < 2000_ik) then
@@ -470,11 +448,11 @@ contains
    end function src_class
 
    !=======================================================================================!
-   !  FIELD ACCESSORS -- copy one entity's raw column out of live state (stage [1] + the       !
-   !  derived kernels). NO reduction here; the reduction is chosen by the descriptor's dim.    !
+   !  Field accessors: copy one entity's column out of live state (with the derived kernels  !
+   !  of stage [1]), with no reduction; the descriptor's dim chooses that.                  !
    !=======================================================================================!
 
-   !----- Per-cohort field over the whole site SoA [1:poly%cohort%n]. -----------------------!
+   !----- Per-cohort field over the polygon's whole cohort array [1:poly%cohort%n]. ---------!
    pure subroutine cohort_source_field(poly, src, x, n)
       type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in)  :: src
@@ -657,16 +635,11 @@ contains
       end select
    end subroutine patch_source_field
 
-   !----- Per-(soil layer, patch) field. `col` is (n_soil_layer_max, n_patch), each patch's   !
-   !      column filled on its site's ACTIVE layers. psi/wetness take the site's retention    !
-   !      curve, and emit MISSING when the fast loop does not run (setup%soil_ready = .false.):  !
-   !      a soil water nothing moves has no potential worth reporting.                        !
-   !                                                                                          !
-   !      Only the active layers are data. The reducers mark only those slots valid,          !
-   !      normalize_slab leaves the rest at MISSING_VALUE, and the serializer writes the fill !
-   !      there: a 10-layer column read over 20 slots would average ten zeros into it, and    !
-   !      soil_matric_potential on padding whose theta_sat is 0 divides by zero -- a Debug    !
-   !      build (-fpe0) aborts, a Release build writes NaN. ----------------------------------!
+   !----- Per-(soil layer, patch) field: col is (n_soil_layer_max, n_patch), each patch's column !
+   !      on its site's active layers. psi and wetness take the site's retention curve, the one  !
+   !      the fast loop integrates, and are missing without a fast loop (setup%soil_ready).      !
+   !      Only the active layers are data and marked valid: the padding would average zeros    !
+   !      into a column, and soil_matric_potential on it (theta_sat 0) divides by zero. --------!
    pure subroutine layer_source_field(poly, setup, src, col, ok)
       type(polygon_t),     intent(in)  :: poly
       type(diag_setup_t),  intent(in)  :: setup
@@ -729,15 +702,10 @@ contains
    end subroutine site_source_field
 
    !=======================================================================================!
-   !  THE DISPATCHER. One variable -> one value (scalar) or one slab, by reducing its FIELD    !
-   !  to the scale its `dim` names, with the weight/mean/scale its descriptor declares.         !
-   !                                                                                          !
-   !  This is the routine that makes "one registry line emits every scale" true: the same        !
-   !  FLD_C_AGB serves agb_cohort (raw), agb_patch, agb_site, agb_pft and agb_size, and the       !
-   !  ONLY difference between those five registry rows is dim + weight + mean.                    !
-   !                                                                                          !
-   !  The nvfortran CSE caveat of the Extract block above applies here too: do NOT extract twice    !
-   !  across an inline component store.                                                            !
+   !  The dispatcher: one variable -> one scalar or slab, its field reduced to the scale its  !
+   !  dim names with its descriptor's weight, mean and scale. One field serves every scale:   !
+   !  agb_cohort, agb_patch, agb_site, agb_pft and agb_size all read FLD_C_AGB. Extract each  !
+   !  variable once per step (the nvfortran trap above).                                      !
    !=======================================================================================!
    subroutine extract_variable(poly, setup, v, scalar_out, slab_out, valid_out, n_out)
       type(polygon_t),     intent(in)  :: poly
@@ -786,7 +754,7 @@ contains
          call reduce_cohort_to_pft(poly, x, v%weight, v%mean, setup%n_pft, slab_out, valid_out,   &
                                    n_out, scale=v%scale)
 
-      !----- DBH size class (ED2-style: bin by the cohort's mean dbh, never split a cohort). -!
+      !----- DBH size class: each cohort whole in the class of its mean dbh. ----------------!
       case (DIM_SIZE)
          call cohort_source_field(poly, v%source_id, x, nf)
          call reduce_cohort_to_size(poly, x, v%weight, v%mean, setup%dbh_edges, setup%n_dbh_class,   &
@@ -814,7 +782,7 @@ contains
             n_out = 0_ik
          end if
 
-      !----- Site scalar: a site-only quantity, or a cohort/patch field reduced to the site. -!
+      !----- Polygon scalar: one of its own, or a cohort/patch field reduced to the polygon. -!
       case default
          select case (kcls)
          case (SRCK_COHORT)
@@ -834,7 +802,7 @@ contains
       end select
    end subroutine extract_variable
 
-   !----- Site-ONLY scalars: quantities that are already site-level and need no reduction. ---!
+   !----- The polygon's own scalars: already polygon quantities, no reduction. ---------------!
    pure real(wp) function extract_scalar_source(poly, source_id) result(val)
       type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in) :: source_id
@@ -884,18 +852,11 @@ contains
    end function extract_scalar_source
 
    !=======================================================================================!
-   !  The per-step tick (netCDF-FREE). The slow step just taken covers [prev, now): its    !
-   !  fluxes were accumulated over that interval, and its state is read here, at `now`,    !
-   !  after the step's dynamics. A step belongs to the period it STARTS in, so it is       !
-   !  folded into the window that holds `prev`, and only THEN is each window that `now`    !
-   !  has left closed (the flags compare now's calendar with prev's). A record stamped d   !
-   !  holds the steps that start in period d: a daily flux is that day's, and a state is   !
-   !  the value at the end of each of the period's steps. Closed records are staged in     !
-   !  bufs%queue for main to serialize.                                                    !
-   !                                                                                       !
-   !  The stand's calendar restructuring runs after this tick (advance_boundary), so every !
-   !  window holds one cohort/patch slot set and the restructuring's events reach          !
-   !  the period that begins.                                                              !
+   !  The per-step tick. The slow step just taken covers [prev, now): it is folded into the  !
+   !  window that holds prev, and only then is each window that now has left closed, so a   !
+   !  step belongs to the period it starts in (docs/science/diagnostics.md §4, Which steps  !
+   !  a record holds). Closed records go to bufs%queue. The calendar restructuring runs     !
+   !  after this tick (advance_boundary).                                                   !
    !=======================================================================================!
    subroutine output_integrate(files, bufs, poly, prev, dt, is_new_day, is_new_month, is_new_year)
       type(output_files_t),   intent(in)    :: files
@@ -913,9 +874,8 @@ contains
       !      stand outgrows one, not when its record is written, up to a month later. ------------------!
       if (files%cohort_axis .and. poly%cohort%n > files%cohort_max) call cap_exceeded('cohort', poly%cohort%n, files%cohort_max)
       if (files%patch_axis  .and. poly%patch%n  > files%patch_max)  call cap_exceeded('patch',  poly%patch%n,  files%patch_max)
-      !----- fold the step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately from the    !
-      !      staged sub-step samples (output_integrate_fast), because sub-daily resolution exists !
-      !      only inside the fast loop.                                                           !
+      !----- Fold the step into the daily, monthly and annual tiers. The FAST tier is fed from the !
+      !      staged sub-steps (output_integrate_fast). -------------------------------------------!
       do t = TIER_DAILY, N_FREQ
          if (files%reg%nidx(t) == 0_ik) cycle
          if (.not. bufs%has_data(t)) bufs%t_open(t) = prev
@@ -1047,26 +1007,14 @@ contains
    end subroutine enqueue_record
 
    !=======================================================================================!
-   !  FAST tier (sub-daily). Resolve one DIM_SCALAR variable's instantaneous value out of the !
-   !  staged sub-step: a patch-block row's site mean or a forcing row. Slab (soil / cohort /    !
-   !  patch) sources are resolved in output_integrate_fast.                                    !
-   !                                                                                          !
-   !  THIS IS NOT A SECOND SWITCHBOARD FOR THE SAME THING.                                      !
-   !                                                                                          !
-   !  The FAST tier is ALREADY on the general machinery: it shares the registry                  !
-   !  (reg%idx_freq(:,1)), the buffers (buf(:,1)), close_tier, and the pending/serialize path.    !
-   !  What is bespoke is only the EXTRACTION SOURCE, and that is forced by the physics of when     !
-   !  the values exist. Sub-daily quantities are sampled DURING the fast loop; by the time main    !
-   !  folds them, `site` holds the post-fast-loop, end-of-slow-step snapshot, so resolving them    !
-   !  against live site state would silently emit end-of-day values on a sub-daily axis.           !
-   !                                                                                          !
-   !  Nor do the two functions overlap: SRC_S_* occupy 4000-4999 and SRC_F_* occupy 5000-5999,     !
-   !  disjoint by construction, so neither can resolve the other's ids. Deleting this would not    !
-   !  remove a duplicate switchboard -- it would remove sub-daily sampling.                        !
+   !  FAST tier: one scalar variable's value in a staged sub-step, a patch-block row's      !
+   !  polygon mean or a forcing row; slab sources are read in output_integrate_fast. The    !
+   !  FAST tier shares everything else with the coarse tiers; only this source differs, the !
+   !  staging, never live state (docs/science/diagnostics.md §4, How the FAST tier is sampled). !
    !=======================================================================================!
    pure real(wp) function extract_fast_scalar(source_id, site_row, forcing) result(val)
       integer(ik), intent(in) :: source_id
-      real(wp),    intent(in) :: site_row(:)   !< the sub-step's site mean of the patch rows (PA_*)
+      real(wp),    intent(in) :: site_row(:)   !< the sub-step's polygon mean of the patch rows (PA_*)
       real(wp),    intent(in) :: forcing(:)    !< the sub-step's forcing (PY_*)
       if (source_id > SRC_F_PA0 .and. source_id <= SRC_F_PA0 + N_PA_ROWS) then
          val = site_row(source_id - SRC_F_PA0)
@@ -1078,10 +1026,9 @@ contains
    end function extract_fast_scalar
 
    !=======================================================================================!
-   !  Fold ONE staged sub-step (index isub) into the FAST tier buffers (tier 1). Called from   !
-   !  main once per staged sub-step; main closes the tier every fast_interval_steps folds.      !
-   !  netCDF-FREE. Reads only the manager's own fast(:) sample + soil/cohort slabs -- never live !
-   !  site state (which by then is the post-fast-loop, end-of-slow-step snapshot).               !
+   !  Fold one staged sub-step (isub) into the FAST tier's buffers. Main calls it once per   !
+   !  staged sub-step and closes the tier every fast_interval_steps folds. It reads only the !
+   !  buffers' staging, never the polygon's live state (the end of the slow step by now).   !
    !=======================================================================================!
    subroutine output_integrate_fast(files, bufs, isub, dt)
       type(output_files_t),   intent(in)    :: files

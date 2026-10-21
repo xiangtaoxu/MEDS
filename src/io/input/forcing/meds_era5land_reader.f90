@@ -222,8 +222,7 @@ contains
       end do
       west = wrap_longitude(nwse(2), lon(1))
       east = wrap_longitude(nwse(4), lon(1))
-      !----- The 0-based column indices are a NAMED array: nvfortran 25.11 miscompiles an implied-do  !
-      !      inside a pack inside an array constructor -- wrong indices at -O2, a segfault at -O0. ---!
+      !----- A named index array, not an implied-do inside pack (a compiler trap, CLAUDE.md). ------!
       col_index = [(i, i = 0_ik, nlon - 1_ik)]
       if (west <= east) then
          cols = pack(col_index, lon >= west - GRID_TOL .and. lon <= east + GRID_TOL)
@@ -447,11 +446,9 @@ contains
          st = nc_close(ncid)
       end do
 
-      !----- MEDS never gap-fills (docs/science/forcing.md §10): the static mask promises data in !
-      !      every selected cell.                                                                   !
-      !      ieee_is_nan, not x /= x: a vectorized self-comparison may signal "invalid" on a quiet   !
-      !      NaN, which a -fpe0 build traps before the message below can name the cell. The first NaN  !
-      !      is found through an integer mask: nvfortran 25.11 has no findloc for LOGICAL arrays.    !
+      !----- MEDS never gap-fills (docs/science/forcing.md §10): the static mask promises data in  !
+      !      every selected cell. ieee_is_nan, because a -fpe0 build can trap x /= x on a NaN, and   !
+      !      findloc over an integer mask, not a logical one (a compiler trap, CLAUDE.md). ----------!
       if (any(ieee_is_nan(buf%values))) then
          bad = int(findloc(merge(1, 0, ieee_is_nan(buf%values)), 1), ik)
          write(message, '(a,a,i4.4,a,i2.2,a,i0,a,f9.3,a,f9.3,a)') trim(ERA_VAR_NAME(bad(3))), ' ',         &

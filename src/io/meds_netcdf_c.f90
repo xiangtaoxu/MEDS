@@ -1,16 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_netcdf_c -- a thin ISO_C_BINDING layer over the netCDF *C* library.                  !
-!                                                                                          !
-! netCDF-Fortran is not available for the ifx/nvfortran toolchains on this machine (its     !
-! .mod files are gfortran-only and compiler-specific), but the netCDF C library is. C        !
-! linkage is compiler-agnostic, so we bind the handful of C entry points we need directly.   !
-! Only the subset MEDS uses is declared; the higher-level logic lives in the callers (the     !
-! state file, the forcing and map readers, the output stream).                               !
-!                                                                                          !
-! Pitfalls baked in here: C is 0-based (callers pass 0-based start); nc_def_var lists dimIDs !
-! slowest-varying FIRST (so [time, cohort]); sizes are C size_t (c_size_t); C strings are     !
-! NUL-terminated (use cstr()).                                                               !
+! meds_netcdf_c -- a thin ISO_C_BINDING layer over the netCDF C library, for the state     !
+! file, the forcing and map readers and the output streams. netCDF-Fortran's .mod files    !
+! are compiler-specific, while the C library links from any compiler, so MEDS binds the C  !
+! entry points it uses directly. C counts from 0 (callers pass 0-based starts), lists      !
+! dimensions slowest-varying first ([time, cohort]), and takes sizes as size_t and         !
+! NUL-terminated strings (cstr); the `_f` wrappers take Fortran strings.                   !
 !==========================================================================================!
 module meds_netcdf_c
    use iso_c_binding, only : c_int, c_size_t, c_double, c_float, c_char, c_ptr, c_null_char,           &
@@ -242,11 +237,9 @@ contains
    end function cstr
 
    !---------------------------------------------------------------------------------------!
-   ! String-argument wrappers. They bind cstr() to a NAMED local before the bind(c) call, so !
-   ! an array-valued FUNCTION RESULT is never passed straight into a C call -- the nvfortran   !
-   ! array-temp miscompile trap (CLAUDE.md, the first compiler trap: silently wrong at -O2).   !
-   ! Callers use these `_f` forms with plain character(len=*) arguments; the raw bind(c) forms !
-   ! stay for the numeric calls (which already pass named array sections).                    !
+   ! String-argument wrappers, for plain character(len=*) arguments; the raw bind(c) forms !
+   ! stay for the numeric calls. Each binds cstr() to a named local before the C call:     !
+   ! no function result goes straight into a call (CLAUDE.md, compiler traps).             !
    !---------------------------------------------------------------------------------------!
    integer(c_int) function nc_create_f(path, cmode, ncidp) result(st)
       character(len=*), intent(in)  :: path
@@ -288,8 +281,7 @@ contains
       st = nc_put_att_text(ncid, varid, cname, length, ctp)
    end function nc_put_att_text_f
 
-   !----- Single-value numeric attribute (e.g. _FillValue). Binds cstr + the value to NAMED    !
-   !      locals before the bind(c) call (the nvfortran array-temp discipline above).          !
+   !----- A one-value numeric attribute (e.g. _FillValue), through named locals as above. --!
    integer(c_int) function nc_put_att_double_f(ncid, varid, name, xtype, val) result(st)
       integer(c_int),   intent(in) :: ncid, varid, xtype
       character(len=*), intent(in) :: name
@@ -343,7 +335,7 @@ contains
       st = nc_inq_dimlen(ncid, dimid, length)
    end function nc_inq_dimlen_f
 
-   !----- Read a text attribute into a Fortran string (netCDF text attrs are NOT NUL-       !
+   !----- Read a text attribute into a Fortran string (netCDF text attrs are not NUL-       !
    !      terminated, so inquire the length first, then copy exactly that many chars).      !
    integer(c_int) function nc_get_att_text_f(ncid, varid, name, text) result(st)
       integer(c_int),   intent(in)  :: ncid, varid

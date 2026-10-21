@@ -23,8 +23,8 @@ from this code — do not renumber their sections.
    rather than re-deriving.
 2. **Capture** — the per-cohort and per-patch dt-weighted accumulators for everything the fast loop
    computes per sub-step and would otherwise discard.
-3. **Reduce** — one weighted aggregation emitting the cohort → patch, site, PFT and size-class
-   family.
+3. **Reduce** — one weighted aggregation emitting the cohort → patch, polygon, PFT and size-class
+   family, and each site's soil column.
 4. **Integrate** — the per-variable, per-tier temporal folding.
 5. **Serialize** — per-tier, per-time-chunk netCDF.
 
@@ -38,7 +38,7 @@ demographic rates. This is the classic place a diagnostic goes silently wrong, s
 rather than implied.
 
 **Empty sets:** a mean over an empty patch, PFT or class is the fill value; a sum over one is a true
-zero. Otherwise the identity that per-PFT and per-class sums equal the site total breaks the moment
+zero. Otherwise the identity that per-PFT and per-class sums equal the polygon total breaks the moment
 a PFT goes locally extinct.
 
 ## Things that bite

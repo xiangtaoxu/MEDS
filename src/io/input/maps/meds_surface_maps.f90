@@ -1,23 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_surface_maps -- every static per-cell map a run reads, in one place: no other module opens  !
-! a map (docs/configuration.md, Input maps).                                                        !
-!                                                                                          !
-! A map is a variable in a netCDF file on the forcing grid: the file's lat and lon axes are the     !
-! ED_ERA5land static file's, so a cell's value sits at the cell's own (row, col) and MEDS never     !
-! regrids. A 2-D map is (lat, lon); a layered one is (layer, lat, lon). A value the map does not    !
-! hold -- the variable's _FillValue or missing_value, or a NaN -- reads as NaN: filling gaps is the  !
-! product's job, not MEDS's, and the caller decides whether a missing value is an error. Packed     !
-! values (scale_factor, add_offset) are unpacked.                                                   !
-!                                                                                          !
-! A read takes the band of rows the cells span, every column, as one hyperslab: one read per       !
-! variable for a whole region, which also serves a box that crosses 180 degrees.                   !
-!                                                                                          !
-! The surface inputs ([maps]; docs/science/soil_biophysics.md §The column from the soil maps):  !
-! read_map_inputs reads the soil maps and the Chave site index at every cell once, and          !
-! apply_map_inputs turns one cell's values into that polygon's configuration -- its soil column,  !
-! layer by layer, its bottom boundaries and its height allometry's site index. A run cell the maps !
-! leave empty is an input error naming the cell.                                                    !
+! meds_surface_maps -- every static per-cell map a run reads; no other module opens a map  !
+! (docs/configuration.md, Input maps). A map is on the forcing grid, so a cell's value     !
+! sits at its own (row, col) and MEDS never regrids; a value the map does not hold reads   !
+! as NaN. map_values_at_cells and map_layers_at_cells read one variable at a list of       !
+! cells; apply_cell_mask keeps a region's cells; read_map_inputs, apply_map_inputs and     !
+! site_map_inputs build each polygon's soil column, bottom boundaries and Chave E from the !
+! [maps] maps (docs/science/soil_biophysics.md §The column from the soil maps).            !
 !==========================================================================================!
 module meds_surface_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
@@ -62,7 +51,7 @@ module meds_surface_maps
       logical :: chave = .false.                          !< the chave_e map was read
       real(wp), allocatable :: layer_top(:), layer_bottom(:)   !< [m] the soil maps' layers, positive down
       real(wp), allocatable :: soil_depth(:)              !< [m] (cell) the soil column's depth
-      real(wp), allocatable :: bc_class(:)                !< [-] (cell) its bottom water boundary, BC_*
+      real(wp), allocatable :: bc_class(:)                !< [-] (cell) its bottom water boundary, MAP_BC_*
       real(wp), allocatable :: f_leak(:)                  !< [-] (cell) a leaky base's drainage factor
       real(wp), allocatable :: deep_temp(:)               !< [K] (cell) the deep soil temperature
       type(soil_texture_t), allocatable :: texture(:,:)   !< (map layer, cell) each layer's soil
@@ -93,8 +82,7 @@ contains
    end subroutine map_layers_at_cells
 
    !----- The cell mask of a region (docs/configuration.md, Regional runs): keep the cells whose    !
-   !      mask value is at least mask_min. A cell the mask leaves empty is not kept. n_dropped counts !
-   !      the cells it removes. -----------------------------------------------------------------------!
+   !      mask value is at least mask_min, not those it leaves empty; n_dropped counts the rest. ----!
    subroutine apply_cell_mask(cells, mask_path, mask_var, mask_min, static_path, n_dropped, stat)
       type(met_cells_t), intent(inout) :: cells
       character(len=*),  intent(in)    :: mask_path, mask_var, static_path
@@ -130,11 +118,11 @@ contains
    end function map_status_message
 
    !=======================================================================================!
-   !  read_map_inputs -- every [maps] map at every cell: the soil depth map's depth,      !
-   !  bottom boundary, leaky drainage factor and deep temperature, the texture and chemistry      !
-   !  maps' layers, and the Chave map's E. A map that cannot be read, or that holds no value at   !
-   !  a cell, is an error (so is a leaky base whose f_leak is outside (0, 1]):                    !
-   !  msg says which map, which variable and which cell, and is '' when every value is there.     !
+   ! read_map_inputs -- every [maps] map at every cell of a run: the soil depth map's four !
+   ! variables, the texture and chemistry maps' layers, and the Chave map's E. msg says    !
+   ! what fails, naming the map, the variable and any cell: a failed read, a gap, a        !
+   ! bc_class not 1-4, or a leaky base's f_leak outside (0, 1]; it is '' when every value  !
+   ! is there.                                                                             !
    !=======================================================================================!
    subroutine read_map_inputs(opts, static_path, cells, inp, msg)
       type(maps_opts_t),          intent(in)  :: opts
@@ -280,20 +268,12 @@ contains
    end subroutine read_map_inputs
 
    !=======================================================================================!
-   !  apply_map_inputs -- cell k's inputs into the configuration its polygon runs.         !
-   !                                                                                          !
-   !  * The soil column ends at the map's soil depth, on the default layers (soil_column_layers); !
-   !    each layer takes the map layers it overlaps, weighted by the overlap, and below the      !
-   !    deepest map layer (2 m) the deepest one. Its curve and Ks come from the pedotransfer     !
-   !    function, its thermal properties from the same texture (docs/science/soil_biophysics.md  !
-   !    §The column from the soil maps).                                                         !
-   !  * The bottom water boundary is the map's: drainage with f = 1 on a free-draining base, the  !
-   !    map's f_leak on a leaky one and 0 on a sealed one, or the aquifer                          !
-   !    (docs/science/soil_biophysics.md §Boundary conditions).                                   !
-   !  * The Dirichlet thermal anchor sits at the map's deep temperature, ANNUAL_DAMPING_DEPTH /  !
-   !    sqrt(2) below the bottom node, where it reflects the annual wave least                    !
-   !    (docs/science/soil_biophysics.md eq. (13)).                                               !
-   !  * The Chave height allometry takes the cell's E.                                          !
+   ! apply_map_inputs -- cell k's inputs into the configuration its polygon runs           !
+   ! (docs/science/soil_biophysics.md §The column from the soil maps): the soil column on  !
+   ! the default layers to the map's depth, each layer's curve, Ks and thermal properties  !
+   ! from the map layers it overlaps; the bottom water boundary from bc_class; the thermal !
+   ! anchor at deep_temp, ANNUAL_DAMPING_DEPTH / sqrt(2) below the bottom node (eq. (13)); !
+   ! and the Chave allometry's E.                                                          !
    !=======================================================================================!
    subroutine apply_map_inputs(inp, k, cfg)
       type(map_inputs_t), intent(in)    :: inp
@@ -390,9 +370,9 @@ contains
    end function layer_texture
 
    !=======================================================================================!
-   !  site_map_inputs -- a site run's [maps] inputs, at the forcing cell its [site]       !
-   !  location reads (the archive's own choice, era5land_select_site), into cfg, which is then   !
-   !  validated again. msg is '' on success, else why the inputs could not be had.               !
+   ! site_map_inputs -- a site run's [maps] inputs, at the forcing cell its [site]         !
+   ! location reads (the archive's own choice, era5land_select_site), into cfg, which is   !
+   ! then validated again. msg is '' on success, else why the inputs could not be had.     !
    !=======================================================================================!
    subroutine site_map_inputs(cfg, msg)
       type(meds_config_t),           intent(inout) :: cfg
@@ -420,8 +400,10 @@ contains
    end subroutine site_map_inputs
 
    !=======================================================================================!
-   !  The read: check the grid, read the band of rows the cells span (every column, every     !
-   !  layer), then pick each cell's values. layer_dim = '' reads a 2-D variable as one layer.   !
+   ! The read: check the grid, read the band of rows the cells span (every column and      !
+   ! layer, in one read per variable, which also serves a box across 180 degrees), then    !
+   ! pick each cell's values. _FillValue, missing_value and NaN read as NaN, and packed    !
+   ! values are unpacked. layer_dim = '' reads a 2-D variable as one layer.                !
    !=======================================================================================!
    subroutine read_cells(path, var, layer_dim, static_path, cells, values, stat)
       character(len=*),      intent(in)  :: path, var, layer_dim, static_path

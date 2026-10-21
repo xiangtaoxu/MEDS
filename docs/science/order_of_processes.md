@@ -225,6 +225,70 @@ Three consequences:
 
   The terminal checkpoint is written at the end of the run.
 
+### The restart file
+
+A state file, `<prefix>-S-YYYYMMDDHHMMSS.nc` stamped with the simulated date, holds the raw
+prognostic state at an instant, never a time average, so that a run resumed from it continues as the
+run that wrote it would have. It serves the restart only; the diagnostics are the `[output]` files.
+It holds every polygon of the run. Each variable has a leading `polygon` axis, the cohort, patch and
+site axes are as long as the largest polygon's, and `n_cohort`, `n_patch`, `n_site` and `n_window`
+mark each polygon's live part; the rest is the fill value. Each polygon writes its own row, so each
+variable is compressed in chunks of one row: a chunk shared by many polygons would be decompressed
+and recompressed at each of their writes once a row outgrows HDF5's chunk cache, and a checkpoint of
+a region of several hundred polygons would take hours instead of minutes. Each site's area and soil
+layer count are stored; its surface is made again from the configuration, and a layer count that
+differs stops the run, since the soil state would be read onto another column.
+
+Each group of variables is stored because the rest of the state cannot rebuild it:
+
+- **The carbon pools as the run holds them**, not re-derived from dbh. Cohort fusion and phenology
+  leave a cohort's pools off the allometry for its dbh, so re-deriving them would move the leaf area
+  (at BCI an LAI of 5.6380 written would read back as 5.6389) and reset the fine-root carbon. The
+  reader derives the geometry from the pools, as the run does; height, basal area, aboveground
+  biomass and leaf area are written for the file's readers only. The overtopping LAI is stored
+  because the plastic traits were acclimated to it ([plant traits](plant_traits.md) §5).
+- **The tissue water and energies** of each cohort. Without them each cohort starts in its patch's
+  state, as a recruit is born, and that step from the evolved state makes the plant-hydraulics solve
+  grind for days on a dense canopy.
+- **The stomatal feedback's predawn potential and its accumulator**
+  ([leaf gas exchange](leaf_gas_exchange.md) §4.2). The predawn potential is yesterday's daily
+  maximum, a maximum over time rather than a function of the instantaneous state. Without it a
+  restart seeds it from the top soil layer's potential, which reads as unstressed and re-opens,
+  mid-drought, stomata the running model had closed. Without the accumulator a restart away from
+  midnight loses the part of today's maximum already seen, and the value handed to tomorrow is too
+  negative, too stressed, by however much of the day is replayed.
+- **The phenology memory** ([leaf phenology](plant_phenology.md) §2). The cue sums and the running
+  light mean are integrals over the past season. Without them every cohort restarts at its birth
+  state, flushing with empty sums, and a deciduous stand restarted in January leafs out in midwinter.
+- **The canopy films**, per plant (their `units` attribute is `kg/plant`). A dry canopy is a valid
+  start, but not the state the writing run was in.
+- **The growth-rate ring buffer** behind `growth_avg`, the mortality predictor, and its write slot.
+- **The growth-temperature running mean**, one per site ([leaf gas exchange](leaf_gas_exchange.md)
+  §2, Thermal acclimation).
+- **The fast reservoirs**: each patch's canopy air, soil, pond and snow. A generic re-seed hands a
+  mature canopy a jump on the first day, which the adaptive integrators resolve only through many
+  tiny sub-steps, the explicit RK45 stepper worst of all. The diagnosed twins (the temperatures and
+  liquid fractions) are stored beside their prognostic partners and read as written.
+- **The turnover shed water**, a rate the slow step hands the fast loop for the whole day: without it
+  a restart loses that day's shed water.
+- **The fast controller's warm start**, the step it last accepted in each patch. Without it a resumed
+  run cold-starts the controller and takes different sub-steps from the continuous run.
+- **The soil-carbon pools** ([soil carbon](soil_carbon.md) §2). A restart keeps them as read and
+  skips the steady-state spin-up.
+
+**A file without a group still restarts**, on that group's start value: each cohort's tissues in its
+patch's state, the predawn potential seeded from the soil, the phenology at birth, a dry canopy, the
+ring buffer filled with `growth_avg`, an unseeded growth temperature that adopts the first day's mean
+rather than relaxing from an arbitrary value over a month, the fast reservoirs' generic seed, a
+cold-started controller and zero soil carbon. A file without the pools places each cohort on the
+allometry from its dbh, and one without the overtopping LAI computes it from the stand as read. A
+file without the pond's enthalpy rebuilds it from the pond's mass at the top soil layer's
+temperature, the layer the pond exchanges with: such a file records a pond whose enthalpy is
+unknown, not empty, and zero energy would restart it about 1 MJ short per kg of ponded water, which
+the energy budget would report as a leak. A dry pond rebuilds to zero either way. Shed water without
+its enthalpy is valued at the canopy air's temperature, the nearest the file has to the tissues it
+left. Films without a `units` attribute are per m² of ground.
+
 ---
 
 ## 7. Code map

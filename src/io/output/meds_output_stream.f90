@@ -1,19 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_output_stream -- the netCDF serializer for the diagnostic-aggregation streams: create a  !
-! per-tier, per-time-chunk file (dims + registry-driven variable defs + CF metadata), append one  !
-! averaged record, and roll to a new file at the chunk boundary (docs/science/diagnostics.md §4;  !
-! the file layout's design record is MEDS_IO_DESIGN.md §5). Reuses meds_netcdf_c.                 !
-!                                                                                          !
-! One serializer writes every file set, with a `polygon` dimension after `time`, one row per       !
-! polygon of the run (a one-polygon run's included): each variable of a record is packed over the  !
-! polygons into one hyperslab, with the fill value for a polygon that does not hold the record (it  !
-! failed earlier that month). Cohort and patch axes are as long as the largest live count among    !
-! the polygons when the file opens, and each polygon's live counts are its own n_cohort and         !
-! n_patch; a slab entry past a polygon's live length reads as the fill value.                       !
-!                                                                                          !
-! netCDF wall: this is the ONLY diagnostic module that touches C; referenced from the manager      !
-! (main-only), never from the stepper.                                                             !
+! meds_output_stream -- stage [5] of the diagnostic output, the netCDF writer: open a per-tier, !
+! per-time-chunk file (dims, coordinates, the tier's variables, CF metadata), append a record, !
+! and roll to a new file at a chunk boundary (write_record). Every file has a polygon axis     !
+! after time; a record is packed over the polygons, with the fill value for a polygon without  !
+! it (one that failed earlier in the month) and past a polygon's live cohort and patch counts  !
+! (docs/science/diagnostics.md §1, §3). The only diagnostic module that calls netCDF, from the !
+! I/O phase only. Design record: MEDS_IO_DESIGN.md §5.                                         !
 !==========================================================================================!
 module meds_output_stream
    use iso_c_binding, only : c_int, c_size_t, c_double, c_char
@@ -68,12 +61,10 @@ contains
             if (.not. time_eq(bufs(p)%queue(t)%rec(i)%t_open, r1%t_open))                      &
                error stop 'write_record: the polygons'' records are not the same period'
          end do
-         !----- Cohort/patch counts are invariant only WITHIN a month; to trim the cohort/patch        !
-         !      dimension to the live count the file must not span more than a month. Cap the effective  !
-         !      file_chunk to FC_MONTH for any tier that carries a cohort/patch variable (site-only tiers !
-         !      keep their configured chunk, e.g. the annual run-file). FAST (tier 1) cohort/patch: one   !
-         !      file PER DAY -- counts are invariant within a day (fusion/fission is monthly/annual), so  !
-         !      the count-grew guard cannot fire at sub-daily cadence. ----------------------------------!
+         !----- The cohort and patch counts are fixed only within a month, so a tier with a cohort or !
+         !      patch variable caps its files at a month (a day for the FAST tier) and trims the axes !
+         !      to the live counts (docs/science/diagnostics.md §3). Other tiers keep their           !
+         !      configured chunk. -----------------------------------------------------------------!
          fc = files%file_chunk(t)
          if (tier_has_cohort_or_patch(files%reg, t)) then
             fc = min(fc, FC_MONTH)
@@ -199,7 +190,7 @@ contains
       np   = files%n_polygon
 
       !----- Which trailing dims does this tier need? A 2-D (soil layer x patch) variable needs     !
-      !      BOTH the patch and soil dims, which is why DIM_SOIL_PATCH sets two flags.  ------------!
+      !      both the patch and soil dims, which is why DIM_SOIL_PATCH sets two flags.  ------------!
       hasc = .false.
       hasp = .false.
       hass = .false.
@@ -225,9 +216,9 @@ contains
       end do
 
       !----- Trim the cohort/patch axes to the live counts of the record that opens this file. A     !
-      !      polygon's count is invariant across a <=1-month file (write_record capped file_chunk for !
-      !      cohort/patch tiers), so this dim fits every record in the file; write_one asserts it.    !
-      !      max(.,1) avoids a zero-length dim on an empty (bare-ground) window.  --------------------!
+      !      polygon's count is fixed within a file of a month or less (write_record caps the chunk), !
+      !      so the axis fits every record; write_one asserts it. max(.,1) avoids a zero-length    !
+      !      axis on bare ground. ---------------------------------------------------------------!
       if (hasc .and. n_cohort > files%cohort_max) error stop 'meds_output_stream: n_cohort exceeds cohort_max buffer'
       if (hasp .and. n_patch  > files%patch_max)  error stop 'meds_output_stream: n_patch exceeds patch_max buffer'
       cohort_dim = max(n_cohort, 1_ik)
@@ -262,8 +253,8 @@ contains
       stream%v_year  = int(def_scalar_var(ncid, dt, 'year',  NC_INT,    '1', 'calendar year (period start)'), ik)
       stream%v_month = int(def_scalar_var(ncid, dt, 'month', NC_INT,    '1', 'calendar month (period start)'), ik)
       stream%v_day   = int(def_scalar_var(ncid, dt, 'day',   NC_INT,    '1', 'calendar day (period start)'), ik)
-      !----- FAST (tier 1): human-readable sub-daily companions so a reader can group-by-hour without    !
-      !      decoding the decimal `time`. Period-start stamp, matching the calendar companions above.  --!
+      !----- The FAST tier: clock companions, so a reader can group by hour without decoding the        !
+      !      decimal `time`; the period-start stamp, as the calendar companions above. ---------------!
       stream%v_hour = -1_ik
       stream%v_minute = -1_ik
       stream%v_second = -1_ik
@@ -327,10 +318,8 @@ contains
          call put_var_text(ncid, v_chave, 'long_name', 'Chave et al. (2014) environmental stress index E')
       end if
 
-      !----- SELF-DESCRIBING AXIS COORDINATES. Both the pft and dbh_class axes have RUN-DEPENDENT   !
-      !      lengths (the PFT count comes from the PFT table, the class edges from TOML), so a file  !
-      !      that carried only the data would be un-interpretable next to a file from another run.   !
-      !      Writing the coordinates makes each file stand on its own.                                !
+      !----- Axis coordinates: the pft and dbh_class axes have run-dependent lengths, so each file   !
+      !      carries its own coordinates and stands on its own (docs/science/diagnostics.md §3). ---!
       stream%v_pft = -1_ik
       stream%v_dbh_lower = -1_ik
       stream%v_dbh_upper = -1_ik
@@ -554,18 +543,16 @@ contains
    end function def_scalar_var
 
    !----- Define one registry variable: (time, polygon[, axis...]), chunked one record at a time  !
-   !      and deflated, with CF attrs + _FillValue. A soil-by-patch variable is (time, polygon,   !
-   !      patch, soil) and a site soil column (time, polygon, site, soil): the buffer side is a   !
-   !      flat slab strided by n_soil_layer_max (DIM_SOIL_PATCH and DIM_SOIL in                   !
-   !      meds_output_types), patch- or site-major and layer-minor, which is netCDF's row-major   !
-   !      order.                                                                                  !
+   !      and deflated, with CF attributes and _FillValue. A soil-by-patch variable is (time,     !
+   !      polygon, patch, soil) and a site soil column (time, polygon, site, soil): the slab is   !
+   !      patch- or site-major and strided by n_soil_layer_max, netCDF's row-major order. ------!
    integer(c_int) function def_registry_var(ncid, dt, dpo, dsi, dc, dp, ds, dpf, dsz, v, np, ns,    &
                                             cohort_dim, patch_dim, setup) result(vid)
       integer(c_int),      intent(in) :: ncid, dt, dpo, dsi, dc, dp, ds, dpf, dsz
       type(var_desc_t),    intent(in) :: v
       integer(ik),         intent(in) :: np                     !< polygons
       integer(ik),         intent(in) :: ns                     !< the site axis's length
-      integer(ik),         intent(in) :: cohort_dim, patch_dim  !< the file's TRIMMED (live-count) axis lengths
+      integer(ik),         intent(in) :: cohort_dim, patch_dim  !< the file's trimmed (live-count) axis lengths
       type(diag_setup_t),  intent(in) :: setup
       integer(c_int)    :: xt, dims(4), rank
       integer(c_size_t) :: chunk(4)
