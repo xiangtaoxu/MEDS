@@ -16,12 +16,13 @@ module meds_init_restart
    use meds_therm_lib,      only : internal_energy_liquid
    use meds_config,         only : meds_config_t, growth_window_steps
    use meds_time,           only : meds_time_t, time_to_stamp, time_to_decimal_year
+   use meds_soil_params,    only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_netcdf_c,       only : nc_check, nc_close, nc_create_f, nc_def_dim_f, nc_enddef, nc_get_att_text_f,   &
                                    nc_get_vara_double, nc_get_vara_int, nc_inq_dimlen, nc_inq_dimlen_f,           &
                                    nc_inq_varid_f, nc_open_f, nc_put_vara_double, nc_put_vara_int, NC_CLOBBER,    &
-                                   NC_DOUBLE, NC_GLOBAL, NC_INT, NC_NETCDF4, NC_NOERR, NC_NOWRITE
+                                   NC_DOUBLE, NC_FILL_DOUBLE, NC_GLOBAL, NC_INT, NC_NETCDF4, NC_NOERR, NC_NOWRITE
    use meds_netcdf_write,   only : define_var, put_global_text, define_polygon_axis, write_polygon_axis,             &
-                                   RESTART_DEFLATE
+                                   define_site_statics, write_site_statics, RESTART_DEFLATE
    use meds_polygon_state_vars,         only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_site_state_vars,            only : make_site_surface
    use meds_patch_state_vars,           only : patch_physical_state
@@ -453,24 +454,21 @@ contains
       !----- 3. Calendar: the cohorts' ring-buffer slot (the restructuring owed is a global      !
       !      attribute). ----------------------------------------------------------------------!
       call def_var(d, 'growth_hist_pos', NC_INT, [d%meta_real], 'ring-buffer write slot (element 1)')
-      !----- The sites: 1. each one's area; 3. the surface it was made with (its layer count is   !
-      !      checked on read); 4. thermal acclimation's running mean                              !
-      !      (docs/science/leaf_gas_exchange.md §2). ------------------------------------------!
-      call def_var(d, 'site_area',       NC_DOUBLE, [d%site], 'site area fraction of the polygon')
-      call def_var(d, 'site_n_soil',     NC_INT,    [d%site], 'the site''s active soil layers')
-      call def_var(d, 'site_soil_depth', NC_DOUBLE, [d%site], 'the site''s soil column depth [m]')
-      call def_var(d, 'site_elevation',  NC_DOUBLE, [d%site], 'the site''s elevation [m]')
-      call def_var(d, 'site_slope',      NC_DOUBLE, [d%site], 'the site''s slope [degrees]')
-      call def_var(d, 'site_aspect',     NC_DOUBLE, [d%site], 'the site''s aspect [degrees from north]')
-      call def_var(d, 't_growth_avg',    NC_DOUBLE, [d%site], 'the site''s running-mean growth temperature [K]')
+      !----- The sites: 1. each one's area and 3. the surface it was made with, as the diagnostic    !
+      !      files carry them (its layer count is checked on read); 4. thermal acclimation's       !
+      !      running mean (docs/science/leaf_gas_exchange.md §2). ------------------------------!
+      call define_site_statics(d%ncid, d%polygon, d%site, [SOIL_BC_DRAIN, SOIL_BC_AQUIFER], 'drain aquifer',    &
+                               by_row=.true., deflate=RESTART_DEFLATE)
+      call def_var(d, 't_growth_avg', NC_DOUBLE, [d%site], 'the site''s running-mean growth temperature [K]')
    end subroutine define_polygon_vars
 
    subroutine put_polygon_vars(r, poly, now)
       type(file_row_t),  intent(in) :: r
       type(polygon_t),   intent(in) :: poly
       type(meds_time_t), intent(in) :: now
-      integer(ik) :: ns, is, nsoil(poly%site%n)
-      real(wp)    :: depth(poly%site%n), elev(poly%site%n), slope(poly%site%n), aspect(poly%site%n)
+      integer(ik) :: ns, is, nsoil(poly%site%n, 1), bc(poly%site%n, 1)
+      real(wp)    :: area(poly%site%n, 1), elev(poly%site%n, 1), slope(poly%site%n, 1), aspect(poly%site%n, 1)
+      real(wp)    :: depth(poly%site%n, 1), drain(poly%site%n, 1), tdeep(poly%site%n, 1)
       ns = poly%site%n
       !----- 2. Dimensions and id counters, and the time. ------------------------------------!
       call put_polygon_int(r, 'n_cohort', poly%cohort%n)
@@ -485,19 +483,20 @@ contains
       call put_int(r, 'growth_hist_pos', [poly%growth_hist_pos])
       !----- The sites, the surface's numbers through contiguous buffers. --------------------!
       do is = 1_ik, ns
-         nsoil(is)  = poly%site%surface(is)%soil%n_active
-         depth(is)  = poly%site%surface(is)%soil_column%depth
-         elev(is)   = poly%site%surface(is)%elevation_m
-         slope(is)  = poly%site%surface(is)%slope_deg
-         aspect(is) = poly%site%surface(is)%aspect_deg
+         associate (surf => poly%site%surface(is))
+            area(is, 1)   = poly%site%area(is)
+            elev(is, 1)   = surf%elevation_m
+            slope(is, 1)  = surf%slope_deg
+            aspect(is, 1) = surf%aspect_deg
+            nsoil(is, 1)  = surf%soil%n_active
+            depth(is, 1)  = surf%soil_column%depth
+            bc(is, 1)     = surf%water_bottom_bc
+            drain(is, 1)  = merge(real(NC_FILL_DOUBLE, wp), surf%drain_factor, surf%water_bottom_bc == SOIL_BC_AQUIFER)
+            tdeep(is, 1)  = surf%deep_temp
+         end associate
       end do
-      call put_dbl(r, 'site_area',       poly%site%area(1:ns))
-      call put_int(r, 'site_n_soil',     nsoil)
-      call put_dbl(r, 'site_soil_depth', depth)
-      call put_dbl(r, 'site_elevation',  elev)
-      call put_dbl(r, 'site_slope',      slope)
-      call put_dbl(r, 'site_aspect',     aspect)
-      call put_dbl(r, 't_growth_avg',    poly%site%t_growth_avg(1:ns))
+      call write_site_statics(r%ncid, r%row - 1_ik, area, elev, slope, aspect, nsoil, depth, bc, drain, tdeep)
+      call put_dbl(r, 't_growth_avg', poly%site%t_growth_avg(1:ns))
    end subroutine put_polygon_vars
 
    !----- The polygon, allocated to the file's counts, and its sites, each surface made from     !

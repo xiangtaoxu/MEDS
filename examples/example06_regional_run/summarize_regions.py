@@ -103,8 +103,9 @@ def main(argv=None):
             d.close()
             continue
         lower = np.asarray(d["dbh_lower"][:])                                 # the classes' lower edges [cm]
-        for k in ("polygon_id", "lat", "lon", "row", "col", "soil_depth", "bottom_bc", "chave_e"):
-            x = np.asarray(d[k][:])
+        for k, v in (("polygon_id", "polygon_id"), ("lat", "lat"), ("lon", "lon"), ("row", "row"), ("col", "col"),
+                     ("soil_depth", "site_soil_depth"), ("bottom_bc", "site_bottom_bc"), ("chave_e", "chave_e")):
+            x = np.asarray(d[v][:])
             out[k].append(x[:, 0] if x.ndim == 2 else x)                     # a site variable: the cell's one site
         agb_pft = d["agb_pft"][:].filled(np.nan) * 20.0                       # kgC/m2 -> dry Mg/ha
         agb = agb_pft.sum(axis=2)                                             # (time, polygon)

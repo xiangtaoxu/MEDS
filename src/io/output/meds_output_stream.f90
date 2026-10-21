@@ -18,8 +18,8 @@ module meds_output_stream
    use meds_netcdf_c, only : nc_check, nc_close, nc_create_f, nc_def_dim_f, nc_enddef, nc_put_att_double_f,       &
                              nc_put_att_int_f, nc_put_var1_double, nc_put_vara_double, nc_put_vara_int,           &
                              nc_sync, NC_CLOBBER, NC_DOUBLE, NC_INT, NC_NETCDF4, NC_UNLIMITED
-   use meds_netcdf_write,  only : define_var, put_text_att, put_int_atts, put_global_text, define_polygon_axis, &
-                                  write_polygon_axis, OUTPUT_DEFLATE
+   use meds_netcdf_write,  only : define_var, put_text_att, put_global_text, define_polygon_axis,               &
+                                  write_polygon_axis, define_site_statics, write_site_statics, OUTPUT_DEFLATE
    use meds_output_params, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter, TIER_FAST, N_FREQ
    use meds_output_integrate, only : close_tier
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
@@ -182,9 +182,8 @@ contains
       character(len=16)  :: stamp
       integer(c_int)     :: ncid, dt, dpo, dsi, dc, dp, ds, dpf, dsz, dnv, vid, dims1(1), dims2(2), dims3(3)
       integer(c_int)     :: dims4(4)
-      integer(c_int)     :: v_row, v_col, v_nsite, v_area, v_elev, v_slope, v_aspect
-      integer(c_int)     :: v_depth, v_bc, v_drain, v_tdeep, v_chave, v_bnds
-      integer(c_size_t)  :: st1(1), cn1(1), st2(2), cn2(2)
+      integer(c_int)     :: v_row, v_col, v_nsite, v_chave, v_bnds
+      integer(c_size_t)  :: st1(1), cn1(1)
       integer(ik)        :: j, k, np, cohort_dim, patch_dim
       logical            :: hasc, hasp, hass, haspf, hassz
       associate (stream => files%stream(tier), reg => files%reg, setup => files%diag)
@@ -289,20 +288,7 @@ contains
       call define_var(ncid, 'n_site', NC_INT, dims1, v_nsite,                                         &
                       long_name='the polygon''s sites (the rest of the site axis is fill)')
       !----- Each polygon's sites, as it runs them: area, terrain and soil column. ---------------!
-      dims2 = [dpo, dsi]
-      call def_site_var('site_area', NC_DOUBLE, '1', 'site area fraction of the polygon', v_area)
-      call def_site_var('site_elevation', NC_DOUBLE, 'm', 'site elevation', v_elev)
-      call def_site_var('site_slope', NC_DOUBLE, 'degree', 'site slope', v_slope)
-      call def_site_var('site_aspect', NC_DOUBLE, 'degree', 'site aspect, clockwise from north', v_aspect)
-      call def_site_var('soil_depth', NC_DOUBLE, 'm', 'soil column depth, the bottom of the deepest layer', v_depth)
-      call def_site_var('bottom_bc', NC_INT, '1', 'bottom water boundary as run: drainage at drain_factor, or aquifer', &
-                        v_bc)
-      call put_int_atts(ncid, v_bc, 'flag_values', [SOIL_BC_DRAIN, SOIL_BC_AQUIFER])
-      call put_text_att(ncid, v_bc, 'flag_meanings', 'drain aquifer')
-      call def_site_var('drain_factor', NC_DOUBLE, '1', 'drainage factor f of the bottom flux q = f K: 1 free '// &
-                        'drainage, the map''s f_leak on a leaky base, 0 sealed (fill on an aquifer)', v_drain)
-      call def_site_var('deep_temp', NC_DOUBLE, 'K', 'deep soil temperature, the thermal anchor below the column', &
-                        v_tdeep)
+      call define_site_statics(ncid, dpo, dsi, [SOIL_BC_DRAIN, SOIL_BC_AQUIFER], 'drain aquifer', by_row=.false.)
       if (allocated(files%polygon_chave_e)) then
          call define_var(ncid, 'chave_e', NC_DOUBLE, dims1, v_chave, units='1',                       &
                          long_name='Chave et al. (2014) environmental stress index E')
@@ -365,21 +351,9 @@ contains
       call nc_check(nc_put_vara_int(ncid, v_row, st1, cn1, int(files%polygon_row, c_int)), 'put row')
       call nc_check(nc_put_vara_int(ncid, v_col, st1, cn1, int(files%polygon_col, c_int)), 'put col')
       call nc_check(nc_put_vara_int(ncid, v_nsite, st1, cn1, int(files%polygon_n_site, c_int)), 'put n_site')
-      st2 = 0_c_size_t
-      cn2 = [int(np, c_size_t), int(files%site_max, c_size_t)]
-      call nc_check(nc_put_vara_double(ncid, v_area, st2, cn2, real(files%site_area, c_double)), 'put site_area')
-      call nc_check(nc_put_vara_double(ncid, v_elev, st2, cn2, real(files%site_elevation, c_double)),           &
-                    'put site_elevation')
-      call nc_check(nc_put_vara_double(ncid, v_slope, st2, cn2, real(files%site_slope, c_double)), 'put site_slope')
-      call nc_check(nc_put_vara_double(ncid, v_aspect, st2, cn2, real(files%site_aspect, c_double)),            &
-                    'put site_aspect')
-      call nc_check(nc_put_vara_double(ncid, v_depth, st2, cn2, real(files%site_soil_depth, c_double)),         &
-                    'put soil_depth')
-      call nc_check(nc_put_vara_int(ncid, v_bc, st2, cn2, int(files%site_bottom_bc, c_int)), 'put bottom_bc')
-      call nc_check(nc_put_vara_double(ncid, v_drain, st2, cn2, real(files%site_drain_factor, c_double)),       &
-                    'put drain_factor')
-      call nc_check(nc_put_vara_double(ncid, v_tdeep, st2, cn2, real(files%site_deep_temp, c_double)),          &
-                    'put deep_temp')
+      call write_site_statics(ncid, 0_ik, files%site_area, files%site_elevation, files%site_slope,              &
+                              files%site_aspect, files%site_n_soil, files%site_soil_depth, files%site_bottom_bc, &
+                              files%site_drain_factor, files%site_deep_temp)
       if (allocated(files%polygon_chave_e))                                                       &
          call nc_check(nc_put_vara_double(ncid, v_chave, st1, cn1, real(files%polygon_chave_e, c_double)), &
                        'put chave_e')
@@ -407,22 +381,6 @@ contains
       stream%d_site = int(dsi, ik)
       write(*,'(2a)') ' output: ', trim(path)
       end associate
-
-   contains
-      !----- A static (polygon, site) variable, with its units, long_name and the fill value its   !
-      !      polygon's missing sites keep. --------------------------------------------------------!
-      subroutine def_site_var(name, xtype, units, lname, v)
-         character(len=*), intent(in)  :: name, units, lname
-         integer(c_int),   intent(in)  :: xtype
-         integer(c_int),   intent(out) :: v
-         call define_var(ncid, name, xtype, dims2, v, units=units, long_name=lname)
-         if (xtype == NC_INT) then
-            call nc_check(nc_put_att_int_f(ncid, v, '_FillValue', NC_INT, int(MISSING_INT, c_int)), 'fill')
-         else
-            call nc_check(nc_put_att_double_f(ncid, v, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), &
-                          'fill')
-         end if
-      end subroutine def_site_var
    end subroutine open_file
 
    !----- The soil coordinate: each site's own layer node depths and, as their bounds, each         !

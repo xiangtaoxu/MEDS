@@ -945,10 +945,10 @@ contains
       call check_true('each polygon has one site', dim_len(ncid, 'site') == 1_ik)
       call read_var(ncid, 'soil_z', [NP, 1_ik, ns], z, fz)
       call read_var(ncid, 'soil_z_bnds', [NP, 1_ik, ns, 2_ik], b, fb)
-      call read_var(ncid, 'soil_depth', [NP, 1_ik], depth, fd)
-      call read_var(ncid, 'bottom_bc', [NP, 1_ik], bc, fc)
-      call read_var(ncid, 'deep_temp', [NP, 1_ik], tdeep, ft)
-      call read_var(ncid, 'drain_factor', [NP, 1_ik], drain, fr)
+      call read_var(ncid, 'site_soil_depth', [NP, 1_ik], depth, fd)
+      call read_var(ncid, 'site_bottom_bc', [NP, 1_ik], bc, fc)
+      call read_var(ncid, 'site_deep_temp', [NP, 1_ik], tdeep, ft)
+      call read_var(ncid, 'site_drain_factor', [NP, 1_ik], drain, fr)
       same_z = fz .and. ns == n_soil_layer_max
       edges  = fb .and. fd .and. ns == n_soil_layer_max
       do p = 1_ik, NP

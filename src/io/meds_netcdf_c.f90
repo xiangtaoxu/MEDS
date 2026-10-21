@@ -26,6 +26,9 @@ module meds_netcdf_c
    integer(c_int), parameter :: NC_DOUBLE    = 6_c_int
    integer(c_int), parameter :: NC_CHUNKED   = 0_c_int      ! storage mode, nc_def/inq_var_chunking
    integer(c_size_t), parameter :: NC_UNLIMITED = 0_c_size_t
+   !----- netCDF's default fill values: what a variable holds where nothing was written. --------!
+   real(c_double),    parameter :: NC_FILL_DOUBLE = 9.9692099683868690e+36_c_double
+   integer(c_int),    parameter :: NC_FILL_INT    = -2147483647_c_int
 
    interface
       integer(c_int) function nc_create(path, cmode, ncidp) bind(c, name="nc_create")
