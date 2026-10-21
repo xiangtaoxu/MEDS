@@ -13,7 +13,8 @@ module meds_met
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
    use meds_numerics, only : linear_interpolate
-   use meds_therm_lib, only : air_density
+   use meds_therm_lib, only : air_density, lapse_air_temperature, lapse_pressure, lapse_specific_humidity,        &
+                              sat_specific_humidity, rh_to_specific_humidity
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string, solar_cosz_utc
    use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
                                    METAVG_END, METAVG_BEGIN, METAVG_CENTER, CLAMP_ERROR, LW_SYNTHESIZE,           &
@@ -22,12 +23,10 @@ module meds_met
                                    synthesize_lwdown
    use meds_met_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
                                   met_cells_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, MEDS_FIELD
-   use meds_lapse_rate, only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,                         &
-                               lapse_specific_humidity
+   use meds_lapse_rate, only : monthly_lapse_rate
    use meds_met_co2, only : co2_series_read, co2_series_at, co2_series_covers,                 &
                                co2_series_end, co2_series_free
-   use meds_forcing_kernels, only : interpolate_wind_energy, cosz_reconstruct_factor, disaggregate_sw,            &
-                                    dewpoint_to_specific_humidity, rh_to_specific_humidity
+   use meds_forcing_kernels, only : interpolate_wind_energy, cosz_reconstruct_factor, disaggregate_sw
    use meds_netcdf_c, only : nc_close, nc_check
    use meds_met_share, only : MET_OK, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, file_lookup_sec,    &
                               humidity_field, add_line
@@ -412,7 +411,7 @@ contains
       case (HUMIDITY_RHAIR)
          rec%qair = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
       case (HUMIDITY_TDEW)
-         rec%qair = dewpoint_to_specific_humidity(humidity_value, rec%psurf_pa)
+         rec%qair = sat_specific_humidity(humidity_value, rec%psurf_pa)
       case default
          rec%qair = humidity_value
       end select

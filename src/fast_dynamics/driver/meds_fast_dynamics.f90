@@ -27,7 +27,8 @@ module meds_fast_dynamics
    use meds_config,           only : meds_config_t, soil_column_params, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy, specific_humidity_to_vpd
+   use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy,                            &
+                                        specific_humidity_to_vpd, precip_phase
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_plant_types, only : leaf_photo_table_t
    use meds_column_view, only : copy_column_cohort
@@ -48,7 +49,6 @@ module meds_fast_dynamics
    use meds_constants,     only : n_soil_layer_max
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_met_types,    only : met_source_t, met_cursor_t, met_forcing_t
-   use meds_forcing_kernels,  only : precip_phase
    use meds_radiation_lib,    only : slope_beam_factor
    use meds_met,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top, met_at_site

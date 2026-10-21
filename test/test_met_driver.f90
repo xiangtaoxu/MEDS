@@ -11,7 +11,9 @@ program test_met_driver
    use meds_constants,       only : t_3ple
    use meds_time,            only : meds_time_t, seconds_between, seconds_into_day, time_advance_seconds,         &
                                     solar_cosz_utc
-   use meds_therm_lib,          only : sat_vapor_pressure, air_density
+   use meds_therm_lib,          only : sat_vapor_pressure, air_density, sat_specific_humidity,                    &
+                                       rh_to_specific_humidity, precip_phase, lapse_air_temperature,              &
+                                       lapse_pressure, lapse_specific_humidity
    use meds_radiation_lib,   only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                     SWPART_PASSTHROUGH, partition_shortwave, clearness_index,                     &
                                     clear_sky_emissivity, synthesize_lwdown, lapse_longwave
@@ -21,11 +23,9 @@ program test_met_driver
                                     WIND_EXPOSURE_LOCAL
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
    use meds_numerics,    only : linear_interpolate
-   use meds_forcing_kernels, only : dewpoint_to_specific_humidity, rh_to_specific_humidity, precip_phase,         &
-                                    cosz_reconstruct_factor, disaggregate_sw
+   use meds_forcing_kernels, only : cosz_reconstruct_factor, disaggregate_sw
    use meds_met_grid,        only : great_circle_distance, nearest_grid_index
-   use meds_lapse_rate,      only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,                    &
-                                    lapse_specific_humidity, cas_top_wind_factor, cas_top_air_temperature,        &
+   use meds_lapse_rate,      only : monthly_lapse_rate, cas_top_wind_factor, cas_top_air_temperature,             &
                                     met_to_cas_top
    use meds_constants,       only : grav, cp_air
    use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
@@ -134,7 +134,7 @@ contains
       real(wp) :: q, e, td, p
       print '(a)', '-- test 2: humidity --'
       td = 285.0_wp ; p = 98000.0_wp
-      q  = dewpoint_to_specific_humidity(td, p)
+      q  = sat_specific_humidity(td, p)
       e  = sat_vapor_pressure(td)
       call check('q from dewpoint == 0.622 e/(p-0.378e)', q, 0.622_wp*e/(p-0.378_wp*e), 1.0e-14_wp)
       call check_true('q in physical range', q > 0.001_wp .and. q < 0.02_wp, q)

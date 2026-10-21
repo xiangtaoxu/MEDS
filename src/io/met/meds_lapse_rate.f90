@@ -10,44 +10,19 @@
 !==========================================================================================!
 module meds_lapse_rate
    use meds_kinds,           only : wp, ik
-   use meds_constants,       only : grav, r_dry, cp_air
-   use meds_therm_lib,       only : sat_vapor_pressure, air_density
+   use meds_constants,       only : grav, cp_air
+   use meds_therm_lib,       only : air_density, lapse_air_temperature, lapse_pressure, lapse_specific_humidity
    use meds_forcing_params,  only : forcing_config_t, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_OPEN_TERRAIN
-   use meds_forcing_kernels, only : rh_to_specific_humidity
    use meds_radiation_lib,   only : lapse_longwave
    use meds_met_types,   only : met_forcing_t
    implicit none
    private
 
-   public :: lapse_air_temperature, lapse_pressure
-   public :: monthly_lapse_rate, lapse_specific_humidity
+   public :: monthly_lapse_rate
    public :: cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
    public :: met_at_site
 
 contains
-
-   !----- Linear environmental lapse of air temperature (docs/science/forcing.md eq. (13)).    !
-   !      dz = site - grid; gamma > 0 cools with height, so a higher site is colder. ---------------!
-   elemental function lapse_air_temperature(tair_grid, dz, gamma) result(tair_site)
-      real(wp), intent(in) :: tair_grid, dz, gamma
-      real(wp) :: tair_site
-      tair_site = tair_grid - gamma * dz
-   end function lapse_air_temperature
-
-   !----- Hypsometric pressure under the same linear T(z), so P and T stay ideal-gas consistent:   !
-   !      P_site = P_grid*(T_site/T_grid)^(g/(Rd*gamma)), or exp(-g*dz/(Rd*T)) as gamma -> 0         !
-   !      (docs/science/forcing.md eq. (13)). -------------------------------------------------------!
-   elemental function lapse_pressure(psurf_grid, tair_grid, dz, gamma) result(psurf_site)
-      real(wp), intent(in) :: psurf_grid, tair_grid, dz, gamma
-      real(wp) :: psurf_site, tair_site
-      real(wp), parameter :: LAPSE_GAMMA_MIN = 1.0e-6_wp
-      if (abs(gamma) > LAPSE_GAMMA_MIN) then
-         tair_site  = tair_grid - gamma * dz
-         psurf_site = psurf_grid * (tair_site / tair_grid) ** (grav / (r_dry * gamma))
-      else
-         psurf_site = psurf_grid * exp(-grav * dz / (r_dry * tair_grid))
-      end if
-   end function lapse_pressure
 
    !=======================================================================================!
    !  1. TERRAIN (per record, at ingest).                                                         !
@@ -58,16 +33,6 @@ contains
       integer(ik), intent(in) :: month             !< 1 .. 12
       gamma = gamma_month(min(12_ik, max(1_ik, month)))
    end function monthly_lapse_rate
-
-   !----- Specific humidity at the site, holding relative humidity across the lapse             !
-   !      (docs/science/forcing.md eq. (14)); holding q would dry a site below its cell. ---------!
-   elemental function lapse_specific_humidity(q_grid, t_grid, p_grid, t_site, p_site) result(q_site)
-      real(wp), intent(in) :: q_grid, t_grid, p_grid, t_site, p_site
-      real(wp) :: q_site, e, rh
-      e      = max(q_grid, 0.0_wp) * p_grid / (0.622_wp + 0.378_wp * max(q_grid, 0.0_wp))
-      rh     = e / sat_vapor_pressure(t_grid)
-      q_site = rh_to_specific_humidity(rh, t_site, p_site)
-   end function lapse_specific_humidity
 
    !----- A site within its polygon (docs/science/forcing.md §8): the polygon's sample taken by the   !
    !      terrain step to the site's elevation, dz above the polygon's, when the run lapses its       !

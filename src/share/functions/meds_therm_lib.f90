@@ -4,7 +4,8 @@
 ! the specific energies of liquid, ice, vapour and canopy air in one datum and the energy  !
 ! -> temperature inverter with phase change (MEDS_ENERGY_BALANCE_DESIGN.md §3.1); moist    !
 ! air: saturation vapour pressure and humidity, VPD and density                            !
-! (docs/science/snow_biophysics.md eq. (1), docs/science/forcing.md eq. (11)); plant       !
+! (docs/science/snow_biophysics.md eq. (1), docs/science/forcing.md eq. (11)); the         !
+! rain/snow split; the air at another height (docs/science/forcing.md §8); plant           !
 ! tissue heat capacity and energy (docs/science/vegetation_energy_dynamics.md eqs.         !
 ! (8)-(10)); soil heat: the thermal properties of a texture and the soil's conductivity    !
 ! and heat capacity (docs/science/soil_biophysics.md eqs. (9) and (11)); and the           !
@@ -16,18 +17,21 @@ module meds_therm_lib
    use meds_kinds,     only : wp, ik
    use meds_constants, only : mmdry, tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,  &
                               t_3ple, tsupercool_liq, tsupercool_vap, r_dry, rho_h2o, k_water,      &
-                              k_ice, c2b_wood, r_gas, t_ref_photo, safe_exp, t_kelvin
+                              k_ice, c2b_wood, r_gas, t_ref_photo, safe_exp, t_kelvin, grav
    implicit none
    private
 
    !----- Energy datum: specific energies and the phase-change inverter. ------------------!
    public :: internal_energy_to_temp, temp_to_internal_energy
    public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, liquid_energy_to_temp
-   public :: precip_enthalpy
+   public :: precip_enthalpy, precip_phase
    !----- Moist air. ----------------------------------------------------------------------!
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
    public :: sat_specific_humidity_temp_deriv, air_vpd, specific_humidity_to_vpd
+   public :: vapor_pressure_to_specific_humidity, specific_humidity_to_vapor_pressure, rh_to_specific_humidity
    public :: air_density, cas_temp_to_enthalpy, cas_enthalpy_to_temp, cas_molar_density
+   !----- The air at another height. ------------------------------------------------------!
+   public :: lapse_air_temperature, lapse_pressure, lapse_specific_humidity
    !----- Plant tissue heat. --------------------------------------------------------------!
    public :: tissue_heat_capacity, tissue_dry_heat_capacity, tissue_temp_to_energy, tissue_energy_to_temp
    !----- Soil heat. ----------------------------------------------------------------------!
@@ -47,6 +51,14 @@ module meds_therm_lib
    real(wp), parameter :: CLM_GRAIN_DENSITY = 2700.0_wp   !< [kg/m3]
    !----- [-] Floor on the relative saturation, where Johansen's log10 form holds. --------!
    real(wp), parameter :: SR_FLOOR = 0.05_wp
+
+   !----- Water's molar mass over dry air's, rounded (mmh2o/mmdry = 0.62198), as the      !
+   !      vapour pressure <-> specific humidity conversions take it. -------------------!
+   real(wp), parameter :: H2O_DRY_RATIO           = 0.622_wp
+   real(wp), parameter :: ONE_MINUS_H2O_DRY_RATIO = 0.378_wp
+
+   !----- [K] Half-width of the rain/snow band about the triple point. -------------------!
+   real(wp), parameter :: PHASE_BAND_K = 1.0_wp
 
    !----- The forms [leaf_physiology].temp_response_form selects. -------------------------!
    integer(ik), parameter :: TEMP_RESPONSE_ARRHENIUS = 1_ik  !< plain Arrhenius
@@ -126,6 +138,17 @@ contains
       h = snow * internal_energy_ice(min(t_3ple, t_air)) + rain * internal_energy_liquid(t_air)
    end function precip_enthalpy
 
+   !----- The rain/snow split (docs/science/forcing.md eq. (12)): a linear ramp across a 2 K   !
+   !      band centred on the triple point; rainf + snowfall = the total. ---------------------!
+   elemental subroutine precip_phase(precip_total, tair_k, rainf, snowfall)
+      real(wp), intent(in)  :: precip_total, tair_k
+      real(wp), intent(out) :: rainf, snowfall
+      real(wp) :: frac_liq
+      frac_liq = min(1.0_wp, max(0.0_wp, (tair_k - (t_3ple - PHASE_BAND_K)) / (2.0_wp * PHASE_BAND_K)))
+      rainf = frac_liq * precip_total
+      snowfall = precip_total - rainf
+   end subroutine precip_phase
+
    !=======================================================================================!
    !     Moist air (docs/science/snow_biophysics.md eq. (1), docs/science/forcing.md eq.   !
    !     (11)).                                                                            !
@@ -159,8 +182,29 @@ contains
       else
          esat = sat_vapor_pressure(t_k)
       end if
-      qs   = 0.622_wp * esat / max(p_pa - 0.378_wp * esat, tiny_num)
+      qs   = vapor_pressure_to_specific_humidity(esat, p_pa)
    end function sat_specific_humidity
+
+   !----- Specific humidity [kg/kg] of air at pressure p_pa holding vapour at pressure e_vap  !
+   !      [Pa]: q = 0.622 e / (p - 0.378 e) (docs/science/forcing.md eq. (11)). -------------!
+   elemental real(wp) function vapor_pressure_to_specific_humidity(e_vap, p_pa) result(q)
+      real(wp), intent(in) :: e_vap, p_pa
+      q = H2O_DRY_RATIO * e_vap / max(p_pa - ONE_MINUS_H2O_DRY_RATIO * e_vap, tiny_num)
+   end function vapor_pressure_to_specific_humidity
+
+   !----- Its inverse: the vapour pressure [Pa] of air at pressure p_pa holding specific      !
+   !      humidity q, e = q p / (0.622 + 0.378 q). ------------------------------------------!
+   elemental real(wp) function specific_humidity_to_vapor_pressure(q, p_pa) result(e_vap)
+      real(wp), intent(in) :: q, p_pa
+      e_vap = q * p_pa / max(H2O_DRY_RATIO + ONE_MINUS_H2O_DRY_RATIO * q, tiny_num)
+   end function specific_humidity_to_vapor_pressure
+
+   !----- Specific humidity [kg/kg] from relative humidity (a fraction, held to [0, 1]) at    !
+   !      temperature t_k and pressure p_pa, over liquid water. -----------------------------!
+   elemental real(wp) function rh_to_specific_humidity(rh, t_k, p_pa) result(q)
+      real(wp), intent(in) :: rh, t_k, p_pa
+      q = vapor_pressure_to_specific_humidity(min(1.0_wp, max(0.0_wp, rh)) * sat_vapor_pressure(t_k), p_pa)
+   end function rh_to_specific_humidity
 
    !----- The slope d(e_sat)/dT [Pa/K], at fixed fliq: on the melt plateau, where fliq     !
    !      changes, the temperature is pinned at the triple point. -------------------------!
@@ -194,7 +238,7 @@ contains
          esat  = sat_vapor_pressure(t_k)
          desat = sat_vapor_pressure_temp_deriv(t_k)
       end if
-      dqsdt = 0.622_wp * p_pa / max((p_pa - 0.378_wp * esat) ** 2, tiny_num) * desat
+      dqsdt = H2O_DRY_RATIO * p_pa / max((p_pa - ONE_MINUS_H2O_DRY_RATIO * esat) ** 2, tiny_num) * desat
    end function sat_specific_humidity_temp_deriv
 
    !----- VPD [Pa] from temperature and the actual vapour pressure. -----------------------!
@@ -212,7 +256,7 @@ contains
       real(wp), intent(in) :: shv       !< [kg/kg] specific humidity
       real(wp), intent(in) :: pressure  !< [Pa]
       real(wp) :: e_vap
-      e_vap = shv * pressure / max(0.622_wp + 0.378_wp * shv, tiny_num)
+      e_vap = specific_humidity_to_vapor_pressure(shv, pressure)
       vpd   = air_vpd(temp, e_vap)
    end function specific_humidity_to_vpd
 
@@ -247,6 +291,44 @@ contains
       real(wp)             :: dmol
       dmol = rho * (1.0_wp - shv) / mmdry
    end function cas_molar_density
+
+   !=======================================================================================!
+   !     The air at another height (docs/science/forcing.md §8): the temperature, pressure   !
+   !     and humidity a linear lapse gives a site dz above the air it is taken from.        !
+   !=======================================================================================!
+
+   !----- Linear environmental lapse of air temperature (docs/science/forcing.md eq.     !
+   !      (13)). dz = site - grid; gamma > 0 cools with height. -----------------------!
+   elemental function lapse_air_temperature(tair_grid, dz, gamma) result(tair_site)
+      real(wp), intent(in) :: tair_grid, dz, gamma
+      real(wp) :: tair_site
+      tair_site = tair_grid - gamma * dz
+   end function lapse_air_temperature
+
+   !----- Hypsometric pressure under the same linear T(z), so P and T stay ideal-gas     !
+   !      consistent: P_site = P_grid (T_site/T_grid)^(g/(Rd gamma)), or                 !
+   !      exp(-g dz/(Rd T)) as gamma -> 0 (docs/science/forcing.md eq. (13)). ---------!
+   elemental function lapse_pressure(psurf_grid, tair_grid, dz, gamma) result(psurf_site)
+      real(wp), intent(in) :: psurf_grid, tair_grid, dz, gamma
+      real(wp) :: psurf_site, tair_site
+      real(wp), parameter :: LAPSE_GAMMA_MIN = 1.0e-6_wp
+      if (abs(gamma) > LAPSE_GAMMA_MIN) then
+         tair_site  = tair_grid - gamma * dz
+         psurf_site = psurf_grid * (tair_site / tair_grid) ** (grav / (r_dry * gamma))
+      else
+         psurf_site = psurf_grid * exp(-grav * dz / (r_dry * tair_grid))
+      end if
+   end function lapse_pressure
+
+   !----- Specific humidity at the site, holding relative humidity across the lapse      !
+   !      (docs/science/forcing.md eq. (14)); holding q would dry a site below its cell. !
+   elemental function lapse_specific_humidity(q_grid, t_grid, p_grid, t_site, p_site) result(q_site)
+      real(wp), intent(in) :: q_grid, t_grid, p_grid, t_site, p_site
+      real(wp) :: q_site, e, rh
+      e      = specific_humidity_to_vapor_pressure(max(q_grid, 0.0_wp), p_grid)
+      rh     = e / sat_vapor_pressure(t_grid)
+      q_site = rh_to_specific_humidity(rh, t_site, p_site)
+   end function lapse_specific_humidity
 
    !=======================================================================================!
    !     Plant tissue heat (docs/science/vegetation_energy_dynamics.md eqs. (8)-(10)).     !

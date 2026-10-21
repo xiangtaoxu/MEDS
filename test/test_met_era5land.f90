@@ -15,10 +15,8 @@ program test_met_era5land
    use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END, CLAMP_ERROR
    use meds_radiation_lib,   only : SWPART_CLEARIDX, SWPART_PASSTHROUGH, clear_sky_emissivity
    use meds_met_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
-   use meds_forcing_kernels, only : dewpoint_to_specific_humidity
+   use meds_therm_lib,       only : sat_specific_humidity, lapse_pressure, sat_vapor_pressure
    use iso_c_binding,        only : c_double
-   use meds_lapse_rate,      only : lapse_pressure
-   use meds_therm_lib,       only : sat_vapor_pressure
    use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
    use meds_met_share, only : MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
    use meds_met_era5land,    only : era5land_path, era5land_default_template, era5land_load_month, ERA_OK,  &
@@ -233,7 +231,7 @@ contains
       met = step_sample(src, cur, t)
       call check('Tair at a stamp', met%tair_k, field(ERA_TAIR, 1_ik, 3_ik, g), 1.0e-9_wp)
       call check('Qair = the kernel of the stored Tdew and PSurf', met%qair,                      &
-                 dewpoint_to_specific_humidity(field(ERA_TDEW, 1_ik, 3_ik, g),                    &
+                 sat_specific_humidity(field(ERA_TDEW, 1_ik, 3_ik, g),                    &
                                                field(ERA_PSURF, 1_ik, 3_ik, g)), 1.0e-15_wp)
       u1 = field(ERA_U10, 1_ik, 3_ik, g) ; v1 = field(ERA_V10, 1_ik, 3_ik, g)
       call check('wind_u = u10', met%wind_u, u1, 1.0e-12_wp)
@@ -277,7 +275,7 @@ contains
       t = meds_time_t(2021_ik, 1_ik, 20_ik, 6_ik) ; g = hour_index(t)
       met = step_sample(src, cur, t)
       t0  = field(ERA_TAIR, 1_ik, 3_ik, g) ; p0 = field(ERA_PSURF, 1_ik, 3_ik, g)
-      q0  = dewpoint_to_specific_humidity(field(ERA_TDEW, 1_ik, 3_ik, g), p0)
+      q0  = sat_specific_humidity(field(ERA_TDEW, 1_ik, 3_ik, g), p0)
       lw0 = field(ERA_LWDOWN, 1_ik, 3_ik, g)
       t1  = t0 - 0.0042_wp * 500.0_wp ; p1 = lapse_pressure(p0, t0, 500.0_wp, 0.0042_wp)
       call check('lapse: T by January''s rate', met%tair_k, t1, 1.0e-9_wp)
