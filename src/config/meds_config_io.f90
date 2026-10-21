@@ -691,7 +691,7 @@ contains
       cfg%output%axis_on(AXIS_PFT)        = toml_logical(t, 'output.axes_pft',        .true.)
       cfg%output%axis_on(AXIS_SIZE)       = toml_logical(t, 'output.axes_size',       .true.)
       cfg%output%axis_on(AXIS_SOIL_PATCH) = toml_logical(t, 'output.axes_soil_patch', .false.)
-      !----- DBH size-class edges (DIM_SIZE), ascending, n_class+1 of them. Absent -> manager_setup !
+      !----- DBH size-class edges (DIM_SIZE), ascending, n_class+1 of them. Absent -> setup_output_files !
       !      installs the built-in inventory default. ----------------------------------------------!
       call load_dbh_edges(t, cfg%output)
       !----- Integrator work counters and the budget residuals; on by default. -------------------!

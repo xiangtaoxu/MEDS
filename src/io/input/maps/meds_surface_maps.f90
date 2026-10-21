@@ -51,10 +51,10 @@ module meds_surface_maps
    !----- The soil maps' layers (ED-SoilMaps v2: SoilGrids 2.0's six depths, to 2 m). ------------!
    character(len=*), parameter :: SOIL_LAYER_DIM = 'depth', SOIL_LAYER_BOUNDS = 'depth_bnds'
    !----- The bottom water boundary of the soil depth map's bc_class. ---------------------------!
-   integer(ik), parameter :: BC_FREE_DRAIN = 1_ik   !< q = K(theta)
-   integer(ik), parameter :: BC_LEAKY      = 2_ik   !< q = f_leak K(theta)
-   integer(ik), parameter :: BC_SEALED     = 3_ik   !< q = 0
-   integer(ik), parameter :: BC_AQUIFER    = 4_ik   !< a water table at the column base
+   integer(ik), parameter :: MAP_BC_FREE_DRAIN = 1_ik   !< q = K(theta)
+   integer(ik), parameter :: MAP_BC_LEAKY      = 2_ik   !< q = f_leak K(theta)
+   integer(ik), parameter :: MAP_BC_SEALED     = 3_ik   !< q = 0
+   integer(ik), parameter :: MAP_BC_AQUIFER    = 4_ik   !< a water table at the column base
 
    !----- What the [maps] maps hold at each cell of a run, read once (read_map_inputs). --!
    type :: map_inputs_t
@@ -147,7 +147,7 @@ contains
          call need(opts%soil_depth_map, 'bc_class', '', v) ; if (len(msg) > 0) return
          inp%bc_class = v(1, :)
          do k = 1_ik, cells%ncell
-            if (all(nint(inp%bc_class(k), ik) /= [BC_FREE_DRAIN, BC_LEAKY, BC_SEALED, BC_AQUIFER])) then
+            if (all(nint(inp%bc_class(k), ik) /= [MAP_BC_FREE_DRAIN, MAP_BC_LEAKY, MAP_BC_SEALED, MAP_BC_AQUIFER])) then
                msg = 'soil map '//trim(opts%soil_depth_map)//': bc_class is not 1-4 at '//cell_name(k)
                return
             end if
@@ -155,7 +155,7 @@ contains
          call need(opts%soil_depth_map, 'f_leak', '', v) ; if (len(msg) > 0) return
          inp%f_leak = v(1, :)
          do k = 1_ik, cells%ncell
-            if (nint(inp%bc_class(k), ik) == BC_LEAKY .and. .not. (inp%f_leak(k) > 0.0_wp .and.           &
+            if (nint(inp%bc_class(k), ik) == MAP_BC_LEAKY .and. .not. (inp%f_leak(k) > 0.0_wp .and.           &
                                                                   inp%f_leak(k) <= 1.0_wp)) then
                msg = 'soil map '//trim(opts%soil_depth_map)//': f_leak is not in (0, 1] at '//cell_name(k)// &
                      ', whose base is leaky'
@@ -299,9 +299,9 @@ contains
             sc%n_layer_values = n
          end associate
          select case (nint(inp%bc_class(k), ik))
-         case (BC_AQUIFER) ; cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
-         case (BC_LEAKY)   ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
-         case (BC_SEALED)  ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
+         case (MAP_BC_AQUIFER) ; cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
+         case (MAP_BC_LEAKY)   ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
+         case (MAP_BC_SEALED)  ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
          case default      ; cfg%soil%water_bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 1.0_wp
          end select
          call soil_column_params(cfg%soil_column, soil)

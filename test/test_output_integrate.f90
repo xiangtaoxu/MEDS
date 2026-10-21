@@ -43,8 +43,8 @@ program test_output_integrate
    use meds_diag_vars,        only : alloc_cohort_diag, CO_LEAF_TEMP, N_PY_ROWS, PY_TAIR, PY_CO2, N_PA_ROWS, PA_CAS_TEMP, PA_LE, &
                                      PA_H, PA_GPP, PA_SW_UP, PA_LW_UP
    use meds_time,             only : meds_time_t, time_advance_days
-   use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
-                                     manager_setup, manager_finalize, build_freq_index,          &
+   use meds_output_registry,  only : alloc_output_set, alloc_output_buffers, find_var_index,        &
+                                     setup_output_files, finalize_output_files, build_freq_index,          &
                                      apply_variable_override, OVR_MASK
    use meds_diagnostic_reduce, only : W_NPLANT, W_LEAF_AREA
    use meds_output_params,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
@@ -239,7 +239,7 @@ contains
       cfg%output%grp_on     = .true.
       cfg%output%axis_on    = .true.               ! the soil-by-patch axis too
       cfg%output%cohort_max = 8_ik
-      call manager_alloc(files, bufs, cfg)
+      call alloc_output_set(files, bufs, cfg)
       call check(files%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
 
       !----- Stage 2 sub-steps of two patches with known values (as fast_dynamics would). -----!
@@ -257,10 +257,10 @@ contains
       bufs%fast_soil_temp_patch(1:2,2)       = [282.0_wp, 283.0_wp]
       bufs%fast_soil_temp_patch(nl+1:nl+2,1) = [290.0_wp, 291.0_wp]         ! patch 2: 291, 292
       bufs%fast_soil_temp_patch(nl+1:nl+2,2) = [292.0_wp, 293.0_wp]
-      bufs%fast_coh_ltemp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
-      bufs%fast_coh_ltemp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
-      bufs%fast_coh_height(1:2,1) = [10.0_wp, 12.0_wp]                      ! slot1=10, slot2=12 (constant)
-      bufs%fast_coh_height(1:2,2) = [10.0_wp, 12.0_wp]
+      bufs%fast_cohort_leaf_temp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
+      bufs%fast_cohort_leaf_temp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
+      bufs%fast_cohort_height(1:2,1) = [10.0_wp, 12.0_wp]                      ! slot1=10, slot2=12 (constant)
+      bufs%fast_cohort_height(1:2,2) = [10.0_wp, 12.0_wp]
 
       call output_integrate_fast(files, bufs, 1_ik, DT)
       call output_integrate_fast(files, bufs, 2_ik, DT)
@@ -308,8 +308,8 @@ contains
       call check(.not. bufs%pending(1)%slabvalid(3,k_soil_p), 'FAST soil patch 1 layer 3 is fill (inactive)')
    end subroutine test_fast_tier
 
-   !----- The driver's order: manager_setup, then an [output].io_config override that switches on a  !
-   !      slab variable setup left off, then manager_finalize and manager_alloc_buffers. The slab must !
+   !----- The driver's order: setup_output_files, then an [output].io_config override that switches on a  !
+   !      slab variable setup left off, then finalize_output_files and alloc_output_buffers. The slab must !
    !      hold every soil layer, read from the QUEUED record through slab_col, as the writer reads it. !
    subroutine test_slab_sized_after_overrides()
       type(meds_config_t)    :: cfg
@@ -322,7 +322,7 @@ contains
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.               ! FAST tier on
       cfg%output%grp_on     = .false.              ! every group off: no slab variable is live yet
-      call manager_setup(files, cfg)
+      call setup_output_files(files, cfg)
       n_live_slab = 0_ik
       do k = 1_ik, files%reg%nvar
          if (files%reg%var(k)%dim /= DIM_SCALAR .and. files%reg%var(k)%streams /= FREQ_NONE)        &
@@ -333,8 +333,8 @@ contains
       call apply_variable_override(files%reg, 'soil_temp_site_fast', OVR_MASK, FREQ_FAST, found)
       call check(found, 'soil_temp_site_fast is a registry variable')
       call build_freq_index(files%reg)             ! what apply_io_overrides does after its overrides
-      call manager_finalize(files)
-      call manager_alloc_buffers(files, bufs)
+      call finalize_output_files(files)
+      call alloc_output_buffers(files, bufs)
       call check(files%max_slab >= nl, 'max_slab covers the soil axis an override switched on')
 
       call alloc_fast_staging(bufs, 1_ik, 0_ik, 1_ik, nl)
@@ -368,12 +368,12 @@ contains
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.               ! FAST tier on
       cfg%output%grp_on     = .false.              ! every group off: no slab variable is live yet
-      call manager_setup(files, cfg)
+      call setup_output_files(files, cfg)
       call apply_variable_override(files%reg, 'soil_temp_layer_patch_fast', OVR_MASK, FREQ_FAST, found)
       call check(found, 'soil_temp_layer_patch_fast is a registry variable')
       call build_freq_index(files%reg)
-      call manager_finalize(files)
-      call manager_alloc_buffers(files, bufs)
+      call finalize_output_files(files)
+      call alloc_output_buffers(files, bufs)
       call alloc_fast_staging(bufs, 1_ik, 3_ik, 1_ik, 2_ik)
       bufs%fast_soil_temp_patch(:,1) = 285.0_wp
       call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
@@ -399,8 +399,8 @@ contains
       cfg%output%freq_on(1) = .true.
       cfg%output%grp_on     = .true.
       cfg%output%cohort_max = 8_ik
-      call manager_alloc(files, a, cfg)
-      call manager_alloc_buffers(files, b)
+      call alloc_output_set(files, a, cfg)
+      call alloc_output_buffers(files, b)
       call check(a%fast_on .and. b%fast_on, 'both polygons'' buffers stage the FAST tier')
       call stage_cas(a, [290.0_wp, 294.0_wp])                              ! mean 292
       call stage_cas(b, [270.0_wp, 280.0_wp])                              ! mean 275
@@ -437,7 +437,7 @@ contains
       cfg%output%grp_on     = .false.
       cfg%output%grp_on(1)  = .true.                                 ! structure
       cfg%output%cohort_max = 8_ik
-      call manager_alloc(files, bufs, cfg)
+      call alloc_output_set(files, bufs, cfg)
       k_s = find_var_index(files%reg, 'agb_site')
       k_c = find_var_index(files%reg, 'agb_cohort')
       k_n = find_var_index(files%reg, 'n_cohort_site')
@@ -501,7 +501,7 @@ contains
       bufs%fast_site(PA_CAS_TEMP, :) = cas
       bufs%fast_patch(PA_CAS_TEMP, 1, :) = cas
       bufs%fast_soil_temp = 280.0_wp ; bufs%fast_soil_temp_patch = 280.0_wp
-      bufs%fast_coh_ltemp = 285.0_wp ; bufs%fast_coh_height = 10.0_wp
+      bufs%fast_cohort_leaf_temp = 285.0_wp ; bufs%fast_cohort_height = 10.0_wp
    end subroutine stage_cas
 
    !----- One polygon's FAST staging as fast_dynamics sizes it (size_fast_staging): nsub sub-steps, !
@@ -522,11 +522,11 @@ contains
       do ip = 1_ik, np
          bufs%fast_soil_patch_live((ip - 1_ik) * nl + 1_ik:(ip - 1_ik) * nl + n_soil) = .true.
       end do
-      allocate(bufs%fast_coh_ltemp(nc, nsub), bufs%fast_coh_gpp(nc, nsub), bufs%fast_coh_height(nc, nsub))
+      allocate(bufs%fast_cohort_leaf_temp(nc, nsub), bufs%fast_cohort_gpp(nc, nsub), bufs%fast_cohort_height(nc, nsub))
       bufs%fast_forcing = 0.0_wp ; bufs%fast_site = 0.0_wp ; bufs%fast_patch = 0.0_wp
       bufs%fast_soil_temp = 0.0_wp ; bufs%fast_soil_water = 0.0_wp
       bufs%fast_soil_temp_patch = 0.0_wp ; bufs%fast_soil_water_patch = 0.0_wp
-      bufs%fast_coh_ltemp = 0.0_wp ; bufs%fast_coh_gpp = 0.0_wp ; bufs%fast_coh_height = 0.0_wp
+      bufs%fast_cohort_leaf_temp = 0.0_wp ; bufs%fast_cohort_gpp = 0.0_wp ; bufs%fast_cohort_height = 0.0_wp
       bufs%n_fast_sub = nsub ; bufs%fast_n_patch = np
    end subroutine alloc_fast_staging
 

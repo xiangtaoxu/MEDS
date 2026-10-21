@@ -299,12 +299,12 @@ module meds_output_types
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (layer x site, n_fast_sub) [m3/m3]
       logical,             allocatable :: fast_soil_live(:)        !< (layer x site) a layer of its site
       logical,             allocatable :: fast_soil_patch_live(:)  !< (layer x patch) a layer of its patch's site
-      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort, n_fast_sub) per-cohort leaf temp [K]
-      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
+      real(wp),            allocatable :: fast_cohort_leaf_temp(:,:)   !< (cohort, n_fast_sub) per-cohort leaf temp [K]
+      real(wp),            allocatable :: fast_cohort_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
       !< (cohort, n_fast_sub) per-cohort height [m] (tallest post-proc)
-      real(wp),            allocatable :: fast_coh_height(:,:)
+      real(wp),            allocatable :: fast_cohort_height(:,:)
       !< (cohort, CO_*, n_fast_sub) the per-cohort diagnostic block's rows, staged while it is on
-      real(wp),            allocatable :: fast_coh_cdiag(:,:,:)
+      real(wp),            allocatable :: fast_cohort_diag(:,:,:)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
       integer(ik)          :: fast_n_site  = 0_ik              !< sites in the fast soil slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs

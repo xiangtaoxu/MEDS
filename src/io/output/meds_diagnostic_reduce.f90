@@ -39,9 +39,9 @@ module meds_diagnostic_reduce
 
    !----- The generic API (stage 3). -------------------------------------------------------!
    public :: W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
-   public :: reduce_cohort_to_site, reduce_cohort_to_patch
+   public :: reduce_cohort_to_polygon, reduce_cohort_to_patch
    public :: reduce_cohort_to_pft, reduce_cohort_to_size
-   public :: reduce_patch_to_site, reduce_patch_columns_to_sites, gather_patch_columns
+   public :: reduce_patch_to_polygon, reduce_patch_columns_to_sites, gather_patch_columns
    !----- Convenience site totals, thin wrappers for the callers that want one number (the    !
    !      driver's summaries, the C API, the tests).                                            !
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area
@@ -99,7 +99,7 @@ contains
    !      `scale` multiplies the per-patch contribution BEFORE it is accumulated               !
    !      (`area * sum(...) * scale`); applying it once at the end instead would change the     !
    !      rounding of every scaled total.                                                       !
-   pure subroutine reduce_cohort_to_site(poly, x, wkind, mean, val, valid, scale)
+   pure subroutine reduce_cohort_to_polygon(poly, x, wkind, mean, val, valid, scale)
       type(polygon_t),    intent(in)  :: poly
       real(wp),           intent(in)  :: x(:)
       integer(ik),        intent(in)  :: wkind
@@ -125,7 +125,7 @@ contains
       else
          valid = .true. ; val = num
       end if
-   end subroutine reduce_cohort_to_site
+   end subroutine reduce_cohort_to_polygon
 
    !=======================================================================================!
    !  cohort -> patch                                                                       !
@@ -261,7 +261,7 @@ contains
    !      restructuring (the driver checks |sum-1| < 1e-5 at the end of a run). `mean = .true.`  !
    !      divides by SUM area anyway, which differs only in the last bit but is robust to a      !
    !      caller that has not renormalized.                                                      !
-   pure subroutine reduce_patch_to_site(poly, x, mean, val, valid)
+   pure subroutine reduce_patch_to_polygon(poly, x, mean, val, valid)
       type(polygon_t), intent(in) :: poly
       real(wp),     intent(in)  :: x(:)
       logical,      intent(in)  :: mean
@@ -281,7 +281,7 @@ contains
       else
          valid = (poly%patch%n > 0_ik) ; val = num
       end if
-   end subroutine reduce_patch_to_site
+   end subroutine reduce_patch_to_polygon
 
    !----- Area-weight each site's per-patch soil columns into the site's column, flattened at      !
    !      (is-1)*n_soil_layer_max + k (DIM_SOIL). A site's layers are its own column's; the slots  !
@@ -347,14 +347,14 @@ contains
    pure real(wp) function total_nplant(poly) result(tot)
       type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(poly, poly%cohort%nplant, W_NONE, .false., tot, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%nplant, W_NONE, .false., tot, ok)
    end function total_nplant
 
    !----- Site basal area [m2 m-2]: per-plant cm2 -> per-ground m2. ------------------------!
    pure real(wp) function total_basal_area(poly) result(tot)
       type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(poly, poly%cohort%basal_area, W_NPLANT, .false., tot, ok,    &
+      call reduce_cohort_to_polygon(poly, poly%cohort%basal_area, W_NPLANT, .false., tot, ok,    &
                                  scale=cm2_to_m2)
    end function total_basal_area
 
@@ -362,14 +362,14 @@ contains
    pure real(wp) function total_agb(poly) result(tot)
       type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(poly, poly%cohort%agb, W_NPLANT, .false., tot, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%agb, W_NPLANT, .false., tot, ok)
    end function total_agb
 
    !----- Site leaf area index [m2 m-2 ground]. -------------------------------------------!
    pure real(wp) function total_lai(poly) result(tot)
       type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(poly, poly%cohort%leaf_area, W_NPLANT, .false., tot, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%leaf_area, W_NPLANT, .false., tot, ok)
    end function total_lai
 
    !----- The patches' shares of the polygon, summed: 1 while no patch area is lost. -----------!
@@ -384,7 +384,7 @@ contains
    pure real(wp) function mean_dbh(poly) result(dm)
       type(polygon_t), intent(in) :: poly
       logical :: ok
-      call reduce_cohort_to_site(poly, poly%cohort%dbh, W_BASAL_AREA, .true., dm, ok)
+      call reduce_cohort_to_polygon(poly, poly%cohort%dbh, W_BASAL_AREA, .true., dm, ok)
    end function mean_dbh
 
 

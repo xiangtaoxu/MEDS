@@ -19,7 +19,7 @@ module meds_output_registry
    use meds_diag_vars,          only : N_CO_FAST_ROWS, N_CO_ROWS, N_PA_ROWS, alloc_cohort_diag, alloc_patch_diag, &
                                        N_SI_ROWS, alloc_site_diag, SI_SW_IN, SI_PAR_BEAM, SI_NIR_BEAM, SI_LWDOWN, &
                                        SI_TAIR, SI_QAIR, SI_PSURF, SI_RHO_AIR
-   use meds_output_params,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
+   use meds_output_params,  only : output_config_t, N_FREQ, N_GRP, N_AXIS, TIER_FAST,                       &
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
                                    GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY,              &
@@ -35,21 +35,21 @@ module meds_output_registry
    use meds_output_integrate, only : alloc_integ_buffer, src_class, SRCK_FAST,                                         &
         FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA,     &
         FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI, FLD_C_WAI,   &
-        FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON, FLD_C_STORAGE_CARBON,       &
-        FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER,  &
-        FLD_C_OVERTOP_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP,   &
-        FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED,               &
+        FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON, FLD_C_NONSTRUCTURAL_CARBON,       &
+        FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER_RATE,  &
+        FLD_C_OVERTOPPING_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP,   &
+        FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_LEAF_FLUSH_TENDENCY, FLD_C_LEAF_SHED_TENDENCY,               &
         FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT,         &
         FLD_P_GLOBAL_ID, FLD_P_SITE, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH,               &
         FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND,                   &
         FLD_P_SOILC_STRUCT_SOIL, FLD_P_SOILC_MICROBIAL, FLD_P_SOILC_SLOW,                        &
         FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH,                                        &
         FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ,  &
-        SRC_S_ET, SRC_S_N_COHORT, SRC_S_N_PATCH, SRC_S_CANOPY_HEIGHT,                            &
-        SRC_S_RUNOFF, SRC_S_RUNOFF_SURF, SRC_S_DRAINAGE,                                         &
-        SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_WATER_NSUB, SRC_S_WORK_WATER_NEWTON,           &
-        SRC_S_WORK_WATER_NFAIL, SRC_S_WORK_WATER_REJECT, SRC_S_WORK_RK45_RESCUE,                     &
-        SRC_S_WORK_CLAMP_STAGE,                                                                  &
+        SRC_PY_ET, SRC_PY_N_COHORT, SRC_PY_N_PATCH, SRC_PY_CANOPY_HEIGHT,                            &
+        SRC_PY_RUNOFF, SRC_PY_RUNOFF_SURF, SRC_PY_DRAINAGE,                                         &
+        SRC_PY_WORK_STEPS, SRC_PY_WORK_REJ, SRC_PY_WORK_WATER_NSUB, SRC_PY_WORK_WATER_NEWTON,           &
+        SRC_PY_WORK_WATER_NFAIL, SRC_PY_WORK_WATER_REJECT, SRC_PY_WORK_RK45_RESCUE,                     &
+        SRC_PY_WORK_CLAMP_STAGE,                                                                  &
         SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PA0,                                &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0, FLD_C_DIAG0, FLD_P_DIAG0, &
         FLD_PY_DIAG0, FLD_SI_DIAG0, FLD_SI_GROWTH_TEMP
@@ -74,9 +74,9 @@ module meds_output_registry
    public :: build_output_registry, build_freq_index, find_var_index, parse_stream_mask
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
-   public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_buffers
-   public :: manager_set_polygons
-   public :: activate_site_diag, dump_io_config
+   public :: alloc_output_set, setup_output_files, finalize_output_files, alloc_output_buffers
+   public :: set_output_polygons
+   public :: activate_polygon_diag, dump_io_config
 
    !----- Named default stream masks (readable `ior` combinations). DAY_MON_YR deliberately     !
    !      EXCLUDES the fast bit -- the fast tier is always opt-in.                                !
@@ -167,13 +167,13 @@ contains
       call add_variable(reg, 'growth_avg_cohort', 'moving-average growth', 'cm/yr',              &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_GROWTH_AVG)
       call add_variable(reg, 'overtopping_lai_cohort', 'cumulative LAI of taller cohorts', 'm2/m2', &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_OVERTOP_LAI)
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_OVERTOPPING_LAI)
       call add_variable(reg, 'pft_cohort', 'plant functional type index', '-',                   &
-                        DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_C_PFT, xt=XTYPE_INT)
+                        DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_C_PFT, xtype=XTYPE_INT)
       call add_variable(reg, 'owner_patch', 'owning patch (1-based)', '-',                       &
-                        DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_C_OWNER_PATCH, xt=XTYPE_INT)
+                        DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_C_OWNER_PATCH, xtype=XTYPE_INT)
       call add_variable(reg, 'global_cohort_id', 'persistent cohort id', '-',                    &
-                        DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_C_GLOBAL_ID, xt=XTYPE_INT)
+                        DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_C_GLOBAL_ID, xtype=XTYPE_INT)
       !----- Per-plant carbon pools (the four PARTEH-style pools the size anchor rides on). ---!
       call add_variable(reg, 'leaf_carbon_cohort', 'leaf carbon per plant', 'kgC/plant',         &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_CARBON)
@@ -182,7 +182,7 @@ contains
       call add_variable(reg, 'wood_carbon_cohort', 'wood carbon per plant', 'kgC/plant',         &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_WOOD_CARBON)
       call add_variable(reg, 'storage_carbon_cohort', 'non-structural carbon per plant', 'kgC/plant', &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_STORAGE_CARBON)
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_NONSTRUCTURAL_CARBON)
       !----- Dynamic (light-acclimating) leaf traits. -----------------------------------------!
       call add_variable(reg, 'sla_cohort', 'specific leaf area', 'm2/kgC',                       &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_SLA)
@@ -191,11 +191,11 @@ contains
       call add_variable(reg, 'rd25_cohort', 'leaf dark respiration at 25 degC', 'umol/m2/s',     &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_RD25)
       call add_variable(reg, 'leaf_turnover_rate_cohort', 'baseline leaf turnover rate', '1/yr', &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_TURNOVER)
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_TURNOVER_RATE)
       call add_variable(reg, 'leaf_flush_tendency_cohort', 'smoothed leaf flush tendency', '-',          &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_FLUSH)
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_FLUSH_TENDENCY)
       call add_variable(reg, 'leaf_shed_tendency_cohort', 'smoothed leaf senescence tendency', '-',      &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_SHED)
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_SHED_TENDENCY)
       call add_variable(reg, 'dmax_psi_leaf_cohort', 'predawn (daily-max) leaf water potential', 'MPa', &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_DMAX_PSI_LEAF)
       !----- Slow-loop RATES off the per-step diagnostic block (poly%cohort%sdiag). -----------!
@@ -215,73 +215,73 @@ contains
       call add_variable(reg, 'age_patch', 'time since disturbance', 'yr',                        &
                         DIM_PATCH, AGG_LAST, GRP_STRUCTURE, MON, FLD_P_AGE)
       call add_variable(reg, 'dist_type_patch', 'disturbance type', '-',                         &
-                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, MON, FLD_P_DIST_TYPE, xt=XTYPE_INT)
+                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, MON, FLD_P_DIST_TYPE, xtype=XTYPE_INT)
       call add_variable(reg, 'cohort_offset', 'first cohort of patch (CSR)', '-',                &
-                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_COHORT_OFFSET, xt=XTYPE_INT)
+                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_COHORT_OFFSET, xtype=XTYPE_INT)
       call add_variable(reg, 'cohort_count', 'cohorts in patch (CSR)', '-',                      &
-                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_COHORT_COUNT, xt=XTYPE_INT)
+                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_COHORT_COUNT, xtype=XTYPE_INT)
       call add_variable(reg, 'global_patch_id', 'persistent patch id', '-',                      &
-                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_GLOBAL_ID, xt=XTYPE_INT)
+                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_GLOBAL_ID, xtype=XTYPE_INT)
       call add_variable(reg, 'patch_site', 'the patch''s site (1-based)', '-',                   &
-                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_SITE, xt=XTYPE_INT)
+                        DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_SITE, xtype=XTYPE_INT)
       !----- Cohort fields reduced onto the patch axis. EXTENSIVE (weighted SUM over nplant),   !
       !      so these are per m2 of THAT PATCH's ground -- the gap-vs-closed-canopy contrast the  !
       !      site scalars average away.  -------------------------------------------------------!
       call add_variable(reg, 'nplant_patch', 'patch plant number density', 'plant/m2',           &
-                        DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_NPLANT, w=W_NONE)
+                        DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_NPLANT, weight=W_NONE)
       call add_variable(reg, 'lai_patch', 'patch leaf area index', 'm2/m2',                      &
-                        DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_LEAF_AREA, w=W_NPLANT)
+                        DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_LEAF_AREA, weight=W_NPLANT)
       call add_variable(reg, 'agb_patch', 'patch aboveground biomass', 'kgC/m2',                 &
-                        DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_AGB, w=W_NPLANT)
+                        DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_AGB, weight=W_NPLANT)
       call add_variable(reg, 'basal_area_patch', 'patch basal area', 'm2/m2',                    &
                         DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_BASAL_AREA,               &
-                        w=W_NPLANT, sc=cm2_to_m2)
+                        weight=W_NPLANT, scale=cm2_to_m2)
    end subroutine register_structure_patch
 
    !----- Site structure scalars. -----------------------------------------------------------!
    subroutine register_structure_site(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'nplant_site', 'site total plant number', 'plant/m2',               &
-                        DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_NPLANT, w=W_NONE)
+                        DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_NPLANT, weight=W_NONE)
       call add_variable(reg, 'basal_area_site', 'site total basal area', 'm2/m2',                &
                         DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_BASAL_AREA,       &
-                        w=W_NPLANT, sc=cm2_to_m2)
+                        weight=W_NPLANT, scale=cm2_to_m2)
       call add_variable(reg, 'agb_site', 'site aboveground biomass', 'kgC/m2',                   &
-                        DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_AGB, w=W_NPLANT)
+                        DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_AGB, weight=W_NPLANT)
       call add_variable(reg, 'lai_site', 'site leaf area index', 'm2/m2',                        &
-                        DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_LEAF_AREA, w=W_NPLANT)
+                        DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_LEAF_AREA, weight=W_NPLANT)
       !----- INTENSIVE structural means. The weight is the physical statement: dbh is basal-    !
       !      area-weighted (the forestry convention, dominated by the trees that hold the stand), !
       !      NOT stem-weighted, which a regenerating understory would swamp.  -------------------!
       call add_variable(reg, 'mean_dbh_site', 'basal-area-weighted mean DBH', 'cm',              &
                         DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_DBH,             &
-                        w=W_BASAL_AREA, mn=.true.)
+                        weight=W_BASAL_AREA, mean=.true.)
       call add_variable(reg, 'mean_height_site', 'basal-area-weighted mean height', 'm',         &
                         DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, FLD_C_HEIGHT,          &
-                        w=W_BASAL_AREA, mn=.true.)
+                        weight=W_BASAL_AREA, mean=.true.)
       call add_variable(reg, 'canopy_height_site', 'height of the tallest cohort', 'm',          &
-                        DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, SRC_S_CANOPY_HEIGHT)
+                        DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, DAY_MON_YR, SRC_PY_CANOPY_HEIGHT)
       call add_variable(reg, 'n_cohort_site', 'live cohort count', '-',                          &
-                        DIM_SCALAR, AGG_LAST, GRP_STRUCTURE, DAY_MON_YR, SRC_S_N_COHORT, xt=XTYPE_INT)
+                        DIM_SCALAR, AGG_LAST, GRP_STRUCTURE, DAY_MON_YR, SRC_PY_N_COHORT, xtype=XTYPE_INT)
       call add_variable(reg, 'n_patch_site', 'live patch count', '-',                            &
-                        DIM_SCALAR, AGG_LAST, GRP_STRUCTURE, DAY_MON_YR, SRC_S_N_PATCH, xt=XTYPE_INT)
+                        DIM_SCALAR, AGG_LAST, GRP_STRUCTURE, DAY_MON_YR, SRC_PY_N_PATCH, xtype=XTYPE_INT)
    end subroutine register_structure_site
 
    !----- PFT axis. The composition view: is any PFT actually competing, or has one won? ----!
    subroutine register_structure_pft(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'nplant_pft', 'plant number density by PFT', 'plant/m2',            &
-                        DIM_PFT, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_NPLANT, w=W_NONE)
+                        DIM_PFT, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_NPLANT, weight=W_NONE)
       call add_variable(reg, 'agb_pft', 'aboveground biomass by PFT', 'kgC/m2',                  &
-                        DIM_PFT, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_AGB, w=W_NPLANT)
+                        DIM_PFT, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_AGB, weight=W_NPLANT)
       call add_variable(reg, 'lai_pft', 'leaf area index by PFT', 'm2/m2',                       &
-                        DIM_PFT, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_LEAF_AREA, w=W_NPLANT)
+                        DIM_PFT, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_LEAF_AREA, weight=W_NPLANT)
       call add_variable(reg, 'basal_area_pft', 'basal area by PFT', 'm2/m2',                     &
                         DIM_PFT, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_BASAL_AREA,             &
-                        w=W_NPLANT, sc=cm2_to_m2)
+                        weight=W_NPLANT, scale=cm2_to_m2)
       call add_variable(reg, 'mean_dbh_pft', 'basal-area-weighted mean DBH by PFT', 'cm',        &
                         DIM_PFT, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_DBH,                    &
-                        w=W_BASAL_AREA, mn=.true.)
+                        weight=W_BASAL_AREA, mean=.true.)
    end subroutine register_structure_pft
 
    !----- DBH size-class axis (ED2-style, a size class of PLANTS). The demographic core's      !
@@ -289,19 +289,19 @@ contains
    subroutine register_structure_size(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'nplant_size', 'plant number density by DBH class', 'plant/m2',     &
-                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_NPLANT, w=W_NONE)
+                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_NPLANT, weight=W_NONE)
       call add_variable(reg, 'agb_size', 'aboveground biomass by DBH class', 'kgC/m2',           &
-                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_AGB, w=W_NPLANT)
+                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_AGB, weight=W_NPLANT)
       call add_variable(reg, 'lai_size', 'leaf area index by DBH class', 'm2/m2',                &
-                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_LEAF_AREA, w=W_NPLANT)
+                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_LEAF_AREA, weight=W_NPLANT)
       call add_variable(reg, 'basal_area_size', 'basal area by DBH class', 'm2/m2',              &
                         DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_BASAL_AREA,            &
-                        w=W_NPLANT, sc=cm2_to_m2)
+                        weight=W_NPLANT, scale=cm2_to_m2)
       call add_variable(reg, 'agb_growth_size', 'AGB growth rate by DBH class', 'kgC/m2/yr',     &
-                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_DAGB_DT, w=W_NPLANT)
+                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_DAGB_DT, weight=W_NPLANT)
       call add_variable(reg, 'mort_rate_size', 'nplant-weighted mortality rate by DBH class', '1/yr', &
                         DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_MORT_RATE,             &
-                        w=W_NPLANT, mn=.true.)
+                        weight=W_NPLANT, mean=.true.)
    end subroutine register_structure_size
 
    !=======================================================================================!
@@ -311,38 +311,38 @@ contains
    subroutine register_carbon(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'gpp_site', 'site gross primary productivity (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_GPP_ACCUM, w=W_NPLANT)
+                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_GPP_ACCUM, weight=W_NPLANT)
       call add_variable(reg, 'npp_site', 'site net primary productivity (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_NPP_ACCUM, w=W_NPLANT)
+                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_NPP_ACCUM, weight=W_NPLANT)
       call add_variable(reg, 'leaf_resp_site', 'site leaf dark respiration (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_LEAF_RESP, w=W_NPLANT)
+                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_LEAF_RESP, weight=W_NPLANT)
       call add_variable(reg, 'stem_resp_site', 'site stem maintenance respiration (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_STEM_RESP, w=W_NPLANT)
+                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_STEM_RESP, weight=W_NPLANT)
       call add_variable(reg, 'root_resp_site', 'site fine-root maintenance respiration (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_ROOT_RESP, w=W_NPLANT)
+                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_ROOT_RESP, weight=W_NPLANT)
       !----- Vegetation carbon STOCKS (AGG_MEAN -- a stock, not a flux). ----------------------!
       call add_variable(reg, 'leaf_carbon_site', 'site leaf carbon', 'kgC/m2',                   &
-                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_LEAF_CARBON, w=W_NPLANT)
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_LEAF_CARBON, weight=W_NPLANT)
       call add_variable(reg, 'fineroot_carbon_site', 'site fine-root carbon', 'kgC/m2',          &
-                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_FINEROOT_CARBON, w=W_NPLANT)
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_FINEROOT_CARBON, weight=W_NPLANT)
       call add_variable(reg, 'wood_carbon_site', 'site wood carbon', 'kgC/m2',                   &
-                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_WOOD_CARBON, w=W_NPLANT)
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_WOOD_CARBON, weight=W_NPLANT)
       call add_variable(reg, 'storage_carbon_site', 'site non-structural carbon', 'kgC/m2',      &
-                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_STORAGE_CARBON, w=W_NPLANT)
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_NONSTRUCTURAL_CARBON, weight=W_NPLANT)
       call add_variable(reg, 'bgb_site', 'site belowground biomass', 'kgC/m2',                   &
-                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_BGB, w=W_NPLANT)
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_BGB, weight=W_NPLANT)
       call add_variable(reg, 'veg_carbon_site', 'site total live vegetation carbon', 'kgC/m2',   &
-                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_VEG_CARBON, w=W_NPLANT)
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_VEG_CARBON, weight=W_NPLANT)
       !----- PFT-resolved carbon fluxes. ------------------------------------------------------!
       call add_variable(reg, 'gpp_pft', 'gross primary productivity by PFT (period total)', 'kgC/m2', &
-                        DIM_PFT, AGG_SUM, GRP_CARBON, MON_YR, FLD_C_GPP_ACCUM, w=W_NPLANT)
+                        DIM_PFT, AGG_SUM, GRP_CARBON, MON_YR, FLD_C_GPP_ACCUM, weight=W_NPLANT)
       call add_variable(reg, 'npp_pft', 'net primary productivity by PFT (period total)', 'kgC/m2', &
-                        DIM_PFT, AGG_SUM, GRP_CARBON, MON_YR, FLD_C_NPP_ACCUM, w=W_NPLANT)
+                        DIM_PFT, AGG_SUM, GRP_CARBON, MON_YR, FLD_C_NPP_ACCUM, weight=W_NPLANT)
       !----- Per-patch carbon fluxes. ---------------------------------------------------------!
       call add_variable(reg, 'gpp_patch', 'patch gross primary productivity (period total)', 'kgC/m2', &
-                        DIM_PATCH, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_GPP_ACCUM, w=W_NPLANT)
+                        DIM_PATCH, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_GPP_ACCUM, weight=W_NPLANT)
       call add_variable(reg, 'npp_patch', 'patch net primary productivity (period total)', 'kgC/m2', &
-                        DIM_PATCH, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_NPP_ACCUM, w=W_NPLANT)
+                        DIM_PATCH, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_NPP_ACCUM, weight=W_NPLANT)
       !----- Per-cohort carbon fluxes (per plant). --------------------------------------------!
       call add_variable(reg, 'gpp_cohort', 'per-plant GPP (period total)', 'kgC/plant',          &
                         DIM_COHORT, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_GPP_ACCUM)
@@ -356,16 +356,16 @@ contains
    subroutine register_water(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'et_site', 'site evapotranspiration (period total)', 'kg/m2',       &
-                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_ET)
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_PY_ET)
       !----- The water leaving the soil column: surface runoff (the pond's spill above its capacity) !
       !      and drainage (the bottom flux: free drainage, 0 on bedrock, net and signed with an       !
       !      aquifer), and their sum. ------------------------------------------------------------------!
       call add_variable(reg, 'runoff_site', 'site runoff: surface runoff + drainage (period total)', 'kg/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_RUNOFF)
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_PY_RUNOFF)
       call add_variable(reg, 'runoff_surf_site', 'site surface runoff (period total)', 'kg/m2',  &
-                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_RUNOFF_SURF)
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_PY_RUNOFF_SURF)
       call add_variable(reg, 'drainage_site', 'site drainage at the soil column''s bottom (period total)', 'kg/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_DRAINAGE)
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_PY_DRAINAGE)
       !----- Each site's soil column, its patches area-weighted (DIM_SOIL). --------------------!
       call add_variable(reg, 'soil_water_site', 'each site''s area-weighted volumetric soil moisture', 'm3/m3', &
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_L_SOIL_WATER)
@@ -425,10 +425,10 @@ contains
       !      not pull the canopy mean as hard as a closed overstory).  --------------------------!
       call add_variable(reg, 'leaf_temp_site', 'leaf-area-weighted canopy leaf temperature', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_DIAG0 + CO_LEAF_TEMP, &
-                        w=W_LEAF_AREA, mn=.true.)
+                        weight=W_LEAF_AREA, mean=.true.)
       call add_variable(reg, 'wood_temp_site', 'leaf-area-weighted wood temperature', 'K',       &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_DIAG0 + CO_WOOD_TEMP, &
-                        w=W_LEAF_AREA, mn=.true.)
+                        weight=W_LEAF_AREA, mean=.true.)
       call add_variable(reg, 'leaf_temp_cohort', 'per-cohort leaf temperature', 'K',             &
                         DIM_COHORT, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_C_DIAG0 + CO_LEAF_TEMP)
       call add_variable(reg, 'wood_temp_cohort', 'per-cohort wood temperature', 'K',             &
@@ -482,23 +482,23 @@ contains
    subroutine register_numerics(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'work_integ_steps_site', 'accepted integrator sub-steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_STEPS)
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_STEPS)
       call add_variable(reg, 'work_integ_rej_site', 'rejected integrator steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_REJ)
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_REJ)
       call add_variable(reg, 'work_water_nsub_site', 'soil-plant water network sub-steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NSUB)
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NSUB)
       call add_variable(reg, 'work_water_newton_site', 'soil-plant water network Newton iterations (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NEWTON)
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NEWTON)
       call add_variable(reg, 'work_water_reject_site',                                          &
                         'soil-plant water network sub-steps rejected and retried shorter (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_REJECT)
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_REJECT)
       call add_variable(reg, 'work_water_nfail_site',                                           &
                         'soil-plant water network sub-steps taken although unconverged (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NFAIL)
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NFAIL)
       call add_variable(reg, 'work_rk45_rescue_site', 'RK45 steps rescued to the implicit path (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_RK45_RESCUE)
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_RK45_RESCUE)
       call add_variable(reg, 'work_clamp_stage_site', 'stage-input clamp activations (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_STAGE)
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_CLAMP_STAGE)
    end subroutine register_numerics
 
 
@@ -563,25 +563,25 @@ contains
       !----- CANOPY-LEVEL twins: leaf-area-weighted means, the standard flux-tower comparands.  --!
       call add_variable(reg, 'anet_site', 'leaf-area-weighted canopy net assimilation', 'umol/m2 leaf/s', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CO_ANET,   &
-                        w=W_LEAF_AREA, mn=.true.)
+                        weight=W_LEAF_AREA, mean=.true.)
       call add_variable(reg, 'gsw_site', 'leaf-area-weighted canopy stomatal conductance', 'mol/m2 leaf/s', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CO_GSW,    &
-                        w=W_LEAF_AREA, mn=.true.)
+                        weight=W_LEAF_AREA, mean=.true.)
       call add_variable(reg, 'psi_leaf_site', 'leaf-area-weighted canopy leaf water potential', 'MPa', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CO_PSI_LEAF, &
-                        w=W_LEAF_AREA, mn=.true.)
+                        weight=W_LEAF_AREA, mean=.true.)
       call add_variable(reg, 'plc_site', 'leaf-area-weighted canopy loss of conductance', '-',   &
                         DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CO_PLC,    &
-                        w=W_LEAF_AREA, mn=.true.)
+                        weight=W_LEAF_AREA, mean=.true.)
       call add_variable(reg, 'beta_stomata_site', 'leaf-area-weighted stomatal water-stress factor', '-', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CO_BETA_STOM, &
-                        w=W_LEAF_AREA, mn=.true.)
+                        weight=W_LEAF_AREA, mean=.true.)
       call add_variable(reg, 'root_uptake_site', 'site root water uptake', 'kg/m2/s',            &
                         DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_C_DIAG0 + CO_ROOT_UPTAKE, &
-                        w=W_NPLANT)
+                        weight=W_NPLANT)
       call add_variable(reg, 'transp_leaf_site', 'leaf-area-weighted canopy transpiration', 'mol/m2 leaf/s', &
                         DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_C_DIAG0 + CO_TRANSP,   &
-                        w=W_LEAF_AREA, mn=.true.)
+                        weight=W_LEAF_AREA, mean=.true.)
    end subroutine register_ecophys
 
    !=======================================================================================!
@@ -592,30 +592,30 @@ contains
    subroutine register_allocation(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'npp_leaf_site', 'NPP allocated to leaf', 'kgC/m2/yr',              &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_LEAF, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_LEAF, weight=W_NPLANT)
       call add_variable(reg, 'npp_fineroot_site', 'NPP allocated to fine root', 'kgC/m2/yr',     &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_FINEROOT, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_FINEROOT, weight=W_NPLANT)
       call add_variable(reg, 'npp_wood_site', 'NPP allocated to wood', 'kgC/m2/yr',              &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_WOOD, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_WOOD, weight=W_NPLANT)
       call add_variable(reg, 'npp_storage_site', 'NPP to non-structural storage', 'kgC/m2/yr',   &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_STORAGE, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_STORAGE, weight=W_NPLANT)
       call add_variable(reg, 'npp_repro_site', 'NPP allocated to reproduction', 'kgC/m2/yr',     &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_REPRO, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_REPRO, weight=W_NPLANT)
       call add_variable(reg, 'growth_resp_site', 'growth respiration', 'kgC/m2/yr',              &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_GROWTH_RESP, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_GROWTH_RESP, weight=W_NPLANT)
       call add_variable(reg, 'storage_resp_site', 'storage maintenance respiration', 'kgC/m2/yr', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_STORAGE_RESP, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_STORAGE_RESP, weight=W_NPLANT)
       call add_variable(reg, 'root_exudate_site', 'root exudate: carbon the growth sink could not use', 'kgC/m2/yr', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_EXUDATE, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_EXUDATE, weight=W_NPLANT)
       !----- Site-level demographic RATES: the three terms that MAKE the AGB trajectory, so a      !
       !      reader can check d(agb)/dt against growth - mortality directly from the file.  -------!
       call add_variable(reg, 'agb_growth_site', 'site AGB growth rate', 'kgC/m2/yr',             &
-                        DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_DAGB_DT, w=W_NPLANT)
+                        DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_DAGB_DT, weight=W_NPLANT)
       call add_variable(reg, 'agb_mort_site', 'site AGB mortality loss rate', 'kgC/m2/yr',       &
-                        DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_MORT_RATE, w=W_AGB)
+                        DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_MORT_RATE, weight=W_AGB)
       call add_variable(reg, 'mort_rate_site', 'nplant-weighted mortality rate', '1/yr',         &
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_MORT_RATE, &
-                        w=W_NPLANT, mn=.true.)
+                        weight=W_NPLANT, mean=.true.)
       !----- Litterfall: the vegetation -> soil carbon seam, from the SAME accumulator the        !
       !      biogeochemistry consumes, by the tissue the carbon came from. Leaf + fine root          !
       !      + wood + fruit/seed + root_exudate_site is the carbon turnover and background mortality !
@@ -658,9 +658,9 @@ contains
       call add_variable(reg, 'litter_leaf_patch', 'patch leaf litterfall carbon', 'kgC/m2/yr',   &
                         DIM_PATCH, AGG_TMEAN, GRP_BIOGEOCHEM, MON, FLD_P_DIAG0 + PA_LITTER_LEAF)
       call add_variable(reg, 'agb_growth_pft', 'AGB growth rate by PFT', 'kgC/m2/yr',            &
-                        DIM_PFT, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_DAGB_DT, w=W_NPLANT)
+                        DIM_PFT, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_DAGB_DT, weight=W_NPLANT)
       call add_variable(reg, 'agb_mort_pft', 'AGB mortality loss rate by PFT', 'kgC/m2/yr',      &
-                        DIM_PFT, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_MORT_RATE, w=W_AGB)
+                        DIM_PFT, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_DIAG0 + CO_MORT_RATE, weight=W_AGB)
    end subroutine register_allocation
 
    !=======================================================================================!
@@ -954,36 +954,36 @@ contains
 
    !----- Append one descriptor (the single "add a variable" registry edit).                   !
    !                                                                                          !
-   !      w / mn / sc are the AGGREGATION contract (see var_desc_t): the per-cohort weight kind, !
+   !      weight / mean / scale are the AGGREGATION contract (see var_desc_t): the per-cohort weight kind, !
    !      whether the reduction is a weighted MEAN (intensive) or a weighted SUM (extensive), and  !
    !      any unit conversion. Defaults (W_NONE, sum, 1.0) are right for a raw slab, which is why  !
    !      the cohort/patch rows above mostly omit them.                                            !
-   subroutine add_variable(reg, nm, ln, un, dm, ag, gr, st, src, xt, w, mn, sc)
+   subroutine add_variable(reg, name, long_name, units, dim, agg, group, streams, source, xtype, weight, mean, scale)
       type(output_registry_t), intent(inout) :: reg
-      character(len=*),        intent(in)    :: nm, ln, un
-      integer(ik),             intent(in)    :: dm, ag, gr, st, src
-      integer(ik), optional,   intent(in)    :: xt, w
-      logical,     optional,   intent(in)    :: mn
-      real(wp),    optional,   intent(in)    :: sc
+      character(len=*),        intent(in)    :: name, long_name, units
+      integer(ik),             intent(in)    :: dim, agg, group, streams, source
+      integer(ik), optional,   intent(in)    :: xtype, weight
+      logical,     optional,   intent(in)    :: mean
+      real(wp),    optional,   intent(in)    :: scale
       integer(ik) :: k
       if (reg%nvar >= MAX_OUTPUT_VARS) error stop 'meds_output_registry: MAX_OUTPUT_VARS exceeded'
-      if (find_var_index(reg, nm) > 0_ik)                                                        &
-         error stop 'meds_output_registry: duplicate variable name ('//trim(nm)//')'
+      if (find_var_index(reg, name) > 0_ik)                                                      &
+         error stop 'meds_output_registry: duplicate variable name ('//trim(name)//')'
       reg%nvar = reg%nvar + 1_ik ; k = reg%nvar
-      reg%var(k)%name            = nm
-      reg%var(k)%long_name       = ln
-      reg%var(k)%units           = un
-      reg%var(k)%dim             = dm
-      reg%var(k)%agg             = ag
-      reg%var(k)%group           = gr
-      reg%var(k)%streams         = st
-      reg%var(k)%streams_default = st
+      reg%var(k)%name            = name
+      reg%var(k)%long_name       = long_name
+      reg%var(k)%units           = units
+      reg%var(k)%dim             = dim
+      reg%var(k)%agg             = agg
+      reg%var(k)%group           = group
+      reg%var(k)%streams         = streams
+      reg%var(k)%streams_default = streams
       reg%var(k)%enabled         = .true.
-      reg%var(k)%source_id       = src
-      reg%var(k)%xtype           = XTYPE_DOUBLE ; if (present(xt)) reg%var(k)%xtype = xt
-      reg%var(k)%weight          = W_NONE       ; if (present(w))  reg%var(k)%weight = w
-      reg%var(k)%mean            = .false.      ; if (present(mn)) reg%var(k)%mean   = mn
-      reg%var(k)%scale           = 1.0_wp       ; if (present(sc)) reg%var(k)%scale  = sc
+      reg%var(k)%source_id       = source
+      reg%var(k)%xtype           = XTYPE_DOUBLE ; if (present(xtype))  reg%var(k)%xtype  = xtype
+      reg%var(k)%weight          = W_NONE       ; if (present(weight)) reg%var(k)%weight = weight
+      reg%var(k)%mean            = .false.      ; if (present(mean))   reg%var(k)%mean   = mean
+      reg%var(k)%scale           = 1.0_wp       ; if (present(scale))  reg%var(k)%scale  = scale
    end subroutine add_variable
 
    !----- Axis index (1..N_AXIS) of a DIM_* code, for the [output].axes_* toggles. DIM_SCALAR   !
@@ -1155,10 +1155,10 @@ contains
    !=======================================================================================!
    !  Build a file set's REGISTRY + config (netCDF-free; NO buffers yet). Split from           !
    !  allocation so a caller can apply meds_io_config.toml per-variable overrides to files%reg    !
-   !  (which change which (var,tier) buffers are needed) BEFORE manager_finalize and             !
-   !  manager_alloc_buffers.                                                                      !
+   !  (which change which (var,tier) buffers are needed) BEFORE finalize_output_files and             !
+   !  alloc_output_buffers.                                                                      !
    !=======================================================================================!
-   subroutine manager_setup(files, cfg)
+   subroutine setup_output_files(files, cfg)
       type(output_files_t),   intent(out) :: files
       type(meds_config_t),    intent(in)  :: cfg
       integer(ik) :: ne
@@ -1195,9 +1195,9 @@ contains
       !----- attach_output sets soil_ready on a polygon's buffers when its fast loop runs; until !
       !      then the psi/wetness diagnostics emit _FillValue. ----------------------------------!
       files%diag%soil_ready = .false.
-   end subroutine manager_setup
+   end subroutine setup_output_files
 
-   !----- Largest slab length any LIVE variable can produce (see manager_finalize). ------------!
+   !----- Largest slab length any LIVE variable can produce (see finalize_output_files). ------------!
    pure integer(ik) function live_max_slab(files) result(cap)
       type(output_files_t),   intent(in) :: files
       integer(ik) :: k
@@ -1238,9 +1238,9 @@ contains
       end do
    end subroutine check_dbh_edges
 
-   !----- Finish the file set once the registry is FINALIZED (after manager_setup and any          !
+   !----- Finish the file set once the registry is FINALIZED (after setup_output_files and any          !
    !      per-variable overrides): the per-tier stream handles and the slab size. -------------------!
-   subroutine manager_finalize(files)
+   subroutine finalize_output_files(files)
       type(output_files_t),  intent(inout) :: files
       integer(ik) :: t
       do t = 1_ik, N_FREQ
@@ -1252,14 +1252,14 @@ contains
       !      variables the pending records are the dominant memory term, and a run with            !
       !      axes_cohort = false (or the 2-D soil axis off, the default) should not pay for the     !
       !      axis it switched off. It is computed HERE, after every override: an [output].io_config  !
-      !      can switch on a slab variable that manager_setup left off, and a slab sized before     !
+      !      can switch on a slab variable that setup_output_files left off, and a slab sized before     !
       !      that is too short for it. ---------------------------------------------------------!
       files%max_slab = live_max_slab(files)
       !----- Whether the cohort and patch caps bind: only a live variable on that axis fills a slab of  !
       !      that size. ------------------------------------------------------------------------------!
       files%cohort_axis = live_axis(files, [DIM_COHORT])
       files%patch_axis  = live_axis(files, [DIM_PATCH, DIM_SOIL_PATCH])
-   end subroutine manager_finalize
+   end subroutine finalize_output_files
 
    !----- Does any live variable have one of these axes? ---------------------------------------!
    pure logical function live_axis(files, dims) result(yes)
@@ -1276,7 +1276,7 @@ contains
 
    !----- Allocate one polygon's buffers for a finalized file set: the integrator buffers of       !
    !      every live (variable, tier) pair and the per-tier scratch records. ------------------------!
-   subroutine manager_alloc_buffers(files, bufs)
+   subroutine alloc_output_buffers(files, bufs)
       type(output_files_t),  intent(in)  :: files
       type(output_buffers_t), intent(out) :: bufs
       integer(ik) :: t, k, nv, cap, bit
@@ -1297,27 +1297,27 @@ contains
          allocate(bufs%pending(t)%slab(files%max_slab, nv), bufs%pending(t)%slabvalid(files%max_slab, nv))
          bufs%pending(t)%used = .false.
       end do
-      bufs%fast_on = files%enabled .and. files%reg%nidx(1) > 0_ik
+      bufs%fast_on = files%enabled .and. files%reg%nidx(TIER_FAST) > 0_ik
       bufs%diag = files%diag
-   end subroutine manager_alloc_buffers
+   end subroutine alloc_output_buffers
 
    !----- Convenience: registry, stream handles and one polygon's buffers in one call (no       !
    !      overrides). ---------------------------------------------------------------------------!
-   subroutine manager_alloc(files, bufs, cfg)
+   subroutine alloc_output_set(files, bufs, cfg)
       type(output_files_t),  intent(out) :: files
       type(output_buffers_t), intent(out) :: bufs
       type(meds_config_t),   intent(in)  :: cfg
-      call manager_setup(files, cfg)
-      call manager_set_polygons(files, [0_ik], [1_ik], [0.0_wp], [0.0_wp], [0_ik], [0_ik], .false.)
-      call manager_finalize(files)
-      call manager_alloc_buffers(files, bufs)
-   end subroutine manager_alloc
+      call setup_output_files(files, cfg)
+      call set_output_polygons(files, [0_ik], [1_ik], [0.0_wp], [0.0_wp], [0_ik], [0_ik], .false.)
+      call finalize_output_files(files)
+      call alloc_output_buffers(files, bufs)
+   end subroutine alloc_output_set
 
    !----- The file set's polygon and site axes: one row per polygon, its id, location, grid indices !
    !      and site count; the site axis is the largest polygon's. The rest of a row -- its sites'   !
    !      areas, terrain and soil columns -- is filled when the polygon attaches to the set         !
    !      (attach_output); a polygon's missing sites keep the fill value. --------------------------!
-   subroutine manager_set_polygons(files, polygon_id, n_site, lat, lon, row, col, with_chave_e)
+   subroutine set_output_polygons(files, polygon_id, n_site, lat, lon, row, col, with_chave_e)
       type(output_files_t), intent(inout) :: files
       integer(ik),          intent(in)    :: polygon_id(:), n_site(:), row(:), col(:)
       real(wp),             intent(in)    :: lat(:), lon(:)
@@ -1341,7 +1341,7 @@ contains
       allocate(files%site_soil_z(n_soil_layer_max, ns, n), source=0.0_wp)
       allocate(files%site_soil_face(n_soil_layer_max + 1_ik, ns, n), source=0.0_wp)
       if (with_chave_e) allocate(files%polygon_chave_e(n), source=0.0_wp)
-   end subroutine manager_set_polygons
+   end subroutine set_output_polygons
 
    !----- Last: precompute, per tier, the list of live (enabled + in-tier) variable indices. -!
    subroutine build_freq_index(reg)
@@ -1366,7 +1366,7 @@ contains
    !  point in meds_diag_vars a no-op, and the fast loop never even asks the leaf kernel for         !
    !  the extra flux fields.                                                                         !
    !=======================================================================================!
-   subroutine activate_site_diag(files, poly)
+   subroutine activate_polygon_diag(files, poly)
       type(output_files_t),   intent(in)    :: files
       type(polygon_t),        intent(inout) :: poly
       logical     :: need_c, need_p, need_s, need_y, need_si
@@ -1400,7 +1400,7 @@ contains
       call alloc_patch_diag (poly%patch%diag,   max(poly%patch%cap,  1_ik), need_p)
       poly%diag%active = need_y                    ! the polygon block: fixed size, nothing to allocate
       call alloc_site_diag(poly%site%diag, poly%site%n, need_si)
-   end subroutine activate_site_diag
+   end subroutine activate_polygon_diag
 
    !=======================================================================================!
    !  Write a fully-commented meds_io_config.toml listing EVERY registered variable with its    !
@@ -1474,7 +1474,7 @@ contains
       integer(ik), intent(in) :: d
       character(len=10) :: s
       select case (d)
-      case (DIM_SCALAR)     ; s = 'site'
+      case (DIM_SCALAR)     ; s = 'polygon'
       case (DIM_COHORT)     ; s = 'cohort'
       case (DIM_PATCH)      ; s = 'patch'
       case (DIM_SOIL)       ; s = 'soil'

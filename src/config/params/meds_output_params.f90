@@ -13,6 +13,7 @@ module meds_output_params
 
    public :: output_config_t
    public :: FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE, N_FREQ
+   public :: TIER_FAST, TIER_DAILY, TIER_MONTHLY, TIER_ANNUAL
    public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_RADIATION, GRP_ECOPHYS,       &
              GRP_BIOGEOCHEM, GRP_NUMERICS, GRP_FORCING, N_GRP
    public :: AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH, N_AXIS
@@ -29,6 +30,8 @@ module meds_output_params
    integer(ik), parameter :: FREQ_MONTHLY = 4_ik
    integer(ik), parameter :: FREQ_ANNUAL  = 8_ik
    integer(ik), parameter :: N_FREQ       = 4_ik   !< number of temporal tiers (FAST/DAILY/MONTHLY/ANNUAL)
+   !----- Each tier's index into the per-tier arrays (bit FREQ_* = 2**(index - 1)). -----------!
+   integer(ik), parameter :: TIER_FAST = 1_ik, TIER_DAILY = 2_ik, TIER_MONTHLY = 3_ik, TIER_ANNUAL = 4_ik
 
    !----- Variable groups (docs/science/diagnostics.md §5). -------------------------------!
    integer(ik), parameter :: GRP_STRUCTURE = 1_ik  !< demography/size: nplant, dbh, agb, patch geometry, ids
@@ -85,7 +88,7 @@ module meds_output_params
       !----- Per-tier enable and file chunk, indexed FAST, DAILY, MONTHLY, ANNUAL. --------!
       logical            :: freq_on(N_FREQ)    = [.false., .true., .true., .true.]
       integer(ik)        :: file_chunk(N_FREQ) = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
-      !----- DBH class edges [cm]; empty here, manager_setup installs the default. --------!
+      !----- DBH class edges [cm]; empty here, setup_output_files installs the default. --------!
       integer(ik)        :: n_dbh_class = 0_ik
       real(wp)           :: dbh_class_edges(MAX_DBH_EDGE) = 0.0_wp
    end type output_config_t

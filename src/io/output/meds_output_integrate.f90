@@ -16,7 +16,7 @@
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
    use meds_time,           only : meds_time_t
-   use meds_output_params,      only : N_FREQ
+   use meds_output_params,      only : N_FREQ, TIER_FAST, TIER_DAILY, TIER_MONTHLY, TIER_ANNUAL
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,   &
                                    diag_setup_t, pending_record_t, record_queue_t,                 &
                                    slab_col,                                                     &
@@ -30,9 +30,9 @@ module meds_output_integrate
    use meds_constants,     only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness
    use meds_soil_hydr_lib,      only : soil_matric_potential
-   use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,             &
+   use meds_diagnostic_reduce,  only : reduce_cohort_to_polygon, reduce_cohort_to_patch,             &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,               &
-                                       reduce_patch_to_site, reduce_patch_columns_to_sites,       &
+                                       reduce_patch_to_polygon, reduce_patch_columns_to_sites,       &
                                        gather_patch_columns
    implicit none
    private
@@ -41,15 +41,15 @@ module meds_output_integrate
    public :: normalize_scalar, normalize_slab
    public :: extract_variable, extract_fast_scalar
    public :: output_integrate, output_integrate_fast, close_tier
-   public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_SITE, SRCK_FAST, SRCK_SITES
+   public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_POLYGON, SRCK_FAST, SRCK_SITE
    !----- Cohort FIELDS (1000-1999). ---------------------------------------------------------!
    public :: FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA
    public :: FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID
    public :: FLD_C_LAI, FLD_C_WAI, FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON
-   public :: FLD_C_STORAGE_CARBON, FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_ONE
-   public :: FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER, FLD_C_OVERTOP_LAI
+   public :: FLD_C_NONSTRUCTURAL_CARBON, FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_ONE
+   public :: FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER_RATE, FLD_C_OVERTOPPING_LAI
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
-   public :: FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED
+   public :: FLD_C_DMAX_PSI_LEAF, FLD_C_LEAF_FLUSH_TENDENCY, FLD_C_LEAF_SHED_TENDENCY
    public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_PY_DIAG0
    !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
@@ -60,11 +60,11 @@ module meds_output_integrate
    !----- Soil LAYER fields (3000-3999). -----------------------------------------------------!
    public :: FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ
    !----- Site-only scalars (4000-4999). -----------------------------------------------------!
-   public :: SRC_S_ET, SRC_S_N_COHORT, SRC_S_N_PATCH, SRC_S_CANOPY_HEIGHT
-   public :: SRC_S_RUNOFF, SRC_S_RUNOFF_SURF, SRC_S_DRAINAGE
-   public :: SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_WATER_NSUB,                              &
-             SRC_S_WORK_WATER_NEWTON, SRC_S_WORK_WATER_NFAIL, SRC_S_WORK_WATER_REJECT
-   public :: SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE
+   public :: SRC_PY_ET, SRC_PY_N_COHORT, SRC_PY_N_PATCH, SRC_PY_CANOPY_HEIGHT
+   public :: SRC_PY_RUNOFF, SRC_PY_RUNOFF_SURF, SRC_PY_DRAINAGE
+   public :: SRC_PY_WORK_STEPS, SRC_PY_WORK_REJ, SRC_PY_WORK_WATER_NSUB,                              &
+             SRC_PY_WORK_WATER_NEWTON, SRC_PY_WORK_WATER_NFAIL, SRC_PY_WORK_WATER_REJECT
+   public :: SRC_PY_WORK_RK45_RESCUE, SRC_PY_WORK_CLAMP_STAGE
    !----- FAST-tier instantaneous sources (5000-5999): resolved against the fast loop's staging.  !
    public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0
@@ -87,9 +87,9 @@ module meds_output_integrate
    integer(ik), parameter :: SRCK_COHORT = 1_ik   !< 1000-1999 : per-cohort field
    integer(ik), parameter :: SRCK_PATCH  = 2_ik   !< 2000-2999 : per-patch field
    integer(ik), parameter :: SRCK_LAYER  = 3_ik   !< 3000-3999 : per-soil-layer field (per patch)
-   integer(ik), parameter :: SRCK_SITE   = 4_ik   !< 4000-4999 : site-only scalar (no reduction)
+   integer(ik), parameter :: SRCK_POLYGON   = 4_ik   !< 4000-4999 : site-only scalar (no reduction)
    integer(ik), parameter :: SRCK_FAST   = 5_ik   !< 5000-5999 : FAST-tier staged sample
-   integer(ik), parameter :: SRCK_SITES  = 6_ik   !< 6000-6999 : one value per site of the polygon
+   integer(ik), parameter :: SRCK_SITE  = 6_ik   !< 6000-6999 : one value per site of the polygon
 
    !----- Cohort FIELDS (SRCK_COHORT). Raw SoA columns first, then derived ones. --------------!
    integer(ik), parameter :: FLD_C_NPLANT          = 1001_ik
@@ -105,19 +105,19 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_LEAF_CARBON     = 1011_ik
    integer(ik), parameter :: FLD_C_FINEROOT_CARBON = 1012_ik
    integer(ik), parameter :: FLD_C_WOOD_CARBON     = 1013_ik
-   integer(ik), parameter :: FLD_C_STORAGE_CARBON  = 1014_ik
+   integer(ik), parameter :: FLD_C_NONSTRUCTURAL_CARBON  = 1014_ik
    integer(ik), parameter :: FLD_C_SLA             = 1015_ik
    integer(ik), parameter :: FLD_C_VCMAX25         = 1016_ik
    integer(ik), parameter :: FLD_C_RD25            = 1017_ik
-   integer(ik), parameter :: FLD_C_LEAF_TURNOVER   = 1018_ik
-   integer(ik), parameter :: FLD_C_OVERTOP_LAI     = 1019_ik
+   integer(ik), parameter :: FLD_C_LEAF_TURNOVER_RATE   = 1018_ik
+   integer(ik), parameter :: FLD_C_OVERTOPPING_LAI     = 1019_ik
    integer(ik), parameter :: FLD_C_GPP_ACCUM       = 1020_ik
    integer(ik), parameter :: FLD_C_LEAF_RESP       = 1021_ik
    integer(ik), parameter :: FLD_C_STEM_RESP       = 1022_ik
    integer(ik), parameter :: FLD_C_ROOT_RESP       = 1023_ik
    integer(ik), parameter :: FLD_C_DMAX_PSI_LEAF   = 1024_ik
-   integer(ik), parameter :: FLD_C_PHENO_FLUSH     = 1025_ik
-   integer(ik), parameter :: FLD_C_PHENO_SHED      = 1026_ik
+   integer(ik), parameter :: FLD_C_LEAF_FLUSH_TENDENCY     = 1025_ik
+   integer(ik), parameter :: FLD_C_LEAF_SHED_TENDENCY      = 1026_ik
    !----- Leaf and wood temperature are not read here at the output tick: one sample per window,  !
    !      at the boundary's local hour, biases them. Their time means are rows of the             !
    !      cohort block (FLD_C_DIAG0 + CO_LEAF_TEMP, CO_WOOD_TEMP), sampled every sub-step. ------!
@@ -137,7 +137,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_DIAG0           = 2100_ik
    !----- POLYGON diagnostics (4100+, a site-scalar family), read from poly%diag (PY_* + FLD_PY_DIAG0). !
    integer(ik), parameter :: FLD_PY_DIAG0          = 4100_ik
-   !----- Per-site fields (6000+, SRCK_SITES): the growth temperature, and the site block's        !
+   !----- Per-site fields (6000+, SRCK_SITE): the growth temperature, and the site block's        !
    !      forcing rows (SI_* + FLD_SI_DIAG0). -----------------------------------------------------!
    integer(ik), parameter :: FLD_SI_GROWTH_TEMP    = 6001_ik
    integer(ik), parameter :: FLD_SI_DIAG0          = 6100_ik
@@ -174,22 +174,22 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_L_SOIL_WETNESS = 3004_ik
    integer(ik), parameter :: FLD_L_SOIL_FLIQ    = 3005_ik
 
-   !----- Site-only scalars (SRCK_SITE): no reduction -- these ARE site quantities already. ----!
-   integer(ik), parameter :: SRC_S_ET               = 4001_ik !< [kg/m2] slow-step ET accumulator
-   integer(ik), parameter :: SRC_S_N_COHORT         = 4002_ik
-   integer(ik), parameter :: SRC_S_N_PATCH          = 4003_ik
-   integer(ik), parameter :: SRC_S_CANOPY_HEIGHT    = 4004_ik !< [m] tallest live cohort
-   integer(ik), parameter :: SRC_S_RUNOFF           = 4005_ik !< [kg/m2] surface runoff + drainage
-   integer(ik), parameter :: SRC_S_RUNOFF_SURF      = 4006_ik !< [kg/m2] the pond's spill
-   integer(ik), parameter :: SRC_S_DRAINAGE         = 4007_ik !< [kg/m2] the column's bottom flux
-   integer(ik), parameter :: SRC_S_WORK_STEPS       = 4030_ik
-   integer(ik), parameter :: SRC_S_WORK_REJ         = 4031_ik
-   integer(ik), parameter :: SRC_S_WORK_WATER_NSUB   = 4032_ik
-   integer(ik), parameter :: SRC_S_WORK_WATER_NEWTON = 4033_ik
-   integer(ik), parameter :: SRC_S_WORK_WATER_NFAIL  = 4034_ik
-   integer(ik), parameter :: SRC_S_WORK_RK45_RESCUE = 4035_ik
-   integer(ik), parameter :: SRC_S_WORK_CLAMP_STAGE = 4036_ik
-   integer(ik), parameter :: SRC_S_WORK_WATER_REJECT = 4040_ik
+   !----- Site-only scalars (SRCK_POLYGON): no reduction -- these ARE site quantities already. ----!
+   integer(ik), parameter :: SRC_PY_ET               = 4001_ik !< [kg/m2] slow-step ET accumulator
+   integer(ik), parameter :: SRC_PY_N_COHORT         = 4002_ik
+   integer(ik), parameter :: SRC_PY_N_PATCH          = 4003_ik
+   integer(ik), parameter :: SRC_PY_CANOPY_HEIGHT    = 4004_ik !< [m] tallest live cohort
+   integer(ik), parameter :: SRC_PY_RUNOFF           = 4005_ik !< [kg/m2] surface runoff + drainage
+   integer(ik), parameter :: SRC_PY_RUNOFF_SURF      = 4006_ik !< [kg/m2] the pond's spill
+   integer(ik), parameter :: SRC_PY_DRAINAGE         = 4007_ik !< [kg/m2] the column's bottom flux
+   integer(ik), parameter :: SRC_PY_WORK_STEPS       = 4030_ik
+   integer(ik), parameter :: SRC_PY_WORK_REJ         = 4031_ik
+   integer(ik), parameter :: SRC_PY_WORK_WATER_NSUB   = 4032_ik
+   integer(ik), parameter :: SRC_PY_WORK_WATER_NEWTON = 4033_ik
+   integer(ik), parameter :: SRC_PY_WORK_WATER_NFAIL  = 4034_ik
+   integer(ik), parameter :: SRC_PY_WORK_RK45_RESCUE = 4035_ik
+   integer(ik), parameter :: SRC_PY_WORK_CLAMP_STAGE = 4036_ik
+   integer(ik), parameter :: SRC_PY_WORK_WATER_REJECT = 4040_ik
 
    !----- FAST-tier staged sources (SRCK_FAST): read from the fast loop's staging, never from      !
    !      site state (which at replay time is the end-of-slow-step snapshot). Two are rows of the   !
@@ -203,7 +203,7 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_COH_GPP       = 5021_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_HEIGHT    = 5022_ik  !< DIM_COHORT
    !----- The per-cohort diagnostic block's rows at the FAST tier, SRC_F_CO0 + CO_*, DIM_COHORT: the  !
-   !      fast loop stages every row of every sub-step when the block is on (fast_coh_cdiag). -----!
+   !      fast loop stages every row of every sub-step when the block is on (fast_cohort_diag). -----!
    integer(ik), parameter :: SRC_F_CO0           = 5300_ik
 
 contains
@@ -402,10 +402,10 @@ contains
       if      (src >= 1000_ik .and. src < 2000_ik) then ; k = SRCK_COHORT
       else if (src >= 2000_ik .and. src < 3000_ik) then ; k = SRCK_PATCH
       else if (src >= 3000_ik .and. src < 4000_ik) then ; k = SRCK_LAYER
-      else if (src >= 4000_ik .and. src < 5000_ik) then ; k = SRCK_SITE
+      else if (src >= 4000_ik .and. src < 5000_ik) then ; k = SRCK_POLYGON
       else if (src >= 5000_ik .and. src < 6000_ik) then ; k = SRCK_FAST
       else if (src >= 6000_ik .and. src < 7000_ik) then
-         k = SRCK_SITES
+         k = SRCK_SITE
       else                                              ; k = SRCK_NONE
       end if
    end function src_class
@@ -437,19 +437,19 @@ contains
       case (FLD_C_LEAF_CARBON)     ; x(1:n) = poly%cohort%leaf_carbon(1:n)
       case (FLD_C_FINEROOT_CARBON) ; x(1:n) = poly%cohort%fineroot_carbon(1:n)
       case (FLD_C_WOOD_CARBON)     ; x(1:n) = poly%cohort%wood_carbon(1:n)
-      case (FLD_C_STORAGE_CARBON)  ; x(1:n) = poly%cohort%nonstructural_carbon(1:n)
+      case (FLD_C_NONSTRUCTURAL_CARBON)  ; x(1:n) = poly%cohort%nonstructural_carbon(1:n)
       case (FLD_C_SLA)             ; x(1:n) = poly%cohort%sla(1:n)
       case (FLD_C_VCMAX25)         ; x(1:n) = poly%cohort%vcmax25(1:n)
       case (FLD_C_RD25)            ; x(1:n) = poly%cohort%rd25(1:n)
-      case (FLD_C_LEAF_TURNOVER)   ; x(1:n) = poly%cohort%leaf_turnover_rate(1:n)
-      case (FLD_C_OVERTOP_LAI)     ; x(1:n) = poly%cohort%overtopping_lai(1:n)
+      case (FLD_C_LEAF_TURNOVER_RATE)   ; x(1:n) = poly%cohort%leaf_turnover_rate(1:n)
+      case (FLD_C_OVERTOPPING_LAI)     ; x(1:n) = poly%cohort%overtopping_lai(1:n)
       case (FLD_C_GPP_ACCUM)       ; x(1:n) = poly%cohort%gpp_accum(1:n)
       case (FLD_C_LEAF_RESP)       ; x(1:n) = poly%cohort%leaf_resp_accum(1:n)
       case (FLD_C_STEM_RESP)       ; x(1:n) = poly%cohort%stem_resp_accum(1:n)
       case (FLD_C_ROOT_RESP)       ; x(1:n) = poly%cohort%root_resp_accum(1:n)
       case (FLD_C_DMAX_PSI_LEAF)   ; x(1:n) = poly%cohort%dmax_psi_leaf(1:n)
-      case (FLD_C_PHENO_FLUSH)     ; x(1:n) = poly%cohort%leaf_flush_tendency(1:n)
-      case (FLD_C_PHENO_SHED)      ; x(1:n) = poly%cohort%leaf_shed_tendency(1:n)
+      case (FLD_C_LEAF_FLUSH_TENDENCY)     ; x(1:n) = poly%cohort%leaf_flush_tendency(1:n)
+      case (FLD_C_LEAF_SHED_TENDENCY)      ; x(1:n) = poly%cohort%leaf_shed_tendency(1:n)
       !----- derived ------------------------------------------------------------------------!
       case (FLD_C_ONE)             ; x(1:n) = 1.0_wp
       case (FLD_C_LAI)             ; x(1:n) = cohort_lai(poly%cohort%nplant(1:n),               &
@@ -539,7 +539,7 @@ contains
 
    !----- Per-(soil layer, patch) field. `col` is (n_soil_layer_max, n_patch), each patch's   !
    !      column filled on its site's ACTIVE layers. psi/wetness take the site's retention    !
-   !      curve, and emit MISSING when the fast loop does not run (dp%soil_ready = .false.):  !
+   !      curve, and emit MISSING when the fast loop does not run (setup%soil_ready = .false.):  !
    !      a soil water nothing moves has no potential worth reporting.                        !
    !                                                                                          !
    !      Only the active layers are data. The reducers mark only those slots valid,          !
@@ -547,9 +547,9 @@ contains
    !      there: a 10-layer column read over 20 slots would average ten zeros into it, and    !
    !      soil_matric_potential on padding whose theta_sat is 0 divides by zero -- a Debug    !
    !      build (-fpe0) aborts, a Release build writes NaN. ----------------------------------!
-   pure subroutine layer_source_field(poly, dp, src, col, ok)
+   pure subroutine layer_source_field(poly, setup, src, col, ok)
       type(polygon_t),     intent(in)  :: poly
-      type(diag_setup_t),  intent(in)  :: dp
+      type(diag_setup_t),  intent(in)  :: setup
       integer(ik),         intent(in)  :: src
       real(wp),            intent(out) :: col(:,:)
       logical,             intent(out) :: ok
@@ -557,7 +557,7 @@ contains
       np = poly%patch%n
       ok = np > 0_ik
       if (.not. ok) return
-      if ((src == FLD_L_SOIL_PSI .or. src == FLD_L_SOIL_WETNESS) .and. .not. dp%soil_ready) then
+      if ((src == FLD_L_SOIL_PSI .or. src == FLD_L_SOIL_WETNESS) .and. .not. setup%soil_ready) then
          ok = .false.
          return
       end if
@@ -619,9 +619,9 @@ contains
    !  The nvfortran CSE caveat of the Extract block above applies here too: do NOT extract twice    !
    !  across an inline component store.                                                            !
    !=======================================================================================!
-   subroutine extract_variable(poly, dp, v, scalar_out, slab_out, valid_out, n_out)
+   subroutine extract_variable(poly, setup, v, scalar_out, slab_out, valid_out, n_out)
       type(polygon_t),     intent(in)  :: poly
-      type(diag_setup_t),  intent(in)  :: dp
+      type(diag_setup_t),  intent(in)  :: setup
       type(var_desc_t),    intent(in)  :: v
       real(wp),            intent(out) :: scalar_out
       real(wp),            intent(out) :: slab_out(:)
@@ -661,18 +661,18 @@ contains
       !----- PFT axis (run-time length; empty PFTs are a true 0 for sums, see the reducer). --!
       case (DIM_PFT)
          call cohort_source_field(poly, v%source_id, x, nf)
-         call reduce_cohort_to_pft(poly, x, v%weight, v%mean, dp%n_pft, slab_out, valid_out,   &
+         call reduce_cohort_to_pft(poly, x, v%weight, v%mean, setup%n_pft, slab_out, valid_out,   &
                                    n_out, scale=v%scale)
 
       !----- DBH size class (ED2-style: bin by the cohort's mean dbh, never split a cohort). -!
       case (DIM_SIZE)
          call cohort_source_field(poly, v%source_id, x, nf)
-         call reduce_cohort_to_size(poly, x, v%weight, v%mean, dp%dbh_edges, dp%n_dbh_class,   &
+         call reduce_cohort_to_size(poly, x, v%weight, v%mean, setup%dbh_edges, setup%n_dbh_class,   &
                                     slab_out, valid_out, n_out, scale=v%scale)
 
       !----- Each site's column, its patches area-weighted, at (is-1)*n_soil_layer_max + k. -!
       case (DIM_SOIL)
-         call layer_source_field(poly, dp, v%source_id, col, ok)
+         call layer_source_field(poly, setup, v%source_id, col, ok)
          if (ok) then
             call reduce_patch_columns_to_sites(poly, col, slab_out, valid_out, n_out)
          else
@@ -685,7 +685,7 @@ contains
 
       !----- 2-D (soil layer x patch), flattened at (ip-1)*n_soil_layer_max + k. -------------!
       case (DIM_SOIL_PATCH)
-         call layer_source_field(poly, dp, v%source_id, col, ok)
+         call layer_source_field(poly, setup, v%source_id, col, ok)
          if (ok) then
             call gather_patch_columns(poly, col, slab_out, valid_out, n_out)
          else
@@ -697,10 +697,10 @@ contains
          select case (kcls)
          case (SRCK_COHORT)
             call cohort_source_field(poly, v%source_id, x, nf)
-            call reduce_cohort_to_site(poly, x, v%weight, v%mean, scalar_out, ok, scale=v%scale)
+            call reduce_cohort_to_polygon(poly, x, v%weight, v%mean, scalar_out, ok, scale=v%scale)
          case (SRCK_PATCH)
             call patch_source_field(poly, v%source_id, x, nf)
-            call reduce_patch_to_site(poly, x, v%mean, scalar_out, ok)
+            call reduce_patch_to_polygon(poly, x, v%mean, scalar_out, ok)
             scalar_out = scalar_out * v%scale
          case default
             scalar_out = extract_scalar_source(poly, v%source_id) ; ok = .true.
@@ -716,26 +716,26 @@ contains
       type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in) :: source_id
       select case (source_id)
-      case (SRC_S_ET)         ; val = poly%et_accum
-      case (SRC_S_RUNOFF)     ; val = poly%runoff_surf_accum + poly%drainage_accum
-      case (SRC_S_RUNOFF_SURF); val = poly%runoff_surf_accum
-      case (SRC_S_DRAINAGE)   ; val = poly%drainage_accum
-      case (SRC_S_N_COHORT)   ; val = real(poly%cohort%n, wp)
-      case (SRC_S_N_PATCH)    ; val = real(poly%patch%n, wp)
-      case (SRC_S_CANOPY_HEIGHT)
+      case (SRC_PY_ET)         ; val = poly%et_accum
+      case (SRC_PY_RUNOFF)     ; val = poly%runoff_surf_accum + poly%drainage_accum
+      case (SRC_PY_RUNOFF_SURF); val = poly%runoff_surf_accum
+      case (SRC_PY_DRAINAGE)   ; val = poly%drainage_accum
+      case (SRC_PY_N_COHORT)   ; val = real(poly%cohort%n, wp)
+      case (SRC_PY_N_PATCH)    ; val = real(poly%patch%n, wp)
+      case (SRC_PY_CANOPY_HEIGHT)
          if (poly%cohort%n > 0_ik) then
             val = maxval(poly%cohort%height(1:poly%cohort%n))
          else
             val = 0.0_wp
          end if
-      case (SRC_S_WORK_STEPS)        ; val = poly%work_integ_steps
-      case (SRC_S_WORK_REJ)          ; val = poly%work_integ_rej
-      case (SRC_S_WORK_WATER_NSUB)   ; val = poly%work_water_nsub
-      case (SRC_S_WORK_WATER_NEWTON) ; val = poly%work_water_newton
-      case (SRC_S_WORK_WATER_NFAIL)  ; val = poly%work_water_nfail
-      case (SRC_S_WORK_WATER_REJECT) ; val = poly%work_water_reject
-      case (SRC_S_WORK_RK45_RESCUE)  ; val = poly%work_rk45_rescue
-      case (SRC_S_WORK_CLAMP_STAGE)  ; val = poly%work_clamp_stage
+      case (SRC_PY_WORK_STEPS)        ; val = poly%work_integ_steps
+      case (SRC_PY_WORK_REJ)          ; val = poly%work_integ_rej
+      case (SRC_PY_WORK_WATER_NSUB)   ; val = poly%work_water_nsub
+      case (SRC_PY_WORK_WATER_NEWTON) ; val = poly%work_water_newton
+      case (SRC_PY_WORK_WATER_NFAIL)  ; val = poly%work_water_nfail
+      case (SRC_PY_WORK_WATER_REJECT) ; val = poly%work_water_reject
+      case (SRC_PY_WORK_RK45_RESCUE)  ; val = poly%work_rk45_rescue
+      case (SRC_PY_WORK_CLAMP_STAGE)  ; val = poly%work_clamp_stage
       case default
          if (source_id > FLD_PY_DIAG0 .and. source_id <= FLD_PY_DIAG0 + N_PY_ROWS) then
             val = MISSING_VALUE
@@ -779,7 +779,7 @@ contains
       !----- fold the step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately from the    !
       !      staged sub-step samples (output_integrate_fast), because sub-daily resolution exists !
       !      only inside the fast loop.                                                           !
-      do t = 2_ik, N_FREQ
+      do t = TIER_DAILY, N_FREQ
          if (files%reg%nidx(t) == 0_ik) cycle
          if (.not. bufs%has_data(t)) bufs%t_open(t) = prev
          do j = 1_ik, files%reg%nidx(t)
@@ -794,9 +794,9 @@ contains
          bufs%has_data(t) = .true.
       end do
       !----- then close the periods the step's end has left (tiers independent). ----------------!
-      if (is_new_year  .and. bufs%has_data(4_ik)) call close_tier(files, bufs, 4_ik)
-      if (is_new_month .and. bufs%has_data(3_ik)) call close_tier(files, bufs, 3_ik)
-      if (is_new_day   .and. bufs%has_data(2_ik)) call close_tier(files, bufs, 2_ik)
+      if (is_new_year  .and. bufs%has_data(TIER_ANNUAL))  call close_tier(files, bufs, TIER_ANNUAL)
+      if (is_new_month .and. bufs%has_data(TIER_MONTHLY)) call close_tier(files, bufs, TIER_MONTHLY)
+      if (is_new_day   .and. bufs%has_data(TIER_DAILY))   call close_tier(files, bufs, TIER_DAILY)
    end subroutine output_integrate
 
    !----- A live count past its output cap: say which, by how much, and what to raise. -----------!
@@ -943,7 +943,7 @@ contains
       real(wp),               intent(in)    :: dt
       integer(ik) :: j, k, src, np, nsp, nss
       if (.not. files%enabled) return
-      if (files%reg%nidx(1) == 0_ik) return
+      if (files%reg%nidx(TIER_FAST) == 0_ik) return
       !----- The staging follows the stand; the slabs are output.cohort_max and patch_max long. The  !
       !      same check as the coarse tiers' (output_integrate), before this tier writes into them. --!
       if (files%cohort_axis .and. bufs%fast_n_cohort > files%cohort_max)                           &
@@ -953,49 +953,49 @@ contains
       np  = bufs%fast_n_patch
       nsp = np * n_soil_layer_max
       nss = bufs%fast_n_site * n_soil_layer_max
-      if (.not. bufs%has_data(1)) bufs%t_open(1) = bufs%fast_time(isub)
-      do j = 1_ik, files%reg%nidx(1)
-         k   = files%reg%idx_freq(j, 1_ik)
+      if (.not. bufs%has_data(TIER_FAST)) bufs%t_open(TIER_FAST) = bufs%fast_time(isub)
+      do j = 1_ik, files%reg%nidx(TIER_FAST)
+         k   = files%reg%idx_freq(j, TIER_FAST)
          src = files%reg%var(k)%source_id
          select case (files%reg%var(k)%dim)
          case (DIM_SCALAR)
-            call integrate_scalar(bufs%buf(k,1), extract_fast_scalar(src, bufs%fast_site(:, isub),        &
+            call integrate_scalar(bufs%buf(k,TIER_FAST), extract_fast_scalar(src, bufs%fast_site(:, isub),        &
                                                                      bufs%fast_forcing(:, isub)), dt)
          case (DIM_PATCH)
-            call integrate_slab(bufs%buf(k,1), bufs%fast_patch(src - SRC_F_PA0, 1:np, isub), np, dt)
+            call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_patch(src - SRC_F_PA0, 1:np, isub), np, dt)
          case (DIM_SOIL)
             if (src == SRC_F_SOIL_WATER) then
-               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water(1:nss,isub), nss, dt,              &
+               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_soil_water(1:nss,isub), nss, dt,              &
                                    bufs%fast_soil_live(1:nss))
             else
-               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp(1:nss,isub), nss, dt,               &
+               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_soil_temp(1:nss,isub), nss, dt,               &
                                    bufs%fast_soil_live(1:nss))
             end if
          case (DIM_SOIL_PATCH)
             if (src == SRC_F_SOIL_WATER) then
-               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water_patch(1:nsp,isub), nsp, dt,        &
+               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_soil_water_patch(1:nsp,isub), nsp, dt,        &
                                    bufs%fast_soil_patch_live(1:nsp))
             else
-               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp_patch(1:nsp,isub), nsp, dt,         &
+               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_soil_temp_patch(1:nsp,isub), nsp, dt,         &
                                    bufs%fast_soil_patch_live(1:nsp))
             end if
          case (DIM_COHORT)
             select case (src)
             case (SRC_F_COH_GPP)
-               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_gpp(:,isub), bufs%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_cohort_gpp(:,isub), bufs%fast_n_cohort, dt)
             case (SRC_F_COH_HEIGHT)
-               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_height(:,isub), bufs%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_cohort_height(:,isub), bufs%fast_n_cohort, dt)
             case (SRC_F_COH_LEAF_TEMP)
-               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_ltemp(:,isub), bufs%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_cohort_leaf_temp(:,isub), bufs%fast_n_cohort, dt)
             case default   ! SRC_F_CO0 + CO_*: a row of the per-cohort diagnostic block
                !----- staged only while the block is on (a fast loop that ran); else it reads as missing
-               if (allocated(bufs%fast_coh_cdiag))                                                    &
-                  call integrate_slab(bufs%buf(k,1), bufs%fast_coh_cdiag(:, src - SRC_F_CO0, isub),   &
+               if (allocated(bufs%fast_cohort_diag))                                                    &
+                  call integrate_slab(bufs%buf(k,TIER_FAST), bufs%fast_cohort_diag(:, src - SRC_F_CO0, isub),   &
                                       bufs%fast_n_cohort, dt)
             end select
          end select
       end do
-      bufs%has_data(1) = .true.
+      bufs%has_data(TIER_FAST) = .true.
    end subroutine output_integrate_fast
 
 end module meds_output_integrate

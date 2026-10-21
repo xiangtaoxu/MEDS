@@ -3,7 +3,7 @@
 ! meds_output_manager -- the serializer-side glue: drain queued records into the file set's       !
 ! streams (output_serialize, called only from the run's I/O phase), and close them at run end      !
 ! (flushing any final partial period). netCDF via meds_output_stream. The netCDF-free half of the  !
-! manager -- allocation (manager_setup / manager_finalize / manager_alloc_buffers in               !
+! manager -- allocation (setup_output_files / finalize_output_files / alloc_output_buffers in               !
 ! meds_output_registry) and the per-step tick (output_integrate in meds_output_integrate) -- is    !
 ! deliberately in meds_io_prep, so the stepper stays off netCDF (docs/science/diagnostics.md §1).   !
 !==========================================================================================!

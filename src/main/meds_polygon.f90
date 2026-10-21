@@ -42,10 +42,11 @@ module meds_polygon
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
    use meds_output_types,           only : output_files_t, output_buffers_t, MISSING_VALUE
+   use meds_output_params,          only : TIER_FAST
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
-   use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
-                                           manager_set_polygons,                                  &
-                                           activate_site_diag, apply_variable_override,          &
+   use meds_output_registry,        only : setup_output_files, finalize_output_files, alloc_output_buffers, &
+                                           set_output_polygons,                                  &
+                                           activate_polygon_diag, apply_variable_override,          &
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
    use meds_constants,              only : n_soil_layer_max
@@ -330,7 +331,7 @@ contains
                call output_integrate_fast(files, bufs, isub, cfg%dt_fast)
                run%fast_step_total = run%fast_step_total + 1_ik
                if (mod(run%fast_step_total, max(files%fast_interval_steps, 1_ik)) == 0_ik)          &
-                  call close_tier(files, bufs, 1_ik)
+                  call close_tier(files, bufs, TIER_FAST)
             end do
             bufs%fast_ready = .false.
          end if
@@ -497,12 +498,12 @@ contains
       type(met_cells_t),    intent(in)    :: cells          !< the run's cells, one per polygon ...
       integer(ik),          intent(in)    :: polygon_id(:)  !< ... their polygon ids ...
       integer(ik),          intent(in)    :: n_site(:)      !< ... and their site counts
-      call manager_setup(files, cfg)
+      call setup_output_files(files, cfg)
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
-      call manager_set_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
+      call set_output_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
                                 any(cfg%pft%allom(1:cfg%pft%n)%height_allometry == HEIGHT_CHAVE))
-      call manager_finalize(files)
+      call finalize_output_files(files)
    end subroutine open_output_files
 
    !----- A polygon's share of an output file set: its buffers, which read the soil diagnostics   !
@@ -516,9 +517,9 @@ contains
       type(polygon_t),        intent(inout) :: poly
       type(polygon_run_t),    intent(in)    :: run
       integer(ik) :: p, is
-      call manager_alloc_buffers(files, bufs)
+      call alloc_output_buffers(files, bufs)
       bufs%diag%soil_ready = cfg%fast_biophysics_on
-      call activate_site_diag(files, poly)
+      call activate_polygon_diag(files, poly)
       p = run%cell
       do is = 1_ik, poly%site%n
          associate (surf => poly%site%surface(is))
