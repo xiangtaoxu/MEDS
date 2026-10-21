@@ -350,8 +350,8 @@ This is the largest usability difference.
 | | MEDS | ED2 |
 |---|---|---|
 | Format | netCDF, written through the C library (no netCDF-Fortran dependency, so it builds under ifx and nvfortran) | HDF5 |
-| Statistics | Every variable's time **mean** over its record's period (`mean_<x>`) and its value at the period's end (`<x>`) | Means; `IQOUTPUT` adds a mean diurnal cycle |
-| Variable selection | **~450 variables, each selectable per timescale, by name or pattern** (`"*_co" = false`, `"mean_*_py" = "M Y"`): registry defaults, then the `io_config` lines, the most specific winning | A fixed schema per file type; the controls are the frequency flags (`IFOUTPUT`, `IDOUTPUT`, `IMOUTPUT`, `IQOUTPUT`, `IYOUTPUT`, `ITOUTPUT`, `IOOUTPUT`) and `IADD_{SITE,PATCH,COHORT}_MEANS` |
+| Statistics | Every variable's time **mean** over its record's period (`mean_<x>`), and a state's value at the period's end (`<x>`) | Means; `IQOUTPUT` adds a mean diurnal cycle |
+| Variable selection | **~370 variables, each selectable per timescale, by name or pattern** (`"*_co" = false`, `"mean_*_py" = "M Y"`): registry defaults, then the `io_config` lines, the most specific winning | A fixed schema per file type; the controls are the frequency flags (`IFOUTPUT`, `IDOUTPUT`, `IMOUTPUT`, `IQOUTPUT`, `IYOUTPUT`, `ITOUTPUT`, `IOOUTPUT`) and `IADD_{SITE,PATCH,COHORT}_MEANS` |
 | Timescales | Four tiers: sub-daily (F), daily (D), monthly (M), annual (Y), each independently enabled and chunked | Per-file-type frequencies plus `FRQFAST` / `FRQSTATE` |
 | Axes | scalar, cohort, patch, soil layer, **PFT**, **DBH size class**, and 2-D (patch × soil layer) | polygon / site / patch / cohort levels |
 | Aggregation | Declared as data on each variable — a weight (none / plant density / leaf area / basal area / AGB) and mean-vs-sum. One registry line emits a field's patch, site, PFT and size-class rollups | Hard-coded per variable |
