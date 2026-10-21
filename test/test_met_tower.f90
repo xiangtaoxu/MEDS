@@ -25,8 +25,8 @@ program test_met_tower
                                     LW_SYNTHESIZE
    use meds_radiation_lib,   only : SWPART_CLEARIDX, clearness_index
    use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
-   use meds_lapse_rate,      only : met_to_cas_top
-   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
+   use meds_met,             only : met_to_cas_top, met_open, met_cursor_init, met_advance, met_instant,          &
+                                    met_close
    use meds_met_share, only : MET_OK, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, MET_ERR_ATTR_MISMATCH
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double

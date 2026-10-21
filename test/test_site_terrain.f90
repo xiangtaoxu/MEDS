@@ -20,7 +20,7 @@ program test_site_terrain
    use meds_forcing_params,  only : forcing_config_t
    use meds_met_types,   only : met_forcing_t
    use meds_radiation_lib,   only : slope_beam_factor
-   use meds_lapse_rate,      only : met_at_site
+   use meds_met,             only : met_at_site
    implicit none
 
    real(wp), parameter :: LAT = 45.0_wp, LON = 0.0_wp, S0 = 1361.0_wp

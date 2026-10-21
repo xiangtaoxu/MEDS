@@ -50,8 +50,7 @@ module meds_fast_dynamics
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_met_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_radiation_lib,    only : slope_beam_factor
-   use meds_met,       only : met_advance, met_instant
-   use meds_lapse_rate,       only : met_to_cas_top, met_at_site
+   use meds_met,       only : met_advance, met_instant, met_to_cas_top, met_at_site
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
    use meds_cohort_state_vars, only : set_cohort_tissue_water, hold_cohort_tissue_temps, cohort_tissue_temps, &
                                       set_cohort_tissue_temps

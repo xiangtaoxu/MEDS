@@ -31,7 +31,7 @@ module meds_therm_lib
    public :: vapor_pressure_to_specific_humidity, specific_humidity_to_vapor_pressure, rh_to_specific_humidity
    public :: air_density, cas_temp_to_enthalpy, cas_enthalpy_to_temp, cas_molar_density
    !----- The air at another height. ------------------------------------------------------!
-   public :: lapse_air_temperature, lapse_pressure, lapse_specific_humidity
+   public :: lapse_air_temperature, lapse_pressure, lapse_specific_humidity, dry_adiabat_temperature
    !----- Plant tissue heat. --------------------------------------------------------------!
    public :: tissue_heat_capacity, tissue_dry_heat_capacity, tissue_temp_to_energy, tissue_energy_to_temp
    !----- Soil heat. ----------------------------------------------------------------------!
@@ -294,7 +294,8 @@ contains
 
    !=======================================================================================!
    !     The air at another height (docs/science/forcing.md §8): the temperature, pressure   !
-   !     and humidity a linear lapse gives a site dz above the air it is taken from.        !
+   !     and humidity a linear lapse gives a site dz above the air it is taken from, and   !
+   !     the temperature dz above along the dry adiabat.                                   !
    !=======================================================================================!
 
    !----- Linear environmental lapse of air temperature (docs/science/forcing.md eq.     !
@@ -329,6 +330,13 @@ contains
       rh     = e / sat_vapor_pressure(t_grid)
       q_site = rh_to_specific_humidity(rh, t_site, p_site)
    end function lapse_specific_humidity
+
+   !----- Air temperature dz above, along the dry adiabat: T - (g/cp) dz, which conserves    !
+   !      the potential temperature theta = T + (g/cp) z (docs/science/forcing.md eq. (15)). !
+   elemental real(wp) function dry_adiabat_temperature(t_k, dz) result(t_dz)
+      real(wp), intent(in) :: t_k, dz
+      t_dz = t_k - (grav / cp_air) * dz
+   end function dry_adiabat_temperature
 
    !=======================================================================================!
    !     Plant tissue heat (docs/science/vegetation_energy_dynamics.md eqs. (8)-(10)).     !
