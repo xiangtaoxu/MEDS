@@ -324,7 +324,7 @@ Use it when your forcing has no longwave, not in preference to one that does.
 Recycled met keeps its sub-daily phase over multi-decade runs: the recycle window is declared in
 config and validated at open, and `test_met_driver` checks recycle phase over 29 years.
 
-What the forcing code in `src/io/input/forcing` takes from ED2:
+What the forcing code in `src/io/met` takes from ED2:
 
 - **The sample a step reads** is ED2's `cgrid%metinput`, held in `met_forcing_t` and passed by the
   driver rather than kept as a global. A region's polygon keeps its cell's latitude and longitude, as
@@ -536,7 +536,7 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 | Phenology | `src/slow_dynamics/plant/meds_phenology.f90`; [`plant_phenology.md`](science/plant_phenology.md) | `phenology_driv.f90`, `phenology_aux.f90` |
 | Mortality / recruitment | `src/slow_dynamics/demography/meds_demography_rates.f90` | `mortality.f90`, `reproduction.f90` |
 | Disturbance | `src/slow_dynamics/demography/meds_demography_patch_fusefiss.f90` | `disturbance.f90`, `fire.f90`, `forestry.f90` |
-| Forcing | `src/io/input/forcing/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
+| Forcing | `src/io/met/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
 | Fusion / fission | `src/slow_dynamics/demography/meds_demography_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
 | Parameters | `src/config/` (TOML, all required); [`docs/configuration.md`](configuration.md) | `ed_params.f90`, the `*_coms` modules, `ED2IN` |
 | State | `src/state/meds_{cohort,patch,site}_state_vars.f90`, named after ED2's; MEDS has no global like `edgrid_g` | `memory/ed_state_vars.F90` |

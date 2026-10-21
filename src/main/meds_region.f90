@@ -35,20 +35,20 @@ module meds_region
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
    use meds_polygon_state_vars,     only : polygon_t, free_polygon
-   use meds_io,                     only : state_file_t, state_file_open, state_file_put, state_file_close, &
-                                           state_file_polygons, io_read_state, state_file_refusal
+   use meds_init_restart,                     only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
+                                           restart_file_polygons, read_restart_file, restart_file_refusal
    use meds_demography_update,      only : update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_vegetation_dynamics,    only : advance_plant_traits, reacclimate_plant_traits
    use meds_init,                   only : init_bare_ground, init_bare_sites, seed_bare_ground,       &
                                            init_from_census, restructure_census_stand
-   use meds_forcing_types,          only : met_source_t, met_cells_t
+   use meds_met_types,          only : met_source_t, met_cells_t
    use meds_forcing_params,         only : MET_PATH_LEN, MET_BACKEND_ED_ERA5LAND
-   use meds_met_driver,             only : met_open, met_close, met_prefetch, MET_OK
-   use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
+   use meds_met,             only : met_open, met_close, met_prefetch, MET_OK
+   use meds_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
                                            map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
    use meds_era5land_reader,        only : era5land_select_box, era5land_static_file, ERA_OK, ERA_ERR_NO_CELL
-   use meds_diagnostic_reduce,      only : print_summary, total_area, total_agb, total_lai
+   use meds_output_reduce,      only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
                                            open_output_files, attach_output, ensure_output_dir,   &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
@@ -181,12 +181,12 @@ contains
       !      site run wrote one before runs became regions. -----------------------------------------!
       allocate(slot(n), source=0_ik)
       if (cfg%init%init_mode == INIT_RESTART) then
-         msg = state_file_refusal(trim(cfg%init%restart_file), n)
+         msg = restart_file_refusal(trim(cfg%init%restart_file), n)
          if (len(msg) > 0) then
             write(*,'(4a)') ' init  : restart (mode 2): the state file ', trim(cfg%init%restart_file), ' ', msg
             return
          end if
-         call state_file_polygons(trim(cfg%init%restart_file), file_ids, found)
+         call restart_file_polygons(trim(cfg%init%restart_file), file_ids, found)
          if (found) then
             do p = 1_ik, n
                slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
@@ -240,10 +240,10 @@ contains
             select case (cfg%init%init_mode)
             case (INIT_RESTART)
                if (slot(p) > 0_ik) then
-                  call io_read_state(poly, pcfg, trim(cfg%init%restart_file), restart_time, found,      &
+                  call read_restart_file(poly, pcfg, trim(cfg%init%restart_file), restart_time, found,      &
                                      fast_found=fast_found, polygon=slot(p), site_cfg=site_cfg)
                else
-                  call io_read_state(poly, pcfg, trim(cfg%init%restart_file), restart_time, found,      &
+                  call read_restart_file(poly, pcfg, trim(cfg%init%restart_file), restart_time, found,      &
                                      fast_found=fast_found, site_cfg=site_cfg)
                end if
                if (.not. found) then
@@ -635,12 +635,12 @@ contains
       end associate
    end subroutine step_polygons
 
-   !----- The state file: every polygon's row, at the current date (meds_io). The cohort, patch and   !
+   !----- The state file: every polygon's row, at the current date (meds_init_restart). The cohort, patch and   !
    !      site axes are the largest polygon's. The polygons share the calendar, so they owe the same  !
    !      boundary restructuring. --------------------------------------------------------------------!
    subroutine region_write_state(reg)
       type(meds_region_t), intent(in) :: reg
-      type(state_file_t)       :: sf
+      type(restart_file_t)       :: sf
       integer(ik), allocatable :: ids(:)
       real(wp),    allocatable :: lat(:), lon(:)
       integer(ik)              :: p, n_cohort, n_patch, n_site
@@ -656,15 +656,15 @@ contains
          n_patch  = max(n_patch, reg%poly(p)%patch%n)
          n_site   = max(n_site, reg%poly(p)%site%n)
       end do
-      call state_file_open(sf, trim(reg%cfg%state%output_dir), trim(reg%cfg%state%output_prefix), reg%now, &
+      call restart_file_open(sf, trim(reg%cfg%state%output_dir), trim(reg%cfg%state%output_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
                            n_patch, n_site, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,              &
                            restructure_pending=reg%poly(1)%restructure_pending,                            &
                            restructure_new_year=reg%poly(1)%restructure_new_year)
       do p = 1_ik, size(reg%poly, kind=ik)
-         call state_file_put(sf, reg%poly(p), reg%now, p)
+         call restart_file_write(sf, reg%poly(p), reg%now, p)
       end do
-      call state_file_close(sf)
+      call restart_file_close(sf)
    end subroutine region_write_state
 
    !----- A year's summary: one polygon's stand every 5 years, or a line for the polygons' mean and  !

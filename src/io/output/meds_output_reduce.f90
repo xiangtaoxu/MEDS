@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_diagnostic_reduce -- stage [3] of the diagnostic output (docs/science/diagnostics.md  !
+! meds_output_reduce -- stage [3] of the diagnostic output (docs/science/diagnostics.md  !
 ! §1-§2): one weighted reduction of a per-cohort field to each patch, the polygon, each PFT  !
 ! or each DBH class, and of a per-patch field to the polygon or to each site's soil column.  !
 ! The weight kind and the sum or mean come from the variable's descriptor. An empty set is   !
@@ -8,7 +8,7 @@
 ! Also the polygon totals the driver and the C API read. Keep each sum(array-expression) as  !
 ! written: a loop may associate differently and move every reported total in its last bit.   !
 !==========================================================================================!
-module meds_diagnostic_reduce
+module meds_output_reduce
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, cm2_to_m2, n_soil_layer_max
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area, patch_polygon_areas
@@ -429,4 +429,4 @@ contains
          '  AGB=', total_agb(poly), '  Dmean=', mean_dbh(poly)
    end subroutine print_summary
 
-end module meds_diagnostic_reduce
+end module meds_output_reduce

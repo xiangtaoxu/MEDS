@@ -1,7 +1,7 @@
 ---
 paths:
   - "src/io/output/**"
-  - "src/io/meds_io.f90"
+  - "src/io/init/meds_init_restart.f90"
   - "src/io/meds_netcdf_c.f90"
   - "src/config/params/meds_output_params.f90"
   - "test/test_output_*.f90"

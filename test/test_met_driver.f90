@@ -20,7 +20,7 @@ program test_met_driver
                                     GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, CO2_SOURCE_FILE,      &
                                     HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,               &
                                     WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
-   use meds_forcing_types,   only : met_forcing_t, met_source_t, met_cursor_t
+   use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
    use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
@@ -30,7 +30,7 @@ program test_met_driver
                                     monthly_lapse_rate, lapse_specific_humidity, lapse_longwave,    &
                                     cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
    use meds_constants,       only : grav, cp_air
-   use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
+   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
                                    MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
                                    MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,       &
                                    MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH, MET_ERR_CO2_FILE,  &

@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_surface_maps -- every static per-cell map a run reads; no other module opens a map  !
+! meds_maps -- every static per-cell map a run reads; no other module opens a map  !
 ! (docs/configuration.md, Input maps). A map is on the forcing grid, so a cell's value     !
 ! sits at its own (row, col) and MEDS never regrids; a value the map does not hold reads   !
 ! as NaN. map_values_at_cells and map_layers_at_cells read one variable at a list of       !
@@ -8,13 +8,13 @@
 ! site_map_inputs build each polygon's soil column, bottom boundaries and Chave E from the !
 ! [maps] maps (docs/science/soil_biophysics.md §The column from the soil maps).            !
 !==========================================================================================!
-module meds_surface_maps
+module meds_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
    use iso_c_binding,         only : c_int, c_size_t, c_double
    use meds_kinds,            only : wp, ik
    use meds_netcdf_c,         only : nc_close, nc_get_att_double_f, nc_get_vara_double, nc_inq_dimlen_f,          &
                                      nc_inq_varid_f, nc_open_f, NC_NOERR, NC_NOWRITE
-   use meds_forcing_types,    only : met_cells_t
+   use meds_met_types,    only : met_cells_t
    use meds_era5land_reader,  only : era5land_same_grid, era5land_keep_cells, era5land_select_site,   &
                                      era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
    use meds_config,           only : meds_config_t, soil_column_layers, soil_column_params
@@ -499,4 +499,4 @@ contains
 
    end subroutine read_cells
 
-end module meds_surface_maps
+end module meds_maps

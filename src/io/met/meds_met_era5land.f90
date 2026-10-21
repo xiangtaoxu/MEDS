@@ -1,19 +1,19 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_archive_source -- the ED_ERA5land archive source (docs/science/forcing.md §1-§2):   !
+! meds_met_era5land -- the ED_ERA5land archive source (docs/science/forcing.md §1-§2):   !
 ! monthly files of hourly ERA5-Land fields over a grid of cells, laid end to end as one         !
-! hourly axis over the months a run needs. It opens the archive (archive_source_open), loads   !
-! a month before the step that reads it (archive_prefetch), and hands the shared ingest one    !
-! record's values as stored (archive_source_record). File I/O is meds_era5land_reader's.      !
+! hourly axis over the months a run needs. It opens the archive (era5land_open), loads   !
+! a month before the step that reads it (era5land_prefetch), and hands the shared ingest one    !
+! record's values as stored (era5land_record). File I/O is meds_era5land_reader's.      !
 !==========================================================================================!
-module meds_met_archive_source
+module meds_met_era5land
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
    use meds_constants, only : day_sec
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, seconds_into_day,    &
                          time_to_string
    use meds_forcing_params, only : MET_PATH_LEN, ARCHIVE_DT_SEC, SWPART_PASSTHROUGH
-   use meds_forcing_types, only : met_record_t, met_source_t, met_cursor_t, met_cells_t,          &
+   use meds_met_types, only : met_record_t, met_source_t, met_cursor_t, met_cells_t,          &
                                   HUMIDITY_TDEW
    use meds_era5land_reader, only : era5land_path, era5land_default_template,                     &
                                     era5land_static_file, era5land_select_site,                   &
@@ -22,13 +22,13 @@ module meds_met_archive_source
                                     ERA_SWDOWN, ERA_LWDOWN, ERA_VAR_NAME, ERA_EPOCH, ERA_OK,      &
                                     ERA_ERR_OPEN, ERA_ERR_NO_CELL
    use meds_netcdf_c, only : nc_open_f, nc_close, NC_NOERR, NC_NOWRITE
-   use meds_met_source_common, only : MET_OK, MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE,             &
+   use meds_met_share, only : MET_OK, MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE,             &
                                       REC_MATCH_TOL, validate_recycle_window, file_lookup_sec,    &
                                       first_record_after, validate_file_against_config
    implicit none
    private
 
-   public :: archive_source_open, archive_prefetch, archive_source_record
+   public :: era5land_open, era5land_prefetch, era5land_record
 
 contains
 
@@ -38,7 +38,7 @@ contains
    !  with the window's first day kept for the recycle seam. A rejection returns its status   !
    !  and the reason; the caller closes the source.                                           !
    !=======================================================================================!
-   subroutine archive_source_open(src, stat, why, run_start, run_end, cells)
+   subroutine era5land_open(src, stat, why, run_start, run_end, cells)
       type(met_source_t),          intent(inout) :: src
       integer(ik),                 intent(out)   :: stat
       character(len=*),            intent(out)   :: why          !< what stops the run when stat /= MET_OK
@@ -54,7 +54,7 @@ contains
       call load_axis_month(src, 1_ik)
       call keep_window_head(src)
       src%rec_first = 1_ik
-   end subroutine archive_source_open
+   end subroutine era5land_open
 
    !=======================================================================================!
    !  PREFETCH from the archive: the month the step starting at `step_start` reads, and the    !
@@ -63,7 +63,7 @@ contains
    !  (docs/science/forcing.md §2). It assumes the daily steps from midnight validate_config   !
    !  requires of the archive.                                                                 !
    !=======================================================================================!
-   subroutine archive_prefetch(src, step_start)
+   subroutine era5land_prefetch(src, step_start)
       type(met_source_t), intent(inout)  :: src
       type(meds_time_t),  intent(in)    :: step_start
       real(wp)    :: s0
@@ -94,12 +94,12 @@ contains
          src%carry_rec = p
       end if
       if (.not. month_loaded(src, k)) call load_axis_month(src, k)
-   end subroutine archive_prefetch
+   end subroutine era5land_prefetch
 
    !----- One record's values at the cursor's cell, as the archive stores them: the dewpoint    !
    !      (converted in the shared ingest), the wind components with their speed, and the total  !
    !      shortwave, never the four streams (open_archive refuses "passthrough"). ---------------!
-   subroutine archive_source_record(src, cur, irec, rec, humidity_value, sw_total)
+   subroutine era5land_record(src, cur, irec, rec, humidity_value, sw_total)
       type(met_source_t), intent(in)    :: src
       type(met_cursor_t), intent(in)    :: cur
       integer(ik),        intent(in)    :: irec
@@ -116,7 +116,7 @@ contains
       rec%rainf    = archive_value(src, cur, h, ERA_RAINF)            ! total rainfall rate [kg/m2/s]
       rec%lwdown   = archive_value(src, cur, h, ERA_LWDOWN)
       sw_total     = archive_value(src, cur, h, ERA_SWDOWN)
-   end subroutine archive_source_record
+   end subroutine era5land_record
 
    !=======================================================================================!
    !  ED_ERA5land OPEN: resolve the paths, take a region's cells or bind the site to its cell     !
@@ -372,4 +372,4 @@ contains
       end if
    end function archive_value
 
-end module meds_met_archive_source
+end module meds_met_era5land

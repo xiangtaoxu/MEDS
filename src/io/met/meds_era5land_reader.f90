@@ -5,7 +5,7 @@
 ! templates, the static file, site and box cell selection, and a month of every domain cell     !
 ! read one chunk column at a time into a float32 buffer. The conversions to the model's fields  !
 ! (humidity from the dewpoint, wind speed from its components) live in the met source           !
-! (meds_met_archive_source, meds_met_driver). Every caller turns a nonzero status here into a   !
+! (meds_met_era5land, meds_met). Every caller turns a nonzero status here into a   !
 ! hard error; returning a status instead of stopping is what lets the tests exercise the        !
 ! rejections. MEDS never gap-fills: a NaN in a selected cell is an error, never a fill.         !
 !==========================================================================================!
@@ -16,7 +16,7 @@ module meds_era5land_reader
    use meds_constants,       only : day_sec
    use meds_time,            only : meds_time_t, days_in_month, seconds_between, time_units_base
    use meds_forcing_params,  only : MET_PATH_LEN, ARCHIVE_DT_SEC, forcing_config_t
-   use meds_forcing_types,   only : met_cells_t, met_month_t
+   use meds_met_types,   only : met_cells_t, met_month_t
    use meds_forcing_kernels, only : great_circle_distance
    use meds_netcdf_c,        only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f, &
                                     nc_get_att_double_f, &
@@ -271,7 +271,7 @@ contains
    !=======================================================================================!
    !  ON THE ARCHIVE GRID: ERA_OK when the file at `path` has the static file's lat and lon     !
    !  axes (within GRID_TOL), so a cell's (row, col) indexes both. The static maps a run reads   !
-   !  (meds_surface_maps) must be on this grid: MEDS never regrids.                              !
+   !  (meds_maps) must be on this grid: MEDS never regrids.                              !
    !=======================================================================================!
    subroutine era5land_same_grid(path, static_path, stat)
       character(len=*), intent(in)  :: path, static_path
@@ -291,7 +291,7 @@ contains
    end subroutine era5land_same_grid
 
    !----- Keep the cells of a domain where `keep` is true, in their order, and regroup them by     !
-   !      chunk (a region's cell mask, meds_surface_maps). -------------------------------------------!
+   !      chunk (a region's cell mask, meds_maps). -------------------------------------------!
    subroutine era5land_keep_cells(dom, keep)
       type(met_cells_t), intent(inout) :: dom
       logical,           intent(in)    :: keep(:)

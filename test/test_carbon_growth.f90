@@ -15,7 +15,7 @@ program test_carbon_growth
                                            update_cohort_derivatives, pool_change_block
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
-   use meds_diagnostic_reduce,     only : has_nan
+   use meds_output_reduce,     only : has_nan
    use meds_test_support, only : banner, build_test_config, check, check_close
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_positive_inf
    implicit none

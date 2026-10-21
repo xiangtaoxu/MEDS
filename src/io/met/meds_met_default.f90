@@ -1,16 +1,16 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_file_source -- the MEDS forcing file source (format = "ED_default",                 !
+! meds_met_default -- the MEDS forcing file source (format = "ED_default",                 !
 ! docs/science/forcing.md §1): a multi-grid netCDF file whose records the run needs are        !
-! read into memory at open, so no step reads the file. It opens the file (file_source_open)   !
-! and hands the shared ingest one record's values as stored (file_source_record).             !
+! read into memory at open, so no step reads the file. It opens the file (default_file_open)   !
+! and hands the shared ingest one record's values as stored (default_file_record).             !
 !==========================================================================================!
-module meds_met_file_source
+module meds_met_default
    use iso_c_binding, only : c_int, c_size_t
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_units_base, seconds_between
    use meds_forcing_params, only : SWPART_PASSTHROUGH, GRIDMATCH_NEAREST, LW_SYNTHESIZE
-   use meds_forcing_types, only : met_record_t, met_source_t, HUMIDITY_QAIR, HUMIDITY_RHAIR,      &
+   use meds_met_types, only : met_record_t, met_source_t, HUMIDITY_QAIR, HUMIDITY_RHAIR,      &
                                   HUMIDITY_TDEW, N_MEDS_FIELD, MEDS_FIELD, FLD_TAIR, FLD_RHAIR,   &
                                   FLD_PSURF, FLD_WIND, FLD_U10, FLD_V10, FLD_RAINF, FLD_LWDOWN,   &
                                   FLD_SWDOWN, FLD_PAR_BEAM, FLD_PAR_DIFFUSE, FLD_NIR_BEAM,        &
@@ -19,13 +19,13 @@ module meds_met_file_source
    use meds_netcdf_c, only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f,       &
                              nc_get_vara_double, nc_close, nc_check, nc_inq_var_chunking,         &
                              NC_NOERR, NC_NOWRITE, NC_CHUNKED
-   use meds_met_source_common, only : MET_OK, MET_ERR_HUMIDITY, validate_recycle_window,          &
+   use meds_met_share, only : MET_OK, MET_ERR_HUMIDITY, validate_recycle_window,          &
                                       first_record_after, validate_file_against_config,           &
                                       humidity_field
    implicit none
    private
 
-   public :: file_source_open, file_source_record
+   public :: default_file_open, default_file_record
 
    !----- RHair is a fraction; a value above this is a percentage written into a fractional field. !
    real(wp), parameter :: RH_FRACTION_MAX = 1.5_wp
@@ -38,7 +38,7 @@ contains
    !  the declared recycle window, and the records the run needs, read into memory. A         !
    !  rejection returns its status and the reason; the caller closes the source.              !
    !=======================================================================================!
-   subroutine file_source_open(src, stat, why, run_start, run_end)
+   subroutine default_file_open(src, stat, why, run_start, run_end)
       type(met_source_t),          intent(inout) :: src
       integer(ik),                 intent(out)   :: stat
       character(len=*),            intent(out)   :: why          !< what stops the run when stat /= MET_OK
@@ -151,12 +151,12 @@ contains
             end if
          end block
       end if
-   end subroutine file_source_open
+   end subroutine default_file_open
 
    !----- One record's values at the cell, as the file stores them: the humidity in its own form,  !
    !      and the shortwave total, or its four streams under sw_partition = "passthrough". The    !
-   !      shared ingest (meds_met_driver's read_record) converts, checks and lapses them. -------!
-   subroutine file_source_record(src, irec, rec, humidity_value, sw_total)
+   !      shared ingest (meds_met's read_record) converts, checks and lapses them. -------!
+   subroutine default_file_record(src, irec, rec, humidity_value, sw_total)
       type(met_source_t), intent(in)    :: src
       integer(ik),        intent(in)    :: irec
       type(met_record_t), intent(inout) :: rec
@@ -188,7 +188,7 @@ contains
       else
          sw_total = series_value(src, FLD_SWDOWN, irec)
       end if
-   end subroutine file_source_record
+   end subroutine default_file_record
 
    !----- Resolve src%grid_index by nearest great-circle distance from [site] lat/lon to the file's !
    !      latitude(grid)/longitude(grid) coordinate vectors.                                        !
@@ -338,4 +338,4 @@ contains
       end if
    end subroutine check_in_series
 
-end module meds_met_file_source
+end module meds_met_default

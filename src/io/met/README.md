@@ -4,12 +4,12 @@ The home for **time-varying boundary conditions read from a file**, as opposed t
 evolves. Meteorology and prescribed CO₂ today; disturbance and land-use schedules and nitrogen
 deposition later.
 
-`libmeds_forcing` links the configuration library and the netCDF C bindings **only** — never the
+`libmeds_met` links the configuration library and the netCDF C bindings **only** — never the
 demography or state layer — so a prescribed driver stays low in the library graph.
 
 ## Modules
 
-- **`meds_forcing_types`** — the runtime types. `met_forcing_t` is the instantaneous atmospheric
+- **`meds_met_types`** — the runtime types. `met_forcing_t` is the instantaneous atmospheric
   state the fast loop reads (a polygon's sample, and a site's or a patch's after the vertical
   moves): a read-only boundary-condition value, which carries the wind vector as well as the speed
   when the source supplies components; its one method, `swdown()`, sums the four shortwave streams.
@@ -35,22 +35,22 @@ demography or state layer — so a prescribed driver stays low in the library gr
   (`met_to_cas_top`), from the forcing's declared heights: potential temperature and humidity are
   conserved, and the wind follows the patch's own log profile after an open-terrain wind is returned
   to its blending height.
-- **`meds_met_driver`** — the reader. `met_open` opens a source (for a site, or for a region's
+- **`meds_met`** — the reader. `met_open` opens a source (for a site, or for a region's
   cells), `met_cursor_init` places a polygon's cursor on it, `met_prefetch` loads what the next step
   reads, and `met_advance` / `met_instant` step and sample a cursor with no file access. Two file
   sources, chosen by `[forcing].format`, each an open and one record's values as stored:
-  - `meds_met_file_source`: the MEDS multi-grid `(time, grid)` forcing NetCDF (`"ED_default"`);
-  - `meds_met_archive_source`: the global ED_ERA5land archive (`"ED_ERA5land"`), whose months it
+  - `meds_met_default`: the MEDS multi-grid `(time, grid)` forcing NetCDF (`"ED_default"`);
+  - `meds_met_era5land`: the global ED_ERA5land archive (`"ED_ERA5land"`), whose months it
     lays end to end as one hourly axis.
 
-  Both share `meds_met_source_common` (the status codes, the time axis, the recycle window and the
+  Both share `meds_met_share` (the status codes, the time axis, the recycle window and the
   check of a file against its config), so bracketing and recycling are the same code for both.
   `read_record` is the one ingest after that. Every clock is UTC. The humidity a file carries
   (dewpoint, relative humidity or specific humidity, exactly one) becomes specific humidity through
   the model's own saturation curve, and the wind components become the speed, at each stamp;
   shortwave is partitioned at ingest. Rain and shortwave come from the record whose interval
   contains the instant. Also the no-file constant-climate backend (`format = "const"`).
-- **`meds_co2_series`** — the prescribed CO₂: reads a MEDS CO₂ file (format 1, a plain-text
+- **`meds_met_co2`** — the prescribed CO₂: reads a MEDS CO₂ file (format 1, a plain-text
   list of period means at a declared `timestep`) and looks it up at a model instant, linear between
   period middles. `met_open` reads it once and `met_instant` sets `met%co2` from it, or from
   `co2_const`, for every backend alike; the met file never carries CO₂. The shipped series is

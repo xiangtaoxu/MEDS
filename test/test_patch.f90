@@ -7,7 +7,7 @@ program test_patch
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_patch_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches,  &
                                               patch_light_profile
-   use meds_diagnostic_reduce, only : total_nplant, total_area
+   use meds_output_reduce, only : total_nplant, total_area
    use meds_cohort_state_vars, only : cohort_film_water
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none

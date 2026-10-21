@@ -75,9 +75,9 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │   │              forcing file, or the ED_ERA5land archive through
 │   │              meds_era5land_reader), its disaggregation kernels,
 │   │              the terrain lapse (meds_lapse_rate) and the CO2
-│   │              series (meds_co2_series)                                   3 255
+│   │              series (meds_met_co2)                                   3 255
 │   ├── input/maps/  static per-cell maps on the forcing grid: the one place
-│   │              a map is read (meds_surface_maps); the region's cell mask    502
+│   │              a map is read (meds_maps); the region's cell mask    502
 │   └── output/    the diagnostic wall: derive → capture → reduce →
 │                  integrate → serialize                                      4 286
 ├── init/          the initial community: bare ground, or a cohort census       471
@@ -174,8 +174,8 @@ One edge is worth knowing because it is easy to get wrong:
 | a stateless constitutive curve: a physical or biological law with parameters | `share/functions/` |
 | a model-independent tool every layer needs (numerics, calendar, checks) | `share/`, if it uses nothing outside `share/` |
 | a TOML block | a leaf in `config/params/`, so `meds_config` can carry it with no back-edge; its keys in `meds_config_main.toml`, its checks in `config/meds_config_check.f90` |
-| a prescribed time-varying input (weather, CO2) | `io/input/forcing/` |
-| a static per-cell input map (soil, a cell mask) | `io/input/maps/meds_surface_maps.f90` |
+| a prescribed time-varying input (weather, CO2) | `io/met/` |
+| a static per-cell input map (soil, a cell mask) | `io/maps/meds_maps.f90` |
 | an output variable | one `add_variable` line in `io/output/meds_output_registry.f90` |
 | a Python entry point | `c_api/`, plus its mandatory ctest target |
 | a top-level orchestration step | `main/meds_stepper.f90` or a `driver/` folder |
@@ -235,7 +235,7 @@ Flat wins because the suite's files have globally unique names, so a mirror buys
 `test_<subject>.f90` does not already give — while costing a test rename on every source move. The
 thing that actually needs to stay honest is the **link line**, not the directory: many tests
 deliberately link one narrow library each (`meds_share`, `meds_config`,
-`meds_fast_kernels`, `meds_forcing`) so those layers stay standalone-buildable, and that discipline
+`meds_fast_kernels`, `meds_met`) so those layers stay standalone-buildable, and that discipline
 is visible in `CMakeLists.txt` whatever directory the file sits in. It is also why the assertion
 helpers live in `meds_test_assert`, which depends on nothing but a kind.
 
@@ -245,4 +245,4 @@ Revisit if the suite outgrows a single `ls`, or if two tests ever want the same 
 
 Four folders carry their own README with subsystem detail:
 [`fast_dynamics/`](fast_dynamics/README.md), [`fast_dynamics/plant/`](fast_dynamics/plant/README.md),
-[`io/input/forcing/`](io/input/forcing/README.md), [`slow_dynamics/soil/`](slow_dynamics/soil/README.md).
+[`io/met/`](io/met/README.md), [`slow_dynamics/soil/`](slow_dynamics/soil/README.md).

@@ -14,7 +14,7 @@ module meds_lapse_rate
    use meds_therm_lib,       only : sat_vapor_pressure, air_density
    use meds_forcing_params,  only : forcing_config_t, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_OPEN_TERRAIN
    use meds_forcing_kernels, only : clear_sky_emissivity, rh_to_specific_humidity
-   use meds_forcing_types,   only : met_forcing_t
+   use meds_met_types,   only : met_forcing_t
    implicit none
    private
 

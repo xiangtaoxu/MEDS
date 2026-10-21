@@ -4,7 +4,7 @@
 ! the queued records into the file set's streams in the run's I/O phase, and output_close     !
 ! writes any final partial periods and closes the files. The netCDF-free half (the file set   !
 ! and buffers in meds_output_registry, the per-step tick in meds_output_integrate) is in      !
-! meds_io_prep, so a step makes no netCDF call (docs/science/diagnostics.md §1).              !
+! meds_output, so a step makes no netCDF call (docs/science/diagnostics.md §1).              !
 !==========================================================================================!
 module meds_output_manager
    use meds_kinds,            only : ik

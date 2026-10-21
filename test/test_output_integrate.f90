@@ -46,7 +46,7 @@ program test_output_integrate
    use meds_output_registry,  only : alloc_output_set, alloc_output_buffers, find_var_index,        &
                                      setup_output_files, finalize_output_files, build_freq_index,          &
                                      apply_variable_override, OVR_MASK
-   use meds_diagnostic_reduce, only : W_NPLANT, W_LEAF_AREA
+   use meds_output_reduce, only : W_NPLANT, W_LEAF_AREA
    use meds_output_params,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
    use meds_constants,        only : n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, test_pft_table, check, check_close

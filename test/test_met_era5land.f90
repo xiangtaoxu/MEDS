@@ -14,12 +14,12 @@ program test_met_era5land
    use meds_time,            only : meds_time_t
    use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
-   use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
+   use meds_met_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
    use meds_forcing_kernels, only : dewpoint_to_specific_humidity, clear_sky_emissivity
    use iso_c_binding,        only : c_double
    use meds_lapse_rate,      only : lapse_pressure
    use meds_therm_lib,       only : sat_vapor_pressure
-   use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
+   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
                                    met_prefetch, &
                                     MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
    use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_select_site, &

@@ -46,9 +46,9 @@ module meds_fast_dynamics
                                      SI_QAIR, SI_PSURF, SI_RHO_AIR, N_SI_ROWS
    use meds_constants,     only : n_soil_layer_max
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
-   use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
+   use meds_met_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_forcing_kernels,  only : precip_phase, slope_incidence_cosz, slope_beam_factor
-   use meds_met_driver,       only : met_advance, met_instant
+   use meds_met,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top, met_at_site
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
    use meds_cohort_state_vars, only : set_cohort_tissue_water, hold_cohort_tissue_temps, cohort_tissue_temps, &

@@ -1,13 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_forcing_types -- the runtime meteorological-forcing types (docs/science/forcing.md §2):     !
+! meds_met_types -- the runtime meteorological-forcing types (docs/science/forcing.md §2):     !
 ! met_forcing_t, the instantaneous atmospheric state the fast loop reads; met_record_t, one        !
 ! ingested file record; met_source_t, the reader state a run shares, and met_cursor_t, each        !
 ! polygon's own; met_cells_t and met_month_t, the archive's cells and month buffer; co2_series_t,  !
 ! the prescribed CO2 series. Uses only meds_kinds, meds_time and meds_forcing_params; the reader   !
-! (meds_met_driver) owns the only mutable forcing state.                                           !
+! (meds_met) owns the only mutable forcing state.                                           !
 !==========================================================================================!
-module meds_forcing_types
+module meds_met_types
    use meds_kinds,          only : wp, sp, ik
    use meds_time,           only : meds_time_t
    use meds_forcing_params, only : forcing_config_t, MET_BACKEND_CONST, MET_PATH_LEN
@@ -191,4 +191,4 @@ contains
    end function met_swdown
 
 
-end module meds_forcing_types
+end module meds_met_types

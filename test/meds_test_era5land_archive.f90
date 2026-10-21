@@ -149,7 +149,7 @@ contains
       st = nc_close(ncid) ; call nc_check(st, 'close static')
    end subroutine write_static
 
-   !----- A static map on the archive's grid (meds_surface_maps): values(lon, lat, layer) as a 2-D    !
+   !----- A static map on the archive's grid (meds_maps): values(lon, lat, layer) as a 2-D    !
    !      (lat, lon) variable, or, with layer_dim, a layered (layer, lat, lon) one, with a _FillValue.  !
    !      lat_shift moves the file's lat axis, to make a map that is off the grid. -----------------------!
    subroutine write_map(path, name, values, fill, layer_dim, lat_shift)

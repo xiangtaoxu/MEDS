@@ -23,9 +23,9 @@ program test_surface_maps
    use meds_test_era5land_archive, only : NLAT, NLON, write_static, write_map, write_surface_maps,     &
                                           soil_depth_at, bc_class_at, f_leak_at, deep_temp_at, chave_e_at, &
                                           texture_at, SG_TOP, SG_BOTTOM
-   use meds_forcing_types,         only : met_cells_t
+   use meds_met_types,         only : met_cells_t
    use meds_era5land_reader,       only : era5land_select_box, era5land_keep_cells, ERA_OK
-   use meds_surface_maps,          only : map_values_at_cells, map_layers_at_cells, apply_cell_mask,  &
+   use meds_maps,          only : map_values_at_cells, map_layers_at_cells, apply_cell_mask,  &
                                           MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
                                           map_inputs_t, read_map_inputs, apply_map_inputs
    use meds_config,                only : meds_config_t, alloc_pft_table

@@ -34,9 +34,9 @@ module meds_polygon
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input, soil_carbon_bad_pool,             &
                                            soil_carbon_pool_name
-   use meds_forcing_types,          only : met_source_t, met_cursor_t
-   use meds_met_driver,             only : met_cursor_init
-   use meds_diagnostic_reduce,      only : total_area, has_nan
+   use meds_met_types,          only : met_source_t, met_cursor_t
+   use meds_met,             only : met_cursor_init
+   use meds_output_reduce,      only : total_area, has_nan
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_budget_check,           only : budget_t, budget_report
@@ -52,7 +52,7 @@ module meds_polygon
    use meds_constants,              only : n_soil_layer_max
    use meds_allometry_lib,          only : HEIGHT_CHAVE
    use meds_soil_params,            only : SOIL_BC_AQUIFER
-   use meds_forcing_types,          only : met_cells_t
+   use meds_met_types,          only : met_cells_t
    use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
    private
@@ -141,7 +141,7 @@ contains
          end if
          !----- Skip the generic re-seed when a restart already restored the true evolved            !
          !      CAS/soil/snow state (docs/science/order_of_processes.md §1): overwriting it here     !
-         !      would silently discard exactly what io_read_state just read back, and the run would  !
+         !      would silently discard exactly what read_restart_file just read back, and the run would  !
          !      jump at the restart.                                                                 !
          if (.not. keep_fast_state) call init_fast_reservoirs(poly, run%fast_ctx)
          if (cfg%snow_init_swe > 0.0_wp) call seed_snow(poly, cfg, verbose)

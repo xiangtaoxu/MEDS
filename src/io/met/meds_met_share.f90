@@ -1,20 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_source_common -- what the two forcing file sources share (docs/science/forcing.md   !
+! meds_met_share -- what the two forcing file sources share (docs/science/forcing.md   !
 ! §1, §2 and §9): the reader's status codes, the time axis with its declared recycle window     !
 ! (validate_recycle_window, recycle_model_to_file), and the check of a file against the         !
 ! [forcing] config that describes it (validate_file_against_config). A MEDS forcing file and    !
 ! the ED_ERA5land archive both lay their records on one axis of seconds since a base time, so    !
-! meds_met_driver brackets and recycles both with one code.                                     !
+! meds_met brackets and recycles both with one code.                                     !
 !==========================================================================================!
-module meds_met_source_common
+module meds_met_share
    use iso_c_binding, only : c_int, c_double
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, is_leap_year,        &
                          time_to_string, whole_years_between
    use meds_forcing_params, only : MET_BACKEND_ED_DEFAULT, METAVG_BEGIN, SWPART_PASSTHROUGH,      &
                                    HEIGHT_ABOVE_GROUND, MAX_RECYCLE_YEARS
-   use meds_forcing_types, only : met_source_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, FLD_QAIR,          &
+   use meds_met_types, only : met_source_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, FLD_QAIR,          &
                                   FLD_RHAIR, FLD_TDEW
    use meds_netcdf_c, only : nc_inq_varid_f, nc_get_att_text_f, nc_get_att_double_f, NC_NOERR,    &
                              NC_GLOBAL
@@ -352,4 +352,4 @@ contains
       end select
    end function avg_convention_name
 
-end module meds_met_source_common
+end module meds_met_share

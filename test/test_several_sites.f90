@@ -20,9 +20,9 @@ program test_several_sites
    use meds_init,                 only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
    use meds_fast_dynamics,        only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_stepper,              only : advance_one_step, advance_boundary
-   use meds_diagnostic_reduce,    only : total_agb, total_nplant, total_area
-   use meds_io,                   only : state_file_t, state_file_open, state_file_put, state_file_close, &
-                                         io_read_state
+   use meds_output_reduce,    only : total_agb, total_nplant, total_area
+   use meds_init_restart,                   only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
+                                         read_restart_file
    use meds_time,                 only : meds_time_t
    use meds_test_support,         only : banner, build_test_config, check, check_close, test_report
    implicit none
@@ -102,7 +102,7 @@ program test_several_sites
    !=== 4. The mixed polygon through a state file. ==========================================!
    now = meds_time_t(year=2000, month=3, day=1)
    call write_state(mixed, now)
-   call io_read_state(back, cfg, './test_several_sites-S-20000301000000.nc', t_read, found,       &
+   call read_restart_file(back, cfg, './test_several_sites-S-20000301000000.nc', t_read, found,       &
                       polygon=1_ik, site_cfg=[cfg, cfg_shallow])
    call check(found .and. back%site%n == 2_ik, 'the state file holds the two sites')
    call check(all(back%site%area(1:2) == mixed%site%area(1:2)), 'each site keeps its area')
@@ -154,12 +154,12 @@ contains
    subroutine write_state(poly, t)
       type(polygon_t),   intent(in) :: poly
       type(meds_time_t), intent(in) :: t
-      type(state_file_t) :: sf
-      call state_file_open(sf, '.', 'test_several_sites', t, poly%n_pft,                          &
+      type(restart_file_t) :: sf
+      call restart_file_open(sf, '.', 'test_several_sites', t, poly%n_pft,                          &
                            int(size(poly%cohort%growth_hist, 1), ik), poly%cohort%n, poly%patch%n,    &
                            poly%site%n, polygon_id=[0_ik], polygon_lat=[0.0_wp], polygon_lon=[0.0_wp])
-      call state_file_put(sf, poly, t, 1_ik)
-      call state_file_close(sf)
+      call restart_file_write(sf, poly, t, 1_ik)
+      call restart_file_close(sf)
    end subroutine write_state
 
    !----- Plant carbon [kgC/m2 of the site]: its patches' cohorts, weighted by patch area. ----!

@@ -18,7 +18,7 @@ module meds_stepper
    use meds_biogeochem_types,     only : soilc_seam_t
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
    use meds_time,                 only : meds_time_t
-   use meds_forcing_types,        only : met_source_t, met_cursor_t
+   use meds_met_types,        only : met_source_t, met_cursor_t
    use meds_output_types,         only : output_buffers_t
    use meds_budget_check,         only : budget_t
    use meds_slow_ledger,          only : slow_ledger_t

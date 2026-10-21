@@ -1,14 +1,14 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_io -- the state (restart) file: every polygon's prognostic state at an instant, in  !
+! meds_init_restart -- the state (restart) file: every polygon's prognostic state at an instant, in  !
 ! a netCDF-4 checkpoint a resumed run continues from exactly, through the netCDF C library !
-! (docs/science/order_of_processes.md §6, The restart file). state_file_open, _put and     !
-! _close write a file a polygon's row at a time; io_read_state reads a row, or the whole   !
-! of a file without the polygon axis (one site's); state_file_polygons and                 !
-! state_file_refusal check a file before a run starts from it. Restart only: diagnostic    !
+! (docs/science/order_of_processes.md §6, The restart file). restart_file_open, _put and     !
+! _close write a file a polygon's row at a time; read_restart_file reads a row, or the whole   !
+! of a file without the polygon axis (one site's); restart_file_polygons and                 !
+! restart_file_refusal check a file before a run starts from it. Restart only: diagnostic    !
 ! output is meds_output_*.                                                                 !
 !==========================================================================================!
-module meds_io
+module meds_init_restart
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
    use meds_state_defaults, only : is_unset_positive
@@ -32,9 +32,9 @@ module meds_io
    implicit none
    private
 
-   public :: io_read_state
-   public :: state_file_t, state_file_open, state_file_put, state_file_close, state_file_polygons
-   public :: state_file_refusal
+   public :: read_restart_file
+   public :: restart_file_t, restart_file_open, restart_file_write, restart_file_close, restart_file_polygons
+   public :: restart_file_refusal
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
@@ -42,10 +42,10 @@ module meds_io
    integer(c_int),   parameter :: DEFLATE_LEVEL = 1_c_int    !< the variables' zlib level
 
    !----- An open state file, its polygon axis ahead of every other. --------------------------------!
-   type :: state_file_t
+   type :: restart_file_t
       integer(c_int)     :: ncid   = -1_c_int
       character(len=512) :: path   = ''
-   end type state_file_t
+   end type restart_file_t
 
 contains
 
@@ -61,9 +61,9 @@ contains
    ! axes. Why each group below persists: docs/science/order_of_processes.md §6, The       !
    ! restart file.                                                                         !
    !---------------------------------------------------------------------------------------!
-   subroutine state_file_open(sf, dir, prefix, now, n_pft, n_window, n_cohort, n_patch, n_site,     &
+   subroutine restart_file_open(sf, dir, prefix, now, n_pft, n_window, n_cohort, n_patch, n_site,     &
                               polygon_id, polygon_lat, polygon_lon, restructure_pending, restructure_new_year)
-      type(state_file_t),    intent(out) :: sf
+      type(restart_file_t),    intent(out) :: sf
       character(len=*),      intent(in)  :: dir, prefix
       type(meds_time_t),     intent(in)  :: now
       integer(ik),           intent(in)  :: n_pft, n_window, n_cohort, n_patch, n_site
@@ -257,13 +257,13 @@ contains
          end if
          call nc_check(nc_def_var_deflate(ncid, v, 1_c_int, 1_c_int, DEFLATE_LEVEL), 'state deflate '//name)
       end subroutine dv
-   end subroutine state_file_open
+   end subroutine restart_file_open
 
    !---------------------------------------------------------------------------------------!
    ! Write one polygon's state into its row (1-based) of an open file.                         !
    !---------------------------------------------------------------------------------------!
-   subroutine state_file_put(sf, poly, now, polygon)
-      type(state_file_t),    intent(in) :: sf
+   subroutine restart_file_write(sf, poly, now, polygon)
+      type(restart_file_t),    intent(in) :: sf
       type(polygon_t),       intent(in) :: poly
       type(meds_time_t),     intent(in) :: now
       integer(ik),           intent(in) :: polygon
@@ -492,18 +492,18 @@ contains
          character(len=*), intent(in) :: name
          call nc_check(nc_inq_varid_f(sf%ncid, name, varid), 'state inq '//name)
       end function varid
-   end subroutine state_file_put
+   end subroutine restart_file_write
 
-   subroutine state_file_close(sf)
-      type(state_file_t), intent(inout) :: sf
+   subroutine restart_file_close(sf)
+      type(restart_file_t), intent(inout) :: sf
       call nc_check(nc_close(sf%ncid), 'state nc_close')
       sf%ncid = -1_c_int
       write(*,'(2a)') ' state : ', trim(sf%path)
-   end subroutine state_file_close
+   end subroutine restart_file_close
 
    !----- A state file's polygon ids, in its rows' order; found = .false. for a file without the  !
    !      polygon axis (one site's) or one that cannot be opened. -------------------------------!
-   subroutine state_file_polygons(path, polygon_id, found)
+   subroutine restart_file_polygons(path, polygon_id, found)
       character(len=*),         intent(in)  :: path
       integer(ik), allocatable, intent(out) :: polygon_id(:)
       logical,                  intent(out) :: found
@@ -521,14 +521,14 @@ contains
       end if
       found = st == NC_NOERR
       st = nc_close(ncid)
-   end subroutine state_file_polygons
+   end subroutine restart_file_polygons
 
    !---------------------------------------------------------------------------------------!
    ! Why the state file at `path` cannot start a run of `n_polygon` polygons, or '' when   !
    ! it can: it cannot be opened, or it holds one site without a `polygon` axis and the    !
    ! run has more than one polygon.                                                        !
    !---------------------------------------------------------------------------------------!
-   function state_file_refusal(path, n_polygon) result(why)
+   function restart_file_refusal(path, n_polygon) result(why)
       character(len=*), intent(in)  :: path
       integer(ik),      intent(in)  :: n_polygon
       character(len=:), allocatable :: why
@@ -543,7 +543,7 @@ contains
       st = nc_close(ncid)
       if (n_polygon > 1_ik .and. .not. has_axis)                                                     &
          why = 'holds one site without a polygon axis; a run of several polygons needs a row for each'
-   end function state_file_refusal
+   end function restart_file_refusal
 
    !----- Does the open state file have a `polygon` axis ahead of every other? -------------------!
    logical function has_polygon_axis(ncid)
@@ -553,15 +553,15 @@ contains
    end function has_polygon_axis
 
    !---------------------------------------------------------------------------------------!
-   ! Reconstruct a polygon from a state file written by state_file_put: row `polygon`      !
+   ! Reconstruct a polygon from a state file written by restart_file_write: row `polygon`      !
    ! (1-based) of a file with the polygon axis, or the whole of a file without it. Each    !
    ! site's surface is made from `site_cfg` (else `cfg`) and the geometry from the carbon  !
    ! pools; the maps and sort order are rebuilt, and the restructuring owed is the file's  !
    ! restructure_pending (docs/science/order_of_processes.md §5). found = .false. if the   !
-   ! file cannot be opened or has another layout (state_file_refusal says why); a PFT,     !
+   ! file cannot be opened or has another layout (restart_file_refusal says why); a PFT,     !
    ! site or soil-layer count unlike the run's stops the run.                              !
    !---------------------------------------------------------------------------------------!
-   subroutine io_read_state(poly, cfg, path, restart_time, found, fast_found, polygon, site_cfg)
+   subroutine read_restart_file(poly, cfg, path, restart_time, found, fast_found, polygon, site_cfg)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
@@ -606,14 +606,14 @@ contains
       ncoh = meta_i(1)
       npat = meta_i(2)
       npft = meta_i(3)
-      if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
+      if (npft /= cfg%pft%n) error stop 'read_restart_file: PFT count in state file /= config PFT count'
 
       !----- The sites: a file without the site axis holds one. ---------------------------------!
       ns = 1_ik
       if (nc_inq_varid_f(ncid, 'n_site', vid) == NC_NOERR) ns = polygon_count(vid)
       if (present(site_cfg)) then
          if (size(site_cfg, kind=ik) /= ns) then
-            write(msg, '(a,i0,a,i0,a)') 'io_read_state: the state file holds ', ns,                     &
+            write(msg, '(a,i0,a,i0,a)') 'read_restart_file: the state file holds ', ns,                     &
                                         ' sites and the configuration ', size(site_cfg), ' for the polygon'
             error stop trim(msg)
          end if
@@ -643,7 +643,7 @@ contains
             call gv_int(ncid, 'site_n_soil', ns, nsoil)
             do is = 1_ik, ns
                if (nsoil(is) /= poly%site%surface(is)%soil%n_active) then
-                  write(msg, '(a,i0,a,i0,a,i0,a)') 'io_read_state: site ', is, ' has ', nsoil(is),       &
+                  write(msg, '(a,i0,a,i0,a,i0,a)') 'read_restart_file: site ', is, ' has ', nsoil(is),       &
                         ' soil layers in the state file and ', poly%site%surface(is)%soil%n_active,     &
                         ' in the configuration'
                   error stop trim(msg)
@@ -1008,6 +1008,6 @@ contains
          call nc_check(nc_inq_varid_f(nc, name, v), 'inq '//name)
          call nc_check(nc_get_vara_double(nc, v, st(1:nd), ct(1:nd), out), 'get '//name)
       end subroutine gv_dbl2_row
-   end subroutine io_read_state
+   end subroutine read_restart_file
 
-end module meds_io
+end module meds_init_restart

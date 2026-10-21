@@ -9,8 +9,8 @@ program test_state_roundtrip
    use meds_polygon_state_vars, only : polygon_t
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars, only : hold_cohort_tissue_temps
-   use meds_io,               only : state_file_t, state_file_open, state_file_put, state_file_close, &
-                                     io_read_state
+   use meds_init_restart,               only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
+                                     read_restart_file
    use meds_time,             only : meds_time_t
    use meds_netcdf_c,     only : NC_NOERR, nc_open_f, nc_inq_varid_f, nc_put_vara_double, nc_close, cstr
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -104,7 +104,7 @@ program test_state_roundtrip
    !----- The file is written on a year boundary with its restructuring still owed, as the driver's   !
    !      yearly checkpoint is (polygon_t%restructure_pending); the reader must say so. --------------!
    call write_state(poly, now, .true., .true.)
-   call io_read_state(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, fast_found=fast_ok)
+   call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, fast_found=fast_ok)
    call check(poly2%restructure_pending .and. poly2%restructure_new_year,                                 &
               'a checkpoint records the year''s restructuring as still owed')
 
@@ -182,7 +182,7 @@ program test_state_roundtrip
 
    !----- Nothing owed: a checkpoint between boundaries, or one written before the flag existed.  !
    call write_state(poly, now, .false., .false.)
-   call io_read_state(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
+   call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
    call check(found .and. .not. poly2%restructure_pending .and. .not. poly2%restructure_new_year,          &
               'a checkpoint with nothing owed reads so')
 
@@ -212,7 +212,7 @@ program test_state_roundtrip
                  nc_del_att(ncid, vid, cstr('units')) == NC_NOERR, 'the leaf film loses its units')
       call check(nc_close(ncid) == NC_NOERR, 'the state file closes')
    end block
-   call io_read_state(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
+   call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
    call check(found, 'a state file with llspan reads')
    do i = 1_ik, poly2%cohort%n
       call check_close(poly2%cohort%leaf_turnover_rate(i), 0.25_wp, 1.0e-15_wp,                     &
@@ -231,12 +231,12 @@ contains
       type(polygon_t),   intent(in) :: s
       type(meds_time_t), intent(in) :: t
       logical,           intent(in) :: pending, new_year
-      type(state_file_t) :: sf
-      call state_file_open(sf, '.', 'test_sr', t, s%n_pft, int(size(s%cohort%growth_hist, 1), ik),      &
+      type(restart_file_t) :: sf
+      call restart_file_open(sf, '.', 'test_sr', t, s%n_pft, int(size(s%cohort%growth_hist, 1), ik),      &
                            s%cohort%n, s%patch%n, s%site%n, polygon_id=[0_ik], polygon_lat=[0.0_wp],   &
                            polygon_lon=[0.0_wp], restructure_pending=pending, restructure_new_year=new_year)
-      call state_file_put(sf, s, t, 1_ik)
-      call state_file_close(sf)
+      call restart_file_write(sf, s, t, 1_ik)
+      call restart_file_close(sf)
    end subroutine write_state
 
 end program test_state_roundtrip

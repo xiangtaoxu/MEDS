@@ -325,7 +325,7 @@ each patch one cohort of every PFT with a positive value. That many plants per m
 
 A census is how you start from a field inventory; see
 [`data/census_example.csv`](../data/census_example.csv)
-and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90).
+and `init_from_census` in [`../src/io/init/meds_init.f90`](../src/io/init/meds_init.f90).
 
 **A census or state file that cannot start the run stops it**, naming the mode and the file: one
 that cannot be opened, a census with no row for the site, or a state file without a row for each of
@@ -531,7 +531,7 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
 
 `[maps]` names the static maps a run takes its soil from, and Chave's site index E. Each map is
 on the ED_ERA5land grid: its `lat` and `lon` must be the archive's static file's, so a cell's value
-sits at the cell's own row and column, and MEDS never regrids. `src/io/input/maps/meds_surface_maps.f90`
+sits at the cell's own row and column, and MEDS never regrids. `src/io/maps/meds_maps.f90`
 reads every map and is the only module that does.
 
 | Key | File (ED-SoilMaps v2) | Variables |

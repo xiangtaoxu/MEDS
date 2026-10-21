@@ -29,8 +29,8 @@ program test_fast_loop
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds
    use meds_forcing_params,      only : MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX, METAVG_END
-   use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
-   use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
+   use meds_met_types,       only : met_source_t, met_cursor_t, met_forcing_t
+   use meds_met,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
    use meds_diag_vars,           only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, PY_PAR_DIFFUSE, PY_RHO_AIR, &
                                         PY_WIND, PA_CAS_TEMP, PA_SKIN_TEMP, PA_LW_UP

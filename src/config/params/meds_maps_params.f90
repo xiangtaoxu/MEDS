@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! meds_maps_params -- the [maps] block, as a config leaf: the static maps a run reads its  !
 ! soil and its height allometry's site index from (docs/configuration.md, "Input maps").   !
-! Each map is on the forcing grid; meds_surface_maps reads it at the run's cells. A region !
+! Each map is on the forcing grid; meds_maps reads it at the run's cells. A region !
 ! needs the three soil maps; a site may use them or set [soil] by hand, and a key a map    !
 ! provides is refused while the map is set.                                                !
 !==========================================================================================!

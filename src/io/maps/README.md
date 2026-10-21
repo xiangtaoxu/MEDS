@@ -1,8 +1,8 @@
-# `src/io/input/maps/` — static per-cell maps
+# `src/io/maps/` — static per-cell maps
 
 The one place MEDS opens a map: a static, per-cell input on the forcing grid, as opposed to the
 time-varying drivers in [`../forcing/`](../forcing/README.md). Library `meds_maps`; it links
-`meds_forcing` for the archive grid it checks maps against and the cell lists it reads them at.
+`meds_met` for the archive grid it checks maps against and the cell lists it reads them at.
 The keys and files are in [`docs/configuration.md`](../../../../docs/configuration.md) (Input maps),
 and the column the soil maps build in
 [`docs/science/soil_biophysics.md`](../../../../docs/science/soil_biophysics.md) (The column from the
@@ -10,7 +10,7 @@ soil maps).
 
 | Module | What it does |
 |---|---|
-| `meds_surface_maps` | Reads a map variable at a list of cells: 2-D `(lat, lon)` or layered `(layer, lat, lon)`, one hyperslab over the rows the cells span. Applies a region's cell mask. Reads the `[maps]` maps at a run's cells (`read_map_inputs`) and turns one cell's values into its polygon's soil column, bottom boundaries and Chave E (`apply_map_inputs`; `site_map_inputs` for a site). |
+| `meds_maps` | Reads a map variable at a list of cells: 2-D `(lat, lon)` or layered `(layer, lat, lon)`, one hyperslab over the rows the cells span. Applies a region's cell mask. Reads the `[maps]` maps at a run's cells (`read_map_inputs`) and turns one cell's values into its polygon's soil column, bottom boundaries and Chave E (`apply_map_inputs`; `site_map_inputs` for a site). |
 
 ## Rules
 

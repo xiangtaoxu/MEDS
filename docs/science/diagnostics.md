@@ -3,7 +3,7 @@
 How MEDS reports itself: what a variable means, how it is aggregated across the demographic
 hierarchy and across time, and how to ask for the ones you want.
 
-Implementation: `src/io/output/` (`meds_diagnostic_kernels`, `meds_diagnostic_reduce`,
+Implementation: `src/io/output/` (`meds_diagnostic_kernels`, `meds_output_reduce`,
 `meds_output_{types,registry,integrate,stream,manager}`) plus the per-cohort / per-patch
 accumulators in `src/state/meds_diag_vars.f90`. Design and rationale:
 `docs/dev_plans/MEDS_IO_V01_PLAN.md`; the temporal-aggregation engine underneath is
@@ -22,7 +22,7 @@ accumulators in `src/state/meds_diag_vars.f90`. Design and rationale:
   [2] CAPTURE     meds_diag_vars              dt-weighted accumulators for everything the fast loop
       │                                       computes per dt_fast and would otherwise discard
       │
-  [3] REDUCE      meds_diagnostic_reduce      ONE weighted aggregation:
+  [3] REDUCE      meds_output_reduce      ONE weighted aggregation:
       │                                       cohort -> {patch, site, PFT, DBH class}; patch -> site
       │
   [4] INTEGRATE   meds_output_integrate       temporal folding per (variable, tier)

@@ -1,14 +1,14 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_driver -- the meteorological-forcing reader (docs/science/forcing.md §1-§3, §10-§12).   !
+! meds_met -- the meteorological-forcing reader (docs/science/forcing.md §1-§3, §10-§12).   !
 ! met_open opens a MEDS forcing file, the ED_ERA5land archive or the no-file CONST backend into the !
 ! met_source_t a run shares; met_cursor_init binds a polygon's met_cursor_t to it; met_prefetch     !
 ! loads what a step reads; met_advance and met_instant step and sample a cursor with no file        !
-! access. read_record is the one ingest for both file sources (meds_met_file_source,                !
-! meds_met_archive_source): it checks, converts, lapses and partitions a record, and a missing      !
+! access. read_record is the one ingest for both file sources (meds_met_default,                !
+! meds_met_era5land): it checks, converts, lapses and partitions a record, and a missing      !
 ! value stops the run. CO2 comes from [forcing].co2_source on model time, never from the met file.  !
 !==========================================================================================!
-module meds_met_driver
+module meds_met
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
@@ -18,11 +18,11 @@ module meds_met_driver
                                    MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN, METAVG_CENTER, &
                                    SWPART_PASSTHROUGH, CLAMP_ERROR, INTERP_LINEAR,                &
                                    LW_SYNTHESIZE, CO2_SOURCE_FILE
-   use meds_forcing_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
+   use meds_met_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
                                   met_cells_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, MEDS_FIELD
    use meds_lapse_rate, only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,         &
                                lapse_specific_humidity, lapse_longwave
-   use meds_co2_series, only : co2_series_read, co2_series_at, co2_series_covers,                 &
+   use meds_met_co2, only : co2_series_read, co2_series_at, co2_series_covers,                 &
                                co2_series_end, co2_series_free
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,                 &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,     &
@@ -30,16 +30,16 @@ module meds_met_driver
                                     synthesize_lwdown, dewpoint_to_specific_humidity,             &
                                     rh_to_specific_humidity
    use meds_netcdf_c, only : nc_close, nc_check
-   use meds_met_source_common, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
+   use meds_met_share, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
                                       MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,     &
                                       MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,              &
                                       MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE,   &
                                       MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE,           &
                                       MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, file_lookup_sec,         &
                                       humidity_field
-   use meds_met_file_source, only : file_source_open, file_source_record
-   use meds_met_archive_source, only : archive_source_open, archive_prefetch,                     &
-                                       archive_source_record
+   use meds_met_default, only : default_file_open, default_file_record
+   use meds_met_era5land, only : era5land_open, era5land_prefetch,                     &
+                                       era5land_record
    implicit none
    private
 
@@ -55,7 +55,7 @@ contains
 
    !=======================================================================================!
    !  OPEN: the CO2, then the backend: CONST (the reference climate), a MEDS forcing file     !
-   !  (file_source_open) or the archive (archive_source_open). With `stat` present a          !
+   !  (default_file_open) or the archive (era5land_open). With `stat` present a          !
    !  rejection returns its code, so the tests can exercise it; absent, it stops the run.     !
    !  run_start and run_end bound what a non-recycling run reads and the CO2 must cover.      !
    !=======================================================================================!
@@ -85,9 +85,9 @@ contains
             src%ngrid = 1_ik
             src%nrec = 0_ik
          case (MET_BACKEND_ED_ERA5LAND)
-            call archive_source_open(src, vstat, why, run_start, run_end, cells)
+            call era5land_open(src, vstat, why, run_start, run_end, cells)
          case default                                              ! MET_BACKEND_ED_DEFAULT
-            call file_source_open(src, vstat, why, run_start, run_end)
+            call default_file_open(src, vstat, why, run_start, run_end)
          end select
       end if
       if (vstat /= MET_OK) then
@@ -166,7 +166,7 @@ contains
    subroutine met_prefetch(src, step_start)
       type(met_source_t), intent(inout)  :: src
       type(meds_time_t),  intent(in)    :: step_start
-      if (src%backend == MET_BACKEND_ED_ERA5LAND) call archive_prefetch(src, step_start)
+      if (src%backend == MET_BACKEND_ED_ERA5LAND) call era5land_prefetch(src, step_start)
    end subroutine met_prefetch
 
    !=======================================================================================!
@@ -419,9 +419,9 @@ contains
       rec%when   = time_advance_seconds(src%base_time, src%time_sec(irec))
       !----- The values as the source stores them; from here on, one ingest for both. -----------!
       if (src%backend == MET_BACKEND_ED_ERA5LAND) then
-         call archive_source_record(src, cur, irec, rec, humidity_value, sw_total)
+         call era5land_record(src, cur, irec, rec, humidity_value, sw_total)
       else
-         call file_source_record(src, irec, rec, humidity_value, sw_total)
+         call default_file_record(src, irec, rec, humidity_value, sw_total)
       end if
       call assert_finite(rec%tair_k, 'Tair', irec, src%grid_index)
       call assert_finite(humidity_value, MEDS_FIELD(humidity_field(src%humidity)), irec, src%grid_index)
@@ -519,4 +519,4 @@ contains
       end if
    end subroutine assert_finite
 
-end module meds_met_driver
+end module meds_met

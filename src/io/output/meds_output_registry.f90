@@ -27,7 +27,7 @@ module meds_output_registry
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, &
                                    XTYPE_DOUBLE, XTYPE_INT, MISSING_VALUE, MISSING_INT, ragged_dim
-   use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
+   use meds_output_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
    use meds_constants,         only : cm2_to_m2, n_soil_layer_max
    use meds_output_integrate, only : alloc_integ_buffer, src_class, SRCK_FAST,                                         &
         FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA,     &

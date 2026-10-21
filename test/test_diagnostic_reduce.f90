@@ -15,7 +15,7 @@ program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_constants,     only : n_soil_layer_max
-   use meds_diagnostic_reduce,  only : reduce_cohort_to_polygon, reduce_cohort_to_patch,            &
+   use meds_output_reduce,  only : reduce_cohort_to_polygon, reduce_cohort_to_patch,            &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,             &
                                        reduce_patch_to_polygon, reduce_patch_columns_to_sites,     &
                                        gather_patch_columns,                                     &
