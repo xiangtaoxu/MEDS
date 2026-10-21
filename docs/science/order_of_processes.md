@@ -276,10 +276,9 @@ Each group of variables is stored because the rest of the state cannot rebuild i
 - **The soil-carbon pools** ([soil carbon](soil_carbon.md) §2). A restart keeps them as read and
   skips the steady-state spin-up.
 
-**A file holds every group, and names its layout.** The global attribute `restart_format` says
-which layout a file has, and the reader takes only its own: a file without one of the groups above
-would restart on a start value, not on the state its run was in, so a file of another layout, as
-every file an older MEDS wrote is, is refused with the reason. One adaptation remains: a run whose
+**A file holds every group, and the reader requires each variable.** A file without one of the
+groups above would restart on a start value, not on the state its run was in, so a file that lacks a
+variable, as a file an older MEDS wrote may, stops the run, naming it. One adaptation remains: a run whose
 growth window (`[demography].growth_memory_days`, [allocation](plant_carbon_allocation.md)) is
 another length than its file's fills the ring buffer with the saved `growth_avg`.
 

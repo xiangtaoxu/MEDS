@@ -5,8 +5,8 @@
 ! (docs/science/order_of_processes.md §6, The restart file). restart_file_open, _write and !
 ! _close write a file a polygon's row at a time; read_restart_file reads a row, and        !
 ! restart_file_slots checks a file before a run starts from it. A file holds every         !
-! variable, and the reader refuses one of another RESTART_FORMAT. Each level's variables   !
-! are defined, written and read in one place, in its state module's section order.         !
+! variable, and the reader requires each one. Each level's variables are defined, written  !
+! and read in one place, in its state module's section order.                              !
 ! Diagnostic output is meds_output_*.                                                      !
 !==========================================================================================!
 module meds_init_restart
@@ -35,7 +35,6 @@ module meds_init_restart
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    !----- The layout written and read, a global attribute of every file; a change to it counts up. -!
-   character(len=*), parameter :: RESTART_FORMAT = '3'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
    character(len=*), parameter :: FILM_UNITS  = 'kg/plant'   !< the canopy films' units attribute
 
@@ -106,7 +105,6 @@ contains
       call define_cohort_vars(d)
       call define_patch_vars(d)
       call put_global_text(ncid, 'title', STATE_TITLE)
-      call put_global_text(ncid, 'restart_format', RESTART_FORMAT)
       pending = 'none'
       if (present(restructure_pending)) then
          if (restructure_pending) pending = 'month'
@@ -147,8 +145,8 @@ contains
    ! geometry from the carbon pools; the maps and sort order are rebuilt, and the          !
    ! restructuring owed is the file's restructure_pending                                  !
    ! (docs/science/order_of_processes.md §5). found = .false. and `why` say the file       !
-   ! cannot be opened, is of another RESTART_FORMAT, or has a PFT, site or soil-layer      !
-   ! count unlike the run's.                                                               !
+   ! cannot be opened or has a PFT, site or soil-layer count unlike the run's; a file      !
+   ! without one of the variables stops the run, naming it.                                !
    !---------------------------------------------------------------------------------------!
    subroutine read_restart_file(poly, cfg, path, restart_time, found, polygon, site_cfg, why)
       type(polygon_t),     intent(out) :: poly
@@ -169,8 +167,7 @@ contains
       if (present(why)) why = 'cannot be opened'
       if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) return
       r = file_row_t(ncid=ncid, row=polygon)
-      msg = format_refusal(ncid)
-      if (len(msg) == 0) call get_polygon_vars(r, poly, cfg, restart_time, msg, site_cfg)
+      call get_polygon_vars(r, poly, cfg, restart_time, msg, site_cfg)
       if (len(msg) > 0) then
          st = nc_close(ncid)
          if (present(why)) why = msg
@@ -186,8 +183,8 @@ contains
    end subroutine read_restart_file
 
    !----- Each polygon's row of the restart file at `path`, by its id. why = '' when the file can   !
-   !      start a run of these polygons, else the reason it cannot: it cannot be opened, is of     !
-   !      another RESTART_FORMAT, or does not hold one of them. -----------------------------------!
+   !      start a run of these polygons, else the reason it cannot: it cannot be opened, or does   !
+   !      not hold one of them. -------------------------------------------------------------------!
    subroutine restart_file_slots(path, ids, slot, why)
       character(len=*),              intent(in)  :: path
       integer(ik),                   intent(in)  :: ids(:)
@@ -202,10 +199,9 @@ contains
          why = 'cannot be opened'
          return
       end if
-      why = format_refusal(ncid)
-      if (len(why) == 0) call file_polygon_ids(ncid, file_ids)
+      why = ''
+      call file_polygon_ids(ncid, file_ids)
       st = nc_close(ncid)
-      if (len(why) > 0) return
       do p = 1_ik, size(ids, kind=ik)
          slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
          if (slot(p) == 0_ik) then
@@ -228,20 +224,6 @@ contains
       call nc_check(nc_get_vara_int(ncid, var_id(ncid, 'polygon_id'), start1, count1, polygon_id),         &
                     'get polygon_id')
    end subroutine file_polygon_ids
-
-   !----- Why an open file is not a state file this MEDS reads, or '' when it is: its global       !
-   !      attribute restart_format names its layout, and an older MEDS's files have none. ---------!
-   function format_refusal(ncid) result(why)
-      integer(c_int), intent(in) :: ncid
-      character(len=:), allocatable :: why
-      character(len=32) :: layout
-      why = ''
-      if (nc_get_att_text_f(ncid, NC_GLOBAL, 'restart_format', layout) /= NC_NOERR) then
-         why = 'was written by an older MEDS, before restart_format '//RESTART_FORMAT
-      else if (trim(layout) /= RESTART_FORMAT) then
-         why = 'is restart_format '//trim(layout)//', and this MEDS reads restart_format '//RESTART_FORMAT
-      end if
-   end function format_refusal
 
    !----- A per-polygon variable: one value per row, uncompressed, with its long_name. ------------!
    subroutine def_polygon_var(d, name, xtype, lname)
