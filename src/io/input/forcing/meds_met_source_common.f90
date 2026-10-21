@@ -223,9 +223,9 @@ contains
       if (src%nrec >= 2_ik) then
          dt_file = src%time_sec(2) - src%time_sec(1)
          if (abs(dt_file - src%dt_forcing) > REC_MATCH_TOL) then
-            write(*,'(a,f12.3,a)') ' met_open: [forcing].dt_forcing = ', src%dt_forcing, ' s'
+            write(*,'(a,f12.3,a)') ' met_open: [forcing].timestep = ', src%dt_forcing, ' s'
             write(*,'(a,f12.3,a)') '   but the file record spacing is ', dt_file, ' s.'
-            write(*,'(a)')         '   dt_forcing places interval midpoints, disaggregates shortwave and'
+            write(*,'(a)')         '   The timestep places interval midpoints, disaggregates shortwave and'
             write(*,'(a)')         '   brackets the recycle seam. A wrong value mis-times all three.'
             vstat = MET_ERR_DT_MISMATCH
             return

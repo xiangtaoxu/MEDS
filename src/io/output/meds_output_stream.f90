@@ -357,7 +357,7 @@ contains
          call nc_check(nc_def_var_f(ncid, 'dbh_upper', NC_DOUBLE, 1_c_int, dims1, vid), 'def dbh_upper')
          call put_var_text(ncid, vid, 'units', 'cm')
          call put_var_text(ncid, vid, 'long_name',                                                  &
-              'DBH class upper edge (exclusive, except the last class which is closed)')
+              'DBH class upper edge (exclusive; the last class also holds every larger plant)')
          stream%v_dbh_upper = int(vid, ik)
       end if
 
