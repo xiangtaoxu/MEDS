@@ -5,8 +5,10 @@ The diagnostic and restart files' variables are named `[mean_]<quantity>[_<break
 variable, with every name it replaces (a fast `*_fast` twin merged into its daily variable, or a
 dropped duplicate), its default tiers and its dimensions. Three variables go without a successor:
 `gpp_rate_site` and `et_rate_site`, duplicates of `mean_gpp_py` and `mean_et_py`, and
-`leaf_temp_cohort_fast`, the leaf temperature at each step's end, which returns as the snapshot
-`leaf_temp_co`.
+`leaf_temp_cohort_fast`, the leaf temperature at each step's end: on the F tier the per-cohort leaf
+temperature is `mean_leaf_temp_co`, the one each step's leaf solve used. Each `mean_` variable also has
+a snapshot, its name without the prefix ([diagnostics](science/diagnostics.md) §4), which this page
+does not list.
 
 ## structure
 

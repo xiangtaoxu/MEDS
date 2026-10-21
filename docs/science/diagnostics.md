@@ -127,7 +127,7 @@ instead, and report their values.
 **Names.** A variable is named `[mean_]<quantity>[_<breakdown>]_<level>`. The level is `_co`
 (cohort), `_pa` (patch), `_si` (site) or `_py` (polygon); the breakdown `_pft`, `_size` (DBH class) or
 `_layer` (soil layer). `mean_` marks a mean over the record's period, and a name without it is the
-value at the period's end. The tier is the file, `<prefix>-F-…`, `-D-`, `-M-` or `-Y-`, so one
+value at the period's end, its snapshot (§4, Snapshots). The tier is the file, `<prefix>-F-…`, `-D-`, `-M-` or `-Y-`, so one
 variable has one name at every tier. The axes' coordinates and bookkeeping (`n_cohort`, `n_patch`,
 `cohort_offset`, `cohort_count`, `global_cohort_id`, `global_patch_id`, `owner_patch`, `patch_site`,
 `soil_z`, …) carry no suffix.
@@ -171,17 +171,16 @@ same ceiling.
 
 ## 4. Aggregation across time
 
-**Every value is a mean over its record's period**, but for the few that are its value at the
-period's end (`AGG_LAST`): the ids and the axes' bookkeeping, and each cohort's density and each
-patch's area and age. A flux is its mean rate, so one variable has one unit at every tier, and a
-period's total is the mean times the period's length.
+**A `mean_` variable is a mean over its record's period**, and the variable of the same name without
+the prefix is its value at the period's end (`AGG_LAST`), its snapshot. A flux is its mean rate, so
+one variable has one unit at every tier, and a period's total is the mean times the period's length.
 
 | `agg` | `cell_methods` | meaning |
 |---|---|---|
 | `AGG_TMEAN` | `time: mean` | dt-weighted mean — the default for a physical state or a mean rate |
 | `AGG_MEAN` | `time: mean` | equal-weight mean |
 | `AGG_RATE` | `time: mean` | mean rate of a per-step amount (the fast loop's carbon and water, a count): the period's amounts over the time they took |
-| `AGG_LAST` | `time: point` | end-of-period snapshot (ids, CSR, PFT index, cohort density, patch area and age) |
+| `AGG_LAST` | `time: point` | end-of-period snapshot: every variable without `mean_` |
 
 The fast loop's carbon fluxes are in µmol CO₂ m⁻² s⁻¹ (per plant for a cohort), water in kg m⁻² s⁻¹,
 energy in W m⁻²; the slow step's rates (allocation, growth, litterfall, mortality) keep their
@@ -190,6 +189,31 @@ per-year units. The solvers' work counters are means per fast step, over the pol
 Four tiers — `F` fast, `D` daily, `M` monthly, `Y` annual — each writing its own file family
 `<prefix>-<letter>[-<stamp>].nc`. Each tier integrates raw state independently; for these operators
 that is identical to chaining.
+
+#### Snapshots
+
+Every mean has its snapshot, off by default (`--dump-io-config` lists it as `false`), and the states
+that are snapshots by default (`nplant_co`, `area_pa`, `age_pa`, `n_cohort_py`, `n_patch_py`) have
+their means. What the end of the period means depends on where the value comes from:
+
+- **A state** is read as the period's last step left it: the daily `dbh_co` stamped 31 July is the
+  diameter at 1 August 00:00 (Which steps a record holds, below), and the monthly one stamped July
+  is the same value.
+- **A fast-loop diagnostic** — a flux, the canopy air, a leaf's conductance — is its value over the
+  period's last fast step, as the fast loop recorded it: the last of the sub-step samples its mean
+  averages. On an F tier one sub-step long (`[output].fast_interval_steps = 1`) `cas_temp_py` and
+  `mean_cas_temp_py` are one series, to the mean's last bit, and the daily `cas_temp_py` is the F
+  `cas_temp_py` of its day's last sub-step.
+  A per-cohort row reduced to the patch or the polygon (`leaf_temp_py`) is that sub-step's
+  per-cohort values reduced as its mean is. The fast loop stages its sub-steps whenever an F
+  variable or such a snapshot is written, with forcing off too (the sub-steps then see the
+  reference climate).
+
+Two kinds of variable have no end-of-period value and are mean-only: the totals the fast loop keeps
+only per slow step (`mean_leaf_resp_py`, `mean_stem_resp_py`, `mean_root_resp_py`, `mean_npp_co`,
+the GPP and NPP by PFT, `mean_et_py`, the runoff and drainage, `mean_rh_py` and `mean_rh_pa`, and the
+work counters), and each site's forcing (`mean_air_temp_si` … `mean_nir_beam_si`). The ids and the axes'
+bookkeeping are snapshot-only.
 
 #### Which steps a record holds
 
@@ -255,11 +279,10 @@ always agree. The patch variables follow `axes_patch` (on by default) and `axes_
 
 ### A caveat worth stating plainly
 
-**A FAST-tier per-cohort variable is a mean over the fast output window, not an instantaneous
-sub-step value.** The per-cohort capture is one dt-weighted accumulator per cohort per slow step,
-not a per-sub-step array (which would be `n_cohort × n_sub × n_var`). At
-`[output].fast_interval_steps = 1` the two coincide; at the default `4` a FAST record is a
-four-sub-step mean. This matters when comparing against a flux tower at sub-hourly resolution.
+**A FAST-tier `mean_` variable is a mean over the fast output window, not an instantaneous sub-step
+value**, and its snapshot is the window's last sub-step. At `[output].fast_interval_steps = 1` the
+two coincide; at the default `4` a mean is a four-sub-step mean. This matters when comparing against
+a flux tower at sub-hourly resolution.
 
 ### How the FAST tier is sampled
 
@@ -267,9 +290,10 @@ Sub-daily values exist only inside the fast loop. The fast loop stages each sub-
 patch's row of the patch block and its soil column, the forcing, and the per-cohort values. After the
 fast loop the output layer replays the staging into the FAST tier, one sub-step at a time. A
 polygon's F value is the patches' sum, each weighted by its share of the polygon; a site's soil column
-weights its patches by their areas within the site. On the F tier every variable is the dt-weighted
-mean of its sub-step samples, whatever its reduction on the coarse tiers: GPP, the mean rate of the
-day's per-step amounts on D, is the mean of the sub-steps' rates on F.
+weights its patches by their areas within the site. On the F tier every `mean_` variable is the
+dt-weighted mean of its sub-step samples, whatever its reduction on the coarse tiers: GPP, the mean
+rate of the day's per-step amounts on D, is the mean of the sub-steps' rates on F. A snapshot is the
+last of them.
 
 The FAST tier shares everything else with the coarse tiers: the registry, the running reductions, the
 closing of a period and the writer. Only where it reads its values differs, and that is forced by
@@ -277,11 +301,13 @@ when they exist: by the time the staging is replayed, the live state is the end 
 a sub-daily variable read from it would write end-of-step values on a sub-daily axis.
 
 A variable therefore has two sources: the staged sample its F records read, and the live field its
-D, M and Y records read. Most have both, under one name. The leaf solve's inputs and a few patch
-fluxes have only the first; the slow step's quantities only the second. A tier a variable has no
-source for would write `_FillValue` for the whole run, so the registry checks every default and every
-override at start-up and refuses to start, naming the variable: a diagnostic that quietly reports
-nothing is worse than one that refuses to start.
+D, M and Y records read. Every row the fast loop records each sub-step (the per-cohort and per-patch
+diagnostic rows, the forcing) is staged, so a variable on one has both, under one name. A few patch
+fluxes (`mean_reco_py`, `mean_sw_up_py`, …) have only the first, and their snapshots, the last
+sub-step's value, go on any tier; the slow step's quantities and the fast loop's per-slow-step totals
+have only the second. A tier a variable has no source for would write `_FillValue` for the whole run,
+so the registry checks every default and every override at start-up and refuses to start, naming the
+variable: a diagnostic that quietly reports nothing is worse than one that refuses to start.
 
 ---
 
@@ -333,11 +359,12 @@ mean_gpp_co        = "F D"     # sub-daily and daily GPP per plant, for one diag
 mean_anet_co       = "D"       # ... and the leaf's net assimilation, daily
 mean_agb_size_py   = "M Y"
 mean_growth_avg_co = false
+soil_water_layer_si = "M"      # each site's soil moisture at the end of each month (a snapshot)
 ```
 
 A name matching no registered variable is a hard error, not a silent no-op, and so is a variable on
-a tier it has no source for: only the `*_fast` variables go on the F stream, and they go nowhere
-else.
+a tier it has no source for (a slow-step quantity on F, a sub-daily-only mean on D), and `true` for a
+variable off by default, which has no default tiers to restore: name them instead.
 
 ---
 
@@ -395,20 +422,21 @@ things. They are written whatever `soil_carbon_on` says, since they are demograp
 
 ## 7. Variable inventory
 
-284 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
-groups, axes and default streams — it is generated from the registry, so it cannot drift.
+452 registered variables, 236 means and 216 snapshots. Run `meds_main --dump-io-config` for the
+authoritative list with units, groups, axes and default streams — it is generated from the registry,
+so it cannot drift.
 
 | group | count | | axis | count |
 |---|---|---|---|---|
-| structure | 68 | | site | 145 |
-| energy | 55 | | cohort | 66 |
-| carbon | 39 | | patch | 44 |
-| forcing | 34 | | pft | 9 |
-| ecophys | 33 | | soil | 7 |
-| water | 22 | | (patch, soil) | 7 |
-| biogeochem | 17 | | dbh_class | 6 |
-| numerics | 10 | | | |
-| radiation | 6 | | | |
+| structure | 130 | | polygon | 216 |
+| energy | 78 | | cohort | 112 |
+| ecophys | 58 | | patch | 66 |
+| carbon | 54 | | pft | 16 |
+| forcing | 48 | | dbh_class | 12 |
+| biogeochem | 32 | | soil | 10 |
+| water | 30 | | (patch, soil) | 10 |
+| numerics | 12 | | site | 10 |
+| radiation | 10 | | | |
 
 ---
 
@@ -418,7 +446,9 @@ Two coupled edits, as designed:
 
 1. a `call add_variable(...)` line in the matching `register_*` routine
    (`meds_output_registry`), naming the field, units, dim, `agg`, group, default streams, and —
-   if it is aggregated — the weight kind and mean/sum flag;
+   if it is aggregated — the weight kind and mean/sum flag. Register the mean, `mean_<x>`: its
+   snapshot `<x>` follows (`register_snapshots`). A quantity written as a snapshot by default is
+   registered by its own name, with its mean beside it;
 2. a `case` in the matching field accessor (`meds_output_extract`) that copies the value out of
    live state, under a new source id there.
 
@@ -429,9 +459,9 @@ registry line each**, with no new extraction code.
 For a quantity the fast loop computes and drops, add a row to `cohort_diag_block` or
 `patch_diag_block` (`meds_diag_vars`): a new index parameter in its section (a patch row the fast
 loop fills goes before `N_PA_FAST_ROWS`, and the slow driver's rows follow), one fill line in the
-capture, and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), so a
-patch row reaches the sub-daily tier with one more registry line (`SRC_F_PA0 + PA_*`), per patch
-or as the polygon mean. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
+capture, and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), and
+the per-cohort rows are staged too, so a registry line on a fast row (`FLD_P_DIAG0 + PA_*`,
+`FLD_C_DIAG0 + CO_*`) reaches the sub-daily tier with no more: its F source follows from it. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
 array, so every permutation is a single whole-array statement that cannot omit a field.
 
 ### The one trap
