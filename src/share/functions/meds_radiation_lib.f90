@@ -9,6 +9,7 @@
 module meds_radiation_lib
    use meds_kinds,     only : wp, ik
    use meds_constants, only : t_3ple, tiny_num, p_std, stefan_boltzmann
+   use meds_therm_lib, only : specific_humidity_to_vapor_pressure
    implicit none
    private
 
@@ -184,9 +185,7 @@ contains
          dt  = t_3ple - tair_k
          eps = 1.0_wp - 0.261_wp * exp(-7.77e-4_wp * dt * dt)
       case default                                      ! LW_CLEAR_BRUTSAERT
-         !----- Vapour pressure [hPa] from specific humidity: e = q P / (0.622 + 0.378 q). ----!
-         e_hpa = 0.01_wp * max(qair, 0.0_wp) * psurf_pa                                        &
-               / max(0.622_wp + 0.378_wp * max(qair, 0.0_wp), tiny_num)
+         e_hpa = 0.01_wp * specific_humidity_to_vapor_pressure(max(qair, 0.0_wp), psurf_pa)   ! [hPa]
          eps   = 1.24_wp * (max(e_hpa, tiny_num) / max(tair_k, tiny_num)) ** (1.0_wp / 7.0_wp)
       end select
       eps = min(1.0_wp, max(0.5_wp, eps))   ! clamp-ok: the formulas give >~0.6; 0.5 only guards malformed input
