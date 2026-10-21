@@ -24,8 +24,8 @@ program test_met_driver
    use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
-                                    great_circle_distance, nearest_grid_index,                   &
                                     clearness_index, clear_sky_emissivity, synthesize_lwdown
+   use meds_met_grid,        only : great_circle_distance, nearest_grid_index
    use meds_lapse_rate,      only : lapse_air_temperature, lapse_pressure,        &
                                     monthly_lapse_rate, lapse_specific_humidity, lapse_longwave,    &
                                     cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top

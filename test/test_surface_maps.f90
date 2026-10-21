@@ -20,11 +20,11 @@ program test_surface_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,                 only : wp, ik
    use meds_test_assert,           only : check_true, test_report
-   use meds_test_era5land_archive, only : NLAT, NLON, write_static, write_map, write_surface_maps,     &
+   use meds_test_era5land_archive, only : NLAT, NLON, write_static, write_map, write_surface_maps, archive_grid, &
                                           soil_depth_at, bc_class_at, f_leak_at, deep_temp_at, chave_e_at, &
                                           texture_at, SG_TOP, SG_BOTTOM
-   use meds_met_types,         only : met_cells_t
-   use meds_era5land_reader,       only : era5land_select_box, era5land_keep_cells, ERA_OK
+   use meds_met_types,             only : met_grid_t, met_cells_t
+   use meds_met_grid,              only : select_box_cells, keep_cells, GRID_OK
    use meds_maps,          only : map_values_at_cells, map_layers_at_cells, apply_cell_mask,  &
                                           MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
                                           map_inputs_t, read_map_inputs, apply_map_inputs
@@ -39,6 +39,7 @@ program test_surface_maps
    integer(ik), parameter :: NL = 3_ik
    character(len=512) :: work
    character(len=:), allocatable :: static
+   type(met_grid_t) :: grid
    type(met_cells_t)  :: cells, masked
    real(wp) :: grid2(NLON, NLAT, 1), grid3(NLON, NLAT, NL)
    real(wp), allocatable :: v(:), v3(:,:)
@@ -56,10 +57,11 @@ program test_surface_maps
    call execute_command_line('rm -rf "'//trim(work)//'" && mkdir -p "'//trim(work)//'"')
    static = trim(work)//'/static.nc'
    call write_static(static, .true.)
+   grid = archive_grid(static)
 
    !----- The box: rows 0-3 (45 .. 15 N) and columns 0-3 (180 .. 120 W), every cell valid. ---------!
-   call era5land_select_box(static, [45.0_wp, -180.0_wp, 15.0_wp, -120.0_wp], cells, st)
-   call check_true('the box selects its 16 cells', st == ERA_OK .and. cells%ncell == 16_ik)
+   call select_box_cells(grid, [45.0_wp, -180.0_wp, 15.0_wp, -120.0_wp], cells, st)
+   call check_true('the box selects its 16 cells', st == GRID_OK .and. cells%ncell == 16_ik)
 
    !----- A 2-D map: 100 row + col, with (row 1, col 2) left empty. ----------------------------------!
    do r = 0_ik, NLAT - 1_ik
@@ -69,7 +71,7 @@ program test_surface_maps
    end do
    grid2(3, 2, 1) = FILL
    call write_map(trim(work)//'/map2.nc', 'value', grid2, FILL)
-   call map_values_at_cells(trim(work)//'/map2.nc', 'value', static, cells, v, st)
+   call map_values_at_cells(trim(work)//'/map2.nc', 'value', grid, cells, v, st)
    call check_true('a 2-D map is read', st == MAP_OK .and. size(v) == cells%ncell)
    ok = .true.
    do k = 1_ik, cells%ncell
@@ -87,7 +89,7 @@ program test_surface_maps
    end do
    grid3(3, 2, :) = FILL
    call write_map(trim(work)//'/map3.nc', 'value', grid3, FILL, layer_dim='depth')
-   call map_layers_at_cells(trim(work)//'/map3.nc', 'value', 'depth', static, cells, v3, st)
+   call map_layers_at_cells(trim(work)//'/map3.nc', 'value', 'depth', grid, cells, v3, st)
    call check_true('a layered map is read', st == MAP_OK .and. size(v3, 1) == NL .and. size(v3, 2) == cells%ncell)
    ok = .true.
    do k = 1_ik, cells%ncell
@@ -104,13 +106,13 @@ program test_surface_maps
 
    !----- Refusals. ---------------------------------------------------------------------------------!
    call write_map(trim(work)//'/offgrid.nc', 'value', grid2, FILL, lat_shift=0.05_wp)
-   call map_values_at_cells(trim(work)//'/offgrid.nc', 'value', static, cells, v, st)
+   call map_values_at_cells(trim(work)//'/offgrid.nc', 'value', grid, cells, v, st)
    call check_true('a map off the forcing grid is refused', st == MAP_ERR_GRID)
-   call map_values_at_cells(trim(work)//'/map2.nc', 'other', static, cells, v, st)
+   call map_values_at_cells(trim(work)//'/map2.nc', 'other', grid, cells, v, st)
    call check_true('a missing variable is refused', st == MAP_ERR_VAR)
-   call map_layers_at_cells(trim(work)//'/map3.nc', 'value', 'layer', static, cells, v3, st)
+   call map_layers_at_cells(trim(work)//'/map3.nc', 'value', 'layer', grid, cells, v3, st)
    call check_true('a missing layer dimension is refused', st == MAP_ERR_VAR)
-   call map_values_at_cells(trim(work)//'/none.nc', 'value', static, cells, v, st)
+   call map_values_at_cells(trim(work)//'/none.nc', 'value', grid, cells, v, st)
    call check_true('a missing file is refused', st == MAP_ERR_OPEN)
 
    !----- The cell mask: keep the even columns at a 0.5 threshold; the empty cell is dropped. --------!
@@ -120,7 +122,7 @@ program test_surface_maps
    grid2(3, 2, 1) = FILL                                    ! (row 1, col 2): an even column, but empty
    call write_map(trim(work)//'/mask.nc', 'keep', grid2, FILL)
    masked = cells
-   call apply_cell_mask(masked, trim(work)//'/mask.nc', 'keep', 0.5_wp, static, n_dropped, st)
+   call apply_cell_mask(masked, trim(work)//'/mask.nc', 'keep', 0.5_wp, grid, n_dropped, st)
    call check_true('the mask is read', st == MAP_OK)
    call check_true('it keeps the 7 even-column cells that are not empty', masked%ncell == 7_ik            &
                    .and. n_dropped == 9_ik)
@@ -136,7 +138,7 @@ program test_surface_maps
    end do
    call write_map(trim(work)//'/frac.nc', 'natural', grid2, FILL)
    masked = cells
-   call apply_cell_mask(masked, trim(work)//'/frac.nc', 'natural', 0.25_wp, static, n_dropped, st)
+   call apply_cell_mask(masked, trim(work)//'/frac.nc', 'natural', 0.25_wp, grid, n_dropped, st)
    call check_true('a fraction map with a threshold keeps column 3 only', st == MAP_OK .and.               &
                    masked%ncell == 4_ik .and. all(masked%col == 3_ik))
 
@@ -146,12 +148,12 @@ program test_surface_maps
    opts%soil_texture_map   = trim(work)//'/surface/soil_texture.nc'
    opts%soil_chemistry_map = trim(work)//'/surface/soil_chemistry.nc'
    opts%chave_e_map        = trim(work)//'/surface/chave_e.nc'
-   call read_map_inputs(opts, static, cells, inp, msg)
+   call read_map_inputs(opts, grid, cells, inp, msg)
    call check_true('a run cell the maps leave empty is named, with the variable',                        &
                    index(msg, 'soil_depth has no value at the cell (25.00, -180.00) (row 2, col 0)') > 0)
    masked = cells
-   call era5land_keep_cells(masked, .not. (cells%row == 2_ik .and. cells%col == 0_ik))
-   call read_map_inputs(opts, static, masked, inp, msg)
+   call keep_cells(masked, .not. (cells%row == 2_ik .and. cells%col == 0_ik))
+   call read_map_inputs(opts, grid, masked, inp, msg)
    call check_true('the maps are read at the other 15 cells', len(msg) == 0 .and. inp%soil .and. inp%chave)
    call check_true('the soil maps'' layers are SoilGrids''', all(inp%layer_top == SG_TOP) .and.           &
                    all(inp%layer_bottom == SG_BOTTOM))
@@ -204,8 +206,8 @@ program test_surface_maps
 
    !----- Rows 2-3, columns 14-17: cell (3, 17) is 2.55 m deep, 8 layers, the last 2.0-2.55 m, below    !
    !      the maps' 2 m: it takes the deepest map layer's soil. Its bottom is (3 + 17) mod 4 + 1 = 1. ---!
-   call era5land_select_box(static, [26.0_wp, 99.0_wp, 14.0_wp, 161.0_wp], cells, st)
-   call read_map_inputs(opts, static, cells, inp, msg)
+   call select_box_cells(grid, [26.0_wp, 99.0_wp, 14.0_wp, 161.0_wp], cells, st)
+   call read_map_inputs(opts, grid, cells, inp, msg)
    do k = 1_ik, cells%ncell
       if (cells%row(k) == 3_ik .and. cells%col(k) == 17_ik) exit
    end do
@@ -234,7 +236,7 @@ program test_surface_maps
    !      the cell. ------------------------------------------------------------------------------------!
    call write_surface_maps(trim(work)//'/surface_f0', f_leak=0.0_wp)
    opts%soil_depth_map     = trim(work)//'/surface_f0/soil_depth.nc'
-   call read_map_inputs(opts, static, cells, inp, msg)
+   call read_map_inputs(opts, grid, cells, inp, msg)
    call check_true('a leaky base with f_leak = 0 is refused, naming the cell',                          &
                    index(msg, 'f_leak is not in (0, 1] at the cell (25.00, 120.00) (row 2, col 15), '//   &
                          'whose base is leaky') > 0)

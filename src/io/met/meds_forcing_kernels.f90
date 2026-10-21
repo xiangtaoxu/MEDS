@@ -1,11 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_forcing_kernels -- the pure and elemental meteorological-forcing math                       !
-! (docs/science/forcing.md §1, §3-§8 and §11): temporal interpolation, the solar zenith at         !
-! apparent solar time, the interval-mean-conserving shortwave disaggregation, the four-stream      !
-! shortwave partition, humidity from dewpoint or RH, the rain/snow split, the longwave synthesis,  !
-! the sun on a slope and the grid match. Uses only meds_share and the forcing config's             !
-! enumerations, so the saturation curve and the solar geometry are the model's own. Device-safe.   !
+! (docs/science/forcing.md §3-§8 and §11): temporal interpolation, the solar zenith at apparent     !
+! solar time, the interval-mean-conserving shortwave disaggregation, the four-stream shortwave      !
+! partition, humidity from dewpoint or RH, the rain/snow split, the longwave synthesis and the sun  !
+! on a slope. Uses only meds_share and the forcing config's enumerations, so the saturation curve   !
+! and the solar geometry are the model's own. Device-safe.                                          !
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
@@ -23,7 +23,6 @@ module meds_forcing_kernels
    public :: slope_incidence_cosz, slope_beam_factor
    public :: partition_shortwave, dewpoint_to_specific_humidity, rh_to_specific_humidity
    public :: precip_phase
-   public :: great_circle_distance, nearest_grid_index
 
    real(wp), parameter :: SOLAR_CONSTANT = 1361.0_wp   !< [W/m2] TOA normal irradiance (mean; eccentricity ~+-3% ignored)
    real(wp), parameter :: COSZ_MIN       = 1.0e-3_wp   !< [-] cosz floor: below this it is night (SW = 0)
@@ -31,7 +30,6 @@ module meds_forcing_kernels
    real(wp), parameter :: FPAR_BEAM      = 0.43_wp     !< [-] PAR fraction of direct-beam SW energy
    real(wp), parameter :: FPAR_DIFFUSE   = 0.52_wp     !< [-] PAR fraction of diffuse SW energy (diffuse is PAR-enriched)
    real(wp), parameter :: PHASE_BAND_K   = 1.0_wp      !< [K] half-width of the rain/snow phase-transition band
-   real(wp), parameter :: EARTH_RADIUS_M = 6.371e6_wp  !< [m] mean Earth radius (great-circle grid match)
 
    !----- The Weiss & Norman (1985) partition's constants, as WN85 publish them. With them the     !
    !      scheme's PPFD is within 4 % of three towers' quantum sensors (docs/science/forcing.md §6). !
@@ -351,23 +349,6 @@ contains
       snowfall = precip_total - rainf
    end subroutine precip_phase
 
-   !=======================================================================================!
-   !  GRID MATCH (docs/science/forcing.md §1): the great-circle distance, and the nearest cell    !
-   !  with a strict '<', so a tie keeps the lowest index. The archive's site selection compares    !
-   !  the distance with [forcing].max_distance_km; the mean Earth radius keeps it within 0.5 %.    !
-   !=======================================================================================!
-   pure function great_circle_distance(lon1_deg, lat1_deg, lon2_deg, lat2_deg) result(dist_m)
-      real(wp), intent(in) :: lon1_deg, lat1_deg, lon2_deg, lat2_deg
-      real(wp) :: dist_m, lat1, lat2, dlon, x, y
-      lat1 = lat1_deg * deg_to_rad
-      lat2 = lat2_deg * deg_to_rad
-      dlon = (lon2_deg - lon1_deg) * deg_to_rad
-      x = sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(dlon)
-      y = sqrt( (cos(lat2) * sin(dlon)) ** 2                                                    &
-              + (cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon)) ** 2 )
-      dist_m = EARTH_RADIUS_M * atan2(y, x)
-   end function great_circle_distance
-
    !----- The sun on a slope (docs/science/forcing.md §8): the cosine of its incidence on a            !
    !      surface tilted `slope_deg` from horizontal and facing `aspect_deg` (clockwise from north),   !
    !      cos i = cos z cos s + sin z sin s cos(A - aspect), with A the sun's azimuth, also clockwise  !
@@ -401,20 +382,5 @@ contains
       if (beam <= 0.0_wp .or. cosz <= COSZ_MIN) return
       f = min(cosi / cosz, SOLAR_CONSTANT * cosi / beam)
    end function slope_beam_factor
-
-   pure function nearest_grid_index(site_lon, site_lat, lon, lat) result(idx)
-      real(wp), intent(in) :: site_lon, site_lat, lon(:), lat(:)
-      integer(ik) :: idx, i
-      real(wp) :: dmin, d
-      idx = 1_ik
-      dmin = huge(1.0_wp)
-      do i = 1_ik, int(size(lon), ik)
-         d = great_circle_distance(site_lon, site_lat, lon(i), lat(i))
-         if (d < dmin) then
-            dmin = d
-            idx = i
-         end if
-      end do
-   end function nearest_grid_index
 
 end module meds_forcing_kernels

@@ -15,7 +15,7 @@ module meds_met_default
                                   FLD_PSURF, FLD_WIND, FLD_U10, FLD_V10, FLD_RAINF, FLD_LWDOWN,   &
                                   FLD_SWDOWN, FLD_PAR_BEAM, FLD_PAR_DIFFUSE, FLD_NIR_BEAM,        &
                                   FLD_NIR_DIFFUSE
-   use meds_forcing_kernels, only : nearest_grid_index
+   use meds_met_grid, only : nearest_grid_index
    use meds_netcdf_c, only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f,       &
                              nc_get_vara_double, nc_close, nc_check, nc_inq_var_chunking,         &
                              NC_NOERR, NC_NOWRITE, NC_CHUNKED

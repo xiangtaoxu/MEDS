@@ -14,9 +14,10 @@ module meds_maps
    use meds_kinds,            only : wp, ik
    use meds_netcdf_c,         only : nc_close, nc_get_att_double_f, nc_get_vara_double, nc_inq_dimlen_f,          &
                                      nc_inq_varid_f, nc_open_f, NC_NOERR, NC_NOWRITE
-   use meds_met_types,    only : met_cells_t
-   use meds_era5land_reader,  only : era5land_same_grid, era5land_keep_cells, era5land_select_site,   &
-                                     era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
+   use meds_met_types,        only : met_grid_t, met_cells_t
+   use meds_met_grid,         only : same_grid, keep_cells, select_site_cell, GRID_OK, GRID_ERR_OPEN,      &
+                                     GRID_ERR_NO_CELL
+   use meds_met_era5land,     only : era5land_grid
    use meds_config,           only : meds_config_t, soil_column_layers, soil_column_params
    use meds_config_check,     only : validate_config
    use meds_maps_params,      only : maps_opts_t, soil_maps_on
@@ -33,7 +34,7 @@ module meds_maps
    public :: map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
 
    integer(ik), parameter :: MAP_OK       = 0_ik
-   integer(ik), parameter :: MAP_ERR_OPEN = 1_ik   !< the file (or the static file) cannot be opened
+   integer(ik), parameter :: MAP_ERR_OPEN = 1_ik   !< the file (or the grid's static file) cannot be opened
    integer(ik), parameter :: MAP_ERR_GRID = 2_ik   !< the file is not on the forcing grid
    integer(ik), parameter :: MAP_ERR_VAR  = 3_ik   !< the variable (or its layer dimension) is not there
 
@@ -61,42 +62,45 @@ module meds_maps
 contains
 
    !----- A 2-D (lat, lon) map variable at every cell: values(cell), NaN where the map is empty. -----!
-   subroutine map_values_at_cells(path, var, static_path, cells, values, stat)
-      character(len=*),      intent(in)  :: path, var, static_path
+   subroutine map_values_at_cells(path, var, grid, cells, values, stat)
+      character(len=*),      intent(in)  :: path, var
+      type(met_grid_t),      intent(in)  :: grid
       type(met_cells_t),     intent(in)  :: cells
       real(wp), allocatable, intent(out) :: values(:)
       integer(ik),           intent(out) :: stat
       real(wp), allocatable :: v(:,:)
-      call read_cells(path, var, '', static_path, cells, v, stat)
+      call read_cells(path, var, '', grid, cells, v, stat)
       if (stat == MAP_OK) values = v(1, :)
    end subroutine map_values_at_cells
 
    !----- A layered (layer, lat, lon) map variable at every cell: values(layer, cell), NaN where the  !
    !      map is empty. `layer_dim` names the variable's first dimension. ------------------------------!
-   subroutine map_layers_at_cells(path, var, layer_dim, static_path, cells, values, stat)
-      character(len=*),      intent(in)  :: path, var, layer_dim, static_path
+   subroutine map_layers_at_cells(path, var, layer_dim, grid, cells, values, stat)
+      character(len=*),      intent(in)  :: path, var, layer_dim
+      type(met_grid_t),      intent(in)  :: grid
       type(met_cells_t),     intent(in)  :: cells
       real(wp), allocatable, intent(out) :: values(:,:)
       integer(ik),           intent(out) :: stat
-      call read_cells(path, var, layer_dim, static_path, cells, values, stat)
+      call read_cells(path, var, layer_dim, grid, cells, values, stat)
    end subroutine map_layers_at_cells
 
    !----- The cell mask of a region (docs/configuration.md, Regional runs): keep the cells whose    !
    !      mask value is at least mask_min, not those it leaves empty; n_dropped counts the rest. ----!
-   subroutine apply_cell_mask(cells, mask_path, mask_var, mask_min, static_path, n_dropped, stat)
+   subroutine apply_cell_mask(cells, mask_path, mask_var, mask_min, grid, n_dropped, stat)
       type(met_cells_t), intent(inout) :: cells
-      character(len=*),  intent(in)    :: mask_path, mask_var, static_path
+      character(len=*),  intent(in)    :: mask_path, mask_var
+      type(met_grid_t),  intent(in)    :: grid
       real(wp),          intent(in)    :: mask_min
       integer(ik),       intent(out)   :: n_dropped, stat
       real(wp), allocatable :: v(:)
       logical,  allocatable :: keep(:)
       n_dropped = 0_ik
-      call map_values_at_cells(mask_path, mask_var, static_path, cells, v, stat)
+      call map_values_at_cells(mask_path, mask_var, grid, cells, v, stat)
       if (stat /= MAP_OK) return
       keep = .not. ieee_is_nan(v)
       where (keep) keep = v >= mask_min
       n_dropped = cells%ncell - int(count(keep), ik)
-      call era5land_keep_cells(cells, keep)
+      call keep_cells(cells, keep)
    end subroutine apply_cell_mask
 
    !----- What a status code means, for the caller's message. ------------------------------------!
@@ -124,11 +128,11 @@ contains
    ! bc_class not 1-4, or a leaky base's f_leak outside (0, 1]; it is '' when every value  !
    ! is there.                                                                             !
    !=======================================================================================!
-   subroutine read_map_inputs(opts, static_path, cells, inp, msg)
-      type(maps_opts_t),          intent(in)  :: opts
-      character(len=*),              intent(in)  :: static_path
+   subroutine read_map_inputs(opts, grid, cells, inp, msg)
+      type(maps_opts_t),             intent(in)  :: opts
+      type(met_grid_t),              intent(in)  :: grid
       type(met_cells_t),             intent(in)  :: cells
-      type(map_inputs_t),        intent(out) :: inp
+      type(map_inputs_t),            intent(out) :: inp
       character(len=:), allocatable, intent(out) :: msg
       real(wp), allocatable :: v(:,:), top_chem(:), bottom_chem(:)
       integer(ik) :: k
@@ -217,7 +221,7 @@ contains
          character(len=*),      intent(in)  :: path, var, layer_dim
          real(wp), allocatable, intent(out) :: values(:,:)
          integer(ik) :: st, c
-         call read_cells(trim(path), var, layer_dim, static_path, cells, values, st)
+         call read_cells(trim(path), var, layer_dim, grid, cells, values, st)
          if (st /= MAP_OK) then
             msg = 'map '//trim(path)//' '//map_status_message(st)//': '//var
             return
@@ -371,29 +375,29 @@ contains
 
    !=======================================================================================!
    ! site_map_inputs -- a site run's [maps] inputs, at the forcing cell its [site]         !
-   ! location reads (the archive's own choice, era5land_select_site), into cfg, which is   !
+   ! location reads (the archive's own choice, select_site_cell), into cfg, which is       !
    ! then validated again. msg is '' on success, else why the inputs could not be had.     !
    !=======================================================================================!
    subroutine site_map_inputs(cfg, msg)
       type(meds_config_t),           intent(inout) :: cfg
       character(len=:), allocatable, intent(out)   :: msg
-      type(met_cells_t)      :: cell
+      type(met_grid_t)   :: grid
+      type(met_cells_t)  :: cell
       type(map_inputs_t) :: inp
-      character(len=:), allocatable :: static
       real(wp)    :: distance_km
       integer(ik) :: st
-      static = trim(era5land_static_file(cfg%forcing))
-      call era5land_select_site(static, cfg%forcing%latitude, cfg%forcing%longitude,              &
-                                cfg%forcing%max_distance_km, cell, distance_km, st)
-      if (st /= ERA_OK) then
-         if (st == ERA_ERR_NO_CELL) then
+      grid = era5land_grid(cfg%forcing)
+      call select_site_cell(grid, cfg%forcing%latitude, cfg%forcing%longitude, cfg%forcing%max_distance_km, &
+                            cell, distance_km, st)
+      if (st /= GRID_OK) then
+         if (st == GRID_ERR_NO_CELL) then
             msg = 'no valid forcing cell near the site for the [maps] maps'
          else
-            msg = 'cannot read the forcing''s static file '//static//' for the [maps] maps'
+            msg = 'cannot read the forcing''s static file '//trim(grid%static_file)//' for the [maps] maps'
          end if
          return
       end if
-      call read_map_inputs(cfg%maps, static, cell, inp, msg)
+      call read_map_inputs(cfg%maps, grid, cell, inp, msg)
       if (len(msg) > 0) return
       call apply_map_inputs(inp, 1_ik, cfg)
       call validate_config(cfg)
@@ -405,8 +409,9 @@ contains
    ! pick each cell's values. _FillValue, missing_value and NaN read as NaN, and packed    !
    ! values are unpacked. layer_dim = '' reads a 2-D variable as one layer.                !
    !=======================================================================================!
-   subroutine read_cells(path, var, layer_dim, static_path, cells, values, stat)
-      character(len=*),      intent(in)  :: path, var, layer_dim, static_path
+   subroutine read_cells(path, var, layer_dim, grid, cells, values, stat)
+      character(len=*),      intent(in)  :: path, var, layer_dim
+      type(met_grid_t),      intent(in)  :: grid
       type(met_cells_t),     intent(in)  :: cells
       real(wp), allocatable, intent(out) :: values(:,:)
       integer(ik),           intent(out) :: stat
@@ -418,9 +423,9 @@ contains
 
       allocate(values(1, cells%ncell))
       values = ieee_value(1.0_wp, ieee_quiet_nan)
-      call era5land_same_grid(path, static_path, stat)
-      if (stat /= ERA_OK) then
-         stat = merge(MAP_ERR_OPEN, MAP_ERR_GRID, stat == ERA_ERR_OPEN)
+      call same_grid(path, grid, stat)
+      if (stat /= GRID_OK) then
+         stat = merge(MAP_ERR_OPEN, MAP_ERR_GRID, stat == GRID_ERR_OPEN)
          return
       end if
       stat = MAP_ERR_OPEN

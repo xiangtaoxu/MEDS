@@ -13,8 +13,9 @@ module meds_test_era5land_archive
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_kinds,           only : wp, sp, ik
    use meds_time,            only : meds_time_t, seconds_between
-   use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_month_hours, &
-                                    ERA_NVAR, ERA_VAR_NAME, ERA_VAR_UNITS
+   use meds_met_era5land,    only : era5land_path, era5land_default_template, era5land_month_hours, &
+                                    ERA_NVAR, ERA_VAR_NAME, ERA_VAR_UNITS, ERA_CHUNK
+   use meds_met_types,       only : met_grid_t
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
    use meds_soil_hydr_lib,   only : soil_texture_t
@@ -23,6 +24,7 @@ module meds_test_era5land_archive
 
    public :: NLAT, NLON, LAT0, DLAT, LON0, DLON, T0
    public :: is_valid, field, air_temperature, hour_index, write_archive, write_static, write_month
+   public :: archive_grid
    public :: write_map
    public :: write_surface_maps, soil_depth_at, bc_class_at, f_leak_at, deep_temp_at, chave_e_at, texture_at
    public :: SG_TOP, SG_BOTTOM
@@ -37,6 +39,13 @@ module meds_test_era5land_archive
    real(wp), parameter :: SG_BOTTOM(6) = [0.05_wp, 0.15_wp, 0.30_wp, 0.60_wp, 1.00_wp, 2.00_wp]
 
 contains
+
+   !----- The archive's grid, from one of its static files. -----------------------------------------!
+   function archive_grid(static) result(grid)
+      character(len=*), intent(in) :: static
+      type(met_grid_t) :: grid
+      grid = met_grid_t(static_file=static, chunk=ERA_CHUNK)
+   end function archive_grid
 
    !----- No data at (row 0, col 5) and (row 2, col 0); everything else is valid. ----------------!
    pure logical function is_valid(r, c)

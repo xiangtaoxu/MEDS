@@ -38,12 +38,13 @@ module meds_region
    use meds_init_restart,           only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
                                            restart_file_slots
    use meds_init,                   only : init_polygon
-   use meds_met_types,          only : met_source_t, met_cells_t
-   use meds_forcing_params,         only : MET_PATH_LEN, MET_BACKEND_ED_ERA5LAND
+   use meds_met_types,              only : met_source_t, met_grid_t, met_cells_t
+   use meds_forcing_params,         only : MET_BACKEND_ED_ERA5LAND
    use meds_met,             only : met_open, met_close, met_prefetch, MET_OK
    use meds_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
                                            map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
-   use meds_era5land_reader,        only : era5land_select_box, era5land_static_file, ERA_OK, ERA_ERR_NO_CELL
+   use meds_met_grid,               only : select_box_cells, GRID_OK, GRID_ERR_NO_CELL
+   use meds_met_era5land,           only : era5land_grid
    use meds_output_reduce,      only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
                                            open_output_files, attach_output, ensure_output_dir,   &
@@ -111,7 +112,7 @@ contains
       logical,             intent(out)   :: ok
       logical, optional,   intent(in)    :: verbose
       type(met_cells_t)          :: cells
-      character(len=MET_PATH_LEN) :: static
+      type(met_grid_t)           :: grid
       integer(ik)                :: st, p, n
       integer(ik), allocatable   :: ids(:), slot(:)
       type(map_inputs_t)         :: inputs
@@ -145,9 +146,9 @@ contains
                             'worker thread''s default stack (4 MB with ifx); set it, e.g. OMP_STACKSIZE=512M'
          !----- The cells: the box's valid cells with enough land, in row-major order, less those the  !
          !      cell mask drops; each one's soil and site index from the [maps] files. ----------------!
-         static = era5land_static_file(cfg%forcing)
-         if (.not. select_cells(cfg, static, cells, reg%verbose)) return
-         call read_map_inputs(cfg%maps, static, cells, inputs, msg)
+         grid = era5land_grid(cfg%forcing)
+         if (.not. select_cells(cfg, grid, cells, reg%verbose)) return
+         call read_map_inputs(cfg%maps, grid, cells, inputs, msg)
          if (len(msg) > 0) then
             write(*,'(2a)') ' region: ', msg
             return
@@ -322,26 +323,26 @@ contains
 
    !----- A region's cells: the box's valid cells with enough land, in row-major order, less those   !
    !      the cell mask drops. .false. (after saying why) when none is left or a file cannot be read. !
-   logical function select_cells(cfg, static, cells, verbose) result(ok)
+   logical function select_cells(cfg, grid, cells, verbose) result(ok)
       type(meds_config_t), intent(in)  :: cfg
-      character(len=*),    intent(in)  :: static
+      type(met_grid_t),    intent(in)  :: grid
       type(met_cells_t),   intent(out) :: cells
       logical,             intent(in)  :: verbose
       integer(ik) :: st, n, j
       ok = .false.
-      call era5land_select_box(static, cfg%region%box_nwse, cells, st, cfg%region%land_fraction_min)
-      if (st == ERA_ERR_NO_CELL) then
+      call select_box_cells(grid, cfg%region%box_nwse, cells, st, cfg%region%land_fraction_min)
+      if (st == GRID_ERR_NO_CELL) then
          write(*,'(a,4(f0.3,1x),a,f0.2)') ' region: no valid cell in box_nwse = ', cfg%region%box_nwse, &
                'with land fraction >= ', cfg%region%land_fraction_min
          return
-      else if (st /= ERA_OK) then
-         write(*,'(2a)') ' region: cannot read valid, elevation and land_fraction from ', trim(static)
+      else if (st /= GRID_OK) then
+         write(*,'(2a)') ' region: cannot read valid, elevation and land_fraction from ', trim(grid%static_file)
          return
       end if
       if (len_trim(cfg%region%cell_mask) > 0) then
          n = cells%ncell
          call apply_cell_mask(cells, trim(cfg%region%cell_mask), trim(cfg%region%cell_mask_var),       &
-                              cfg%region%cell_mask_min, static, j, st)
+                              cfg%region%cell_mask_min, grid, j, st)
          if (st /= MAP_OK) then
             write(*,'(4a)') ' region: the cell mask ', trim(cfg%region%cell_mask), ' ', map_status_message(st)
             return
