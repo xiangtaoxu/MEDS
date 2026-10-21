@@ -33,13 +33,13 @@ module meds_output_integrate
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,             &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,               &
                                        reduce_patch_to_site, reduce_patch_columns_to_sites,       &
-                                       gather_patch_columns, total_et
+                                       gather_patch_columns
    implicit none
    private
 
    public :: alloc_integ_buffer, reset_buffer, integrate_scalar, integrate_slab
-   public :: normalize_scalar, normalize_slab, slab_capacity
-   public :: extract_variable, extract_scalar_source, extract_fast_scalar
+   public :: normalize_scalar, normalize_slab
+   public :: extract_variable, extract_fast_scalar
    public :: output_integrate, output_integrate_fast, close_tier
    public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_SITE, SRCK_FAST, SRCK_SITES
    !----- Cohort FIELDS (1000-1999). ---------------------------------------------------------!
@@ -254,10 +254,6 @@ contains
       end if
    end subroutine reset_buffer
 
-   pure integer(ik) function slab_capacity(buf) result(cap)
-      type(integ_buffer_t), intent(in) :: buf
-      if (allocated(buf%slab)) then ; cap = int(size(buf%slab), ik) ; else ; cap = 0_ik ; end if
-   end function slab_capacity
 
    !=======================================================================================!
    !  Integrate (fold one step)                                                             !
@@ -720,7 +716,7 @@ contains
       type(polygon_t), intent(in) :: poly
       integer(ik),  intent(in) :: source_id
       select case (source_id)
-      case (SRC_S_ET)         ; val = total_et(poly)
+      case (SRC_S_ET)         ; val = poly%et_accum
       case (SRC_S_RUNOFF)     ; val = poly%runoff_surf_accum + poly%drainage_accum
       case (SRC_S_RUNOFF_SURF); val = poly%runoff_surf_accum
       case (SRC_S_DRAINAGE)   ; val = poly%drainage_accum

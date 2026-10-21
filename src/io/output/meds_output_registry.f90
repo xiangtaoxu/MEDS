@@ -635,8 +635,8 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PA_LITTER_STRUCT)
       call add_variable(reg, 'nplant_recruit_site', 'recruitment density flux', 'plant/m2/yr',   &
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PA_RECRUIT_NPLANT)
-   call add_variable(reg, 'disturb_area_site', 'patch area fraction disturbed', '1/yr',           &
-                     DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PA_DISTURB_AREA)
+      call add_variable(reg, 'disturb_area_site', 'patch area fraction disturbed', '1/yr',        &
+                        DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PA_DISTURB_AREA)
       !----- Mortality carbon SPLIT BY PATHWAY. The three are mutually exclusive and jointly       !
       !      exhaustive, so they sum to the whole-individual mortality carbon -- which is what makes !
       !      them worth emitting separately: a stand thinning continuously and a stand being knocked !

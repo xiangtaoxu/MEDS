@@ -14,9 +14,9 @@
 ! one before it: MEDS never gap-fills, so a missing period is an error, not an interpolation.      !
 !                                                                                          !
 ! The lookup places each value at the middle of its period and interpolates linearly between     !
-! the middles (docs/science/forcing.md eq. (18)).                                                 !
-! the middles. Over the first and last half-periods it holds the end value, which is still        !
-! inside the period that value is the mean of; nothing is extrapolated. A run must lie inside     !
+! the middles (docs/science/forcing.md eq. (18)). Over the first and last half-periods it holds  !
+! the end value, which is still inside the period that value is the mean of; nothing is          !
+! extrapolated. A run must lie inside                                                             !
 ! the file's periods, which met_open checks once (co2_series_covers), so a lookup never leaves    !
 ! them. The lookup is on MODEL time, so the CO2 keeps rising while recycled met repeats.          !
 !==========================================================================================!

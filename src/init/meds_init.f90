@@ -10,13 +10,12 @@
 module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, growth_window_steps
-   use meds_patch_state_vars, only : DIST_PRIMARY
    use meds_allometry_lib, only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
    use meds_site_state_vars,       only : make_site_surface
    use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map,      &
                                           assign_cohort_id, assign_patch_id
-   use meds_patch_state_vars,      only : patch_physical_state
+   use meds_patch_state_vars,      only : patch_physical_state, DIST_PRIMARY
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
                                                split_cohorts
    use meds_demography_patch_fusefiss,  only : sort_patches, new_fuse_patches, terminate_patches
@@ -28,6 +27,8 @@ module meds_init
 
    !----- The census file's column layout: each index is the column's position, 0 if absent. -!
    integer, parameter :: CENSUS_MAX_COLS = 32, CENSUS_FIELD_LEN = 64
+   !----- Two rows of one patch agree on its area within this fraction of it. ------------------!
+   real(wp), parameter :: PATCH_AREA_RTOL = 1.0e-9_wp
    type :: census_columns_t
       logical :: header = .false.
       integer :: n = 0
@@ -258,7 +259,7 @@ contains
                   patch_id_of   = [patch_id_of, pid]
                   patch_area_of = [patch_area_of, area]
                else if (cols%area > 0) then
-                  if (abs(area - patch_area_of(ip)) > 1.0e-9_wp * patch_area_of(ip)) then
+                  if (abs(area - patch_area_of(ip)) > PATCH_AREA_RTOL * patch_area_of(ip)) then
                      write(pid_str, '(i0)') pid
                      error stop 'meds_init: census patch_id '//trim(pid_str)//                     &
                                 ' has rows with two different patch_area values in '//trim(path)

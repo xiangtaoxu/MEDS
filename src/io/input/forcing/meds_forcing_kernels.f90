@@ -10,18 +10,17 @@
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan_boltzmann
-   use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
-   use meds_therm_lib,         only : sat_vapor_pressure
-   use meds_time,           only : meds_time_t, solar_cosz, day_of_year, solar_declination
-   use meds_forcing_params, only : INTERP_LINEAR, INTERP_STEP,                                 &
+   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan_boltzmann, day_sec, deg_to_rad
+   use meds_forcing_params, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, INTERP_LINEAR, INTERP_STEP,          &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN
+   use meds_therm_lib,      only : sat_vapor_pressure
+   use meds_time,           only : meds_time_t, solar_cosz, day_of_year, solar_declination
    implicit none
    private
 
    public :: interpolate_forcing, interpolate_wind_energy
    public :: clearness_index, clear_sky_emissivity, synthesize_lwdown
-   public :: apparent_solar_seconds, met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw
+   public :: met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw
    public :: slope_incidence_cosz, slope_beam_factor
    public :: partition_shortwave, dewpoint_to_specific_humidity, rh_to_specific_humidity
    public :: precip_phase
@@ -294,7 +293,7 @@ contains
       real(wp) :: eps, e_hpa, dt
       select case (form)
       case (LW_CLEAR_IDSO)
-         dt  = 273.16_wp - tair_k
+         dt  = t_3ple - tair_k
          eps = 1.0_wp - 0.261_wp * exp(-7.77e-4_wp * dt * dt)
       case default                                      ! LW_CLEAR_BRUTSAERT
          !----- Vapour pressure [hPa] from specific humidity: e = q P / (0.622 + 0.378 q). ----!
@@ -377,10 +376,9 @@ contains
    !=======================================================================================!
    pure function great_circle_distance(lon1_deg, lat1_deg, lon2_deg, lat2_deg) result(dist_m)
       real(wp), intent(in) :: lon1_deg, lat1_deg, lon2_deg, lat2_deg
-      real(wp) :: dist_m, d2r, lat1, lat2, dlon, x, y
-      d2r  = pi / 180.0_wp
-      lat1 = lat1_deg * d2r ; lat2 = lat2_deg * d2r
-      dlon = (lon2_deg - lon1_deg) * d2r
+      real(wp) :: dist_m, lat1, lat2, dlon, x, y
+      lat1 = lat1_deg * deg_to_rad ; lat2 = lat2_deg * deg_to_rad
+      dlon = (lon2_deg - lon1_deg) * deg_to_rad
       x = sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(dlon)
       y = sqrt( (cos(lat2) * sin(dlon)) ** 2                                                    &
               + (cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon)) ** 2 )
@@ -395,18 +393,17 @@ contains
                                                aspect_deg) result(cosi)
       type(meds_time_t), intent(in) :: t
       real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg, slope_deg, aspect_deg
-      real(wp) :: d2r, lat, decl, hour_angle, cosz, sinz, azimuth, slope
-      d2r        = pi / 180.0_wp
-      lat        = latitude_deg * d2r
+      real(wp) :: lat, decl, hour_angle, cosz, sinz, azimuth, slope
+      lat        = latitude_deg * deg_to_rad
       decl       = solar_declination(day_of_year(t))
-      hour_angle = 2.0_wp * pi * (apparent_solar_seconds(t, sec_utc, longitude_deg) / 86400.0_wp - 0.5_wp)
+      hour_angle = 2.0_wp * pi * (apparent_solar_seconds(t, sec_utc, longitude_deg) / day_sec - 0.5_wp)
       cosz       = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hour_angle)
       cosi       = 0.0_wp
       if (cosz <= 0.0_wp) return
       sinz    = sqrt(max(0.0_wp, 1.0_wp - cosz * cosz))
       azimuth = atan2(-cos(decl) * sin(hour_angle), sin(decl) * cos(lat) - cos(decl) * sin(lat) * cos(hour_angle))
-      slope   = slope_deg * d2r
-      cosi    = max(0.0_wp, cosz * cos(slope) + sinz * sin(slope) * cos(azimuth - aspect_deg * d2r))
+      slope   = slope_deg * deg_to_rad
+      cosi    = max(0.0_wp, cosz * cos(slope) + sinz * sin(slope) * cos(azimuth - aspect_deg * deg_to_rad))
    end function slope_incidence_cosz
 
    !----- The factor the direct beam takes on a slope: the beam normal to the sun, beam / cos z,       !

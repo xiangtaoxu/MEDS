@@ -23,7 +23,8 @@ module meds_surface_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
    use iso_c_binding,         only : c_int, c_size_t, c_double
    use meds_kinds,            only : wp, ik
-   use meds_netcdf_c
+   use meds_netcdf_c,         only : nc_close, nc_get_att_double_f, nc_get_vara_double, nc_inq_dimlen_f,          &
+                                     nc_inq_varid_f, nc_open_f, NC_NOERR, NC_NOWRITE
    use meds_forcing_types,    only : met_cells_t
    use meds_era5land_reader,  only : era5land_same_grid, era5land_keep_cells, era5land_select_site,   &
                                      era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL

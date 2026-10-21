@@ -25,7 +25,7 @@ module meds_output_types
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE
    public :: XTYPE_DOUBLE, XTYPE_INT
    public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS, MAX_DBH_CLASS
-   public :: agg_is_slabwise, ragged_dim
+   public :: ragged_dim, slab_col
 
    !----- Temporal reduction operators (the `agg` of a variable). -----------------------------!
    integer(ik), parameter :: AGG_MEAN    = 1_ik  !< equal-weight arithmetic mean
@@ -181,8 +181,6 @@ module meds_output_types
       integer(ik), allocatable :: col(:)        !< (nvar) slab column of each variable (0 = none)
    end type pending_record_t
 
-   public :: slab_col
-
    !----- The closed records of one tier waiting for the I/O phase, in closing order. A queued     !
    !      record keeps only the slab rows the writer reads, not the scratch's max_slab rows, so a   !
    !      month of fast-tier records costs the live cohort count, not cohort_max. Elements are       !
@@ -326,11 +324,6 @@ contains
       if (allocated(pr%col)) then ; c = pr%col(k) ; else ; c = k ; end if
    end function slab_col
 
-   !----- .true. if the operator averages/weights (needs seed/wsum handling), used by callers. --!
-   pure logical function agg_is_slabwise(dim) result(yes)
-      integer(ik), intent(in) :: dim
-      yes = (dim /= DIM_SCALAR)
-   end function agg_is_slabwise
 
    !----- The axes whose length and slots follow the stand: cohort, patch, and soil by patch. They  !
    !      are fixed only within a month (docs/science/diagnostics.md §3), so a file of them spans   !

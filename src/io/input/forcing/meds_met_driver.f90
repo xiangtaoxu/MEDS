@@ -27,6 +27,7 @@
 ! recycled.                                                                                         !
 !==========================================================================================!
 module meds_met_driver
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
    use meds_therm_lib, only : air_density
@@ -537,7 +538,7 @@ contains
       real(wp),         intent(in) :: x
       character(len=*), intent(in) :: name
       integer(ik),      intent(in) :: irec, grid
-      if (x /= x) then                                   ! NaN test (no ieee dependency)
+      if (ieee_is_nan(x)) then
          write(*,'(4a,i0,a,i0)') 'met_driver: missing/NaN value in required field ', trim(name), &
                ' at time record ', ' ', irec, ', grid ', grid
          error stop 'met_driver: forcing has a data gap (MEDS does not gap-fill; fix the source upstream)'

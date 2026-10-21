@@ -22,15 +22,11 @@
 !==========================================================================================!
 module meds_diagnostic_kernels
    use meds_kinds,         only : wp, ik
-   use meds_constants,     only : tiny_num, gsw_2_gsc
-   use meds_therm_lib,     only : sat_vapor_pressure, air_vpd, specific_humidity_to_vpd
+   use meds_constants,     only : tiny_num
    implicit none
    private
 
-   public :: cohort_lai, cohort_npp_per_plant, cohort_gsc, cohort_wue, cohort_ci_ca
-   public :: soil_wetness, air_vpd, specific_humidity_to_vpd
-   public :: bowen_ratio, safe_ratio
-   public :: dbh_class_index
+   public :: cohort_lai, cohort_npp_per_plant, soil_wetness, dbh_class_index
 
 contains
 
@@ -39,7 +35,7 @@ contains
    !=======================================================================================!
 
    !----- Per-cohort leaf area index [m2 leaf / m2 ground of its own patch]. ----------------!
-   pure elemental real(wp) function cohort_lai(nplant, leaf_area) result(lai)
+   elemental real(wp) function cohort_lai(nplant, leaf_area) result(lai)
       real(wp), intent(in) :: nplant     !< [plant/m2]
       real(wp), intent(in) :: leaf_area  !< [m2/plant]
       lai = nplant * leaf_area
@@ -49,37 +45,11 @@ contains
    !      minus the three autotrophic MAINTENANCE respiration terms. Growth respiration is     !
    !      NOT included here -- it is charged inside the slow-loop allocation step, and adding   !
    !      it would double-count against npp_*_site. Mirrors total_npp's definition exactly.     !
-   pure elemental real(wp) function cohort_npp_per_plant(gpp, leaf_resp, stem_resp, root_resp) &
+   elemental real(wp) function cohort_npp_per_plant(gpp, leaf_resp, stem_resp, root_resp) &
                                     result(npp)
       real(wp), intent(in) :: gpp, leaf_resp, stem_resp, root_resp   !< [kgC/plant]
       npp = gpp - leaf_resp - stem_resp - root_resp
    end function cohort_npp_per_plant
-
-   !=======================================================================================!
-   !  Leaf gas exchange                                                                     !
-   !=======================================================================================!
-
-   !----- Stomatal conductance to CO2 from the conductance to water vapour (Fick: CO2        !
-   !      diffuses 1.6x slower than H2O through the stomatal pore).                            !
-   pure elemental real(wp) function cohort_gsc(gsw) result(gsc)
-      real(wp), intent(in) :: gsw   !< [mol H2O/m2 leaf/s]
-      gsc = gsw / gsw_2_gsc
-   end function cohort_gsc
-
-   !----- Instantaneous water-use efficiency [umol CO2 / mmol H2O]. The transpiration input   !
-   !      is the leaf kernel's [mol H2O/m2/s], so the 1e3 converts mol -> mmol. Guarded: at     !
-   !      night E -> 0 and the ratio is meaningless, so it returns 0 rather than a huge spike.  !
-   pure elemental real(wp) function cohort_wue(a_net, transpiration) result(wue)
-      real(wp), intent(in) :: a_net          !< [umol CO2/m2 leaf/s]
-      real(wp), intent(in) :: transpiration  !< [mol H2O/m2 leaf/s]
-      wue = safe_ratio(a_net, 1.0e3_wp * transpiration)
-   end function cohort_wue
-
-   !----- Ci/Ca ratio [-], the standard water-use-strategy index. ---------------------------!
-   pure elemental real(wp) function cohort_ci_ca(ci, ca) result(r)
-      real(wp), intent(in) :: ci, ca   !< [umol/mol]
-      r = safe_ratio(ci, ca)
-   end function cohort_ci_ca
 
    !=======================================================================================!
    !  Soil                                                                                  !
@@ -88,37 +58,11 @@ contains
    !----- Relative saturation (ED2 `soil_wetness`) [-]: where the layer sits between residual !
    !      and saturation. Clamped to [0,1] so a solver excursion outside the constitutive       !
    !      domain reports as exactly dry/saturated rather than as an out-of-range number.        !
-   pure elemental real(wp) function soil_wetness(theta, theta_res, theta_sat) result(w)
+   elemental real(wp) function soil_wetness(theta, theta_res, theta_sat) result(w)
       real(wp), intent(in) :: theta, theta_res, theta_sat
       w = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
       w = min(max(w, 0.0_wp), 1.0_wp)
    end function soil_wetness
-
-   !=======================================================================================!
-   !  Atmosphere / canopy air: air_vpd and specific_humidity_to_vpd are meds_therm_lib's,    !
-   !  re-exported above (CONTENT RULE).                                                     !
-   !=======================================================================================!
-
-   !=======================================================================================!
-   !  Generic                                                                               !
-   !=======================================================================================!
-
-   !----- Bowen ratio H/LE [-]; 0 when the latent flux is negligible (night, frozen). -------!
-   pure elemental real(wp) function bowen_ratio(h_flux, le_flux) result(b)
-      real(wp), intent(in) :: h_flux, le_flux   !< [W/m2]
-      b = safe_ratio(h_flux, le_flux)
-   end function bowen_ratio
-
-   !----- x/y, returning 0 when |y| is negligible. The ONE guarded division in this module:  !
-   !      every ratio diagnostic routes through it so a zero denominator can never produce a   !
-   !      NaN or an Inf that would then poison a period mean (and be indistinguishable from a  !
-   !      real value in the output file). A diagnostic that cannot be formed is 0 here, and     !
-   !      the aggregation layer's own empty-period guard emits _FillValue for a period that      !
-   !      genuinely had no samples -- the two mechanisms answer different questions.             !
-   pure elemental real(wp) function safe_ratio(x, y) result(r)
-      real(wp), intent(in) :: x, y
-      if (abs(y) > tiny_num) then ; r = x / y ; else ; r = 0.0_wp ; end if
-   end function safe_ratio
 
    !=======================================================================================!
    !  Size-class binning (DIM_SIZE)                                                          !

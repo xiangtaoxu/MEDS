@@ -24,7 +24,7 @@ module meds_era5land_reader
    implicit none
    private
 
-   public :: era5land_path, era5land_default_template, era5land_default_static, era5land_static_file
+   public :: era5land_path, era5land_default_template, era5land_static_file
    public :: era5land_select_site, era5land_select_box, era5land_load_month, era5land_month_hours
    public :: era5land_same_grid, era5land_keep_cells
    public :: ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, ERA_RAINF, ERA_SWDOWN, ERA_LWDOWN

@@ -77,7 +77,6 @@ module meds_forcing_types
       real(wp) :: rho_air      = 1.2_wp       !< [kg/m3]    DERIVED from air_temp/psurf/qair
    contains
       procedure :: swdown         => met_swdown          !< total downward SW = sum of the four streams
-      procedure :: rshort_diffuse => met_rshort_diffuse  !< diffuse SW = par_diffuse + nir_diffuse
    end type met_forcing_t
 
    !----- One raw timestamped record as read (pre-interpolation). The four SW streams are      !
@@ -222,9 +221,5 @@ contains
       sw = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
    end function met_swdown
 
-   pure real(wp) function met_rshort_diffuse(met) result(diff)
-      class(met_forcing_t), intent(in) :: met
-      diff = met%par_diffuse + met%nir_diffuse
-   end function met_rshort_diffuse
 
 end module meds_forcing_types

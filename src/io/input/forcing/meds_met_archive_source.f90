@@ -9,6 +9,7 @@
 module meds_met_archive_source
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
+   use meds_constants, only : day_sec
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, seconds_into_day,    &
                          time_to_string
    use meds_forcing_params, only : MET_PATH_LEN, ARCHIVE_DT_SEC, SWPART_PASSTHROUGH
@@ -292,7 +293,7 @@ contains
       time_of_day = seconds_into_day(src%cycle_anchor)
       src%n_head = 1_ik
       if (time_of_day > REC_MATCH_TOL)                                                            &
-         src%n_head = 1_ik + nint((86400.0_wp - time_of_day) / src%dt_forcing, ik)
+         src%n_head = 1_ik + nint((day_sec - time_of_day) / src%dt_forcing, ik)
       h1 = src%irec_cycle_first - src%month_rec0(1)
       allocate(src%head(src%n_head, src%cells%ncell, ERA_NVAR))
       src%head = src%buffer%values(h1:h1 + src%n_head - 1_ik, :, :)

@@ -72,6 +72,7 @@ module meds_constants
 
    !----- Conversions: units. -------------------------------------------------------------!
    real(wp), parameter :: t_kelvin       = 273.15_wp             !< [K] 0 degC in kelvin
+   real(wp), parameter :: deg_to_rad     = pi / 180.0_wp         !< [rad/deg]
    real(wp), parameter :: cm2_to_m2      = 1.0e-4_wp             !< [m2/cm2] basal and sapwood areas are kept in cm2
    real(wp), parameter :: mol_2_umol     = 1.0e6_wp              !< [umol/mol] mole fraction -> ppm
    real(wp), parameter :: umol_2_kgc     = 1.20107e-8_wp         !< [kgC/umol] carbon in 1 umol CO2 (12.0107 g/mol)

@@ -18,10 +18,14 @@
 module meds_output_stream
    use iso_c_binding, only : c_int, c_size_t, c_double, c_char
    use meds_kinds,    only : wp, ik
-   use meds_time,     only : meds_time_t, time_to_decimal_year
+   use meds_time,     only : meds_time_t, time_to_decimal_year, time_eq
    use meds_constants,     only : n_soil_layer_max
    use meds_soil_params,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
-   use meds_netcdf_c
+   use meds_netcdf_c, only : cstr, nc_check, nc_close, nc_create_f, nc_def_dim_f, nc_def_var_f,                   &
+                             nc_def_var_chunking, nc_def_var_deflate, nc_enddef, nc_put_att_double_f,             &
+                             nc_put_att_int, nc_put_att_int_f, nc_put_att_text_f, nc_put_var1_double,             &
+                             nc_put_vara_double, nc_put_vara_int, nc_sync, NC_CHUNKED, NC_CLOBBER, NC_DOUBLE,     &
+                             NC_GLOBAL, NC_INT, NC_NETCDF4, NC_UNLIMITED
    use meds_output_params, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
                                   output_files_t, output_buffers_t,                                  &
@@ -36,6 +40,7 @@ module meds_output_stream
    public :: write_record, stream_close_file
 
    character(len=*), parameter :: TITLE = 'MEDS diagnostic aggregation output'
+   integer(c_int),   parameter :: DEFLATE_LEVEL = 4_c_int   !< the variables' zlib level
 
 contains
 
@@ -60,7 +65,7 @@ contains
       associate (r1 => bufs(p1)%queue(t)%rec(i))
          do p = p1 + 1_ik, np
             if (bufs(p)%queue(t)%n < i) cycle
-            if (.not. same_time(bufs(p)%queue(t)%rec(i)%t_open, r1%t_open))                      &
+            if (.not. time_eq(bufs(p)%queue(t)%rec(i)%t_open, r1%t_open))                      &
                error stop 'write_record: the polygons'' records are not the same period'
          end do
          !----- Cohort/patch counts are invariant only WITHIN a month; to trim the cohort/patch        !
@@ -540,7 +545,7 @@ contains
       end select
       call nc_check(nc_def_var_f(ncid, trim(v%name), xt, rank, dims(1:rank), vid), 'def '//trim(v%name))
       call nc_check(nc_def_var_chunking(ncid, vid, NC_CHUNKED, chunk(1:rank)), 'chunk '//trim(v%name))
-      call nc_check(nc_def_var_deflate(ncid, vid, 1_c_int, 1_c_int, 4_c_int), 'deflate '//trim(v%name))
+      call nc_check(nc_def_var_deflate(ncid, vid, 1_c_int, 1_c_int, DEFLATE_LEVEL), 'deflate '//trim(v%name))
       call put_var_text(ncid, vid, 'units', trim(v%units))
       call put_var_text(ncid, vid, 'long_name', trim(v%long_name))
       cm = cell_methods_of(v%agg)
@@ -699,11 +704,6 @@ contains
       end if
    end function record_length
 
-   pure logical function same_time(a, b)
-      type(meds_time_t), intent(in) :: a, b
-      same_time = a%year == b%year .and. a%month == b%month .and. a%day == b%day .and.            &
-                  a%hour == b%hour .and. a%minute == b%minute .and. a%second == b%second
-   end function same_time
 
    !----- Map a normalized real (with validity) to an int record value (MISSING_INT if invalid). !
    pure integer(c_int) function real_to_int(x, valid) result(iv)

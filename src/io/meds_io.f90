@@ -30,7 +30,11 @@ module meds_io
    use meds_state_defaults, only : is_unset_positive
    use meds_config,   only : meds_config_t, growth_window_steps
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
-   use meds_netcdf_c
+   use meds_netcdf_c, only : nc_check, nc_close, nc_create_f, nc_def_dim_f, nc_def_var_f, nc_def_var_chunking,   &
+                             nc_def_var_deflate, nc_enddef, nc_get_att_text_f, nc_get_vara_double,               &
+                             nc_get_vara_int, nc_inq_dimlen, nc_inq_dimlen_f, nc_inq_varid_f, nc_open_f,          &
+                             nc_put_att_text_f, nc_put_vara_double, nc_put_vara_int, NC_CHUNKED, NC_CLOBBER,      &
+                             NC_DOUBLE, NC_GLOBAL, NC_INT, NC_NETCDF4, NC_NOERR, NC_NOWRITE
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
    use meds_cohort_state_vars,      only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water, &
@@ -51,6 +55,7 @@ module meds_io
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
    character(len=*), parameter :: FILM_UNITS  = 'kg/plant'   !< the canopy films' units attribute
+   integer(c_int),   parameter :: DEFLATE_LEVEL = 1_c_int    !< the variables' zlib level
 
    !----- An open state file, its polygon axis ahead of every other. --------------------------------!
    type :: state_file_t
@@ -321,7 +326,7 @@ contains
             end do
             call nc_check(nc_def_var_chunking(ncid, v, NC_CHUNKED, chunk(1:nd)), 'state chunk '//name)
          end if
-         call nc_check(nc_def_var_deflate(ncid, v, 1_c_int, 1_c_int, 1_c_int), 'state deflate '//name)
+         call nc_check(nc_def_var_deflate(ncid, v, 1_c_int, 1_c_int, DEFLATE_LEVEL), 'state deflate '//name)
       end subroutine dv
    end subroutine state_file_open
 

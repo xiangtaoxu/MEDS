@@ -48,7 +48,7 @@ module meds_region
    use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
                                            map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
    use meds_era5land_reader,        only : era5land_select_box, era5land_static_file, ERA_OK, ERA_ERR_NO_CELL
-   use meds_diagnostic_reduce,      only : print_summary, total_area, total_agb, total_lai, count_cohorts
+   use meds_diagnostic_reduce,      only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
                                            open_output_files, attach_output, ensure_output_dir,   &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
@@ -735,7 +735,7 @@ contains
                if (reg%verbose)                                                                    &
                   write(*,'(i9,2f9.2,f12.4,f7.3,i9,es12.2,2(1x,i0))') poly%id,                      &
                         poly%latitude_deg, poly%longitude_deg, total_agb(poly),                     &
-                        total_lai(poly), count_cohorts(poly), a1 - 1.0_wp,                          &
+                        total_lai(poly), poly%cohort%n, a1 - 1.0_wp,                          &
                         run%energy_budget%n_fail, run%water_budget%n_fail
             end associate
          end do

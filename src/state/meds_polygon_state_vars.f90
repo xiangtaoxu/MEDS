@@ -74,7 +74,7 @@ module meds_polygon_state_vars
       !----- The polygon's evapotranspiration accumulator [kg/m2 = mm]: the fast loop sums the       !
       !      area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the              !
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
-      !      (total_et) at the output tick. Transient (never restarted).                                !
+      !      (SRC_S_ET) at the output tick. Transient (never restarted).                                !
       real(wp)           :: et_accum       = 0.0_wp
       !----- And the water the soil column lost the same way [kg/m2 = mm]: the pond's spill (surface   !
       !      runoff) and the bottom flux (drainage; negative when an aquifer feeds the column). --------!

@@ -39,18 +39,13 @@ module meds_diagnostic_reduce
 
    !----- The generic API (stage 3). -------------------------------------------------------!
    public :: W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
-   public :: cohort_weight, reduce_cohort_to_site, reduce_cohort_to_patch
+   public :: reduce_cohort_to_site, reduce_cohort_to_patch
    public :: reduce_cohort_to_pft, reduce_cohort_to_size
    public :: reduce_patch_to_site, reduce_patch_columns_to_sites, gather_patch_columns
    !----- Convenience site totals, thin wrappers for the callers that want one number (the    !
    !      driver's summaries, the C API, the tests).                                            !
-   public :: total_nplant, total_basal_area, total_agb, total_lai, total_area, mean_dbh
-   public :: total_gpp, total_npp
-   public :: mean_can_temp, mean_soil_temp_top, total_et
-   public :: total_soilc_fast_grnd, total_soilc_fast_soil, total_soilc_struct_grnd,               &
-             total_soilc_struct_soil, total_soilc_microbial, total_soilc_slow,                    &
-             total_soilc_passive, total_rh
-   public :: count_cohorts, has_nan, print_summary
+   public :: total_nplant, total_basal_area, total_agb, total_lai, total_area
+   public :: has_nan, print_summary
 
    !=======================================================================================!
    !  WEIGHT KINDS. A weight is a PER-COHORT quantity w_i; patch area is applied separately    !
@@ -392,138 +387,11 @@ contains
       call reduce_cohort_to_site(poly, poly%cohort%dbh, W_BASAL_AREA, .true., dm, ok)
    end function mean_dbh
 
-   !----- Site GROSS GPP accumulated over the slow step [kgC m-2 ground]. The per-cohort     !
-   !      gpp_accum is populated by the fast biophysics loop (0 when it is off).              !
-   pure real(wp) function total_gpp(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      logical :: ok
-      call reduce_cohort_to_site(poly, poly%cohort%gpp_accum, W_NPLANT, .false., tot, ok)
-   end function total_gpp
-
-   !----- Site NPP over the slow step [kgC m-2 ground] = GPP - autotrophic MAINTENANCE resp   !
-   !      (leaf + stem + fine-root), all per-slow-step accumulators from the fast loop.        !
-   pure real(wp) function total_npp(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp)    :: x(max(poly%cohort%n, 1_ik))
-      integer(ik) :: n
-      logical     :: ok
-      n = poly%cohort%n
-      if (n > 0_ik) x(1:n) = poly%cohort%gpp_accum(1:n) - poly%cohort%leaf_resp_accum(1:n)    &
-                             - poly%cohort%stem_resp_accum(1:n) - poly%cohort%root_resp_accum(1:n)
-      call reduce_cohort_to_site(poly, x, W_NPLANT, .false., tot, ok)
-   end function total_npp
-
-   !----- Site canopy-air-space temperature [K], area-weighted mean over patches. -----------!
-   pure real(wp) function mean_can_temp(poly) result(tbar)
-      type(polygon_t), intent(in) :: poly
-      real(wp)    :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical     :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%cas(ip)%can_temp ; end do
-      call reduce_patch_to_site(poly, x, .false., tbar, ok)
-   end function mean_can_temp
-
-   !----- Site soil-top (layer 1) temperature [K], area-weighted mean over patches. ---------!
-   pure real(wp) function mean_soil_temp_top(poly) result(tbar)
-      type(polygon_t), intent(in) :: poly
-      real(wp)    :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical     :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_energy(ip)%soil_temp(1) ; end do
-      call reduce_patch_to_site(poly, x, .false., tbar, ok)
-   end function mean_soil_temp_top
-
-   !----- Site evapotranspiration over the slow step [kg/m2 = mm] (fast-loop accumulator). --!
-   pure real(wp) function total_et(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      tot = poly%et_accum
-   end function total_et
-
-   !----- Site slow soil-carbon pools [kgC m-2 ground]: area-weighted patch sums. All 0 when  !
-   !      soil_carbon_on is off (the pools stay at their allocation-time default).             !
-   pure real(wp) function total_soilc_fast_grnd(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp) :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon ; end do
-      call reduce_patch_to_site(poly, x, .false., tot, ok)
-   end function total_soilc_fast_grnd
-
-   pure real(wp) function total_soilc_fast_soil(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp) :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%fast_soil_carbon ; end do
-      call reduce_patch_to_site(poly, x, .false., tot, ok)
-   end function total_soilc_fast_soil
-
-   pure real(wp) function total_soilc_struct_grnd(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp) :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%struct_grnd_carbon ; end do
-      call reduce_patch_to_site(poly, x, .false., tot, ok)
-   end function total_soilc_struct_grnd
-
-   pure real(wp) function total_soilc_struct_soil(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp) :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%struct_soil_carbon ; end do
-      call reduce_patch_to_site(poly, x, .false., tot, ok)
-   end function total_soilc_struct_soil
-
-   pure real(wp) function total_soilc_microbial(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp) :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%microbial_carbon ; end do
-      call reduce_patch_to_site(poly, x, .false., tot, ok)
-   end function total_soilc_microbial
-
-   pure real(wp) function total_soilc_slow(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp) :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%slow_carbon ; end do
-      call reduce_patch_to_site(poly, x, .false., tot, ok)
-   end function total_soilc_slow
-
-   pure real(wp) function total_soilc_passive(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp) :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%soil_carbon(ip)%passive_carbon ; end do
-      call reduce_patch_to_site(poly, x, .false., tot, ok)
-   end function total_soilc_passive
-
-   !----- Site heterotrophic respiration over the slow step [kgC m-2 ground]: the fast loop's  !
-   !      independently-accumulated matrix Rh. Equals the daily soil_carbon_step's rh_today by  !
-   !      construction (docs/science/soil_carbon.md §7), so this is exact, not an approximation. !
-   pure real(wp) function total_rh(poly) result(tot)
-      type(polygon_t), intent(in) :: poly
-      real(wp) :: x(max(poly%patch%n, 1_ik))
-      integer(ik) :: ip
-      logical :: ok
-      do ip = 1_ik, poly%patch%n ; x(ip) = poly%patch%xi_accum(ip)%rh_fast_accum ; end do
-      call reduce_patch_to_site(poly, x, .false., tot, ok)
-   end function total_rh
 
    !=======================================================================================!
    !  Health checks / reporting                                                              !
    !=======================================================================================!
 
-   pure integer(ik) function count_cohorts(poly) result(nc)
-      type(polygon_t), intent(in) :: poly
-      nc = poly%cohort%n
-   end function count_cohorts
 
    !----- True if any diameter, density, AGB or wood carbon is NaN, or any cohort's leaf or wood !
    !      temperature, or any patch's canopy air, is not finite. The fast loop's integrators      !
