@@ -34,8 +34,8 @@ demography or state layer — so a prescribed driver stays low in the library gr
   sun's position in `meds_time`, the shortwave partition, the longwave synthesis and its lapse in
   `meds_radiation_lib`, the humidity conversions, the rain/snow split and the lapse of temperature,
   pressure and humidity in `meds_therm_lib`. Two file sources, chosen by `[forcing].format`, each an open and one record's values as stored:
-  - `meds_met_default`: the MEDS multi-grid `(time, grid)` forcing NetCDF (`"ED_default"`);
-  - `meds_met_era5land`: the global ED_ERA5land archive (`"ED_ERA5land"`), whose months it
+  - `meds_met_default`: the MEDS multi-grid `(time, grid)` forcing NetCDF (`"default"`);
+  - `meds_met_era5land`: the global ED_ERA5land archive (`"ERA5land"`), whose months it
     lays end to end as one hourly axis.
 
   Each is named after the `format` value that selects it. Both share `meds_met_share` (the
@@ -97,13 +97,13 @@ incident-equivalent PAR and the longwave emission temperature, in `apply_rt_forc
 
 ## Preparing forcing
 
-**The ED_ERA5land archive** (`format = "ED_ERA5land"`) is built once per installation with the tools in
+**The ED_ERA5land archive** (`format = "ERA5land"`) is built once per installation with the tools in
 `scripts/prepare_era5/` (`download_era5land_gdex.py` or `download_era5land_cds.py`, then
 `build_era5land_static.py` and `build_era5land_archive.py`); a run then only names its folder in
 `data_path`. The static file's `valid` mask comes from one raw GDEX file, so an archive built from
 the CDS still needs one GDEX download. See `MEDS_FORCING_DESIGN.md` §12–§14.
 
-**A single forcing file** (`format = "ED_default"`) comes from `scripts/prepare_era5/make_forcing_file.py`,
+**A single forcing file** (`format = "default"`) comes from `scripts/prepare_era5/make_forcing_file.py`,
 run in the `meds-era5` environment, with either input:
 
 ```bash

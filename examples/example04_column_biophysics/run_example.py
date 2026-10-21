@@ -78,7 +78,7 @@ def run_window(meds_main, config):
     cfg = RunConfig.load(config, relative_to=HERE)
     lead = cfg.copy()
     for key, value in {"run.end_time": start, "output.enabled": False, "output.prefix": "window_lead",
-                       "state.write_state": True, "state.output_prefix": "window"}.items():
+                       "output.state_write": True, "output.state_file_prefix": "window"}.items():
         lead.set(key, value)
     state = os.path.join(OUTPUT, f"window-S-{start.replace('-', '')}000000.nc")
     window = cfg.copy()

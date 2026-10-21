@@ -120,7 +120,7 @@ def trial_config(par, threads):
     for key, value in {"run.start_time": f"{START}-01-01", "run.end_time": f"{START + YEARS}-01-01",
                        "run.n_threads": threads, "init.init_mode": 1, "init.census_file": GROWTH_CENSUS,
                        "output.enabled": True, "output.prefix": "trial", "output.monthly.enabled": False,
-                       "state.write_state": False}.items():
+                       "output.state_write": False}.items():
         cfg.set(key, value)
     return apply(cfg, par) if par else cfg
 

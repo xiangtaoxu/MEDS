@@ -12,7 +12,7 @@ program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_time,            only : meds_time_t
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END, CLAMP_ERROR
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ERA5LAND, METAVG_END, CLAMP_ERROR
    use meds_radiation_lib,   only : SWPART_CLEARIDX, SWPART_PASSTHROUGH, clear_sky_emissivity
    use meds_met_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
    use meds_therm_lib,       only : sat_specific_humidity, lapse_pressure, sat_vapor_pressure
@@ -197,7 +197,7 @@ contains
    !----- A reader config on the synthetic archive at the valid cell (1,3), 35 N 120 W. ----------!
    function archive_config() result(fc)
       type(forcing_config_t) :: fc
-      fc%format = MET_BACKEND_ED_ERA5LAND ; fc%data_path = DIR ; fc%max_distance_km = 50.0_wp
+      fc%format = MET_BACKEND_ERA5LAND ; fc%data_path = DIR ; fc%max_distance_km = 50.0_wp
       fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%latitude = 35.0_wp ; fc%longitude = -120.0_wp
       fc%recycle = .false. ; fc%start_clamp = CLAMP_ERROR

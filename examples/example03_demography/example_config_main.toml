@@ -52,11 +52,11 @@ init_mode    = 0
 census_file  = "examples/example03_demography/data/bci_1985_census.csv"   # prepare_census.py
 pft_config   = "examples/example03_demography/example_config_pft.toml"
 
-[state]
-output_dir            = "examples/example03_demography/output"   # relative to the repo root (run dir)
-output_prefix         = "example_output"
-write_state           = false
-interval_years  = 50
+[output]
+state_write       = false
+state_interval    = "50 years"
+state_file_dir    = "examples/example03_demography/output" # relative to the repo root (run dir)
+state_file_prefix = "example_output"
 
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance, unused here: the fast loop is off and growth is a

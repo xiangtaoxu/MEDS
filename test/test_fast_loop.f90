@@ -28,7 +28,7 @@ program test_fast_loop
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds
-   use meds_forcing_params,      only : MET_BACKEND_ED_DEFAULT, METAVG_END
+   use meds_forcing_params,      only : MET_BACKEND_DEFAULT, METAVG_END
    use meds_radiation_lib,       only : SWPART_CLEARIDX
    use meds_met_types,       only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
@@ -199,7 +199,7 @@ program test_fast_loop
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
       cfg%forcing%forcing_on   = .true.
-      cfg%forcing%format      = MET_BACKEND_ED_DEFAULT
+      cfg%forcing%format      = MET_BACKEND_DEFAULT
       cfg%forcing%path         = 'test_fast_loop_forcing.nc'
       cfg%forcing%grid_index   = 1_ik ; cfg%forcing%timestep = 3600.0_wp
       cfg%forcing%avg_convention = METAVG_END ; cfg%forcing%sw_partition = SWPART_CLEARIDX

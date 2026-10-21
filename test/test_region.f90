@@ -184,8 +184,8 @@ program test_region
    !      the year boundary. The second half writes January's files exactly as the whole run does. ---!
    call derive(trim(work)//'/whole.toml', recycled('whole', '"2023-01-06"', .false.), region=.true.)
    call run_region(trim(work)//'/whole.toml')
-   call derive(trim(work)//'/half1.toml', '[state]'//nl()//'write_state = true'//nl()//'output_dir = "'// &
-               trim(work)//'/state"'//nl()//'output_prefix = "half"'//nl()//'interval_years = 1'//nl()//      &
+   call derive(trim(work)//'/half1.toml', '[output]'//nl()//'state_write = true'//nl()//'state_file_dir = "'// &
+               trim(work)//'/state"'//nl()//'state_file_prefix = "half"'//nl()//'state_interval = "1 year"'//nl()// &
                recycled('half1', '"2023-01-01"', .false.), region=.true.)
    call execute_command_line('mkdir -p "'//trim(work)//'/state"')
    call run_region(trim(work)//'/half1.toml')
@@ -207,8 +207,8 @@ program test_region
    !      restructured at its first step. It writes a one-polygon state file, which a region refuses  !
    !      below. -------------------------------------------------------------------------------------!
    call derive(trim(work)//'/reuse.toml', '[run]'//nl()//'end_time = "2021-02-01"'//nl()//            &
-               '[output]'//nl()//'enabled = false'//nl()//'[state]'//nl()//'write_state = true'//nl()//   &
-               'output_dir = "'//trim(work)//'/state"'//nl()//'output_prefix = "site"'//nl()//          &
+               '[output]'//nl()//'enabled = false'//nl()//'state_write = true'//nl()//                  &
+               'state_file_dir = "'//trim(work)//'/state"'//nl()//'state_file_prefix = "site"'//nl()//  &
                site_block(1_ik), region=.false.)
    call region_open(trim(work)//'/reuse.toml', site_run, ok, verbose=.false.)
    if (.not. ok) error stop 'test_region: the reuse run did not open'
@@ -320,8 +320,8 @@ program test_region
    call refused('forcing.max_distance_km is refused in a region',                                  &
                 '[forcing]'//nl()//'max_distance_km = 50.0'//nl()//region_block(), .true., .false.,   &
                 'does not apply to [run].mode = "region"')
-   call refused('a region needs the archive', '[forcing]'//nl()//'format = "ED_default"'//nl()//region_block(), &
-                .true., .true., 'needs forcing.format = "ED_ERA5land"')
+   call refused('a region needs the archive', '[forcing]'//nl()//'format = "default"'//nl()//region_block(),    &
+                .true., .true., 'needs forcing.format = "ERA5land"')
    call refused('a region does not start from a census', '[init]'//nl()//'init_mode = 1'//nl()//           &
                 'census_file = "census.csv"'//nl()//region_block(),                                           &
                 .true., .false., 'not a census')
@@ -407,10 +407,9 @@ contains
       b = '[run]'//nl()//'start_time = "2021-01-25"'//nl()//'end_time = "2021-02-06"'//nl()//        &
           '[fast]'//nl()//'fast_probe = false'//nl()//                                              &
           '[init]'//nl()//'init_mode = 0'//nl()//                                                   &
-          '[state]'//nl()//'write_state = false'//nl()//                                            &
-          '[forcing]'//nl()//'format = "ED_ERA5land"'//nl()//'data_path = "'//trim(work)//'/archive"'//nl()// &
+          '[forcing]'//nl()//'format = "ERA5land"'//nl()//'data_path = "'//trim(work)//'/archive"'//nl()//    &
           'recycle = false'//nl()//                                                                 &
-          '[output]'//nl()//'dir = "'//trim(work)//'/out"'//nl()//                                  &
+          '[output]'//nl()//'dir = "'//trim(work)//'/out"'//nl()//'state_write = false'//nl()//       &
           '[output.monthly]'//nl()//'enabled = true'//nl()//'file_chunk = "month"'//nl()//            &
           '[maps]'//nl()//'soil_depth_map = "'//trim(work)//'/archive/soil_depth.nc"'//nl()//      &
           'soil_texture_map = "'//trim(work)//'/archive/soil_texture.nc"'//nl()//                     &

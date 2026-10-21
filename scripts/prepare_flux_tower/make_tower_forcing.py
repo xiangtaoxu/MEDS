@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""make_tower_forcing.py -- build a MEDS forcing file ([forcing].format = "ED_default") from
+"""make_tower_forcing.py -- build a MEDS forcing file ([forcing].format = "default") from
 flux-tower meteorology: AmeriFlux BASE, FLUXNET/ONEFlux, or any CSV a site TOML describes
 (scripts/prepare_flux_tower/README.md).
 
@@ -188,7 +188,7 @@ def build(site, out, short_gap_max=4, start=None, end=None, report_path=None):
 
 
 def parse_args(argv):
-    ap = argparse.ArgumentParser(description="Flux-tower meteorology -> a MEDS ED_default forcing file.")
+    ap = argparse.ArgumentParser(description="Flux-tower meteorology -> a MEDS forcing file.")
     ap.add_argument("--site", required=True, help="the site TOML that declares the data")
     ap.add_argument("--out", required=True, help="the forcing NetCDF to write")
     ap.add_argument("--short-gap-max", type=int, help="the longest gap interpolated, in records (default 4)")

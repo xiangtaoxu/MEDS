@@ -305,7 +305,7 @@ density is above zero, that many plants per m², at `min_cohort_height`.
 
 | | MEDS | ED2 |
 |---|---|---|
-| Format | A MEDS forcing file of time series at a list of points (`"ED_default"`), the global ED_ERA5land archive of one netCDF file per variable per month on the 0.1° grid (`"ED_ERA5land"`, which a region requires), or a constant-forcing backend with no file | `ED_MET_DRIVER_HEADER` pointing at HDF5 files, `IMETTYPE` |
+| Format | A MEDS forcing file of time series at a list of points (`"default"`), the global ED_ERA5land archive of one netCDF file per variable per month on the 0.1° grid (`"ERA5land"`, which a region requires), or a constant-forcing backend with no file | `ED_MET_DRIVER_HEADER` pointing at HDF5 files, `IMETTYPE` |
 | Gap filling | **None — a NaN in a required field is a hard error** | — |
 | Shortwave partitioning | Erbs (default), Weiss–Norman, or a clearness-index scheme. MEDS's Weiss–Norman uses the paper's 600 / 720 W m⁻² visible / NIR beam, where ED2 uses 0.43 / 0.57 of the solar constant | `IMETRAD` 0–5 (as-is, SiB, Weiss–Norman, all-diffuse, all-direct, clearness index) |
 | Sub-daily reconstruction | Interval-mean-conserving disaggregation anchored on the model sun (UTC + longitude + equation of time) | `IMETAVG` 0–3 declares the averaging convention |

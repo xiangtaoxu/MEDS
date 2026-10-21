@@ -18,6 +18,7 @@ module meds_output_params
              GRP_BIOGEOCHEM, GRP_NUMERICS, GRP_FORCING, N_GRP
    public :: FC_DAY, FC_MONTH, FC_YEAR, FC_RUN
    public :: SYNC_NEVER, SYNC_FLUSH
+   public :: STATE_DAYS, STATE_MONTHS, STATE_YEARS
    public :: MAX_DBH_EDGE
    public :: freq_tier_index, freq_letter
 
@@ -54,6 +55,12 @@ module meds_output_params
    integer(ik), parameter :: FC_YEAR  = 3_ik  !< one file per sim-year
    integer(ik), parameter :: FC_RUN   = 4_ik  !< one file for the whole run (annual default)
 
+   !----- The unit of [output].state_interval: a state file every N days, N month boundaries or N  !
+   !      year boundaries. -----------------------------------------------------------------------!
+   integer(ik), parameter :: STATE_DAYS   = 1_ik
+   integer(ik), parameter :: STATE_MONTHS = 2_ik
+   integer(ik), parameter :: STATE_YEARS  = 3_ik
+
    !----- nc_sync durability policy: never, or after every flush. -------------------------!
    integer(ik), parameter :: SYNC_NEVER = 0_ik  !< no nc_sync (fastest; crash forfeits the open chunk)
    integer(ik), parameter :: SYNC_FLUSH = 1_ik  !< nc_sync after each flush (durable; default)
@@ -74,6 +81,13 @@ module meds_output_params
       !----- Per-tier enable and file chunk, indexed FAST, DAILY, MONTHLY, ANNUAL. --------!
       logical            :: freq_on(N_FREQ)    = [.false., .true., .true., .true.]
       integer(ik)        :: file_chunk(N_FREQ) = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
+      !----- The state files (<state_file_prefix>-S-<date>.nc), the model's whole state to restart   !
+      !      from: every state_every days, months or years (state_unit) and at the run's end. ---------!
+      logical            :: state_write       = .false.
+      integer(ik)        :: state_every       = 1_ik
+      integer(ik)        :: state_unit        = STATE_YEARS
+      character(len=256) :: state_file_dir    = '.'            !< their directory, and the PFT table's
+      character(len=256) :: state_file_prefix = 'meds'         !< their file-name stem
       !----- DBH class edges [cm]; empty here, setup_output_files installs the default. --------!
       integer(ik)        :: n_dbh_class = 0_ik
       real(wp)           :: dbh_class_edges(MAX_DBH_EDGE) = 0.0_wp

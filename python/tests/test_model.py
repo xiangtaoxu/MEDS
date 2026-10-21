@@ -35,7 +35,7 @@ def two_days(run_dir: Path, monthly: bool = False, overrides: dict | None = None
                        "run.n_threads": 1, "fast.fast_biophysics_on": True, "forcing.forcing_on": False,
                        "init.init_mode": 1,
                        "init.census_file": str(ROOT / "data/census_example.csv"),
-                       "state.write_state": False, "output.enabled": True, "output.dir": str(run_dir / "out"),
+                       "output.state_write": False, "output.enabled": True, "output.dir": str(run_dir / "out"),
                        "output.prefix": "m", "output.fast.enabled": True, "output.daily.enabled": True,
                        "output.monthly.enabled": monthly, "output.annual.enabled": False,
                        **(overrides or {})}.items():

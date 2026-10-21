@@ -67,13 +67,12 @@ pft_config   = "pft_parameters.toml"
 soil_temp    = 298.65             # [K] as [soil].deep_temp
 soil_theta   = 0.42               # [m3/m3] example 04's start
 
-[state]
-output_dir     = "output"
-output_prefix  = "regen"
-write_state    = true             # a checkpoint every 20 years and at the end, to restart from
-interval_years = 20
 
 [output]
+state_write       = true           # a checkpoint every 20 years and at the end, to restart from
+state_interval    = "20 years"
+state_file_dir    = "output"
+state_file_prefix = "regen"
 enabled       = true
 dir           = "output"
 prefix        = "regen"
@@ -136,7 +135,7 @@ apply_elevation_lapse = false
 # model's own date: 279 umol/mol in 1600, 282 in 1800, 413 in 2020.
 [forcing]
 forcing_on     = true
-format         = "ED_default"
+format         = "default"
 path           = "data/bci_era5land_2003-2022.nc"
 grid_index     = 1
 grid_match     = "explicit"

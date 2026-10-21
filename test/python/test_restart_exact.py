@@ -2,9 +2,9 @@
 """A restart continues exactly as the run that wrote the state would have, and a restart that
 re-acclimates its traits ([init].reacclimate_traits) gets the traits a census start gives.
 
-Each case runs meds_main from the demography example's census on the fast loop's constant
-reference climate (no forcing file) and compares the final state files variable by variable,
-bit for bit. MEDS_MAIN names the executable; CTest sets it.
+Each case runs meds_main from the demography example's census, on the fast loop's constant
+reference climate (no forcing file) or on a synthetic hourly forcing file, and compares state files
+variable by variable, bit for bit. MEDS_MAIN names the executable; CTest sets it.
 """
 import os
 import subprocess
@@ -18,6 +18,8 @@ from netCDF4 import Dataset
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python"))
 from meds.config import RunConfig  # noqa: E402
+sys.path.insert(0, str(ROOT / "scripts"))
+import meds_forcing_file as mff  # noqa: E402
 
 MEDS_MAIN = os.environ.get("MEDS_MAIN", str(ROOT / "build-ifx" / "meds_main"))
 
@@ -31,12 +33,49 @@ def base_config(run_dir, start, end, *, slow_on, restart_file=None, reacclimate=
                        "init.init_mode": 2 if restart_file else 1,
                        "init.restart_file": restart_file or "none",
                        "init.census_file": str(ROOT / "data/census_example.csv"),
-                       "state.output_dir": str(run_dir / "out"), "state.output_prefix": "s",
-                       "state.write_state": True, "output.enabled": False,
+                       "output.state_file_dir": str(run_dir / "out"), "output.state_file_prefix": "s",
+                       "output.state_write": True, "output.enabled": False,
                        "trait_dynamics.trait_plasticity_on": plasticity}.items():
         cfg.set(key, value)
     if reacclimate:
         cfg.set("init.reacclimate_traits", True)
+    return cfg
+
+
+def synthetic_forcing(path, start="2001-05-31", days=8):
+    """An hourly MEDS forcing file at 0 E, so a UTC day starts at local midnight: a diurnal cycle whose
+    clearness changes from day to day, an afternoon shower every other day, and no longwave, which the
+    run synthesizes from the air and the clearness (the reader carries a day's last clearness through
+    the night)."""
+    t = np.arange(np.datetime64(start), np.datetime64(start) + np.timedelta64(days, "D"),
+                  np.timedelta64(1, "h"))
+    hour = (t - t.astype("datetime64[D]")).astype("timedelta64[h]").astype(int).astype(float)
+    day = (t.astype("datetime64[D]") - np.datetime64(start, "D")).astype(int)
+    clear = np.array([0.9, 0.4, 0.75, 0.3, 0.85, 0.5, 0.7, 0.6])[day % 8]
+    n = len(t)
+    arrays = {"Tair": (291.0 + 6.0 * np.sin(np.pi * (hour - 9) / 12))[:, None],
+              "Qair": np.full((n, 1), 0.010), "PSurf": np.full((n, 1), 1.0e5), "Wind": np.full((n, 1), 2.5),
+              "Rainf": np.where((day % 2 == 1) & (hour >= 15) & (hour < 17), 2.0e-3, 0.0)[:, None],
+              "SWdown": (clear * np.clip(1000.0 * np.sin(np.pi * (hour - 6) / 12), 0, None))[:, None]}
+    attrs = {"title": "restart-test forcing", "source": "synthetic", "history": "test_restart_exact.py",
+             "timestep_seconds": 3600, "avg_convention": "begin", "sw_input_kind": "total",
+             "wind_meas_height_m": 10.0}
+    mff.write_forcing_file(path, t, [(42.4, 0.0, 300.0)], arrays, attrs)
+
+
+def forced_config(run_dir, forcing, start, end, restart_file=None):
+    """base_config on the synthetic forcing, the whole model on, a state file every day."""
+    cfg = base_config(run_dir, start, end, slow_on=True, restart_file=restart_file)
+    for key, value in {"forcing.forcing_on": True, "forcing.format": "default", "forcing.path": str(forcing),
+                       "forcing.grid_index": 1, "forcing.grid_match": "explicit", "forcing.tq_height": 10.0,
+                       "forcing.wind_height": 10.0, "forcing.height_above": "ground",
+                       "forcing.wind_exposure": "local", "forcing.timestep": "3600s",
+                       "forcing.avg_convention": "begin", "forcing.sw_partition": "clearidx",
+                       "forcing.lwdown_source": "synthesize", "forcing.co2_source": "const",
+                       "forcing.co2_const": 400.0, "forcing.recycle": False, "forcing.start_clamp": "error",
+                       "site.latitude": 42.4, "site.longitude": 0.0, "site.elevation": 300.0,
+                       "site.apply_elevation_lapse": False, "output.state_interval": "1 day"}.items():
+        cfg.set(key, value)
     return cfg
 
 
@@ -113,3 +152,28 @@ def test_reacclimate_matches_census_start(tmp_path, plasticity):
     s, _ = read_state(same)
     for v in ("sla_co", "vcmax25_co", "rd25_co", "leaf_turnover_rate_co", "leaf_area_co", "leaf_carbon_co", "nonstructural_carbon_co"):
         assert np.array_equal(s[v], a[v]), v
+
+
+def test_forced_daily_states_restart_exactly(tmp_path):
+    """A state file every day ([output].state_interval = "1 day"), on a forcing file whose longwave the
+    run synthesizes: a restart from one of them, at local midnight, continues as the whole run does,
+    bit for bit, from the first night on."""
+    forcing = tmp_path / "forcing.nc"
+    synthetic_forcing(forcing)
+    whole = tmp_path / "whole"
+    run(whole, forced_config(whole, forcing, "2001-06-01", "2001-06-05"))
+    daily = sorted((whole / "out").glob("s-S-*.nc"))
+    assert [p.name[4:12] for p in daily] == ["20010602", "20010603", "20010604", "20010605"]
+    second = tmp_path / "second"
+    run(second, forced_config(second, forcing, "2001-06-03", "2001-06-05", restart_file=str(daily[1])))
+    for name in ("s-S-20010604000000.nc", "s-S-20010605000000.nc"):
+        assert_same_state(whole / "out" / name, second / "out" / name)
+
+
+def test_monthly_states(tmp_path):
+    """[output].state_interval = "1 month": a state file at each month boundary and one at the end."""
+    cfg = base_config(tmp_path, "2001-06-01", "2001-08-03", slow_on=True)
+    cfg.set("output.state_interval", "1 month")
+    run(tmp_path, cfg)
+    names = sorted(p.name[4:12] for p in (tmp_path / "out").glob("s-S-*.nc"))
+    assert names == ["20010701", "20010801", "20010803"]

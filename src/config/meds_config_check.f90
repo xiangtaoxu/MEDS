@@ -12,7 +12,8 @@
 module meds_config_check
    use meds_kinds,              only : wp, ik
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
-   use meds_constants,          only : n_soil_layer_max
+   use meds_constants,          only : n_soil_layer_max, day_sec
+   use meds_output_params,      only : STATE_DAYS
    use meds_time,               only : time_lt, time_valid, time_to_string, whole_years_between
    use meds_toml,               only : toml_table_t, toml_has, toml_has_section
    use meds_allometry_lib,      only : HEIGHT_CHAVE
@@ -20,7 +21,7 @@ module meds_config_check
    use meds_soil_hydr_lib,      only : SOIL_RETENTION_VG
    use meds_pft_params,         only : PATH_C3, PATH_C4
    use meds_soil_params,        only : soil_texture_layers_t, soil_params_t, ENERGY_BC_DIRICHLET
-   use meds_forcing_params,     only : LW_SYNTHESIZE, MET_BACKEND_ED_ERA5LAND, WIND_EXPOSURE_OPEN_TERRAIN,        &
+   use meds_forcing_params,     only : LW_SYNTHESIZE, MET_BACKEND_ERA5LAND, WIND_EXPOSURE_OPEN_TERRAIN,           &
                                        WIND_EXPOSURE_LOCAL, ARCHIVE_DT_SEC, CO2_SOURCE_CONST, CO2_SOURCE_FILE,    &
                                        METAVG_END, MAX_RECYCLE_YEARS
    use meds_radiation_lib,      only : SWPART_PASSTHROUGH
@@ -175,8 +176,8 @@ contains
       type(toml_table_t),  intent(in)    :: tm, tp
       type(meds_config_t), intent(in)    :: cfg
       type(key_report_t),  intent(inout) :: report
-      character(len=*), parameter :: ARCHIVE = 'does not apply to forcing.format = "ED_ERA5land": the archive '// &
-                                               'finds the site''s cell and its elevation itself'
+      character(len=*), parameter :: ARCHIVE = 'does not apply to forcing.format = "ERA5land": the '//           &
+                                               'ED_ERA5land archive finds the site''s cell and its elevation itself'
       character(len=*), parameter :: CELL    = 'does not apply to [run].mode = "region": each polygon sits at '// &
                                                'its cell''s centre, at the cell''s orography'
       character(len=*), parameter :: CHAVE   = 'applies only to a PFT with height_allometry = "chave2014"'
@@ -185,7 +186,7 @@ contains
          call add_line(report, '[region] (in '//trim(tm%source)//') needs [run].mode = "region"')
       !----- [forcing]/[site]: the keys of the other source, location or mode. ---------------------!
       if (cfg%forcing%forcing_on) then
-         if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
+         if (cfg%forcing%format == MET_BACKEND_ERA5LAND) then
             call refuse(report, tm, 'forcing.path', ARCHIVE)
             call refuse(report, tm, 'forcing.grid_index', ARCHIVE)
             call refuse(report, tm, 'forcing.grid_match', ARCHIVE)
@@ -208,7 +209,7 @@ contains
          end if
          if (.not. cfg%forcing%apply_elevation_lapse) then
             call refuse(report, tm, 'site.lapse_rate_tair', 'applies only with site.apply_elevation_lapse = true')
-            if (cfg%forcing%format /= MET_BACKEND_ED_ERA5LAND)                                       &
+            if (cfg%forcing%format /= MET_BACKEND_ERA5LAND)                                          &
                call refuse(report, tm, 'site.grid_elevation',                                         &
                            'applies only with site.apply_elevation_lapse = true')
          end if
@@ -417,10 +418,15 @@ contains
          error stop TAG//'init.reacclimate_traits applies to a restart (init.init_mode = 2) only'
    end subroutine check_init
 
-   !----- [output]: a fast-tier window does not straddle two slow steps, whose restructuring would  !
-   !      move the cohort and patch slots it opened with. ------------------------------------------!
+   !----- [output]: a state file every N days falls on a step's end, and a fast-tier window does not !
+   !      straddle two slow steps, whose restructuring would move the cohort and patch slots it      !
+   !      opened with. ---------------------------------------------------------------------------!
    subroutine check_output(cfg)
       type(meds_config_t), intent(in) :: cfg
+      if (cfg%output%state_write .and. cfg%output%state_unit == STATE_DAYS) then
+         if (mod(real(cfg%output%state_every, wp) * day_sec, cfg%dt_slow) /= 0.0_wp)                 &
+            error stop TAG//'output.state_interval in days must be whole slow steps ([run].dt_slow)'
+      end if
       if (.not. (cfg%fast_biophysics_on .and. cfg%output%enabled)) return
       if (cfg%output%fast_interval_steps < 1_ik) error stop TAG//'output.fast_interval_steps < 1'
       if (mod(cfg%n_fast_per_slow, cfg%output%fast_interval_steps) /= 0_ik)                           &
@@ -473,22 +479,22 @@ contains
          error stop TAG//'site.lapse_rate_tair must lie in [0, 0.01] K/m'
       if (cfg%forcing%lwdown_source == LW_SYNTHESIZE .and. cfg%forcing%lw_cloud_a < 0.0_wp)             &
          error stop TAG//'forcing.lw_cloud_a must be >= 0 (a cloudy sky emits MORE, not less)'
-      if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
+      if (cfg%forcing%format == MET_BACKEND_ERA5LAND) then
          if (len_trim(cfg%forcing%data_path) == 0) error stop TAG//'forcing.data_path is empty'
          if (cfg%mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)               &
             error stop TAG//'forcing.max_distance_km must be > 0'
          if (abs(cfg%forcing%timestep - ARCHIVE_DT_SEC) > 0.5_wp)                                      &
-            error stop TAG//'forcing.timestep must be 1 hour for format = "ED_ERA5land"'
+            error stop TAG//'forcing.timestep must be 1 hour for format = "ERA5land"'
          if (cfg%forcing%avg_convention /= METAVG_END)                                                   &
-            error stop TAG//'forcing.avg_convention must be "end" for format = "ED_ERA5land"'
+            error stop TAG//'forcing.avg_convention must be "end" for format = "ERA5land"'
          if (cfg%forcing%sw_partition == SWPART_PASSTHROUGH)                                             &
-            error stop TAG//'forcing.sw_partition cannot be "passthrough" for format = "ED_ERA5land" '//  &
+            error stop TAG//'forcing.sw_partition cannot be "passthrough" for format = "ERA5land" '//     &
                             '(the archive stores total shortwave)'
          if (abs(cfg%dt_slow - 86400.0_wp) > 0.5_wp)                                                     &
-            error stop TAG//'format = "ED_ERA5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
+            error stop TAG//'format = "ERA5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
          if (cfg%start_time%hour /= 0_ik .or. cfg%start_time%minute /= 0_ik .or.                         &
              cfg%start_time%second /= 0_ik)                                                             &
-            error stop TAG//'format = "ED_ERA5land" needs [run].start_time at 00:00:00'
+            error stop TAG//'format = "ERA5land" needs [run].start_time at 00:00:00'
       end if
       if (cfg%forcing%recycle) then
          if (.not. time_valid(cfg%forcing%recycle_start))                                              &
@@ -518,8 +524,8 @@ contains
       if (cfg%mode /= RUN_MODE_REGION) return
       if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                                 &
          error stop TAG//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
-      if (cfg%forcing%format /= MET_BACKEND_ED_ERA5LAND)                                               &
-         error stop TAG//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
+      if (cfg%forcing%format /= MET_BACKEND_ERA5LAND)                                                  &
+         error stop TAG//'[run].mode = "region" needs forcing.format = "ERA5land"'
       if (cfg%fast_probe)                                                                               &
          error stop TAG//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
       if (cfg%init%init_mode == INIT_CENSUS)                                                                 &
@@ -558,8 +564,8 @@ contains
    subroutine check_maps(cfg)
       type(meds_config_t), intent(in) :: cfg
       if (soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0) then
-         if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%format == MET_BACKEND_ED_ERA5LAND))        &
-            error stop TAG//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
+         if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%format == MET_BACKEND_ERA5LAND))           &
+            error stop TAG//'the [maps] files need forcing.format = "ERA5land" (they are on its grid)'
       end if
       if (len_trim(cfg%maps%chave_e_map) > 0 .and.                                                      &
           .not. any(cfg%pft%allom(1:cfg%pft%n)%height_allometry == HEIGHT_CHAVE))                            &

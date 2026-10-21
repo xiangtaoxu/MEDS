@@ -54,13 +54,12 @@ init_mode    = 2
 restart_file = "spinup-S-20740701000000.nc"
 pft_config   = "pft_parameters.toml"
 
-[state]
-output_dir            = "."
-output_prefix         = "july"
-write_state           = false
-interval_years  = 1
 
 [output]
+state_write       = false
+state_interval    = "1 years"
+state_file_dir    = "."
+state_file_prefix = "july"
 enabled       = true
 dir           = "out"
 prefix        = "july"
@@ -122,7 +121,7 @@ height_above         = "zero_plane"
 wind_exposure        = "open_terrain"
 wind_exposure_z0     = 0.03
 wind_blending_height = 40.0
-format         = "ED_default"
+format         = "default"
 path           = "../../data/forcing/ithaca_forcing.nc"
 grid_index     = 1
 grid_match     = "explicit"

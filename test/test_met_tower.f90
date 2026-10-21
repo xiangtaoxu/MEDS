@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_met_tower -- the contract an ED_default forcing file built from flux-tower data relies on !
+! test_met_tower -- the contract a MEDS forcing file built from flux-tower data relies on        !
 ! (docs/science/forcing.md §1, §7 and §8):                                                  !
 !                                                                                          !
 !   1. the three humidity forms, each converted with the model's own curve, and the files that   !
@@ -20,7 +20,7 @@ program test_met_tower
    use meds_time,            only : meds_time_t, time_advance_seconds, solar_cosz_utc
    use meds_therm_lib,       only : sat_vapor_pressure, specific_humidity_to_vpd, rh_to_specific_humidity,        &
                                     sat_specific_humidity
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, METAVG_END, METAVG_BEGIN,           &
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_DEFAULT, METAVG_END, METAVG_BEGIN,              &
                                     HEIGHT_ABOVE_GROUND, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL,            &
                                     LW_SYNTHESIZE
    use meds_radiation_lib,   only : SWPART_CLEARIDX, clearness_index
@@ -57,7 +57,7 @@ contains
    function tower_config(convention) result(fc)
       integer(ik), intent(in) :: convention
       type(forcing_config_t)  :: fc
-      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = TOWER_FILE ; fc%grid_index = 1_ik
+      fc%format = MET_BACKEND_DEFAULT ; fc%path = TOWER_FILE ; fc%grid_index = 1_ik
       fc%timestep = DT ; fc%avg_convention = convention ; fc%sw_partition = SWPART_CLEARIDX
       fc%latitude = 9.1568_wp ; fc%longitude = -79.8486_wp ; fc%elevation = 150.0_wp
       fc%recycle = .false.
@@ -92,7 +92,7 @@ contains
       s = real(k - 1, wp) * DT
    end function stamp_seconds
 
-   !----- A one-point ED_default file, half-hourly from 2020-07-01 00:00 UTC. `humidity` names the  !
+   !----- A one-point MEDS forcing file, half-hourly from 2020-07-01 00:00 UTC. `humidity` names the !
    !      variable(s) it carries ('RHair', 'Tdew', 'Qair', 'RHair+Qair' or 'none'); an empty         !
    !      `time_zone` or `height_above` leaves that attribute out, and so does stated_height <= 0.    !
    subroutine write_tower_file(convention, humidity, time_zone, rh_scale, stated_height, height_above)

@@ -42,7 +42,7 @@ at once, together with any missing required ones. Each line gives a suggestion:
 
 Renamed and retired keys are listed in [`CHANGELOG.md`](../CHANGELOG.md). A listed key that the run's
 other settings give nothing to do is refused the same way, with the setting that makes it inapplicable:
-`forcing.path` with `format = "ED_ERA5land"`, a `[region]` block in a site run, a soil key the
+`forcing.path` with `format = "ERA5land"`, a `[region]` block in a site run, a soil key the
 `[maps]` provide.
 
 A key that parses and does nothing is worse than one that is absent: `[forcing] dt_forcing = 7200`
@@ -377,14 +377,14 @@ useless for science.
 
 `[forcing].format` picks the source:
 
-- **`"ED_ERA5land"`** reads the global ED_ERA5land archive: one file per variable per month, built
+- **`"ERA5land"`** reads the global ED_ERA5land archive: one file per variable per month, built
   with the tools in `scripts/prepare_era5/`. Give it `data_path` (the archive folder) and
   `max_distance_km`. The reader finds the site's cell itself and takes that cell's elevation from
   the archive, so `path`, `grid_index`, `grid_match` and `[site].grid_elevation` do not apply and
   are rejected if present. Every month file the run needs must exist when it starts, and the run
   must step daily from midnight (`dt_slow = "1d"`, `start_time` at 00:00:00): the reader loads a
   month at a time before each step.
-- **`"ED_default"`** reads one forcing file, named by `path`: cut from ERA5-Land by
+- **`"default"`** reads one forcing file, named by `path`: cut from ERA5-Land by
   `scripts/prepare_era5/make_forcing_file.py`, or built from flux-tower data by
   `scripts/prepare_flux_tower/make_tower_forcing.py`.
 
@@ -413,7 +413,7 @@ grows with the stand, and the aerodynamics runs from there ([`science/forcing.md
 - **The terrain lapse** (`[site].apply_elevation_lapse`) moves temperature, pressure, humidity (at constant
   relative humidity) and file longwave from the forcing cell's elevation to the site's.
   `[site].lapse_rate_tair` takes one rate or twelve monthly rates, and `[site].grid_elevation` gives
-  the cell's elevation for an `"ED_default"` file. Both are required with the lapse on and refused
+  the cell's elevation for an `"default"` file. Both are required with the lapse on and refused
   with it off; a flux tower measures at the site and runs with it off.
 - **A file may state its heights.** When it carries `tq_height_m`, `wind_height_m` or
   `height_above`, they must agree with `[forcing]`, or the run stops at open.
@@ -492,7 +492,7 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its
   configuration is checked on its own.
-- **Rules.** A region needs `[forcing].format = "ED_ERA5land"` with forcing and the fast loop on. It
+- **Rules.** A region needs `[forcing].format = "ERA5land"` with forcing and the fast loop on. It
   takes its locations from its cells, so `[site].latitude`, `longitude`, `elevation`
   and `[forcing].max_distance_km` are refused; the rest of `[site]`, the terrain-lapse switch and
   rates, still applies. A region starts from bare ground (`init_mode = 0`) or from a region state
@@ -546,7 +546,7 @@ reads every map and is the only module that does.
 | `chave_e_map` | `ED_ERA5land_Chave2014_E.nc` | `chave_e` |
 
 The three soil maps go together. A region needs them. A site may use them as well, read at the
-forcing cell its `[site]` location reads (so with `format = "ED_ERA5land"`), or it sets the
+forcing cell its `[site]` location reads (so with `format = "ERA5land"`), or it sets the
 `[soil]` column by hand. From the maps, each cell's column is built as follows:
 
 - **Depth and layers.** The column ends at `soil_depth`, on the default layers

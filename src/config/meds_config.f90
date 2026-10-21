@@ -39,7 +39,7 @@ module meds_config
    implicit none
    private
 
-   public :: meds_config_t, init_opts_t, state_opts_t
+   public :: meds_config_t, init_opts_t
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: derive_config, derive_parameters, growth_window_steps, site_config
    public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
@@ -77,14 +77,6 @@ module meds_config
       real(wp)           :: soil_theta   = 0.30_wp        !< [m3/m3] every soil layer's start
       logical            :: reacclimate_traits = .false.  !< a restart's plastic traits from this PFT file
    end type init_opts_t
-
-   !----- [state]: the restart stream. ------------------------------------------------------------!
-   type :: state_opts_t
-      character(len=256) :: output_dir                    !< directory of the state files and the PFT CSV
-      character(len=256) :: output_prefix                 !< their file-name stem
-      logical            :: write_state                   !< write state checkpoints
-      integer(ik)        :: interval_years                !< [yr] between checkpoints
-   end type state_opts_t
 
    type :: meds_config_t
       !----- [run]. ---------------------------------------------------------------------------!
@@ -150,9 +142,8 @@ module meds_config
       real(wp) :: disturbance_survive_height              !< [m]
       real(wp) :: min_recruit_size                        !< [plant/m2]
 
-      !----- [init], [state], [output]. ---------------------------------------------------------!
+      !----- [init], [output] (the diagnostics and the state files). -----------------------------!
       type(init_opts_t)     :: init
-      type(state_opts_t)    :: state
       type(output_config_t) :: output
 
       !----- [carbon], [trait_dynamics]. --------------------------------------------------------!

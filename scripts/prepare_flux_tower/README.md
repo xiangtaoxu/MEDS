@@ -1,6 +1,6 @@
 # `prepare_flux_tower/` — MEDS forcing from flux-tower data
 
-Builds an `ED_default` forcing file (`[forcing].format = "ED_default"`) from a flux tower's
+Builds a MEDS forcing file (`[forcing].format = "default"`) from a flux tower's
 meteorology: AmeriFlux BASE, FLUXNET/ONEFlux, or any CSV. A site TOML **declares** what the data
 are. The tool **checks** each declaration against the sun and the data, converts everything to
 MEDS's own conventions, fills gaps explicitly with a flag on every value, and states the tower's

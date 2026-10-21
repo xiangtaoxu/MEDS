@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_default -- the MEDS forcing file source (format = "ED_default",                 !
+! meds_met_default -- the MEDS forcing file source (format = "default",                    !
 ! docs/science/forcing.md §1): a multi-grid netCDF file whose records the run needs are        !
 ! read into memory at open, so no step reads the file. It opens the file (default_file_open)   !
 ! and hands the shared ingest one record's values as stored (default_file_record).             !
@@ -34,7 +34,7 @@ module meds_met_default
 contains
 
    !=======================================================================================!
-   !  OPEN a MEDS forcing file (ED_default): the grid and time dims, the time axis and its     !
+   !  OPEN a MEDS forcing file ("default"): the grid and time dims, the time axis and its      !
    !  base time from the `time:units` attribute, the checks of the file against the config and !
    !  the declared recycle window, and the records the run needs, read into memory. A         !
    !  rejection returns its status and the reason; the caller closes the source.              !

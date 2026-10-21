@@ -186,18 +186,17 @@ pft_config   = "meds_config_pft.toml"      # the PFT file
 # soil_theta         = 0.30       # [m3/m3]  every soil layer's start
 # reacclimate_traits = false      # a restart's plastic leaf traits from this run's PFT file
 
-[state]
-# The restart stream and the run's PFT table; the diagnostics are [output]'s.
-output_dir            = "."             # directory of the state files and <prefix>_pft_parameters.csv
-output_prefix         = "meds_output"   # their file-name stem: <prefix>-S-<date>.nc
-write_state           = false           # write state checkpoints
-interval_years  = 50              # [yr] between checkpoints (and one at the end)
-
 # ------------------------------------------------------------------------------------------
-# The diagnostic output: netCDF files <prefix>-<F|D|M|Y>[-<stamp>].nc, one per tier and time chunk
-# (docs/science/diagnostics.md). Each variable is written at its default tiers unless io_config says
-# otherwise; `meds_main --dump-io-config` lists every variable, its default and the tiers it can be on.
+# What a run writes. The state files: the model's whole state at an instant, to restart from
+# ([init].restart_file), <state_file_prefix>-S-<date>.nc. The diagnostics: netCDF files
+# <prefix>-<F|D|M|Y>[-<stamp>].nc, one per tier and time chunk (docs/science/diagnostics.md); each
+# variable is written at its default tiers unless io_config says otherwise, and `meds_main
+# --dump-io-config` lists every variable, its default and the tiers it can be on.
 [output]
+state_write       = false         # write state files (the three keys below are required with it)
+state_interval    = "50 years"    # one every "N days", "N months" or "N years", and one at the end
+state_file_dir    = "."           # their directory, and that of <prefix>_pft_parameters.csv
+state_file_prefix = "meds_output" # their file-name stem
 enabled       = false           # write the diagnostics
 dir           = "out"           # directory
 prefix        = "meds"          # file-name stem
@@ -331,16 +330,16 @@ phi_psii         = 0.74    # [-] electrons per absorbed photon in low light, tim
 #                                        #   (1989) for the N. Hemisphere, after Liston & Elder (2006):
 #                                        #   [0.0044, 0.0059, 0.0071, 0.0078, 0.0081, 0.0082,
 #                                        #    0.0081, 0.0081, 0.0077, 0.0068, 0.0055, 0.0047]
-# grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "ED_default" only)
+# grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "default" only)
 # [forcing]
 # forcing_on            = true
-# format                = "ED_default"   # "ED_ERA5land" (the archive) | "ED_default" (a file)
-#   ---- format = "ED_ERA5land" ----
+# format                = "default"      # "ERA5land" (the ED_ERA5land archive) | "default" (a forcing file)
+#   ---- format = "ERA5land" ----
 # data_path             = "/path/to/ED_ERA5land"   # the archive folder
 # max_distance_km       = 15.0           # a site on a cell without data takes the nearest valid cell this close
 # file_template         = "{data_path}/ED_ERA5land_{var}_{yyyy}{mm}.nc"   # optional; the default shown
 # static_file           = "{data_path}/ED_ERA5land_static.nc"             # optional; the default shown
-#   ---- format = "ED_default" ----
+#   ---- format = "default" ----
 # path                  = "ithaca_forcing.nc"
 # grid_index            = 1              # the file's grid cell this polygon reads (grid_match = "explicit")
 # grid_match            = "explicit"     # "explicit" (grid_index) | "nearest" (to [site] latitude/longitude)

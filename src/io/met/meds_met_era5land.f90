@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_era5land -- format = "ED_ERA5land": the ERA5-Land archive, monthly files of     !
+! meds_met_era5land -- format = "ERA5land": the ERA5-Land archive, monthly files of        !
 ! hourly fields over its global grid (docs/science/forcing.md §1-§2; the files' layout is  !
 ! MEDS_FORCING_DESIGN.md §14), laid end to end as one hourly axis over the months a run    !
 ! needs. era5land_open opens it, era5land_prefetch loads a month before the step that      !
@@ -215,7 +215,7 @@ contains
          call archive_month_of(time_advance_seconds(f%recycle_end, -src%dt_forcing), .false., y1, m1)
       else
          if (.not. (present(run_start) .and. present(run_end))) then
-            call add_line(why, ' met_open: format = "ED_ERA5land" without recycling needs the run period')
+            call add_line(why, ' met_open: format = "ERA5land" without recycling needs the run period')
             stat = MET_ERR_ARCHIVE
             return
          end if
