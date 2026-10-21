@@ -194,42 +194,25 @@ write_state           = false           # write state checkpoints
 interval_years  = 50              # [yr] between checkpoints (and one at the end)
 
 # ------------------------------------------------------------------------------------------
-# The diagnostic output: time-averaged netCDF files <prefix>-<F|D|M|Y>[-<stamp>].nc, one per tier and
-# time chunk (docs/science/diagnostics.md). `meds_main --dump-io-config` writes a meds_io_config.toml
-# listing every variable, for the per-variable choice; the switches below are the coarse one. Later
-# wins: the registry's defaults, the axes, the groups, the tiers, the per-variable file.
+# The diagnostic output: netCDF files <prefix>-<F|D|M|Y>[-<stamp>].nc, one per tier and time chunk
+# (docs/science/diagnostics.md). Each variable is written at its default tiers unless io_config says
+# otherwise; `meds_main --dump-io-config` lists every variable, its default and the tiers it can be on.
 [output]
 enabled       = false           # write the diagnostics
 dir           = "out"           # directory
 prefix        = "meds"          # file-name stem
-io_config     = ""              # a meds_io_config.toml of per-variable choices ("" = none)
+io_config     = ""              # what is written: a file of [variables] lines, each a name or a pattern
+                                #   ("*_co" = false, "mean_*_py" = "M Y"); "" = the defaults. `meds_main
+                                #   --dump-io-config` lists every variable (docs/science/diagnostics.md §5)
 cohort_max    = 4096            # the files' cohort axis (the run stops when the live count exceeds it)
 patch_max     = 256             # the files' patch axis
 fast_interval_steps = 4         # dt_fast sub-steps a sub-daily record spans (4 x 900 s = hourly)
 sync_every    = "flush"         # "flush": records reach the disk each month | "never"
 
-  # --- Variable groups. ---
-  structure     = true          # demography, size, identity, patch geometry
-  carbon        = true          # GPP, NPP, Ra, allocation, vegetation carbon stocks
-  water         = true          # ET, soil moisture and potential, snow, surface water
-  energy        = true          # LE, H, net radiation, temperatures, canopy-air state
-  biogeochem    = true          # soil-carbon pools, Rh, litterfall
-  numerics      = true          # integrator work counters and the budget residuals
-  forcing       = true          # the forcing the run used
-  radiation     = false         # albedo, absorbed SW/PAR/LW, ground radiation
-  ecophys       = false         # per-cohort leaf gas exchange and hydraulics (the largest)
-
-  # --- Axes: drop a whole trailing dimension. ---
-  axes_cohort     = true
-  axes_patch      = true
-  axes_pft        = true
-  axes_size       = true
-  axes_soil_patch = false       # (soil layer x patch) columns
-
   # --- The dbh_class axis: ascending edges [cm]; a cohort counts whole in the class of its dbh. ---
   dbh_class_edges = [0.0, 10.0, 20.0, 30.0, 50.0, 70.0, 100.0]
 
-  # --- Each tier: on or off, and the span of one file. One key per line. ---
+  # --- Each tier: on or off (off writes nothing, whatever io_config says), and the span of one file. ---
   [output.fast]
   enabled = false
   file_chunk = "day"

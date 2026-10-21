@@ -350,12 +350,12 @@ This is the largest usability difference.
 | | MEDS | ED2 |
 |---|---|---|
 | Format | netCDF, written through the C library (no netCDF-Fortran dependency, so it builds under ifx and nvfortran) | HDF5 |
-| Statistics | Time **mean**, sum, min, max and last | Means; `IQOUTPUT` adds a mean diurnal cycle |
-| Variable selection | **~200 variables, each switchable individually, per timescale.** Resolution order: registry defaults → axis toggles → group toggles → per-tier → per-variable overrides | A fixed schema per file type; the controls are the frequency flags (`IFOUTPUT`, `IDOUTPUT`, `IMOUTPUT`, `IQOUTPUT`, `IYOUTPUT`, `ITOUTPUT`, `IOOUTPUT`) and `IADD_{SITE,PATCH,COHORT}_MEANS` |
+| Statistics | Every variable's time **mean** over its record's period (`mean_<x>`) and its value at the period's end (`<x>`) | Means; `IQOUTPUT` adds a mean diurnal cycle |
+| Variable selection | **~450 variables, each selectable per timescale, by name or pattern** (`"*_co" = false`, `"mean_*_py" = "M Y"`): registry defaults, then the `io_config` lines, the most specific winning | A fixed schema per file type; the controls are the frequency flags (`IFOUTPUT`, `IDOUTPUT`, `IMOUTPUT`, `IQOUTPUT`, `IYOUTPUT`, `ITOUTPUT`, `IOOUTPUT`) and `IADD_{SITE,PATCH,COHORT}_MEANS` |
 | Timescales | Four tiers: sub-daily (F), daily (D), monthly (M), annual (Y), each independently enabled and chunked | Per-file-type frequencies plus `FRQFAST` / `FRQSTATE` |
 | Axes | scalar, cohort, patch, soil layer, **PFT**, **DBH size class**, and 2-D (patch × soil layer) | polygon / site / patch / cohort levels |
 | Aggregation | Declared as data on each variable — a weight (none / plant density / leaf area / basal area / AGB) and mean-vs-sum. One registry line emits a field's patch, site, PFT and size-class rollups | Hard-coded per variable |
-| Discovering variables | `meds_main --dump-io-config` writes a complete override file listing every variable | Read the source or the wiki |
+| Discovering variables | `meds_main --dump-io-config` lists every variable by group, with its default tiers and the tiers it can be on | Read the source or the wiki |
 | Empty sets | A mean over an empty patch/PFT/class is `_FillValue`; a sum is a true 0, so the PFT and size-class sums still equal the site total when a PFT goes locally extinct | — |
 | Restart | A separate, deliberately orthogonal stream under its own `[state]` block: `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, raw prognostic state at an instant, never a time average | `ISOUTPUT`, `FRQSTATE`, HDF5 history files |
 | Post-processing | `post_proc/` — site time series, stand structure, a 3-D landscape, a per-PFT / per-size-class plotter, and a worked evaluation notebook that checks the conservation identities **from the file** | Community scripts |

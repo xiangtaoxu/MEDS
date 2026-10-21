@@ -19,8 +19,8 @@ module meds_output_setup
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, MISSING_VALUE,          &
                                    MISSING_INT, DIM_SCALAR
    use meds_constants,         only : n_soil_layer_max
-   use meds_output_registry,  only : build_output_registry, freq_bit, apply_variable_override, parse_stream_mask, &
-                                     build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
+   use meds_output_registry,  only : build_output_registry, freq_bit, parse_stream_mask, selection_t,           &
+                                     apply_selections, resolve_streams, OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_output_integrate, only : alloc_integ_buffer
    use meds_output_extract,   only : FLD_C_DIAG0, FLD_P_DIAG0, FLD_PY_DIAG0, FLD_SI_DIAG0, SRC_F_CO0, SRC_NONE
    use meds_allometry_lib,    only : HEIGHT_CHAVE
@@ -91,52 +91,53 @@ contains
       if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = poly%cohort%pft_table%allom(1)%chave_e
    end subroutine attach_output
 
-   !----- Apply the optional meds_io_config.toml per-variable override table to the file set's !
-   !      registry (value grammar and unknown-name trap: docs/science/diagnostics.md §5). Each  !
-   !      `variables.<name> = <value>` entry: a bool force-enables / disables everywhere; a     !
-   !      quoted "F D M Y" string replaces the stream mask. A name matching no registry         !
-   !      variable is a hard error.                                                             !
+   !----- Apply [output].io_config's [variables] lines to the file set's registry (the grammar and  !
+   !      the rules: docs/science/diagnostics.md §5). A key is a variable's name or a pattern with   !
+   !      `*`, quoted or not; a value true, false or a quoted "F D M Y" string. --------------------!
    subroutine apply_io_overrides(files, tomlpath, verbose)
       type(output_files_t),   intent(inout) :: files
       character(len=*),       intent(in)    :: tomlpath
       logical,                intent(in)    :: verbose
       type(toml_table_t) :: tt
-      logical            :: ok, found
-      integer(ik)        :: i, mask, status
+      type(selection_t), allocatable :: sel(:)
+      logical            :: ok
+      integer(ik)        :: i, n, mask, status
       character(len=256) :: raw, sval
-      character(len=64)  :: name
+      character(len=64)  :: key
       character(len=8)   :: bad
       call toml_parse_file(tomlpath, tt, ok)
       if (.not. ok) error stop 'meds_output_setup: cannot read [output].io_config = '//trim(tomlpath)
+      allocate(sel(max(tt%n, 1_ik)))
+      n = 0_ik
       do i = 1_ik, tt%n
          if (len_trim(tt%key(i)) <= 10) cycle
          if (tt%key(i)(1:10) /= 'variables.') cycle
-         name = trim(tt%key(i)(11:))
-         raw  = adjustl(tt%val(i))
+         key = adjustl(tt%key(i)(11:))
+         if (key(1:1) == '"') key = key(2:index(key(2:), '"'))     ! a quoted key: "mean_*_py"
+         raw = adjustl(tt%val(i))
+         n = n + 1_ik
+         sel(n)%key = key
          select case (trim(raw))
          case ('true')
-            call apply_variable_override(files%reg, trim(name), OVR_TRUE, 0_ik, found)
+            sel(n)%kind = OVR_TRUE
          case ('false')
-            call apply_variable_override(files%reg, trim(name), OVR_FALSE, 0_ik, found)
+            sel(n)%kind = OVR_FALSE
          case default
-            if (raw(1:1) == '"') then                    ! quoted stream string "F D M Y"
-               sval = raw(2:index(raw(2:), '"'))
-               call parse_stream_mask(trim(sval), mask, status, bad)
-               if (status /= 0_ik)                                                               &
-                  error stop 'meds_output_setup: io_config unknown stream token "'//trim(bad)//        &
-                             '" for variable '//trim(name)
-               call apply_variable_override(files%reg, trim(name), OVR_MASK, mask, found)
-            else
-               error stop 'meds_output_setup: io_config bad value for '//trim(name)//                  &
+            if (raw(1:1) /= '"')                                                                  &
+               error stop 'meds_output_setup: io_config bad value for '//trim(key)//                     &
                           ' (expected true|false or a quoted "F D M Y" string)'
-            end if
+            sval = raw(2:index(raw(2:), '"'))
+            call parse_stream_mask(trim(sval), mask, status, bad)
+            if (status /= 0_ik)                                                                   &
+               error stop 'meds_output_setup: io_config unknown stream token "'//trim(bad)//              &
+                          '" for '//trim(key)
+            sel(n)%kind = OVR_MASK
+            sel(n)%mask = mask
          end select
-         if (.not. found)                                                                        &
-            error stop 'meds_output_setup: io_config variable "'//trim(name)//                         &
-                       '" matches no registry variable (typo?)'
       end do
-      call build_freq_index(files%reg)
-      if (verbose) write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
+      call apply_selections(files%reg, sel(1:n))
+      call resolve_streams(files%reg)
+      if (verbose) write(*,'(3a)') ' output: applied the selection in ', trim(tomlpath), ''
    end subroutine apply_io_overrides
 
    !=======================================================================================!
@@ -313,13 +314,18 @@ contains
       bufs%diag = files%diag
    end subroutine alloc_output_buffers
 
-   !----- Convenience: registry, stream handles and one polygon's buffers in one call (no       !
-   !      overrides). ---------------------------------------------------------------------------!
-   subroutine alloc_output_set(files, bufs, cfg)
+   !----- Convenience: registry, stream handles and one polygon's buffers in one call, with an   !
+   !      optional selection in place of an io_config file. ---------------------------------------!
+   subroutine alloc_output_set(files, bufs, cfg, sel)
       type(output_files_t),  intent(out) :: files
       type(output_buffers_t), intent(out) :: bufs
       type(meds_config_t),   intent(in)  :: cfg
+      type(selection_t), optional, intent(in) :: sel(:)   !< io_config lines, as apply_io_overrides reads them
       call setup_output_files(files, cfg)
+      if (present(sel)) then
+         call apply_selections(files%reg, sel)
+         call resolve_streams(files%reg)
+      end if
       call set_output_polygons(files, [0_ik], [1_ik], [0.0_wp], [0.0_wp], [0_ik], [0_ik], .false.)
       call finalize_output_files(files)
       call alloc_output_buffers(files, bufs)

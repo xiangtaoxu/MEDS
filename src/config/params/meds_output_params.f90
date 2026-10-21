@@ -1,8 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_output_params -- the [output] block (docs/science/diagnostics.md) and the codes it  !
-! uses: temporal tiers (FREQ_*), variable groups (GRP_*), axes (AXIS_*), file chunks       !
-! (FC_*) and sync (SYNC_*). A config leaf (meds_kinds only), so meds_config carries        !
+! uses: temporal tiers (FREQ_*), variable groups (GRP_*), file chunks (FC_*) and sync      !
+! (SYNC_*). A config leaf (meds_kinds only), so meds_config carries                        !
 ! output_config_t with no edge back to the io layer; the io-only codes (AGG_*, DIM_*) are  !
 ! in meds_output_types.                                                                    !
 !==========================================================================================!
@@ -16,7 +16,6 @@ module meds_output_params
    public :: TIER_FAST, TIER_DAILY, TIER_MONTHLY, TIER_ANNUAL
    public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_RADIATION, GRP_ECOPHYS,       &
              GRP_BIOGEOCHEM, GRP_NUMERICS, GRP_FORCING, N_GRP
-   public :: AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH, N_AXIS
    public :: FC_DAY, FC_MONTH, FC_YEAR, FC_RUN
    public :: SYNC_NEVER, SYNC_FLUSH
    public :: MAX_DBH_EDGE
@@ -33,7 +32,8 @@ module meds_output_params
    !----- Each tier's index into the per-tier arrays (bit FREQ_* = 2**(index - 1)). -----------!
    integer(ik), parameter :: TIER_FAST = 1_ik, TIER_DAILY = 2_ik, TIER_MONTHLY = 3_ik, TIER_ANNUAL = 4_ik
 
-   !----- Variable groups (docs/science/diagnostics.md §5). -------------------------------!
+   !----- Variable groups, the headings of the --dump-io-config list (docs/science/diagnostics.md   !
+   !      §5). ---------------------------------------------------------------------------------!
    integer(ik), parameter :: GRP_STRUCTURE = 1_ik  !< demography/size: nplant, dbh, agb, patch geometry, ids
    integer(ik), parameter :: GRP_CARBON    = 2_ik  !< GPP, NPP, Ra, allocation, vegetation carbon stocks
    integer(ik), parameter :: GRP_WATER     = 3_ik  !< ET, soil moisture and potential, snow, surface water
@@ -44,14 +44,6 @@ module meds_output_params
    integer(ik), parameter :: GRP_BIOGEOCHEM = 8_ik  !< soil-carbon pools, Rh, litterfall
    integer(ik), parameter :: GRP_FORCING    = 9_ik  !< the forcing the run used, after the reader's partitions
    integer(ik), parameter :: N_GRP          = 9_ik
-
-   !----- Axes: each toggle suppresses a whole trailing dimension. ------------------------!
-   integer(ik), parameter :: AXIS_COHORT     = 1_ik
-   integer(ik), parameter :: AXIS_PATCH      = 2_ik
-   integer(ik), parameter :: AXIS_PFT        = 3_ik
-   integer(ik), parameter :: AXIS_SIZE       = 4_ik
-   integer(ik), parameter :: AXIS_SOIL_PATCH = 5_ik
-   integer(ik), parameter :: N_AXIS          = 5_ik
 
    !----- DBH size-class edge ceiling (n_class <= MAX_DBH_EDGE-1). ------------------------!
    integer(ik), parameter :: MAX_DBH_EDGE = 33_ik
@@ -67,24 +59,18 @@ module meds_output_params
    integer(ik), parameter :: SYNC_FLUSH = 1_ik  !< nc_sync after each flush (durable; default)
 
    !=======================================================================================!
-   !  The [output] block: plain scalars and fixed arrays. The per-variable overrides are   !
-   !  in meds_io_config.toml, read by build_output_registry (docs/science/diagnostics.md   !
-   !  §5).                                                                                 !
+   !  The [output] block: plain scalars and fixed arrays. What is written is the registry's !
+   !  defaults and the lines of [output].io_config (docs/science/diagnostics.md §5).        !
    !=======================================================================================!
    type :: output_config_t
       logical            :: enabled     = .false.               !< master switch
       character(len=256) :: dir         = '.'                   !< output directory
       character(len=256) :: prefix      = 'meds'                !< filename stem
-      character(len=256) :: io_config   = ''                    !< path to meds_io_config.toml ('' -> group/freq defaults only)
+      character(len=256) :: io_config   = ''                    !< path to meds_io_config.toml ('' -> the defaults)
       integer(ik)        :: cohort_max  = 4096_ik               !< cohort slab size: a run stops if its live count exceeds it
       integer(ik)        :: patch_max   = 256_ik                !< patch slab size: likewise
       integer(ik)        :: sync_every  = SYNC_FLUSH            !< nc_sync policy: SYNC_NEVER | SYNC_FLUSH
       integer(ik)        :: fast_interval_steps = 4_ik          !< fast tier flushes every N*dt_fast
-      !----- Group toggles, indexed by GRP_*; RADIATION and ECOPHYS off by default. -------!
-      logical            :: grp_on(N_GRP) = [.true., .true., .true., .true., .true.,             &
-                                             .false., .false., .true., .true.]
-      !----- Axis toggles, indexed by AXIS_*; the 2-D soil-patch axis off by default. -----!
-      logical            :: axis_on(N_AXIS) = [.true., .true., .true., .true., .false.]
       !----- Per-tier enable and file chunk, indexed FAST, DAILY, MONTHLY, ANNUAL. --------!
       logical            :: freq_on(N_FREQ)    = [.false., .true., .true., .true.]
       integer(ik)        :: file_chunk(N_FREQ) = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]

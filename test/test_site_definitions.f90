@@ -151,7 +151,7 @@ contains
           '[init]'//nl//'init_mode = '//trim(m)//nl//'restart_file = "'//restart//'"'//nl//         &
           '[state]'//nl//'output_dir = "'//trim(work)//'"'//nl//'output_prefix = "sites"'//nl//     &
           '[output]'//nl//'dir = "'//trim(work)//'"'//nl//'prefix = "sites"'//nl//                  &
-          'io_config = ""'//nl//'water = true'//nl//'structure = true'//nl//                        &
+          'io_config = ""'//nl//                                                                    &
           '[output.fast]'//nl//'enabled = false'//nl//'[output.daily]'//nl//'enabled = true'//nl//  &
           'file_chunk = "run"'//nl
    end function run_block

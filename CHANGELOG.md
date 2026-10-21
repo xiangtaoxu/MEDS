@@ -51,7 +51,8 @@ carbon and water totals are mean rates, and the solvers' work counters means per
 Every variable of the diagnostic and restart files is named `[mean_]<quantity>[_<breakdown>]_<level>`, one
 name at every tier, each fast twin merged into its daily variable (#473). Every mean has its snapshot,
 its value at the period's end, under the name without `mean_`, off until an `io_config` names its tiers
-(#474).
+(#474). An `io_config` line names a variable or a pattern (`"*_co" = false`, `"mean_*_py" = "M Y"`), the
+most specific line winning, and `[output]`'s group and axis switches go (#475).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -68,6 +69,20 @@ its value at the period's end, under the name without `mean_`, off until an `io_
     calibration and `meds.canopy` do.
   - The restart file is `restart_format = "2"`: a state file this release wrote before the rename does
     not restart either.
+- **`[output]`'s group and axis switches are gone** (#475): `structure`, `carbon`, `water`, `energy`,
+  `biogeochem`, `numerics`, `forcing`, `radiation`, `ecophys` and `axes_cohort`, `axes_patch`,
+  `axes_pft`, `axes_size`, `axes_soil_patch` stop the run as unknown keys; delete them. The defaults
+  write what the switches' defaults did (the `radiation` and `ecophys` groups and the soil by patch
+  off); say the rest in `[output].io_config` (`docs/science/diagnostics.md` §5):
+  - `axes_cohort = false` → `"*_co" = false`; `axes_patch = false` → `"*_pa" = false`; `axes_pft` or
+    `axes_size = false` → `"*_pft_*" = false` or `"*_size_*" = false`;
+  - every group off, then the names (as examples 04 and 06 did) → `"*" = false`, then the names;
+  - `ecophys = true` → its variables or a pattern, with their tiers (`"mean_*_co" = "D M"`): they are off
+    by default, so `true` does not turn them on;
+  - the axes' bookkeeping (`owner_patch`, `global_cohort_id`, `cohort_offset`, `cohort_count`,
+    `global_patch_id`, `patch_site`) is written with its axis, at each tier a variable on the axis is,
+    and naming it stops the run: delete such a line;
+  - `[output.<tier>].enabled = false` writes nothing at that tier, whatever `io_config` says.
 - **An `io_config`'s `true` needs a variable with default tiers** (#474). The snapshots (#474) are off by
   default, and `cas_temp_py = true` stops the run, saying so: name the tiers, `cas_temp_py = "D M"`.
   `meds_main --dump-io-config` lists such a variable as `false`.
@@ -317,6 +332,12 @@ its value at the period's end, under the name without `mean_`, off until an `io_
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
   `hydraulics.root_beta`.
+- **Fortran: the output selection** (#475): `output_config_t` loses `grp_on` and `axis_on`, and
+  `meds_output_params` its `AXIS_*` codes and `N_AXIS`; `apply_group_toggles`, `apply_axis_toggles`,
+  `apply_freq_enables` and `dim_axis_index` go. `apply_selections(reg, sel)` applies `selection_t` lines
+  (a name or pattern, `OVR_TRUE`/`OVR_FALSE`/`OVR_MASK` and the tiers), `resolve_streams` clears the
+  tiers switched off (`output_registry_t%tier_on`) and sets the bookkeeping's (`var_desc_t%coord`), and
+  `usable_tiers` and `glob_match` are public; `alloc_output_set` takes an optional selection.
 - **Fortran: the output registry's snapshots** (#474): `var_desc_t%snap_staged` marks a snapshot the D,
   M and Y tiers read from the last staged sub-step; `add_variable` derives `source_fast` from a fast-loop
   row (`FLD_C_DIAG0 + CO_*`, `FLD_P_DIAG0 + PA_*`, `FLD_PY_DIAG0 + PY_*`), so `fast_source=` names only
@@ -398,6 +419,17 @@ its value at the period's end, under the name without `mean_`, off until an `io_
 
 ### Changed
 
+- **Selection by name or pattern** (#475). An `io_config` line names a variable or a pattern of names
+  (`*` any run of characters) and gives it tiers, `true` or `false`; each variable takes the most
+  specific line that matches it, its own name over any pattern, more literal characters over fewer. A
+  pattern gives each variable the tiers it asks that the variable can be on; two lines as specific as
+  each other that disagree, a line that matches nothing and a tier none of a line's variables can be on
+  stop the run. The registry's defaults replace the group and axis switches, and the axes' bookkeeping
+  follows its axis. `--dump-io-config` lists the variables by group, each with its default and the
+  tiers it can be on. Example 05's and 06's configs select what they did; example 04's three
+  `io_config` files start from `"*" = false` and keep the budget residuals, so they no longer write the
+  daily soil carbon, Rh and work counters the old switches left on, and they gain the patch bookkeeping
+  with their patch variables.
 - **A snapshot for every mean** (#474). Each `mean_<x>` has its `<x>` (`AGG_LAST`, `time: point`), off
   by default, and the states written as snapshots (`nplant_co`, `area_pa`, `age_pa`, `n_cohort_py`,
   `n_patch_py`) their means: 452 variables, 216 of them snapshots. A state's snapshot is the state as

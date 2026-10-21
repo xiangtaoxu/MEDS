@@ -44,7 +44,8 @@ program test_output_integrate
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_setup,     only : alloc_output_set, alloc_output_buffers, setup_output_files,                  &
                                      finalize_output_files
-   use meds_output_registry,  only : find_var_index, build_freq_index, apply_variable_override, OVR_MASK
+   use meds_output_registry,  only : find_var_index, build_freq_index, apply_variable_override, OVR_MASK,         &
+                                     OVR_FALSE, selection_t, apply_selections, resolve_streams
    use meds_output_reduce, only : W_NPLANT, W_LEAF_AREA
    use meds_output_params,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_DAILY, FREQ_NONE
    use meds_constants,        only : n_soil_layer_max
@@ -223,15 +224,13 @@ contains
       call check_close(extract_fast_scalar(SRC_F_PA0 + PA_LW_UP,    s, f0), 455.0_wp, 1.0e-12_wp, 'fast extract lw_up')
       call check_close(extract_fast_scalar(SRC_F_PY0 + PY_CO2, s, f0), 415.0_wp, 1.0e-12_wp, 'fast extract forcing CO2')
 
-      !----- Build a manager with the FAST tier + all groups ON (so the energy/water/carbon FAST vars   !
-      !      register), then fold a 2-sub-step window and close it. -----!
+      !----- Build a manager with the FAST tier on (the defaults' F variables) and the soil by patch, !
+      !      then fold a 2-sub-step window and close it. -----!
       cfg = build_test_config(86400.0_wp)
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.               ! FAST tier on
-      cfg%output%grp_on     = .true.
-      cfg%output%axis_on    = .true.               ! the soil-by-patch axis too
       cfg%output%cohort_max = 8_ik
-      call alloc_output_set(files, bufs, cfg)
+      call alloc_output_set(files, bufs, cfg, [selection_t('mean_soil_temp_layer_pa', OVR_MASK, FREQ_FAST)])
       call check(files%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
 
       !----- Stage 2 sub-steps of two patches with known values (as fast_dynamics would). -----!
@@ -311,8 +310,8 @@ contains
       cfg = build_test_config(86400.0_wp)
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.               ! FAST tier on
-      cfg%output%grp_on     = .false.              ! every group off: no slab variable is live yet
       call setup_output_files(files, cfg)
+      call select_nothing(files)                   ! no slab variable is live yet
       n_live_slab = 0_ik
       do k = 1_ik, files%reg%nvar
          if (files%reg%var(k)%dim /= DIM_SCALAR .and. files%reg%var(k)%streams /= FREQ_NONE)        &
@@ -322,7 +321,7 @@ contains
 
       call apply_variable_override(files%reg, 'mean_soil_temp_layer_si', OVR_MASK, FREQ_FAST, found)
       call check(found, 'mean_soil_temp_layer_si is a registry variable')
-      call build_freq_index(files%reg)             ! what apply_io_overrides does after its overrides
+      call resolve_streams(files%reg)              ! what apply_io_overrides does after its lines
       call finalize_output_files(files)
       call alloc_output_buffers(files, bufs)
       call check(files%max_slab >= nl, 'max_slab covers the soil axis an override switched on')
@@ -357,11 +356,11 @@ contains
       cfg = build_test_config(86400.0_wp)
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.               ! FAST tier on
-      cfg%output%grp_on     = .false.              ! every group off: no slab variable is live yet
       call setup_output_files(files, cfg)
+      call select_nothing(files)                   ! no slab variable is live yet
       call apply_variable_override(files%reg, 'mean_soil_temp_layer_pa', OVR_MASK, FREQ_FAST, found)
       call check(found, 'mean_soil_temp_layer_pa is a registry variable')
-      call build_freq_index(files%reg)
+      call resolve_streams(files%reg)
       call finalize_output_files(files)
       call alloc_output_buffers(files, bufs)
       call alloc_fast_staging(bufs, 1_ik, 3_ik, 1_ik, 2_ik)
@@ -387,7 +386,6 @@ contains
       cfg = build_test_config(86400.0_wp)
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.
-      cfg%output%grp_on     = .true.
       cfg%output%cohort_max = 8_ik
       call alloc_output_set(files, a, cfg)
       call alloc_output_buffers(files, b)
@@ -424,10 +422,10 @@ contains
       cfg = build_test_config(DT)
       cfg%output%enabled    = .true.
       cfg%output%freq_on    = [.false., .true., .true., .false.]    ! daily + monthly
-      cfg%output%grp_on     = .false.
-      cfg%output%grp_on(1)  = .true.                                 ! structure
       cfg%output%cohort_max = 8_ik
-      call alloc_output_set(files, bufs, cfg)
+      call alloc_output_set(files, bufs, cfg, [selection_t('*', OVR_FALSE, FREQ_NONE),              &
+                            selection_t('mean_agb_*', OVR_MASK, ior(FREQ_DAILY, FREQ_MONTHLY)),          &
+                            selection_t('n_cohort_py', OVR_MASK, ior(FREQ_DAILY, FREQ_MONTHLY))])
       k_s = find_var_index(files%reg, 'mean_agb_py')
       k_c = find_var_index(files%reg, 'mean_agb_co')
       c_c = slab_col(bufs%pending(3), k_c)
@@ -524,17 +522,16 @@ contains
       cfg = build_test_config(DT)
       cfg%output%enabled    = .true.
       cfg%output%freq_on    = [.true., .true., .false., .false.]     ! F + daily
-      cfg%output%grp_on     = .false.
-      cfg%output%axis_on    = .true.
       cfg%output%cohort_max = 8_ik
       call setup_output_files(files, cfg)
+      call select_nothing(files)
       call apply_variable_override(files%reg, 'cas_temp_py', OVR_MASK, ior(FREQ_FAST, FREQ_DAILY), found)
       call apply_variable_override(files%reg, 'mean_cas_temp_py', OVR_MASK, FREQ_FAST, found)
       call apply_variable_override(files%reg, 'cas_temp_pa', OVR_MASK, FREQ_DAILY, found)
       call apply_variable_override(files%reg, 'reco_py', OVR_MASK, FREQ_DAILY, found)
       call apply_variable_override(files%reg, 'leaf_temp_py', OVR_MASK, FREQ_DAILY, found)
       call check(found, 'the snapshots are registry variables')
-      call build_freq_index(files%reg)
+      call resolve_streams(files%reg)
       call finalize_output_files(files)
       call alloc_output_buffers(files, bufs)
       call check(bufs%fast_on, 'a snapshot read from the staging turns the staging on')
@@ -579,6 +576,13 @@ contains
       call check(.not. bufs%pending(2)%svalid(k_t), 'D: a step with nothing staged has no snapshot')
       call free_polygon(poly)
    end subroutine test_snapshots
+
+   !----- `"*" = false`: nothing selected, the axes' bookkeeping included. ------------------------!
+   subroutine select_nothing(files)
+      type(output_files_t), intent(inout) :: files
+      call apply_selections(files%reg, [selection_t('*', OVR_FALSE, FREQ_NONE)])
+      call resolve_streams(files%reg)
+   end subroutine select_nothing
 
    !----- One patch holding `agb`'s cohorts, one plant each. ------------------------------------!
    subroutine set_cohorts(poly, agb)

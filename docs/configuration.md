@@ -80,7 +80,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
 | `[[sites]]` | A site run's polygon as several sites, one table each: its share, terrain and ground ([Several sites](#several-sites)). |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
-| `[output]` | Which diagnostics are written, on which axes, at which timescales. |
+| `[output]` | Which diagnostics are written (`io_config`), at which timescales. |
 | `[state]` | Restart checkpointing: output directory, prefix, interval. |
 
 **`[soil]` is the ground; `[fast]` holds the solvers' settings.** Every property of the ground is in
@@ -352,10 +352,11 @@ soil water's potential, and is re-seeded from its patch once the patch is seeded
 
 Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:
 
-- **Diagnostic timeseries** — the `[output]` subsystem. 284 variables across 9 groups and 7 axes,
-  each switchable individually per timescale (sub-daily, daily, monthly, annual). Run
-  `meds_main --dump-io-config` to generate a file listing every available variable name.
-  See [`science/diagnostics.md`](science/diagnostics.md).
+- **Diagnostic timeseries** — the `[output]` subsystem. 452 variables, each a mean over its
+  record's period (`mean_<x>`) or its value at the period's end (`<x>`), at four timescales
+  (sub-daily, daily, monthly, annual). `[output].io_config` chooses them by name or pattern
+  (`"*_co" = false`, `"mean_*_py" = "M Y"`); `meds_main --dump-io-config` lists every variable. See
+  [`science/diagnostics.md`](science/diagnostics.md) §5.
 - **State checkpoints** — `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, enabled with `[state].write_state`. The
   instantaneous prognostic state only, no diagnostics, written every `[state].interval_years` and at
   run end. **The timestamp is the simulated date**, so pointing `[init].restart_file` at one

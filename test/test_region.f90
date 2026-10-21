@@ -343,6 +343,18 @@ program test_region
    call refused('an io_config true may not switch on a variable that is off by default',          &
                 '[output]'//nl()//'io_config = "'//trim(work)//'/io_true_off.toml"'//nl()//          &
                 site_block(1_ik), .false., .false., 'is off by default')
+   !----- The selection's own rules (docs/science/diagnostics.md §5): a line that matches nothing, !
+   !      two lines as specific as each other that disagree, a tier none of a line's variables can be !
+   !      on, and the axes' bookkeeping named; and the retired switches are unknown keys. -----------!
+   call refuse_io('an io_config pattern that matches no variable is refused', '"*_xyz" = false',            &
+                  'matches no variable')
+   call refuse_io('two io_config lines as specific as each other that disagree are refused',              &
+                  '"mean_a*" = "D"'//nl()//'"*agb_py" = "M"', 'make one more specific')
+   call refuse_io('an io_config line asking for a tier none of its variables can be on is refused',       &
+                  '"*_co" = "Y"', 'none of its variables can be on Y')
+   call refuse_io('the axes'' bookkeeping is not selected', 'owner_patch = "D"', 'is written with its axis')
+   call refused('a retired [output] switch is an unknown key', '[output]'//nl()//'axes_cohort = false'//nl()// &
+                site_block(1_ik), .false., .false., 'is not a key MEDS reads')
    call refused('a cell mask must be on the forcing grid', '[region]'//nl()//'cell_mask = "'//            &
                 trim(work)//'/archive/offgrid.nc"'//nl()//'cell_mask_var = "keep"'//nl()//region_block(),  &
                 .true., .false., 'is not on the forcing grid')
@@ -468,6 +480,14 @@ contains
       close(u)
       call check_true(what, es /= 0 .and. said)
    end subroutine refused
+
+   !----- An io_config of these [variables] lines, refused with the message given. -----------------!
+   subroutine refuse_io(what, lines, message)
+      character(len=*), intent(in) :: what, lines, message
+      call write_text(trim(work)//'/io_refused.toml', '[variables]'//nl()//lines)
+      call refused(what, '[output]'//nl()//'io_config = "'//trim(work)//'/io_refused.toml"'//nl()//     &
+                   site_block(1_ik), .false., .false., message)
+   end subroutine refuse_io
 
    !----- Write the override block, then the template without the keys that do not apply. ---------!
    subroutine derive(path, overrides, region, keep_file_keys)

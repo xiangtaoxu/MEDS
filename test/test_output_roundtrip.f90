@@ -40,6 +40,8 @@ program test_output_roundtrip
    use meds_output_params,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_setup,     only : alloc_output_set
+   use meds_output_registry,  only : selection_t, OVR_FALSE, OVR_MASK
+   use meds_output_params,    only : FREQ_NONE, FREQ_DAILY, FREQ_ANNUAL
    use meds_output_integrate, only : output_integrate
    use meds_output_stream,   only : output_serialize, output_close
    use meds_netcdf_c
@@ -83,10 +85,13 @@ program test_output_roundtrip
    call set_site_gpp(poly, 2.0_wp)
    call set_site_soil_temp(poly, 290.0_wp)
 
-   !----- Output config: daily + annual streams; enable the energy group (soil). -----!
+   !----- Output config: daily + annual streams; the variables the checks read. -----!
    cfg = build_cfg()
    dt  = 86400.0_wp
-   call alloc_output_set(files, bufs(1), cfg)
+   call alloc_output_set(files, bufs(1), cfg, [selection_t('*', OVR_FALSE, FREQ_NONE),                      &
+                         selection_t('mean_agb_*', OVR_MASK, ior(FREQ_DAILY, FREQ_ANNUAL)),                    &
+                         selection_t('mean_gpp_py', OVR_MASK, ior(FREQ_DAILY, FREQ_ANNUAL)),                   &
+                         selection_t('mean_soil_temp_layer_si', OVR_MASK, ior(FREQ_DAILY, FREQ_ANNUAL))])
 
    !----- A soil column with FEWER active layers than the compile-time ceiling. That gap is the   !
    !      whole point: a soil-dimensioned variable emitted over all n_soil_layer_max slots would  !
@@ -138,9 +143,6 @@ contains
       c%output%sync_every = SYNC_FLUSH
       c%output%freq_on    = [.false., .true., .false., .true.]     ! daily + annual
       c%output%file_chunk = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
-      !----- structure + carbon + ENERGY (soil); the other groups off. Order: STRUCTURE CARBON  !
-      !      WATER ENERGY NUMERICS RADIATION ECOPHYS BIOGEOCHEM FORCING. ----------------------!
-      c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false., .false.]
    end function build_cfg
 
    !----- Daily file: 3 records, mean_agb_py = [10,20,30], n_cohort=1, mean_agb_co slab = [10,20,30], !
