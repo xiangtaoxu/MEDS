@@ -320,7 +320,7 @@ contains
       end function ledger_not_finite
 
       !----- Everything is handed on; the fast loop uses the forcing only when forcing_on, and     !
-      !      stages the fast output tier only then. -------------------------------------------------!
+      !      stages its sub-steps when the output reads them (bufs%fast_on). ------------------------!
       subroutine stepper(fast_bufs)
          type(output_buffers_t), intent(inout) :: fast_bufs
          call advance_one_step(poly, cfg, run%fast_ctx, met_src=met_src, met_cur=run%met_cur,             &
@@ -334,22 +334,23 @@ contains
 
       !----- FAST tier: replay the sub-step samples the fast loop staged in bufs%fast(:), closing   !
       !      the tier every fast_interval_steps sub-steps. Then the diagnostic tick of the slower   !
-      !      tiers. Closed records are queued; the I/O phase writes them.  -------------------------!
+      !      tiers, whose snapshots of fast-loop values read the last staged sub-step. Closed       !
+      !      records are queued; the I/O phase writes them.  ---------------------------------------!
       subroutine tick_output(files, bufs)
          type(output_files_t),  intent(in)    :: files
          type(output_buffers_t), intent(inout) :: bufs
          integer(ik) :: isub
-         if (bufs%fast_ready) then
+         if (bufs%fast_ready .and. files%reg%nidx(TIER_FAST) > 0_ik) then
             do isub = 1_ik, bufs%n_fast_sub
                call output_integrate_fast(files, bufs, isub, cfg%dt_fast)
                run%fast_step_total = run%fast_step_total + 1_ik
                if (mod(run%fast_step_total, max(files%fast_interval_steps, 1_ik)) == 0_ik)          &
                   call close_tier(files, bufs, TIER_FAST)
             end do
-            bufs%fast_ready = .false.
          end if
          call output_integrate(files, bufs, poly, prev, cfg%dt_slow, is_new_day, is_new_month,           &
                                is_new_year)
+         bufs%fast_ready = .false.
       end subroutine tick_output
 
    end subroutine polygon_step

@@ -390,9 +390,10 @@ contains
       allocate(site_col(poly%site%n))
       call site_column_configs(ctx, poly, site_col)
 
-      !----- FAST (sub-daily) output staging: fill it only when the tier is active and a diurnal    !
-      !      signal exists (forcing on). Serialize stays in main.                                    !
-      do_fast = present(out_bufs) .and. do_forcing
+      !----- FAST (sub-daily) output staging: fill it only when something reads it, the F tier or a  !
+      !      snapshot of a fast-loop value; with forcing off the sub-steps see the reference climate. !
+      !      Serialize stays in main.                                                                !
+      do_fast = present(out_bufs)
       if (do_fast) do_fast = out_bufs%fast_on
       !----- The per-cohort / per-patch diagnostic capture runs only when the registry actually   !
       !      asked for it (main sets `active` from the live variable list). Everything downstream !
@@ -948,7 +949,7 @@ contains
          if (present(run_water_budget))  call budget_merge(run_water_budget,  site_water_budget,  1.0_wp)
          if (present(run_face_budget))   call budget_merge(run_face_budget,   site_face_budget,   1.0_wp)
       end if
-      if (do_fast) out_bufs%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
+      if (do_fast) out_bufs%fast_ready = .true.   ! signal main: the staging holds this slow step
    end subroutine fast_dynamics
 
    !----- Each site's column configuration: the polygon's, with the site's soil column, the        !

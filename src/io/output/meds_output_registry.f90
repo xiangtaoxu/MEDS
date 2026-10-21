@@ -44,7 +44,8 @@ module meds_output_registry
                                      SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PA0, SRC_F_COH_LEAF_TEMP,                 &
                                      SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CO0, FLD_C_DIAG0, FLD_P_DIAG0,        &
                                      FLD_PY_DIAG0, FLD_SI_DIAG0, FLD_SI_GROWTH_TEMP
-   use meds_diag_vars,       only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_TRANSP,           &
+   use meds_diag_vars,       only : N_CO_FAST_ROWS, N_PA_FAST_ROWS, N_PY_ROWS, N_SI_ROWS,                    &
+                                    CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_TRANSP,           &
                                     CO_BETA_STOM, CO_BETA_NONSTOM, CO_LEAF_VPD, CO_PSI_LEAF, CO_PSI_WOOD,         &
                                     CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW,         &
                                     CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_LEAF_TEMP, CO_WOOD_TEMP,            &
@@ -119,6 +120,7 @@ contains
       call register_patch_fluxes(reg)
       call register_fast(reg)
       call register_forcing(reg)
+      call register_snapshots(reg)                ! each mean_<x>'s end-of-period <x>, off by default
 
       call enforce_annual_guard(reg)              ! no cohort or patch variable on FREQ_ANNUAL (docs/science/diagnostics.md §3)
       call enforce_fast_guard(reg)                ! FAST tier <-> FAST-staged source, both ways
@@ -134,7 +136,10 @@ contains
    !  (docs/science/diagnostics.md §8):                                                      !
    !                                                                                          !
    !  add_variable(reg, name, long_name, units, dim, agg, group, streams, source                  !
-   !               [, xtype][, weight][, mean][, scale])                                           !
+   !               [, xtype][, weight][, mean][, scale][, fast_source])                            !
+   !                                                                                          !
+   !  A variable whose name has no mean_ prefix is a snapshot (AGG_LAST); a state's snapshot   !
+   !  is registered here with its mean, and register_snapshots adds the others.               !
    !=======================================================================================!
 
    !----- Per-cohort structure: the demographic atom's own state, written raw. --------------!
@@ -142,6 +147,8 @@ contains
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'nplant_co', 'plant number density', 'plant/m2', DIM_COHORT, AGG_LAST, GRP_STRUCTURE, DAY_MON,     &
                         FLD_C_NPLANT)
+      call add_variable(reg, 'mean_nplant_co', 'plant number density', 'plant/m2', DIM_COHORT, AGG_MEAN, GRP_STRUCTURE,         &
+                        FREQ_NONE, FLD_C_NPLANT)
       call add_variable(reg, 'mean_dbh_co', 'diameter at breast height', 'cm', DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, DAY_MON,    &
                         FLD_C_DBH)
       call add_variable(reg, 'mean_height_co', 'height', 'm', DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, ior(FAST, DAY_MON),          &
@@ -202,7 +209,11 @@ contains
    subroutine register_structure_patch(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'area_pa', 'patch area fraction', '-', DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON, FLD_P_AREA)
+      call add_variable(reg, 'mean_area_pa', 'patch area fraction', '-', DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, FREQ_NONE,         &
+                        FLD_P_AREA)
       call add_variable(reg, 'age_pa', 'time since disturbance', 'yr', DIM_PATCH, AGG_LAST, GRP_STRUCTURE, MON, FLD_P_AGE)
+      call add_variable(reg, 'mean_age_pa', 'time since disturbance', 'yr', DIM_PATCH, AGG_MEAN, GRP_STRUCTURE, FREQ_NONE,      &
+                        FLD_P_AGE)
       call add_variable(reg, 'dist_type_pa', 'disturbance type', '-', DIM_PATCH, AGG_LAST, GRP_STRUCTURE, MON, FLD_P_DIST_TYPE, &
                         xtype=XTYPE_INT)
       call add_variable(reg, 'cohort_offset', 'first cohort of patch (CSR)', '-', DIM_PATCH, AGG_LAST, GRP_STRUCTURE, DAY_MON,  &
@@ -248,6 +259,10 @@ contains
                         SRC_PY_N_COHORT, xtype=XTYPE_INT)
       call add_variable(reg, 'n_patch_py', 'live patch count', '-', DIM_SCALAR, AGG_LAST, GRP_STRUCTURE, DAY_MON_YR,            &
                         SRC_PY_N_PATCH, xtype=XTYPE_INT)
+      call add_variable(reg, 'mean_n_cohort_py', 'live cohort count', '-', DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, FREQ_NONE,      &
+                        SRC_PY_N_COHORT)
+      call add_variable(reg, 'mean_n_patch_py', 'live patch count', '-', DIM_SCALAR, AGG_MEAN, GRP_STRUCTURE, FREQ_NONE,        &
+                        SRC_PY_N_PATCH)
    end subroutine register_structure_site
 
    !----- PFT axis. The composition view: is any PFT actually competing, or has one won? ----!
@@ -382,23 +397,21 @@ contains
    subroutine register_energy(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'mean_cas_temp_py', 'polygon canopy-air-space temperature', 'K', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY,   &
-                        ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_CAS_TEMP, fast_source=SRC_F_PA0 + PA_CAS_TEMP)
+                        ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_CAS_TEMP)
       call add_variable(reg, 'mean_cas_shv_py', 'polygon canopy-air specific humidity', 'kg/kg', DIM_SCALAR, AGG_TMEAN,         &
                         GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_CAS_SHV)
       call add_variable(reg, 'mean_cas_co2_py', 'polygon canopy-air CO2 mixing ratio', 'umol/mol', DIM_SCALAR, AGG_TMEAN,          &
-                        GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_CAS_CO2, fast_source=SRC_F_PA0 + PA_CAS_CO2)
+                        GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_CAS_CO2)
       call add_variable(reg, 'mean_cas_vpd_py', 'polygon canopy-air vapour-pressure deficit', 'Pa', DIM_SCALAR, AGG_TMEAN,         &
                         GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_CAS_VPD)
       call add_variable(reg, 'mean_cas_depth_py', 'polygon canopy-air-space depth', 'm', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY,     &
                         MON_YR, FLD_P_CAS_DEPTH)
       call add_variable(reg, 'mean_soil_temp_top_py', 'polygon soil-top (layer 1) temperature', 'K', DIM_SCALAR, AGG_TMEAN,        &
-                        GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_SOIL_TEMP_TOP,                                      &
-                        fast_source=SRC_F_PA0 + PA_SOIL_TEMP_TOP)
+                        GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_SOIL_TEMP_TOP)
       !----- The skin temperature (docs/science/diagnostics.md §4): what an infrared thermometer   !
       !      or a satellite land-surface temperature sees, not the soil. -----------------------------!
       call add_variable(reg, 'mean_skin_temp_py', 'skin temperature: black-body temperature of the longwave up', 'K',           &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_SKIN_TEMP,                   &
-                        fast_source=SRC_F_PA0 + PA_SKIN_TEMP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_SKIN_TEMP)
       call add_variable(reg, 'mean_soil_temp_layer_si', 'each site''s area-weighted soil temperature', 'K', DIM_SOIL, AGG_TMEAN, &
                         GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_L_SOIL_TEMP, fast_source=SRC_F_SOIL_TEMP)
       call add_variable(reg, 'mean_soil_fliq_layer_si', 'each site''s area-weighted soil liquid fraction', '-', DIM_SOIL,       &
@@ -411,15 +424,15 @@ contains
       call add_variable(reg, 'mean_wood_temp_py', 'leaf-area-weighted wood temperature', 'K', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, &
                         DAY_MON_YR, FLD_C_DIAG0 + CO_WOOD_TEMP, weight=W_LEAF_AREA, mean=.true.)
       call add_variable(reg, 'mean_leaf_temp_co', 'per-cohort leaf temperature', 'K', DIM_COHORT, AGG_TMEAN, GRP_ENERGY,        &
-                        ior(FAST, DAY_MON), FLD_C_DIAG0 + CO_LEAF_TEMP, fast_source=SRC_F_CO0 + CO_LEAF_TEMP)
+                        ior(FAST, DAY_MON), FLD_C_DIAG0 + CO_LEAF_TEMP)
       call add_variable(reg, 'mean_wood_temp_co', 'per-cohort wood temperature', 'K', DIM_COHORT, AGG_TMEAN, GRP_ENERGY,        &
                         DAY_MON, FLD_C_DIAG0 + CO_WOOD_TEMP)
       call add_variable(reg, 'mean_cas_temp_pa', 'patch canopy-air-space temperature', 'K', DIM_PATCH, AGG_TMEAN, GRP_ENERGY,   &
-                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_CAS_TEMP, fast_source=SRC_F_PA0 + PA_CAS_TEMP)
+                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_CAS_TEMP)
       call add_variable(reg, 'mean_soil_temp_top_pa', 'patch soil-top temperature', 'K', DIM_PATCH, AGG_TMEAN, GRP_ENERGY,      &
-                        ior(FAST, MON), FLD_P_DIAG0 + PA_SOIL_TEMP_TOP, fast_source=SRC_F_PA0 + PA_SOIL_TEMP_TOP)
+                        ior(FAST, MON), FLD_P_DIAG0 + PA_SOIL_TEMP_TOP)
       call add_variable(reg, 'mean_skin_temp_pa', 'patch skin temperature (longwave up)', 'K', DIM_PATCH, AGG_TMEAN, GRP_ENERGY, &
-                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_SKIN_TEMP, fast_source=SRC_F_PA0 + PA_SKIN_TEMP)
+                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_SKIN_TEMP)
       call add_variable(reg, 'mean_soil_temp_layer_pa', 'soil temperature by layer and patch', 'K', DIM_SOIL_PATCH, AGG_TMEAN,  &
                         GRP_ENERGY, ior(FAST, DAY_MON), FLD_L_SOIL_TEMP, fast_source=SRC_F_SOIL_TEMP)
       call add_variable(reg, 'mean_soil_fliq_layer_pa', 'soil liquid fraction by layer and patch', '-', DIM_SOIL_PATCH,         &
@@ -493,7 +506,7 @@ contains
       call add_variable(reg, 'mean_anet_co', 'net leaf assimilation', 'umol/m2 leaf/s', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS,     &
                         DAY_MON, FLD_C_DIAG0 + CO_ANET)
       call add_variable(reg, 'mean_agross_co', 'gross leaf assimilation', 'umol/m2 leaf/s', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, &
-                        ior(FAST, DAY_MON), FLD_C_DIAG0 + CO_AGROSS, fast_source=SRC_F_CO0 + CO_AGROSS)
+                        ior(FAST, DAY_MON), FLD_C_DIAG0 + CO_AGROSS)
       call add_variable(reg, 'mean_gsw_co', 'stomatal conductance to water vapour', 'mol/m2 leaf/s', DIM_COHORT, AGG_TMEAN,     &
                         GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CO_GSW)
       call add_variable(reg, 'mean_gbw_co', 'leaf boundary-layer conductance', 'm/s', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON,  &
@@ -511,9 +524,9 @@ contains
       call add_variable(reg, 'mean_beta_nonstomata_co', 'non-stomatal (capacity) water-stress factor', '-', DIM_COHORT,         &
                         AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CO_BETA_NONSTOM)
       call add_variable(reg, 'mean_leaf_vpd_co', 'leaf-to-air vapour-pressure deficit', 'Pa', DIM_COHORT, AGG_TMEAN,            &
-                        GRP_ECOPHYS, ior(FAST, MON), FLD_C_DIAG0 + CO_LEAF_VPD, fast_source=SRC_F_CO0 + CO_LEAF_VPD)
+                        GRP_ECOPHYS, ior(FAST, MON), FLD_C_DIAG0 + CO_LEAF_VPD)
       call add_variable(reg, 'mean_psi_leaf_co', 'leaf water potential', 'MPa', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS,             &
-                        ior(FAST, DAY_MON), FLD_C_DIAG0 + CO_PSI_LEAF, fast_source=SRC_F_CO0 + CO_PSI_LEAF)
+                        ior(FAST, DAY_MON), FLD_C_DIAG0 + CO_PSI_LEAF)
       call add_variable(reg, 'mean_psi_wood_co', 'wood water potential', 'MPa', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON,    &
                         FLD_C_DIAG0 + CO_PSI_WOOD)
       call add_variable(reg, 'mean_plc_co', 'plant loss of hydraulic conductance', '-', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS,     &
@@ -527,7 +540,7 @@ contains
       call add_variable(reg, 'mean_wood_water_co', 'internal wood water', 'kg/plant', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON,  &
                         FLD_C_DIAG0 + CO_WOOD_WATER)
       call add_variable(reg, 'mean_abs_par_co', 'absorbed photosynthetically active radiation', 'W/m2', DIM_COHORT, AGG_TMEAN,  &
-                        GRP_RADIATION, ior(FAST, DAY_MON), FLD_C_DIAG0 + CO_ABS_PAR, fast_source=SRC_F_CO0 + CO_ABS_PAR)
+                        GRP_RADIATION, ior(FAST, DAY_MON), FLD_C_DIAG0 + CO_ABS_PAR)
       call add_variable(reg, 'mean_abs_sw_co', 'absorbed shortwave radiation', 'W/m2', DIM_COHORT, AGG_TMEAN, GRP_RADIATION,    &
                         DAY_MON, FLD_C_DIAG0 + CO_ABS_SW)
       call add_variable(reg, 'mean_abs_lw_co', 'net longwave radiation', 'W/m2', DIM_COHORT, AGG_TMEAN, GRP_RADIATION, MON,     &
@@ -626,11 +639,11 @@ contains
       type(output_registry_t), intent(inout) :: reg
       !--- energy ---!
       call add_variable(reg, 'mean_le_py', 'latent heat flux', 'W/m2', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, ior(FAST, DAY_MON_YR), &
-                        FLD_P_DIAG0 + PA_LE, fast_source=SRC_F_PA0 + PA_LE)
+                        FLD_P_DIAG0 + PA_LE)
       call add_variable(reg, 'mean_h_py', 'sensible heat flux', 'W/m2', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY,                      &
-                        ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_H, fast_source=SRC_F_PA0 + PA_H)
+                        ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_H)
       call add_variable(reg, 'mean_rnet_py', 'net all-wave radiation', 'W/m2', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY,               &
-                        ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_RNET, fast_source=SRC_F_PA0 + PA_RNET)
+                        ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_RNET)
       !----- Top-of-canopy radiative fluxes, for a radiometer or satellite comparison: fluxes, not  !
       !      a mean albedo, which is a mean of ratios (docs/science/canopy_radiation_transfer.md      !
       !      eq. (15)). ---------------------------------------------------------------------------!
@@ -643,15 +656,15 @@ contains
       call add_variable(reg, 'mean_sw_up_nir_py', 'upwelling NIR shortwave at canopy top', 'W/m2', DIM_SCALAR, AGG_TMEAN,       &
                         GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_SW_UP_NIR)
       call add_variable(reg, 'mean_lw_up_py', 'upwelling longwave at canopy top (emission included)', 'W/m2', DIM_SCALAR,       &
-                        AGG_TMEAN, GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_LW_UP, fast_source=SRC_F_PA0 + PA_LW_UP)
+                        AGG_TMEAN, GRP_ENERGY, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_LW_UP)
       call add_variable(reg, 'mean_sw_in_py', 'incident shortwave at canopy top', 'W/m2', DIM_SCALAR, AGG_TMEAN, GRP_FORCING,   &
-                        ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_SW_IN, fast_source=SRC_F_PY0 + PY_SW_IN)
+                        ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_SW_IN)
       call add_variable(reg, 'mean_sw_ground_py', 'shortwave absorbed at the ground', 'W/m2', DIM_SCALAR, AGG_TMEAN,            &
                         GRP_RADIATION, DAY_MON, FLD_P_DIAG0 + PA_SW_GROUND)
       call add_variable(reg, 'mean_lw_ground_py', 'net longwave at the ground', 'W/m2', DIM_SCALAR, AGG_TMEAN, GRP_RADIATION,   &
                         DAY_MON, FLD_P_DIAG0 + PA_LW_GROUND)
       call add_variable(reg, 'mean_ustar_py', 'friction velocity', 'm/s', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY,                    &
-                        ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_USTAR, fast_source=SRC_F_PA0 + PA_USTAR)
+                        ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_USTAR)
       call add_variable(reg, 'mean_ggnet_py', 'ground conductance', 'm/s', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON,              &
                         FLD_P_DIAG0 + PA_GGNET)
       call add_variable(reg, 'mean_rough_py', 'aerodynamic roughness length', 'm', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR,   &
@@ -665,25 +678,25 @@ contains
       call add_variable(reg, 'mean_displace_pa', 'patch zero-plane displacement height', 'm', DIM_PATCH, AGG_TMEAN, GRP_ENERGY, &
                         DAY_MON, FLD_P_DIAG0 + PA_DISPLACE)
       !--- carbon ---!
-      call add_variable(reg, 'mean_nee_py', 'net ecosystem exchange (mean rate)', 'umol/m2/s', DIM_SCALAR, AGG_TMEAN,           &
-                        GRP_CARBON, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_NEE, fast_source=SRC_F_PA0 + PA_NEE)
+      call add_variable(reg, 'mean_nee_py', 'net ecosystem exchange', 'umol/m2/s', DIM_SCALAR, AGG_TMEAN,                        &
+                        GRP_CARBON, ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_NEE)
       !--- water ---!
-      call add_variable(reg, 'mean_precip_py', 'total precipitation (mean rate)', 'kg/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_FORCING, &
-                        ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_PRECIP, fast_source=SRC_F_PY0 + PY_PRECIP)
+      call add_variable(reg, 'mean_precip_py', 'total precipitation', 'kg/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_FORCING,             &
+                        ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_PRECIP)
       !--- budget health (GRP_NUMERICS): the numbers that say whether anything above is real. ---!
-      call add_variable(reg, 'mean_resid_energy_py', 'mean signed whole-column energy-budget residual (+ = appearing)', 'W/m2', &
+      call add_variable(reg, 'mean_resid_energy_py', 'signed whole-column energy-budget residual (+ = appearing)', 'W/m2',       &
                         DIM_SCALAR, AGG_TMEAN, GRP_NUMERICS, DAY_MON_YR, FLD_P_DIAG0 + PA_RESID_ENERGY)
-      call add_variable(reg, 'mean_resid_water_py', 'mean signed whole-column water-budget residual (+ = appearing)', 'kg/m2/s', &
+      call add_variable(reg, 'mean_resid_water_py', 'signed whole-column water-budget residual (+ = appearing)', 'kg/m2/s',      &
                         DIM_SCALAR, AGG_TMEAN, GRP_NUMERICS, DAY_MON_YR, FLD_P_DIAG0 + PA_RESID_WATER)
       !--- per-patch twins of the four that vary most between a gap and a closed canopy. ---!
       call add_variable(reg, 'mean_le_pa', 'patch latent heat flux', 'W/m2', DIM_PATCH, AGG_TMEAN, GRP_ENERGY,                  &
-                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_LE, fast_source=SRC_F_PA0 + PA_LE)
+                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_LE)
       call add_variable(reg, 'mean_h_pa', 'patch sensible heat flux', 'W/m2', DIM_PATCH, AGG_TMEAN, GRP_ENERGY,                 &
-                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_H, fast_source=SRC_F_PA0 + PA_H)
+                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_H)
       call add_variable(reg, 'mean_rnet_pa', 'patch net all-wave radiation', 'W/m2', DIM_PATCH, AGG_TMEAN, GRP_ENERGY,          &
-                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_RNET, fast_source=SRC_F_PA0 + PA_RNET)
+                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_RNET)
       call add_variable(reg, 'mean_nee_pa', 'patch net ecosystem exchange', 'umol/m2/s', DIM_PATCH, AGG_TMEAN, GRP_CARBON,      &
-                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_NEE, fast_source=SRC_F_PA0 + PA_NEE)
+                        ior(FAST, DAY_MON), FLD_P_DIAG0 + PA_NEE)
    end subroutine register_patch_fluxes
 
    !=======================================================================================!
@@ -701,15 +714,15 @@ contains
       !      the per-cohort diagnostic block, SRC_F_CO0 + CO_*): enough to repeat the solve outside  !
       !      the model, which the fast calibration's canopy of leaf kernels does (calibrate_fast). ---!
       call add_variable(reg, 'mean_leaf_par_co', 'leaf solve: incident-equivalent PAR per leaf area', 'umol/m2/s', DIM_COHORT,  &
-                        AGG_TMEAN, GRP_ECOPHYS, FAST, FLD_C_DIAG0 + CO_LEAF_PAR, fast_source=SRC_F_CO0 + CO_LEAF_PAR)
+                        AGG_TMEAN, GRP_ECOPHYS, FAST, FLD_C_DIAG0 + CO_LEAF_PAR)
       call add_variable(reg, 'mean_ca_co', 'leaf solve: canopy-air CO2', 'umol/mol', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS,        &
-                        FAST, FLD_C_DIAG0 + CO_CA, fast_source=SRC_F_CO0 + CO_CA)
+                        FAST, FLD_C_DIAG0 + CO_CA)
       call add_variable(reg, 'mean_pressure_co', 'leaf solve: air pressure', 'Pa', DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS,          &
-                        FAST, FLD_C_DIAG0 + CO_PRESSURE, fast_source=SRC_F_CO0 + CO_PRESSURE)
+                        FAST, FLD_C_DIAG0 + CO_PRESSURE)
       call add_variable(reg, 'mean_psi_predawn_co', 'leaf solve: predawn leaf water potential', 'MPa', DIM_COHORT, AGG_TMEAN,   &
-                        GRP_ECOPHYS, FAST, FLD_C_DIAG0 + CO_PSI_PREDAWN, fast_source=SRC_F_CO0 + CO_PSI_PREDAWN)
+                        GRP_ECOPHYS, FAST, FLD_C_DIAG0 + CO_PSI_PREDAWN)
       call add_variable(reg, 'mean_gb_mol_co', 'leaf solve: boundary-layer conductance', 'mol/m2/s', DIM_COHORT, AGG_TMEAN,     &
-                        GRP_ECOPHYS, FAST, FLD_C_DIAG0 + CO_GB_MOL, fast_source=SRC_F_CO0 + CO_GB_MOL)
+                        GRP_ECOPHYS, FAST, FLD_C_DIAG0 + CO_GB_MOL)
       !----- Per-patch twins: the same samples before the sum over patches, named and switched as  !
       !      docs/science/diagnostics.md §4 (The FAST tier by patch) says. -----------------------!
       call add_variable(reg, 'mean_sw_up_pa', 'patch shortwave leaving the canopy top (VIS + NIR)', 'W/m2', DIM_PATCH,          &
@@ -752,34 +765,31 @@ contains
       call add_variable(reg, 'mean_growth_temp_si', 'each site''s running-mean growth temperature', 'K', DIM_SITE, AGG_TMEAN,   &
                         GRP_FORCING, DAY_MON_YR, FLD_SI_GROWTH_TEMP)
       call add_variable(reg, 'mean_air_temp_py', 'air temperature at the forcing''s own height (forcing)', 'K', DIM_SCALAR,     &
-                        AGG_TMEAN, GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_TAIR, fast_source=SRC_F_PY0 + PY_TAIR)
+                        AGG_TMEAN, GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_TAIR)
       call add_variable(reg, 'mean_qair_py', 'specific humidity at the forcing''s own height (forcing)', 'kg/kg', DIM_SCALAR,   &
-                        AGG_TMEAN, GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_QAIR, fast_source=SRC_F_PY0 + PY_QAIR)
+                        AGG_TMEAN, GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_QAIR)
       call add_variable(reg, 'mean_psurf_py', 'surface pressure (forcing)', 'Pa', DIM_SCALAR, AGG_TMEAN, GRP_FORCING,           &
-                        ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_PSURF, fast_source=SRC_F_PY0 + PY_PSURF)
+                        ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_PSURF)
       call add_variable(reg, 'mean_wind_py', 'wind speed at the forcing''s own height (forcing)', 'm/s', DIM_SCALAR, AGG_TMEAN, &
-                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_WIND, fast_source=SRC_F_PY0 + PY_WIND)
+                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_WIND)
       call add_variable(reg, 'mean_lwdown_py', 'downward longwave at canopy top (forcing)', 'W/m2', DIM_SCALAR, AGG_TMEAN,      &
-                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_LWDOWN, fast_source=SRC_F_PY0 + PY_LWDOWN)
+                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_LWDOWN)
       call add_variable(reg, 'mean_par_beam_py', 'direct-beam PAR at canopy top (forcing)', 'W/m2', DIM_SCALAR, AGG_TMEAN,      &
-                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_PAR_BEAM, fast_source=SRC_F_PY0 + PY_PAR_BEAM)
+                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_PAR_BEAM)
       call add_variable(reg, 'mean_par_diffuse_py', 'diffuse PAR at canopy top (forcing)', 'W/m2', DIM_SCALAR, AGG_TMEAN,       &
-                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_PAR_DIFFUSE,                                      &
-                        fast_source=SRC_F_PY0 + PY_PAR_DIFFUSE)
+                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_PAR_DIFFUSE)
       call add_variable(reg, 'mean_nir_beam_py', 'direct-beam NIR at canopy top (forcing)', 'W/m2', DIM_SCALAR, AGG_TMEAN,      &
-                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_NIR_BEAM, fast_source=SRC_F_PY0 + PY_NIR_BEAM)
+                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_NIR_BEAM)
       call add_variable(reg, 'mean_nir_diffuse_py', 'diffuse NIR at canopy top (forcing)', 'W/m2', DIM_SCALAR, AGG_TMEAN,       &
-                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_NIR_DIFFUSE,                                      &
-                        fast_source=SRC_F_PY0 + PY_NIR_DIFFUSE)
-      call add_variable(reg, 'mean_snowfall_py', 'frozen precipitation (mean rate, split at each patch''s canopy-air top)',     &
-                        'kg/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_SNOWFALL,       &
-                        fast_source=SRC_F_PY0 + PY_SNOWFALL)
+                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_NIR_DIFFUSE)
+      call add_variable(reg, 'mean_snowfall_py', 'frozen precipitation (split at each patch''s canopy-air top)',                 &
+                        'kg/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_SNOWFALL)
       call add_variable(reg, 'mean_atm_co2_py', 'free-atmosphere CO2 (forcing)', 'umol/mol', DIM_SCALAR, AGG_TMEAN, GRP_FORCING, &
-                        ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_CO2, fast_source=SRC_F_PY0 + PY_CO2)
+                        ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_CO2)
       call add_variable(reg, 'mean_cosz_py', 'cosine of the solar zenith angle (0 with the sun down)', '1', DIM_SCALAR,         &
-                        AGG_TMEAN, GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_COSZ, fast_source=SRC_F_PY0 + PY_COSZ)
+                        AGG_TMEAN, GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_COSZ)
       call add_variable(reg, 'mean_rho_air_py', 'air density at the forcing''s own height', 'kg/m3', DIM_SCALAR, AGG_TMEAN,     &
-                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_RHO_AIR, fast_source=SRC_F_PY0 + PY_RHO_AIR)
+                        GRP_FORCING, ior(FAST, DAY_MON_YR), FLD_PY_DIAG0 + PY_RHO_AIR)
       !----- The patch's own forcing: the sample moved to its canopy-air top                         !
       !      (docs/science/forcing.md §8). Only the wind and the air temperature differ between       !
       !      patches; the rest is the polygon's, above. -----------------------------------------------!
@@ -791,13 +801,14 @@ contains
                         AGG_TMEAN, GRP_FORCING, DAY_MON, FLD_P_DIAG0 + PA_Z_CAS_TOP)
       !----- The FAST tier: each sub-step's own sample (air_temp_fast, sw_in_fast and atm_co2_fast  !
       !      are registered with the fast fluxes, in this group). --------------------------------------!
-      call add_variable(reg, 'mean_rainf_py', 'liquid precipitation (mean rate, split at each patch''s canopy-air top)',        &
+      call add_variable(reg, 'mean_rainf_py', 'liquid precipitation (split at each patch''s canopy-air top)',                    &
                         'kg/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST, SRC_NONE, fast_source=SRC_F_PY0 + PY_RAINF)
    end subroutine register_forcing
 
    !----- Append one descriptor. weight, mean and scale say how the field reduces (var_desc_t);  !
    !      their defaults (W_NONE, sum, 1.0) suit a raw slab, so the cohort and patch rows mostly  !
-   !      omit them. ----------------------------------------------------------------------------!
+   !      omit them. A fast-loop diagnostic row is staged every sub-step, so its F source follows !
+   !      from its coarse one (staged_row); fast_source names any other. -----------------------!
    subroutine add_variable(reg, name, long_name, units, dim, agg, group, streams, source, xtype, weight, mean, scale, &
                            fast_source)
       type(output_registry_t), intent(inout) :: reg
@@ -808,33 +819,101 @@ contains
       integer(ik), optional,   intent(in)    :: xtype, weight
       logical,     optional,   intent(in)    :: mean
       real(wp),    optional,   intent(in)    :: scale
-      integer(ik) :: k
-      if (reg%nvar >= MAX_OUTPUT_VARS) error stop 'meds_output_registry: MAX_OUTPUT_VARS exceeded'
-      if (find_var_index(reg, name) > 0_ik)                                                      &
-         error stop 'meds_output_registry: duplicate variable name ('//trim(name)//')'
-      reg%nvar = reg%nvar + 1_ik
-      k = reg%nvar
-      reg%var(k)%name            = name
-      reg%var(k)%long_name       = long_name
-      reg%var(k)%units           = units
-      reg%var(k)%dim             = dim
-      reg%var(k)%agg             = agg
-      reg%var(k)%group           = group
-      reg%var(k)%streams         = streams
-      reg%var(k)%streams_default = streams
-      reg%var(k)%enabled         = .true.
-      reg%var(k)%source_id       = source
-      reg%var(k)%source_fast     = SRC_NONE
-      if (present(fast_source)) reg%var(k)%source_fast = fast_source
-      reg%var(k)%xtype           = XTYPE_DOUBLE
-      if (present(xtype))  reg%var(k)%xtype  = xtype
-      reg%var(k)%weight          = W_NONE
-      if (present(weight)) reg%var(k)%weight = weight
-      reg%var(k)%mean            = .false.
-      if (present(mean))   reg%var(k)%mean   = mean
-      reg%var(k)%scale           = 1.0_wp
-      if (present(scale))  reg%var(k)%scale  = scale
+      type(var_desc_t) :: v
+      v%name            = name
+      v%long_name       = long_name
+      v%units           = units
+      v%dim             = dim
+      v%agg             = agg
+      v%group           = group
+      v%streams         = streams
+      v%streams_default = streams
+      v%enabled         = .true.
+      v%source_id       = source
+      v%source_fast     = staged_row(dim, source)
+      if (present(fast_source)) v%source_fast = fast_source
+      v%xtype           = XTYPE_DOUBLE
+      if (present(xtype))  v%xtype  = xtype
+      v%weight          = W_NONE
+      if (present(weight)) v%weight = weight
+      v%mean            = .false.
+      if (present(mean))   v%mean   = mean
+      v%scale           = 1.0_wp
+      if (present(scale))  v%scale  = scale
+      call append_variable(reg, v)
    end subroutine add_variable
+
+   subroutine append_variable(reg, v)
+      type(output_registry_t), intent(inout) :: reg
+      type(var_desc_t),        intent(in)    :: v
+      if (reg%nvar >= MAX_OUTPUT_VARS) error stop 'meds_output_registry: MAX_OUTPUT_VARS exceeded'
+      if (find_var_index(reg, v%name) > 0_ik)                                                    &
+         error stop 'meds_output_registry: duplicate variable name ('//trim(v%name)//')'
+      reg%nvar = reg%nvar + 1_ik
+      reg%var(reg%nvar) = v
+   end subroutine append_variable
+
+   !----- The staged twin of a fast-loop diagnostic row. Each sub-step the fast loop stages its    !
+   !      per-cohort rows, each patch's row and their polygon mean (the area-weighted sum the      !
+   !      coarse tiers reduce a patch row to), and the forcing, so a variable on one of these has   !
+   !      a sub-step value on its own axis. SRC_NONE for any other source. ------------------------!
+   pure integer(ik) function staged_row(dm, src) result(f)
+      integer(ik), intent(in) :: dm, src
+      f = SRC_NONE
+      if (dm == DIM_COHORT .and. src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) then
+         f = SRC_F_CO0 + (src - FLD_C_DIAG0)
+      else if ((dm == DIM_PATCH .or. dm == DIM_SCALAR) .and. src > FLD_P_DIAG0 .and.            &
+               src <= FLD_P_DIAG0 + N_PA_FAST_ROWS) then
+         f = SRC_F_PA0 + (src - FLD_P_DIAG0)
+      else if (dm == DIM_SCALAR .and. src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PY_ROWS) then
+         f = SRC_F_PY0 + (src - FLD_PY_DIAG0)
+      end if
+   end function staged_row
+
+   !=======================================================================================!
+   !  The snapshots: for each mean_<x>, <x>, its value at the end of the period, off unless    !
+   !  asked for (docs/science/diagnostics.md §3). A state is read as the period's last step    !
+   !  left it. A fast-loop diagnostic, a flux included, is its value over the period's last    !
+   !  fast step, read from the staging (snap_staged), so on an F tier one sub-step long a      !
+   !  snapshot equals its mean. Two kinds of variable have no such value and stay mean-only:   !
+   !  the totals the fast loop keeps only per slow step (an AGG_RATE amount with no staged    !
+   !  sub-step) and each site's forcing.                                                      !
+   !=======================================================================================!
+   subroutine register_snapshots(reg)
+      type(output_registry_t), intent(inout) :: reg
+      type(var_desc_t) :: base, snap
+      integer(ik) :: k, n_base
+      n_base = reg%nvar
+      do k = 1_ik, n_base
+         base = reg%var(k)
+         if (base%name(1:5) /= 'mean_') cycle
+         if (find_var_index(reg, base%name(6:)) > 0_ik) cycle      ! a state's, registered with its mean
+         if (base%agg == AGG_RATE .and. base%source_fast == SRC_NONE) cycle
+         if (base%source_id > FLD_SI_DIAG0 .and. base%source_id <= FLD_SI_DIAG0 + N_SI_ROWS) cycle
+         snap = base
+         snap%name            = base%name(6:)
+         snap%agg             = AGG_LAST
+         snap%streams         = FREQ_NONE
+         snap%streams_default = FREQ_NONE
+         snap%snap_staged     = base%source_id == SRC_NONE .or. base%agg == AGG_RATE .or.         &
+                                fast_row(base%source_id)
+         !----- The staging holds a sub-step of each source but a cohort row reduced to a coarser  !
+         !      axis, which the snapshot reduces itself from the staged row (staged_snapshot). ----!
+         if (snap%snap_staged .and. snap%source_fast == SRC_NONE .and.                             &
+             .not. (base%source_id > FLD_C_DIAG0 .and. base%source_id <= FLD_C_DIAG0 + N_CO_FAST_ROWS)) &
+            error stop 'meds_output_registry: no staged sub-step for the snapshot '//trim(snap%name)
+         call append_variable(reg, snap)
+      end do
+   end subroutine register_snapshots
+
+   !----- A row the fast loop fills each sub-step, which the coarse tiers read as its mean over  !
+   !      the slow step: the per-cohort and per-patch blocks' fast rows and the forcing echo. ----!
+   pure logical function fast_row(src)
+      integer(ik), intent(in) :: src
+      fast_row = (src > FLD_C_DIAG0  .and. src <= FLD_C_DIAG0 + N_CO_FAST_ROWS) .or.                &
+                 (src > FLD_P_DIAG0  .and. src <= FLD_P_DIAG0 + N_PA_FAST_ROWS) .or.                &
+                 (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PY_ROWS)
+   end function fast_row
 
    !----- Axis index (1..N_AXIS) of a DIM_* code, for the [output].axes_* toggles; 0 for an axis !
    !      with no toggle (a polygon scalar, a site soil column, a per-site value). --------------!
@@ -888,21 +967,21 @@ contains
       type(output_registry_t), intent(in) :: reg
       integer(ik) :: k
       do k = 1_ik, reg%nvar
-         call check_fast_tier(reg%var(k)%name, reg%var(k)%source_id, reg%var(k)%source_fast,     &
-                            reg%var(k)%streams)
+         call check_fast_tier(reg%var(k), reg%var(k)%streams)
       end do
    end subroutine enforce_fast_guard
 
    !----- One variable's streams against its sources: the F tier reads a staged sub-step value,  !
-   !      the D, M and Y tiers a field of the state at the step's end. ----------------------------!
-   subroutine check_fast_tier(name, source_id, source_fast, streams)
-      character(len=*), intent(in) :: name
-      integer(ik),      intent(in) :: source_id, source_fast, streams
-      if (iand(streams, FREQ_FAST) /= 0_ik .and. src_class(source_fast) /= SRCK_FAST)               &
-         error stop 'meds_output_registry: "'//trim(name)//'" has no sub-daily value and cannot be '//  &
+   !      the D, M and Y tiers a field of the state at the step's end, or, for a snapshot that     !
+   !      reads the staging, the last sub-step. ---------------------------------------------------!
+   subroutine check_fast_tier(v, streams)
+      type(var_desc_t), intent(in) :: v
+      integer(ik),      intent(in) :: streams
+      if (iand(streams, FREQ_FAST) /= 0_ik .and. src_class(v%source_fast) /= SRCK_FAST)             &
+         error stop 'meds_output_registry: "'//trim(v%name)//'" has no sub-daily value and cannot be '// &
                     'put on the F stream'
-      if (iand(streams, not(FREQ_FAST)) /= 0_ik .and. source_id == SRC_NONE)                        &
-         error stop 'meds_output_registry: "'//trim(name)//'" exists only sub-daily and can only be '// &
+      if (iand(streams, not(FREQ_FAST)) /= 0_ik .and. v%source_id == SRC_NONE .and. .not. v%snap_staged) &
+         error stop 'meds_output_registry: "'//trim(v%name)//'" exists only sub-daily and can only be '// &
                     'on the F stream'
    end subroutine check_fast_tier
 
@@ -948,6 +1027,9 @@ contains
       if (.not. found) return
       select case (kind)
       case (OVR_TRUE)
+         if (reg%var(k)%streams_default == FREQ_NONE)                                            &
+            error stop 'meds_output_registry: "'//trim(name)//'" is off by default, so true has no '// &
+                       'tiers to restore; name them, e.g. "D M"'
          reg%var(k)%streams = reg%var(k)%streams_default
       case (OVR_FALSE)
          reg%var(k)%streams = FREQ_NONE
@@ -955,7 +1037,7 @@ contains
          m = mask
          if (ragged_dim(reg%var(k)%dim) .and. iand(m, FREQ_ANNUAL) /= 0_ik)                      &
             error stop 'meds_output_registry: annual (Y) stream forbidden on cohort/patch variable ('//trim(name)//')'
-         call check_fast_tier(reg%var(k)%name, reg%var(k)%source_id, reg%var(k)%source_fast, m)
+         call check_fast_tier(reg%var(k), m)
          reg%var(k)%streams = m
       end select
    end subroutine apply_variable_override
@@ -1042,6 +1124,7 @@ contains
       write(u,'(a)') '# switches in the main config.'
       write(u,'(a)') '#'
       write(u,'(a)') '#   name = true      -> force ON at the variable''s registry-default streams'
+      write(u,'(a)') '#                       (an error for a variable listed as false, off by default)'
       write(u,'(a)') '#   name = false     -> force OFF everywhere'
       write(u,'(a)') '#   name = "F D M Y" -> replace the stream mask (F fast, D daily, M monthly, Y annual;'
       write(u,'(a)') '#                       Y is forbidden on a cohort- or patch-dimensioned variable)'
@@ -1051,7 +1134,11 @@ contains
       write(u,'(a)') ''
       write(u,'(a)') '[variables]'
       do k = 1_ik, reg%nvar
-         lhs = '# '//trim(reg%var(k)%name)//' = "'//trim(mask_to_string(reg%var(k)%streams_default))//'"'
+         if (reg%var(k)%streams_default == FREQ_NONE) then
+            lhs = '# '//trim(reg%var(k)%name)//' = false'
+         else
+            lhs = '# '//trim(reg%var(k)%name)//' = "'//trim(mask_to_string(reg%var(k)%streams_default))//'"'
+         end if
          write(u,'(a)') lhs//'  # ['//trim(group_name(reg%var(k)%group))//', '//                  &
                         trim(dim_name(reg%var(k)%dim))//'] '//trim(reg%var(k)%long_name)//        &
                         ' ('//trim(reg%var(k)%units)//')'

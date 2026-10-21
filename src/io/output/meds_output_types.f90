@@ -94,6 +94,8 @@ module meds_output_types
       integer(ik) :: xtype           = XTYPE_DOUBLE !< XTYPE_DOUBLE | XTYPE_INT
       integer(ik) :: source_id       = 0_ik         !< the field the D, M and Y tiers read (0: none)
       integer(ik) :: source_fast     = 0_ik         !< the staged sub-step value the F tier reads (0: none)
+      logical     :: snap_staged     = .false.      !< a snapshot the D, M and Y tiers read from the last staged
+                                                    !  sub-step (a fast-loop diagnostic's end-of-period value)
       !----- How the field reduces to this variable's axis, so one field serves every scale. The   !
       !      weight kind and mean together state extensive vs intensive (docs/science/diagnostics.md §2). !
       integer(ik) :: weight          = 0_ik         !< W_* per-cohort weight kind (0 = W_NONE)
@@ -250,7 +252,7 @@ module meds_output_types
       !      row of the patch block (PA_*) and soil column, their polygon mean, the forcing (PY_*)    !
       !      and the per-cohort rows by the polygon's cohort slot. They follow the live counts, which  !
       !      the output layer checks against output.patch_max and cohort_max. ---------------------!
-      logical              :: fast_on = .false.                !< output on and the FAST tier has live variables
+      logical              :: fast_on = .false.                !< output on, and the F tier or a snapshot reads the staging
       type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) each sub-step's start
       real(wp),            allocatable :: fast_forcing(:,:)     !< (PY_*, n_fast_sub) the sub-step's forcing
       real(wp),            allocatable :: fast_patch(:,:,:)     !< (PA_*, patch, n_fast_sub) each patch's row
@@ -274,7 +276,7 @@ module meds_output_types
       integer(ik)          :: fast_n_site  = 0_ik              !< sites in the fast soil slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< the polygon's live cohorts in the fast cohort slabs
       integer(ik)          :: fast_n_patch  = 0_ik             !< live patches in the fast patch rows
-      logical              :: fast_ready   = .false.           !< the staging is filled and awaits replay
+      logical              :: fast_ready   = .false.           !< the staging holds this slow step's sub-steps
       !----- The diagnostic parameters this polygon's extraction reads: its file set's, with         !
       !      soil_ready set when its fast loop runs (attach_output). --------------------------------!
       type(diag_setup_t)   :: diag
