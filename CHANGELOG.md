@@ -46,9 +46,21 @@ radiation above the canopy in a new `meds_radiation_lib`, the humidity conversio
 and the air at another height in `meds_therm_lib`; `src/io/met` keeps the reader and where it samples
 the air. The restart and the diagnostic files name each site's statics alike (#470). A state file
 holds every variable and names its layout, and the reader refuses one an older MEDS wrote instead of
-filling in what it lacks (#471).
+filling in what it lacks (#471). Every output value is a mean over its record's period: the fast loop's
+carbon and water totals are mean rates, and the solvers' work counters means per fast step (#472).
 
 **Upgrading from v0.3.5:**
+- **The diagnostic files' totals are mean rates** (#472). Each is a mean over its record's period, so
+  one variable has one unit at every tier:
+  - `gpp_*`, `npp_*`, `leaf_resp_site`, `stem_resp_site`, `root_resp_site` and `rh_*`: kgC m⁻² per
+    record → µmol CO₂ m⁻² s⁻¹ (`gpp_cohort`, `npp_cohort`: µmol CO₂ plant⁻¹ s⁻¹);
+  - `et_site`, `runoff_site`, `runoff_surf_site` and `drainage_site`: kg m⁻² per record → kg m⁻² s⁻¹;
+  - the `work_*_site` counters: a count per record → a mean per fast step, over the polygon's patches.
+
+  A record's total is its mean times its length: for GPP in kgC m⁻², `gpp_site` × 1.20107 × 10⁻⁸ ×
+  the record's seconds. A script that added up records multiplies each by its length first, as
+  examples 05's and 06's do. The slow step's rates (allocation, litterfall, growth, mortality) keep
+  their per-year units.
 - **State files written before this release do not restart** (#471). A state file names its layout in
   the global attribute `restart_format`, and the reader refuses a file without it, saying so, where it
   used to fill in what an older file lacked: the polygon axis, the carbon pools, the tissue water and
@@ -381,6 +393,12 @@ filling in what it lacks (#471).
   unknown, repeated or missing column, a malformed row or a non-positive value, or a restart file with
   a PFT, site or soil-layer count unlike the run's, stops it with the reason. A forcing file the
   reader cannot read at open is `MET_ERR_FILE`, with the netCDF library's text.
+- **Every output value a mean over its period** (#472). `AGG_RATE`, the period's per-step amounts over
+  the time they took, replaces the sum; the unused minimum, maximum and flux-integral operators go;
+  every flux's `cell_methods` is `time: mean`. A variable's unit factor is applied on every path it is
+  read on (the raw cohort, patch and site fields and the polygon's own scalars, as well as the
+  reductions). The generated `meds_io_config.toml` is regenerated: its group labels had also drifted
+  since the polygon renames (#468).
 - **One restart-file layout** (#471). The writer marks each state file `restart_format = "1"`; the
   reader reads every variable and refuses a file of another layout, and its dozen fill-in branches for
   older files go (`order_of_processes.md` §6). A run whose growth window is another length than its

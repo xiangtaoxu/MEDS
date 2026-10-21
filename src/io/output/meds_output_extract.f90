@@ -524,6 +524,7 @@ contains
          call cohort_source_field(poly, v%source_id, slab_out, n_out)
          valid_out(1:max(n_out,1_ik)) = .false.
          valid_out(1:n_out) = slab_out(1:n_out) /= MISSING_VALUE   ! a cohort with no samples: fill
+         call scale_slab(slab_out, n_out, v%scale)
 
       !----- Patch axis: either a per-patch field verbatim, or a cohort field reduced to it. -!
       case (DIM_PATCH)
@@ -534,6 +535,7 @@ contains
          else
             call patch_source_field(poly, v%source_id, slab_out, n_out)
             valid_out(1:max(n_out,1_ik)) = .true.
+            call scale_slab(slab_out, n_out, v%scale)
          end if
 
       !----- PFT axis (run-time length; empty PFTs are a true 0 for sums, see the reducer). --!
@@ -553,6 +555,7 @@ contains
          call layer_source_field(poly, setup, v%source_id, col, ok)
          if (ok) then
             call reduce_patch_columns_to_sites(poly, col, slab_out, valid_out, n_out)
+            call scale_slab(slab_out, n_out, v%scale)
          else
             n_out = 0_ik
          end if
@@ -560,12 +563,14 @@ contains
       !----- One value per site. --------------------------------------------------------------!
       case (DIM_SITE)
          call site_source_field(poly, v%source_id, slab_out, valid_out, n_out)
+         call scale_slab(slab_out, n_out, v%scale)
 
       !----- 2-D (soil layer x patch), flattened at (ip-1)*n_soil_layer_max + k. -------------!
       case (DIM_SOIL_PATCH)
          call layer_source_field(poly, setup, v%source_id, col, ok)
          if (ok) then
             call gather_patch_columns(poly, col, slab_out, valid_out, n_out)
+            call scale_slab(slab_out, n_out, v%scale)
          else
             n_out = 0_ik
          end if
@@ -582,6 +587,7 @@ contains
             scalar_out = scalar_out * v%scale
          case default
             scalar_out = extract_scalar_source(poly, v%source_id)
+            if (scalar_out /= MISSING_VALUE) scalar_out = scalar_out * v%scale
             ok = .true.
          end select
          !----- A mean over nothing (bare ground, or only cohorts with no samples) has nothing to  !
@@ -645,6 +651,14 @@ contains
    !  FAST tier shares everything else with the coarse tiers; only this source differs, the !
    !  staging, never live state (docs/science/diagnostics.md §4, How the FAST tier is sampled). !
    !=======================================================================================!
+   !----- A variable's unit factor on a slab its reducer did not scale: every value but the fill. --!
+   pure subroutine scale_slab(x, n, scale)
+      real(wp),    intent(inout) :: x(:)
+      integer(ik), intent(in)    :: n
+      real(wp),    intent(in)    :: scale
+      where (x(1:n) /= MISSING_VALUE) x(1:n) = x(1:n) * scale
+   end subroutine scale_slab
+
    pure real(wp) function extract_fast_scalar(source_id, site_row, forcing) result(val)
       integer(ik), intent(in) :: source_id
       real(wp),    intent(in) :: site_row(:)   !< the sub-step's polygon mean of the patch rows (PA_*)

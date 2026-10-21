@@ -10,6 +10,7 @@ stand's and each PFT's, against the BCI 50-ha plot's censuses 1985-2010 on the m
 respiration, with the BCI tower's GPP (2012-2017, corrected as in example 04); evapotranspiration; and
 the stems of 10 cm and more, against the censuses.
 """
+import calendar
 import os
 import sys
 
@@ -32,6 +33,14 @@ plt.rcParams.update({"font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor":
                      "grid.linewidth": 0.6, "legend.frameon": False})
 
 
+UMOL_TO_KGC = 1.20107e-8                          # [kgC/umol CO2], meds_constants' umol_2_kgc
+
+
+def year_seconds(years):
+    """The length [s] of each record's year: the files give fluxes as mean rates."""
+    return np.array([366.0 if calendar.isleap(int(y)) else 365.0 for y in years]) * 86400.0
+
+
 def read(path):
     """The run's yearly output, in field units."""
     with Dataset(path) as ds:
@@ -40,10 +49,12 @@ def read(path):
             x, dims = np.array(ds[k][:], dtype=float), ds[k].dimensions
             return x.take(0, axis=dims.index("polygon")) if "polygon" in dims else x
         lower = v("dbh_lower")
+        yr = year_seconds(v("year"))                                    # a mean rate times this: per year
         return {"year": v("year"), "agb": v("agb_pft") * 10.0,                 # kgC/m2 -> MgC/ha
                 "ba": v("basal_area_pft") * 1e4, "lai": v("lai_pft"),          # m2/m2 -> m2/ha
-                "gpp": v("gpp_site") * 10.0, "npp": v("npp_site") * 10.0, "rh": v("rh_site") * 10.0,
-                "et": v("et_site"),                                            # kg/m2/yr = mm/yr
+                "gpp": v("gpp_site") * UMOL_TO_KGC * yr * 10.0,                # umol/m2/s -> MgC/ha/yr
+                "npp": v("npp_site") * UMOL_TO_KGC * yr * 10.0, "rh": v("rh_site") * UMOL_TO_KGC * yr * 10.0,
+                "et": v("et_site") * yr,                                       # kg/m2/s -> mm/yr
                 "stems10": v("nplant_size")[:, lower >= 10.0].sum(axis=1) * 1e4}
 
 

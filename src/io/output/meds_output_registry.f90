@@ -17,10 +17,10 @@ module meds_output_registry
                                    GRP_ENERGY, GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,          &
                                    GRP_FORCING
    use meds_output_types,   only : var_desc_t, output_registry_t, MAX_OUTPUT_VARS, AGG_MEAN, AGG_LAST,            &
-                                   AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,      &
+                                   AGG_TMEAN, AGG_RATE, DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,      &
                                    DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, XTYPE_DOUBLE, XTYPE_INT, ragged_dim
    use meds_output_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
-   use meds_constants,         only : cm2_to_m2
+   use meds_constants,         only : cm2_to_m2, kgc_2_umol
    use meds_output_extract,   only : src_class, SRCK_FAST, FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT,                 &
                                      FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA, FLD_C_GROWTH_AVG, FLD_C_PFT,   &
                                      FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI, FLD_C_WAI,                    &
@@ -113,7 +113,7 @@ contains
       call register_water(reg)
       call register_energy(reg)
       call register_biogeochem(reg)
-      call register_numerics(reg)
+      call register_numerics(reg, cfg%dt_fast)
       call register_ecophys(reg)
       call register_allocation(reg)
       call register_patch_fluxes(reg)
@@ -295,21 +295,22 @@ contains
    end subroutine register_structure_size
 
    !=======================================================================================!
-   !  Carbon. gpp_accum and the *_resp_accum are per-slow-step accumulators the fast loop     !
-   !  fills, so AGG_SUM gives the period's carbon total (all 0 when the fast loop is off).   !
+   !  Carbon. gpp_accum and the *_resp_accum are per-slow-step amounts the fast loop fills    !
+   !  [kgC]; AGG_RATE reports their mean rate over the period, in umol CO2 (all 0 when the   !
+   !  fast loop is off).                                                                     !
    !=======================================================================================!
    subroutine register_carbon(reg)
       type(output_registry_t), intent(inout) :: reg
-      call add_variable(reg, 'gpp_site', 'site gross primary productivity (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_GPP_ACCUM, weight=W_NPLANT)
-      call add_variable(reg, 'npp_site', 'site net primary productivity (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_NPP_ACCUM, weight=W_NPLANT)
-      call add_variable(reg, 'leaf_resp_site', 'site leaf dark respiration (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_LEAF_RESP, weight=W_NPLANT)
-      call add_variable(reg, 'stem_resp_site', 'site stem maintenance respiration (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_STEM_RESP, weight=W_NPLANT)
-      call add_variable(reg, 'root_resp_site', 'site fine-root maintenance respiration (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, FLD_C_ROOT_RESP, weight=W_NPLANT)
+      call add_variable(reg, 'gpp_site', 'site gross primary productivity', 'umol/m2/s', &
+                        DIM_SCALAR, AGG_RATE, GRP_CARBON, DAY_MON_YR, FLD_C_GPP_ACCUM, weight=W_NPLANT, scale=kgc_2_umol)
+      call add_variable(reg, 'npp_site', 'site net primary productivity', 'umol/m2/s', &
+                        DIM_SCALAR, AGG_RATE, GRP_CARBON, DAY_MON_YR, FLD_C_NPP_ACCUM, weight=W_NPLANT, scale=kgc_2_umol)
+      call add_variable(reg, 'leaf_resp_site', 'site leaf dark respiration', 'umol/m2/s', &
+                        DIM_SCALAR, AGG_RATE, GRP_CARBON, DAY_MON_YR, FLD_C_LEAF_RESP, weight=W_NPLANT, scale=kgc_2_umol)
+      call add_variable(reg, 'stem_resp_site', 'site stem maintenance respiration', 'umol/m2/s', &
+                        DIM_SCALAR, AGG_RATE, GRP_CARBON, DAY_MON_YR, FLD_C_STEM_RESP, weight=W_NPLANT, scale=kgc_2_umol)
+      call add_variable(reg, 'root_resp_site', 'site fine-root maintenance respiration', 'umol/m2/s', &
+                        DIM_SCALAR, AGG_RATE, GRP_CARBON, DAY_MON_YR, FLD_C_ROOT_RESP, weight=W_NPLANT, scale=kgc_2_umol)
       !----- Vegetation carbon stocks (AGG_MEAN: a stock, not a flux). -----------------------!
       call add_variable(reg, 'leaf_carbon_site', 'site leaf carbon', 'kgC/m2',                   &
                         DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_LEAF_CARBON, weight=W_NPLANT)
@@ -324,20 +325,20 @@ contains
       call add_variable(reg, 'veg_carbon_site', 'site total live vegetation carbon', 'kgC/m2',   &
                         DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, FLD_C_VEG_CARBON, weight=W_NPLANT)
       !----- PFT-resolved carbon fluxes. ------------------------------------------------------!
-      call add_variable(reg, 'gpp_pft', 'gross primary productivity by PFT (period total)', 'kgC/m2', &
-                        DIM_PFT, AGG_SUM, GRP_CARBON, MON_YR, FLD_C_GPP_ACCUM, weight=W_NPLANT)
-      call add_variable(reg, 'npp_pft', 'net primary productivity by PFT (period total)', 'kgC/m2', &
-                        DIM_PFT, AGG_SUM, GRP_CARBON, MON_YR, FLD_C_NPP_ACCUM, weight=W_NPLANT)
+      call add_variable(reg, 'gpp_pft', 'gross primary productivity by PFT', 'umol/m2/s', &
+                        DIM_PFT, AGG_RATE, GRP_CARBON, MON_YR, FLD_C_GPP_ACCUM, weight=W_NPLANT, scale=kgc_2_umol)
+      call add_variable(reg, 'npp_pft', 'net primary productivity by PFT', 'umol/m2/s', &
+                        DIM_PFT, AGG_RATE, GRP_CARBON, MON_YR, FLD_C_NPP_ACCUM, weight=W_NPLANT, scale=kgc_2_umol)
       !----- Per-patch carbon fluxes. ---------------------------------------------------------!
-      call add_variable(reg, 'gpp_patch', 'patch gross primary productivity (period total)', 'kgC/m2', &
-                        DIM_PATCH, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_GPP_ACCUM, weight=W_NPLANT)
-      call add_variable(reg, 'npp_patch', 'patch net primary productivity (period total)', 'kgC/m2', &
-                        DIM_PATCH, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_NPP_ACCUM, weight=W_NPLANT)
+      call add_variable(reg, 'gpp_patch', 'patch gross primary productivity', 'umol/m2/s', &
+                        DIM_PATCH, AGG_RATE, GRP_CARBON, DAY_MON, FLD_C_GPP_ACCUM, weight=W_NPLANT, scale=kgc_2_umol)
+      call add_variable(reg, 'npp_patch', 'patch net primary productivity', 'umol/m2/s', &
+                        DIM_PATCH, AGG_RATE, GRP_CARBON, DAY_MON, FLD_C_NPP_ACCUM, weight=W_NPLANT, scale=kgc_2_umol)
       !----- Per-cohort carbon fluxes (per plant). --------------------------------------------!
-      call add_variable(reg, 'gpp_cohort', 'per-plant GPP (period total)', 'kgC/plant',          &
-                        DIM_COHORT, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_GPP_ACCUM)
-      call add_variable(reg, 'npp_cohort', 'per-plant NPP (period total)', 'kgC/plant',          &
-                        DIM_COHORT, AGG_SUM, GRP_CARBON, DAY_MON, FLD_C_NPP_ACCUM)
+      call add_variable(reg, 'gpp_cohort', 'per-plant GPP', 'umol/plant/s',          &
+                        DIM_COHORT, AGG_RATE, GRP_CARBON, DAY_MON, FLD_C_GPP_ACCUM, scale=kgc_2_umol)
+      call add_variable(reg, 'npp_cohort', 'per-plant NPP', 'umol/plant/s',          &
+                        DIM_COHORT, AGG_RATE, GRP_CARBON, DAY_MON, FLD_C_NPP_ACCUM, scale=kgc_2_umol)
    end subroutine register_carbon
 
    !=======================================================================================!
@@ -345,17 +346,17 @@ contains
    !=======================================================================================!
    subroutine register_water(reg)
       type(output_registry_t), intent(inout) :: reg
-      call add_variable(reg, 'et_site', 'site evapotranspiration (period total)', 'kg/m2',       &
-                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_PY_ET)
+      call add_variable(reg, 'et_site', 'site evapotranspiration', 'kg/m2/s',       &
+                        DIM_SCALAR, AGG_RATE, GRP_WATER, DAY_MON_YR, SRC_PY_ET)
       !----- The water leaving the soil column: surface runoff (the pond's spill above its capacity) !
       !      and drainage (the bottom flux: free drainage, 0 on bedrock, net and signed with an       !
       !      aquifer), and their sum. ------------------------------------------------------------------!
-      call add_variable(reg, 'runoff_site', 'site runoff: surface runoff + drainage (period total)', 'kg/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_PY_RUNOFF)
-      call add_variable(reg, 'runoff_surf_site', 'site surface runoff (period total)', 'kg/m2',  &
-                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_PY_RUNOFF_SURF)
-      call add_variable(reg, 'drainage_site', 'site drainage at the soil column''s bottom (period total)', 'kg/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_PY_DRAINAGE)
+      call add_variable(reg, 'runoff_site', 'site runoff: surface runoff + drainage', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_RATE, GRP_WATER, DAY_MON_YR, SRC_PY_RUNOFF)
+      call add_variable(reg, 'runoff_surf_site', 'site surface runoff', 'kg/m2/s',  &
+                        DIM_SCALAR, AGG_RATE, GRP_WATER, DAY_MON_YR, SRC_PY_RUNOFF_SURF)
+      call add_variable(reg, 'drainage_site', 'site drainage at the soil column''s bottom', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_RATE, GRP_WATER, DAY_MON_YR, SRC_PY_DRAINAGE)
       !----- Each site's soil column, its patches area-weighted (DIM_SOIL). --------------------!
       call add_variable(reg, 'soil_water_site', 'each site''s area-weighted volumetric soil moisture', 'm3/m3', &
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_L_SOIL_WATER)
@@ -455,38 +456,39 @@ contains
                         DIM_SCALAR, AGG_MEAN, GRP_BIOGEOCHEM, DAY_MON_YR, FLD_P_SOILC_PASSIVE)
       call add_variable(reg, 'soilc_total_site', 'site total soil organic carbon', 'kgC/m2',     &
                         DIM_SCALAR, AGG_MEAN, GRP_BIOGEOCHEM, DAY_MON_YR, FLD_P_SOILC_TOTAL)
-      call add_variable(reg, 'rh_site', 'site heterotrophic respiration (period total)', 'kgC/m2', &
-                        DIM_SCALAR, AGG_SUM, GRP_BIOGEOCHEM, DAY_MON_YR, FLD_P_RH)
+      call add_variable(reg, 'rh_site', 'site heterotrophic respiration', 'umol/m2/s', &
+                        DIM_SCALAR, AGG_RATE, GRP_BIOGEOCHEM, DAY_MON_YR, FLD_P_RH, scale=kgc_2_umol)
       call add_variable(reg, 'soilc_total_patch', 'patch total soil organic carbon', 'kgC/m2',   &
                         DIM_PATCH, AGG_MEAN, GRP_BIOGEOCHEM, MON, FLD_P_SOILC_TOTAL)
-      call add_variable(reg, 'rh_patch', 'patch heterotrophic respiration (period total)', 'kgC/m2', &
-                        DIM_PATCH, AGG_SUM, GRP_BIOGEOCHEM, MON, FLD_P_RH)
+      call add_variable(reg, 'rh_patch', 'patch heterotrophic respiration', 'umol/m2/s', &
+                        DIM_PATCH, AGG_RATE, GRP_BIOGEOCHEM, MON, FLD_P_RH, scale=kgc_2_umol)
    end subroutine register_biogeochem
 
    !=======================================================================================!
-   !  Numerics: the integrators' work, summed over the period, since a mean would hide the   !
-   !  one day that went wrong.                                                                !
+   !  Numerics: the integrators' work, each count's mean per fast step over the period (the  !
+   !  daily tier shows the one day that went wrong).                                         !
    !=======================================================================================!
-   subroutine register_numerics(reg)
+   subroutine register_numerics(reg, dt_fast)
       type(output_registry_t), intent(inout) :: reg
-      call add_variable(reg, 'work_integ_steps_site', 'accepted integrator sub-steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_STEPS)
-      call add_variable(reg, 'work_integ_rej_site', 'rejected integrator steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_REJ)
-      call add_variable(reg, 'work_water_nsub_site', 'soil-plant water network sub-steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NSUB)
-      call add_variable(reg, 'work_water_newton_site', 'soil-plant water network Newton iterations (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NEWTON)
+      real(wp),                intent(in)    :: dt_fast   !< [s] a count per second times this: per fast step
+      call add_variable(reg, 'work_integ_steps_site', 'accepted integrator sub-steps per fast step, over the patches', &
+                        '1', DIM_SCALAR, AGG_RATE, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_STEPS, scale=dt_fast)
+      call add_variable(reg, 'work_integ_rej_site', 'rejected integrator steps per fast step, over the patches', &
+                        '1', DIM_SCALAR, AGG_RATE, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_REJ, scale=dt_fast)
+      call add_variable(reg, 'work_water_nsub_site', 'soil-plant water network sub-steps per fast step', &
+                        '1', DIM_SCALAR, AGG_RATE, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NSUB, scale=dt_fast)
+      call add_variable(reg, 'work_water_newton_site', 'soil-plant water network Newton iterations per fast step', &
+                        '1', DIM_SCALAR, AGG_RATE, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NEWTON, scale=dt_fast)
       call add_variable(reg, 'work_water_reject_site',                                          &
-                        'soil-plant water network sub-steps rejected and retried shorter (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_REJECT)
+                        'soil-plant water network sub-steps rejected and retried shorter, per fast step', &
+                        '1', DIM_SCALAR, AGG_RATE, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_REJECT, scale=dt_fast)
       call add_variable(reg, 'work_water_nfail_site',                                           &
-                        'soil-plant water network sub-steps taken although unconverged (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NFAIL)
-      call add_variable(reg, 'work_rk45_rescue_site', 'RK45 steps rescued to the implicit path (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_RK45_RESCUE)
-      call add_variable(reg, 'work_clamp_stage_site', 'stage-input clamp activations (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_CLAMP_STAGE)
+                        'soil-plant water network sub-steps taken although unconverged, per fast step', &
+                        '1', DIM_SCALAR, AGG_RATE, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_WATER_NFAIL, scale=dt_fast)
+      call add_variable(reg, 'work_rk45_rescue_site', 'RK45 steps rescued to the implicit path, per fast step', &
+                        '1', DIM_SCALAR, AGG_RATE, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_RK45_RESCUE, scale=dt_fast)
+      call add_variable(reg, 'work_clamp_stage_site', 'stage-input clamp activations per fast step', &
+                        '1', DIM_SCALAR, AGG_RATE, GRP_NUMERICS, DAY_MON_YR, SRC_PY_WORK_CLAMP_STAGE, scale=dt_fast)
    end subroutine register_numerics
 
 

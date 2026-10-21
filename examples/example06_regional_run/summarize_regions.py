@@ -17,6 +17,7 @@ plus its polygon_id, lat, lon, soil_depth, bottom_bc and chave_e from the files,
 Usage: python summarize_regions.py [--era5-archive DIR]   (or set ERA5LAND_ARCHIVE)
 """
 import argparse
+import calendar
 import glob
 import os
 import re
@@ -29,6 +30,10 @@ OUT = os.path.join(HERE, "output")
 N_MONTHS = 1800
 LAST = slice(N_MONTHS - 120, N_MONTHS)                  # June 2011 - May 2021
 START = (1871, 6)                                        # the first month
+UMOL_TO_KGC = 1.20107e-8                                 # [kgC/umol CO2], meds_constants' umol_2_kgc
+#: the length [s] of each of the run's months: a monthly record is a mean rate, so it times this is the month's total
+MONTH_SECONDS = np.array([calendar.monthrange(START[0] + (START[1] - 1 + k) // 12, (START[1] - 1 + k) % 12 + 1)[1]
+                          for k in range(N_MONTHS)]) * 86400.0
 
 
 class Region:
@@ -115,8 +120,9 @@ def main(argv=None):
         lai = per_year(d["lai_site"][:].filled(np.nan))
         out["agb_traj"].append(agb.reshape(150, 12, -1).mean(axis=1).T)
         out["agb20"].append(agb[228:240].mean(axis=0))
-        for k, v in (("gpp", "gpp_site"), ("et", "et_site"), ("runoff", "runoff_site")):
-            out[k].append(per_year(d[v][:].filled(np.nan)).sum(axis=1).mean(axis=0))
+        for k, v, unit in (("gpp", "gpp_site", UMOL_TO_KGC), ("et", "et_site", 1.0), ("runoff", "runoff_site", 1.0)):
+            total = d[v][:].filled(np.nan) * MONTH_SECONDS[:, None] * unit          # each month's total
+            out[k].append(per_year(total).sum(axis=1).mean(axis=0))
         out["agb"].append(agb[LAST].mean(axis=0))
         out["height"].append(np.nanmean(d["canopy_height_site"][:].filled(np.nan)[LAST], axis=0))
         out["wd"].append(np.nanmean(wd, axis=0))

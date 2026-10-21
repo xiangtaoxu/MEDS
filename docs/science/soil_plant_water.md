@@ -221,6 +221,8 @@ the pond takes the mixture; the canopy film keeps the rain's valuation, since it
 
 ## 6. Work counters
 
+Each is a mean per fast step over the record's period.
+
 | Output | Counts |
 |---|---|
 | `work_water_nsub_site` | accepted sub-steps |

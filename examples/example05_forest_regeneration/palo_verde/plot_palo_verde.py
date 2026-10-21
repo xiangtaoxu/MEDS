@@ -10,6 +10,7 @@ and basal area, the stand's and each PFT's, against the 2009 inventory on the mo
 Nature 530:211); each year's highest and lowest monthly leaf area index, and the last ten years' by PFT;
 GPP; the trees of 10 cm and more, against the inventory. Fluxes are of whole calendar years.
 """
+import calendar
 import os
 import tomllib
 
@@ -32,6 +33,14 @@ plt.rcParams.update({"font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor":
                      "grid.linewidth": 0.6, "legend.frameon": False})
 
 
+UMOL_TO_KGC = 1.20107e-8                          # [kgC/umol CO2], meds_constants' umol_2_kgc
+
+
+def year_seconds(years):
+    """The length [s] of each record's year: the files give fluxes as mean rates."""
+    return np.array([366.0 if calendar.isleap(int(y)) else 365.0 for y in years]) * 86400.0
+
+
 def read(path):
     """The run's records, in field units; the stand's age [yr] from the run's first day."""
     with Dataset(path) as ds:
@@ -41,8 +50,10 @@ def read(path):
             return x.take(0, axis=dims.index("polygon")) if "polygon" in dims else x
         t = v("year") + (v("month") - 1.0) / 12.0 if "month" in ds.variables else v("year")
         lower = v("dbh_lower")
+        yr = year_seconds(v("year"))                                    # a mean rate times this: per year
         return {"age": t - t[0], "agb": v("agb_pft") * 10.0, "ba": v("basal_area_pft") * 1e4,   # MgC/ha, m2/ha
-                "lai": v("lai_pft"), "gpp": v("gpp_site") * 10.0, "et": v("et_site"),           # MgC/ha/yr, mm/yr
+                "lai": v("lai_pft"), "gpp": v("gpp_site") * UMOL_TO_KGC * yr * 10.0,            # MgC/ha/yr
+                "et": v("et_site") * yr,                                                         # mm/yr
                 "stems10": v("nplant_size")[:, lower >= 10.0].sum(axis=1) * 1e4}
 
 

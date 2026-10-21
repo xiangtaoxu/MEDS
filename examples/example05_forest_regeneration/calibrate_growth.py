@@ -46,6 +46,7 @@ Usage:
 Needs example 03's census files: python ../example03_demography/prepare_census.py CENSUS_DIR
 """
 import argparse
+import calendar
 import json
 import os
 import subprocess
@@ -164,11 +165,21 @@ BUDGET = ("gpp_site", "leaf_resp_site", "stem_resp_site", "root_resp_site", "gro
           "root_exudate_site")
 
 
+#: the fast loop's carbon fluxes, which the files give as mean rates [umol CO2 m-2 s-1]
+UMOL_RATES = ("gpp_site", "leaf_resp_site", "stem_resp_site", "root_resp_site")
+UMOL_TO_KGC = 1.20107e-8                              # [kgC/umol CO2], meds_constants' umol_2_kgc
+
+
 def carbon_budget(path):
     from netCDF4 import Dataset
     with Dataset(path) as ds:
         ds.set_auto_mask(False)
-        return {k: float(np.mean(ds[k][1:])) for k in BUDGET}
+        yr = np.array([366.0 if calendar.isleap(int(y)) else 365.0 for y in ds["year"][:]]) * 86400.0
+
+        def per_year(k):                              # [kgC/m2/yr]: a mean rate times its year's length
+            x = np.asarray(ds[k][:], dtype=float)
+            return x * UMOL_TO_KGC * yr.reshape((-1,) + (1,) * (x.ndim - 1)) if k in UMOL_RATES else x
+        return {k: float(np.mean(per_year(k)[1:])) for k in BUDGET}
 
 
 def shares(b):

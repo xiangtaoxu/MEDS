@@ -17,20 +17,18 @@ module meds_output_types
    public :: var_desc_t, integ_buffer_t, output_registry_t, diag_setup_t
    public :: pending_record_t, record_queue_t, stream_file_t
    public :: output_files_t, output_buffers_t
-   public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_TMEAN, AGG_FLUXSUM
+   public :: AGG_MEAN, AGG_RATE, AGG_LAST, AGG_TMEAN
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE
    public :: XTYPE_DOUBLE, XTYPE_INT
    public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS, MAX_DBH_CLASS
    public :: ragged_dim, slab_col
 
-   !----- Temporal reduction operators (the `agg` of a variable). -----------------------------!
-   integer(ik), parameter :: AGG_MEAN    = 1_ik  !< equal-weight arithmetic mean
-   integer(ik), parameter :: AGG_SUM     = 2_ik  !< plain sum (period totals of accumulators, count tallies)
-   integer(ik), parameter :: AGG_MIN     = 3_ik  !< period minimum
-   integer(ik), parameter :: AGG_MAX     = 4_ik  !< period maximum
-   integer(ik), parameter :: AGG_LAST    = 5_ik  !< end-of-period snapshot (ids / CSR / instantaneous)
-   integer(ik), parameter :: AGG_TMEAN   = 6_ik  !< dt-weighted state mean (the physical-stock default)
-   integer(ik), parameter :: AGG_FLUXSUM = 7_ik  !< dt-weighted integral of a rate (period total)
+   !----- Temporal reduction operators (the `agg` of a variable): a mean over the period, or its   !
+   !      value at the period's end (docs/science/diagnostics.md §4). ----------------------------!
+   integer(ik), parameter :: AGG_MEAN  = 1_ik  !< equal-weight arithmetic mean of the samples
+   integer(ik), parameter :: AGG_RATE  = 2_ik  !< mean rate of a per-step amount: Sum(amount) / Sum(dt)
+   integer(ik), parameter :: AGG_LAST  = 5_ik  !< end-of-period snapshot (ids / CSR / instantaneous)
+   integer(ik), parameter :: AGG_TMEAN = 6_ik  !< dt-weighted state mean (the physical-stock default)
 
    !----- The trailing axis of a variable. The cohort and patch slots are fixed within a window     !
    !      (docs/science/diagnostics.md §4), so every axis folds by direct slot index. -------------!
@@ -113,9 +111,8 @@ module meds_output_types
       logical     :: active = .false.       !< allocated + participating (this var is on in this tier)
       !----- scalar accumulators (DIM_SCALAR). -------------------------------------------------!
       real(wp)    :: scal  = 0.0_wp         !< running reduction
-      real(wp)    :: wsum  = 0.0_wp         !< Sum(dt) weight (AGG_TMEAN/FLUXSUM)
-      integer(ik) :: nsamp = 0_ik           !< equal-weight sample count (MEAN/SUM/MIN/MAX/LAST)
-      real(wp)    :: seed  = 0.0_wp         !< re-seed value (MIN=+huge, MAX=-huge, else 0)
+      real(wp)    :: wsum  = 0.0_wp         !< Sum(dt) weight (AGG_TMEAN, AGG_RATE)
+      integer(ik) :: nsamp = 0_ik           !< equal-weight sample count (AGG_MEAN, AGG_LAST)
       !----- per-slot accumulators of an axis variable, sized to the axis's capacity. ------------!
       real(wp),    allocatable :: slab(:)
       real(wp),    allocatable :: wsum_slab(:)

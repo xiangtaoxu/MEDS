@@ -44,7 +44,7 @@ program test_output_roundtrip
    use meds_output_stream,   only : output_serialize, output_close
    use meds_netcdf_c
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_constants,        only : n_soil_layer_max
+   use meds_constants,        only : n_soil_layer_max, kgc_2_umol, day_sec
    use meds_soil_params,      only : soil_params_t
    use meds_soil_hydr_lib,    only : SOIL_RETENTION_VG
    use meds_output_types,     only : MISSING_VALUE
@@ -77,7 +77,8 @@ program test_output_roundtrip
    call rebuild_patch_map(poly)
 
    !----- Constant carbon + soil sources (fast loop is off in this unit test, so set them here    !
-   !      via opaque setters, as the fast loop would). gpp_accum=2 -> daily AGG_SUM gpp_site=2;     !
+   !      via opaque setters, as the fast loop would). gpp_accum=2 kgC/m2 a day -> daily gpp_site,  !
+   !      its mean rate, 2 kgC/m2/day in umol/m2/s;                                                 !
    !      soil_temp=290 -> daily AGG_TMEAN soil_temp_site=290 per layer.                            !
    call set_site_gpp(poly, 2.0_wp)
    call set_site_soil_temp(poly, 290.0_wp)
@@ -173,11 +174,12 @@ contains
                     [3_c_size_t, 1_c_size_t, 1_c_size_t], agbc), 'get agb_cohort')
       call check_close(real(agbc(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_cohort day1 slot1')
       call check_close(real(agbc(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_cohort day3 slot1')
-      !----- Carbon: gpp_site AGG_SUM over 1 step/day = 2.0 each day. -----!
+      !----- Carbon: gpp_site, 2 kgC/m2 a day as its mean rate [umol/m2/s]. -----!
       call nc_check(nc_inq_varid_f(ncid, 'gpp_site', vid), 'daily gpp_site id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], gpp), &
                     'get gpp_site')
-      call check_close(real(gpp(2), wp), 2.0_wp, 1.0e-9_wp, 'daily gpp_site (AGG_SUM) = 2')
+      call check_close(real(gpp(2), wp), 2.0_wp * kgc_2_umol / day_sec, 1.0e-9_wp,                   &
+                       'daily gpp_site = 2 kgC/m2/day as umol/m2/s')
       !----- Soil (DIM_SOIL): soil_temp_site(time, polygon, site, soil) AGG_TMEAN = 290 K per layer. -!
       call nc_check(nc_inq_varid_f(ncid, 'soil_temp_site', vid), 'daily soil_temp_site id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t, 0_c_size_t, 0_c_size_t],   &

@@ -13,8 +13,8 @@ module meds_output_integrate
    use meds_time,           only : meds_time_t
    use meds_output_params,      only : N_FREQ, TIER_FAST, TIER_DAILY, TIER_MONTHLY, TIER_ANNUAL
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,                  &
-                                   pending_record_t, record_queue_t, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,         &
-                                   AGG_LAST, AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,           &
+                                   pending_record_t, record_queue_t, AGG_MEAN, AGG_RATE, AGG_LAST, AGG_TMEAN,     &
+                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH,                                             &
                                    DIM_SOIL, DIM_SOIL_PATCH, MISSING_VALUE
    use meds_polygon_state_vars, only : polygon_t
    use meds_constants,     only : n_soil_layer_max
@@ -33,19 +33,6 @@ contains
    !  Buffer lifecycle                                                                      !
    !=======================================================================================!
 
-   !----- The re-seed value for an operator: MIN=+huge, MAX=-huge, everything else 0. ------!
-   pure real(wp) function seed_of(agg) result(s)
-      integer(ik), intent(in) :: agg
-      select case (agg)
-      case (AGG_MIN)
-         s =  huge(1.0_wp)
-      case (AGG_MAX)
-         s = -huge(1.0_wp)
-      case default
-         s =  0.0_wp
-      end select
-   end function seed_of
-
    !----- Allocate + seed one (variable, tier) buffer. slab arrays sized to `cap` for a       !
    !      non-scalar dim; scalar dims allocate none.                                            !
    subroutine alloc_integ_buffer(buf, v, freq, cap)
@@ -57,7 +44,6 @@ contains
       buf%agg    = v%agg
       buf%dim    = v%dim
       buf%active = .true.
-      buf%seed   = seed_of(v%agg)
       if (v%dim /= DIM_SCALAR) then
          allocate(buf%slab(cap), buf%wsum_slab(cap), buf%hits(cap))
       end if
@@ -67,12 +53,12 @@ contains
    !----- Re-seed a buffer for the next period. ---------------------------------------------!
    subroutine reset_buffer(buf)
       type(integ_buffer_t), intent(inout) :: buf
-      buf%scal  = buf%seed
+      buf%scal  = 0.0_wp
       buf%wsum  = 0.0_wp
       buf%nsamp = 0_ik
       buf%n_slab = 0_ik
       if (allocated(buf%slab)) then
-         buf%slab(:)      = buf%seed
+         buf%slab(:)      = 0.0_wp
          buf%wsum_slab(:) = 0.0_wp
          buf%hits(:)      = 0_ik
       end if
@@ -92,25 +78,15 @@ contains
       case (AGG_MEAN)
          buf%scal = buf%scal + x
          buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_SUM)
+      case (AGG_RATE)
          buf%scal = buf%scal + x
-         buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_MIN)
-         buf%scal = min(buf%scal, x)
-         buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_MAX)
-         buf%scal = max(buf%scal, x)
-         buf%nsamp = buf%nsamp + 1_ik
+         buf%wsum  = buf%wsum + dt
       case (AGG_LAST)
          buf%scal = x
          buf%nsamp = buf%nsamp + 1_ik
       case (AGG_TMEAN)
          buf%scal = buf%scal + x*dt
          buf%wsum  = buf%wsum + dt
-      case (AGG_FLUXSUM)
-         buf%scal = buf%scal + x*dt
-         buf%wsum  = buf%wsum + dt
-         buf%nsamp = buf%nsamp + 1_ik
       end select
    end subroutine integrate_scalar
 
@@ -133,19 +109,17 @@ contains
             if (.not. valid(i)) cycle
          end if
          select case (buf%agg)
-         case (AGG_MEAN, AGG_SUM)
+         case (AGG_MEAN)
             buf%slab(i) = buf%slab(i) + x(i)
             buf%hits(i) = buf%hits(i) + 1_ik
-         case (AGG_MIN)
-            buf%slab(i) = min(buf%slab(i), x(i))
-            buf%hits(i) = buf%hits(i) + 1_ik
-         case (AGG_MAX)
-            buf%slab(i) = max(buf%slab(i), x(i))
+         case (AGG_RATE)
+            buf%slab(i) = buf%slab(i) + x(i)
+            buf%wsum_slab(i) = buf%wsum_slab(i) + dt
             buf%hits(i) = buf%hits(i) + 1_ik
          case (AGG_LAST)
             buf%slab(i) = x(i)
             buf%hits(i) = buf%hits(i) + 1_ik
-         case (AGG_TMEAN, AGG_FLUXSUM)
+         case (AGG_TMEAN)
             buf%slab(i) = buf%slab(i) + x(i)*dt
             buf%wsum_slab(i) = buf%wsum_slab(i) + dt
             buf%hits(i) = buf%hits(i) + 1_ik
@@ -169,25 +143,13 @@ contains
          else
             valid = .false.
          end if
-      case (AGG_TMEAN)
+      case (AGG_TMEAN, AGG_RATE)
          if (buf%wsum > 0.0_wp) then
             out = buf%scal / buf%wsum
          else
             valid = .false.
          end if
-      case (AGG_FLUXSUM)
-         if (buf%nsamp > 0_ik) then
-            out = buf%scal
-         else
-            valid = .false.
-         end if
-      case (AGG_SUM)
-         if (buf%nsamp > 0_ik) then
-            out = buf%scal
-         else
-            valid = .false.
-         end if
-      case (AGG_MIN, AGG_MAX, AGG_LAST)
+      case (AGG_LAST)
          if (buf%nsamp > 0_ik) then
             out = buf%scal
          else
@@ -217,12 +179,12 @@ contains
                out(i) = buf%slab(i) / real(buf%hits(i), wp)
                valid(i) = .true.
             end if
-         case (AGG_TMEAN)
+         case (AGG_TMEAN, AGG_RATE)
             if (buf%wsum_slab(i) > 0.0_wp) then
                out(i) = buf%slab(i) / buf%wsum_slab(i)
                valid(i) = .true.
             end if
-         case (AGG_FLUXSUM, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST)
+         case (AGG_LAST)
             if (buf%hits(i) > 0_ik) then
                out(i) = buf%slab(i)
                valid(i) = .true.

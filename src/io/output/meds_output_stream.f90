@@ -26,8 +26,7 @@ module meds_output_stream
                                   output_files_t, output_buffers_t,                                  &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
                                   DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, diag_setup_t,               &
-                                  XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,    &
-                                  AGG_LAST, AGG_TMEAN, AGG_FLUXSUM,                                &
+                                  XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_RATE, AGG_TMEAN,          &
                                   MISSING_VALUE, MISSING_INT, ragged_dim
    implicit none
    private
@@ -155,14 +154,8 @@ contains
       integer(ik), intent(in) :: agg
       character(len=16) :: cm
       select case (agg)
-      case (AGG_MEAN, AGG_TMEAN)
+      case (AGG_MEAN, AGG_TMEAN, AGG_RATE)
          cm = 'time: mean'
-      case (AGG_SUM, AGG_FLUXSUM)
-         cm = 'time: sum'
-      case (AGG_MIN)
-         cm = 'time: minimum'
-      case (AGG_MAX)
-         cm = 'time: maximum'
       case default
          cm = 'time: point'   ! AGG_LAST
       end select
