@@ -122,7 +122,7 @@ contains
       type(meds_config_t), allocatable :: site_cfg(:)     !< [[sites]]: each site's configuration ...
       real(wp),            allocatable :: site_area(:)    !< ... and share of the polygon
       character(len=:), allocatable :: msg
-      logical                    :: fast_found, region, started
+      logical                    :: region, started
 
       ok = .false.
       if (present(verbose)) reg%verbose = verbose
@@ -175,8 +175,7 @@ contains
 
       !----- A restart (init_mode = 2): each polygon's row of the state file, by its id. A file may  !
       !      hold more polygons than the run: a region whose cell failed resumes with that cell      !
-      !      masked out. A one-polygon run also reads a state file without a polygon axis, which     !
-      !      holds one site. --------------------------------------------------------------------------!
+      !      masked out. ------------------------------------------------------------------------------!
       allocate(slot(n), source=0_ik)
       if (cfg%init%init_mode == INIT_RESTART) then
          call restart_file_slots(trim(cfg%init%restart_file), ids, slot, msg)
@@ -220,12 +219,11 @@ contains
                call apply_map_inputs(inputs, p, pcfg)
                call validate_config(pcfg)
             end if
-            fast_found = .false.
             !----- Its sites: [[sites]]'s, each with its configuration and share, or one site. ----------!
             if (allocated(site_cfg)) deallocate(site_cfg, site_area)
             if (allocated(pcfg%sites)) call polygon_sites(pcfg, site_cfg, site_area)
             call init_polygon(poly, pcfg, polygon_name(run), reg%verbose .and. n == 1_ik, slot(p), reg%now,     &
-                              fast_found, started, site_cfg=site_cfg, site_area=site_area)
+                              started, site_cfg=site_cfg, site_area=site_area)
             if (.not. started) return
             !----- The polygon's id and place, on the stand the initial community built. -------------!
             poly%id            = ids(p)
@@ -236,7 +234,8 @@ contains
 
             !----- The fast context and reservoirs, the forcing cursor, snow, soil-carbon spin-up. One  !
             !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
-            call polygon_prepare(cfg, reg%met_src, poly, run, keep_fast_state=fast_found,              &
+            call polygon_prepare(cfg, reg%met_src, poly, run,                                          &
+                                 keep_fast_state=cfg%init%init_mode == INIT_RESTART,                      &
                                  keep_soil_carbon=cfg%init%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)

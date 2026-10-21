@@ -70,11 +70,11 @@ src/                                    35.5 k lines · 90 modules · 21 CMake l
 │                  drivers, and the slow conservation ledger                 2 017
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── io/            every data file a run reads or writes                      9 910
+├── io/            every data file a run reads or writes                      9 717
 │   ├── (root)     the netCDF C bindings, and the helpers both writers share    615
 │   ├── init/      the initial state, by [init].init_mode: bare ground, a
 │   │              cohort census, or a restart file, which the checkpoints
-│   │              write; init_polygon starts a polygon from one              1 799
+│   │              write; init_polygon starts a polygon from one              1 606
 │   ├── met/       the atmosphere above the canopy: the met reader (a MEDS
 │   │              forcing file, or the ED_ERA5land archive) and its sample at
 │   │              a site and at a patch's canopy-air top (meds_met), the grid

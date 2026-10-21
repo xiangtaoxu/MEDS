@@ -1,8 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !----- State restart round-trip: the per-cohort PLASTIC leaf traits (sla/vcmax25/rd25 and the ----!
 !----- leaf turnover rate) must be written to and recovered from a state checkpoint, not reset ----!
-!----- to top-of-canopy; a file holding the rate as a leaf lifespan (`llspan`) still reads, and ---!
-!----- one holding the canopy films per m2 of ground (no `units`) reads them per plant. ----------!
+!----- to top-of-canopy, and a file an older MEDS wrote (no restart_format) is refused. ----------!
 program test_state_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
@@ -12,18 +11,13 @@ program test_state_roundtrip
    use meds_init_restart,               only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
                                      read_restart_file
    use meds_time,             only : meds_time_t
-   use meds_netcdf_c,     only : NC_NOERR, nc_open_f, nc_inq_varid_f, nc_put_vara_double, nc_close, cstr
+   use meds_netcdf_c,     only : NC_NOERR, NC_GLOBAL, nc_open_f, nc_close, cstr
    use meds_test_support, only : banner, build_test_config, check, check_close
-   use iso_c_binding,     only : c_int, c_size_t, c_double, c_char
+   use iso_c_binding,     only : c_int, c_char
    implicit none
 
    integer(c_int), parameter :: NC_WRITE = 1_c_int        ! netcdf.h: open for writing
    interface
-      integer(c_int) function nc_rename_var(ncid, varid, name) bind(c, name="nc_rename_var")
-         import :: c_int, c_char
-         integer(c_int), value, intent(in) :: ncid, varid
-         character(kind=c_char), intent(in) :: name(*)
-      end function nc_rename_var
       integer(c_int) function nc_del_att(ncid, varid, name) bind(c, name="nc_del_att")
          import :: c_int, c_char
          integer(c_int), value, intent(in) :: ncid, varid
@@ -34,7 +28,7 @@ program test_state_roundtrip
    type(meds_config_t) :: cfg
    type(polygon_t)     :: poly, poly2
    type(meds_time_t)   :: now, rt
-   logical             :: found, fast_ok
+   logical             :: found
    real(wp)            :: sla_set, vc_set, rd_set, turnover_set
    integer(ik)         :: i
 
@@ -104,12 +98,11 @@ program test_state_roundtrip
    !----- The file is written on a year boundary with its restructuring still owed, as the driver's   !
    !      yearly checkpoint is (polygon_t%restructure_pending); the reader must say so. --------------!
    call write_state(poly, now, .true., .true.)
-   call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, fast_found=fast_ok)
+   call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
    call check(poly2%restructure_pending .and. poly2%restructure_new_year,                                 &
               'a checkpoint records the year''s restructuring as still owed')
 
    call check(found, 'state file read back')
-   call check(fast_ok, 'fast reservoirs found in state file just written')
    call check(poly2%cohort%n == poly%cohort%n, 'cohort count preserved')
    do i = 1_ik, poly2%cohort%n
       call check_close(poly2%cohort%sla(i),     sla_set, 1.0e-9_wp, 'sla recovered from state')
@@ -180,47 +173,25 @@ program test_state_roundtrip
                        'shed_water_enth recovered from state')
    end do
 
-   !----- Nothing owed: a checkpoint between boundaries, or one written before the flag existed.  !
+   !----- Nothing owed: a checkpoint between boundaries. -----------------------------------------!
    call write_state(poly, now, .false., .false.)
    call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
    call check(found .and. .not. poly2%restructure_pending .and. .not. poly2%restructure_new_year,          &
               'a checkpoint with nothing owed reads so')
 
-   !----- A state file written while the trait was a leaf lifespan holds `llspan` [yr] in place of  !
-   !      `leaf_turnover_rate`: the reader takes the rate as its reciprocal. The file just written is  !
-   !      made into one by renaming the variable and writing a 4-yr lifespan into it. And a file      !
-   !      written while the films were per m2 of ground has no `units` on them: removing it makes    !
-   !      the reader take the same numbers as per m2 of ground, so per plant they are 1/nplant as   !
-   !      large. ----------------------------------------------------------------------------------!
+   !----- A file without restart_format, as an older MEDS wrote it, is refused, saying so. ---------!
    block
-      integer(c_int)              :: ncid, vid
-      integer(c_size_t)           :: start(2), count(2)
-      real(c_double), allocatable :: lifespan(:)
-      character(kind=c_char)      :: new_name(7)
+      integer(c_int)                :: ncid
+      character(kind=c_char)        :: att(15)
+      character(len=:), allocatable :: why
       call check(nc_open_f('./test_sr-S-20000101000000.nc', NC_WRITE, ncid) == NC_NOERR,             &
                  'the state file opens for writing')
-      call check(nc_inq_varid_f(ncid, 'leaf_turnover_rate', vid) == NC_NOERR,                        &
-                 'the state file holds leaf_turnover_rate')
-      new_name = cstr('llspan')
-      call check(nc_rename_var(ncid, vid, new_name) == NC_NOERR, 'the variable is renamed llspan')
-      allocate(lifespan(poly%cohort%n)) ; lifespan = 4.0_c_double
-      start = 0_c_size_t
-      count = [1_c_size_t, int(poly%cohort%n, c_size_t)]                 ! the polygon's row
-      call check(nc_put_vara_double(ncid, vid, start, count, lifespan) == NC_NOERR,                  &
-                 'a 4-yr lifespan is written into it')
-      call check(nc_inq_varid_f(ncid, 'leaf_surf_water', vid) == NC_NOERR .and.                      &
-                 nc_del_att(ncid, vid, cstr('units')) == NC_NOERR, 'the leaf film loses its units')
+      att = cstr('restart_format')
+      call check(nc_del_att(ncid, NC_GLOBAL, att) == NC_NOERR, 'its restart_format is removed')
       call check(nc_close(ncid) == NC_NOERR, 'the state file closes')
+      call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik, why=why)
+      call check(.not. found .and. index(why, 'older MEDS') > 0, 'a file of an older MEDS is refused, saying why')
    end block
-   call read_restart_file(poly2, cfg, './test_sr-S-20000101000000.nc', rt, found, polygon=1_ik)
-   call check(found, 'a state file with llspan reads')
-   do i = 1_ik, poly2%cohort%n
-      call check_close(poly2%cohort%leaf_turnover_rate(i), 0.25_wp, 1.0e-15_wp,                     &
-                       'llspan [yr] is read as the leaf turnover rate 1/llspan [1/yr]')
-      call check_close(poly2%cohort%sla(i), sla_set, 1.0e-9_wp, 'the other traits read as before')
-      call check_close(poly2%cohort%leaf_surf_water(i), poly%cohort%leaf_surf_water(i) / poly%cohort%nplant(i), &
-                       1.0e-15_wp, 'a film without units is read per m2 of ground')
-   end do
 
    write(*,'(a)') '   PASS'
 
