@@ -328,16 +328,16 @@ program test_region
    call refused('a fast-tier window may not straddle two slow steps',                               &
                 '[output]'//nl()//'fast_interval_steps = 5'//nl()//site_block(1_ik), .false., .false., &
                 'output.fast_interval_steps must divide')
-   !----- An io_config override is held to the FAST guard as the defaults are: a variable         !
-   !      without a FAST-staged source on the F stream, and a FAST-staged one on a coarse tier. ------!
+   !----- An io_config override is held to the tiers' sources as the defaults are: a variable    !
+   !      with no sub-daily value on the F stream, and one that exists only sub-daily on a coarse tier. !
    call write_text(trim(work)//'/io_f_coarse.toml', '[variables]'//nl()//'anet_cohort = "F D"')
    call refused('an io_config override may not put a coarse variable on the F stream',            &
                 '[output]'//nl()//'io_config = "'//trim(work)//'/io_f_coarse.toml"'//nl()//          &
-                site_block(1_ik), .false., .false., 'is not a FAST-staged variable')
+                site_block(1_ik), .false., .false., 'has no sub-daily value')
    call write_text(trim(work)//'/io_fast_daily.toml', '[variables]'//nl()//'cas_temp_patch_fast = "D"')
    call refused('an io_config override may not put a FAST-staged variable on a coarse tier',      &
                 '[output]'//nl()//'io_config = "'//trim(work)//'/io_fast_daily.toml"'//nl()//        &
-                site_block(1_ik), .false., .false., 'is FAST-staged and can only be on the F stream')
+                site_block(1_ik), .false., .false., 'exists only sub-daily')
    call refused('a cell mask must be on the forcing grid', '[region]'//nl()//'cell_mask = "'//            &
                 trim(work)//'/archive/offgrid.nc"'//nl()//'cell_mask_var = "keep"'//nl()//region_block(),  &
                 .true., .false., 'is not on the forcing grid')

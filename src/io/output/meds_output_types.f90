@@ -92,12 +92,13 @@ module meds_output_types
       integer(ik) :: streams_default = 0_ik         !< the registry default membership (restored by a `true` override)
       logical     :: enabled         = .true.       !< master per-variable on/off
       integer(ik) :: xtype           = XTYPE_DOUBLE !< XTYPE_DOUBLE | XTYPE_INT
-      integer(ik) :: source_id       = 0_ik         !< the source id: which field supplies it
+      integer(ik) :: source_id       = 0_ik         !< the field the D, M and Y tiers read (0: none)
+      integer(ik) :: source_fast     = 0_ik         !< the staged sub-step value the F tier reads (0: none)
       !----- How the field reduces to this variable's axis, so one field serves every scale. The   !
       !      weight kind and mean together state extensive vs intensive (docs/science/diagnostics.md §2). !
       integer(ik) :: weight          = 0_ik         !< W_* per-cohort weight kind (0 = W_NONE)
       logical     :: mean            = .false.      !< .true. weighted mean (intensive); .false. sum (extensive)
-      real(wp)    :: scale           = 1.0_wp       !< unit conversion applied inside the patch loop
+      real(wp)    :: scale           = 1.0_wp       !< unit conversion of source_id, applied where it is read
    end type var_desc_t
 
    !==========================================================================================!

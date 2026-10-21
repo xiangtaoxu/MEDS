@@ -26,7 +26,7 @@ module meds_output_extract
    private
 
    public :: extract_variable, extract_fast_scalar
-   public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_POLYGON, SRCK_FAST, SRCK_SITE
+   public :: src_class, SRCK_COHORT, SRCK_PATCH, SRCK_LAYER, SRCK_POLYGON, SRCK_FAST, SRCK_SITE, SRC_NONE
    !----- Cohort fields (1000-1999). ---------------------------------------------------------!
    public :: FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA
    public :: FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID
@@ -68,6 +68,7 @@ module meds_output_extract
    integer(ik), parameter :: SRCK_LAYER  = 3_ik   !< 3000-3999 : per-soil-layer field (per patch)
    integer(ik), parameter :: SRCK_POLYGON   = 4_ik   !< 4000-4999 : the polygon's own scalar (no reduction)
    integer(ik), parameter :: SRCK_FAST   = 5_ik   !< 5000-5999 : FAST-tier staged sample
+   integer(ik), parameter :: SRC_NONE    = 0_ik   !< no source: a variable without a value on those tiers
    integer(ik), parameter :: SRCK_SITE  = 6_ik   !< 6000-6999 : one value per site of the polygon
 
    !----- Cohort fields (SRCK_COHORT). Raw SoA columns first, then derived ones. --------------!
