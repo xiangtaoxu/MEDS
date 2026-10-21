@@ -12,7 +12,8 @@
 !                                                                                          !
 ! The routines derive what the parameters imply: the run's derived values, the PFT table's !
 ! arrays and leaf capacities, and the soil column (its layers and the bundles the soil     !
-! kernels read), built once per column: each site and each map cell.                       !
+! kernels read), built once per column: each site and each map cell, whose [maps] inputs   !
+! apply_map_inputs writes into its polygon's configuration.                                !
 !==========================================================================================!
 module meds_config
    use meds_kinds,              only : wp, ik
@@ -20,16 +21,20 @@ module meds_config
    use meds_time,               only : meds_time_t
    use meds_pft_params,         only : pft_table_t, HYD_UNSET
    use meds_plant_hydr_lib,     only : tissue_psi_tlp
-   use meds_soil_hydr_lib,      only : soil_head_to_theta, soil_matric_potential
+   use meds_soil_hydr_lib,      only : soil_head_to_theta, soil_matric_potential, soil_texture_t,     &
+                                       soil_texture_to_hydraulics, SOIL_RETENTION_VG
+   use meds_therm_lib,          only : soil_texture_to_thermal
    use meds_fast_params,        only : process_mask_t, INTEG_ARK, CTRL_I, CTRL_L1_ADAPTIVE
    use meds_soil_params,        only : soil_column_config_t, soil_texture_layers_t, soil_params_t,    &
-                                       soil_thermal_params_t, soil_opts_t, energy_opts_t
+                                       soil_thermal_params_t, soil_opts_t, energy_opts_t,             &
+                                       SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
    use meds_biophysics_params,  only : snow_params_t, aero_cfg_t
    use meds_biogeochem_params,  only : decomp_opts_t
    use meds_forcing_params,     only : forcing_config_t
    use meds_output_params,      only : output_config_t
    use meds_region_params,      only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
-   use meds_maps_params,        only : maps_opts_t, soil_maps_on
+   use meds_maps_params,        only : maps_opts_t, soil_maps_on, map_inputs_t, MAP_BC_LEAKY,          &
+                                       MAP_BC_SEALED, MAP_BC_AQUIFER
    use meds_sites_params,       only : site_spec_t
    implicit none
    private
@@ -44,7 +49,7 @@ module meds_config
    public :: maps_opts_t, soil_maps_on
    public :: alloc_pft_table, derive_leaf_params
    public :: soil_column_layers, soil_column_texture, soil_column_params, soil_column_start_theta
-   public :: top_soil_psi, SOIL_LAYER_TEMPLATE, soil_layer_grid
+   public :: top_soil_psi, SOIL_LAYER_TEMPLATE, soil_layer_grid, apply_map_inputs
    public :: build_soil_hydr_params, build_soil_therm_params
 
    !----- [init].init_mode. -------------------------------------------------------------------!
@@ -464,6 +469,108 @@ contains
       psi = soil_matric_potential(soil%retention, theta_top, soil%theta_sat(1), soil%theta_res(1),   &
                                   soil%curve_par_a(1), soil%curve_par_n(1))
    end function top_soil_psi
+
+   !---------------------------------------------------------------------------------------!
+   ! apply_map_inputs -- cell k's inputs into the configuration its polygon runs           !
+   ! (docs/science/soil_biophysics.md §The column from the soil maps): the soil column on  !
+   ! the default layers to the map's depth, each layer's curve, Ks and thermal properties  !
+   ! from the map layers it overlaps; the bottom water boundary from bc_class; the thermal !
+   ! anchor at deep_temp, ANNUAL_DAMPING_DEPTH / sqrt(2) below the bottom node (eq. (13)); !
+   ! and the Chave allometry's E.                                                          !
+   !---------------------------------------------------------------------------------------!
+   subroutine apply_map_inputs(inp, k, cfg)
+      type(map_inputs_t), intent(in)    :: inp
+      integer(ik),            intent(in)    :: k
+      type(meds_config_t),    intent(inout) :: cfg
+      type(soil_texture_t) :: tex
+      type(soil_params_t)  :: soil
+      real(wp)    :: bottoms(n_soil_layer_max), top
+      integer(ik) :: n, l
+
+      if (inp%soil) then
+         associate (sc => cfg%soil_column)
+            sc%depth = inp%soil_depth(k)
+            sc%n_layer_bottoms = 0_ik
+            sc%retention = SOIL_RETENTION_VG
+            call soil_column_layers(sc, bottoms, n)
+            top = 0.0_wp
+            do l = 1_ik, n
+               tex = layer_texture(inp, k, top, bottoms(l))
+               call soil_texture_to_hydraulics(tex, sc%layer_theta_sat(l), sc%layer_theta_res(l),      &
+                                                 sc%layer_curve_par_a(l), sc%layer_curve_par_n(l),       &
+                                                 sc%layer_ksat(l))
+               call soil_texture_to_thermal(tex%sand, tex%clay, sc%layer_theta_sat(l),                     &
+                                              sc%layer_solid_conductivity(l), sc%layer_dry_conductivity(l),  &
+                                              sc%layer_dry_heat_capacity(l))
+               top = bottoms(l)
+            end do
+            sc%n_layer_values = n
+         end associate
+         select case (nint(inp%bc_class(k), ik))
+         case (MAP_BC_AQUIFER)
+            cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
+         case (MAP_BC_LEAKY)
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = inp%f_leak(k)
+         case (MAP_BC_SEALED)
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = 0.0_wp
+         case default
+            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
+            cfg%soil%drain_factor = 1.0_wp
+         end select
+         call soil_column_params(cfg%soil_column, soil)
+         cfg%energy%deep_temp  = inp%deep_temp(k)
+         cfg%energy%deep_depth = abs(soil%z_node(soil%n_active)) + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)
+      end if
+      if (inp%chave) cfg%pft%allom(:)%chave_e = inp%chave_e(k)
+   end subroutine apply_map_inputs
+
+   !----- The soil of the column's layer [top, bottom]: the map layers it overlaps, each weighted  !
+   !      by the overlap. The deepest map layer reaches down without end. ----------------------------!
+   pure function layer_texture(inp, k, top, bottom) result(tex)
+      type(map_inputs_t), intent(in) :: inp
+      integer(ik),            intent(in) :: k
+      real(wp),               intent(in) :: top, bottom
+      type(soil_texture_t) :: tex
+      real(wp)    :: w, wsum, hi
+      integer(ik) :: m, nm
+      nm = size(inp%layer_top, kind=ik)
+      tex%sand = 0.0_wp
+      tex%silt = 0.0_wp
+      tex%clay = 0.0_wp
+      tex%org_carbon = 0.0_wp
+      tex%cec  = 0.0_wp
+      tex%ph   = 0.0_wp
+      tex%bulk_density = 0.0_wp
+      tex%coarse_frag = 0.0_wp
+      wsum = 0.0_wp
+      do m = 1_ik, nm
+         hi = bottom
+         if (m < nm) hi = min(bottom, inp%layer_bottom(m))
+         w = hi - max(top, inp%layer_top(m))
+         if (w <= 0.0_wp) cycle
+         wsum = wsum + w
+         associate (t => inp%texture(m, k))
+            tex%sand         = tex%sand         + w * t%sand
+            tex%silt         = tex%silt         + w * t%silt
+            tex%clay         = tex%clay         + w * t%clay
+            tex%org_carbon   = tex%org_carbon   + w * t%org_carbon
+            tex%cec          = tex%cec          + w * t%cec
+            tex%ph           = tex%ph           + w * t%ph
+            tex%bulk_density = tex%bulk_density + w * t%bulk_density
+            tex%coarse_frag  = tex%coarse_frag  + w * t%coarse_frag
+         end associate
+      end do
+      tex%sand = tex%sand / wsum
+      tex%silt = tex%silt / wsum
+      tex%clay = tex%clay / wsum
+      tex%org_carbon = tex%org_carbon / wsum
+      tex%cec = tex%cec / wsum
+      tex%ph = tex%ph / wsum
+      tex%bulk_density = tex%bulk_density / wsum
+      tex%coarse_frag = tex%coarse_frag / wsum
+   end function layer_texture
 
    !=======================================================================================!
    !  Per-column soil parameter assemblers: pure, state-free constructors that fill a      !

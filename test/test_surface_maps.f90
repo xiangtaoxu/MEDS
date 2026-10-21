@@ -25,11 +25,11 @@ program test_surface_maps
                                           texture_at, SG_TOP, SG_BOTTOM
    use meds_met_types,             only : met_grid_t, met_cells_t
    use meds_met_grid,              only : select_box_cells, keep_cells, GRID_OK
-   use meds_maps,          only : map_values_at_cells, map_layers_at_cells, apply_cell_mask,  &
+   use meds_maps,                  only : map_values_at_cells, map_layers_at_cells, apply_cell_mask,  &
                                           MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
-                                          map_inputs_t, read_map_inputs, apply_map_inputs
-   use meds_config,                only : meds_config_t, alloc_pft_table
-   use meds_maps_params,           only : maps_opts_t
+                                          read_map_inputs
+   use meds_config,                only : meds_config_t, alloc_pft_table, apply_map_inputs
+   use meds_maps_params,           only : maps_opts_t, map_inputs_t
    use meds_soil_hydr_lib,         only : soil_texture_t, soil_texture_to_hydraulics
    use meds_therm_lib,             only : soil_texture_to_thermal
    use meds_soil_params,           only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH

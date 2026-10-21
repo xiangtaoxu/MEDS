@@ -29,7 +29,7 @@ module meds_region
    use meds_constants,              only : day_sec, yr_day
    use meds_numerics,               only : ascending_order
    use meds_config,                 only : meds_config_t, INIT_RESTART,                                &
-                                           RUN_MODE_REGION, soil_maps_on, site_config
+                                           RUN_MODE_REGION, soil_maps_on, site_config, apply_map_inputs
    use meds_config_check,           only : validate_config
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
@@ -41,9 +41,9 @@ module meds_region
    use meds_met_types,              only : met_source_t, met_grid_t, met_cells_t
    use meds_forcing_params,         only : MET_BACKEND_ED_ERA5LAND
    use meds_met,             only : met_open, met_close, met_prefetch, MET_OK
-   use meds_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
-                                           map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
-   use meds_met_grid,               only : select_box_cells, GRID_OK, GRID_ERR_NO_CELL
+   use meds_maps,                   only : apply_cell_mask, map_status_message, MAP_OK, read_map_inputs
+   use meds_maps_params,            only : map_inputs_t
+   use meds_met_grid,               only : select_box_cells, select_site_cell, GRID_OK, GRID_ERR_NO_CELL
    use meds_met_era5land,           only : era5land_grid
    use meds_output_reduce,      only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
@@ -320,6 +320,34 @@ contains
          end associate
       end do
    end subroutine set_site_terrain
+
+   !----- A site run's [maps] inputs, at the forcing cell its [site] location reads (the archive's  !
+   !      own choice, select_site_cell), into cfg, which is then validated again. msg is '' on    !
+   !      success, else why the inputs could not be had. ---------------------------------------!
+   subroutine site_map_inputs(cfg, msg)
+      type(meds_config_t),           intent(inout) :: cfg
+      character(len=:), allocatable, intent(out)   :: msg
+      type(met_grid_t)   :: grid
+      type(met_cells_t)  :: cell
+      type(map_inputs_t) :: inp
+      real(wp)    :: distance_km
+      integer(ik) :: st
+      grid = era5land_grid(cfg%forcing)
+      call select_site_cell(grid, cfg%forcing%latitude, cfg%forcing%longitude, cfg%forcing%max_distance_km, &
+                            cell, distance_km, st)
+      if (st /= GRID_OK) then
+         if (st == GRID_ERR_NO_CELL) then
+            msg = 'no valid forcing cell near the site for the [maps] maps'
+         else
+            msg = 'cannot read the forcing''s static file '//trim(grid%static_file)//' for the [maps] maps'
+         end if
+         return
+      end if
+      call read_map_inputs(cfg%maps, grid, cell, inp, msg)
+      if (len(msg) > 0) return
+      call apply_map_inputs(inp, 1_ik, cfg)
+      call validate_config(cfg)
+   end subroutine site_map_inputs
 
    !----- A region's cells: the box's valid cells with enough land, in row-major order, less those   !
    !      the cell mask drops. .false. (after saying why) when none is left or a file cannot be read. !
