@@ -604,7 +604,9 @@ time. Setting `lw_cloud_a = 0` gives a pure clear-sky sky and that bias back.
 **At night $`k_t`$ is undefined** — there is no shortwave to divide — and `clearness_index` returns a
 *negative sentinel* rather than zero, because a zero would read as fully overcast and apply the
 maximum cloud correction to every night. The driver holds the **last daytime** $`k_t`$ through the
-dark, which is dusk's cloudiness carried forward. That one scalar is updated in `met_advance`, not
+dark, which is dusk's cloudiness carried forward. The polygon owns it (`polygon_t%kt_last_day`), so a
+state file carries it and a restart at night resumes the same sky. That one scalar is updated in
+`met_advance`, not
 `met_instant`: `met_instant` is `intent(in)` and runs per sub-step, and the advance sits outside the
 patch loop, so the state cannot become a data race when the patch axis is threaded. The remembered
 index is formed from the bracketing record's interval-mean shortwave against the sun at the sample

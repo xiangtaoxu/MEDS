@@ -59,8 +59,9 @@ a PFT goes locally extinct.
   `src/io/output/` less `meds_output_stream`, the one module that calls netCDF. That split is what
   keeps the stepper's edge free of a C dependency. Both writers, the diagnostic files and the
   restart file, define their variables and the polygon axis through `meds_netcdf_write`.
-- **`[state]` is the restart stream only** (a block spelled `[io]` is refused). A checkpoint is raw
-  prognostic state at an instant, never a time average; diagnostics are `[output]`.
+- **The state files are `[output]`'s `state_*` keys.** A state file is raw prognostic state at an
+  instant, never a time average, and everything a run needs to continue bit for bit, the forcing
+  reader's memory included (the night's clearness, `polygon_t%kt_last_day`).
 
 ## Adding a variable
 

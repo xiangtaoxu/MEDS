@@ -85,8 +85,8 @@ space, and a thread uses what it touches. When running `meds_main` on a region b
 MEDS warns at a region's open when it is not set.
 
 **Restarts.** Each region writes a state file every 25 years (`<region>-S-<date>.nc`). To resume a region
-from one, set `[init] init_mode = 2` and `restart_file` to it, and give `[output]` and `[state]` a new
-`prefix`, so the original monthly file is kept; the resumed run repeats the original's months bit for bit
+from one, set `[init] init_mode = 2` and `restart_file` to it, and give `[output]` a new `prefix` and
+`state_file_prefix`, so the original monthly file is kept; the resumed run repeats the original's months bit for bit
 and `summarize_regions.py` joins a region's monthly files by month.
 
 ## Speed and resources

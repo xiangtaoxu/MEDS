@@ -55,7 +55,8 @@ with every per-PFT trait actually used. It is a provenance record: what the run 
 you meant.
 
 Every run also writes the **parameter record**, `<prefix>_parameters.csv`, beside its diagnostic
-output (`[output].dir`, `[output].prefix`) and beside its state (`[state]`), whichever it writes. It
+output (`[output].dir`, `[output].prefix`) and beside its state files (`[output].state_file_dir`,
+`state_file_prefix`), whichever it writes. It
 has one row for every key the loader read, from every file it read (the main file, the PFT file,
 the output list): `source,key,index,present,value`. `index` is 0 for a scalar and the element for an
 array; `present` says whether the key was in the file or took its compiled default; `value` is what
@@ -80,8 +81,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
 | `[[sites]]` | A site run's polygon as several sites, one table each: its share, terrain and ground ([Several sites](#several-sites)). |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
-| `[output]` | Which diagnostics are written (`io_config`), at which timescales. |
-| `[state]` | Restart checkpointing: output directory, prefix, interval. |
+| `[output]` | What a run writes: the state files (`state_*`) and the diagnostics (`io_config`, the tiers). |
 
 **`[soil]` is the ground; `[fast]` holds the solvers' settings.** Every property of the ground is in
 one block, whichever solver reads it: the column, its surface and both bottom boundaries. The column
@@ -350,17 +350,19 @@ soil water's potential, and is re-seeded from its patch once the patch is seeded
 
 ## Output
 
-Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:
+Two streams, both set in `[output]`:
 
 - **Diagnostic timeseries** — the `[output]` subsystem. 452 variables, each a mean over its
   record's period (`mean_<x>`) or its value at the period's end (`<x>`), at four timescales
   (sub-daily, daily, monthly, annual). `[output].io_config` chooses them by name or pattern
   (`"*_co" = false`, `"mean_*_py" = "M Y"`); `meds_main --dump-io-config` lists every variable. See
   [`science/diagnostics.md`](science/diagnostics.md) §5.
-- **State checkpoints** — `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, enabled with `[state].write_state`. The
-  instantaneous prognostic state only, no diagnostics, written every `[state].interval_years` and at
-  run end. **The timestamp is the simulated date**, so pointing `[init].restart_file` at one
-  resumes from exactly that date.
+- **State files** — `<state_file_dir>/<state_file_prefix>-S-<YYYYMMDDHHMMSS>.nc`, written with
+  `state_write = true`: the model's whole state at an instant, no diagnostics, to restart from. One
+  every `state_interval` (`"N days"`, `"N months"` or `"N years"`: every N days from the run's start,
+  whole slow steps, or at every N-th month or year boundary) and one at the run's end. **The
+  timestamp is the simulated date**, so pointing `[init].restart_file` at one resumes from exactly
+  that date, and the run continues as the one that wrote it would have, bit for bit.
 
 Every file of both streams has a `polygon` dimension, one row per polygon; a site run's files have one
 row ([Regional runs](#regional-runs) gives the layout).
@@ -504,8 +506,8 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   and a grown stand's automatic arrays overflow it after a few decades of regrowth: the run dies with
   a segmentation fault. Set `OMP_STACKSIZE=512M` (it reserves address space; only what a thread
   touches is used). A region with more than one thread warns at open when it is not set.
-- **State files.** With `[state].write_state`, a region writes one state file every
-  `interval_years` and at the end, `<prefix>-S-<date>.nc` like a site's. It holds every polygon: a
+- **State files.** With `[output].state_write`, a region writes one state file every
+  `state_interval` and at the end, `<prefix>-S-<date>.nc` like a site's. It holds every polygon: a
   `polygon` axis leads each variable, `polygon_id` names the rows, the cohort and patch axes are as
   long as the largest polygon's, and `n_cohort`, `n_patch` and `n_window` mark each polygon's live
   part (the rest is the fill value); `lat` and `lon` are its cell's centre. A region restarted from

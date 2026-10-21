@@ -357,7 +357,7 @@ This is the largest usability difference.
 | Aggregation | Declared as data on each variable — a weight (none / plant density / leaf area / basal area / AGB) and mean-vs-sum. One registry line emits a field's patch, site, PFT and size-class rollups | Hard-coded per variable |
 | Discovering variables | `meds_main --dump-io-config` lists every variable by group, with its default tiers and the tiers it can be on | Read the source or the wiki |
 | Empty sets | A mean over an empty patch/PFT/class is `_FillValue`; a sum is a true 0, so the PFT and size-class sums still equal the site total when a PFT goes locally extinct | — |
-| Restart | A separate, deliberately orthogonal stream under its own `[state]` block: `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, raw prognostic state at an instant, never a time average | `ISOUTPUT`, `FRQSTATE`, HDF5 history files |
+| Restart | A separate, deliberately orthogonal stream, `[output]`'s `state_*` keys, at any interval of days, months or years: `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, raw prognostic state at an instant, never a time average | `ISOUTPUT`, `FRQSTATE`, HDF5 history files |
 | Post-processing | `post_proc/` — site time series, stand structure, a 3-D landscape, a per-PFT / per-size-class plotter, and a worked evaluation notebook that checks the conservation identities **from the file** | Community scripts |
 
 Two conventions worth knowing before you write analysis code. **Sub-daily variables are separate

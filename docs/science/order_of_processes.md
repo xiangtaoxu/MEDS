@@ -220,8 +220,8 @@ Three consequences:
   period in a queue. No netCDF call is made inside a step.
 - **The I/O phase** runs at each month boundary, after the step and before the next one:
   - it writes the queued records;
-  - every `[state].interval_years`, at the year boundary, it writes the checkpoint: one state file,
-    a row per polygon.
+  - at each `[output].state_interval` it writes the state file: one file, a row per polygon. A
+    month's steps are cut short at a state time, so a state file every N days falls inside a month.
 
   The terminal checkpoint is written at the end of the run.
 
