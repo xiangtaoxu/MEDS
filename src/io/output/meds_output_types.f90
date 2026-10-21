@@ -144,11 +144,11 @@ module meds_output_types
       integer(ik)       :: n_cohort = 0_ik, n_patch = 0_ik  !< live slab lengths this record
       real(wp),    allocatable :: sval(:)       !< (nvar) normalized scalar value
       logical,     allocatable :: svalid(:)     !< (nvar)
-      real(wp),    allocatable :: slab(:,:)     !< (max_slab, nvar) normalized slab values
-      logical,     allocatable :: slabvalid(:,:)!< (max_slab, nvar)
+      real(wp),    allocatable :: slab(:,:)     !< (rows, columns) normalized slab values
+      logical,     allocatable :: slabvalid(:,:)!< (rows, columns)
       integer(ik), allocatable :: nslab(:)      !< (nvar) slab length (0 for scalar vars)
-      !----- A queued record stores only its tier's slab variables: slab(:, col(k)) is registry     !
-      !      variable k's slab. The scratch record leaves col unallocated and indexes slab(:, k). ---!
+      !----- A record stores only its tier's live slab variables: slab(:, col(k)) is registry      !
+      !      variable k's slab (slab_col), in the scratch record and the queued ones alike. ----------!
       integer(ik), allocatable :: col(:)        !< (nvar) slab column of each variable (0 = none)
    end type pending_record_t
 

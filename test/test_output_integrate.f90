@@ -204,7 +204,7 @@ contains
       type(output_files_t)   :: files
       type(output_buffers_t) :: bufs
       real(wp)    :: f0(N_PY_ROWS), s(N_PA_ROWS)
-      integer(ik) :: k_cas, k_soil, k_air, k_hgt, k_cas_p, k_soil_p, nl
+      integer(ik) :: k_cas, k_soil, k_air, k_hgt, k_cas_p, k_soil_p, nl, c_soil, c_hgt, c_cas_p, c_soil_p
       real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
 
       !----- extract_fast_scalar: a patch-block id reads its row of the sub-step's site mean, and a  !
@@ -264,10 +264,11 @@ contains
       call check_close(bufs%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp TMEAN')
       !----- Soil-column slab path: mean_soil_temp_layer_si slot means. -----!
       k_soil = find_var_index(files%reg, 'mean_soil_temp_layer_si')
-      call check(bufs%pending(1)%nslab(k_soil) == nl .and. bufs%pending(1)%slabvalid(2,k_soil)          &
-                 .and. .not. bufs%pending(1)%slabvalid(3,k_soil), 'FAST soil slab: the site''s 2 layers of nl')
-      call check_close(bufs%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
-      call check_close(bufs%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
+      c_soil = slab_col(bufs%pending(1), k_soil)
+      call check(bufs%pending(1)%nslab(k_soil) == nl .and. bufs%pending(1)%slabvalid(2,c_soil)          &
+                 .and. .not. bufs%pending(1)%slabvalid(3,c_soil), 'FAST soil slab: the site''s 2 layers of nl')
+      call check_close(bufs%pending(1)%slab(1,c_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
+      call check_close(bufs%pending(1)%slab(2,c_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
       !----- Per-cohort slab path: n_cohort (the slots are checked on mean_height_co below). -----!
       call check(bufs%pending(1)%n_cohort == 2_ik, 'FAST n_cohort = 2')
       !----- Forcing air-temp scalar path + per-cohort HEIGHT slab path (tallest-cohort post-proc). -----!
@@ -275,23 +276,26 @@ contains
       call check(k_air > 0_ik, 'mean_air_temp_py registered')
       call check_close(bufs%pending(1)%sval(k_air), 301.0_wp, 1.0e-10_wp, 'FAST air_temp TMEAN')
       k_hgt = find_var_index(files%reg, 'mean_height_co')
+      c_hgt = slab_col(bufs%pending(1), k_hgt)
       call check(k_hgt > 0_ik, 'mean_height_co registered')
-      call check_close(bufs%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
-      call check_close(bufs%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
+      call check_close(bufs%pending(1)%slab(1,c_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
+      call check_close(bufs%pending(1)%slab(2,c_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
       !----- The patch axis: each patch's own mean, and each patch's soil column in the            !
       !      soil-by-patch layout, with the inactive layers as fill. -----!
       k_cas_p = find_var_index(files%reg, 'mean_cas_temp_pa')
+      c_cas_p = slab_col(bufs%pending(1), k_cas_p)
       call check(k_cas_p > 0_ik, 'mean_cas_temp_pa registered')
       call check(bufs%pending(1)%n_patch == 2_ik, 'FAST n_patch = 2')
-      call check_close(bufs%pending(1)%slab(1,k_cas_p), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 1')
-      call check_close(bufs%pending(1)%slab(2,k_cas_p), 302.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 2')
+      call check_close(bufs%pending(1)%slab(1,c_cas_p), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 1')
+      call check_close(bufs%pending(1)%slab(2,c_cas_p), 302.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 2')
       k_soil_p = find_var_index(files%reg, 'mean_soil_temp_layer_pa')
+      c_soil_p = slab_col(bufs%pending(1), k_soil_p)
       call check(k_soil_p > 0_ik, 'mean_soil_temp_layer_pa registered')
-      call check_close(bufs%pending(1)%slab(1,k_soil_p),    281.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 1')
-      call check_close(bufs%pending(1)%slab(2,k_soil_p),    282.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 2')
-      call check_close(bufs%pending(1)%slab(nl+1,k_soil_p), 291.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 1')
-      call check_close(bufs%pending(1)%slab(nl+2,k_soil_p), 292.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 2')
-      call check(.not. bufs%pending(1)%slabvalid(3,k_soil_p), 'FAST soil patch 1 layer 3 is fill (inactive)')
+      call check_close(bufs%pending(1)%slab(1,c_soil_p),    281.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 1')
+      call check_close(bufs%pending(1)%slab(2,c_soil_p),    282.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 2')
+      call check_close(bufs%pending(1)%slab(nl+1,c_soil_p), 291.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 1')
+      call check_close(bufs%pending(1)%slab(nl+2,c_soil_p), 292.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 2')
+      call check(.not. bufs%pending(1)%slabvalid(3,c_soil_p), 'FAST soil patch 1 layer 3 is fill (inactive)')
    end subroutine test_fast_tier
 
    !----- The driver's order: setup_output_files, then an [output].io_config override that switches on a  !
@@ -415,7 +419,7 @@ contains
       type(output_buffers_t) :: bufs
       type(polygon_t)        :: poly
       type(meds_time_t)      :: jan30, jan31, feb1
-      integer(ik) :: k_s, k_c, k_n
+      integer(ik) :: k_s, k_c, k_n, c_c
       real(wp), parameter :: DT = 86400.0_wp
       cfg = build_test_config(DT)
       cfg%output%enabled    = .true.
@@ -426,6 +430,7 @@ contains
       call alloc_output_set(files, bufs, cfg)
       k_s = find_var_index(files%reg, 'mean_agb_py')
       k_c = find_var_index(files%reg, 'mean_agb_co')
+      c_c = slab_col(bufs%pending(3), k_c)
       k_n = find_var_index(files%reg, 'n_cohort_py')
       call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
 
@@ -450,7 +455,7 @@ contains
       call check_close(bufs%pending(3)%sval(k_s), 11.0_wp, 1.0e-12_wp,                             &
                        'January''s site mean includes its last step: (10 + 12) / 2')
       call check(bufs%pending(3)%nslab(k_c) == 1_ik, 'January''s cohort slab: its one slot set')
-      call check_close(bufs%pending(3)%slab(1,k_c), 11.0_wp, 1.0e-12_wp,                           &
+      call check_close(bufs%pending(3)%slab(1,c_c), 11.0_wp, 1.0e-12_wp,                           &
                        'January''s cohort slab includes its last step too')
       call check(.not. bufs%has_data(3), 'nothing of the boundary step is left for February')
 
@@ -462,7 +467,7 @@ contains
       call close_tier(files, bufs, 3_ik)
       call check_close(bufs%pending(3)%sval(k_s), 25.0_wp, 1.0e-12_wp, 'February''s site mean: its own step')
       call check(bufs%pending(3)%nslab(k_c) == 2_ik, 'February''s cohort slab: the new slot set')
-      call check_close(bufs%pending(3)%slab(2,k_c), 5.0_wp, 1.0e-12_wp, 'February''s recruit')
+      call check_close(bufs%pending(3)%slab(2,c_c), 5.0_wp, 1.0e-12_wp, 'February''s recruit')
       call check_close(bufs%pending(3)%sval(k_n), 2.0_wp, 1.0e-12_wp, 'February''s cohort count')
       call free_polygon(poly)
    end subroutine test_boundary_step

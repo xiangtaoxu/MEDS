@@ -17,7 +17,7 @@ module meds_output_setup
    use meds_output_params,  only : N_FREQ, TIER_FAST, N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT, FREQ_NONE
    use meds_output_types,   only : output_files_t, output_buffers_t, MAX_DBH_CLASS, DIM_COHORT, DIM_PATCH,        &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, MISSING_VALUE,          &
-                                   MISSING_INT
+                                   MISSING_INT, DIM_SCALAR
    use meds_constants,         only : n_soil_layer_max
    use meds_output_registry,  only : build_output_registry, freq_bit, apply_variable_override, parse_stream_mask, &
                                      build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
@@ -283,9 +283,22 @@ contains
             end if
          end do
       end do
+      !----- Each tier's scratch record: every variable's scalar, and a slab column for each of the  !
+      !      tier's live slab variables only, so a variable nobody writes costs nothing here. --------!
       do t = 1_ik, N_FREQ
+         bit = freq_bit(t)
          allocate(bufs%pending(t)%sval(nv), bufs%pending(t)%svalid(nv), bufs%pending(t)%nslab(nv))
-         allocate(bufs%pending(t)%slab(files%max_slab, nv), bufs%pending(t)%slabvalid(files%max_slab, nv))
+         allocate(bufs%pending(t)%col(nv), source=0_ik)
+         cap = 0_ik
+         do k = 1_ik, nv
+            if (files%reg%var(k)%enabled .and. iand(files%reg%var(k)%streams, bit) /= 0_ik .and.     &
+                files%reg%var(k)%dim /= DIM_SCALAR) then
+               cap = cap + 1_ik
+               bufs%pending(t)%col(k) = cap
+            end if
+         end do
+         allocate(bufs%pending(t)%slab(files%max_slab, max(cap, 1_ik)),                              &
+                  bufs%pending(t)%slabvalid(files%max_slab, max(cap, 1_ik)))
          bufs%pending(t)%used = .false.
       end do
       bufs%fast_on = files%enabled .and. files%reg%nidx(TIER_FAST) > 0_ik

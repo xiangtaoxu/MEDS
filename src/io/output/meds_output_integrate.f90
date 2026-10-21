@@ -15,7 +15,7 @@ module meds_output_integrate
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,                  &
                                    pending_record_t, record_queue_t, AGG_MEAN, AGG_RATE, AGG_LAST, AGG_TMEAN,     &
                                    DIM_SCALAR, DIM_COHORT, DIM_PATCH,                                             &
-                                   DIM_SOIL, DIM_SOIL_PATCH, MISSING_VALUE
+                                   DIM_SOIL, DIM_SOIL_PATCH, MISSING_VALUE, slab_col
    use meds_polygon_state_vars, only : polygon_t
    use meds_constants,     only : n_soil_layer_max
    use meds_output_extract, only : SRC_F_CO0, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_COH_LEAF_TEMP, SRC_F_PA0,    &
@@ -254,7 +254,7 @@ contains
       type(output_files_t),   intent(in)    :: files
       type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: t
-      integer(ik) :: j, k, ns, nsl
+      integer(ik) :: j, k, c, ns, nsl
       integer(ik) :: slab_k(files%reg%nidx(t))
       logical     :: soil_patch(files%reg%nidx(t))
       bufs%pending(t)%used   = .true.
@@ -270,8 +270,9 @@ contains
          if (files%reg%var(k)%dim == DIM_SCALAR) then
             call normalize_scalar(bufs%buf(k,t), bufs%pending(t)%sval(k), bufs%pending(t)%svalid(k))
          else
-            call normalize_slab(bufs%buf(k,t), bufs%pending(t)%slab(:,k),                          &
-                                bufs%pending(t)%slabvalid(:,k), ns)
+            c = slab_col(bufs%pending(t), k)
+            call normalize_slab(bufs%buf(k,t), bufs%pending(t)%slab(:,c),                          &
+                                bufs%pending(t)%slabvalid(:,c), ns)
             bufs%pending(t)%nslab(k) = ns
             !----- The record's axis lengths. A soil-by-patch slab is patch-major, strided by the  !
             !      layer ceiling, so it holds ns / n_soil_layer_max patches. ---------------------!
@@ -344,8 +345,8 @@ contains
          r%col = 0_ik
          do c = 1_ik, ncol
             r%col(slab_k(c)) = c
-            r%slab(1:rows, c) = src%slab(1:rows, slab_k(c))
-            r%slabvalid(1:rows, c) = src%slabvalid(1:rows, slab_k(c))
+            r%slab(1:rows, c) = src%slab(1:rows, slab_col(src, slab_k(c)))
+            r%slabvalid(1:rows, c) = src%slabvalid(1:rows, slab_col(src, slab_k(c)))
          end do
       end associate
    end subroutine enqueue_record
