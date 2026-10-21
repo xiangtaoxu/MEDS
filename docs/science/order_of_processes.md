@@ -202,7 +202,7 @@ Three consequences:
   January daily state ([diagnostics](diagnostics.md) §4).
 - **A checkpoint on a boundary holds the stand before the restructuring.** Its global attribute
   `restructure_pending` (`none`, `month` or `year`) records what is owed, and a run resumed from it
-  performs that first, as the continuous run does. A state file without the attribute owes nothing.
+  performs that first, as the continuous run does.
 
 ---
 
@@ -276,18 +276,12 @@ Each group of variables is stored because the rest of the state cannot rebuild i
 - **The soil-carbon pools** ([soil carbon](soil_carbon.md) §2). A restart keeps them as read and
   skips the steady-state spin-up.
 
-**A file without a group still restarts**, on that group's start value: each cohort's tissues in its
-patch's state, the predawn potential seeded from the soil, the phenology at birth, a dry canopy, the
-ring buffer filled with `growth_avg`, an unseeded growth temperature that adopts the first day's mean
-rather than relaxing from an arbitrary value over a month, the fast reservoirs' generic seed, a
-cold-started controller and zero soil carbon. A file without the pools places each cohort on the
-allometry from its dbh, and one without the overtopping LAI computes it from the stand as read. A
-file without the pond's enthalpy rebuilds it from the pond's mass at the top soil layer's
-temperature, the layer the pond exchanges with: such a file records a pond whose enthalpy is
-unknown, not empty, and zero energy would restart it about 1 MJ short per kg of ponded water, which
-the energy budget would report as a leak. A dry pond rebuilds to zero either way. Shed water without
-its enthalpy is valued at the canopy air's temperature, the nearest the file has to the tissues it
-left. Films without a `units` attribute are per m² of ground.
+**A file holds every group, and names its layout.** The global attribute `restart_format` says
+which layout a file has, and the reader takes only its own: a file without one of the groups above
+would restart on a start value, not on the state its run was in, so a file of another layout, as
+every file an older MEDS wrote is, is refused with the reason. One adaptation remains: a run whose
+growth window (`[demography].growth_memory_days`, [allocation](plant_carbon_allocation.md)) is
+another length than its file's fills the ring buffer with the saved `growth_avg`.
 
 ---
 

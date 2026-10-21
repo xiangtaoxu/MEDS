@@ -3,17 +3,17 @@
 ! meds_init_restart -- the state (restart) file: every polygon's prognostic state at an    !
 ! instant, in a netCDF-4 checkpoint a resumed run continues from exactly                   !
 ! (docs/science/order_of_processes.md §6, The restart file). restart_file_open, _write and !
-! _close write a file a polygon's row at a time; read_restart_file reads a row, or the     !
-! whole of a file without the polygon axis (one site's); restart_file_slots checks a file  !
-! before a run starts from it. Each level's variables are defined, written and read in one !
-! place, in its state module's section order. Diagnostic output is meds_output_*.          !
+! _close write a file a polygon's row at a time; read_restart_file reads a row, and        !
+! restart_file_slots checks a file before a run starts from it. A file holds every         !
+! variable, and the reader refuses one of another RESTART_FORMAT. Each level's variables   !
+! are defined, written and read in one place, in its state module's section order.         !
+! Diagnostic output is meds_output_*.                                                      !
 !==========================================================================================!
 module meds_init_restart
    use iso_c_binding,       only : c_int, c_size_t
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : n_soil_layer_max, n_snow_layer_max
    use meds_state_defaults, only : is_unset_positive
-   use meds_therm_lib,      only : internal_energy_liquid
    use meds_config,         only : meds_config_t, growth_window_steps
    use meds_time,           only : meds_time_t, time_to_stamp, time_to_decimal_year
    use meds_soil_params,    only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
@@ -25,10 +25,7 @@ module meds_init_restart
                                    define_site_statics, write_site_statics, RESTART_DEFLATE
    use meds_polygon_state_vars,         only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_site_state_vars,            only : make_site_surface
-   use meds_patch_state_vars,           only : patch_physical_state
-   use meds_cohort_state_vars,          only : set_cohort_size, set_cohort_size_from_carbon, set_cohort_tissue_water, &
-                                               set_cohort_tissue_temps, hold_cohort_tissue_temps
-   use meds_demography_update,          only : update_overtopping_lai
+   use meds_cohort_state_vars,          only : set_cohort_size_from_carbon
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    implicit none
    private
@@ -37,6 +34,8 @@ module meds_init_restart
    public :: read_restart_file, restart_file_slots
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
+   !----- The layout written and read, a global attribute of every file; a change to it counts up. -!
+   character(len=*), parameter :: RESTART_FORMAT = '1'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
    character(len=*), parameter :: FILM_UNITS  = 'kg/plant'   !< the canopy films' units attribute
 
@@ -53,27 +52,11 @@ module meds_init_restart
       integer(c_int) :: growth_window
    end type file_dims_t
 
-   !----- One polygon's row of an open file: row `row` (1-based) of a file with the polygon axis, or !
-   !      the whole of a file without it (one site's). -----------------------------------------------!
+   !----- One polygon's row (1-based) of an open file. ---------------------------------------------!
    type :: file_row_t
-      integer(c_int) :: ncid     = -1_c_int
-      integer(ik)    :: row      = 1_ik
-      logical        :: has_axis = .true.
+      integer(c_int) :: ncid = -1_c_int
+      integer(ik)    :: row  = 1_ik
    end type file_row_t
-
-   !----- What a file held of the state that older files lack; section 4 derives the rest. ----------!
-   type :: file_held_t
-      logical :: pools           = .false.   !< the carbon pools (else each cohort is placed from its dbh)
-      logical :: overtopping_lai = .false.
-      logical :: growth_rings    = .false.   !< the growth rings, of this run's window length
-      logical :: films_per_plant = .true.    !< the canopy films in kg/plant (else per m2 of ground)
-      logical :: tissue_water    = .true.
-      logical :: tissue_temps    = .true.
-      logical :: tissue_energy   = .true.
-      logical :: fast            = .false.   !< the fast reservoirs (else the caller re-seeds them)
-      logical :: pond_energy     = .false.
-      logical :: shed_energy     = .false.
-   end type file_held_t
 
 contains
 
@@ -123,6 +106,7 @@ contains
       call define_cohort_vars(d)
       call define_patch_vars(d)
       call put_global_text(ncid, 'title', STATE_TITLE)
+      call put_global_text(ncid, 'restart_format', RESTART_FORMAT)
       pending = 'none'
       if (present(restructure_pending)) then
          if (restructure_pending) pending = 'month'
@@ -144,7 +128,7 @@ contains
       type(meds_time_t),    intent(in) :: now
       integer(ik),          intent(in) :: polygon
       type(file_row_t) :: r
-      r = file_row_t(ncid=sf%ncid, row=polygon, has_axis=.true.)
+      r = file_row_t(ncid=sf%ncid, row=polygon)
       call put_polygon_vars(r, poly, now)
       if (poly%cohort%n > 0_ik) call put_cohort_vars(r, poly)
       if (poly%patch%n > 0_ik)  call put_patch_vars(r, poly)
@@ -158,63 +142,52 @@ contains
    end subroutine restart_file_close
 
    !---------------------------------------------------------------------------------------!
-   ! Reconstruct a polygon from a state file written by restart_file_write: row `polygon`  !
-   ! (1-based) of a file with the polygon axis, or the whole of a file without it. Each    !
-   ! site's surface is made from `site_cfg` (else `cfg`) and the geometry from the carbon  !
-   ! pools; the maps and sort order are rebuilt, and the restructuring owed is the file's  !
-   ! restructure_pending (docs/science/order_of_processes.md §5). found = .false. and     !
-   ! `why` say the file cannot be opened, has another layout, or a PFT, site or soil-layer !
+   ! Reconstruct a polygon from row `polygon` (1-based) of a state file written by        !
+   ! restart_file_write. Each site's surface is made from `site_cfg` (else `cfg`) and the  !
+   ! geometry from the carbon pools; the maps and sort order are rebuilt, and the          !
+   ! restructuring owed is the file's restructure_pending                                  !
+   ! (docs/science/order_of_processes.md §5). found = .false. and `why` say the file       !
+   ! cannot be opened, is of another RESTART_FORMAT, or has a PFT, site or soil-layer      !
    ! count unlike the run's.                                                               !
    !---------------------------------------------------------------------------------------!
-   subroutine read_restart_file(poly, cfg, path, restart_time, found, fast_found, polygon, site_cfg, why)
+   subroutine read_restart_file(poly, cfg, path, restart_time, found, polygon, site_cfg, why)
       type(polygon_t),     intent(out) :: poly
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
       type(meds_time_t),   intent(out) :: restart_time
       logical,             intent(out) :: found
-      !----- .true. when the file's fast reservoirs were read; otherwise the caller re-seeds them   !
-      !      (init_fast_reservoirs). -----------------------------------------------------------------!
-      logical, optional,   intent(out) :: fast_found
-      integer(ik), optional, intent(in) :: polygon    !< its row (1-based); absent for a file without the axis
+      integer(ik),         intent(in)  :: polygon    !< its row (1-based)
       type(meds_config_t), optional, intent(in) :: site_cfg(:)   !< each site's configuration
       character(len=:), allocatable, optional, intent(out) :: why  !< why found = .false.; '' when found
       character(len=:), allocatable :: msg
-      type(file_row_t)  :: r
-      type(file_held_t) :: held
-      integer(c_int)    :: ncid, st
+      type(file_row_t) :: r
+      integer(c_int)   :: ncid, st
+      logical          :: same_window
 
       found = .false.
       restart_time = meds_time_t()
-      if (present(fast_found)) fast_found = .false.
       if (present(why)) why = 'cannot be opened'
       if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) return
-      r = file_row_t(ncid=ncid, has_axis=present(polygon))
-      if (present(polygon)) r%row = polygon
-      !----- The polygon axis, where a file has it, leads every variable: reading the other kind   !
-      !      of file would take the wrong elements. --------------------------------------------------!
-      if (has_polygon_axis(ncid) .neqv. r%has_axis) then
-         st = nc_close(ncid)
-         if (present(why)) why = 'has a polygon axis where the run reads a file without one, or none where it needs one'
-         return
-      end if
-      call get_polygon_vars(r, poly, cfg, restart_time, msg, site_cfg)
+      r = file_row_t(ncid=ncid, row=polygon)
+      msg = format_refusal(ncid)
+      if (len(msg) == 0) call get_polygon_vars(r, poly, cfg, restart_time, msg, site_cfg)
       if (len(msg) > 0) then
          st = nc_close(ncid)
          if (present(why)) why = msg
          return
       end if
-      if (poly%cohort%n > 0_ik) call get_cohort_vars(r, poly, cfg, held)
-      if (poly%patch%n > 0_ik)  call get_patch_vars(r, poly, held)
+      same_window = .true.
+      if (poly%cohort%n > 0_ik) call get_cohort_vars(r, poly, cfg, same_window)
+      if (poly%patch%n > 0_ik)  call get_patch_vars(r, poly)
       call nc_check(nc_close(ncid), 'state nc_close (read)')
-      call derive_after_read(poly, cfg, held)
-      if (present(fast_found)) fast_found = held%fast
+      call derive_after_read(poly, cfg, same_window)
       if (present(why)) why = ''
       found = .true.
    end subroutine read_restart_file
 
-   !----- Each polygon's row of the restart file at `path`, by its id: 0 for every polygon of a file  !
-   !      without the polygon axis (one site's). why = '' when the file can start a run of these     !
-   !      polygons, else the reason it cannot (restart_file_refusal, or a polygon it does not hold). -!
+   !----- Each polygon's row of the restart file at `path`, by its id. why = '' when the file can   !
+   !      start a run of these polygons, else the reason it cannot: it cannot be opened, is of     !
+   !      another RESTART_FORMAT, or does not hold one of them. -----------------------------------!
    subroutine restart_file_slots(path, ids, slot, why)
       character(len=*),              intent(in)  :: path
       integer(ik),                   intent(in)  :: ids(:)
@@ -222,13 +195,17 @@ contains
       character(len=:), allocatable, intent(out) :: why
       integer(ik), allocatable :: file_ids(:)
       integer(ik)       :: p
-      logical           :: found
+      integer(c_int)    :: ncid, st
       character(len=24) :: id_str
       allocate(slot(size(ids)), source=0_ik)
-      why = restart_file_refusal(path, size(ids, kind=ik))
+      if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) then
+         why = 'cannot be opened'
+         return
+      end if
+      why = format_refusal(ncid)
+      if (len(why) == 0) call file_polygon_ids(ncid, file_ids)
+      st = nc_close(ncid)
       if (len(why) > 0) return
-      call restart_file_polygons(path, file_ids, found)
-      if (.not. found) return
       do p = 1_ik, size(ids, kind=ik)
          slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
          if (slot(p) == 0_ik) then
@@ -239,56 +216,32 @@ contains
       end do
    end subroutine restart_file_slots
 
-   !----- A state file's polygon ids, in its rows' order; found = .false. for a file without the  !
-   !      polygon axis (one site's) or one that cannot be opened. -------------------------------!
-   subroutine restart_file_polygons(path, polygon_id, found)
-      character(len=*),         intent(in)  :: path
+   !----- An open state file's polygon ids, in its rows' order. ----------------------------------!
+   subroutine file_polygon_ids(ncid, polygon_id)
+      integer(c_int),           intent(in)  :: ncid
       integer(ik), allocatable, intent(out) :: polygon_id(:)
-      logical,                  intent(out) :: found
-      integer(c_int)    :: ncid, vid, st
       integer(c_size_t) :: n, start1(1), count1(1)
-      found = .false.
-      if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) return
-      st = nc_inq_varid_f(ncid, 'polygon_id', vid)
-      if (st == NC_NOERR) st = nc_inq_dimlen_f(ncid, 'polygon', n)
-      if (st == NC_NOERR) then
-         allocate(polygon_id(n))
-         start1 = 0_c_size_t
-         count1 = n
-         st = nc_get_vara_int(ncid, vid, start1, count1, polygon_id)
-      end if
-      found = st == NC_NOERR
-      st = nc_close(ncid)
-   end subroutine restart_file_polygons
+      call nc_check(nc_inq_dimlen_f(ncid, 'polygon', n), 'state inq polygon')
+      allocate(polygon_id(n))
+      start1 = 0_c_size_t
+      count1 = n
+      call nc_check(nc_get_vara_int(ncid, var_id(ncid, 'polygon_id'), start1, count1, polygon_id),         &
+                    'get polygon_id')
+   end subroutine file_polygon_ids
 
-   !---------------------------------------------------------------------------------------!
-   ! Why the state file at `path` cannot start a run of `n_polygon` polygons, or '' when   !
-   ! it can: it cannot be opened, or it holds one site without a `polygon` axis and the    !
-   ! run has more than one polygon.                                                        !
-   !---------------------------------------------------------------------------------------!
-   function restart_file_refusal(path, n_polygon) result(why)
-      character(len=*), intent(in)  :: path
-      integer(ik),      intent(in)  :: n_polygon
-      character(len=:), allocatable :: why
-      integer(c_int) :: ncid, st
-      logical        :: has_axis
-      why = ''
-      if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) then
-         why = 'cannot be opened'
-         return
-      end if
-      has_axis = has_polygon_axis(ncid)
-      st = nc_close(ncid)
-      if (n_polygon > 1_ik .and. .not. has_axis)                                                     &
-         why = 'holds one site without a polygon axis; a run of several polygons needs a row for each'
-   end function restart_file_refusal
-
-   !----- Does the open state file have a `polygon` axis ahead of every other? -------------------!
-   logical function has_polygon_axis(ncid)
+   !----- Why an open file is not a state file this MEDS reads, or '' when it is: its global       !
+   !      attribute restart_format names its layout, and an older MEDS's files have none. ---------!
+   function format_refusal(ncid) result(why)
       integer(c_int), intent(in) :: ncid
-      integer(c_size_t) :: n
-      has_polygon_axis = nc_inq_dimlen_f(ncid, 'polygon', n) == NC_NOERR
-   end function has_polygon_axis
+      character(len=:), allocatable :: why
+      character(len=32) :: layout
+      why = ''
+      if (nc_get_att_text_f(ncid, NC_GLOBAL, 'restart_format', layout) /= NC_NOERR) then
+         why = 'was written by an older MEDS, before restart_format '//RESTART_FORMAT
+      else if (trim(layout) /= RESTART_FORMAT) then
+         why = 'is restart_format '//trim(layout)//', and this MEDS reads restart_format '//RESTART_FORMAT
+      end if
+   end function format_refusal
 
    !----- A per-polygon variable: one value per row, uncompressed, with its long_name. ------------!
    subroutine def_polygon_var(d, name, xtype, lname)
@@ -390,41 +343,23 @@ contains
       call nc_check(nc_get_vara_int(r%ncid, var_id(r%ncid, name), st(1:nd), ct(1:nd), x), 'get '//name)
    end subroutine get_int
 
-   !----- get_dbl where the file holds the variable; `x` keeps what it had where it does not. -----!
-   subroutine get_dbl_if_held(r, name, x)
-      type(file_row_t), intent(in)    :: r
-      character(len=*), intent(in)    :: name
-      real(wp),         intent(inout) :: x(:)
-      if (file_has(r, name)) call get_dbl(r, name, x)
-   end subroutine get_dbl_if_held
-
-   logical function file_has(r, name)
-      type(file_row_t), intent(in) :: r
-      character(len=*), intent(in) :: name
-      integer(c_int) :: v
-      file_has = nc_inq_varid_f(r%ncid, name, v) == NC_NOERR
-   end function file_has
-
    integer(c_int) function var_id(ncid, name)
       integer(c_int),   intent(in) :: ncid
       character(len=*), intent(in) :: name
       call nc_check(nc_inq_varid_f(ncid, name, var_id), 'state inq '//name)
    end function var_id
 
-   !----- Where a polygon's n values sit: its row, when the file has the polygon axis; then entry  !
-   !      `item` (1-based) of the cohort or patch axis, when given; then the first n entries. -----!
+   !----- Where a polygon's n values sit: its row; then entry `item` (1-based) of the cohort or    !
+   !      patch axis, when given; then the first n entries. ---------------------------------------!
    pure subroutine where_in_file(r, n, item, st, ct, nd)
       type(file_row_t),      intent(in)  :: r
       integer(ik),           intent(in)  :: n
       integer(ik), optional, intent(in)  :: item
       integer(c_size_t),     intent(out) :: st(3), ct(3)
       integer,               intent(out) :: nd
-      nd = 0
-      if (r%has_axis) then
-         nd = 1
-         st(1) = int(r%row - 1_ik, c_size_t)
-         ct(1) = 1_c_size_t
-      end if
+      nd = 1
+      st(1) = int(r%row - 1_ik, c_size_t)
+      ct(1) = 1_c_size_t
       if (present(item)) then
          nd = nd + 1
          st(nd) = int(item - 1_ik, c_size_t)
@@ -500,8 +435,8 @@ contains
    end subroutine put_polygon_vars
 
    !----- The polygon, allocated to the file's counts, and its sites, each surface made from     !
-   !      site_cfg (else cfg). A file without the site axis holds one site. why = '' unless the  !
-   !      file's PFT, site or soil-layer count is unlike the run's. ------------------------------!
+   !      site_cfg (else cfg). why = '' unless the file's PFT, site or soil-layer count is unlike !
+   !      the run's. -----------------------------------------------------------------------------!
    subroutine get_polygon_vars(r, poly, cfg, restart_time, why, site_cfg)
       type(file_row_t),              intent(in)  :: r
       type(polygon_t),               intent(out) :: poly
@@ -512,19 +447,16 @@ contains
       character(len=16)  :: pending
       character(len=160) :: msg
       integer(ik) :: meta_i(N_META_INT), ns, is
-      real(wp)    :: meta_r(N_META_REAL)
 
       why = ''
       !----- 2. Dimensions and id counters, and the file's time. -----------------------------!
       call get_int(r, 'meta_int',  meta_i)
-      call get_dbl(r, 'meta_real', meta_r)
       if (meta_i(3) /= cfg%pft%n) then
          write(msg, '(a,i0,a,i0)') 'holds ', meta_i(3), ' PFTs and the configuration ', cfg%pft%n
          why = trim(msg)
          return
       end if
-      ns = 1_ik
-      if (file_has(r, 'n_site')) ns = get_polygon_int(r, 'n_site')
+      ns = get_polygon_int(r, 'n_site')
       if (present(site_cfg)) then
          if (size(site_cfg, kind=ik) /= ns) then
             write(msg, '(a,i0,a,i0,a)') 'holds ', ns, ' sites and the configuration ', size(site_cfg),        &
@@ -542,12 +474,11 @@ contains
       restart_time = meds_time_t(year=meta_i(6), month=meta_i(7), day=meta_i(8),               &
                                  hour=meta_i(9), minute=meta_i(10), second=meta_i(11))
       !----- 3. Calendar: the restructuring owed (the ring's slot comes with the rings, section 2). !
-      pending = 'none'
-      if (nc_get_att_text_f(r%ncid, NC_GLOBAL, 'restructure_pending', pending) /= NC_NOERR) pending = 'none'
+      call nc_check(nc_get_att_text_f(r%ncid, NC_GLOBAL, 'restructure_pending', pending), 'state restructure_pending')
       poly%restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
       poly%restructure_new_year = trim(pending) == 'year'
       !----- The sites: 3. each surface; 1. each area, and each site's soil state is per layer of   !
-      !      the column it was written on; a file without them has one site, every patch in it. ---!
+      !      the column it was written on. ----------------------------------------------------------!
       do is = 1_ik, ns
          if (present(site_cfg)) then
             call make_site_surface(poly%site%surface(is), site_cfg(is))
@@ -555,25 +486,21 @@ contains
             call make_site_surface(poly%site%surface(is), cfg)
          end if
       end do
-      if (file_has(r, 'site_area')) then
-         call get_dbl(r, 'site_area', poly%site%area(1:ns))
-         block
-            integer(ik) :: nsoil(ns)
-            call get_int(r, 'site_n_soil', nsoil)
-            do is = 1_ik, ns
-               if (nsoil(is) /= poly%site%surface(is)%soil%n_active) then
-                  write(msg, '(a,i0,a,i0,a,i0)') 'has ', nsoil(is), ' soil layers at site ', is,             &
-                        ' and the configuration ', poly%site%surface(is)%soil%n_active
-                  why = trim(msg)
-                  return
-               end if
-            end do
-         end block
-      else
-         poly%site%area(1) = meta_r(1)
-      end if
-      !----- 4. Growth temperature: a file without it keeps alloc_polygon's unseeded sentinel. --!
-      call get_dbl_if_held(r, 't_growth_avg', poly%site%t_growth_avg(1:ns))
+      call get_dbl(r, 'site_area', poly%site%area(1:ns))
+      block
+         integer(ik) :: nsoil(ns)
+         call get_int(r, 'site_n_soil', nsoil)
+         do is = 1_ik, ns
+            if (nsoil(is) /= poly%site%surface(is)%soil%n_active) then
+               write(msg, '(a,i0,a,i0,a,i0)') 'has ', nsoil(is), ' soil layers at site ', is,                &
+                     ' and the configuration ', poly%site%surface(is)%soil%n_active
+               why = trim(msg)
+               return
+            end if
+         end do
+      end block
+      !----- 4. Growth temperature. ----------------------------------------------------------!
+      call get_dbl(r, 't_growth_avg', poly%site%t_growth_avg(1:ns))
    end subroutine get_polygon_vars
 
    !=======================================================================================!
@@ -700,15 +627,13 @@ contains
       end associate
    end subroutine put_cohort_vars
 
-   !----- The cohorts as the file holds them; what an older file lacks keeps alloc_polygon's    !
-   !      value, or is set in section 4 as `held` records. --------------------------------------!
-   subroutine get_cohort_vars(r, poly, cfg, held)
+   !----- The cohorts as the file holds them. same_window says the file's growth window is this     !
+   !      run's length, so its rings are read; otherwise section 4 seeds them from growth_avg. -----!
+   subroutine get_cohort_vars(r, poly, cfg, same_window)
       type(file_row_t),    intent(in)    :: r
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      type(file_held_t),   intent(inout) :: held
-      character(len=16) :: units
-      integer(c_int)    :: vid
+      logical,             intent(out)   :: same_window
       integer(c_size_t) :: nwin_file
       integer(ik)       :: ncoh, nwin, i, gpos(1)
       ncoh = poly%cohort%n
@@ -718,75 +643,45 @@ contains
          call get_int(r, 'global_cohort_id', c%global_id(1:ncoh))
          call get_int(r, 'owner_patch',      c%owner_patch(1:ncoh))
          call get_dbl(r, 'nplant',           c%nplant(1:ncoh))
-         !----- 2. Carbon pools: a file without them places each cohort from its dbh. ----------!
-         held%pools = file_has(r, 'leaf_carbon')
-         if (held%pools) then
-            call get_dbl(r, 'leaf_carbon',          c%leaf_carbon(1:ncoh))
-            call get_dbl(r, 'fineroot_carbon',      c%fineroot_carbon(1:ncoh))
-            call get_dbl(r, 'wood_carbon',          c%wood_carbon(1:ncoh))
-            call get_dbl(r, 'nonstructural_carbon', c%nonstructural_carbon(1:ncoh))
-         end if
-         !----- 3. Size: derived from the pools in section 4, so only dbh (a file without pools  !
-         !      places the cohort from it) and the overtopping LAI are read. ---------------------!
-         call get_dbl(r, 'dbh', c%dbh(1:ncoh))
-         held%overtopping_lai = file_has(r, 'overtopping_lai')
-         if (held%overtopping_lai) call get_dbl(r, 'overtopping_lai', c%overtopping_lai(1:ncoh))
-         !----- 4. Water. A file whose films carry no units holds them per m2 of ground; a file  !
-         !      without the predawn potential keeps alloc_polygon's unset value (seeded from the !
-         !      soil). ---------------------------------------------------------------------------!
-         held%tissue_water = file_has(r, 'leaf_water_mass')
-         call get_dbl_if_held(r, 'leaf_water_mass', c%leaf_water_mass(1:ncoh))
-         call get_dbl_if_held(r, 'wood_water_mass', c%wood_water_mass(1:ncoh))
-         call get_dbl_if_held(r, 'leaf_surf_water', c%leaf_surf_water(1:ncoh))
-         call get_dbl_if_held(r, 'wood_surf_water', c%wood_surf_water(1:ncoh))
-         if (nc_inq_varid_f(r%ncid, 'leaf_surf_water', vid) == NC_NOERR) then
-            if (nc_get_att_text_f(r%ncid, vid, 'units', units) /= NC_NOERR) units = ''
-            held%films_per_plant = trim(units) == FILM_UNITS
-         end if
-         call get_dbl_if_held(r, 'dmax_psi_leaf', c%dmax_psi_leaf(1:ncoh))
+         !----- 2. Carbon pools. --------------------------------------------------------------!
+         call get_dbl(r, 'leaf_carbon',          c%leaf_carbon(1:ncoh))
+         call get_dbl(r, 'fineroot_carbon',      c%fineroot_carbon(1:ncoh))
+         call get_dbl(r, 'wood_carbon',          c%wood_carbon(1:ncoh))
+         call get_dbl(r, 'nonstructural_carbon', c%nonstructural_carbon(1:ncoh))
+         !----- 3. Size: derived from the pools in section 4; the overtopping LAI is the cohort's  !
+         !      light. ---------------------------------------------------------------------------!
+         call get_dbl(r, 'overtopping_lai', c%overtopping_lai(1:ncoh))
+         !----- 4. Water. ---------------------------------------------------------------------!
+         call get_dbl(r, 'leaf_water_mass', c%leaf_water_mass(1:ncoh))
+         call get_dbl(r, 'wood_water_mass', c%wood_water_mass(1:ncoh))
+         call get_dbl(r, 'leaf_surf_water', c%leaf_surf_water(1:ncoh))
+         call get_dbl(r, 'wood_surf_water', c%wood_surf_water(1:ncoh))
+         call get_dbl(r, 'dmax_psi_leaf',   c%dmax_psi_leaf(1:ncoh))
          !----- 5. Energy. --------------------------------------------------------------------!
-         held%tissue_temps  = file_has(r, 'leaf_temp')
-         held%tissue_energy = file_has(r, 'leaf_energy')
-         call get_dbl_if_held(r, 'leaf_energy', c%leaf_energy(1:ncoh))
-         call get_dbl_if_held(r, 'wood_energy', c%wood_energy(1:ncoh))
-         call get_dbl_if_held(r, 'leaf_temp',   c%leaf_temp(1:ncoh))
-         call get_dbl_if_held(r, 'wood_temp',   c%wood_temp(1:ncoh))
-         !----- 6. Plastic leaf traits: the PFT's top-of-canopy values, then the file's where it  !
-         !      has them; a file that holds a leaf lifespan [yr], `llspan`, gives the rate as its  !
-         !      reciprocal. ----------------------------------------------------------------------!
-         do i = 1_ik, ncoh
-            c%sla(i)     = cfg%pft%sla(c%pft(i))
-            c%vcmax25(i) = cfg%pft%vcmax25(c%pft(i))
-            c%rd25(i)    = cfg%pft%rd25(c%pft(i))
-            c%leaf_turnover_rate(i) = cfg%pft%leaf_turnover_rate_toc(c%pft(i))
-         end do
-         call get_dbl_if_held(r, 'sla',                c%sla(1:ncoh))
-         call get_dbl_if_held(r, 'vcmax25',            c%vcmax25(1:ncoh))
-         call get_dbl_if_held(r, 'rd25',               c%rd25(1:ncoh))
-         call get_dbl_if_held(r, 'leaf_turnover_rate', c%leaf_turnover_rate(1:ncoh))
-         if (file_has(r, 'llspan')) then
-            call get_dbl(r, 'llspan', c%leaf_turnover_rate(1:ncoh))
-            c%leaf_turnover_rate(1:ncoh) = 1.0_wp / c%leaf_turnover_rate(1:ncoh)
-         end if
-         !----- 7. Leaf phenology: a file without it keeps the birth values alloc_polygon set. ---!
-         call get_dbl_if_held(r, 'leaf_flush_tendency', c%leaf_flush_tendency(1:ncoh))
-         call get_dbl_if_held(r, 'leaf_shed_tendency',  c%leaf_shed_tendency(1:ncoh))
-         call get_dbl_if_held(r, 'growing_degree_days', c%growing_degree_days(1:ncoh))
-         call get_dbl_if_held(r, 'cold_degree_days',    c%cold_degree_days(1:ncoh))
-         call get_dbl_if_held(r, 'dry_psi_sum',         c%dry_psi_sum(1:ncoh))
-         call get_dbl_if_held(r, 'wet_psi_sum',         c%wet_psi_sum(1:ncoh))
-         call get_dbl_if_held(r, 'light_hours_mean',    c%light_hours_mean(1:ncoh))
-         !----- 8. Growth history: the ring buffer, with the polygon's write slot, when the file   !
-         !      has one of this run's window length; section 4 otherwise seeds it full of the     !
-         !      saved growth_avg. ----------------------------------------------------------------!
+         call get_dbl(r, 'leaf_energy', c%leaf_energy(1:ncoh))
+         call get_dbl(r, 'wood_energy', c%wood_energy(1:ncoh))
+         call get_dbl(r, 'leaf_temp',   c%leaf_temp(1:ncoh))
+         call get_dbl(r, 'wood_temp',   c%wood_temp(1:ncoh))
+         !----- 6. Plastic leaf traits. -------------------------------------------------------!
+         call get_dbl(r, 'sla',                c%sla(1:ncoh))
+         call get_dbl(r, 'vcmax25',            c%vcmax25(1:ncoh))
+         call get_dbl(r, 'rd25',               c%rd25(1:ncoh))
+         call get_dbl(r, 'leaf_turnover_rate', c%leaf_turnover_rate(1:ncoh))
+         !----- 7. Leaf phenology. ------------------------------------------------------------!
+         call get_dbl(r, 'leaf_flush_tendency', c%leaf_flush_tendency(1:ncoh))
+         call get_dbl(r, 'leaf_shed_tendency',  c%leaf_shed_tendency(1:ncoh))
+         call get_dbl(r, 'growing_degree_days', c%growing_degree_days(1:ncoh))
+         call get_dbl(r, 'cold_degree_days',    c%cold_degree_days(1:ncoh))
+         call get_dbl(r, 'dry_psi_sum',         c%dry_psi_sum(1:ncoh))
+         call get_dbl(r, 'wet_psi_sum',         c%wet_psi_sum(1:ncoh))
+         call get_dbl(r, 'light_hours_mean',    c%light_hours_mean(1:ncoh))
+         !----- 8. Growth history: the ring buffer, with the polygon's write slot, when the file's !
+         !      window is this run's length. ------------------------------------------------------!
          call get_dbl(r, 'growth_avg', c%growth_avg(1:ncoh))
          nwin = growth_window_steps(cfg)
-         held%growth_rings = file_has(r, 'growth_hist')
-         if (held%growth_rings) then
-            call nc_check(nc_inq_dimlen_f(r%ncid, 'growth_window', nwin_file), 'inq growth_window')
-            held%growth_rings = int(nwin_file, ik) == nwin .and. int(size(c%growth_hist, 1), ik) == nwin
-         end if
-         if (held%growth_rings) then
+         call nc_check(nc_inq_dimlen_f(r%ncid, 'growth_window', nwin_file), 'inq growth_window')
+         same_window = int(nwin_file, ik) == nwin .and. int(size(c%growth_hist, 1), ik) == nwin
+         if (same_window) then
             call get_dbl(r, 'growth_accum', c%growth_accum(1:ncoh))
             call get_int(r, 'growth_count', c%growth_count(1:ncoh))
             do i = 1_ik, ncoh
@@ -796,7 +691,7 @@ contains
             poly%growth_hist_pos = gpos(1)
          end if
          !----- 9. Fast-to-slow accumulators. -------------------------------------------------!
-         call get_dbl_if_held(r, 'dmax_psi_leaf_accum', c%dmax_psi_leaf_accum(1:ncoh))
+         call get_dbl(r, 'dmax_psi_leaf_accum', c%dmax_psi_leaf_accum(1:ncoh))
       end associate
    end subroutine get_cohort_vars
 
@@ -929,129 +824,103 @@ contains
       end associate
    end subroutine put_patch_vars
 
-   !----- The patches as the file holds them. The fast reservoirs were written together, so the  !
-   !      first stands for all, and the shed water and the controller's warm start come with     !
-   !      them: a file without them leaves alloc_polygon's values for the caller to re-seed. ----!
-   subroutine get_patch_vars(r, poly, held)
-      type(file_row_t),  intent(in)    :: r
-      type(polygon_t),   intent(inout) :: poly
-      type(file_held_t), intent(inout) :: held
-      real(wp)    :: buf(poly%patch%n), sc(poly%patch%n, 9)
+   !----- The patches as the file holds them, each per-patch number of a store through a contiguous !
+   !      buffer. -----------------------------------------------------------------------------------!
+   subroutine get_patch_vars(r, poly)
+      type(file_row_t), intent(in)    :: r
+      type(polygon_t),  intent(inout) :: poly
+      real(wp)    :: buf(poly%patch%n)
       integer(ik) :: ibuf(poly%patch%n), npat, npft, ip
       npat = poly%patch%n
       npft = poly%n_pft
-      held%fast = file_has(r, 'cas_can_enthalpy')
       associate (p => poly%patch)
-         !----- 1. Identity and area; a file without owner_site has one site, alloc_polygon's   !
-         !      default. -------------------------------------------------------------------------!
+         !----- 1. Identity and area. ---------------------------------------------------------!
          call get_int(r, 'global_patch_id', p%global_id(1:npat))
          call get_int(r, 'dist_type',       p%dist_type(1:npat))
-         if (file_has(r, 'owner_site')) call get_int(r, 'owner_site', p%owner_site(1:npat))
+         call get_int(r, 'owner_site',      p%owner_site(1:npat))
          call get_dbl(r, 'patch_area',      p%area(1:npat))
          call get_dbl(r, 'patch_age',       p%age(1:npat))
          !----- 3. Recruit bank. --------------------------------------------------------------!
          do ip = 1_ik, npat
             call get_dbl(r, 'recruit_pool', p%recruit_pool(1:npft, ip), item=ip)
          end do
-         if (held%fast) then
-            !----- 4. Canopy air. -------------------------------------------------------------!
-            call get_dbl(r, 'cas_can_enthalpy', buf)
-            p%cas(1:npat)%can_enthalpy = buf
-            call get_dbl(r, 'cas_can_shv', buf)
-            p%cas(1:npat)%can_shv = buf
-            call get_dbl(r, 'cas_can_co2', buf)
-            p%cas(1:npat)%can_co2 = buf
-            call get_dbl(r, 'cas_can_temp', buf)
-            p%cas(1:npat)%can_temp = buf
-            !----- 5. Snow. -------------------------------------------------------------------!
-            call get_int(r, 'snow_nlayer', ibuf)
-            p%snow(1:npat)%nlayer = ibuf
-            do ip = 1_ik, npat
-               call get_dbl(r, 'snow_swe',    p%snow(ip)%swe(1:n_snow_layer_max),         item=ip)
-               call get_dbl(r, 'snow_energy', p%snow(ip)%snow_energy(1:n_snow_layer_max), item=ip)
-               call get_dbl(r, 'snow_depth',  p%snow(ip)%snow_depth(1:n_snow_layer_max),  item=ip)
-               call get_dbl(r, 'snow_temp',   p%snow(ip)%snow_temp(1:n_snow_layer_max),   item=ip)
-               call get_dbl(r, 'snow_fliq',   p%snow(ip)%snow_fliq(1:n_snow_layer_max),   item=ip)
-            end do
-            !----- 6. Soil water and heat, and the pond; a file without the pond's energy has it  !
-            !      derived in section 4. ----------------------------------------------------------!
-            do ip = 1_ik, npat
-               call get_dbl(r, 'soil_theta',  p%soil_water(ip)%theta(1:n_soil_layer_max),        item=ip)
-               call get_dbl(r, 'soil_energy', p%soil_energy(ip)%soil_energy(1:n_soil_layer_max), item=ip)
-               call get_dbl(r, 'soil_temp',   p%soil_energy(ip)%soil_temp(1:n_soil_layer_max),   item=ip)
-               call get_dbl(r, 'soil_fliq',   p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max),   item=ip)
-            end do
-            call get_dbl(r, 'soil_w_surface', buf)
-            p%soil_water(1:npat)%w_surface = buf
-            held%pond_energy = file_has(r, 'soil_w_surface_enth')
-            if (held%pond_energy) then
-               call get_dbl(r, 'soil_w_surface_enth', buf)
-               p%soil_water(1:npat)%w_surface_energy = buf
-            end if
-         end if
-         !----- 7. Soil carbon: a file without it restarts the pools at zero. -----------------!
-         sc = 0.0_wp
-         call get_dbl_if_held(r, 'soilc_fast_grnd',   sc(:,1))
-         call get_dbl_if_held(r, 'soilc_fast_soil',   sc(:,2))
-         call get_dbl_if_held(r, 'soilc_struct_grnd', sc(:,3))
-         call get_dbl_if_held(r, 'soilc_struct_soil', sc(:,4))
-         call get_dbl_if_held(r, 'soilc_microbial',   sc(:,5))
-         call get_dbl_if_held(r, 'soilc_slow',        sc(:,6))
-         call get_dbl_if_held(r, 'soilc_passive',     sc(:,7))
-         call get_dbl_if_held(r, 'soilc_lignin_grnd', sc(:,8))
-         call get_dbl_if_held(r, 'soilc_lignin_soil', sc(:,9))
-         p%soil_carbon(1:npat)%fast_grnd_carbon   = sc(:,1)
-         p%soil_carbon(1:npat)%fast_soil_carbon   = sc(:,2)
-         p%soil_carbon(1:npat)%struct_grnd_carbon = sc(:,3)
-         p%soil_carbon(1:npat)%struct_soil_carbon = sc(:,4)
-         p%soil_carbon(1:npat)%microbial_carbon   = sc(:,5)
-         p%soil_carbon(1:npat)%slow_carbon        = sc(:,6)
-         p%soil_carbon(1:npat)%passive_carbon     = sc(:,7)
-         p%soil_carbon(1:npat)%struct_grnd_lignin = sc(:,8)
-         p%soil_carbon(1:npat)%struct_soil_lignin = sc(:,9)
-         !----- 8. Daily slow-to-fast rates: the shed water, with the fast reservoirs (a file     !
-         !      without its enthalpy has it derived in section 4); the slow loop's CO2. ----------!
-         if (held%fast) then
-            call get_dbl_if_held(r, 'shed_water_rate', p%shed_water_rate(1:npat))
-            held%shed_energy = file_has(r, 'shed_water_enth')
-            if (held%shed_energy) call get_dbl(r, 'shed_water_enth', p%shed_water_enth(1:npat))
-         end if
-         call get_dbl_if_held(r, 'slow_co2_rate', p%slow_co2_rate(1:npat))
-         !----- 10. Solver memory: a file without the warm start cold-starts the controller. --!
-         if (held%fast) call get_dbl_if_held(r, 'adapt_dt_last', p%adapt_dt_last(1:npat))
+         !----- 4. Canopy air. ----------------------------------------------------------------!
+         call get_dbl(r, 'cas_can_enthalpy', buf)
+         p%cas(1:npat)%can_enthalpy = buf
+         call get_dbl(r, 'cas_can_shv', buf)
+         p%cas(1:npat)%can_shv = buf
+         call get_dbl(r, 'cas_can_co2', buf)
+         p%cas(1:npat)%can_co2 = buf
+         call get_dbl(r, 'cas_can_temp', buf)
+         p%cas(1:npat)%can_temp = buf
+         !----- 5. Snow. ----------------------------------------------------------------------!
+         call get_int(r, 'snow_nlayer', ibuf)
+         p%snow(1:npat)%nlayer = ibuf
+         do ip = 1_ik, npat
+            call get_dbl(r, 'snow_swe',    p%snow(ip)%swe(1:n_snow_layer_max),         item=ip)
+            call get_dbl(r, 'snow_energy', p%snow(ip)%snow_energy(1:n_snow_layer_max), item=ip)
+            call get_dbl(r, 'snow_depth',  p%snow(ip)%snow_depth(1:n_snow_layer_max),  item=ip)
+            call get_dbl(r, 'snow_temp',   p%snow(ip)%snow_temp(1:n_snow_layer_max),   item=ip)
+            call get_dbl(r, 'snow_fliq',   p%snow(ip)%snow_fliq(1:n_snow_layer_max),   item=ip)
+         end do
+         !----- 6. Soil water and heat, and the pond. -----------------------------------------!
+         do ip = 1_ik, npat
+            call get_dbl(r, 'soil_theta',  p%soil_water(ip)%theta(1:n_soil_layer_max),        item=ip)
+            call get_dbl(r, 'soil_energy', p%soil_energy(ip)%soil_energy(1:n_soil_layer_max), item=ip)
+            call get_dbl(r, 'soil_temp',   p%soil_energy(ip)%soil_temp(1:n_soil_layer_max),   item=ip)
+            call get_dbl(r, 'soil_fliq',   p%soil_energy(ip)%soil_fliq(1:n_soil_layer_max),   item=ip)
+         end do
+         call get_dbl(r, 'soil_w_surface', buf)
+         p%soil_water(1:npat)%w_surface = buf
+         call get_dbl(r, 'soil_w_surface_enth', buf)
+         p%soil_water(1:npat)%w_surface_energy = buf
+         !----- 7. Soil carbon. ---------------------------------------------------------------!
+         call get_dbl(r, 'soilc_fast_grnd', buf)
+         p%soil_carbon(1:npat)%fast_grnd_carbon = buf
+         call get_dbl(r, 'soilc_fast_soil', buf)
+         p%soil_carbon(1:npat)%fast_soil_carbon = buf
+         call get_dbl(r, 'soilc_struct_grnd', buf)
+         p%soil_carbon(1:npat)%struct_grnd_carbon = buf
+         call get_dbl(r, 'soilc_struct_soil', buf)
+         p%soil_carbon(1:npat)%struct_soil_carbon = buf
+         call get_dbl(r, 'soilc_microbial', buf)
+         p%soil_carbon(1:npat)%microbial_carbon = buf
+         call get_dbl(r, 'soilc_slow', buf)
+         p%soil_carbon(1:npat)%slow_carbon = buf
+         call get_dbl(r, 'soilc_passive', buf)
+         p%soil_carbon(1:npat)%passive_carbon = buf
+         call get_dbl(r, 'soilc_lignin_grnd', buf)
+         p%soil_carbon(1:npat)%struct_grnd_lignin = buf
+         call get_dbl(r, 'soilc_lignin_soil', buf)
+         p%soil_carbon(1:npat)%struct_soil_lignin = buf
+         !----- 8. Daily slow-to-fast rates. --------------------------------------------------!
+         call get_dbl(r, 'shed_water_rate', p%shed_water_rate(1:npat))
+         call get_dbl(r, 'shed_water_enth', p%shed_water_enth(1:npat))
+         call get_dbl(r, 'slow_co2_rate',   p%slow_co2_rate(1:npat))
+         !----- 10. Solver memory. ------------------------------------------------------------!
+         call get_dbl(r, 'adapt_dt_last', p%adapt_dt_last(1:npat))
       end associate
    end subroutine get_patch_vars
 
    !=======================================================================================!
-   !  4. AFTER THE READ: the geometry from the pools, what an older file lacked from what  !
-   !     it held, and the maps, sort order and overtopping LAI                             !
+   !  4. AFTER THE READ: the geometry from the pools, the growth rings of another window   !
+   !     length, and the maps and sort order                                               !
    !=======================================================================================!
 
-   subroutine derive_after_read(poly, cfg, held)
+   subroutine derive_after_read(poly, cfg, same_window)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      type(file_held_t),   intent(in)    :: held
-      real(wp)    :: t_birth, psi_birth
-      integer(ik) :: ncoh, npat, nwin, i, ip
+      logical,             intent(in)    :: same_window
+      integer(ik) :: ncoh, nwin, i
       ncoh = poly%cohort%n
-      npat = poly%patch%n
 
-      !----- Canopy films held per m2 of ground, to per plant. -------------------------------!
-      if (.not. held%films_per_plant) then
-         poly%cohort%leaf_surf_water(1:ncoh) = poly%cohort%leaf_surf_water(1:ncoh) / poly%cohort%nplant(1:ncoh)
-         poly%cohort%wood_surf_water(1:ncoh) = poly%cohort%wood_surf_water(1:ncoh) / poly%cohort%nplant(1:ncoh)
-      end if
-      !----- The geometry from the pools, as the run derives it; a file without pools places    !
-      !      each cohort on the allometry from its dbh. ----------------------------------------!
+      !----- The geometry from the pools, as the run derives it. -----------------------------!
       do i = 1_ik, ncoh
-         if (held%pools) then
-            call set_cohort_size_from_carbon(poly%cohort, i)
-         else
-            call set_cohort_size(poly%cohort, i)
-         end if
+         call set_cohort_size_from_carbon(poly%cohort, i)
       end do
-      !----- A growth ring buffer the file lacked, seeded full of the saved growth_avg. -------!
-      if (.not. held%growth_rings) then
+      !----- The growth rings, when this run's window is another length than the file's: seeded !
+      !      full of the saved growth_avg. --------------------------------------------------------!
+      if (.not. same_window) then
          nwin = growth_window_steps(cfg)
          do i = 1_ik, ncoh
             if (.not. is_unset_positive(poly%cohort%growth_avg(i))) then
@@ -1061,59 +930,10 @@ contains
             end if
          end do
       end if
-      !----- The shed water's enthalpy, valued at the canopy air's temperature, and the pond's,  !
-      !      its mass at the top soil layer's temperature (docs/science/order_of_processes.md §6, !
-      !      The restart file). -------------------------------------------------------------!
-      if (held%fast .and. .not. held%shed_energy) then
-         do ip = 1_ik, npat
-            poly%patch%shed_water_enth(ip) = poly%patch%shed_water_rate(ip)                                   &
-                                           * internal_energy_liquid(poly%patch%cas(ip)%can_temp)
-         end do
-      end if
-      if (held%fast .and. .not. held%pond_energy) then
-         do ip = 1_ik, npat
-            poly%patch%soil_water(ip)%w_surface_energy = poly%patch%soil_water(ip)%w_surface                 &
-                  * internal_energy_liquid(poly%patch%soil_energy(ip)%soil_temp(1))
-         end do
-      end if
-      !----- A file without the tissue water or temperatures starts each cohort in its patch's state,  !
-      !      as a recruit is born: the canopy air and top soil layer just read, or, without those, the !
-      !      run's starting state, from which init_fast_reservoirs re-seeds the patch and cohorts. ----!
-      if (ncoh > 0_ik .and. npat > 0_ik .and. .not. (held%tissue_water .and. held%tissue_temps)) then
-         do i = 1_ik, ncoh
-            ip = poly%cohort%owner_patch(i)
-            call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg,                &
-                                      poly%site%surface(poly%patch%owner_site(ip)), t_birth, psi_birth)
-            if (.not. held%tissue_temps) then
-               poly%cohort%leaf_temp(i) = t_birth
-               poly%cohort%wood_temp(i) = t_birth
-            end if
-            if (.not. held%tissue_water) then
-               associate (hydro => cfg%pft%hydro(poly%cohort%pft(i)))
-                  call set_cohort_tissue_water(poly%cohort, i, psi_birth, hydro%leaf_curve, hydro%wood_curve)
-               end associate
-            end if
-         end do
-      end if
-      !----- The tissue energies are the state and the temperatures their twins. A file without the  !
-      !      energies, or whose tissue water was set above, derives them from the temperatures at the  !
-      !      masses; one without only the temperatures derives those from the energies. --------------!
-      if (ncoh > 0_ik .and. .not. (held%tissue_energy .and. held%tissue_water .and. held%tissue_temps)) then
-         do i = 1_ik, ncoh
-            if (held%tissue_energy .and. held%tissue_water) then
-               call set_cohort_tissue_temps(poly%cohort, i)
-            else
-               call hold_cohort_tissue_temps(poly%cohort, i)
-            end if
-         end do
-      end if
 
       call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
       call sort_cohorts(poly)
-      !----- A file without overtopping_lai: compute it from the stand as read, so the traits'     !
-      !      light environment is the stand's from the first step rather than an open sky. --------!
-      if (ncoh > 0_ik .and. .not. held%overtopping_lai) call update_overtopping_lai(poly)
    end subroutine derive_after_read
 
 end module meds_init_restart
