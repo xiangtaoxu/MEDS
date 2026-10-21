@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_io_config_example -- the shipped meds_io_config.toml must list EVERY registered variable   !
+! test_io_config_example -- the shipped meds_io_config.toml must list EVERY selectable variable   !
 !                                                                                          !
 ! That file is a GENERATED artifact (`meds_main --dump-io-config`) which is nonetheless TRACKED,   !
 ! because it is the shipped example of the per-variable override surface that                      !
@@ -51,6 +51,7 @@ program test_io_config_example
 
    n_missing = 0_ik
    do k = 1_ik, reg%nvar
+      if (reg%var(k)%coord) cycle          ! the axes' bookkeeping is written with its axis, not selected
       !----- The dump writes one commented assignment per variable: "# <name> = ...". Matching on  !
       !      "# name = " rather than the bare name avoids a short name matching inside a longer     !
       !      one (mean_gpp_py inside gpp_site_something) or inside a long_name or units string.        !

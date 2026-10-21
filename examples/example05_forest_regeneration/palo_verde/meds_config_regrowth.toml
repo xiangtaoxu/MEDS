@@ -78,12 +78,8 @@ dir           = "output"
 prefix        = "regrowth"
 sync_every    = "flush"
 # Monthly and yearly site and PFT totals (io_config_regrowth.toml); trees above and below 10 cm.
-axes_cohort   = false
-axes_patch    = false
-radiation     = false
 io_config     = "io_config_regrowth.toml"
 dbh_class_edges = [0.0, 10.0, 1000.0]
-ecophys       = false
 
 [output.fast]
 enabled    = false

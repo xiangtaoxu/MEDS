@@ -78,11 +78,7 @@ dir           = "output"
 prefix        = "pv"
 sync_every    = "flush"
 # Daily per-cohort records for the leaf-habit analysis; hourly leaf potential per cohort (io_config_inventory.toml).
-axes_cohort   = true
-axes_patch    = false
-radiation     = false
 io_config     = "io_config_inventory.toml"
-ecophys       = false
 
 [output.fast]
 enabled    = true

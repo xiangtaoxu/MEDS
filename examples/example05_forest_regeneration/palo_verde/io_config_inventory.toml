@@ -2,13 +2,12 @@
 # Output of meds_config_inventory.toml: daily (D) and monthly (M) cohort records for the leaf habits and the
 # carbon budget, PFT and site totals also yearly (Y); hourly (F) leaf potential.
 [variables]
+"*_pa"                      = false     # no per-patch record
 nplant_co                   = "D M"
 mean_dbh_co                 = "D M"
 mean_height_co              = "F D M"
 mean_lai_co                 = "D M"
 pft_co                      = "D M"
-owner_patch                 = "D M"
-global_cohort_id            = "D M"
 mean_leaf_carbon_co         = "D M"
 mean_storage_carbon_co      = "D M"
 mean_leaf_flush_tendency_co = "D M"

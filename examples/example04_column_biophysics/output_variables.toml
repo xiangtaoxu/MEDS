@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # The variables the BCI evaluation run writes: the hourly fluxes and states the tower also measures,
 # the forcing as the model saw it, and daily stand structure. Tiers: F = sub-daily (hourly here,
-# fast_interval_steps = 4), D = daily. Every stamp is UTC.
+# fast_interval_steps = 4), D = daily. Every stamp is UTC. "*" = false starts from nothing, so only these
+# are written.
 [variables]
+"*"                      = false
+"mean_resid_*_py"        = "D"     # the energy and water budget residuals: is the run sane?
 mean_sw_in_py            = "F"     # incoming shortwave, as the model disaggregated it
 mean_lwdown_py           = "F"     # downward longwave at the canopy top (the forcing)
 mean_rnet_py             = "F"     # net all-wave radiation      <-> the tower's Rnet

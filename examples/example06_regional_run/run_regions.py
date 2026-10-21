@@ -152,8 +152,6 @@ def make_regions(n_regions, years, threads, pft, archive, maps, chave_e, cost_fi
                 ("output", "dir", f'"{rdir}"'), ("output", "prefix", f'"{name}"'),
                 ("output", "io_config", f'"{os.path.join(HERE, "io_config_region.toml")}"'),
                 ("output", "dbh_class_edges", DBH_EDGES),
-                *[("output", g_, "false") for g_ in ("structure", "carbon", "water", "energy", "biogeochem",
-                                                      "numerics", "forcing")],
                 ("output.annual", "enabled", "false"),
                 ("forcing", "format", '"ED_ERA5land"'), ("forcing", "data_path", f'"{archive}"'),
                 ("forcing", "co2_file", f'"{os.path.join(ROOT, "data", "co2", "co2_cmip7_global_annual_1000-2022.txt")}"'),

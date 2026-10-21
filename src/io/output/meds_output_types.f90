@@ -94,6 +94,8 @@ module meds_output_types
       integer(ik) :: xtype           = XTYPE_DOUBLE !< XTYPE_DOUBLE | XTYPE_INT
       integer(ik) :: source_id       = 0_ik         !< the field the D, M and Y tiers read (0: none)
       integer(ik) :: source_fast     = 0_ik         !< the staged sub-step value the F tier reads (0: none)
+      logical     :: coord           = .false.      !< the axis's bookkeeping (ids, CSR): written with the axis,
+                                                    !  not selected (resolve_streams)
       logical     :: snap_staged     = .false.      !< a snapshot the D, M and Y tiers read from the last staged
                                                     !  sub-step (a fast-loop diagnostic's end-of-period value)
       !----- How the field reduces to this variable's axis, so one field serves every scale. The   !
@@ -131,6 +133,7 @@ module meds_output_types
       integer(ik)                   :: nvar = 0_ik
       integer(ik), allocatable      :: idx_freq(:,:) !< (MAX_OUTPUT_VARS, N_FREQ): var indices live in each tier
       integer(ik)                   :: nidx(N_FREQ) = 0_ik
+      logical                       :: tier_on(N_FREQ) = .true.  !< [output.<tier>].enabled: off writes nothing
    end type output_registry_t
 
    !==========================================================================================!

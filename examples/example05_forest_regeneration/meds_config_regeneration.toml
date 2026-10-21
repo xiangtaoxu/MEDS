@@ -79,11 +79,8 @@ dir           = "output"
 prefix        = "regen"
 sync_every    = "flush"
 # Site, PFT and size-class totals only: per-cohort and per-patch records over 421 years would be
-# gigabytes. The checkpoints hold the full stand.
-axes_cohort   = false
-axes_patch    = false
-radiation     = false
-ecophys       = false
+# gigabytes (io_config_regeneration.toml). The checkpoints hold the full stand.
+io_config     = "io_config_regeneration.toml"
 
 [output.fast]
 enabled    = false

@@ -30,12 +30,8 @@ module meds_config_io
    use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
                                    METAVG_END, METAVG_BEGIN, LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,     &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
-   use meds_output_params, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
-                                 GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_FORCING,        &
-                                 AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH,  &
-                                 MAX_DBH_EDGE,                                                   &
-                                   GRP_ENERGY, GRP_NUMERICS, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
-                                   FC_RUN
+   use meds_output_params, only : output_config_t, MAX_DBH_EDGE, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH,      &
+                                 FC_YEAR, FC_RUN
    use meds_time,       only : meds_time_t, string_to_time
    use meds_biophysics_params, only : snow_params_t, aero_cfg_t
    use meds_biogeochem_params, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,          &
@@ -673,28 +669,9 @@ contains
       cfg%output%fast_interval_steps = toml_int    (t, 'output.fast_interval_steps', 4_ik)
       call opt_choice(t, 'output.sync_every', [character(len=NAME_LEN) :: 'flush', 'never'],               &
                       [SYNC_FLUSH, SYNC_NEVER], cfg%output%sync_every, m)
-      !----- Variable-group toggles: the groups that make a run judgeable are on, and the two      !
-      !      heavy evaluation groups (radiation, ecophys) off. ------------------------------------!
-      cfg%output%grp_on(GRP_STRUCTURE)  = toml_logical(t, 'output.structure',  .true.)
-      cfg%output%grp_on(GRP_CARBON)     = toml_logical(t, 'output.carbon',     .true.)
-      cfg%output%grp_on(GRP_WATER)      = toml_logical(t, 'output.water',      .true.)
-      cfg%output%grp_on(GRP_ENERGY)     = toml_logical(t, 'output.energy',     .true.)
-      cfg%output%grp_on(GRP_RADIATION)  = toml_logical(t, 'output.radiation',  .false.)
-      cfg%output%grp_on(GRP_ECOPHYS)    = toml_logical(t, 'output.ecophys',    .false.)
-      cfg%output%grp_on(GRP_BIOGEOCHEM) = toml_logical(t, 'output.biogeochem', .true.)
-      cfg%output%grp_on(GRP_FORCING)    = toml_logical(t, 'output.forcing',    .true.)
-      !----- Axis toggles: suppress a whole trailing dimension without naming variables. The 2-D    !
-      !      (soil layer x patch) axis is the highest-volume non-cohort axis and is off. -----------!
-      cfg%output%axis_on(AXIS_COHORT)     = toml_logical(t, 'output.axes_cohort',     .true.)
-      cfg%output%axis_on(AXIS_PATCH)      = toml_logical(t, 'output.axes_patch',      .true.)
-      cfg%output%axis_on(AXIS_PFT)        = toml_logical(t, 'output.axes_pft',        .true.)
-      cfg%output%axis_on(AXIS_SIZE)       = toml_logical(t, 'output.axes_size',       .true.)
-      cfg%output%axis_on(AXIS_SOIL_PATCH) = toml_logical(t, 'output.axes_soil_patch', .false.)
       !----- DBH size-class edges (DIM_SIZE), ascending, n_class+1 of them. Absent -> setup_output_files !
       !      installs the built-in inventory default. ----------------------------------------------!
       call load_dbh_edges(t, cfg%output)
-      !----- Integrator work counters and the budget residuals; on by default. -------------------!
-      cfg%output%grp_on(GRP_NUMERICS)  = toml_logical(t, 'output.numerics',      .true.)
       !----- Per-tier switch and file chunk, in tier order: fast, daily, monthly, annual. --------!
       cfg%output%freq_on(1) = toml_logical(t, 'output.fast.enabled',    .false.)
       cfg%output%freq_on(2) = toml_logical(t, 'output.daily.enabled',   .true.)
