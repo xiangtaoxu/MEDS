@@ -125,13 +125,10 @@ consumers live outside it.
   $`J_{\mathrm{max25}}`$ and TPU with the plastic $`V_{\mathrm{cmax25}}`$. The single-leaf wrapper
   `meds_fast_config.leaf_gas_exchange` takes the same two overrides.
 
-- **Persistence (`meds_init_restart`).** The four trait states are written to and read from the state checkpoint
-  (optional on read: a state file without them restarts at top-of-canopy), so a **state** restart
-  recovers the acclimated traits exactly; `[init].reacclimate_traits` instead re-derives them from this
+- **Persistence (`meds_init_restart`).** The four trait states are written to and read from the state checkpoint,
+  so a **state** restart recovers the acclimated traits exactly; `[init].reacclimate_traits` instead re-derives them from this
   run's PFT file. A **census** start acclimates instantaneously when the run opens (`region_open`,
-  `advance_plant_traits(..., instantaneous=.true.)`), because census cohorts carry no history. A state
-  file that holds the rate as a leaf lifespan [yr] (the variable `llspan`, written before the rate was
-  the state) is read as its reciprocal.
+  `advance_plant_traits(..., instantaneous=.true.)`), because census cohorts carry no history.
 
 ## Parameters
 

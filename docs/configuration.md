@@ -235,7 +235,7 @@ of a top-of-canopy cohort's leaf carbon its background turnover replaces a year,
 `[trait_dynamics].trait_plasticity_on` it slows in shade (`docs/science/plant_traits.md` eq. (1)).
 The light-plasticity slopes, `[pft].kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and
 `kplastic_leaf_turnover`, ship as ED2's fits to Vcmax25 and the turnover rate (Lloyd et al. 2010), from
-`scripts/pft_traits`. A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.
+`scripts/pft_traits`.
 
 ## Several sites
 
@@ -329,8 +329,10 @@ and `init_from_census` in [`../src/io/init/meds_init_census.f90`](../src/io/init
 
 **A census or state file that cannot start the run stops it**, naming the mode, the file and what
 is wrong with it: one that cannot be opened, a census with no row for the site or a malformed
-column or row, or a state file without a row for each of the run's polygons (a region's, given to
-a site run) or with a PFT, site or soil-layer count unlike the run's. Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
+column or row, or a state file an older MEDS wrote, without a row for each of the run's polygons
+(a region's, given to a site run) or with a PFT, site or soil-layer count unlike the run's. A state
+file names its layout in its global attribute `restart_format`, and MEDS reads only its own: a
+file from an older MEDS does not restart, so start that run again from its census or bare ground. Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
 from bare ground instead. `meds_main` stops, and `meds.model.Run` raises `RuntimeError`.
 
 **The initial soil state** is `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³], both optional:
@@ -509,11 +511,10 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   it (`init_mode = 2`, `restart_file`) finds each polygon's row by its id, the cell's index on the
   forcing grid. The file must hold every polygon of the region and may hold more, so a region whose
   cell failed resumes from its last state file with that cell masked out (`[region].cell_mask`); the
-  other polygons run on as they would have. A restart file that cannot be opened, or one without a
-  row for each polygon (a site's), stops the region, naming the file. A restart continues exactly: a
-  region run in two halves, across a recycle wrap, writes the second half as the whole run does. A
-  site run writes the same layout with one row, and still reads a state file written before runs
-  had the axis.
+  other polygons run on as they would have. A restart file that cannot be opened, one an older MEDS
+  wrote, or one without a row for each polygon stops the region, naming the file. A restart
+  continues exactly: a region run in two halves, across a recycle wrap, writes the second half as
+  the whole run does. A site run writes the same layout with one row.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
   (a NaN, a cohort or soil-carbon state out of bounds) stops at the failing step, and the others

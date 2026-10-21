@@ -203,8 +203,7 @@ ends on the boundary, and before the fast loop of the step that begins there. As
 **A checkpoint on a boundary holds the stand before the restructuring.** The global attribute
 `restructure_pending` (`none`, `month` or `year`) records which restructuring is still owed. A run
 resumed from the checkpoint performs it first, so its first record holds the same events as the
-continuous run's. A state file without the attribute was written after its boundary's
-restructuring, and owes none.
+continuous run's.
 
 #### The skin temperature
 

@@ -44,9 +44,17 @@ per stage, and a reader that refuses a file says why, with no change to any resu
 forcing's physics joins the model's other laws in `src/share`: the sun's position in `meds_time`, the
 radiation above the canopy in a new `meds_radiation_lib`, the humidity conversions, the rain/snow split
 and the air at another height in `meds_therm_lib`; `src/io/met` keeps the reader and where it samples
-the air. The restart and the diagnostic files name each site's statics alike (#470).
+the air. The restart and the diagnostic files name each site's statics alike (#470). A state file
+holds every variable and names its layout, and the reader refuses one an older MEDS wrote instead of
+filling in what it lacks (#471).
 
 **Upgrading from v0.3.5:**
+- **State files written before this release do not restart** (#471). A state file names its layout in
+  the global attribute `restart_format`, and the reader refuses a file without it, saying so, where it
+  used to fill in what an older file lacked: the polygon axis, the carbon pools, the tissue water and
+  energies, the fast reservoirs, the soil carbon, a leaf lifespan (`llspan`), films per m² of ground,
+  and the rest. Start such a run again from its census or bare ground. v0.3.5's archived example
+  state files no longer restart.
 - **`[forcing].format = "const"` is gone** (#469). It opened no file and drove the run with a fixed
   reference climate; no shipped config used it. `format` takes `"ED_default"` or `"ED_ERA5land"`, and a
   run without forcing sets `forcing_on = false`.
@@ -274,6 +282,9 @@ the air. The restart and the diagnostic files name each site's statics alike (#4
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
   `hydraulics.root_beta`.
+- **Fortran: the restart reader** (#471): `read_restart_file` takes the polygon's row as a required
+  argument and loses `fast_found`, and `init_polygon` loses `fast_found`: a restart always restores
+  the fast reservoirs, and the region keeps them for every restart.
 - **Fortran: the forcing's physics in `src/share`** (#470), for code built against MEDS's modules.
   `meds_forcing_kernels` and `meds_lapse_rate` are gone:
   - `meds_numerics`: `linear_interpolate(a, b, w)` replaces `interpolate_forcing` and its
@@ -370,6 +381,10 @@ the air. The restart and the diagnostic files name each site's statics alike (#4
   unknown, repeated or missing column, a malformed row or a non-positive value, or a restart file with
   a PFT, site or soil-layer count unlike the run's, stops it with the reason. A forcing file the
   reader cannot read at open is `MET_ERR_FILE`, with the netCDF library's text.
+- **One restart-file layout** (#471). The writer marks each state file `restart_format = "1"`; the
+  reader reads every variable and refuses a file of another layout, and its dozen fill-in branches for
+  older files go (`order_of_processes.md` §6). A run whose growth window is another length than its
+  file's still fills the ring buffer with the saved `growth_avg`.
 - **The forcing's physics is in `src/share`, beside the model's other laws** (#470). The solar
   geometry is `meds_time`'s; the shortwave partition, the clearness index, the clear-sky emissivity,
   the longwave synthesis and its lapse, and the beam on a slope are `meds_radiation_lib`'s; the
