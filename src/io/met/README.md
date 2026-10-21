@@ -21,25 +21,19 @@ demography or state layer — so a prescribed driver stays low in the library gr
   in); `met_cells_t` lists the cells of it a run reads (one for a site, the valid cells of a box),
   and `met_month_t` holds one month of them. `co2_series_t` is a prescribed CO₂ series, held on
   `met_source_t`.
-- **`meds_forcing_kernels`** — the `pure` and `elemental` math: per-variable temporal interpolation
-  (linear or step) with an energy-conserving form for wind, the solar zenith `met_solar_cosz` at
-  local apparent solar time (UTC plus longitude plus the equation of time, a private step), the
-  **interval-mean-conserving** shortwave disaggregation, the total-to-four-stream shortwave partition
-  (Erbs clearness index by default, Weiss-Norman available), humidity conversions over the shared
-  saturation vapour pressure, precipitation phase, the longwave synthesis and the sun on a slope.
-- **`meds_lapse_rate`** — every vertical correction, in two steps (`docs/science/forcing.md` §8).
-  The **terrain** lapse runs per record at ingest (`read_record`), from the forcing cell's elevation
-  to the polygon's: temperature by a monthly lapse rate, pressure hydrostatically, humidity at
-  constant relative humidity, and file longwave by the clear-sky ε·T⁴ ratio. Per sub-step, the same
-  lapse takes the polygon's sample to each of its sites, with the beam on the site's slope
-  (`met_at_site`). The **move to each patch's canopy-air top** runs per patch in the fast loop
-  (`met_to_cas_top`), from the forcing's declared heights: potential temperature and humidity are
-  conserved, and the wind follows the patch's own log profile after an open-terrain wind is returned
-  to its blending height.
 - **`meds_met`** — the reader. `met_open` opens a source (for a site, or for a region's
   cells), `met_cursor_init` places a polygon's cursor on it, `met_prefetch` loads what the next step
-  reads, and `met_advance` / `met_instant` step and sample a cursor with no file access. Two file
-  sources, chosen by `[forcing].format`, each an open and one record's values as stored:
+  reads, and `met_advance` / `met_instant` step and sample a cursor with no file access: states
+  linear, wind in its energy form, and the shortwave **disaggregated** from its interval means so
+  that their mean is kept. It then takes a sample where it is used, in two vertical steps
+  (`docs/science/forcing.md` §8): to each **site** (`met_at_site`), the terrain lapse from the
+  polygon's elevation and the beam on the site's slope, and to each **patch's canopy-air top**
+  (`met_to_cas_top`), per patch in the fast loop, from the forcing's declared heights: potential
+  temperature and humidity conserved, and the wind along the patch's own log profile after an
+  open-terrain wind is returned to its blending height. The laws are the shared libraries': the
+  sun's position in `meds_time`, the shortwave partition, the longwave synthesis and its lapse in
+  `meds_radiation_lib`, the humidity conversions, the rain/snow split and the lapse of temperature,
+  pressure and humidity in `meds_therm_lib`. Two file sources, chosen by `[forcing].format`, each an open and one record's values as stored:
   - `meds_met_default`: the MEDS multi-grid `(time, grid)` forcing NetCDF (`"ED_default"`);
   - `meds_met_era5land`: the global ED_ERA5land archive (`"ED_ERA5land"`), whose months it
     lays end to end as one hourly axis.
@@ -48,7 +42,10 @@ demography or state layer — so a prescribed driver stays low in the library gr
   status codes, the time axis, the recycle window and the check of a file against its config), so
   bracketing and recycling are the same code for both. A reader that refuses a file returns its
   status and its reason, and `met_open` prints the reason.
-  `read_record` is the one ingest after that. Every clock is UTC. The humidity a file carries
+  `read_record` is the one ingest after that, and runs the terrain lapse from the forcing cell's
+  elevation to the polygon's: temperature by the month's lapse rate, pressure hydrostatically,
+  humidity at constant relative humidity, and file longwave by the clear-sky ε·T⁴ ratio. Every clock
+  is UTC. The humidity a file carries
   (dewpoint, relative humidity or specific humidity, exactly one) becomes specific humidity through
   the model's own saturation curve, and the wind components become the speed, at each stamp;
   shortwave is partitioned at ingest. Rain and shortwave come from the record whose interval

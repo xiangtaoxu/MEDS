@@ -1,10 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_forcing_params -- the [forcing] and [site] blocks (docs/science/forcing.md) and the !
-! selector codes the config, the reader and the disaggregation kernels share. A config     !
-! leaf (meds_kinds and meds_time only), so meds_config carries forcing_config_t with no    !
-! edge back to the forcing layer. The defaults are an Ithaca NY / ERA5-Land reference      !
-! site.                                                                                    !
+! selector codes the config and the reader share; the shortwave partition's and the        !
+! clear-sky emissivity's are meds_radiation_lib's. A config leaf (share only), so          !
+! meds_config carries forcing_config_t with no edge back to the forcing layer. The         !
+! defaults are an Ithaca NY / ERA5-Land reference site.                                    !
 !==========================================================================================!
 module meds_forcing_params
    use meds_kinds, only : wp, ik
@@ -57,7 +57,7 @@ module meds_forcing_params
    integer(ik), parameter :: CO2_SOURCE_FILE  = 1_ik   !< a MEDS CO2 file (format: docs/science/forcing.md §12)
 
    !----- The forcing's own vertical frame: the forcing is moved from its heights to the   !
-   !      top of each patch's canopy air space (meds_lapse_rate; docs/science/forcing.md   !
+   !      top of each patch's canopy air space (met_to_cas_top; docs/science/forcing.md    !
    !      §8 Step 2). ---------------------------------------------------------------------!
    integer(ik), parameter :: HEIGHT_ABOVE_ZERO_PLANE = 0_ik  !< above the patch's displacement height (a reanalysis has no d)
    integer(ik), parameter :: HEIGHT_ABOVE_GROUND     = 1_ik  !< heights above the ground (a flux tower)

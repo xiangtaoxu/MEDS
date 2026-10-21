@@ -623,7 +623,7 @@ contains
          call ensure_aero_out_capacity(aero, ncoh)
 
          !----- This patch's canopy-air top and roughness. Every forcing sample is moved to that top  !
-         !      along the patch's own log profile (meds_lapse_rate, docs/science/forcing.md §8), and    !
+         !      along the patch's own log profile (met_to_cas_top, docs/science/forcing.md §8), and     !
          !      the aerodynamics runs from there. Both are fixed for the day: the canopy height and the !
          !      canopy-air depth change only on a slow step. -------------------------------------------!
          z_top = biophys%cas%can_depth

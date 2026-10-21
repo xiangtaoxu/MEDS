@@ -13,27 +13,29 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 **domain** second, over a **state layer** that both halves share.
 
 ```
-src/                                    35.5 k lines · 91 modules · 21 CMake libraries
+src/                                    35.5 k lines · 90 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_share
 ├── share/         uses nothing outside itself; every layer may use it: kinds,
 │   │              constants, numerics (clamps, means, the conservation test),
 │   │              linear algebra (Thomas sweep, dense LU, arrowhead solve,
-│   │              matrix exponential), calendar time, budget checks         1 170
+│   │              matrix exponential), calendar time and the sun's
+│   │              position, budget checks                                   1 249
 │   └── functions/ stateless constitutive laws, one library per domain:
 │                  allometry, plant hydraulics, soil hydraulics,
-│                  thermodynamics (with the temperature response of
-│                  enzyme rates), canopy optics                              1 793
+│                  thermodynamics (moist air and its lapse, with the
+│                  temperature response of enzyme rates), canopy optics,
+│                  the radiation above the canopy                            2 129
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        meds_config_t (one field per key) and the routines that
 │   │              derive what the parameters imply (the soil column, the
 │   │              PFT table's arrays), the TOML reader, the loader, and
-│   │              the checks of the keys and their values                   3 224
+│   │              the checks of the keys and their values                   3 226
 │   └── params/    the run's parameters, one leaf per TOML block: the types
 │                  and codes a kernel imports without meds_config (the PFT
 │                  table, the soil, forcing, output, the fast loop, snow and
-│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   885
+│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   873
 │
 │  ── STATE, one file per level of the hierarchy, each in sections ────────────
 ├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
@@ -68,19 +70,20 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  drivers, and the slow conservation ledger                 2 017
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── io/            every data file a run reads or writes                     10 290
-│   ├── (root)     the netCDF C bindings, and the helpers both writers share    518
+├── io/            every data file a run reads or writes                      9 910
+│   ├── (root)     the netCDF C bindings, and the helpers both writers share    615
 │   ├── init/      the initial state, by [init].init_mode: bare ground, a
 │   │              cohort census, or a restart file, which the checkpoints
-│   │              write; init_polygon starts a polygon from one              1 800
+│   │              write; init_polygon starts a polygon from one              1 799
 │   ├── met/       the atmosphere above the canopy: the met reader (a MEDS
-│   │              forcing file, or the ED_ERA5land archive), the grid its
-│   │              cells are on (meds_met_grid), its kernels, the terrain
-│   │              lapse (meds_lapse_rate) and the CO2 series (meds_met_co2)  3 339
+│   │              forcing file, or the ED_ERA5land archive) and its sample at
+│   │              a site and at a patch's canopy-air top (meds_met), the grid
+│   │              its cells are on (meds_met_grid) and the CO2 series
+│   │              (meds_met_co2)                                             2 905
 │   ├── maps/      static per-cell maps on the forcing grid: the one place
 │   │              a map is read (meds_maps)                                    350
 │   └── output/    the diagnostic wall: derive → capture → reduce →
-│                  integrate → serialize                                      4 283
+│                  integrate → serialize                                      4 241
 ├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
 │                  demography, and the full coupled run                        938
 └── main/          meds_stepper (one coupled slow step, and the boundary
