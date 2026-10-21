@@ -90,10 +90,10 @@ Patch area `a_p` enters **only** at the patch → site step, never inside the we
 serves every scale. A patch-axis value therefore carries no area factor: it is per m² of *that
 patch's own* ground, which is what makes a gap-versus-closed-canopy comparison meaningful.
 
-**A `_site` scalar is the polygon's.** In a polygon of several sites, `a_p` in eq. (2) is the
-patch's share of the polygon: its site's area times its own area within the site. The soil columns
-are the exception: `mean_soil_water_layer_si` and its kin are each site's column, on that site's own layers,
-its patches weighted by their areas within the site.
+**A `_py` variable is the polygon's.** In a polygon of several sites, `a_p` in eq. (2) is the
+patch's share of the polygon: its site's area times its own area within the site. A `_si` variable is
+each site's: the soil columns (`mean_soil_water_layer_si` and its kin, on that site's own layers, its
+patches weighted by their areas within the site), the forcing each site saw, and the site's statics.
 
 **Empty sets.** A patch with no cohorts, or a **mean** with nothing to average, emits
 `_FillValue` — never `0/0`, and never a bare 0 that a reader would take for a measurement. "Nothing
@@ -123,6 +123,14 @@ instead, and report their values.
 ---
 
 ## 3. The axes
+
+**Names.** A variable is named `[mean_]<quantity>[_<breakdown>]_<level>`. The level is `_co`
+(cohort), `_pa` (patch), `_si` (site) or `_py` (polygon); the breakdown `_pft`, `_size` (DBH class) or
+`_layer` (soil layer). `mean_` marks a mean over the record's period, and a name without it is the
+value at the period's end. The tier is the file, `<prefix>-F-…`, `-D-`, `-M-` or `-Y-`, so one
+variable has one name at every tier. The axes' coordinates and bookkeeping (`n_cohort`, `n_patch`,
+`cohort_offset`, `cohort_count`, `global_cohort_id`, `global_patch_id`, `owner_patch`, `patch_site`,
+`soil_z`, …) carry no suffix.
 
 | netCDF dim | length | notes |
 |---|---|---|
@@ -231,22 +239,19 @@ per patch (`mean_skin_temp_pa`), sub-daily (`mean_skin_temp_py`) and both (`mean
 
 ### The FAST tier by patch
 
-A site mean over a closed canopy and a gap can describe neither. In a stand with a gap, the gap's
+A polygon mean over a closed canopy and a gap can describe neither. In a stand with a gap, the gap's
 surface soil can run 13 K above the air at midday while the closed patch's runs 0.7 K below it. So
-each FAST quantity of the patch block also has a per-patch twin:
+each fast quantity of the patch block is also written per patch on the F tier:
 
-- It is named after its coarse patch variable, plus `_fast`: `mean_cas_temp_pa`,
-  `mean_soil_temp_top_pa`, `mean_skin_temp_pa`, `mean_le_pa`, `mean_h_pa`,
-  `mean_rnet_pa`, `mean_nee_pa`.
-- A quantity with no coarse patch variable keeps its site stem: `mean_gpp_pa`,
-  `mean_sw_up_pa`, `mean_lw_up_pa`, `mean_ustar_pa`, `mean_npp_pa`,
-  `mean_reco_pa`, `mean_cas_co2_pa`.
-- The soil columns by layer and patch are `mean_soil_temp_layer_pa` and
-  `mean_soil_water_layer_pa`.
+- `mean_cas_temp_pa`, `mean_soil_temp_top_pa`, `mean_skin_temp_pa`, `mean_le_pa`, `mean_h_pa`,
+  `mean_rnet_pa`, `mean_nee_pa`, `mean_gpp_pa` and `mean_npp_pa`, which have daily values too, under
+  the same names;
+- `mean_sw_up_pa`, `mean_lw_up_pa`, `mean_ustar_pa`, `mean_reco_pa` and `mean_cas_co2_pa`, which
+  exist only sub-daily;
+- the soil columns by layer and patch, `mean_soil_temp_layer_pa` and `mean_soil_water_layer_pa`.
 
-The site `*_fast` value is the area-weighted sum of the patch values, taken in patch order, so the
-two always agree. The twins follow `axes_patch` (on by default) and `axes_soil_patch` (off), as the
-coarse patch variables do.
+The polygon's F value is the area-weighted sum of the patch values, taken in patch order, so the two
+always agree. The patch variables follow `axes_patch` (on by default) and `axes_soil_patch` (off).
 
 ### A caveat worth stating plainly
 
@@ -261,23 +266,22 @@ four-sub-step mean. This matters when comparing against a flux tower at sub-hour
 Sub-daily values exist only inside the fast loop. The fast loop stages each sub-step's sample: each
 patch's row of the patch block and its soil column, the forcing, and the per-cohort values. After the
 fast loop the output layer replays the staging into the FAST tier, one sub-step at a time. A
-`*_fast` value of the whole polygon is the patches' sum, each weighted by its share of the polygon; a
-site's soil column weights its patches by their areas within the site.
+polygon's F value is the patches' sum, each weighted by its share of the polygon; a site's soil column
+weights its patches by their areas within the site. On the F tier every variable is the dt-weighted
+mean of its sub-step samples, whatever its reduction on the coarse tiers: GPP, the mean rate of the
+day's per-step amounts on D, is the mean of the sub-steps' rates on F.
 
 The FAST tier shares everything else with the coarse tiers: the registry, the running reductions, the
 closing of a period and the writer. Only where it reads its values differs, and that is forced by
 when they exist: by the time the staging is replayed, the live state is the end of the slow step, so
 a sub-daily variable read from it would write end-of-step values on a sub-daily axis.
 
-The pairing is therefore closed in both directions:
-
-- a variable without a FAST-staged source on the F stream would read a staging nothing fills for it;
-- a FAST-staged variable on a coarse tier would read live state, which does not carry it.
-
-Either would write `_FillValue` for the whole run, and either is easy to ask for by hand
-(`mean_cas_temp_py = "F"` in `meds_io_config.toml`). The registry checks every default and every
-override at start-up and refuses to start, naming the variable (and, for one put on F, pointing to
-its `*_fast` twin): a diagnostic that quietly reports nothing is worse than one that refuses to start.
+A variable therefore has two sources: the staged sample its F records read, and the live field its
+D, M and Y records read. Most have both, under one name. The leaf solve's inputs and a few patch
+fluxes have only the first; the slow step's quantities only the second. A tier a variable has no
+source for would write `_FillValue` for the whole run, so the registry checks every default and every
+override at start-up and refuses to start, naming the variable: a diagnostic that quietly reports
+nothing is worse than one that refuses to start.
 
 ---
 
@@ -295,22 +299,22 @@ Resolution order — later wins:
 by default; `radiation` and `ecophys` off. `biogeochem` keeps the soil-carbon pools apart from
 `carbon`, so a run can report the vegetation's carbon without the seven soil pools, which stay 0 with
 `soil_carbon_on = false`. `forcing` is the atmospheric boundary the run used, after
-the reader's shortwave partition, rain/snow split and optional corrections: site means at the daily,
-monthly and yearly tiers (`mean_air_temp_py`, `mean_qair_py`, `mean_psurf_py`, `mean_wind_py`, `mean_lwdown_py`,
+the reader's shortwave partition, rain/snow split and optional corrections: polygon means at every
+tier (`mean_air_temp_py`, `mean_qair_py`, `mean_psurf_py`, `mean_wind_py`, `mean_lwdown_py`,
 the four shortwave streams `mean_par_beam_py` … `mean_nir_diffuse_py`, `mean_precip_py`, `mean_snowfall_py`,
-`mean_atm_co2_py`, `mean_cosz_py`, `mean_rho_air_py`) and their sub-daily `*_fast` twins (with `mean_rainf_py`; rain
+`mean_atm_co2_py`, `mean_cosz_py`, `mean_rho_air_py`, and `mean_rainf_py`, sub-daily only; rain
 and snow are the split each patch made at its canopy-air top, area-weighted), and three patch rows at the daily and
 monthly tiers: the forcing each patch saw at its canopy-air top, `mean_wind_cas_top_pa` and
 `mean_air_temp_cas_top_pa`, and that top's height `mean_cas_depth_pa` (with `mean_rough_pa` and
-`mean_displace_pa`, in `energy`, the move can be rebuilt; [`forcing.md`](forcing.md) §8). With `sw_in_*`
-and `precip_*`, it is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
+`mean_displace_pa`, in `energy`, the move can be rebuilt; [`forcing.md`](forcing.md) §8). With
+`mean_sw_in_py` and `mean_precip_py`, it is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
 by far the highest-volume group and the one a production run most often wants off.
 
 `numerics` defaults **on** because it carries the energy and water budget residuals. A closure
 nobody records is worse than one nobody looks at.
 
 **Axes** are the biggest single lever on output volume: `axes_cohort = false` removes ~66
-variables' worth of per-cohort slabs while leaving every site scalar intact.
+variables' worth of per-cohort slabs while leaving every polygon variable intact.
 
 **Per-variable control**, for debugging:
 
@@ -325,9 +329,9 @@ io_config = "meds_io_config.toml"
 
 ```toml
 [variables]
-mean_gpp_co = "F"     # sub-daily leaf physiology for one diagnostic run
-mean_anet_co   = "D"       # ... and its daily mean
-mean_agb_size_py      = "M Y"
+mean_gpp_co        = "F D"     # sub-daily and daily GPP per plant, for one diagnostic run
+mean_anet_co       = "D"       # ... and the leaf's net assimilation, daily
+mean_agb_size_py   = "M Y"
 mean_growth_avg_co = false
 ```
 

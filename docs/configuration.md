@@ -257,11 +257,11 @@ A polygon is one site unless `[[sites]]` divides it, in a site run. Each `[[site
 - **The terrain.** Each sub-step the polygon's forcing is moved to each site: to its elevation, by the
   run's lapse (`[site].apply_elevation_lapse`), and its direct beam onto its slope
   ([forcing](science/forcing.md) §8, Each site of a polygon). Each site's daily-mean air temperature
-  drives its phenology and growth temperature, and its forcing is reported as `*_by_site`.
+  drives its phenology and growth temperature, and its forcing is reported as `mean_*_si`.
 - **What a site is.** Each site has its own patches, made at the start (`init_mode = 0`, the same
   number per site) or from its census rows; the patch operators work within a site
   ([order of processes](science/order_of_processes.md)), so no area moves between sites. The output
-  reports each site's soil column and properties on a `site` axis, and every `_site` scalar is the
+  reports each site's soil column and properties on a `site` axis, and every `_py` variable is the
   polygon's ([diagnostics](science/diagnostics.md) §2–3).
 - **A restart** reads the sites back from the state file, which must hold as many as the config and,
   for each, as many soil layers.
