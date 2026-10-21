@@ -68,19 +68,19 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  drivers, and the slow conservation ledger                 2 017
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── io/            every data file a run reads or writes                      8 632
+├── io/            every data file a run reads or writes                      9 463
 │   ├── (root)     the netCDF C bindings, and the state file: written at
-│   │              checkpoints, read at restart                               1 171
+│   │              checkpoints, read at restart                               1 420
 │   ├── input/forcing/  prescribed drivers: the met reader (a MEDS
 │   │              forcing file, or the ED_ERA5land archive through
 │   │              meds_era5land_reader), its disaggregation kernels,
 │   │              the terrain lapse (meds_lapse_rate) and the CO2
-│   │              series (meds_co2_series)                                   3 117
+│   │              series (meds_co2_series)                                   3 255
 │   ├── input/maps/  static per-cell maps on the forcing grid: the one place
-│   │              a map is read (meds_surface_maps); the region's cell mask    168
+│   │              a map is read (meds_surface_maps); the region's cell mask    502
 │   └── output/    the diagnostic wall: derive → capture → reduce →
-│                  integrate → serialize                                      4 176
-├── init/          the initial community: bare ground, or a cohort census       182
+│                  integrate → serialize                                      4 286
+├── init/          the initial community: bare ground, or a cohort census       471
 ├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
 │                  demography, and the full coupled run                        938
 └── main/          meds_stepper (one coupled slow step, and the boundary
