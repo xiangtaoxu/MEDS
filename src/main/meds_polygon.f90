@@ -23,7 +23,8 @@ module meds_polygon
    use meds_therm_lib,              only : temp_to_internal_energy, internal_energy_to_temp
    use meds_config,                 only : meds_config_t
    use meds_time,                   only : meds_time_t, time_to_string
-   use meds_cohort_state_vars,      only : cohort_bad_field, cohort_field_name
+   use meds_cohort_state_vars,      only : cohort_bad_field, cohort_field_finite, cohort_field_name
+   use meds_patch_state_vars,       only : canopy_air_bad_field, canopy_air_field_name
    use meds_polygon_state_vars,     only : polygon_t, reset_step_diagnostics
    use meds_stepper,                only : advance_one_step, advance_boundary
    use meds_slow_dynamics,          only : refresh_canopy_depth
@@ -36,7 +37,7 @@ module meds_polygon
                                            soil_carbon_pool_name
    use meds_met_types,          only : met_source_t, met_cursor_t
    use meds_met,             only : met_cursor_init
-   use meds_output_reduce,      only : total_area, has_nan
+   use meds_output_reduce,      only : total_area
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_budget_check,           only : budget_t, budget_report
@@ -225,21 +226,14 @@ contains
       poly%restructure_pending  = is_new_month
       poly%restructure_new_year = is_new_year
 
-      !----- NAN GUARD, every step: the stand, the tissue temperatures and the canopy air         !
-      !      (has_nan), and the run's energy and water ledgers, whose running residual turns NaN    !
-      !      the step any flux or store in them does. A NaN is a STATUS here, not an `error stop`:   !
-      !      a library caller survives it.  ---------------------------------------------------------!
-      if (has_nan(poly) .or. ledger_not_finite()) then
-         write(*,'(a)') ' ERROR: a NaN reached the state or the energy/water ledger.'
-         if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
-         write(*,'(2a)') '        in the step ending ', time_to_string(now)
-         status = DRIVER_ERR_NAN ; run%status = status ; return
-      end if
-
-      !----- BOUNDS GUARD, checked every step and NOT gated on the ledger: each cohort's state     !
-      !      (cohort_bad_field: density, carbon pools, SLA, water) and each CENTURY soil-carbon     !
-      !      pool. An operator keeps these in bounds by construction, so a violation is a bug;     !
-      !      stopping on the step it happens, naming the field, is what makes it findable.         !
+      !----- STATE GUARD, every step: the run's energy and water ledgers, whose running residual   !
+      !      turns NaN the step any flux or store in them does; each cohort's state                  !
+      !      (cohort_bad_field: density, carbon pools, SLA, water, tissue energies); each patch's    !
+      !      canopy air (canopy_air_bad_field); and each CENTURY soil-carbon pool. A non-finite      !
+      !      value is DRIVER_ERR_NAN and an out-of-bounds one DRIVER_ERR_BOUNDS: a STATUS, not an    !
+      !      `error stop`, so a library caller survives it. An operator keeps these in bounds by     !
+      !      construction, so a violation is a bug; stopping on the step it happens, naming the     !
+      !      field, is what makes it findable.                                                       !
       !                                                                                          !
       !      The ledger checks the soil-carbon predicate at every phase boundary and can say WHICH  !
       !      operator broke it, which is far more useful -- but the ledger is a diagnostic with an  !
@@ -247,23 +241,54 @@ contains
       !      disable is a trap. So the guard itself lives here, unconditional, and the ledger's     !
       !      copy is the attribution.                                                              !
       !      Once per slow step over a few hundred cohorts x 10 fields; the cost does not register. !
+      if (ledger_not_finite()) then
+         write(*,'(a)') ' ERROR: a NaN reached the energy/water ledger.'
+         if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
+         write(*,'(2a)') '        in the step ending ', time_to_string(now)
+         status = DRIVER_ERR_NAN
+         run%status = status
+         return
+      end if
       block
          integer(ik) :: ii, kk
          do ii = 1_ik, poly%cohort%n
             kk = cohort_bad_field(poly%cohort, ii)
             if (kk /= 0_ik) then
-               write(*,'(a)') ' ERROR: a cohort''s state is outside its physical bounds.'
+               if (cohort_field_finite(poly%cohort, ii, kk)) then
+                  write(*,'(a)') ' ERROR: a cohort''s state is outside its physical bounds.'
+                  status = DRIVER_ERR_BOUNDS
+               else
+                  write(*,'(a)') ' ERROR: a cohort''s state is not finite.'
+                  status = DRIVER_ERR_NAN
+               end if
                if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
                write(*,'(3a,i0,a,i0,a,i0)') '        field ', trim(cohort_field_name(kk)),          &
                      ', cohort id ', poly%cohort%global_id(ii), ' (pft ',                         &
                      poly%cohort%pft(ii), ') in patch ', poly%cohort%owner_patch(ii)
                write(*,'(2a)')  '        date ', time_to_string(now)
-               write(*,'(a)') '        Density, carbon and water are amounts: never negative, never'
-               write(*,'(a)') '        infinite. Every operator keeps them so by construction.'
-               status = DRIVER_ERR_BOUNDS ; run%status = status
+               if (status == DRIVER_ERR_BOUNDS) then
+                  write(*,'(a)') '        Density, carbon and water are amounts: never negative, never'
+                  write(*,'(a)') '        infinite. Every operator keeps them so by construction.'
+               end if
+               run%status = status
                return
             end if
          end do
+         if (allocated(poly%patch%cas)) then
+            do ii = 1_ik, poly%patch%n
+               kk = canopy_air_bad_field(poly%patch%cas(ii))
+               if (kk /= 0_ik) then
+                  write(*,'(a)') ' ERROR: a patch''s canopy air is not finite.'
+                  if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
+                  write(*,'(3a,i0,a,i0)') '        field ', trim(canopy_air_field_name(kk)), ', patch ', ii,  &
+                        ' of ', poly%patch%n
+                  write(*,'(2a)')  '        date ', time_to_string(now)
+                  status = DRIVER_ERR_NAN
+                  run%status = status
+                  return
+               end if
+            end do
+         end if
          if (cfg%soil_carbon%soil_carbon_on) then
             do ii = 1_ik, poly%patch%n
                kk = soil_carbon_bad_pool(poly%patch%soil_carbon(ii))

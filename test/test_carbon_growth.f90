@@ -6,7 +6,8 @@ program test_carbon_growth
    use meds_therm_lib,              only : internal_energy_liquid
    use meds_allometry_lib, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
    use meds_config,                 only : meds_config_t, growth_window_steps
-   use meds_cohort_state_vars, only : cohort_deriv_alloc, cohort_bad_field, cohort_field_name
+   use meds_cohort_state_vars, only : cohort_deriv_alloc, cohort_bad_field, cohort_field_finite, cohort_field_name
+   use meds_patch_state_vars,  only : canopy_air_bad_field
    use meds_polygon_state_vars, only : polygon_t
    use meds_demography_update, only : update_cohort_states
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
@@ -15,7 +16,6 @@ program test_carbon_growth
                                            update_cohort_derivatives, pool_change_block
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
-   use meds_output_reduce,     only : has_nan
    use meds_test_support, only : banner, build_test_config, check, check_close
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_positive_inf
    implicit none
@@ -51,25 +51,27 @@ program test_carbon_growth
    call check(poly%cohort%dbh(1) > dbh0,          'dbh did not increase with wood_carbon (the flip)')
    call check_close(poly%cohort%leaf_area(1), poly%cohort%leaf_carbon(1) * cfg%pft%sla(3_ik),   &
                     1.0e-9_wp, 'carbon-mode leaf_area /= leaf_carbon*sla')
-   call check(.not. has_nan(poly), 'carbon-mode step produced NaN')
+   call check(cohort_bad_field(poly%cohort, 1_ik) == 0_ik, 'carbon-mode step left the cohort out of bounds')
 
-   !----- has_nan sees the fast loop's states too: a non-finite canopy air or leaf temperature is  !
-   !      what the integrators commit when even their smallest step fails. ------------------------!
+   !----- The driver's checks see the fast loop's states too: a non-finite canopy air or tissue     !
+   !      energy is what the integrators commit when even their smallest step fails. ---------------!
    block
-      real(wp) :: keep
+      real(wp)    :: keep
+      integer(ik) :: k
       if (allocated(poly%patch%cas)) then
          keep = poly%patch%cas(1)%can_shv
          poly%patch%cas(1)%can_shv = ieee_value(keep, ieee_quiet_nan)
-         call check(has_nan(poly), 'has_nan missed a NaN canopy-air humidity')
+         call check(canopy_air_bad_field(poly%patch%cas(1)) == 2_ik, 'a NaN canopy-air humidity is caught')
          poly%patch%cas(1)%can_shv = keep
+         call check(canopy_air_bad_field(poly%patch%cas(1)) == 0_ik, 'the restored canopy air passes')
       end if
-      if (allocated(poly%cohort%leaf_temp)) then
-         keep = poly%cohort%leaf_temp(1)
-         poly%cohort%leaf_temp(1) = ieee_value(keep, ieee_positive_inf)
-         call check(has_nan(poly), 'has_nan missed an infinite leaf temperature')
-         poly%cohort%leaf_temp(1) = keep
-      end if
-      call check(.not. has_nan(poly), 'has_nan still true after the state was restored')
+      keep = poly%cohort%leaf_energy(1)
+      poly%cohort%leaf_energy(1) = ieee_value(keep, ieee_positive_inf)
+      k = cohort_bad_field(poly%cohort, 1_ik)
+      call check(trim(cohort_field_name(k)) == 'leaf_energy' .and. .not. cohort_field_finite(poly%cohort, 1_ik, k), &
+                 'an infinite leaf energy is caught, as not finite')
+      poly%cohort%leaf_energy(1) = keep
+      call check(cohort_bad_field(poly%cohort, 1_ik) == 0_ik, 'the restored cohort passes')
    end block
 
    !=== 2b. The cached WOOD geometry must describe TODAY's tree, not the one 30 steps ago. ======!

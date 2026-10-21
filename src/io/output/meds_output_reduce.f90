@@ -25,7 +25,7 @@ module meds_output_reduce
    !----- Polygon totals for the callers that want one number (the driver's summaries, the C  !
    !      API, the tests). ------------------------------------------------------------------!
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area
-   public :: has_nan, print_summary
+   public :: print_summary
    public :: dbh_class_index
 
    !=======================================================================================!
@@ -386,38 +386,6 @@ contains
    !  Health checks / reporting                                                              !
    !=======================================================================================!
 
-
-   !----- True if any diameter, density, AGB or wood carbon is NaN, or any cohort's leaf or wood !
-   !      temperature, or any patch's canopy air, is not finite. The fast loop's integrators      !
-   !      commit a non-finite state rather than hang when even their smallest step fails, and the !
-   !      canopy air and the tissue temperatures are where such a failure lands. ------------------!
-   pure logical function has_nan(poly) result(bad)
-      type(polygon_t), intent(in) :: poly
-      integer(ik) :: i
-      bad = .false.
-      do i = 1_ik, poly%cohort%n
-         if (ieee_is_nan(poly%cohort%dbh(i))    .or. ieee_is_nan(poly%cohort%nplant(i)) .or.   &
-             ieee_is_nan(poly%cohort%agb(i))    .or. ieee_is_nan(poly%cohort%wood_carbon(i)))  &
-            bad = .true.
-         if (allocated(poly%cohort%leaf_temp)) then
-            if (.not. ieee_is_finite(poly%cohort%leaf_temp(i))) bad = .true.
-         end if
-         if (allocated(poly%cohort%wood_temp)) then
-            if (.not. ieee_is_finite(poly%cohort%wood_temp(i))) bad = .true.
-         end if
-         if (allocated(poly%cohort%leaf_energy)) then
-            if (.not. (ieee_is_finite(poly%cohort%leaf_energy(i)) .and. ieee_is_finite(poly%cohort%wood_energy(i)))) &
-               bad = .true.
-         end if
-      end do
-      if (allocated(poly%patch%cas)) then
-         do i = 1_ik, poly%patch%n
-            if (.not. (ieee_is_finite(poly%patch%cas(i)%can_enthalpy) .and.                      &
-                       ieee_is_finite(poly%patch%cas(i)%can_shv)      .and.                      &
-                       ieee_is_finite(poly%patch%cas(i)%can_co2))) bad = .true.
-         end do
-      end if
-   end function has_nan
 
    !----- Human-readable one-line summary. ------------------------------------------------!
    subroutine print_summary(poly, label)

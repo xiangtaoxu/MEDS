@@ -16,7 +16,7 @@
 ! values a field holds before it has a real one are in meds_state_defaults.                !
 !==========================================================================================!
 module meds_cohort_state_vars
-   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : tissue_c_leaf, tissue_c_wood_dry, cp_liq
    use meds_therm_lib,       only : tissue_heat_capacity, tissue_dry_heat_capacity, tissue_temp_to_energy,  &
@@ -40,7 +40,7 @@ module meds_cohort_state_vars
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_film_water, cohort_water_enthalpy
    public :: cohort_wood_store_carbon
    public :: set_cohort_tissue_water, cohort_tissue_temps, set_cohort_tissue_temps, hold_cohort_tissue_temps
-   public :: cohort_bad_field, cohort_field_name
+   public :: cohort_bad_field, cohort_field_finite, cohort_field_name
 
    !----- All cohorts of a site. The model integrates nplant and the four carbon pools; the  !
    !      size fields are a function of the pools, written only by set_cohort_size_from_carbon. !
@@ -142,11 +142,13 @@ module meds_cohort_state_vars
       real(wp), allocatable :: dln_nplant_dt(:)
    end type cohort_deriv_block
 
-   !----- The bounded cohort fields cohort_bad_field checks, in its order. ------------------!
-   integer(ik), parameter :: N_COHORT_BOUNDED = 10_ik
-   character(len=20), parameter :: COHORT_BOUNDED_NAME(N_COHORT_BOUNDED) = [character(len=20) ::   &
+   !----- The cohort fields cohort_bad_field checks, in its order: the first N_COHORT_AMOUNTS  !
+   !      are amounts, finite and never below zero; the tissue energies are finite. ---------!
+   integer(ik), parameter :: N_COHORT_AMOUNTS = 10_ik, N_COHORT_CHECKED = 12_ik
+   character(len=20), parameter :: COHORT_CHECKED_NAME(N_COHORT_CHECKED) = [character(len=20) ::   &
       'nplant', 'leaf_carbon', 'fineroot_carbon', 'wood_carbon', 'nonstructural_carbon', 'sla',     &
-      'leaf_water_mass', 'wood_water_mass', 'leaf_surf_water', 'wood_surf_water']
+      'leaf_water_mass', 'wood_water_mass', 'leaf_surf_water', 'wood_surf_water', 'leaf_energy',    &
+      'wood_energy']
 
 contains
 
@@ -897,49 +899,68 @@ contains
    !---------------------------------------------------------------------------------------!
    ! The bounds of a cohort's state: its plant density, carbon pools, SLA, and the water it    !
    ! holds (internal stores and the films on its leaves and wood) are amounts, never below     !
-   ! zero and never infinite. Every operator keeps them in bounds by construction -- the        !
-   ! applier zeroes only a pool's round-off, mortality never takes nplant below `negligible`,   !
-   ! the fast loop clamps the films into [0, capacity] -- so a violation is an operator bug.    !
-   ! The driver checks this every step and names the field, so the bug is caught the step it    !
-   ! happens instead of through a quantity derived from it, somewhere else, years later. The    !
-   ! geometry is not checked: it is a function of these. Returns the first bad field's index,   !
-   ! 0 if none.                                                                                 !
+   ! zero and never infinite; its tissue energies are finite. Every operator keeps them in     !
+   ! bounds by construction -- the applier zeroes only a pool's round-off, mortality never     !
+   ! takes nplant below `negligible`, the fast loop clamps the films into [0, capacity] -- so  !
+   ! a violation is an operator bug, and a non-finite energy is a fast-loop integrator that    !
+   ! could not take even its smallest step. The driver checks this every step and names the   !
+   ! field, so the bug is caught the step it happens. The geometry and the temperatures are    !
+   ! not checked: they are functions of these. Returns the first bad field's index, 0 if none. !
    !---------------------------------------------------------------------------------------!
    pure function cohort_bad_field(cohort, i) result(k)
       type(cohort_block), intent(in) :: cohort
       integer(ik),        intent(in) :: i
       integer(ik)                    :: k
-      real(wp)    :: x(N_COHORT_BOUNDED)
+      real(wp)    :: x(N_COHORT_CHECKED)
       integer(ik) :: j
-      x = [cohort%nplant(i), cohort%leaf_carbon(i), cohort%fineroot_carbon(i),                      &
-           cohort%wood_carbon(i), cohort%nonstructural_carbon(i), cohort%sla(i),                    &
-           cohort%leaf_water_mass(i), cohort%wood_water_mass(i),                                    &
-           cohort%leaf_surf_water(i), cohort%wood_surf_water(i)]
+      x = checked_fields(cohort, i)
       k = 0_ik
-      do j = 1_ik, N_COHORT_BOUNDED
-         !----- NaN first, by classification, as soil_carbon_bad_pool does: a comparison with a NaN !
-         !      raises IEEE invalid, which a trapping build stops on. ---------------------------!
-         if (ieee_is_nan(x(j))) then
+      do j = 1_ik, N_COHORT_CHECKED
+         !----- Not finite first, by classification, as soil_carbon_bad_pool does: a comparison   !
+         !      with a NaN raises IEEE invalid, which a trapping build stops on. ------------------!
+         if (.not. ieee_is_finite(x(j))) then
             k = j
             return
          end if
-         if (x(j) < 0.0_wp .or. x(j) > huge(x(j))) then
+         if (j <= N_COHORT_AMOUNTS .and. x(j) < 0.0_wp) then
             k = j
             return
          end if
       end do
    end function cohort_bad_field
 
+   !----- Whether field k (cohort_bad_field's index) of cohort i is finite: the driver reports a  !
+   !      non-finite field as a NaN and a finite one out of bounds as a bound. --------------------!
+   pure logical function cohort_field_finite(cohort, i, k) result(yes)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i, k
+      real(wp) :: x(N_COHORT_CHECKED)
+      x = checked_fields(cohort, i)
+      yes = ieee_is_finite(x(k))
+   end function cohort_field_finite
+
    !----- Name for the index cohort_bad_field returns, so a failure message is readable. -------!
    pure function cohort_field_name(k) result(nm)
       integer(ik), intent(in) :: k
       character(len=20)       :: nm
-      if (k >= 1_ik .and. k <= N_COHORT_BOUNDED) then
-         nm = COHORT_BOUNDED_NAME(k)
+      if (k >= 1_ik .and. k <= N_COHORT_CHECKED) then
+         nm = COHORT_CHECKED_NAME(k)
       else
          nm = '(none)'
       end if
    end function cohort_field_name
+
+   !----- The fields cohort_bad_field checks, in COHORT_CHECKED_NAME's order. --------------------!
+   pure function checked_fields(cohort, i) result(x)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i
+      real(wp)                       :: x(N_COHORT_CHECKED)
+      x = [cohort%nplant(i), cohort%leaf_carbon(i), cohort%fineroot_carbon(i),                      &
+           cohort%wood_carbon(i), cohort%nonstructural_carbon(i), cohort%sla(i),                    &
+           cohort%leaf_water_mass(i), cohort%wood_water_mass(i),                                    &
+           cohort%leaf_surf_water(i), cohort%wood_surf_water(i),                                    &
+           cohort%leaf_energy(i), cohort%wood_energy(i)]
+   end function checked_fields
 
    !=======================================================================================!
    !  TENDENCIES: the bundle the slow step fills and update_cohort_states applies          !
