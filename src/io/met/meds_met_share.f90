@@ -1,20 +1,21 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_source_common -- what the two forcing file sources share (docs/science/forcing.md   !
+! meds_met_share -- what the two forcing file sources share (docs/science/forcing.md   !
 ! §1, §2 and §9): the reader's status codes, the time axis with its declared recycle window     !
 ! (validate_recycle_window, recycle_model_to_file), and the check of a file against the         !
 ! [forcing] config that describes it (validate_file_against_config). A MEDS forcing file and    !
 ! the ED_ERA5land archive both lay their records on one axis of seconds since a base time, so    !
-! meds_met_driver brackets and recycles both with one code.                                     !
+! meds_met brackets and recycles both with one code. A check that fails returns its status and  !
+! its reason, line by line (add_line); met_open prints it.                                       !
 !==========================================================================================!
-module meds_met_source_common
+module meds_met_share
    use iso_c_binding, only : c_int, c_double
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_between, is_leap_year,        &
                          time_to_string, whole_years_between
    use meds_forcing_params, only : MET_BACKEND_ED_DEFAULT, METAVG_BEGIN, SWPART_PASSTHROUGH,      &
                                    HEIGHT_ABOVE_GROUND, MAX_RECYCLE_YEARS
-   use meds_forcing_types, only : met_source_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, FLD_QAIR,          &
+   use meds_met_types, only : met_source_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, FLD_QAIR,          &
                                   FLD_RHAIR, FLD_TDEW
    use meds_netcdf_c, only : nc_inq_varid_f, nc_get_att_text_f, nc_get_att_double_f, NC_NOERR,    &
                              NC_GLOBAL
@@ -24,9 +25,9 @@ module meds_met_source_common
    public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                  &
              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,           &
              MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED,   &
-             MET_ERR_CO2_IN_MET_FILE, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY
+             MET_ERR_CO2_IN_MET_FILE, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, MET_ERR_FILE
    public :: REC_MATCH_TOL, validate_recycle_window, file_lookup_sec, first_record_after,         &
-             validate_file_against_config, humidity_field
+             validate_file_against_config, humidity_field, add_line
 
    !----- met_open status codes (see the `stat` argument). ---------------------------------!
    integer(ik), parameter :: MET_OK                          = 0_ik
@@ -42,6 +43,7 @@ module meds_met_source_common
    integer(ik), parameter :: MET_ERR_CO2_IN_MET_FILE         = 10_ik  !< the met file carries CO2air
    integer(ik), parameter :: MET_ERR_NOT_UTC                 = 11_ik  !< the file does not say time_zone = "UTC"
    integer(ik), parameter :: MET_ERR_HUMIDITY                = 12_ik  !< no, two, or out-of-range humidity variables
+   integer(ik), parameter :: MET_ERR_FILE                    = 13_ik  !< the file cannot be read as a MEDS forcing file
 
    !----- Tolerance for "this record stamp is that instant" [s]: the axis is float seconds, so an  !
    !      exact == would be brittle, and half a second is far below any forcing interval. ---------!
@@ -56,9 +58,11 @@ contains
    !  just opened. MEDS never infers the window from the file: it is told where the cycle starts  !
    !  and how long it is, and checks that the file agrees (docs/science/forcing.md §9).          !
    !=======================================================================================!
-   subroutine validate_recycle_window(src, stat)
-      type(met_source_t), intent(inout)  :: src
-      integer(ik),        intent(out)   :: stat
+   subroutine validate_recycle_window(src, stat, why)
+      type(met_source_t),            intent(inout) :: src
+      integer(ik),                   intent(out)   :: stat
+      character(len=:), allocatable, intent(inout) :: why     !< the reason, when stat /= MET_OK
+      character(len=320) :: buf
       real(wp)    :: start_sec, end_sec
       integer(ik) :: i
       logical     :: covered
@@ -75,9 +79,10 @@ contains
       src%n_cycle_years = whole_years_between(src%fcfg%recycle_start, src%fcfg%recycle_end,     &
                                               MAX_RECYCLE_YEARS)
       if (src%n_cycle_years < 1_ik) then
-         write(*,'(4a)') ' met_open: recycle window ', time_to_string(src%fcfg%recycle_start),   &
-                         ' .. ', time_to_string(src%fcfg%recycle_end)
-         write(*,'(a)')  '   is not an exact whole number of calendar years.'
+         write(buf,'(4a)') ' met_open: recycle window ', time_to_string(src%fcfg%recycle_start),   &
+                           ' .. ', time_to_string(src%fcfg%recycle_end)
+         call add_line(why, trim(buf))
+         call add_line(why, '   is not an exact whole number of calendar years.')
          stat = MET_ERR_WINDOW_NOT_WHOLE_YEARS
          return
       end if
@@ -94,13 +99,14 @@ contains
          end if
       end do
       if (src%irec_cycle_first == 0_ik) then
-         write(*,'(2a)') ' met_open: forcing.recycle_start = ', time_to_string(src%fcfg%recycle_start)
-         write(*,'(a)')  '   does not match any record in the forcing file. The file record stamps run'
-         write(*,'(4a)') '   from ', time_to_string(time_advance_seconds(src%base_time, src%time_sec(1))), &
-                         ' to ',    time_to_string(time_advance_seconds(src%base_time, src%time_sec(src%nrec)))
-         write(*,'(a)')  '   Set recycle_start to an actual record stamp -- MEDS does not guess it. Note'
-         write(*,'(a)')  '   avg_convention="end" files (ERA5-Land) stamp the END of each interval, so the'
-         write(*,'(a)')  '   first record of a calendar year is 01:00:00 for hourly data, not 00:00:00.'
+         call add_line(why, ' met_open: forcing.recycle_start = '//time_to_string(src%fcfg%recycle_start))
+         call add_line(why, '   does not match any record in the forcing file. The file record stamps run')
+         write(buf,'(4a)') '   from ', time_to_string(time_advance_seconds(src%base_time, src%time_sec(1))), &
+                           ' to ',    time_to_string(time_advance_seconds(src%base_time, src%time_sec(src%nrec)))
+         call add_line(why, trim(buf))
+         call add_line(why, '   Set recycle_start to an actual record stamp -- MEDS does not guess it. Note')
+         call add_line(why, '   avg_convention="end" files (ERA5-Land) stamp the END of each interval, so the')
+         call add_line(why, '   first record of a calendar year is 01:00:00 for hourly data, not 00:00:00.')
          stat = MET_ERR_START_NOT_A_RECORD
          return
       end if
@@ -117,11 +123,12 @@ contains
       covered = src%irec_cycle_last > src%irec_cycle_first
       if (covered) covered = src%time_sec(src%irec_cycle_last) >= end_sec - src%dt_forcing - REC_MATCH_TOL
       if (.not. covered) then
-         write(*,'(4a)') ' met_open: the forcing file does not cover the declared recycle window ', &
-                         time_to_string(src%fcfg%recycle_start), ' .. ',                         &
-                         time_to_string(src%fcfg%recycle_end)
-         write(*,'(2a)') '   last record in the file: ',                                         &
-                         time_to_string(time_advance_seconds(src%base_time, src%time_sec(src%nrec)))
+         write(buf,'(4a)') ' met_open: the forcing file does not cover the declared recycle window ', &
+                           time_to_string(src%fcfg%recycle_start), ' .. ',                         &
+                           time_to_string(src%fcfg%recycle_end)
+         call add_line(why, trim(buf))
+         call add_line(why, '   last record in the file: '//                                         &
+                            time_to_string(time_advance_seconds(src%base_time, src%time_sec(src%nrec))))
          stat = MET_ERR_WINDOW_NOT_COVERED
          return
       end if
@@ -207,10 +214,12 @@ contains
    ! record spacing matters most; the attributes are checked when present (docs/science/forcing.md !
    ! §1).                                                                                           !
    !---------------------------------------------------------------------------------------!
-   subroutine validate_file_against_config(src, ncid, vstat)
-      type(met_source_t), intent(in)   :: src
-      integer(c_int),     intent(in)  :: ncid
-      integer(ik),        intent(out) :: vstat
+   subroutine validate_file_against_config(src, ncid, vstat, why)
+      type(met_source_t),            intent(in)    :: src
+      integer(c_int),                intent(in)    :: ncid
+      integer(ik),                   intent(out)   :: vstat
+      character(len=:), allocatable, intent(inout) :: why     !< the reason, when vstat /= MET_OK
+      character(len=320) :: buf
       character(len=64) :: attr
       real(wp)          :: dt_file
       integer(c_int)    :: st
@@ -223,17 +232,20 @@ contains
       if (src%nrec >= 2_ik) then
          dt_file = src%time_sec(2) - src%time_sec(1)
          if (abs(dt_file - src%dt_forcing) > REC_MATCH_TOL) then
-            write(*,'(a,f12.3,a)') ' met_open: [forcing].timestep = ', src%dt_forcing, ' s'
-            write(*,'(a,f12.3,a)') '   but the file record spacing is ', dt_file, ' s.'
-            write(*,'(a)')         '   The timestep places interval midpoints, disaggregates shortwave and'
-            write(*,'(a)')         '   brackets the recycle seam. A wrong value mis-times all three.'
+            write(buf,'(a,f12.3,a)') ' met_open: [forcing].timestep = ', src%dt_forcing, ' s'
+            call add_line(why, trim(buf))
+            write(buf,'(a,f12.3,a)') '   but the file record spacing is ', dt_file, ' s.'
+            call add_line(why, trim(buf))
+            call add_line(why, '   The timestep places interval midpoints, disaggregates shortwave and')
+            call add_line(why, '   brackets the recycle seam. A wrong value mis-times all three.')
             vstat = MET_ERR_DT_MISMATCH
             return
          end if
          do i = 3_ik, src%nrec
             if (abs((src%time_sec(i) - src%time_sec(i-1)) - dt_file) > REC_MATCH_TOL) then
-               write(*,'(a,i0,a)') ' met_open: forcing record spacing changes at record ', i, '.'
-               write(*,'(a)')      '   MEDS assumes a uniform time axis.'
+               write(buf,'(a,i0,a)') ' met_open: forcing record spacing changes at record ', i, '.'
+               call add_line(why, trim(buf))
+               call add_line(why, '   MEDS assumes a uniform time axis.')
                vstat = MET_ERR_AXIS_NOT_UNIFORM
                return
             end if
@@ -244,8 +256,8 @@ contains
       st = nc_get_att_text_f(ncid, NC_GLOBAL, 'avg_convention', attr)
       if (st == NC_NOERR .and. len_trim(attr) > 0) then
          if (trim(attr) /= trim(avg_convention_name(src%fcfg%avg_convention))) then
-            write(*,'(4a)') ' met_open: file avg_convention = "', trim(attr),                     &
-                            '", config = "', trim(avg_convention_name(src%fcfg%avg_convention))//'"'
+            call add_line(why, ' met_open: file avg_convention = "'//trim(attr)//                &
+                               '", config = "'//trim(avg_convention_name(src%fcfg%avg_convention))//'"')
             vstat = MET_ERR_ATTR_MISMATCH
             return
          end if
@@ -255,16 +267,16 @@ contains
       st = nc_get_att_text_f(ncid, NC_GLOBAL, 'sw_input_kind', attr)
       if (st == NC_NOERR .and. len_trim(attr) > 0) then
          if (trim(attr) == 'total' .and. src%fcfg%sw_partition == SWPART_PASSTHROUGH) then
-            write(*,'(a)') ' met_open: the file carries TOTAL shortwave (sw_input_kind = "total")'
-            write(*,'(a)') '   but [forcing].sw_partition = "passthrough", which expects the four'
-            write(*,'(a)') '   component streams. The run would read fields the file does not have.'
+            call add_line(why, ' met_open: the file carries TOTAL shortwave (sw_input_kind = "total")')
+            call add_line(why, '   but [forcing].sw_partition = "passthrough", which expects the four')
+            call add_line(why, '   component streams. The run would read fields the file does not have.')
             vstat = MET_ERR_ATTR_MISMATCH
             return
          end if
          if (trim(attr) == 'components' .and. src%fcfg%sw_partition /= SWPART_PASSTHROUGH) then
-            write(*,'(a)') ' met_open: the file already carries the four shortwave components'
-            write(*,'(a)') '   (sw_input_kind = "components") but [forcing].sw_partition asks for a'
-            write(*,'(a)') '   split. Partitioning an already-split stream double-counts the beam.'
+            call add_line(why, ' met_open: the file already carries the four shortwave components')
+            call add_line(why, '   (sw_input_kind = "components") but [forcing].sw_partition asks for a')
+            call add_line(why, '   split. Partitioning an already-split stream double-counts the beam.')
             vstat = MET_ERR_ATTR_MISMATCH
             return
          end if
@@ -276,8 +288,8 @@ contains
          st = nc_get_att_text_f(ncid, NC_GLOBAL, 'time_zone', attr)
          if (st /= NC_NOERR) attr = '(absent)'
          if (trim(attr) /= 'UTC') then
-            write(*,'(3a)') ' met_open: the forcing file''s time_zone attribute is "', trim(attr), '".'
-            write(*,'(a)')  '   MEDS runs in UTC: build the file on a UTC clock and set time_zone = "UTC".'
+            call add_line(why, ' met_open: the forcing file''s time_zone attribute is "'//trim(attr)//'".')
+            call add_line(why, '   MEDS runs in UTC: build the file on a UTC clock and set time_zone = "UTC".')
             vstat = MET_ERR_NOT_UTC
             return
          end if
@@ -285,17 +297,17 @@ contains
 
       !----- (e) The heights the file states, against those the config moves the forcing from    !
       !      (docs/science/forcing.md §8). ------------------------------------------------------!
-      call check_height_attribute(ncid, 'tq_height_m',        src%fcfg%tq_height,   vstat)
+      call check_height_attribute(ncid, 'tq_height_m',        src%fcfg%tq_height,   vstat, why)
       if (vstat /= MET_OK) return
-      call check_height_attribute(ncid, 'wind_height_m',      src%fcfg%wind_height, vstat)
+      call check_height_attribute(ncid, 'wind_height_m',      src%fcfg%wind_height, vstat, why)
       if (vstat /= MET_OK) return
-      call check_height_attribute(ncid, 'wind_meas_height_m', src%fcfg%wind_height, vstat)
+      call check_height_attribute(ncid, 'wind_meas_height_m', src%fcfg%wind_height, vstat, why)
       if (vstat /= MET_OK) return
       st = nc_get_att_text_f(ncid, NC_GLOBAL, 'height_above', attr)
       if (st == NC_NOERR .and. len_trim(attr) > 0) then
          if (trim(attr) /= trim(height_above_name(src%fcfg%height_above))) then
-            write(*,'(4a)') ' met_open: file height_above = "', trim(attr), '", config = "',        &
-                            trim(height_above_name(src%fcfg%height_above))//'"'
+            call add_line(why, ' met_open: file height_above = "'//trim(attr)//'", config = "'//      &
+                               trim(height_above_name(src%fcfg%height_above))//'"')
             vstat = MET_ERR_ATTR_MISMATCH
             return
          end if
@@ -306,10 +318,10 @@ contains
       block
          integer(c_int) :: vid
          if (nc_inq_varid_f(ncid, 'CO2air', vid) == NC_NOERR) then
-            write(*,'(a)') ' met_open: the forcing file carries CO2air, but CO2 comes from'
-            write(*,'(a)') '   [forcing].co2_source ("const" or "file"), never from the met file.'
-            write(*,'(a)') '   Remove it (ncks -x -v CO2air in.nc out.nc) or rebuild the file with'
-            write(*,'(a)') '   make_forcing_file.py, which does not write it.'
+            call add_line(why, ' met_open: the forcing file carries CO2air, but CO2 comes from')
+            call add_line(why, '   [forcing].co2_source ("const" or "file"), never from the met file.')
+            call add_line(why, '   Remove it (ncks -x -v CO2air in.nc out.nc) or rebuild the file with')
+            call add_line(why, '   make_forcing_file.py, which does not write it.')
             vstat = MET_ERR_CO2_IN_MET_FILE
             return
          end if
@@ -318,20 +330,32 @@ contains
 
    !----- A file's stated measurement height (a global attribute in m), when present, against the   !
    !      configured one.                                                                             !
-   subroutine check_height_attribute(ncid, name, configured, vstat)
-      integer(c_int),   intent(in)  :: ncid
-      character(len=*), intent(in)  :: name
-      real(wp),         intent(in)  :: configured
-      integer(ik),      intent(out) :: vstat
+   subroutine check_height_attribute(ncid, name, configured, vstat, why)
+      integer(c_int),                intent(in)    :: ncid
+      character(len=*),              intent(in)    :: name
+      real(wp),                      intent(in)    :: configured
+      integer(ik),                   intent(out)   :: vstat
+      character(len=:), allocatable, intent(inout) :: why
+      character(len=320) :: buf
       real(c_double) :: stated
       vstat = MET_OK
       if (nc_get_att_double_f(ncid, NC_GLOBAL, name, stated) /= NC_NOERR) return
       if (abs(real(stated, wp) - configured) > HEIGHT_MATCH_TOL) then
-         write(*,'(3a,f0.3,a,f0.3,a)') ' met_open: the forcing file states ', name, ' = ', stated,     &
-                                       ' m, but [forcing] says ', configured, ' m.'
+         write(buf,'(3a,f0.3,a,f0.3,a)') ' met_open: the forcing file states ', name, ' = ', stated,     &
+                                         ' m, but [forcing] says ', configured, ' m.'
+         call add_line(why, trim(buf))
          vstat = MET_ERR_ATTR_MISMATCH
       end if
    end subroutine check_height_attribute
+
+   !----- One more line of a reader's reason for refusing a file; the opener prints it. ---------!
+   pure subroutine add_line(why, line)
+      character(len=:), allocatable, intent(inout) :: why
+      character(len=*),              intent(in)    :: line
+      if (.not. allocated(why)) why = ''
+      if (len(why) > 0) why = why//new_line('a')
+      why = why//line
+   end subroutine add_line
 
    pure function height_above_name(code) result(nm)
       integer(ik), intent(in) :: code
@@ -352,4 +376,4 @@ contains
       end select
    end function avg_convention_name
 
-end module meds_met_source_common
+end module meds_met_share

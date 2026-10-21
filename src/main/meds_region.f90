@@ -28,33 +28,32 @@ module meds_region
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : day_sec, yr_day
    use meds_numerics,               only : ascending_order
-   use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART,                   &
-                                           RUN_MODE_REGION, soil_maps_on, site_config
+   use meds_config,                 only : meds_config_t, INIT_RESTART,                                &
+                                           RUN_MODE_REGION, soil_maps_on, site_config, apply_map_inputs
    use meds_config_check,           only : validate_config
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
    use meds_polygon_state_vars,     only : polygon_t, free_polygon
-   use meds_io,                     only : state_file_t, state_file_open, state_file_put, state_file_close, &
-                                           state_file_polygons, io_read_state, state_file_refusal
-   use meds_demography_update,      only : update_overtopping_lai
-   use meds_demography_cohort_fusefiss, only : max_cohort_count
-   use meds_vegetation_dynamics,    only : advance_plant_traits, reacclimate_plant_traits
-   use meds_init,                   only : init_bare_ground, init_bare_sites, seed_bare_ground,       &
-                                           init_from_census, restructure_census_stand
-   use meds_forcing_types,          only : met_source_t, met_cells_t
-   use meds_forcing_params,         only : MET_PATH_LEN, MET_BACKEND_ED_ERA5LAND
-   use meds_met_driver,             only : met_open, met_close, met_prefetch, MET_OK
-   use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
-                                           map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
-   use meds_era5land_reader,        only : era5land_select_box, era5land_static_file, ERA_OK, ERA_ERR_NO_CELL
-   use meds_diagnostic_reduce,      only : print_summary, total_area, total_agb, total_lai
+   use meds_init_restart,           only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
+                                           restart_file_slots
+   use meds_init,                   only : init_polygon
+   use meds_met_types,              only : met_source_t, met_grid_t, met_cells_t
+   use meds_forcing_params,         only : MET_BACKEND_ED_ERA5LAND
+   use meds_met,             only : met_open, met_close, met_prefetch
+   use meds_met_share,       only : MET_OK
+   use meds_maps,                   only : apply_cell_mask, map_status_message, MAP_OK, read_map_inputs
+   use meds_maps_params,            only : map_inputs_t
+   use meds_met_grid,               only : select_box_cells, select_site_cell, GRID_OK, GRID_ERR_NO_CELL
+   use meds_met_era5land,           only : era5land_grid
+   use meds_output_reduce,      only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
-                                           open_output_files, attach_output, ensure_output_dir,   &
+                                           ensure_output_dir,                                     &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
-                                           DRIVER_ERR_BOUNDS, N_PATCH_INIT
+                                           DRIVER_ERR_BOUNDS
    use meds_output_types,           only : output_files_t, output_buffers_t
-   use meds_output_manager,         only : output_serialize, output_close
+   use meds_output_stream,          only : output_serialize, output_close
+   use meds_output_setup,           only : open_output_files, attach_output
    use meds_toml,                   only : toml_write_record
    implicit none
    private
@@ -115,16 +114,15 @@ contains
       logical,             intent(out)   :: ok
       logical, optional,   intent(in)    :: verbose
       type(met_cells_t)          :: cells
-      character(len=MET_PATH_LEN) :: static
+      type(met_grid_t)           :: grid
       integer(ik)                :: st, p, n
-      integer(ik), allocatable   :: ids(:), file_ids(:), slot(:)
+      integer(ik), allocatable   :: ids(:), slot(:)
       type(map_inputs_t)         :: inputs
       type(meds_config_t)        :: pcfg
       type(meds_config_t), allocatable :: site_cfg(:)     !< [[sites]]: each site's configuration ...
       real(wp),            allocatable :: site_area(:)    !< ... and share of the polygon
       character(len=:), allocatable :: msg
-      type(meds_time_t)          :: restart_time
-      logical                    :: found, fast_found, region
+      logical                    :: fast_found, region, started
 
       ok = .false.
       if (present(verbose)) reg%verbose = verbose
@@ -150,9 +148,9 @@ contains
                             'worker thread''s default stack (4 MB with ifx); set it, e.g. OMP_STACKSIZE=512M'
          !----- The cells: the box's valid cells with enough land, in row-major order, less those the  !
          !      cell mask drops; each one's soil and site index from the [maps] files. ----------------!
-         static = era5land_static_file(cfg%forcing)
-         if (.not. select_cells(cfg, static, cells, reg%verbose)) return
-         call read_map_inputs(cfg%maps, static, cells, inputs, msg)
+         grid = era5land_grid(cfg%forcing)
+         if (.not. select_cells(cfg, grid, cells, reg%verbose)) return
+         call read_map_inputs(cfg%maps, grid, cells, inputs, msg)
          if (len(msg) > 0) then
             write(*,'(2a)') ' region: ', msg
             return
@@ -177,25 +175,14 @@ contains
 
       !----- A restart (init_mode = 2): each polygon's row of the state file, by its id. A file may  !
       !      hold more polygons than the run: a region whose cell failed resumes with that cell      !
-      !      masked out. A one-polygon run also reads a state file without a polygon axis, as every   !
-      !      site run wrote one before runs became regions. -----------------------------------------!
+      !      masked out. A one-polygon run also reads a state file without a polygon axis, which     !
+      !      holds one site. --------------------------------------------------------------------------!
       allocate(slot(n), source=0_ik)
       if (cfg%init%init_mode == INIT_RESTART) then
-         msg = state_file_refusal(trim(cfg%init%restart_file), n)
+         call restart_file_slots(trim(cfg%init%restart_file), ids, slot, msg)
          if (len(msg) > 0) then
             write(*,'(4a)') ' init  : restart (mode 2): the state file ', trim(cfg%init%restart_file), ' ', msg
             return
-         end if
-         call state_file_polygons(trim(cfg%init%restart_file), file_ids, found)
-         if (found) then
-            do p = 1_ik, n
-               slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
-               if (slot(p) == 0_ik) then
-                  write(*,'(a,i0,3a)') ' init  : restart (mode 2): polygon ', ids(p), ' is not in the state file ', &
-                                       trim(cfg%init%restart_file), ', which must hold every polygon of the run'
-                  return
-               end if
-            end do
          end if
       end if
 
@@ -237,77 +224,15 @@ contains
             !----- Its sites: [[sites]]'s, each with its configuration and share, or one site. ----------!
             if (allocated(site_cfg)) deallocate(site_cfg, site_area)
             if (allocated(pcfg%sites)) call polygon_sites(pcfg, site_cfg, site_area)
-            select case (cfg%init%init_mode)
-            case (INIT_RESTART)
-               if (slot(p) > 0_ik) then
-                  call io_read_state(poly, pcfg, trim(cfg%init%restart_file), restart_time, found,      &
-                                     fast_found=fast_found, polygon=slot(p), site_cfg=site_cfg)
-               else
-                  call io_read_state(poly, pcfg, trim(cfg%init%restart_file), restart_time, found,      &
-                                     fast_found=fast_found, site_cfg=site_cfg)
-               end if
-               if (.not. found) then
-                  write(*,'(5a)') ' init  : restart (mode 2): cannot read ', trim(polygon_name(run)),      &
-                                  ' from the state file ', trim(cfg%init%restart_file)
-                  return
-               end if
-               reg%now = restart_time
-               if (reg%verbose .and. n == 1_ik) call report_restart(cfg, reg%now, fast_found, poly%restructure_pending)
-            case (INIT_CENSUS)
-               if (allocated(site_cfg)) then
-                  call init_from_census(poly, pcfg, trim(cfg%init%census_file), found, why=msg,            &
-                                        site_ids=pcfg%sites%census_site_id, site_cfg=site_cfg,           &
-                                        site_area=site_area)
-               else
-                  call init_from_census(poly, pcfg, trim(cfg%init%census_file), found, why=msg)
-               end if
-               if (.not. found) then
-                  write(*,'(4a)') ' init  : census (mode 1): the census file ', trim(cfg%init%census_file), &
-                                  ' ', msg
-                  return
-               end if
-               if (reg%verbose) then
-                  write(*,'(2a)') ' init  : census (mode 1) ', trim(cfg%init%census_file)
-                  write(*,'(a,i0,a,i0,a)') '         read ', poly%patch%n, ' patches, ',                &
-                                           poly%cohort%n, ' cohorts'
-               end if
-               !----- A census stand is restructured by the slow step's own operators before the first  !
-               !      step: it arrives with a cohort per measured size and a patch per plot cell.  -------!
-               call restructure_census_stand(poly, pcfg)
-               if (reg%verbose) write(*,'(a,i0,a,i0,a,i0,a)') '         restructured to ',              &
-                     poly%patch%n, ' patches, ', poly%cohort%n, ' cohorts (at most ',                    &
-                     max_cohort_count(poly), ' in a patch)'
-            case default
-               if (allocated(site_cfg)) then
-                  call init_bare_sites(poly, pcfg, spread(N_PATCH_INIT, 1, size(site_cfg)), site_cfg, site_area)
-               else
-                  call init_bare_ground(poly, pcfg, N_PATCH_INIT)
-               end if
-               call seed_bare_ground(poly, pcfg)
-               if (reg%verbose .and. n == 1_ik) write(*,'(a)') ' init  : bare ground (mode 0)'
-            end select
+            call init_polygon(poly, pcfg, polygon_name(run), reg%verbose .and. n == 1_ik, slot(p), reg%now,     &
+                              fast_found, started, site_cfg=site_cfg, site_area=site_area)
+            if (.not. started) return
             !----- The polygon's id and place, on the stand the initial community built. -------------!
             poly%id            = ids(p)
             poly%latitude_deg  = cells%lat(p)
             poly%longitude_deg = cells%lon(p)
             poly%elevation_m   = cells%elevation(p)
             call set_site_terrain(poly, pcfg)
-
-            !----- Census cohorts sit in an established stand but carry NO trait history, so with     !
-            !      plasticity on their leaf traits acclimate to their light INSTANTANEOUSLY (after the !
-            !      competition sweep). Bare ground legitimately starts at top-of-canopy; a restart     !
-            !      already read the plastic traits from file, unless [init].reacclimate_traits asks    !
-            !      for this run's PFT file instead (a calibration trial that restarts from a shared    !
-            !      state with changed traits).                                                           !
-            if (pcfg%trait_plasticity_on .and. cfg%init%init_mode == INIT_CENSUS) then
-               call update_overtopping_lai(poly)
-               call advance_plant_traits(poly, pcfg, pcfg%dt_years, instantaneous=.true.)
-            end if
-            if (pcfg%init%reacclimate_traits .and. cfg%init%init_mode == INIT_RESTART) then
-               call reacclimate_plant_traits(poly, pcfg)
-               if (reg%verbose .and. n == 1_ik)                                                       &
-                  write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
-            end if
 
             !----- The fast context and reservoirs, the forcing cursor, snow, soil-carbon spin-up. One  !
             !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
@@ -342,9 +267,10 @@ contains
       !      rest of each axis empty; the files carry each polygon's own layer depths and inputs. -----!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
-         call open_output_files(cfg, reg%out_files, reg%verbose, cells, ids, reg%poly(:)%site%n)
+         call open_output_files(cfg, reg%out_files, reg%verbose, ids, reg%poly(:)%site%n, cells%lat, cells%lon, &
+                                cells%row, cells%col)
          do p = 1_ik, n
-            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p))
+            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p)%cell)
          end do
          if (reg%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
@@ -398,28 +324,56 @@ contains
       end do
    end subroutine set_site_terrain
 
+   !----- A site run's [maps] inputs, at the forcing cell its [site] location reads (the archive's  !
+   !      own choice, select_site_cell), into cfg, which is then validated again. msg is '' on    !
+   !      success, else why the inputs could not be had. ---------------------------------------!
+   subroutine site_map_inputs(cfg, msg)
+      type(meds_config_t),           intent(inout) :: cfg
+      character(len=:), allocatable, intent(out)   :: msg
+      type(met_grid_t)   :: grid
+      type(met_cells_t)  :: cell
+      type(map_inputs_t) :: inp
+      real(wp)    :: distance_km
+      integer(ik) :: st
+      grid = era5land_grid(cfg%forcing)
+      call select_site_cell(grid, cfg%forcing%latitude, cfg%forcing%longitude, cfg%forcing%max_distance_km, &
+                            cell, distance_km, st)
+      if (st /= GRID_OK) then
+         if (st == GRID_ERR_NO_CELL) then
+            msg = 'no valid forcing cell near the site for the [maps] maps'
+         else
+            msg = 'cannot read the forcing''s static file '//trim(grid%static_file)//' for the [maps] maps'
+         end if
+         return
+      end if
+      call read_map_inputs(cfg%maps, grid, cell, inp, msg)
+      if (len(msg) > 0) return
+      call apply_map_inputs(inp, 1_ik, cfg)
+      call validate_config(cfg)
+   end subroutine site_map_inputs
+
    !----- A region's cells: the box's valid cells with enough land, in row-major order, less those   !
    !      the cell mask drops. .false. (after saying why) when none is left or a file cannot be read. !
-   logical function select_cells(cfg, static, cells, verbose) result(ok)
+   logical function select_cells(cfg, grid, cells, verbose) result(ok)
       type(meds_config_t), intent(in)  :: cfg
-      character(len=*),    intent(in)  :: static
+      type(met_grid_t),    intent(in)  :: grid
       type(met_cells_t),   intent(out) :: cells
       logical,             intent(in)  :: verbose
       integer(ik) :: st, n, j
       ok = .false.
-      call era5land_select_box(static, cfg%region%box_nwse, cells, st, cfg%region%land_fraction_min)
-      if (st == ERA_ERR_NO_CELL) then
+      call select_box_cells(grid, cfg%region%box_nwse, cells, st, cfg%region%land_fraction_min)
+      if (st == GRID_ERR_NO_CELL) then
          write(*,'(a,4(f0.3,1x),a,f0.2)') ' region: no valid cell in box_nwse = ', cfg%region%box_nwse, &
                'with land fraction >= ', cfg%region%land_fraction_min
          return
-      else if (st /= ERA_OK) then
-         write(*,'(2a)') ' region: cannot read valid, elevation and land_fraction from ', trim(static)
+      else if (st /= GRID_OK) then
+         write(*,'(2a)') ' region: cannot read valid, elevation and land_fraction from ', trim(grid%static_file)
          return
       end if
       if (len_trim(cfg%region%cell_mask) > 0) then
          n = cells%ncell
          call apply_cell_mask(cells, trim(cfg%region%cell_mask), trim(cfg%region%cell_mask_var),       &
-                              cfg%region%cell_mask_min, static, j, st)
+                              cfg%region%cell_mask_min, grid, j, st)
          if (st /= MAP_OK) then
             write(*,'(4a)') ' region: the cell mask ', trim(cfg%region%cell_mask), ' ', map_status_message(st)
             return
@@ -464,20 +418,6 @@ contains
          name = 'the site'
       end if
    end function polygon_name
-
-   !----- A one-polygon restart's progress lines. --------------------------------------------------!
-   subroutine report_restart(cfg, now, fast_found, pending)
-      type(meds_config_t), intent(in) :: cfg
-      type(meds_time_t),   intent(in) :: now
-      logical,             intent(in) :: fast_found, pending
-      write(*,'(4a)') ' init  : restart (mode 2) ', trim(cfg%init%restart_file), ' @ ', time_to_string(now)
-      if (fast_found) then
-         write(*,'(a)') '         (CAS/soil/snow fast reservoirs restored -- exact restart)'
-      else
-         write(*,'(a)') '         (state file predates fast-reservoir persistence -- re-seeding)'
-      end if
-      if (pending) write(*,'(a)') '         (the boundary''s restructuring is pending: it runs before the first step)'
-   end subroutine report_restart
 
    !----- Is the environment variable set? ---------------------------------------------------------!
    logical function env_set(name) result(yes)
@@ -635,12 +575,12 @@ contains
       end associate
    end subroutine step_polygons
 
-   !----- The state file: every polygon's row, at the current date (meds_io). The cohort, patch and   !
+   !----- The state file: every polygon's row, at the current date (meds_init_restart). The cohort, patch and   !
    !      site axes are the largest polygon's. The polygons share the calendar, so they owe the same  !
    !      boundary restructuring. --------------------------------------------------------------------!
    subroutine region_write_state(reg)
       type(meds_region_t), intent(in) :: reg
-      type(state_file_t)       :: sf
+      type(restart_file_t)       :: sf
       integer(ik), allocatable :: ids(:)
       real(wp),    allocatable :: lat(:), lon(:)
       integer(ik)              :: p, n_cohort, n_patch, n_site
@@ -656,15 +596,15 @@ contains
          n_patch  = max(n_patch, reg%poly(p)%patch%n)
          n_site   = max(n_site, reg%poly(p)%site%n)
       end do
-      call state_file_open(sf, trim(reg%cfg%state%output_dir), trim(reg%cfg%state%output_prefix), reg%now, &
+      call restart_file_open(sf, trim(reg%cfg%state%output_dir), trim(reg%cfg%state%output_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
                            n_patch, n_site, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,              &
                            restructure_pending=reg%poly(1)%restructure_pending,                            &
                            restructure_new_year=reg%poly(1)%restructure_new_year)
       do p = 1_ik, size(reg%poly, kind=ik)
-         call state_file_put(sf, reg%poly(p), reg%now, p)
+         call restart_file_write(sf, reg%poly(p), reg%now, p)
       end do
-      call state_file_close(sf)
+      call restart_file_close(sf)
    end subroutine region_write_state
 
    !----- A year's summary: one polygon's stand every 5 years, or a line for the polygons' mean and  !

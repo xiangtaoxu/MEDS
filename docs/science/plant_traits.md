@@ -125,7 +125,7 @@ consumers live outside it.
   $`J_{\mathrm{max25}}`$ and TPU with the plastic $`V_{\mathrm{cmax25}}`$. The single-leaf wrapper
   `meds_fast_config.leaf_gas_exchange` takes the same two overrides.
 
-- **Persistence (`meds_io`).** The four trait states are written to and read from the state checkpoint
+- **Persistence (`meds_init_restart`).** The four trait states are written to and read from the state checkpoint
   (optional on read: a state file without them restarts at top-of-canopy), so a **state** restart
   recovers the acclimated traits exactly; `[init].reacclimate_traits` instead re-derives them from this
   run's PFT file. A **census** start acclimates instantaneously when the run opens (`region_open`,
@@ -153,7 +153,7 @@ consumers live outside it.
 | per-cohort trait state + fusion weighting | `meds_cohort_state_vars` (SoA `sla/vcmax25/rd25/leaf_turnover_rate`); `meds_demography_cohort_fusefiss`: `fuse_2_cohorts` |
 | slow-loop orchestration + SLA-overshoot resorption | `meds_vegetation_dynamics`: `advance_plant_traits` |
 | carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `cohort%leaf_turnover_rate`); `meds_leaf_gas_exchange`: `leaf_gas_exchange_batch`, `leaf_params_at_capacity` (`vcmax25`/`rd25`) |
-| state persistence + census instant | `meds_io`: `state_file_put`/`io_read_state`; `meds_region`: `region_open` (census start); `meds_vegetation_dynamics`: `reacclimate_plant_traits` |
+| state persistence + census instant | `meds_init_restart`: `restart_file_write`/`read_restart_file`; `meds_init`: `init_polygon` (census start); `meds_vegetation_dynamics`: `reacclimate_plant_traits` |
 
 ## References
 - **Ma, Y., Moorcroft, P. R., Wright, S. J., Rogers, A., Lamour, J., Davidson, K. J., Serbin, S. P.,
@@ -164,5 +164,5 @@ consumers live outside it.
   reshapes predicted forest demography, structure, and biomass.
 - **Lloyd et al. (2010)**, *Biogeosciences* 7:1833 — within-canopy gradients of foliar traits (the
   plasticity relationships and `trait_plasticity_scheme = 2` defaults).
-- ED2 `ED/src/utils/update_derived_utils.f90` (`update_cohort_plastic_trait`), `ED/src/init/ed_params.f90`
+- ED2 `ED/src/utils/update_derived_utils.f90` (`update_cohort_plastic_trait`), `ED/src/io/init/ed_params.f90`
   (the `kplastic_*` derivations).

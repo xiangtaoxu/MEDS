@@ -10,9 +10,9 @@ program test_output_registry
    use meds_output_params,   only : FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, N_FREQ, N_GRP, &
                                     GRP_STRUCTURE
    use meds_output_types,    only : output_registry_t, MAX_OUTPUT_VARS, DIM_COHORT, DIM_PATCH
-   use meds_output_registry, only : build_output_registry, build_freq_index, find_var_index,     &
-                                    apply_variable_override, apply_group_toggles, parse_stream_mask, &
-                                    freq_bit, OVR_TRUE, OVR_FALSE, OVR_MASK
+   use meds_output_registry, only : build_output_registry, build_freq_index, find_var_index,                      &
+                                    apply_variable_override, apply_group_toggles, parse_stream_mask, freq_bit,    &
+                                    OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_test_support, only : banner, build_test_config, check
    implicit none
 

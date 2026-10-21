@@ -29,9 +29,10 @@ module meds_c_api_demography
    use meds_config_io,              only : load_meds_config
    use meds_cohort_state_vars,       only : cohort_deriv_alloc
    use meds_polygon_state_vars,      only : polygon_t, free_polygon
-   use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
+   use meds_init_bare_ground, only : init_bare_ground
+   use meds_init_census, only : init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
-   use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area
+   use meds_output_reduce, only : total_agb, total_lai, total_nplant, total_basal_area
    use meds_allometry_lib,          only : dbh_to_height, size_to_leaf_carbon, size_to_wood_carbon,  &
                                            storage_carbon_target
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai

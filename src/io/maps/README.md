@@ -1,8 +1,8 @@
-# `src/io/input/maps/` — static per-cell maps
+# `src/io/maps/` — static per-cell maps
 
 The one place MEDS opens a map: a static, per-cell input on the forcing grid, as opposed to the
-time-varying drivers in [`../forcing/`](../forcing/README.md). Library `meds_maps`; it links
-`meds_forcing` for the archive grid it checks maps against and the cell lists it reads them at.
+time-varying drivers in [`../met/`](../met/README.md). Library `meds_maps`; it links `meds_met` for
+the grid it checks maps against (`meds_met_grid`) and the cell lists it reads them at.
 The keys and files are in [`docs/configuration.md`](../../../../docs/configuration.md) (Input maps),
 and the column the soil maps build in
 [`docs/science/soil_biophysics.md`](../../../../docs/science/soil_biophysics.md) (The column from the
@@ -10,13 +10,13 @@ soil maps).
 
 | Module | What it does |
 |---|---|
-| `meds_surface_maps` | Reads a map variable at a list of cells: 2-D `(lat, lon)` or layered `(layer, lat, lon)`, one hyperslab over the rows the cells span. Applies a region's cell mask. Reads the `[maps]` maps at a run's cells (`read_map_inputs`) and turns one cell's values into its polygon's soil column, bottom boundaries and Chave E (`apply_map_inputs`; `site_map_inputs` for a site). |
+| `meds_maps` | Reads a map variable at a list of cells: 2-D `(lat, lon)` or layered `(layer, lat, lon)`, one hyperslab over the rows the cells span. Applies a region's cell mask. Reads every `[maps]` map at a run's cells (`read_map_inputs`) into a `map_inputs_t` (`config/params/meds_maps_params`), which `meds_config`'s `apply_map_inputs` turns into a polygon's soil column, bottom boundary and Chave E. It only reads. |
 
 ## Rules
 
-- **A map is on the forcing grid.** The file's `lat` and `lon` axes must be the ED_ERA5land static
-  file's, so a cell's value sits at the cell's own `(row, col)`. MEDS never regrids: a map on
-  another grid is refused (`MAP_ERR_GRID`).
+- **A map is on the forcing grid.** The file's `lat` and `lon` axes must be the grid's static
+  file's (`same_grid`), so a cell's value sits at the cell's own `(row, col)`. MEDS never regrids: a
+  map on another grid is refused (`MAP_ERR_GRID`).
 - **An empty cell reads as NaN.** The variable's `_FillValue` or `missing_value`, or a NaN, marks a
   cell the map does not hold. Filling gaps is the product's job, in its own pipeline, not MEDS's; the
   caller decides whether a missing value is an error. Packed values (`scale_factor`, `add_offset`)
@@ -27,9 +27,10 @@ soil maps).
 
 - **The cell mask** (`[region].cell_mask`, `cell_mask_var`, `cell_mask_min`): `meds_region` keeps the
   cells of its box whose mask value is at least the threshold, through `apply_cell_mask`, which
-  regroups the kept cells by archive chunk (`era5land_keep_cells`).
+  regroups the kept cells by the grid's chunk (`keep_cells`).
 - **The input maps** (`[maps]`): `meds_region` reads them once for a region's polygons and gives each
-  polygon its cell's, or reads them at the forcing cell of a site run (`site_map_inputs`). A run cell
+  polygon its cell's (`apply_map_inputs`), or reads them at the forcing cell of a site run (its
+  `site_map_inputs`). A run cell
   a map leaves empty is an error that names the map, the variable and the cell. The products'
   variable names are fixed here: ED-SoilMaps v2 (`soil_depth`, `bc_class`, `f_leak`, `deep_temp`;
   `sand`, `silt`, `clay`, `bulk_density`, `coarse_fragments`; `organic_carbon`, `cec`, `ph_h2o`, on

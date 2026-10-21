@@ -1,8 +1,9 @@
 ---
 paths:
   - "src/io/output/**"
-  - "src/io/meds_io.f90"
+  - "src/io/init/meds_init_restart.f90"
   - "src/io/meds_netcdf_c.f90"
+  - "src/io/meds_netcdf_write.f90"
   - "src/config/params/meds_output_params.f90"
   - "test/test_output_*.f90"
   - "test/test_diagnostic_reduce.f90"
@@ -19,8 +20,8 @@ from this code — do not renumber their sections.
 **derive → capture → reduce → integrate → serialize.**
 
 1. **Derive** — pure closed-form quantities (leaf area index, conductances, water-use efficiency,
-   soil potential, vapour-pressure deficit, size-class index). Calls the owning physics library
-   rather than re-deriving.
+   soil potential, vapour-pressure deficit, size-class index), in the field accessors of
+   `meds_output_extract`. Calls the owning physics library rather than re-deriving.
 2. **Capture** — the per-cohort and per-patch dt-weighted accumulators for everything the fast loop
    computes per sub-step and would otherwise discard.
 3. **Reduce** — one weighted aggregation emitting the cohort → patch, polygon, PFT and size-class
@@ -54,14 +55,16 @@ a PFT goes locally extinct.
   a variable between tiers then silently writes a different quantity.
 - **Cohort and patch axes are forbidden on the annual stream**, because a window longer than a month
   straddles the disturbance restructuring.
-- **The netCDF-free half is a separate CMake target from the serializer**, and it is an **explicit
-  file list, not a glob**. Adding a diagnostic module there is a deliberate edit. That split is what
-  keeps the stepper's edge free of a C dependency.
+- **The netCDF-free half is a separate CMake target from the writer**: `meds_output` globs
+  `src/io/output/` less `meds_output_stream`, the one module that calls netCDF. That split is what
+  keeps the stepper's edge free of a C dependency. Both writers, the diagnostic files and the
+  restart file, define their variables and the polygon axis through `meds_netcdf_write`.
 - **`[state]` is the restart stream only** (a block spelled `[io]` is refused). A checkpoint is raw
   prognostic state at an instant, never a time average; diagnostics are `[output]`.
 
 ## Adding a variable
 
-One `add_variable` line in the registry, with the weight, mean flag, scale, units and group. Then
-check it appears in `meds_main --dump-io-config`. If it needs a new accumulator, add the row to the
+One `add_variable` line in the registry, with the weight, mean flag, scale, units and group; a new
+field also takes a source id and an accessor case in `meds_output_extract`. Then check it appears
+in `meds_main --dump-io-config`. If it needs a new accumulator, add the row to the
 diagnostic block — not a new standalone array.

@@ -1,20 +1,21 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_forcing_types -- the runtime meteorological-forcing types (docs/science/forcing.md §2):     !
-! met_forcing_t, the instantaneous atmospheric state the fast loop reads; met_record_t, one        !
-! ingested file record; met_source_t, the reader state a run shares, and met_cursor_t, each        !
-! polygon's own; met_cells_t and met_month_t, the archive's cells and month buffer; co2_series_t,  !
-! the prescribed CO2 series. Uses only meds_kinds, meds_time and meds_forcing_params; the reader   !
-! (meds_met_driver) owns the only mutable forcing state.                                           !
+! meds_met_types -- the runtime meteorological-forcing types (docs/science/forcing.md §2): !
+! met_forcing_t, the instantaneous atmospheric state the fast loop reads; met_record_t,    !
+! one ingested file record; met_source_t, the reader state a run shares, and               !
+! met_cursor_t, each polygon's own; met_grid_t and met_cells_t, a gridded product's grid   !
+! and the cells a run reads; met_month_t, the archive's month buffer; co2_series_t, the    !
+! prescribed CO2 series. Uses only meds_kinds, meds_time and meds_forcing_params; the      !
+! reader (meds_met) owns the only mutable forcing state.                                   !
 !==========================================================================================!
-module meds_forcing_types
+module meds_met_types
    use meds_kinds,          only : wp, sp, ik
    use meds_time,           only : meds_time_t
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_CONST, MET_PATH_LEN
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_PATH_LEN
    implicit none
    private
 
-   public :: met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t, met_month_t
+   public :: met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_grid_t, met_cells_t, met_month_t
    public :: co2_series_t
    public :: HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW
    public :: N_MEDS_FIELD, MEDS_FIELD, FLD_TAIR, FLD_QAIR, FLD_RHAIR, FLD_TDEW, FLD_PSURF, FLD_WIND
@@ -42,8 +43,9 @@ module meds_forcing_types
    !==========================================================================================!
    !  met_forcing_t -- the instantaneous atmospheric state the fast loop reads: a polygon's       !
    !  sample, or a site's or a patch's after the vertical moves (docs/science/forcing.md §8).     !
-   !  Plain scalars, so it copies cheaply. The defaults are the CONST backend's reference climate  !
-   !  (the four streams sum to 400 W/m2, fast_context_t%rad_sw_top's default).                    !
+   !  Plain scalars, so it copies cheaply. The defaults are a reference climate: a run without    !
+   !  forcing keeps those the fast loop's reference_met does not set (the four streams sum to     !
+   !  400 W/m2, fast_context_t%rad_sw_top's default).                                             !
    !==========================================================================================!
    type :: met_forcing_t
       real(wp) :: tair_k       = 288.0_wp     !< [K]        air temperature at reference height
@@ -79,13 +81,26 @@ module meds_forcing_types
    end type met_record_t
 
    !==========================================================================================!
-   !  met_cells_t -- the ED_ERA5land cells a run reads: one for a site, a box's valid cells for a  !
-   !  region. Grid indices are 0-based, as the netCDF C API counts. The cells are grouped by the   !
-   !  archive's 16 x 16 chunk, so a month load reads each touched chunk column once.              !
+   !  met_grid_t -- a gridded product's grid (meds_met_grid): its static file, which holds the     !
+   !  regular lat/lon axes and each cell's valid mask, orography and land fraction under these     !
+   !  names, and the edge of the square chunks its data files are stored in.                      !
+   !==========================================================================================!
+   type :: met_grid_t
+      character(len=MET_PATH_LEN) :: static_file = ''
+      character(len=32) :: lat_var = 'lat', lon_var = 'lon'
+      character(len=32) :: valid_var = 'valid', elevation_var = 'elevation', land_fraction_var = 'land_fraction'
+      integer(ik)       :: chunk = 1_ik                     !< [cells] the data files' chunk edge
+   end type met_grid_t
+
+   !==========================================================================================!
+   !  met_cells_t -- the cells of a grid a run reads: one for a site, a box's valid cells for a   !
+   !  region. Grid indices are 0-based, as the netCDF C API counts. The cells are grouped by the  !
+   !  grid's chunk, so a month load reads each touched chunk column once.                        !
    !==========================================================================================!
    type :: met_cells_t
       integer(ik) :: ncell = 0_ik
-      integer(ik) :: nlat = 0_ik, nlon = 0_ik               !< archive grid size
+      integer(ik) :: nlat = 0_ik, nlon = 0_ik               !< grid size
+      integer(ik) :: chunk = 1_ik                           !< [cells] the chunk edge they are grouped by
       integer(ik), allocatable :: row(:), col(:)            !< 0-based (lat, lon) index of each cell
       real(wp),    allocatable :: lat(:), lon(:)            !< [deg] cell centre
       real(wp),    allocatable :: elevation(:)              !< [m] static-file orography
@@ -125,7 +140,7 @@ module meds_forcing_types
    !==========================================================================================!
    type :: met_source_t
       type(forcing_config_t)  :: fcfg                       !< [forcing]/[site] config
-      integer(ik) :: backend    = MET_BACKEND_CONST         !< ED_DEFAULT | ED_ERA5LAND | CONST
+      integer(ik) :: backend    = MET_BACKEND_ED_DEFAULT    !< MET_BACKEND_*: ED_DEFAULT | ED_ERA5LAND
       integer(ik) :: humidity   = HUMIDITY_TDEW             !< the humidity the source carries (HUMIDITY_*)
       integer(ik) :: ncid       = -1_ik                     !< NetCDF handle (via meds_netcdf_c), -1 if closed
       integer(ik) :: grid_index = 1_ik                      !< MEDS forcing file: the location (1..ngrid) read
@@ -144,7 +159,7 @@ module meds_forcing_types
       !----- The archive: its months laid end to end on time_sec (seconds since 1970-01-01); month k !
       !      holds records month_rec0(k)+1 .. month_rec0(k)+hours, and one month sits in `buffer`. ---!
       character(len=MET_PATH_LEN) :: file_template = ''     !< resolved file template
-      character(len=MET_PATH_LEN) :: static_file   = ''     !< resolved static file
+      type(met_grid_t)  :: grid                             !< the archive's grid
       type(met_cells_t) :: cells                            !< the cells read: one for a site, many for a region
       integer(ik), allocatable :: month_year(:), month_month(:), month_rec0(:)
       type(met_month_t) :: buffer                           !< the loaded month (year = 0 before the first)
@@ -171,10 +186,10 @@ module meds_forcing_types
    !==========================================================================================!
    type :: met_cursor_t
       integer(ik) :: cell = 1_ik                            !< this polygon's cell in the source (1 for a site run)
-      real(wp)    :: latitude_deg     = 42.44_wp            !< [deg +N] solar geometry
-      real(wp)    :: longitude_deg    = -76.50_wp           !< [deg +E] local solar time from the UTC clock
-      real(wp)    :: elevation_m      = 320.0_wp            !< [m] the polygon's elevation (lapse target)
-      real(wp)    :: grid_elevation_m = 320.0_wp            !< [m] forcing-cell elevation (lapse origin)
+      real(wp)    :: latitude_deg     = 0.0_wp              !< [deg +N] solar geometry
+      real(wp)    :: longitude_deg    = 0.0_wp              !< [deg +E] local solar time from the UTC clock
+      real(wp)    :: elevation_m      = 0.0_wp              !< [m] the polygon's elevation (lapse target)
+      real(wp)    :: grid_elevation_m = 0.0_wp              !< [m] forcing-cell elevation (lapse origin)
       integer(ik) :: irec_prev  = 0_ik                      !< cursor: index of the "previous" bracketing record
       type(met_record_t) :: rec_prev, rec_next              !< the two records bracketing the model time
       logical     :: at_wrap_seam    = .false.              !< current bracket is the cycle-boundary seam (last -> first)
@@ -191,4 +206,4 @@ contains
    end function met_swdown
 
 
-end module meds_forcing_types
+end module meds_met_types

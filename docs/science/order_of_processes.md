@@ -299,7 +299,7 @@ left. Films without a `units` attribute are per m² of ground.
 | one slow step | `polygon_step` | `meds_polygon` |
 | fast loop + slow dynamics | `advance_one_step` | `meds_stepper` |
 | the fast loop | `fast_dynamics` | `meds_fast_dynamics` |
-| vertical corrections: the terrain lapse at ingest, the move to each patch's canopy-air top | `read_record`; `met_to_cas_top` | `meds_met_driver`, `meds_lapse_rate` |
+| vertical corrections: the terrain lapse at ingest, the move to each patch's canopy-air top | `read_record`; `met_to_cas_top` | `meds_met`, `meds_lapse_rate` |
 | one sub-step of one patch | `column_fast_step` | `meds_fast_step` |
 | the slow dynamics | `advance_slow_dynamics` | `meds_slow_dynamics` |
 | the cohorts' day | `vegetation_dynamics` | `meds_vegetation_dynamics` |
@@ -307,5 +307,7 @@ left. Films without a `units` attribute are per m² of ground.
 | the calendar boundary | `advance_boundary` → `advance_boundary_dynamics` → `restructure_stand` | `meds_stepper`, `meds_slow_dynamics`, `meds_vegetation_dynamics` |
 | the output tick | `output_integrate`, `output_integrate_fast`, `close_tier` | `meds_output_integrate` |
 | zeroing the step diagnostics | `reset_step_diagnostics` | `meds_polygon_state_vars` |
-| writing records | `output_serialize` | `meds_output_manager` |
-| checkpoints | `region_write_state` → `state_file_open` / `state_file_put`; `io_read_state` | `meds_region`, `meds_io` |
+| writing records | `output_serialize` | `meds_output_stream` |
+| checkpoints | `region_write_state` → `restart_file_open` / `restart_file_write`; `read_restart_file` | `meds_region`, `meds_init_restart` |
+| the start of a polygon | `init_polygon` | `meds_init` |
+| the output file set | `open_output_files`, `attach_output` | `meds_output_setup` |

@@ -4,8 +4,8 @@ program test_init_census
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
-   use meds_init,             only : init_from_census, restructure_census_stand
-   use meds_diagnostic_reduce, only : total_nplant
+   use meds_init_census, only : init_from_census, restructure_census_stand
+   use meds_output_reduce, only : total_nplant
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 

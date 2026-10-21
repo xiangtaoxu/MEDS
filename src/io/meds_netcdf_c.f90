@@ -379,28 +379,32 @@ contains
       if (st == NC_NOERR) value = buf(1)
    end function nc_get_att_double_f
 
+   !----- The netCDF library's text for a status ('' when it has none). ---------------------!
+   function nc_error_text(status) result(text)
+      integer(c_int), intent(in) :: status
+      character(len=256)         :: text
+      character(kind=c_char), pointer :: cbuf(:)
+      type(c_ptr) :: cp
+      integer     :: i
+      text = ''
+      cp = nc_strerror(status)
+      if (.not. c_associated(cp)) return
+      call c_f_pointer(cp, cbuf, [256])
+      do i = 1, 256
+         if (cbuf(i) == c_null_char) exit
+         text(i:i) = cbuf(i)
+      end do
+   end function nc_error_text
+
    !----- Abort with the netCDF error message if `status` is not NC_NOERR. ----------------!
    subroutine nc_check(status, context)
       integer(c_int),   intent(in) :: status
       character(len=*), intent(in) :: context
-      character(kind=c_char), pointer :: cbuf(:)
-      type(c_ptr) :: cp
-      integer     :: i
+      character(len=256) :: text
       if (status == NC_NOERR) return
-      cp = nc_strerror(status)
       write(*,'(3a,i0)') 'meds_netcdf_c: netCDF error in ', trim(context), ', status=', status
-      if (c_associated(cp)) then
-         call c_f_pointer(cp, cbuf, [256])
-         block
-            character(len=256) :: text
-            text = ''
-            do i = 1, 256
-               if (cbuf(i) == c_null_char) exit
-               text(i:i) = cbuf(i)
-            end do
-            write(*,'(2a)') '   ', trim(text)
-         end block
-      end if
+      text = nc_error_text(status)
+      if (len_trim(text) > 0) write(*,'(2a)') '   ', trim(text)
       error stop 'meds_netcdf_c: netCDF call failed'
    end subroutine nc_check
 

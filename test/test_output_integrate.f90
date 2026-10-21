@@ -35,18 +35,18 @@ program test_output_integrate
                                      MISSING_VALUE,                                               &
                                      AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
                                      AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT
-   use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar,         &
-                                     integrate_slab, normalize_scalar, normalize_slab,           &
-                                     extract_variable, output_integrate_fast, close_tier,        &
-                                     extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PA0, SRC_F_PY0, &
+   use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar, integrate_slab,          &
+                                     normalize_scalar, normalize_slab, output_integrate_fast, close_tier,         &
                                      output_integrate
+   use meds_output_extract,   only : extract_variable, extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PA0,    &
+                                     SRC_F_PY0
    use meds_diag_vars,        only : alloc_cohort_diag, CO_LEAF_TEMP, N_PY_ROWS, PY_TAIR, PY_CO2, N_PA_ROWS, PA_CAS_TEMP, PA_LE, &
                                      PA_H, PA_GPP, PA_SW_UP, PA_LW_UP
    use meds_time,             only : meds_time_t, time_advance_days
-   use meds_output_registry,  only : alloc_output_set, alloc_output_buffers, find_var_index,        &
-                                     setup_output_files, finalize_output_files, build_freq_index,          &
-                                     apply_variable_override, OVR_MASK
-   use meds_diagnostic_reduce, only : W_NPLANT, W_LEAF_AREA
+   use meds_output_setup,     only : alloc_output_set, alloc_output_buffers, setup_output_files,                  &
+                                     finalize_output_files
+   use meds_output_registry,  only : find_var_index, build_freq_index, apply_variable_override, OVR_MASK
+   use meds_output_reduce, only : W_NPLANT, W_LEAF_AREA
    use meds_output_params,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
    use meds_constants,        only : n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, test_pft_table, check, check_close

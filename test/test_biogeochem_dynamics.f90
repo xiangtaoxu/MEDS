@@ -21,7 +21,7 @@ program test_biogeochem_dynamics
    use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
                                         build_soil_therm_params
    use meds_polygon_state_vars,  only : polygon_t
-   use meds_init,                only : init_bare_ground, add_cohort, finalize_init
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,     only : n_soil_layer_max
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG

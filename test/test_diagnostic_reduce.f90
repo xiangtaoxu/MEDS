@@ -15,13 +15,14 @@ program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_constants,     only : n_soil_layer_max
-   use meds_diagnostic_reduce,  only : reduce_cohort_to_polygon, reduce_cohort_to_patch,            &
+   use meds_output_reduce,  only : reduce_cohort_to_polygon, reduce_cohort_to_patch,            &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,             &
                                        reduce_patch_to_polygon, reduce_patch_columns_to_sites,     &
                                        gather_patch_columns,                                     &
                                        W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA,             &
                                        total_agb, total_lai, total_nplant
-   use meds_diagnostic_kernels, only : dbh_class_index, soil_wetness
+   use meds_output_reduce,      only : dbh_class_index
+   use meds_soil_hydr_lib,      only : soil_theta_to_saturation
    use meds_diag_vars,          only : cohort_diag_block, alloc_cohort_diag, reorder_cohort_diag, copy_cohort_diag, &
                                        fuse_cohort_diag, clear_cohort_diag, cohort_diag_value, N_CO_FAST_ROWS, &
                                        CO_LEAF_TEMP, CO_SAPFLOW, CO_ABS_SW, CO_WOOD_TEMP, CO_GSW
@@ -323,9 +324,9 @@ contains
    !  The derived-quantity kernels: the relative saturation, clamped to [0, 1].                 !
    !=======================================================================================!
    subroutine test_kernels()
-      call check_close(soil_wetness(0.3_wp, 0.1_wp, 0.5_wp), 0.5_wp, 1.0e-12_wp, 'relative saturation')
-      call check_close(soil_wetness(0.6_wp, 0.1_wp, 0.5_wp), 1.0_wp, 1.0e-12_wp, 'oversaturated clamps to 1')
-      call check_close(soil_wetness(0.0_wp, 0.1_wp, 0.5_wp), 0.0_wp, 1.0e-12_wp, 'below residual clamps to 0')
+      call check_close(soil_theta_to_saturation(0.3_wp, 0.5_wp, 0.1_wp), 0.5_wp, 1.0e-12_wp, 'relative saturation')
+      call check_close(soil_theta_to_saturation(0.6_wp, 0.5_wp, 0.1_wp), 1.0_wp, 1.0e-12_wp, 'oversaturated clamps to 1')
+      call check_close(soil_theta_to_saturation(0.0_wp, 0.5_wp, 0.1_wp), 0.0_wp, 1.0e-12_wp, 'below residual clamps to 0')
    end subroutine test_kernels
 
    !=======================================================================================!

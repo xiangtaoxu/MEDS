@@ -5,21 +5,23 @@
 ! and roll to a new file at a chunk boundary (write_record). Every file has a polygon axis     !
 ! after time; a record is packed over the polygons, with the fill value for a polygon without  !
 ! it (one that failed earlier in the month) and past a polygon's live cohort and patch counts  !
-! (docs/science/diagnostics.md §1, §3). The only diagnostic module that calls netCDF, from the !
-! I/O phase only. Design record: MEDS_IO_DESIGN.md §5.                                         !
+! (docs/science/diagnostics.md §1, §3). output_serialize drains the queued records in the     !
+! run's I/O phase, and output_close writes the final partial periods and closes the files. The !
+! only diagnostic module that calls netCDF. Design record: MEDS_IO_DESIGN.md §5.               !
 !==========================================================================================!
 module meds_output_stream
-   use iso_c_binding, only : c_int, c_size_t, c_double, c_char
+   use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
    use meds_time,     only : meds_time_t, time_to_decimal_year, time_eq
    use meds_constants,     only : n_soil_layer_max
    use meds_soil_params,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
-   use meds_netcdf_c, only : cstr, nc_check, nc_close, nc_create_f, nc_def_dim_f, nc_def_var_f,                   &
-                             nc_def_var_chunking, nc_def_var_deflate, nc_enddef, nc_put_att_double_f,             &
-                             nc_put_att_int, nc_put_att_int_f, nc_put_att_text_f, nc_put_var1_double,             &
-                             nc_put_vara_double, nc_put_vara_int, nc_sync, NC_CHUNKED, NC_CLOBBER, NC_DOUBLE,     &
-                             NC_GLOBAL, NC_INT, NC_NETCDF4, NC_UNLIMITED
-   use meds_output_params, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter, TIER_FAST
+   use meds_netcdf_c, only : nc_check, nc_close, nc_create_f, nc_def_dim_f, nc_enddef, nc_put_att_double_f,       &
+                             nc_put_att_int_f, nc_put_var1_double, nc_put_vara_double, nc_put_vara_int,           &
+                             nc_sync, NC_CLOBBER, NC_DOUBLE, NC_INT, NC_NETCDF4, NC_UNLIMITED
+   use meds_netcdf_write,  only : define_var, put_text_att, put_int_atts, put_global_text, define_polygon_axis, &
+                                  write_polygon_axis, OUTPUT_DEFLATE
+   use meds_output_params, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter, TIER_FAST, N_FREQ
+   use meds_output_integrate, only : close_tier
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
                                   output_files_t, output_buffers_t,                                  &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
@@ -30,10 +32,9 @@ module meds_output_stream
    implicit none
    private
 
-   public :: write_record, stream_close_file
+   public :: output_serialize, output_close
 
    character(len=*), parameter :: TITLE = 'MEDS diagnostic aggregation output'
-   integer(c_int),   parameter :: DEFLATE_LEVEL = 4_c_int   !< the variables' zlib level
 
 contains
 
@@ -181,7 +182,7 @@ contains
       character(len=16)  :: stamp
       integer(c_int)     :: ncid, dt, dpo, dsi, dc, dp, ds, dpf, dsz, dnv, vid, dims1(1), dims2(2), dims3(3)
       integer(c_int)     :: dims4(4)
-      integer(c_int)     :: v_id, v_lat, v_lon, v_row, v_col, v_nsite, v_area, v_elev, v_slope, v_aspect
+      integer(c_int)     :: v_row, v_col, v_nsite, v_area, v_elev, v_slope, v_aspect
       integer(c_int)     :: v_depth, v_bc, v_drain, v_tdeep, v_chave, v_bnds
       integer(c_size_t)  :: st1(1), cn1(1), st2(2), cn2(2)
       integer(ik)        :: j, k, np, cohort_dim, patch_dim
@@ -239,7 +240,7 @@ contains
       ds = -1_c_int
       dpf = -1_c_int
       dsz = -1_c_int
-      call nc_check(nc_def_dim_f(ncid, 'polygon', int(np, c_size_t), dpo), 'dim polygon')
+      call define_polygon_axis(ncid, np, dpo)
       call nc_check(nc_def_dim_f(ncid, 'site', int(files%site_max, c_size_t), dsi), 'dim site')
       if (hasc) call nc_check(nc_def_dim_f(ncid, 'cohort', int(cohort_dim, c_size_t), dc), 'dim cohort')
       if (hasp) call nc_check(nc_def_dim_f(ncid, 'patch',  int(patch_dim,  c_size_t), dp), 'dim patch')
@@ -267,36 +268,26 @@ contains
       if (hasc .or. hasp) then
          dims2 = [dt, dpo]
          if (hasc) then
-            call nc_check(nc_def_var_f(ncid, 'n_cohort', NC_INT, 2_c_int, dims2, vid), 'def n_cohort')
-            call put_var_text(ncid, vid, 'long_name', 'the polygon''s live cohorts this record (the rest is fill)')
+            call define_var(ncid, 'n_cohort', NC_INT, dims2, vid,                                              &
+                            long_name='the polygon''s live cohorts this record (the rest is fill)')
             call nc_check(nc_put_att_int_f(ncid, vid, '_FillValue', NC_INT, int(MISSING_INT, c_int)), 'fill')
             stream%v_ncohort = int(vid, ik)
          end if
          if (hasp) then
-            call nc_check(nc_def_var_f(ncid, 'n_patch', NC_INT, 2_c_int, dims2, vid), 'def n_patch')
-            call put_var_text(ncid, vid, 'long_name', 'the polygon''s live patches this record (the rest is fill)')
+            call define_var(ncid, 'n_patch', NC_INT, dims2, vid,                                               &
+                            long_name='the polygon''s live patches this record (the rest is fill)')
             call nc_check(nc_put_att_int_f(ncid, vid, '_FillValue', NC_INT, int(MISSING_INT, c_int)), 'fill')
             stream%v_npatch = int(vid, ik)
          end if
       end if
 
-      !----- The polygon axis: its id, its cell centre and its grid indices, so a region maps back   !
-      !      onto the lat/lon grid in one step. --------------------------------------------------------!
+      !----- The polygon axis (define_polygon_axis: its id and cell centre) and its grid indices, so a  !
+      !      region maps back onto the lat/lon grid in one step. ---------------------------------------!
       dims1 = [dpo]
-      call nc_check(nc_def_var_f(ncid, 'polygon_id', NC_INT, 1_c_int, dims1, v_id), 'def polygon_id')
-      call put_var_text(ncid, v_id, 'long_name', 'forcing cell row-major index: row * n_lon + col')
-      call nc_check(nc_def_var_f(ncid, 'lat', NC_DOUBLE, 1_c_int, dims1, v_lat), 'def lat')
-      call put_var_text(ncid, v_lat, 'units', 'degrees_north')
-      call put_var_text(ncid, v_lat, 'standard_name', 'latitude')
-      call nc_check(nc_def_var_f(ncid, 'lon', NC_DOUBLE, 1_c_int, dims1, v_lon), 'def lon')
-      call put_var_text(ncid, v_lon, 'units', 'degrees_east')
-      call put_var_text(ncid, v_lon, 'standard_name', 'longitude')
-      call nc_check(nc_def_var_f(ncid, 'row', NC_INT, 1_c_int, dims1, v_row), 'def row')
-      call put_var_text(ncid, v_row, 'long_name', '0-based latitude index on the forcing grid')
-      call nc_check(nc_def_var_f(ncid, 'col', NC_INT, 1_c_int, dims1, v_col), 'def col')
-      call put_var_text(ncid, v_col, 'long_name', '0-based longitude index on the forcing grid')
-      call nc_check(nc_def_var_f(ncid, 'n_site', NC_INT, 1_c_int, dims1, v_nsite), 'def n_site')
-      call put_var_text(ncid, v_nsite, 'long_name', 'the polygon''s sites (the rest of the site axis is fill)')
+      call define_var(ncid, 'row', NC_INT, dims1, v_row, long_name='0-based latitude index on the forcing grid')
+      call define_var(ncid, 'col', NC_INT, dims1, v_col, long_name='0-based longitude index on the forcing grid')
+      call define_var(ncid, 'n_site', NC_INT, dims1, v_nsite,                                         &
+                      long_name='the polygon''s sites (the rest of the site axis is fill)')
       !----- Each polygon's sites, as it runs them: area, terrain and soil column. ---------------!
       dims2 = [dpo, dsi]
       call def_site_var('site_area', NC_DOUBLE, '1', 'site area fraction of the polygon', v_area)
@@ -306,16 +297,15 @@ contains
       call def_site_var('soil_depth', NC_DOUBLE, 'm', 'soil column depth, the bottom of the deepest layer', v_depth)
       call def_site_var('bottom_bc', NC_INT, '1', 'bottom water boundary as run: drainage at drain_factor, or aquifer', &
                         v_bc)
-      call put_var_ints(ncid, v_bc, 'flag_values', [SOIL_BC_DRAIN, SOIL_BC_AQUIFER])
-      call put_var_text(ncid, v_bc, 'flag_meanings', 'drain aquifer')
+      call put_int_atts(ncid, v_bc, 'flag_values', [SOIL_BC_DRAIN, SOIL_BC_AQUIFER])
+      call put_text_att(ncid, v_bc, 'flag_meanings', 'drain aquifer')
       call def_site_var('drain_factor', NC_DOUBLE, '1', 'drainage factor f of the bottom flux q = f K: 1 free '// &
                         'drainage, the map''s f_leak on a leaky base, 0 sealed (fill on an aquifer)', v_drain)
       call def_site_var('deep_temp', NC_DOUBLE, 'K', 'deep soil temperature, the thermal anchor below the column', &
                         v_tdeep)
       if (allocated(files%polygon_chave_e)) then
-         call nc_check(nc_def_var_f(ncid, 'chave_e', NC_DOUBLE, 1_c_int, dims1, v_chave), 'def chave_e')
-         call put_var_text(ncid, v_chave, 'units', '1')
-         call put_var_text(ncid, v_chave, 'long_name', 'Chave et al. (2014) environmental stress index E')
+         call define_var(ncid, 'chave_e', NC_DOUBLE, dims1, v_chave, units='1',                       &
+                         long_name='Chave et al. (2014) environmental stress index E')
       end if
 
       !----- Axis coordinates: the pft and dbh_class axes have run-dependent lengths, so each file   !
@@ -326,8 +316,7 @@ contains
       stream%v_soil_z = -1_ik
       if (haspf) then
          dims1 = [dpf]
-         call nc_check(nc_def_var_f(ncid, 'pft', NC_INT, 1_c_int, dims1, vid), 'def pft coord')
-         call put_var_text(ncid, vid, 'long_name', 'plant functional type index')
+         call define_var(ncid, 'pft', NC_INT, dims1, vid, long_name='plant functional type index')
          stream%v_pft = int(vid, ik)
       end if
       !----- Each site has its own layers: the coordinate is per site, with each layer's top and        !
@@ -335,29 +324,23 @@ contains
       if (hass) then
          call nc_check(nc_def_dim_f(ncid, 'nv', 2_c_size_t, dnv), 'dim nv')
          dims3 = [dpo, dsi, ds]
-         call nc_check(nc_def_var_f(ncid, 'soil_z', NC_DOUBLE, 3_c_int, dims3, vid), 'def soil_z')
-         call put_var_text(ncid, vid, 'units', 'm')
-         call put_var_text(ncid, vid, 'long_name', 'the site''s soil layer node depths (negative downward)')
-         call put_var_text(ncid, vid, 'bounds', 'soil_z_bnds')
+         call define_var(ncid, 'soil_z', NC_DOUBLE, dims3, vid, units='m',                             &
+                         long_name='the site''s soil layer node depths (negative downward)')
+         call put_text_att(ncid, vid, 'bounds', 'soil_z_bnds')
          call nc_check(nc_put_att_double_f(ncid, vid, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), 'fill')
          stream%v_soil_z = int(vid, ik)
          dims4 = [dpo, dsi, ds, dnv]
-         call nc_check(nc_def_var_f(ncid, 'soil_z_bnds', NC_DOUBLE, 4_c_int, dims4, v_bnds), 'def soil_z_bnds')
-         call put_var_text(ncid, v_bnds, 'units', 'm')
-         call put_var_text(ncid, v_bnds, 'long_name', 'the site''s soil layer tops and bottoms (negative downward)')
+         call define_var(ncid, 'soil_z_bnds', NC_DOUBLE, dims4, v_bnds, units='m',                     &
+                         long_name='the site''s soil layer tops and bottoms (negative downward)')
          call nc_check(nc_put_att_double_f(ncid, v_bnds, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), &
                        'fill')
       end if
       if (hassz) then
          dims1 = [dsz]
-         call nc_check(nc_def_var_f(ncid, 'dbh_lower', NC_DOUBLE, 1_c_int, dims1, vid), 'def dbh_lower')
-         call put_var_text(ncid, vid, 'units', 'cm')
-         call put_var_text(ncid, vid, 'long_name', 'DBH class lower edge (inclusive)')
+         call define_var(ncid, 'dbh_lower', NC_DOUBLE, dims1, vid, units='cm', long_name='DBH class lower edge (inclusive)')
          stream%v_dbh_lower = int(vid, ik)
-         call nc_check(nc_def_var_f(ncid, 'dbh_upper', NC_DOUBLE, 1_c_int, dims1, vid), 'def dbh_upper')
-         call put_var_text(ncid, vid, 'units', 'cm')
-         call put_var_text(ncid, vid, 'long_name',                                                  &
-              'DBH class upper edge (exclusive; the last class also holds every larger plant)')
+         call define_var(ncid, 'dbh_upper', NC_DOUBLE, dims1, vid, units='cm',                         &
+                         long_name='DBH class upper edge (exclusive; the last class also holds every larger plant)')
          stream%v_dbh_upper = int(vid, ik)
       end if
 
@@ -370,17 +353,15 @@ contains
          stream%vid(k) = int(vid, ik)
       end do
 
-      call put_global(ncid, 'title', TITLE)
-      call put_global(ncid, 'Conventions', 'CF-1.10')
-      if (len_trim(files%forcing_qair) > 0) call put_global(ncid, 'forcing_qair', trim(files%forcing_qair))
+      call put_global_text(ncid, 'title', TITLE)
+      call put_global_text(ncid, 'Conventions', 'CF-1.10')
+      if (len_trim(files%forcing_qair) > 0) call put_global_text(ncid, 'forcing_qair', trim(files%forcing_qair))
       call nc_check(nc_enddef(ncid), 'stream enddef')
 
       !----- Write the axis coordinates once, right after enddef (they do not vary by record). --!
       st1 = [0_c_size_t]
       cn1 = [int(np, c_size_t)]
-      call nc_check(nc_put_vara_int(ncid, v_id, st1, cn1, int(files%polygon_id, c_int)), 'put polygon_id')
-      call nc_check(nc_put_vara_double(ncid, v_lat, st1, cn1, real(files%polygon_lat, c_double)), 'put lat')
-      call nc_check(nc_put_vara_double(ncid, v_lon, st1, cn1, real(files%polygon_lon, c_double)), 'put lon')
+      call write_polygon_axis(ncid, files%polygon_id, files%polygon_lat, files%polygon_lon)
       call nc_check(nc_put_vara_int(ncid, v_row, st1, cn1, int(files%polygon_row, c_int)), 'put row')
       call nc_check(nc_put_vara_int(ncid, v_col, st1, cn1, int(files%polygon_col, c_int)), 'put col')
       call nc_check(nc_put_vara_int(ncid, v_nsite, st1, cn1, int(files%polygon_n_site, c_int)), 'put n_site')
@@ -434,9 +415,7 @@ contains
          character(len=*), intent(in)  :: name, units, lname
          integer(c_int),   intent(in)  :: xtype
          integer(c_int),   intent(out) :: v
-         call nc_check(nc_def_var_f(ncid, name, xtype, 2_c_int, dims2, v), 'def '//name)
-         call put_var_text(ncid, v, 'units', units)
-         call put_var_text(ncid, v, 'long_name', lname)
+         call define_var(ncid, name, xtype, dims2, v, units=units, long_name=lname)
          if (xtype == NC_INT) then
             call nc_check(nc_put_att_int_f(ncid, v, '_FillValue', NC_INT, int(MISSING_INT, c_int)), 'fill')
          else
@@ -512,34 +491,11 @@ contains
       call nc_check(nc_put_vara_double(ncid, int(vhi_ik, c_int), st, cn, hi), 'put dbh_upper')
    end subroutine write_size_coord
 
-   !----- One text attribute on an already-defined variable. --------------------------------!
-   subroutine put_var_text(ncid, vid, name, text)
-      integer(c_int),   intent(in) :: ncid, vid
-      character(len=*), intent(in) :: name, text
-      call nc_check(nc_put_att_text_f(ncid, vid, name, int(len_trim(text), c_size_t), text), 'att '//name)
-   end subroutine put_var_text
-
-   !----- One integer-array attribute on an already-defined variable. ------------------------!
-   subroutine put_var_ints(ncid, vid, name, vals)
-      integer(c_int),   intent(in) :: ncid, vid
-      character(len=*), intent(in) :: name
-      integer(ik),      intent(in) :: vals(:)
-      character(kind=c_char) :: cname(len_trim(name) + 1)
-      integer(c_int)         :: iv(size(vals))
-      cname = cstr(name)
-      iv = int(vals, c_int)
-      call nc_check(nc_put_att_int(ncid, vid, cname, NC_INT, int(size(iv), c_size_t), iv), 'att '//name)
-   end subroutine put_var_ints
-
    !----- Define a 1-D record variable (time) + units/long_name; returns its varid. ----------!
    integer(c_int) function def_scalar_var(ncid, dt, name, xtype, units, lname) result(vid)
       integer(c_int),   intent(in) :: ncid, dt, xtype
       character(len=*), intent(in) :: name, units, lname
-      integer(c_int) :: dims(1)
-      dims = [dt]
-      call nc_check(nc_def_var_f(ncid, name, xtype, 1_c_int, dims, vid), 'def '//name)
-      call nc_check(nc_put_att_text_f(ncid, vid, 'units', int(len_trim(units), c_size_t), units), 'units '//name)
-      call nc_check(nc_put_att_text_f(ncid, vid, 'long_name', int(len_trim(lname), c_size_t), lname), 'lname '//name)
+      call define_var(ncid, name, xtype, [dt], vid, units=units, long_name=lname)
    end function def_scalar_var
 
    !----- Define one registry variable: (time, polygon[, axis...]), chunked one record at a time  !
@@ -597,25 +553,16 @@ contains
          dims(rank) = dsi
          chunk(rank) = int(ns, c_size_t)
       end select
-      call nc_check(nc_def_var_f(ncid, trim(v%name), xt, rank, dims(1:rank), vid), 'def '//trim(v%name))
-      call nc_check(nc_def_var_chunking(ncid, vid, NC_CHUNKED, chunk(1:rank)), 'chunk '//trim(v%name))
-      call nc_check(nc_def_var_deflate(ncid, vid, 1_c_int, 1_c_int, DEFLATE_LEVEL), 'deflate '//trim(v%name))
-      call put_var_text(ncid, vid, 'units', trim(v%units))
-      call put_var_text(ncid, vid, 'long_name', trim(v%long_name))
+      call define_var(ncid, trim(v%name), xt, dims(1:rank), vid, units=trim(v%units), long_name=trim(v%long_name), &
+                      chunk=chunk(1:rank), deflate=OUTPUT_DEFLATE)
       cm = cell_methods_of(v%agg)
-      call put_var_text(ncid, vid, 'cell_methods', trim(cm))
+      call put_text_att(ncid, vid, 'cell_methods', trim(cm))
       if (v%xtype == XTYPE_INT) then
          call nc_check(nc_put_att_int_f(ncid, vid, '_FillValue', NC_INT, int(MISSING_INT, c_int)), 'fill')
       else
          call nc_check(nc_put_att_double_f(ncid, vid, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), 'fill')
       end if
    end function def_registry_var
-
-   subroutine put_global(ncid, name, text)
-      integer(c_int),   intent(in) :: ncid
-      character(len=*), intent(in) :: name, text
-      call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, name, int(len_trim(text), c_size_t), text), 'global '//name)
-   end subroutine put_global
 
    !=======================================================================================!
    !  Append record i: the calendar and the live counts from polygon p1 (the first that holds  !
@@ -798,5 +745,54 @@ contains
       vv = [val]
       call nc_check(nc_put_vara_int(ncid, int(vid_ik, c_int), st, cn, vv), 'put int rec')
    end subroutine put_int_rec
+
+
+   !----- Drain every polygon's queued records to the per-tier files, in closing order, then empty  !
+   !      the queues; called from the I/O phase at month boundaries and at the end of the run.     !
+   !      Record i of tier t is one period across the polygons. A polygon that failed earlier in   !
+   !      the month closed fewer, so the longest queue sets the count and the others get the fill  !
+   !      value: a failure loses no other polygon's month. ----------------------------------------!
+   subroutine output_serialize(files, bufs)
+      type(output_files_t),   intent(inout) :: files
+      type(output_buffers_t), intent(inout) :: bufs(:)
+      integer(ik) :: t, i, p, nrec
+      if (.not. files%enabled) return
+      do t = 1_ik, N_FREQ
+         nrec = 0_ik
+         do p = 1_ik, size(bufs, kind=ik)
+            nrec = max(nrec, bufs(p)%queue(t)%n)
+         end do
+         do i = 1_ik, nrec
+            call write_record(files, bufs, t, i)
+         end do
+         do p = 1_ik, size(bufs, kind=ik)
+            bufs(p)%queue(t)%n = 0_ik
+         end do
+      end do
+   end subroutine output_serialize
+
+   !----- End of run: optionally close every polygon's final partial windows (the FAST tier's too) !
+   !      and write them, then close the files. ------------------------------------------------!
+   subroutine output_close(files, bufs, flush_partial)
+      type(output_files_t),   intent(inout) :: files
+      type(output_buffers_t), intent(inout) :: bufs(:)
+      logical, optional,      intent(in)    :: flush_partial
+      logical     :: fp
+      integer(ik) :: t, p
+      if (.not. files%enabled) return
+      fp = .true.
+      if (present(flush_partial)) fp = flush_partial
+      if (fp) then
+         do p = 1_ik, size(bufs, kind=ik)
+            do t = 1_ik, N_FREQ
+               if (bufs(p)%has_data(t)) call close_tier(files, bufs(p), t)
+            end do
+         end do
+         call output_serialize(files, bufs)
+      end if
+      do t = 1_ik, N_FREQ
+         call stream_close_file(files%stream(t))
+      end do
+   end subroutine output_close
 
 end module meds_output_stream

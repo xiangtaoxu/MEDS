@@ -351,7 +351,7 @@ phi_psii         = 0.74    # [-] electrons per absorbed photon in low light, tim
 # grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "ED_default" only)
 # [forcing]
 # forcing_on            = true
-# format                = "ED_default"   # "ED_ERA5land" (the archive) | "ED_default" (a file) | "const"
+# format                = "ED_default"   # "ED_ERA5land" (the archive) | "ED_default" (a file)
 #   ---- format = "ED_ERA5land" ----
 # data_path             = "/path/to/ED_ERA5land"   # the archive folder
 # max_distance_km       = 15.0           # a site on a cell without data takes the nearest valid cell this close

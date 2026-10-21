@@ -14,19 +14,18 @@ program test_met_era5land
    use meds_time,            only : meds_time_t
    use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
-   use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
+   use meds_met_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
    use meds_forcing_kernels, only : dewpoint_to_specific_humidity, clear_sky_emissivity
    use iso_c_binding,        only : c_double
    use meds_lapse_rate,      only : lapse_pressure
    use meds_therm_lib,       only : sat_vapor_pressure
-   use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
-                                   met_prefetch, &
-                                    MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
-   use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_select_site, &
-                                    era5land_select_box, era5land_load_month, ERA_OK, ERA_ERR_NAN,  &
-                                    ERA_ERR_FILL, ERA_NVAR, ERA_ERR_NO_CELL, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, &
-                                    ERA_LWDOWN
-   use meds_test_era5land_archive, only : T0, field, hour_index, write_archive, write_month
+   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
+   use meds_met_share, only : MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
+   use meds_met_era5land,    only : era5land_path, era5land_default_template, era5land_load_month, ERA_OK,  &
+                                    ERA_ERR_NAN, ERA_ERR_FILL, ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF,      &
+                                    ERA_U10, ERA_V10, ERA_LWDOWN
+   use meds_met_grid,        only : select_site_cell, select_box_cells, GRID_OK, GRID_ERR_NO_CELL
+   use meds_test_era5land_archive, only : T0, field, hour_index, write_archive, write_month, archive_grid
    implicit none
 
    character(len=*), parameter :: DIR = 'era5land_test_tmp'
@@ -92,8 +91,8 @@ contains
       real(wp)    :: d
       integer(ik) :: st
       print '(a)', '-- era5land 2: site to cell --'
-      call era5land_select_site(DIR//'/ED_ERA5land_static.nc', 35.0_wp, -120.0_wp, 50.0_wp, dom, d, st)
-      call check_true('a site on a valid cell takes that cell', st == ERA_OK .and. dom%ncell == 1_ik &
+      call select_site_cell(archive_grid(DIR//'/ED_ERA5land_static.nc'), 35.0_wp, -120.0_wp, 50.0_wp, dom, d, st)
+      call check_true('a site on a valid cell takes that cell', st == GRID_OK .and. dom%ncell == 1_ik &
                       .and. dom%row(1) == 1_ik .and. dom%col(1) == 3_ik)
       call check('its distance is 0', d, 0.0_wp, 1.0e-6_wp)
       call check('its elevation comes from the static file', dom%elevation(1), 103.0_wp, 1.0e-6_wp)
@@ -102,12 +101,12 @@ contains
 
       !----- (0,5) has no data. Its nearest valid neighbour is (1,5), 10 deg of latitude south   !
       !      (1112 km), not (0,4) or (0,6), 20 deg of longitude away at 45 N (about 1570 km). ------!
-      call era5land_select_site(DIR//'/ED_ERA5land_static.nc', 45.0_wp, -80.0_wp, 2000.0_wp, dom, d, st)
-      call check_true('a no-data site takes the nearest valid cell', st == ERA_OK                &
+      call select_site_cell(archive_grid(DIR//'/ED_ERA5land_static.nc'), 45.0_wp, -80.0_wp, 2000.0_wp, dom, d, st)
+      call check_true('a no-data site takes the nearest valid cell', st == GRID_OK                &
                       .and. dom%row(1) == 1_ik .and. dom%col(1) == 5_ik)
       call check('and reports its distance', d, 1111.95_wp, 0.1_wp)
-      call era5land_select_site(DIR//'/ED_ERA5land_static.nc', 45.0_wp, -80.0_wp, 1000.0_wp, dom, d, st)
-      call check_true('no valid cell within the limit is an error', st == ERA_ERR_NO_CELL)
+      call select_site_cell(archive_grid(DIR//'/ED_ERA5land_static.nc'), 45.0_wp, -80.0_wp, 1000.0_wp, dom, d, st)
+      call check_true('no valid cell within the limit is an error', st == GRID_ERR_NO_CELL)
    end subroutine test_site_selection
 
    !=======================================================================================!
@@ -124,8 +123,8 @@ contains
       across = [40.0_wp, 150.0_wp, 20.0_wp, -150.0_wp] ; inside = [50.0_wp, -130.0_wp, 10.0_wp, -90.0_wp]
       !----- [N, W, S, E] = [40, 150, 20, -150]: rows 35 and 25 N; columns 160 E, then -180 and  !
       !      -160 across 180. (2,0) has no data, so 5 cells.                                        !
-      call era5land_select_box(DIR//'/ED_ERA5land_static.nc', across, dom, st)
-      call check_true('box across 180: 5 valid cells', st == ERA_OK .and. dom%ncell == 5_ik)
+      call select_box_cells(archive_grid(DIR//'/ED_ERA5land_static.nc'), across, dom, st)
+      call check_true('box across 180: 5 valid cells', st == GRID_OK .and. dom%ncell == 5_ik)
       call check_true('row-major, west to east across 180',                                      &
                       all(dom%row == [1_ik, 1_ik, 1_ik, 2_ik, 2_ik]) .and.                        &
                       all(dom%col == [17_ik, 0_ik, 1_ik, 17_ik, 1_ik]))
@@ -134,17 +133,17 @@ contains
       call check_true('each chunk reads only the box of its cells',                                &
                       all(dom%chunk_row == [1_ik, 1_ik]) .and. all(dom%chunk_col == [0_ik, 17_ik]) .and. &
                       all(dom%chunk_nrow == [2_ik, 2_ik]) .and. all(dom%chunk_ncol == [2_ik, 1_ik]))
-      call era5land_select_box(DIR//'/ED_ERA5land_static.nc', inside, dom, st)
-      call check_true('box not across 180: 4 rows x 2 columns', st == ERA_OK .and. dom%ncell == 8_ik)
+      call select_box_cells(archive_grid(DIR//'/ED_ERA5land_static.nc'), inside, dom, st)
+      call check_true('box not across 180: 4 rows x 2 columns', st == GRID_OK .and. dom%ncell == 8_ik)
       !----- A region's selection rule: column 1 is 30% land, so land_fraction_min = 0.5 drops     !
       !      its two cells and keeps the order of the rest. -----------------------------------------!
-      call era5land_select_box(DIR//'/ED_ERA5land_static.nc', across, dom, st, land_fraction_min=0.5_wp)
+      call select_box_cells(archive_grid(DIR//'/ED_ERA5land_static.nc'), across, dom, st, land_fraction_min=0.5_wp)
       call check_true('land_fraction_min drops the mostly-water cells',                            &
-                      st == ERA_OK .and. dom%ncell == 3_ik .and.                                   &
+                      st == GRID_OK .and. dom%ncell == 3_ik .and.                                   &
                       all(dom%row == [1_ik, 1_ik, 2_ik]) .and. all(dom%col == [17_ik, 0_ik, 17_ik]))
       call check_true('the box keeps each cell''s land fraction', all(dom%land_fraction == 1.0_wp))
 
-      call era5land_select_box(DIR//'/ED_ERA5land_static.nc', across, dom, st)
+      call select_box_cells(archive_grid(DIR//'/ED_ERA5land_static.nc'), across, dom, st)
       call era5land_load_month(era5land_default_template(), DIR, dom, 2021_ik, 2_ik, buf, st, msg)
       call check_true('February loads', st == ERA_OK .and. buf%nt == 672_ik)
       g = hour_index(meds_time_t(2021_ik, 2_ik, 1_ik, 1_ik))
@@ -168,7 +167,7 @@ contains
       real(wp)    :: d
       integer(ik) :: st
       print '(a)', '-- era5land 4: NaN in a selected cell --'
-      call era5land_select_site(DIR//'/static_allvalid.nc', 45.0_wp, -80.0_wp, 50.0_wp, dom, d, st)
+      call select_site_cell(archive_grid(DIR//'/static_allvalid.nc'), 45.0_wp, -80.0_wp, 50.0_wp, dom, d, st)
       call era5land_load_month(era5land_default_template(), DIR, dom, 2021_ik, 1_ik, buf, st, msg)
       call check_true('a NaN in a selected cell is rejected', st == ERA_ERR_NAN)
       call check_true('and the message names the variable', index(msg, 'Tair') > 0)
@@ -189,7 +188,7 @@ contains
       do v = 1_ik, ERA_NVAR
          call write_month(DIR2, v, 2021_ik, 1_ik, fill=-9999.0_c_double)
       end do
-      call era5land_select_site(DIR//'/ED_ERA5land_static.nc', 35.0_wp, -120.0_wp, 50.0_wp, dom, d, st)
+      call select_site_cell(archive_grid(DIR//'/ED_ERA5land_static.nc'), 35.0_wp, -120.0_wp, 50.0_wp, dom, d, st)
       call era5land_load_month(era5land_default_template(), DIR2, dom, 2021_ik, 1_ik, buf, st, msg)
       call check_true('a month file with a numeric _FillValue is refused', st == ERA_ERR_FILL)
       call check_true('and the message says so', index(msg, '_FillValue') > 0)
@@ -382,7 +381,7 @@ contains
       print '(a)', '-- era5land 8: one region source, one cursor per polygon --'
       !----- The box across 180 from test 3: (1,17), (1,0), (1,1), (2,17), (2,1). Polygons at the   !
       !      second and fifth cells, (1,0) and (2,1); a site run at each cell for comparison. ------!
-      call era5land_select_box(DIR//'/ED_ERA5land_static.nc', [40.0_wp, 150.0_wp, 20.0_wp, -150.0_wp], &
+      call select_box_cells(archive_grid(DIR//'/ED_ERA5land_static.nc'), [40.0_wp, 150.0_wp, 20.0_wp, -150.0_wp], &
                                cells, st)
       fc = archive_config()
       call met_open(region, fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),            &

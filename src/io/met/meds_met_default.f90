@@ -1,31 +1,31 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_file_source -- the MEDS forcing file source (format = "ED_default",                 !
+! meds_met_default -- the MEDS forcing file source (format = "ED_default",                 !
 ! docs/science/forcing.md §1): a multi-grid netCDF file whose records the run needs are        !
-! read into memory at open, so no step reads the file. It opens the file (file_source_open)   !
-! and hands the shared ingest one record's values as stored (file_source_record).             !
+! read into memory at open, so no step reads the file. It opens the file (default_file_open)   !
+! and hands the shared ingest one record's values as stored (default_file_record).             !
 !==========================================================================================!
-module meds_met_file_source
+module meds_met_default
    use iso_c_binding, only : c_int, c_size_t
    use meds_kinds, only : wp, ik
    use meds_time, only : meds_time_t, time_units_base, seconds_between
    use meds_forcing_params, only : SWPART_PASSTHROUGH, GRIDMATCH_NEAREST, LW_SYNTHESIZE
-   use meds_forcing_types, only : met_record_t, met_source_t, HUMIDITY_QAIR, HUMIDITY_RHAIR,      &
+   use meds_met_types, only : met_record_t, met_source_t, HUMIDITY_QAIR, HUMIDITY_RHAIR,      &
                                   HUMIDITY_TDEW, N_MEDS_FIELD, MEDS_FIELD, FLD_TAIR, FLD_RHAIR,   &
                                   FLD_PSURF, FLD_WIND, FLD_U10, FLD_V10, FLD_RAINF, FLD_LWDOWN,   &
                                   FLD_SWDOWN, FLD_PAR_BEAM, FLD_PAR_DIFFUSE, FLD_NIR_BEAM,        &
                                   FLD_NIR_DIFFUSE
-   use meds_forcing_kernels, only : nearest_grid_index
+   use meds_met_grid, only : nearest_grid_index
    use meds_netcdf_c, only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f,       &
-                             nc_get_vara_double, nc_close, nc_check, nc_inq_var_chunking,         &
+                             nc_get_vara_double, nc_close, nc_inq_var_chunking, nc_error_text,    &
                              NC_NOERR, NC_NOWRITE, NC_CHUNKED
-   use meds_met_source_common, only : MET_OK, MET_ERR_HUMIDITY, validate_recycle_window,          &
-                                      first_record_after, validate_file_against_config,           &
-                                      humidity_field
+   use meds_met_share, only : MET_OK, MET_ERR_HUMIDITY, MET_ERR_FILE, validate_recycle_window,    &
+                              first_record_after, validate_file_against_config, humidity_field,   &
+                              add_line
    implicit none
    private
 
-   public :: file_source_open, file_source_record
+   public :: default_file_open, default_file_record
 
    !----- RHair is a fraction; a value above this is a percentage written into a fractional field. !
    real(wp), parameter :: RH_FRACTION_MAX = 1.5_wp
@@ -38,53 +38,71 @@ contains
    !  the declared recycle window, and the records the run needs, read into memory. A         !
    !  rejection returns its status and the reason; the caller closes the source.              !
    !=======================================================================================!
-   subroutine file_source_open(src, stat, why, run_start, run_end)
-      type(met_source_t),          intent(inout) :: src
-      integer(ik),                 intent(out)   :: stat
-      character(len=*),            intent(out)   :: why          !< what stops the run when stat /= MET_OK
-      type(meds_time_t), optional, intent(in)    :: run_start, run_end
+   subroutine default_file_open(src, stat, why, run_start, run_end)
+      type(met_source_t),            intent(inout) :: src
+      integer(ik),                   intent(out)   :: stat
+      character(len=:), allocatable, intent(out)   :: why    !< what stops the run when stat /= MET_OK
+      type(meds_time_t), optional,   intent(in)    :: run_start, run_end
       integer(c_int)    :: st, ncid
       integer(c_size_t) :: dlen
       character(len=256):: units
+      character(len=320):: buf
       logical           :: ok
 
       stat = MET_OK
       why = ''
       st = nc_open_f(trim(src%fcfg%path), NC_NOWRITE, ncid)
-      call nc_check(st, 'met_open: nc_open '//trim(src%fcfg%path))
+      call check_read(st, 'open', src, stat, why)
+      if (stat /= MET_OK) return
       src%ncid = int(ncid, ik)
 
       st = nc_inq_dimlen_f(ncid, 'grid', dlen)
-      call nc_check(st, 'met_open: grid dim')
+      call check_read(st, 'its grid dimension', src, stat, why)
+      if (stat /= MET_OK) return
       src%ngrid = int(dlen, ik)
       !----- The grid column: grid_index as given, or the nearest to the [site] location. -------!
       if (src%fcfg%grid_match == GRIDMATCH_NEAREST) then
-         call resolve_grid_index(src)                        ! sets src%grid_index in 1..ngrid
+         call resolve_grid_index(src, stat, why)             ! sets src%grid_index in 1..ngrid
+         if (stat /= MET_OK) return
       else                                                   ! GRIDMATCH_EXPLICIT
          if (src%fcfg%grid_index < 1_ik .or. src%fcfg%grid_index > src%ngrid) then
-            write(*,'(a,i0,a,i0)') 'met_open: grid_index ', src%fcfg%grid_index, ' out of range 1..', src%ngrid
-            error stop 'met_open: grid_index out of range'
+            write(buf,'(a,i0,a,i0)') ' met_open: grid_index ', src%fcfg%grid_index, ' out of range 1..', src%ngrid
+            call add_line(why, trim(buf))
+            stat = MET_ERR_FILE
+            return
          end if
       end if
 
       st = nc_inq_dimlen_f(ncid, 'time', dlen)
-      call nc_check(st, 'met_open: time dim')
+      call check_read(st, 'its time dimension', src, stat, why)
+      if (stat /= MET_OK) return
       src%nrec = int(dlen, ik)
-      if (src%nrec < 1_ik) error stop 'met_open: forcing file has no time records'
+      if (src%nrec < 1_ik) then
+         call add_line(why, ' met_open: the forcing file has no time records')
+         stat = MET_ERR_FILE
+         return
+      end if
 
       !----- The base time, from the "seconds since <base>" units attribute. -----------------!
       block
          integer(c_int) :: vid
          st = nc_inq_varid_f(ncid, 'time', vid)
-         call nc_check(st, 'met_open: time varid')
+         call check_read(st, 'its time variable', src, stat, why)
+         if (stat /= MET_OK) return
          st = nc_get_att_text_f(ncid, vid, 'units', units)
-         call nc_check(st, 'met_open: time:units')
+         call check_read(st, 'time:units', src, stat, why)
+         if (stat /= MET_OK) return
          call time_units_base(units, src%base_time, ok)
-         if (.not. ok) error stop 'met_open: could not parse time:units "seconds since <base>"'
+         if (.not. ok) then
+            call add_line(why, ' met_open: could not parse time:units "seconds since <base>"')
+            stat = MET_ERR_FILE
+            return
+         end if
       end block
 
       !----- The whole time axis (seconds since base_time). ----------------------------------!
-      call read_time_axis(src)
+      call read_time_axis(src, stat, why)
+      if (stat /= MET_OK) return
 
       !----- The wind vector: a file carrying u10 and v10 supplies it, and the speed comes from   !
       !      the components; a file with Wind alone gives the speed only. -----------------------!
@@ -95,25 +113,16 @@ contains
       end block
 
       !----- The humidity the file carries: exactly one of RHair, Tdew and Qair. ------------------!
-      call detect_humidity(src, ncid, stat)
-      if (stat /= MET_OK) then
-         why = 'met_open: the forcing file''s humidity is ambiguous or absent (see the message above)'
-         return
-      end if
+      call detect_humidity(src, ncid, stat, why)
+      if (stat /= MET_OK) return
 
       !----- The file's record spacing and global attributes against [forcing]. -------------------!
-      call validate_file_against_config(src, ncid, stat)
-      if (stat /= MET_OK) then
-         why = 'met_open: the forcing file contradicts [forcing] (see the message above)'
-         return
-      end if
+      call validate_file_against_config(src, ncid, stat, why)
+      if (stat /= MET_OK) return
 
       !----- The declared recycle window against the file's record stamps, known only here. -----!
-      call validate_recycle_window(src, stat)
-      if (stat /= MET_OK) then
-         why = 'met_open: forcing file does not match the declared [forcing] recycle window'
-         return
-      end if
+      call validate_recycle_window(src, stat, why)
+      if (stat /= MET_OK) return
 
       !----- The records the run can read, into memory: the recycle window, or the run period (the  !
       !      whole file when neither is known, as in unit tests). Only those, because a file in 1 x 1  !
@@ -130,7 +139,8 @@ contains
             r1 = min(src%nrec, first_record_after(src, seconds_between(src%base_time, run_end)) + 1_ik)
          end if
          if (r1 <= r0) r1 = min(src%nrec, r0 + 1_ik)
-         call read_series(src, ncid, r0, r1)
+         call read_series(src, ncid, r0, r1, stat, why)
+         if (stat /= MET_OK) return
          st = nc_close(ncid)
          src%ncid = -1_ik
          src%rec_first = r0                          ! a cursor's first bracket: the first records in range
@@ -143,20 +153,20 @@ contains
             integer(ik) :: j
             j = src%series_col(FLD_RHAIR)
             if (maxval(src%series(:, j)) > RH_FRACTION_MAX) then
-               write(*,'(a,f0.2,a)') ' met_open: RHair reaches ', maxval(src%series(:, j)),                &
-                                     ', but it is a fraction (units "1"), not a percentage.'
+               write(buf,'(a,f0.2,a)') ' met_open: RHair reaches ', maxval(src%series(:, j)),            &
+                                       ', but it is a fraction (units "1"), not a percentage.'
+               call add_line(why, trim(buf))
                stat = MET_ERR_HUMIDITY
-               why = 'met_open: RHair is in percent (see the message above)'
                return
             end if
          end block
       end if
-   end subroutine file_source_open
+   end subroutine default_file_open
 
    !----- One record's values at the cell, as the file stores them: the humidity in its own form,  !
    !      and the shortwave total, or its four streams under sw_partition = "passthrough". The    !
-   !      shared ingest (meds_met_driver's read_record) converts, checks and lapses them. -------!
-   subroutine file_source_record(src, irec, rec, humidity_value, sw_total)
+   !      shared ingest (meds_met's read_record) converts, checks and lapses them. -------!
+   subroutine default_file_record(src, irec, rec, humidity_value, sw_total)
       type(met_source_t), intent(in)    :: src
       integer(ik),        intent(in)    :: irec
       type(met_record_t), intent(inout) :: rec
@@ -188,12 +198,14 @@ contains
       else
          sw_total = series_value(src, FLD_SWDOWN, irec)
       end if
-   end subroutine file_source_record
+   end subroutine default_file_record
 
    !----- Resolve src%grid_index by nearest great-circle distance from [site] lat/lon to the file's !
    !      latitude(grid)/longitude(grid) coordinate vectors.                                        !
-   subroutine resolve_grid_index(src)
-      type(met_source_t), intent(inout)  :: src
+   subroutine resolve_grid_index(src, stat, why)
+      type(met_source_t),            intent(inout) :: src
+      integer(ik),                   intent(inout) :: stat
+      character(len=:), allocatable, intent(inout) :: why
       integer(c_int)    :: st, vlat, vlon
       integer(c_size_t) :: start1(1), count1(1)
       real(wp), allocatable :: lat_grid(:), lon_grid(:)
@@ -201,13 +213,13 @@ contains
       start1(1) = 0_c_size_t
       count1(1) = int(src%ngrid, c_size_t)
       st = nc_inq_varid_f(int(src%ncid, c_int), 'latitude', vlat)
-      call nc_check(st, 'resolve_grid_index: latitude varid')
-      st = nc_get_vara_double(int(src%ncid, c_int), vlat, start1, count1, lat_grid)
-      call nc_check(st, 'resolve_grid_index: latitude values')
+      if (st == NC_NOERR) st = nc_get_vara_double(int(src%ncid, c_int), vlat, start1, count1, lat_grid)
+      call check_read(st, 'its latitude(grid)', src, stat, why)
+      if (stat /= MET_OK) return
       st = nc_inq_varid_f(int(src%ncid, c_int), 'longitude', vlon)
-      call nc_check(st, 'resolve_grid_index: longitude varid')
-      st = nc_get_vara_double(int(src%ncid, c_int), vlon, start1, count1, lon_grid)
-      call nc_check(st, 'resolve_grid_index: longitude values')
+      if (st == NC_NOERR) st = nc_get_vara_double(int(src%ncid, c_int), vlon, start1, count1, lon_grid)
+      call check_read(st, 'its longitude(grid)', src, stat, why)
+      if (stat /= MET_OK) return
       src%grid_index = nearest_grid_index(src%fcfg%longitude, src%fcfg%latitude, lon_grid, lat_grid)
       write(*,'(a,i0,a,f8.3,a,f8.3,a)') 'met_open: grid_match=nearest resolved grid_index=', src%grid_index, &
             ' (site lon=', src%fcfg%longitude, ' lat=', src%fcfg%latitude, ')'
@@ -218,29 +230,46 @@ contains
    !  Helpers (NetCDF backend).                                                                 !
    !=======================================================================================!
    !----- Read the whole time coordinate (seconds since base_time) into src%time_sec. ---------!
-   subroutine read_time_axis(src)
-      type(met_source_t), intent(inout)  :: src
+   subroutine read_time_axis(src, stat, why)
+      type(met_source_t),            intent(inout) :: src
+      integer(ik),                   intent(inout) :: stat
+      character(len=:), allocatable, intent(inout) :: why
       integer(c_int)    :: st, vid
       integer(c_size_t) :: start1(1), count1(1)
       if (allocated(src%time_sec)) deallocate(src%time_sec)
       allocate(src%time_sec(src%nrec))
-      st = nc_inq_varid_f(int(src%ncid, c_int), 'time', vid)
-      call nc_check(st, 'read_time_axis: time varid')
       start1(1) = 0_c_size_t
       count1(1) = int(src%nrec, c_size_t)
-      st = nc_get_vara_double(int(src%ncid, c_int), vid, start1, count1, src%time_sec)
-      call nc_check(st, 'read_time_axis: time values')
+      st = nc_inq_varid_f(int(src%ncid, c_int), 'time', vid)
+      if (st == NC_NOERR) st = nc_get_vara_double(int(src%ncid, c_int), vid, start1, count1, src%time_sec)
+      call check_read(st, 'its time values', src, stat, why)
    end subroutine read_time_axis
+
+   !----- A netCDF call of the open that failed: MET_ERR_FILE, and the reason, naming what was being !
+   !      read and the library's text. ------------------------------------------------------------!
+   subroutine check_read(st, what, src, stat, why)
+      integer(c_int),                intent(in)    :: st
+      character(len=*),              intent(in)    :: what
+      type(met_source_t),            intent(in)    :: src
+      integer(ik),                   intent(inout) :: stat
+      character(len=:), allocatable, intent(inout) :: why
+      if (st == NC_NOERR) return
+      call add_line(why, ' met_open: cannot read the forcing file '//trim(src%fcfg%path)//': '//what//        &
+                         ' ('//trim(nc_error_text(st))//')')
+      stat = MET_ERR_FILE
+   end subroutine check_read
 
    !----- The humidity form of a MEDS forcing file: exactly one of its three variables            !
    !      (docs/science/forcing.md §1). A file with none cannot drive the canopy air; a file with   !
    !      two leaves the reader to pick one, and the two may disagree through the provider's own    !
    !      saturation curve. -----------------------------------------------------------------------!
-   subroutine detect_humidity(src, ncid, stat)
-      type(met_source_t), intent(inout) :: src
-      integer(c_int),     intent(in)    :: ncid
-      integer(ik),        intent(out)   :: stat
+   subroutine detect_humidity(src, ncid, stat, why)
+      type(met_source_t),            intent(inout) :: src
+      integer(c_int),                intent(in)    :: ncid
+      integer(ik),                   intent(out)   :: stat
+      character(len=:), allocatable, intent(inout) :: why
       integer(ik), parameter :: FORMS(3) = [HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW]
+      character(len=320) :: buf
       integer(c_int) :: vid
       integer(ik)    :: i, n
       stat = MET_OK
@@ -252,20 +281,23 @@ contains
          end if
       end do
       if (n /= 1_ik) then
-         write(*,'(a,i0,a)') ' met_open: the forcing file carries ', n,                                &
-                             ' of the humidity variables RHair, Tdew and Qair; it must carry exactly one.'
-         write(*,'(a)')      '   Store the humidity the source measured (RHair for a tower, Tdew for'
-         write(*,'(a)')      '   ERA5-Land); MEDS converts it with its own saturation curve.'
+         write(buf,'(a,i0,a)') ' met_open: the forcing file carries ', n,                              &
+                               ' of the humidity variables RHair, Tdew and Qair; it must carry exactly one.'
+         call add_line(why, trim(buf))
+         call add_line(why, '   Store the humidity the source measured (RHair for a tower, Tdew for')
+         call add_line(why, '   ERA5-Land); MEDS converts it with its own saturation curve.')
          stat = MET_ERR_HUMIDITY
       end if
    end subroutine detect_humidity
 
    !----- A MEDS forcing file's fields at the cell, records r0..r1, read at open. Each field's    !
    !      column in the series is found here, once (series_col, 0 for a field the file lacks). -----!
-   subroutine read_series(src, ncid, r0, r1)
-      type(met_source_t), intent(inout)  :: src
-      integer(c_int),     intent(in)    :: ncid
-      integer(ik),        intent(in)    :: r0, r1
+   subroutine read_series(src, ncid, r0, r1, stat, why)
+      type(met_source_t),            intent(inout) :: src
+      integer(c_int),                intent(in)    :: ncid
+      integer(ik),                   intent(in)    :: r0, r1
+      integer(ik),                   intent(inout) :: stat
+      character(len=:), allocatable, intent(inout) :: why
       integer(c_int)    :: st, vid(N_MEDS_FIELD)
       integer(c_size_t) :: start2(2), count2(2)
       logical     :: present_(N_MEDS_FIELD)
@@ -285,7 +317,8 @@ contains
          src%series_col(j) = n
          if (n == 1_ik) call note_one_record_chunks(ncid, vid(j), r1 - r0 + 1_ik, src%fcfg%path)
          st = nc_get_vara_double(ncid, vid(j), start2, count2, src%series(:, n))
-         call nc_check(st, 'read_series: get '//trim(MEDS_FIELD(j)))
+         call check_read(st, 'its '//trim(MEDS_FIELD(j)), src, stat, why)
+         if (stat /= MET_OK) return
       end do
    end subroutine read_series
 
@@ -338,4 +371,4 @@ contains
       end if
    end subroutine check_in_series
 
-end module meds_met_file_source
+end module meds_met_default

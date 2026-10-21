@@ -1,8 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_met_driver -- unit tests for the meteorological-forcing library (docs/science/forcing.md): !
-! the pure disaggregation kernels, the CONST backend, and a NetCDF round-trip (write a small     !
-! (time,grid) MEDS forcing file, read it back through the reader).                               !
+! the pure disaggregation kernels and a NetCDF round-trip (write a small (time,grid) MEDS        !
+! forcing file, read it back through the reader).                                                !
 ! Argument 1 (from CMake): the shipped CO2 series, data/co2/, checked by test_co2_series.          !
 !==========================================================================================!
 program test_met_driver
@@ -13,32 +13,31 @@ program test_met_driver
                                     time_advance_seconds
    use meds_therm_lib,          only : sat_vapor_pressure, air_density
    use meds_forcing_params,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,    &
-                                    SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR,        &
-                                    INTERP_STEP, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,  &
-                                    CLAMP_HOLD, CLAMP_ERROR,                                   &
-                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, CO2_SOURCE_FILE,      &
-                                    HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,               &
-                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
-   use meds_forcing_types,   only : met_forcing_t, met_source_t, met_cursor_t
+   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT,                                     &
+                                    SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR, INTERP_STEP,             &
+                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH, CLAMP_HOLD, CLAMP_ERROR,        &
+                                    GRIDMATCH_NEAREST, CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE,                  &
+                                    HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
+   use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
    use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
-                                    great_circle_distance, nearest_grid_index,                   &
                                     clearness_index, clear_sky_emissivity, synthesize_lwdown
+   use meds_met_grid,        only : great_circle_distance, nearest_grid_index
    use meds_lapse_rate,      only : lapse_air_temperature, lapse_pressure,        &
                                     monthly_lapse_rate, lapse_specific_humidity, lapse_longwave,    &
                                     cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
    use meds_constants,       only : grav, cp_air
-   use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
-                                   MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
-                                   MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,       &
-                                   MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH, MET_ERR_CO2_FILE,  &
-                                   MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE
+   use meds_met,      only : met_open, met_cursor_init, met_advance, met_instant, met_close
+   use meds_met_share, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                 &
+                              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH,             &
+                              MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
    implicit none
    character(len=*), parameter :: NCFILE = 'test_met_driver_tmp.nc'
+   !----- The forcing file the CO2 tests open: 365 daily records of 2021 (write_yearfile). ------!
+   character(len=*), parameter :: CO2_MET_FILE = 'test_met_co2_year_tmp.nc'
    character(len=1024) :: co2_default_file = ''
 
    call test_interpolation()
@@ -47,7 +46,6 @@ program test_met_driver
    call test_sw_partition()
    call test_sw_partition_weissnorman()
    call test_cosz_reconstruction()
-   call test_const_backend()
    call test_netcdf_roundtrip()
    call test_sunrise_interval()
    call test_nearest_grid()
@@ -241,25 +239,6 @@ contains
       factor = cosz_reconstruct_factor(t, 4.0_wp*3600.0_wp, dt_sub, dt_win, LAT, LON) ! 04-05 UTC = night
       call check('night window -> factor 0', factor, 0.0_wp, 1.0e-30_wp)
    end subroutine test_cosz_reconstruction
-
-   !----- 6. CONST backend returns the reference climate (SW = 400, held flat), cosz derived. -!
-   subroutine test_const_backend()
-      type(met_source_t)     :: src
-      type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
-      type(met_forcing_t)    :: met
-      type(meds_time_t)      :: now
-      print '(a)', '-- test 6: CONST backend --'
-      fc%format = MET_BACKEND_CONST ; fc%latitude = 42.44_wp ; fc%longitude = -76.50_wp
-      call met_open(src, fc) ; call site_cursor(src, cur, fc)
-      now = meds_time_t(year=2020_ik, month=7_ik, day=1_ik, hour=17_ik)   ! ~solar noon at Ithaca
-      call met_advance(src, cur, now)
-      met = met_instant(src, cur, now)
-      call check('CONST swdown = 400', met%swdown(), 400.0_wp, 1.0e-9_wp)
-      call check_true('CONST cosz recomputed > 0 at noon', met%cosz > 0.5_wp, met%cosz)
-      call check_true('CONST rho_air ~ 1.2', abs(met%rho_air - 1.2_wp) < 0.2_wp, met%rho_air)
-      call met_close(src)
-   end subroutine test_const_backend
 
    !----- 7. NetCDF round-trip: write a (time=25, grid=2) file, read it back. ----------------!
    subroutine test_netcdf_roundtrip()
@@ -781,7 +760,7 @@ contains
    !      cover rejected at open.                                                                   !
    subroutine test_co2_series(default_file)
       character(len=*), intent(in) :: default_file      !< the shipped series ('' -> its check is skipped)
-      character(len=*), parameter :: CF = 'test_met_co2_tmp.txt', YF = 'test_met_co2_year_tmp.nc'
+      character(len=*), parameter :: CF = 'test_met_co2_tmp.txt'
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
       type(forcing_config_t) :: fc
@@ -789,11 +768,14 @@ contains
       integer(ik)            :: st
       print '(a)', '-- test 15: prescribed CO2 --'
 
-      !----- "const": co2_const, the CONST backend included (not the type's 420 default). -------!
-      fc%format = MET_BACKEND_CONST ; fc%co2_const = 284.3_wp
-      call met_open(src, fc) ; call site_cursor(src, cur, fc)
-      met = met_instant(src, cur, meds_time_t(2020_ik, 7_ik, 1_ik))
-      call check('const: CO2 = co2_const on the CONST backend', met%co2, 284.3_wp, 1.0e-12_wp)
+      !----- "const": co2_const (not the type's 420 default). --------------------------------------!
+      call write_yearfile(CO2_MET_FILE, 2021_ik)
+      fc = co2_test_forcing()
+      fc%co2_const = 284.3_wp
+      call met_open(src, fc)
+      call site_cursor(src, cur, fc)
+      met = met_instant(src, cur, meds_time_t(2021_ik, 7_ik, 1_ik))
+      call check('const: CO2 = co2_const', met%co2, 284.3_wp, 1.0e-12_wp)
       call met_close(src)
 
       !----- Annual means, with comments and a blank line. 2000 is a leap year, so its middle is   !
@@ -884,12 +866,9 @@ contains
 
       !----- The point of reading CO2 on model time: recycled met repeats, the CO2 does not. Model !
       !      2023-07-02 12:00 reads the 2021 met record but the 2023 CO2. ---------------------------!
-      call write_yearfile(YF, 2021_ik)
       call write_text(CF, [character(len=48) :: 'timestep 1 year', 'units umol/mol', '2021 400',    &
                            '2022 410', '2023 420', '2024 430'])
-      fc = forcing_config_t()
-      fc%format = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
-      fc%timestep = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc = co2_test_forcing()
       fc%recycle = .true.
       fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik) ; fc%recycle_end = meds_time_t(2022_ik, 1_ik, 1_ik)
       fc%co2_source = CO2_SOURCE_FILE ; fc%co2_file = CF
@@ -939,7 +918,7 @@ contains
       end if
    end subroutine test_co2_series
 
-   !----- Open the CONST backend with co2_file = path over the run [t0, t1]; `st` is met_open's.  !
+   !----- Open CO2_MET_FILE with co2_file = path over the run [t0, t1]; `st` is met_open's. ------!
    subroutine open_file_co2(path, t0, t1, src, cur, st)
       character(len=*),   intent(in)    :: path
       type(meds_time_t),  intent(in)    :: t0, t1
@@ -947,10 +926,25 @@ contains
       type(met_cursor_t), intent(out)   :: cur
       integer(ik),        intent(out)   :: st
       type(forcing_config_t) :: fc
-      fc%format = MET_BACKEND_CONST ; fc%co2_source = CO2_SOURCE_FILE ; fc%co2_file = path
+      fc = co2_test_forcing()
+      fc%co2_source = CO2_SOURCE_FILE
+      fc%co2_file = path
       call met_open(src, fc, stat=st, run_start=t0, run_end=t1)
       if (st == MET_OK) call site_cursor(src, cur, fc)
    end subroutine open_file_co2
+
+   !----- The CO2 tests' [forcing]: CO2_MET_FILE, read whole, not recycled. The CO2 is read on model !
+   !      time, so the file's year need not be the run's. ---------------------------------------!
+   function co2_test_forcing() result(fc)
+      type(forcing_config_t) :: fc
+      fc%format = MET_BACKEND_ED_DEFAULT
+      fc%path = CO2_MET_FILE
+      fc%grid_index = 1_ik
+      fc%timestep = 86400.0_wp
+      fc%avg_convention = METAVG_END
+      fc%sw_partition = SWPART_CLEARIDX
+      fc%recycle = .false.
+   end function co2_test_forcing
 
    real(wp) function co2_now(src, cur, t) result(co2)
       type(met_source_t), intent(in) :: src

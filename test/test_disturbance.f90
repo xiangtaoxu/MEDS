@@ -8,8 +8,8 @@ program test_disturbance
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance
    use meds_diag_vars,                 only : PA_DISTURB_AREA, PA_LE, PA_MORT_C_CULL, alloc_patch_diag, patch_diag_value
    use meds_constants,                 only : yr_sec
-   use meds_init,             only : init_bare_ground, add_cohort, finalize_init
-   use meds_diagnostic_reduce, only : total_area, total_nplant
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
+   use meds_output_reduce, only : total_area, total_nplant
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 

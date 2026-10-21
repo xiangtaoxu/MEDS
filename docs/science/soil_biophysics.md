@@ -203,7 +203,7 @@ and runs low where soil structure adds large pores.
 ### The column from the soil maps
 
 With the `[maps]` soil maps (ED-SoilMaps v2; `docs/configuration.md` "Input maps"),
-`apply_map_inputs` (`meds_surface_maps`) builds each cell's column. A region's polygons and a site
+`apply_map_inputs` (`meds_config`) builds each cell's column from what `meds_maps` read. A region's polygons and a site
 on the ED_ERA5land grid build it the same way.
 
 - **The layers.** The column ends at the map's `soil_depth`, on the layers above.
@@ -403,7 +403,7 @@ and passes the resulting flux into the CO₂ source.
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | explicit thermal tendency (RK45) | `meds_soil_energy`: `soil_energy_time_deriv` |
 | bottom thermal boundary, eqs. (12)–(13) | `meds_soil_energy`: `bottom_heat_face`, `deep_conductance` |
-| the column from the soil maps | `meds_surface_maps`: `apply_map_inputs` |
+| the column from the soil maps | `meds_maps`: `read_map_inputs`; `meds_config`: `apply_map_inputs` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; `meds_fast_prepass`: `patch_heterotrophic_respiration` |
 | prognostic soil types | `meds_patch_state_vars`: `soil_water_column_t`, `soil_energy_column_t` |

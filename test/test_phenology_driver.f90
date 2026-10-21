@@ -23,7 +23,7 @@ program test_phenology_driver
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t, pft_leaf_psi_tlp
    use meds_polygon_state_vars,   only : polygon_t
-   use meds_init,                 only : init_bare_ground, add_cohort
+   use meds_init_bare_ground, only : init_bare_ground, add_cohort
    use meds_vegetation_dynamics,  only : advance_leaf_phenology
    use meds_constants,            only : day_sec
    use meds_time,                 only : daylength

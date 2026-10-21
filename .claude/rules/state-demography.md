@@ -2,7 +2,7 @@
 paths:
   - "src/state/**"
   - "src/slow_dynamics/**"
-  - "src/init/**"
+  - "src/io/init/**"
   - "test/test_containers.f90"
   - "test/test_fusion_cohort.f90"
   - "test/test_patch.f90"

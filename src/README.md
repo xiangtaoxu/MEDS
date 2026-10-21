@@ -19,21 +19,21 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 ├── share/         uses nothing outside itself; every layer may use it: kinds,
 │   │              constants, numerics (clamps, means, the conservation test),
 │   │              linear algebra (Thomas sweep, dense LU, arrowhead solve,
-│   │              matrix exponential), calendar time, budget checks         1 148
+│   │              matrix exponential), calendar time, budget checks         1 170
 │   └── functions/ stateless constitutive laws, one library per domain:
 │                  allometry, plant hydraulics, soil hydraulics,
 │                  thermodynamics (with the temperature response of
-│                  enzyme rates), canopy optics                              1 916
+│                  enzyme rates), canopy optics                              1 793
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        meds_config_t (one field per key) and the routines that
 │   │              derive what the parameters imply (the soil column, the
 │   │              PFT table's arrays), the TOML reader, the loader, and
-│   │              the checks of the keys and their values                   3 119
+│   │              the checks of the keys and their values                   3 224
 │   └── params/    the run's parameters, one leaf per TOML block: the types
 │                  and codes a kernel imports without meds_config (the PFT
 │                  table, the soil, forcing, output, the fast loop, snow and
-│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   861
+│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   885
 │
 │  ── STATE, one file per level of the hierarchy, each in sections ────────────
 ├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
@@ -43,7 +43,7 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  meds_site_state_vars: the site block;
 │                  meds_polygon_state_vars: polygon_t; meds_diag_vars: the
 │                  diagnostic accumulators; meds_state_defaults: the values
-│                  a field holds before it has a real one                    2 612
+│                  a field holds before it has a real one                    2 758
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
 ├── fast_dynamics/       sub-daily, one dt_fast per step                     11 632
@@ -68,26 +68,26 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  drivers, and the slow conservation ledger                 2 017
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── io/            every data file a run reads or writes                      9 463
-│   ├── (root)     the netCDF C bindings, and the state file: written at
-│   │              checkpoints, read at restart                               1 420
-│   ├── input/forcing/  prescribed drivers: the met reader (a MEDS
-│   │              forcing file, or the ED_ERA5land archive through
-│   │              meds_era5land_reader), its disaggregation kernels,
-│   │              the terrain lapse (meds_lapse_rate) and the CO2
-│   │              series (meds_co2_series)                                   3 255
-│   ├── input/maps/  static per-cell maps on the forcing grid: the one place
-│   │              a map is read (meds_surface_maps); the region's cell mask    502
+├── io/            every data file a run reads or writes                     10 290
+│   ├── (root)     the netCDF C bindings, and the helpers both writers share    518
+│   ├── init/      the initial state, by [init].init_mode: bare ground, a
+│   │              cohort census, or a restart file, which the checkpoints
+│   │              write; init_polygon starts a polygon from one              1 800
+│   ├── met/       the atmosphere above the canopy: the met reader (a MEDS
+│   │              forcing file, or the ED_ERA5land archive), the grid its
+│   │              cells are on (meds_met_grid), its kernels, the terrain
+│   │              lapse (meds_lapse_rate) and the CO2 series (meds_met_co2)  3 339
+│   ├── maps/      static per-cell maps on the forcing grid: the one place
+│   │              a map is read (meds_maps)                                    350
 │   └── output/    the diagnostic wall: derive → capture → reduce →
-│                  integrate → serialize                                      4 286
-├── init/          the initial community: bare ground, or a cohort census       471
+│                  integrate → serialize                                      4 283
 ├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
 │                  demography, and the full coupled run                        938
 └── main/          meds_stepper (one coupled slow step, and the boundary
                    restructuring), meds_polygon (one polygon's run
                    machinery and step), meds_region (a run of one polygon
                    or many: open / step / finalize), meds_main
-                   (the PROGRAM)                                             1 392
+                   (the PROGRAM)                                             1 406
 ```
 
 **`share/` is one library, and it admits only what depends on nothing outside it.** Every module
@@ -140,28 +140,29 @@ Acyclic by construction, and the build enforces it. Every arrow is a `target_lin
 in [`CMakeLists.txt`](../CMakeLists.txt).
 
 ```
-  share  ──→ config ──→ state ──────────────────────→ demography ──→ io_prep
+  share  ──→ config ──→ state ──────────────────────→ demography ──→ output
      │                    │                              ↑             │
      │                    ├──→ fast_kernels ──────┐      │             │
      │                    └──→ slow_kernels ──────┼──────┘             │
      │                                            │                    │
-  netcdf_c, config ──→ forcing ─────────────────→ fast  ←──────────────┤
-                                                  slow  ←──────────────┘
-                                                  init
+  netcdf_c, config ──→ met ─────────────────────→ fast  ←──────────────┘
+                                                  slow
+                                                  init  ←── slow, netcdf_c
                                                     └──→ stepper ──→ model
                                                                      (INTERFACE)
-  forcing, config ──→ maps ──────────────────────┐
-  io_stream ─────────────────────────────────────┤
+  met, config ──→ maps ──────────────────────────┐
+  output_stream ─────────────────────────────────┤
   model ─────────────────────────────────────────┴──→ driver ──→ meds_main
                                                                └→ meds_py (libmeds.so)
 ```
 
 One edge is worth knowing because it is easy to get wrong:
 
-- **`io_prep` carries no netCDF.** The netCDF-free half of the output subsystem (the reductions,
-  the registry, the temporal integrators) is a separate target from the serializer, so the stepper
-  can tick the integrators without pulling a C dependency. It is an explicit file list, not a glob:
-  adding a diagnostic module there is a deliberate CMake edit.
+- **`output` carries no netCDF.** The netCDF-free half of the output subsystem (the registry, the
+  file set's setup, the extract, the reductions, the temporal integrators) is a separate target
+  from the writer, `output_stream`, so the stepper can tick the integrators without pulling a C
+  dependency. It globs `io/output/` less the writer. The fast loop links it because it stages the
+  FAST tier's sub-step samples in a polygon's output buffers.
 
 ## Where does a new file go?
 
@@ -169,14 +170,15 @@ One edge is worth knowing because it is easy to get wrong:
 |---|---|
 | a soil, canopy or plant process | `fast_dynamics/<domain>/` or `slow_dynamics/<domain>/`, by the **cadence of its caller** |
 | a per-patch store the kernels and the patch block share | `state/meds_patch_state_vars.f90`: its type, its blend, and its section of `patch_block` |
-| a per-cohort field | `state/meds_cohort_state_vars.f90`: its section of `cohort_block` and of each lockstep list — and every creation site, and the fusion policy |
-| a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_2_patches` and the new gap in `apply_patch_disturbance` |
+| a per-cohort field | `state/meds_cohort_state_vars.f90`: its section of `cohort_block` and of each lockstep list — and every creation site, the fusion policy, and, if it persists, the restart file (`io/init/meds_init_restart.f90`: three adjacent lines in its cohort section) |
+| a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_2_patches`, the new gap in `apply_patch_disturbance`, and, if it persists, the restart file's patch section |
 | a stateless constitutive curve: a physical or biological law with parameters | `share/functions/` |
 | a model-independent tool every layer needs (numerics, calendar, checks) | `share/`, if it uses nothing outside `share/` |
 | a TOML block | a leaf in `config/params/`, so `meds_config` can carry it with no back-edge; its keys in `meds_config_main.toml`, its checks in `config/meds_config_check.f90` |
-| a prescribed time-varying input (weather, CO2) | `io/input/forcing/` |
-| a static per-cell input map (soil, a cell mask) | `io/input/maps/meds_surface_maps.f90` |
-| an output variable | one `add_variable` line in `io/output/meds_output_registry.f90` |
+| a prescribed time-varying input (weather, CO2) | `io/met/`: a reader named after its `[forcing].format` value; a gridded product, a `met_grid_t` for `meds_met_grid` |
+| a way to start a run (`[init].init_mode`) | `io/init/`: a `meds_init_<start>` module, dispatched by `init_polygon` |
+| a static per-cell input map (soil, a cell mask) | `io/maps/meds_maps.f90` |
+| an output variable | one `add_variable` line in `io/output/meds_output_registry.f90`; a new field also needs its source id and accessor case in `io/output/meds_output_extract.f90` |
 | a Python entry point | `c_api/`, plus its mandatory ctest target |
 | a top-level orchestration step | `main/meds_stepper.f90` or a `driver/` folder |
 
@@ -190,8 +192,9 @@ These are the things that break quietly if you do not know them.
 - **One centralized lockstep reorder.** When you add a per-cohort field, add it to its section of
   `cohort_block` and of each lockstep routine (allocate, free, grow, move, reorder, copy) in
   `state/meds_cohort_state_vars.f90` — the one file that lists every cohort field, every list in
-  the same section order. This is the structural fix for ED2's "forgot to reallocate one array"
-  class of bug. Patch fields work the same way in `state/meds_patch_state_vars.f90`, whose
+  the same section order. A field that persists across a restart is defined, written and read in
+  the same section of the restart file (`io/init/meds_init_restart.f90`). This is the structural
+  fix for ED2's "forgot to reallocate one array" class of bug. Patch fields work the same way in `state/meds_patch_state_vars.f90`, whose
   `reorder_patch_block` is what `sort_patches` and `patch_compact` call.
 - **Persistent identity.** Every cohort and patch is stamped with a monotonic `global_id` at
   creation and carries it, in lockstep, through every sort, fusion and compaction. Ids are never
@@ -235,7 +238,7 @@ Flat wins because the suite's files have globally unique names, so a mirror buys
 `test_<subject>.f90` does not already give — while costing a test rename on every source move. The
 thing that actually needs to stay honest is the **link line**, not the directory: many tests
 deliberately link one narrow library each (`meds_share`, `meds_config`,
-`meds_fast_kernels`, `meds_forcing`) so those layers stay standalone-buildable, and that discipline
+`meds_fast_kernels`, `meds_met`) so those layers stay standalone-buildable, and that discipline
 is visible in `CMakeLists.txt` whatever directory the file sits in. It is also why the assertion
 helpers live in `meds_test_assert`, which depends on nothing but a kind.
 
@@ -243,6 +246,7 @@ Revisit if the suite outgrows a single `ls`, or if two tests ever want the same 
 
 ## Per-folder notes
 
-Four folders carry their own README with subsystem detail:
+Five folders carry their own README with subsystem detail:
 [`fast_dynamics/`](fast_dynamics/README.md), [`fast_dynamics/plant/`](fast_dynamics/plant/README.md),
-[`io/input/forcing/`](io/input/forcing/README.md), [`slow_dynamics/soil/`](slow_dynamics/soil/README.md).
+[`io/met/`](io/met/README.md), [`io/maps/`](io/maps/README.md),
+[`slow_dynamics/soil/`](slow_dynamics/soil/README.md).

@@ -1,20 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_co2_series -- the prescribed free-atmosphere CO2 (docs/science/forcing.md §12): read a     !
+! meds_met_co2 -- the prescribed free-atmosphere CO2 (docs/science/forcing.md §12): read a     !
 ! MEDS CO2 file, format 1, into a co2_series_t (co2_series_read) and look it up at a model instant !
 ! (co2_series_at). Each row is a period's mean, placed at the period's middle: the lookup is       !
 ! linear between middles and holds the end values over the outer half-periods (eq. (18)). A       !
 ! missing period is an error, never interpolated. met_open checks once that the file covers the    !
 ! run (co2_series_covers). The lookup is on model time, so the CO2 rises while recycled met repeats. !
 !==========================================================================================!
-module meds_co2_series
+module meds_met_co2
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_kinds,           only : wp, ik
    use meds_time,            only : meds_time_t, string_to_time, time_to_string, time_eq, seconds_between,  &
                                     time_advance_seconds, time_advance_days, time_advance_months,           &
                                     time_advance_years
    use meds_forcing_params,  only : INTERP_LINEAR
-   use meds_forcing_types,   only : co2_series_t
+   use meds_met_types,   only : co2_series_t
    use meds_forcing_kernels, only : interpolate_forcing
    implicit none
    private
@@ -310,4 +310,4 @@ contains
       write(msg, '(a,i0,2a)') 'line ', iline, ': ', text
    end subroutine line_msg
 
-end module meds_co2_series
+end module meds_met_co2

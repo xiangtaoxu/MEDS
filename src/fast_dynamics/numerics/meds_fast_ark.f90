@@ -226,7 +226,7 @@ contains
             !      adaptive fac, so use fmin directly). At a smaller dt, Y2 ~ y and base3 no longer            !
             !      overshoots, so the step becomes finite and the march recovers -- the correct adaptive       !
             !      response, not a force-accept. Only if even a floor-sized step is non-finite do we commit    !
-            !      and bail, so the driver's has_nan check (meds_polygon) reports it instead of the march      !
+            !      and bail, so the driver's state guard (meds_polygon) reports it instead of the march        !
             !      hanging.                                                                                    !
             if (err /= err .or. dt /= dt) then
                if (dt <= dt_floor) then

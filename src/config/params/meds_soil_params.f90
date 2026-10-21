@@ -40,7 +40,7 @@ module meds_soil_params
       real(wp)    :: solid_conductivity = 3.0_wp    !< [W/m/K]  mineral-solid conductivity
       real(wp)    :: dry_conductivity   = 0.15_wp   !< [W/m/K]  dry-matrix conductivity
       real(wp)    :: dry_heat_capacity  = 2.0e6_wp  !< [J/m3/K] dry-matrix volumetric heat capacity
-      !----- Per-layer texture from the soil maps (meds_surface_maps); no config key. -----!
+      !----- Per-layer texture from the soil maps (meds_maps); no config key. -----!
       integer(ik) :: n_layer_values = 0_ik      !< [-] the column's layer count; 0: the one texture above
       real(wp)    :: layer_theta_sat(n_soil_layer_max)          = 0.0_wp
       real(wp)    :: layer_theta_res(n_soil_layer_max)          = 0.0_wp

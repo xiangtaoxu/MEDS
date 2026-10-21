@@ -37,9 +37,17 @@ holds one module per block, and the reference config describes each key in a lin
 The configuration's leaves are the run's parameters, `src/config/params`, and a kernel's parameter
 bundle is its `*_args_t` (#465). `src/init` and `src/io` drop the code nothing called, name the polygon
 their output reduces to, write one statement per line and keep their longer explanations on the science
-pages, with no change to any result (#468).
+pages, with no change to any result (#468). `src/io` holds every file a run reads or writes in four
+folders, `init/`, `met/`, `maps/` and `output/`: each start is a module of `init/`, the restart file is
+laid out by level, the met grid serves any gridded product, the maps only read, the output is a module
+per stage, and a reader that refuses a file says why, with no change to any result (#469).
 
 **Upgrading from v0.3.5:**
+- **`[forcing].format = "const"` is gone** (#469). It opened no file and drove the run with a fixed
+  reference climate; no shipped config used it. `format` takes `"ED_default"` or `"ED_ERA5land"`, and a
+  run without forcing sets `forcing_on = false`.
+- **`[output].io_config` takes TOML's `true` and `false` only** (#469), as every reader takes only the
+  names it lists: `.true.`, `True` and `TRUE` (and their `false` twins) stop the run.
 - **Six keys nothing read are gone** (#464): `[demography].patch_diff_age_tol`,
   `patch_min_area_remain` and `enable_patch_fission`, `[snow].snow_stab_thresh`, and `[pft].huber_value`
   and `wood_carbon_density`. Delete them; a config that keeps one stops the run. The PFT CSV loses
@@ -256,6 +264,43 @@ pages, with no change to any result (#468).
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
   `hydraulics.root_beta`.
+- **Fortran: `src/io` by folder** (#469), for code built against MEDS's modules. `src/init` is
+  `src/io/init`, and `src/io/input/{forcing,maps}` are `src/io/met` and `src/io/maps`. Libraries:
+  `meds_forcing` is `meds_met`, `meds_io_prep` is `meds_output` and `meds_io_stream` is
+  `meds_output_stream`; the restart file is in `meds_init`, and `meds_netcdf_c` also holds
+  `meds_netcdf_write`. Modules and their routines:
+  - `meds_io` is `meds_init_restart`: `restart_file_t`, `restart_file_open`, `restart_file_write`,
+    `restart_file_close` and `read_restart_file` replace `state_file_t`, `state_file_open`,
+    `state_file_put`, `state_file_close` and `io_read_state`, which also returns `why`;
+    `restart_file_slots` replaces `state_file_polygons` and `state_file_refusal`;
+  - `meds_init` is split: `meds_init_bare_ground` (`init_bare_ground`, `init_bare_sites`,
+    `seed_bare_ground`, `add_cohort`, `finalize_init`, `N_PATCH_INIT`, from `meds_polygon`),
+    `meds_init_census` (`census_table_t`, `read_census_file`, which returns `why` in place of
+    `opened`, `init_from_census`, `restructure_census_stand`) and `meds_init` (`init_polygon`, the start
+    of a polygon by `[init].init_mode`, with a census stand's acclimation);
+  - `meds_met_driver` is `meds_met`, `meds_forcing_types` `meds_met_types`, `meds_met_source_common`
+    `meds_met_share`, `meds_co2_series` `meds_met_co2`; `meds_met_file_source` is `meds_met_default`
+    (`default_file_open`, `default_file_record`) and `meds_met_archive_source` `meds_met_era5land`
+    (`era5land_open`, `era5land_prefetch`, `era5land_record`). `meds_era5land_reader` is gone: its
+    grid is `meds_met_grid` (`select_site_cell`, `select_box_cells`, `keep_cells`, `same_grid` and
+    `GRID_*` codes, on a `met_grid_t` that `era5land_grid` gives for the archive, with
+    `great_circle_distance` and `nearest_grid_index` from `meds_forcing_kernels`), and its month files
+    are `meds_met_era5land`'s. The `MET_*` codes come from `meds_met_share` only;
+  - `meds_surface_maps` is `meds_maps`, which only reads: `map_inputs_t` and `MAP_BC_*` come from
+    `meds_maps_params`, `apply_map_inputs` from `meds_config`, and `site_map_inputs` is
+    `meds_region`'s. The maps take the grid (`met_grid_t`) where they took the static file's path;
+  - `meds_diagnostic_reduce` is `meds_output_reduce`, which also holds `dbh_class_index`; the source
+    ids and `extract_variable` and `extract_fast_scalar` come from `meds_output_extract`; the file
+    set's setup (`setup_output_files`, `finalize_output_files`, `alloc_output_buffers`,
+    `set_output_polygons`, `alloc_output_set`, `activate_polygon_diag`) and `open_output_files` and
+    `attach_output`, from `meds_polygon`, come from `meds_output_setup`; `output_serialize` and
+    `output_close` from `meds_output_stream`. `open_output_files` takes the polygons' lat, lon, row and
+    col, and `attach_output` a polygon's row;
+  - `soil_wetness` is `soil_theta_to_saturation` in `meds_soil_hydr_lib`, `(theta, theta_sat,
+    theta_res)`; `has_nan` is gone (`cohort_bad_field`, `cohort_field_finite` and
+    `canopy_air_bad_field` check the state).
+
+  No netCDF variable name, TOML key other than `format = "const"`, or C API changes.
 - **Fortran names in the output layer** (#468), for code built against MEDS's modules:
   `reduce_cohort_to_site` and `reduce_patch_to_site` are `reduce_cohort_to_polygon` and
   `reduce_patch_to_polygon`, `activate_site_diag` is `activate_polygon_diag`, and `manager_setup`,
@@ -269,6 +314,34 @@ pages, with no change to any result (#468).
 
 ### Changed
 
+- **`src/io` by folder, one module per job** (#469). `io/init/` holds the starts, one module each
+  (bare ground, a census, a restart file), and `init_polygon`, which runs the one `[init].init_mode`
+  names and its own finishing (a census stand's restructuring and acclimation, a restart's
+  re-acclimation); `io/met/` the atmosphere; `io/maps/` the maps; `io/output/` the diagnostics, a
+  module per stage (`meds_output_{types,registry,setup,extract,reduce,integrate,stream}`) and globbed
+  by CMake less the writer. The census reader returns a table, which the start builds the stand from.
+- **The restart file by level** (#469): `meds_init_restart` defines, writes and reads the polygon and
+  its sites, the cohorts and the patches each in one place, in the state modules' section order, and
+  derives what an older file lacks in one section after the read, in the order it ran before. A
+  per-cohort field that persists is three adjacent lines there.
+- **The met grid serves any gridded product** (#469): `meds_met_grid` takes a grid descriptor (the
+  static file, the names in it, the chunk edge) where `meds_era5land_reader` knew ERA5-Land.
+- **The maps only read** (#469); the derive from a cell's maps into its polygon's configuration is
+  `meds_config`'s.
+- **The state guard checks each level in its state module** (#469): `cohort_bad_field` also checks the
+  tissue energies as finite, and `canopy_air_bad_field` the canopy air. A non-finite value is still
+  `DRIVER_ERR_NAN` and an out-of-bounds one `DRIVER_ERR_BOUNDS`, and either message now names the field
+  and the cohort or patch.
+- **One netCDF writing layer** (#469): `meds_netcdf_write` defines a variable with its attributes,
+  chunks and compression, and the polygon axis, for the restart and the diagnostic files alike; the
+  zlib levels are `RESTART_DEFLATE` (1) and `OUTPUT_DEFLATE` (4). The restart file's `lat` and `lon`
+  carry `units` and `standard_name` in place of a `long_name`.
+- **A reader that refuses a file says why, and its opener prints it** (#469). The met readers return
+  their reasons to `met_open`, which prints them also when the caller takes the status; the census
+  and restart readers return theirs to `init_polygon` in place of stopping the run: a census with an
+  unknown, repeated or missing column, a malformed row or a non-positive value, or a restart file with
+  a PFT, site or soil-layer count unlike the run's, stops it with the reason. A forcing file the
+  reader cannot read at open is `MET_ERR_FILE`, with the netCDF library's text.
 - **The output layer names the polygon it reduces to** (#468). A polygon holds several sites, and a
   scalar reduction weights each patch by its share of the polygon, so the reductions, the source family
   of the polygon's own scalars (`SRCK_POLYGON`, `SRC_PY_*`) and the diagnostic activation say polygon;
@@ -587,6 +660,9 @@ pages, with no change to any result (#468).
 
 ### Removed
 
+- **The `"const"` forcing backend** (#469), with `MET_BACKEND_CONST` and its test, and `met_cursor_t`'s
+  built-in location (Ithaca's), which `met_cursor_init` always set. `met_forcing_t` keeps its reference
+  climate, which a run without forcing still reads where the fast loop sets no value.
 - **Code in `src/io` nothing called** (#468): twelve convenience totals in `meds_diagnostic_reduce`,
   the derive helpers `cohort_gsc`, `cohort_wue`, `cohort_ci_ca`, `bowen_ratio` and `safe_ratio` with the
   two `meds_therm_lib` re-exports beside them, `agg_is_slabwise`, `slab_capacity` and

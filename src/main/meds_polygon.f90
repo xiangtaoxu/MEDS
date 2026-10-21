@@ -23,7 +23,8 @@ module meds_polygon
    use meds_therm_lib,              only : temp_to_internal_energy, internal_energy_to_temp
    use meds_config,                 only : meds_config_t
    use meds_time,                   only : meds_time_t, time_to_string
-   use meds_cohort_state_vars,      only : cohort_bad_field, cohort_field_name
+   use meds_cohort_state_vars,      only : cohort_bad_field, cohort_field_finite, cohort_field_name
+   use meds_patch_state_vars,       only : canopy_air_bad_field, canopy_air_field_name
    use meds_polygon_state_vars,     only : polygon_t, reset_step_diagnostics
    use meds_stepper,                only : advance_one_step, advance_boundary
    use meds_slow_dynamics,          only : refresh_canopy_depth
@@ -34,33 +35,22 @@ module meds_polygon
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input, soil_carbon_bad_pool,             &
                                            soil_carbon_pool_name
-   use meds_forcing_types,          only : met_source_t, met_cursor_t
-   use meds_met_driver,             only : met_cursor_init
-   use meds_diagnostic_reduce,      only : total_area, has_nan
+   use meds_met_types,          only : met_source_t, met_cursor_t
+   use meds_met,             only : met_cursor_init
+   use meds_output_reduce,      only : total_area
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
-   use meds_output_types,           only : output_files_t, output_buffers_t, MISSING_VALUE
+   use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_params,          only : TIER_FAST
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
-   use meds_output_registry,        only : setup_output_files, finalize_output_files, alloc_output_buffers, &
-                                           set_output_polygons,                                  &
-                                           activate_polygon_diag, apply_variable_override,          &
-                                           parse_stream_mask, build_freq_index, OVR_TRUE,         &
-                                           OVR_FALSE, OVR_MASK
-   use meds_constants,              only : n_soil_layer_max
-   use meds_allometry_lib,          only : HEIGHT_CHAVE
-   use meds_soil_params,            only : SOIL_BC_AQUIFER
-   use meds_forcing_types,          only : met_cells_t
-   use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
    private
 
    public :: polygon_run_t, polygon_prepare, polygon_step, polygon_report
-   public :: open_output_files, attach_output, ensure_output_dir
+   public :: ensure_output_dir
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
-   public :: N_PATCH_INIT
 
    !----- Step and run status codes. OK/DONE are normal; the ERR codes are failures, returned as a  !
    !      status rather than an `error stop` so a library caller survives them.                   !
@@ -70,7 +60,6 @@ module meds_polygon
    integer(ik), parameter :: DRIVER_ERR_AREA= 3_ik   !< patch areas do not sum to 1 (finalize only)
    integer(ik), parameter :: DRIVER_ERR_BOUNDS = 4_ik !< a cohort or soil-carbon state is outside its bounds
 
-   integer(ik), parameter :: N_PATCH_INIT = 6_ik     !< bare-ground patches when no census/restart
 
    !----- What the run needs to step and check one polygon; its state is the polygon_t beside it. --!
    type :: polygon_run_t
@@ -141,7 +130,7 @@ contains
          end if
          !----- Skip the generic re-seed when a restart already restored the true evolved            !
          !      CAS/soil/snow state (docs/science/order_of_processes.md §1): overwriting it here     !
-         !      would silently discard exactly what io_read_state just read back, and the run would  !
+         !      would silently discard exactly what read_restart_file just read back, and the run would  !
          !      jump at the restart.                                                                 !
          if (.not. keep_fast_state) call init_fast_reservoirs(poly, run%fast_ctx)
          if (cfg%snow_init_swe > 0.0_wp) call seed_snow(poly, cfg, verbose)
@@ -237,21 +226,14 @@ contains
       poly%restructure_pending  = is_new_month
       poly%restructure_new_year = is_new_year
 
-      !----- NAN GUARD, every step: the stand, the tissue temperatures and the canopy air         !
-      !      (has_nan), and the run's energy and water ledgers, whose running residual turns NaN    !
-      !      the step any flux or store in them does. A NaN is a STATUS here, not an `error stop`:   !
-      !      a library caller survives it.  ---------------------------------------------------------!
-      if (has_nan(poly) .or. ledger_not_finite()) then
-         write(*,'(a)') ' ERROR: a NaN reached the state or the energy/water ledger.'
-         if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
-         write(*,'(2a)') '        in the step ending ', time_to_string(now)
-         status = DRIVER_ERR_NAN ; run%status = status ; return
-      end if
-
-      !----- BOUNDS GUARD, checked every step and NOT gated on the ledger: each cohort's state     !
-      !      (cohort_bad_field: density, carbon pools, SLA, water) and each CENTURY soil-carbon     !
-      !      pool. An operator keeps these in bounds by construction, so a violation is a bug;     !
-      !      stopping on the step it happens, naming the field, is what makes it findable.         !
+      !----- STATE GUARD, every step: the run's energy and water ledgers, whose running residual   !
+      !      turns NaN the step any flux or store in them does; each cohort's state                  !
+      !      (cohort_bad_field: density, carbon pools, SLA, water, tissue energies); each patch's    !
+      !      canopy air (canopy_air_bad_field); and each CENTURY soil-carbon pool. A non-finite      !
+      !      value is DRIVER_ERR_NAN and an out-of-bounds one DRIVER_ERR_BOUNDS: a STATUS, not an    !
+      !      `error stop`, so a library caller survives it. An operator keeps these in bounds by     !
+      !      construction, so a violation is a bug; stopping on the step it happens, naming the     !
+      !      field, is what makes it findable.                                                       !
       !                                                                                          !
       !      The ledger checks the soil-carbon predicate at every phase boundary and can say WHICH  !
       !      operator broke it, which is far more useful -- but the ledger is a diagnostic with an  !
@@ -259,23 +241,54 @@ contains
       !      disable is a trap. So the guard itself lives here, unconditional, and the ledger's     !
       !      copy is the attribution.                                                              !
       !      Once per slow step over a few hundred cohorts x 10 fields; the cost does not register. !
+      if (ledger_not_finite()) then
+         write(*,'(a)') ' ERROR: a NaN reached the energy/water ledger.'
+         if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
+         write(*,'(2a)') '        in the step ending ', time_to_string(now)
+         status = DRIVER_ERR_NAN
+         run%status = status
+         return
+      end if
       block
          integer(ik) :: ii, kk
          do ii = 1_ik, poly%cohort%n
             kk = cohort_bad_field(poly%cohort, ii)
             if (kk /= 0_ik) then
-               write(*,'(a)') ' ERROR: a cohort''s state is outside its physical bounds.'
+               if (cohort_field_finite(poly%cohort, ii, kk)) then
+                  write(*,'(a)') ' ERROR: a cohort''s state is outside its physical bounds.'
+                  status = DRIVER_ERR_BOUNDS
+               else
+                  write(*,'(a)') ' ERROR: a cohort''s state is not finite.'
+                  status = DRIVER_ERR_NAN
+               end if
                if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
                write(*,'(3a,i0,a,i0,a,i0)') '        field ', trim(cohort_field_name(kk)),          &
                      ', cohort id ', poly%cohort%global_id(ii), ' (pft ',                         &
                      poly%cohort%pft(ii), ') in patch ', poly%cohort%owner_patch(ii)
                write(*,'(2a)')  '        date ', time_to_string(now)
-               write(*,'(a)') '        Density, carbon and water are amounts: never negative, never'
-               write(*,'(a)') '        infinite. Every operator keeps them so by construction.'
-               status = DRIVER_ERR_BOUNDS ; run%status = status
+               if (status == DRIVER_ERR_BOUNDS) then
+                  write(*,'(a)') '        Density, carbon and water are amounts: never negative, never'
+                  write(*,'(a)') '        infinite. Every operator keeps them so by construction.'
+               end if
+               run%status = status
                return
             end if
          end do
+         if (allocated(poly%patch%cas)) then
+            do ii = 1_ik, poly%patch%n
+               kk = canopy_air_bad_field(poly%patch%cas(ii))
+               if (kk /= 0_ik) then
+                  write(*,'(a)') ' ERROR: a patch''s canopy air is not finite.'
+                  if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
+                  write(*,'(3a,i0,a,i0)') '        field ', trim(canopy_air_field_name(kk)), ', patch ', ii,  &
+                        ' of ', poly%patch%n
+                  write(*,'(2a)')  '        date ', time_to_string(now)
+                  status = DRIVER_ERR_NAN
+                  run%status = status
+                  return
+               end if
+            end do
+         end if
          if (cfg%soil_carbon%soil_carbon_on) then
             do ii = 1_ik, poly%patch%n
                kk = soil_carbon_bad_pool(poly%patch%soil_carbon(ii))
@@ -484,110 +497,6 @@ contains
          pools_ss%struct_soil_carbon + pools_ss%microbial_carbon + pools_ss%slow_carbon +        &
          pools_ss%passive_carbon, ' kgC/m2'
    end subroutine soil_carbon_steady
-
-   !---------------------------------------------------------------------------------------!
-   ! open_output_files -- lay out one output file set: the registry from the config, the   !
-   ! per-variable overrides of [output].io_config, and the polygon axis with each          !
-   ! polygon's cell and site count. Each polygon that writes into the set then calls       !
-   ! attach_output, which gives the files that polygon's own sites.                        !
-   !---------------------------------------------------------------------------------------!
-   subroutine open_output_files(cfg, files, verbose, cells, polygon_id, n_site)
-      type(meds_config_t),  intent(in)    :: cfg
-      type(output_files_t), intent(inout) :: files
-      logical,              intent(in)    :: verbose
-      type(met_cells_t),    intent(in)    :: cells          !< the run's cells, one per polygon ...
-      integer(ik),          intent(in)    :: polygon_id(:)  !< ... their polygon ids ...
-      integer(ik),          intent(in)    :: n_site(:)      !< ... and their site counts
-      call setup_output_files(files, cfg)
-      if (len_trim(cfg%output%io_config) > 0)                                                     &
-         call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
-      call set_output_polygons(files, polygon_id, n_site, cells%lat, cells%lon, cells%row, cells%col, &
-                                any(cfg%pft%allom(1:cfg%pft%n)%height_allometry == HEIGHT_CHAVE))
-      call finalize_output_files(files)
-   end subroutine open_output_files
-
-   !----- A polygon's share of an output file set: its buffers, which read the soil diagnostics   !
-   !      when its fast loop runs, the diagnostic blocks it must accumulate for the set's         !
-   !      variables, and its row of the per-polygon variables: each site's area, terrain, layers  !
-   !      and soil column, and the height allometry's site index its cell's map gave it. ---------!
-   subroutine attach_output(cfg, files, bufs, poly, run)
-      type(meds_config_t),    intent(in)    :: cfg
-      type(output_files_t),   intent(inout) :: files
-      type(output_buffers_t), intent(inout) :: bufs
-      type(polygon_t),        intent(inout) :: poly
-      type(polygon_run_t),    intent(in)    :: run
-      integer(ik) :: p, is
-      call alloc_output_buffers(files, bufs)
-      bufs%diag%soil_ready = cfg%fast_biophysics_on
-      call activate_polygon_diag(files, poly)
-      p = run%cell
-      do is = 1_ik, poly%site%n
-         associate (surf => poly%site%surface(is))
-            files%site_area(is, p)         = poly%site%area(is)
-            files%site_elevation(is, p)    = surf%elevation_m
-            files%site_slope(is, p)        = surf%slope_deg
-            files%site_aspect(is, p)       = surf%aspect_deg
-            files%site_n_soil(is, p)       = surf%soil%n_active
-            files%site_soil_z(:, is, p)    = surf%soil%z_node
-            files%site_soil_face(:, is, p) = surf%soil%soil_layer_z
-            files%site_soil_depth(is, p)   = surf%soil_column%depth
-            files%site_bottom_bc(is, p)    = surf%water_bottom_bc
-            files%site_drain_factor(is, p) = merge(MISSING_VALUE, surf%drain_factor,                &
-                                                   surf%water_bottom_bc == SOIL_BC_AQUIFER)
-            files%site_deep_temp(is, p)    = surf%deep_temp
-         end associate
-      end do
-      !----- E is the polygon's, the same in every PFT's record. -----------------------------!
-      if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = poly%cohort%pft_table%allom(1)%chave_e
-   end subroutine attach_output
-
-   !----- Apply the optional meds_io_config.toml per-variable override table to the manager's   !
-   !      registry (value grammar and unknown-name trap: docs/science/diagnostics.md §5). Each  !
-   !      `variables.<name> = <value>` entry: a bool force-enables / disables everywhere; a     !
-   !      quoted "F D M Y" string replaces the stream mask. A name matching no registry         !
-   !      variable is a hard error.                                                             !
-   subroutine apply_io_overrides(files, tomlpath, verbose)
-      type(output_files_t),   intent(inout) :: files
-      character(len=*),       intent(in)    :: tomlpath
-      logical,                intent(in)    :: verbose
-      type(toml_table_t) :: tt
-      logical            :: ok, found
-      integer(ik)        :: i, mask, status
-      character(len=256) :: raw, sval
-      character(len=64)  :: name
-      character(len=8)   :: bad
-      call toml_parse_file(tomlpath, tt, ok)
-      if (.not. ok) error stop 'meds_polygon: cannot read [output].io_config = '//trim(tomlpath)
-      do i = 1_ik, tt%n
-         if (len_trim(tt%key(i)) <= 10) cycle
-         if (tt%key(i)(1:10) /= 'variables.') cycle
-         name = trim(tt%key(i)(11:))
-         raw  = adjustl(tt%val(i))
-         select case (trim(raw))
-         case ('true', '.true.', 'True', 'TRUE')
-            call apply_variable_override(files%reg, trim(name), OVR_TRUE, 0_ik, found)
-         case ('false', '.false.', 'False', 'FALSE')
-            call apply_variable_override(files%reg, trim(name), OVR_FALSE, 0_ik, found)
-         case default
-            if (raw(1:1) == '"') then                    ! quoted stream string "F D M Y"
-               sval = raw(2:index(raw(2:), '"'))
-               call parse_stream_mask(trim(sval), mask, status, bad)
-               if (status /= 0_ik)                                                               &
-                  error stop 'meds_polygon: io_config unknown stream token "'//trim(bad)//        &
-                             '" for variable '//trim(name)
-               call apply_variable_override(files%reg, trim(name), OVR_MASK, mask, found)
-            else
-               error stop 'meds_polygon: io_config bad value for '//trim(name)//                  &
-                          ' (expected true|false or a quoted "F D M Y" string)'
-            end if
-         end select
-         if (.not. found)                                                                        &
-            error stop 'meds_polygon: io_config variable "'//trim(name)//                         &
-                       '" matches no registry variable (typo?)'
-      end do
-      call build_freq_index(files%reg)
-      if (verbose) write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
-   end subroutine apply_io_overrides
 
    !----- Create the output directory if it does not exist (a run-level convenience). The engine   !
    !      and the kernel libraries never touch the filesystem.                                      !

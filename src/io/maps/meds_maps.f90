@@ -1,102 +1,81 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_surface_maps -- every static per-cell map a run reads; no other module opens a map  !
+! meds_maps -- every static per-cell map a run reads; no other module opens a map          !
 ! (docs/configuration.md, Input maps). A map is on the forcing grid, so a cell's value     !
 ! sits at its own (row, col) and MEDS never regrids; a value the map does not hold reads   !
 ! as NaN. map_values_at_cells and map_layers_at_cells read one variable at a list of       !
-! cells; apply_cell_mask keeps a region's cells; read_map_inputs, apply_map_inputs and     !
-! site_map_inputs build each polygon's soil column, bottom boundaries and Chave E from the !
-! [maps] maps (docs/science/soil_biophysics.md §The column from the soil maps).            !
+! cells; apply_cell_mask keeps a region's cells; read_map_inputs reads every [maps] map at !
+! a run's cells, which meds_config's apply_map_inputs turns into each polygon's soil       !
+! column, bottom boundary and Chave E (docs/science/soil_biophysics.md §The column from    !
+! the soil maps).                                                                          !
 !==========================================================================================!
-module meds_surface_maps
+module meds_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
    use iso_c_binding,         only : c_int, c_size_t, c_double
    use meds_kinds,            only : wp, ik
    use meds_netcdf_c,         only : nc_close, nc_get_att_double_f, nc_get_vara_double, nc_inq_dimlen_f,          &
                                      nc_inq_varid_f, nc_open_f, NC_NOERR, NC_NOWRITE
-   use meds_forcing_types,    only : met_cells_t
-   use meds_era5land_reader,  only : era5land_same_grid, era5land_keep_cells, era5land_select_site,   &
-                                     era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
-   use meds_config,           only : meds_config_t, soil_column_layers, soil_column_params
-   use meds_config_check,     only : validate_config
-   use meds_maps_params,      only : maps_opts_t, soil_maps_on
-   use meds_constants,        only : n_soil_layer_max
-   use meds_soil_params,      only : soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER,                   &
-                                     ANNUAL_DAMPING_DEPTH
-   use meds_soil_hydr_lib,    only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
-   use meds_therm_lib,        only : soil_texture_to_thermal
+   use meds_met_types,        only : met_grid_t, met_cells_t
+   use meds_met_grid,         only : same_grid, keep_cells, GRID_OK, GRID_ERR_OPEN
+   use meds_maps_params,      only : maps_opts_t, soil_maps_on, map_inputs_t, MAP_BC_FREE_DRAIN, MAP_BC_LEAKY, &
+                                     MAP_BC_SEALED, MAP_BC_AQUIFER
    implicit none
    private
 
    public :: map_values_at_cells, map_layers_at_cells, apply_cell_mask, map_status_message
    public :: MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR
-   public :: map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
+   public :: read_map_inputs
 
    integer(ik), parameter :: MAP_OK       = 0_ik
-   integer(ik), parameter :: MAP_ERR_OPEN = 1_ik   !< the file (or the static file) cannot be opened
+   integer(ik), parameter :: MAP_ERR_OPEN = 1_ik   !< the file (or the grid's static file) cannot be opened
    integer(ik), parameter :: MAP_ERR_GRID = 2_ik   !< the file is not on the forcing grid
    integer(ik), parameter :: MAP_ERR_VAR  = 3_ik   !< the variable (or its layer dimension) is not there
 
    !----- The soil maps' layers (ED-SoilMaps v2: SoilGrids 2.0's six depths, to 2 m). ------------!
    character(len=*), parameter :: SOIL_LAYER_DIM = 'depth', SOIL_LAYER_BOUNDS = 'depth_bnds'
-   !----- The bottom water boundary of the soil depth map's bc_class. ---------------------------!
-   integer(ik), parameter :: MAP_BC_FREE_DRAIN = 1_ik   !< q = K(theta)
-   integer(ik), parameter :: MAP_BC_LEAKY      = 2_ik   !< q = f_leak K(theta)
-   integer(ik), parameter :: MAP_BC_SEALED     = 3_ik   !< q = 0
-   integer(ik), parameter :: MAP_BC_AQUIFER    = 4_ik   !< a water table at the column base
-
-   !----- What the [maps] maps hold at each cell of a run, read once (read_map_inputs). --!
-   type :: map_inputs_t
-      logical :: soil  = .false.                          !< the soil maps were read
-      logical :: chave = .false.                          !< the chave_e map was read
-      real(wp), allocatable :: layer_top(:), layer_bottom(:)   !< [m] the soil maps' layers, positive down
-      real(wp), allocatable :: soil_depth(:)              !< [m] (cell) the soil column's depth
-      real(wp), allocatable :: bc_class(:)                !< [-] (cell) its bottom water boundary, MAP_BC_*
-      real(wp), allocatable :: f_leak(:)                  !< [-] (cell) a leaky base's drainage factor
-      real(wp), allocatable :: deep_temp(:)               !< [K] (cell) the deep soil temperature
-      type(soil_texture_t), allocatable :: texture(:,:)   !< (map layer, cell) each layer's soil
-      real(wp), allocatable :: chave_e(:)                 !< [-] (cell) Chave et al. (2014)'s E
-   end type map_inputs_t
 
 contains
 
    !----- A 2-D (lat, lon) map variable at every cell: values(cell), NaN where the map is empty. -----!
-   subroutine map_values_at_cells(path, var, static_path, cells, values, stat)
-      character(len=*),      intent(in)  :: path, var, static_path
+   subroutine map_values_at_cells(path, var, grid, cells, values, stat)
+      character(len=*),      intent(in)  :: path, var
+      type(met_grid_t),      intent(in)  :: grid
       type(met_cells_t),     intent(in)  :: cells
       real(wp), allocatable, intent(out) :: values(:)
       integer(ik),           intent(out) :: stat
       real(wp), allocatable :: v(:,:)
-      call read_cells(path, var, '', static_path, cells, v, stat)
+      call read_cells(path, var, '', grid, cells, v, stat)
       if (stat == MAP_OK) values = v(1, :)
    end subroutine map_values_at_cells
 
    !----- A layered (layer, lat, lon) map variable at every cell: values(layer, cell), NaN where the  !
    !      map is empty. `layer_dim` names the variable's first dimension. ------------------------------!
-   subroutine map_layers_at_cells(path, var, layer_dim, static_path, cells, values, stat)
-      character(len=*),      intent(in)  :: path, var, layer_dim, static_path
+   subroutine map_layers_at_cells(path, var, layer_dim, grid, cells, values, stat)
+      character(len=*),      intent(in)  :: path, var, layer_dim
+      type(met_grid_t),      intent(in)  :: grid
       type(met_cells_t),     intent(in)  :: cells
       real(wp), allocatable, intent(out) :: values(:,:)
       integer(ik),           intent(out) :: stat
-      call read_cells(path, var, layer_dim, static_path, cells, values, stat)
+      call read_cells(path, var, layer_dim, grid, cells, values, stat)
    end subroutine map_layers_at_cells
 
    !----- The cell mask of a region (docs/configuration.md, Regional runs): keep the cells whose    !
    !      mask value is at least mask_min, not those it leaves empty; n_dropped counts the rest. ----!
-   subroutine apply_cell_mask(cells, mask_path, mask_var, mask_min, static_path, n_dropped, stat)
+   subroutine apply_cell_mask(cells, mask_path, mask_var, mask_min, grid, n_dropped, stat)
       type(met_cells_t), intent(inout) :: cells
-      character(len=*),  intent(in)    :: mask_path, mask_var, static_path
+      character(len=*),  intent(in)    :: mask_path, mask_var
+      type(met_grid_t),  intent(in)    :: grid
       real(wp),          intent(in)    :: mask_min
       integer(ik),       intent(out)   :: n_dropped, stat
       real(wp), allocatable :: v(:)
       logical,  allocatable :: keep(:)
       n_dropped = 0_ik
-      call map_values_at_cells(mask_path, mask_var, static_path, cells, v, stat)
+      call map_values_at_cells(mask_path, mask_var, grid, cells, v, stat)
       if (stat /= MAP_OK) return
       keep = .not. ieee_is_nan(v)
       where (keep) keep = v >= mask_min
       n_dropped = cells%ncell - int(count(keep), ik)
-      call era5land_keep_cells(cells, keep)
+      call keep_cells(cells, keep)
    end subroutine apply_cell_mask
 
    !----- What a status code means, for the caller's message. ------------------------------------!
@@ -124,11 +103,11 @@ contains
    ! bc_class not 1-4, or a leaky base's f_leak outside (0, 1]; it is '' when every value  !
    ! is there.                                                                             !
    !=======================================================================================!
-   subroutine read_map_inputs(opts, static_path, cells, inp, msg)
-      type(maps_opts_t),          intent(in)  :: opts
-      character(len=*),              intent(in)  :: static_path
+   subroutine read_map_inputs(opts, grid, cells, inp, msg)
+      type(maps_opts_t),             intent(in)  :: opts
+      type(met_grid_t),              intent(in)  :: grid
       type(met_cells_t),             intent(in)  :: cells
-      type(map_inputs_t),        intent(out) :: inp
+      type(map_inputs_t),            intent(out) :: inp
       character(len=:), allocatable, intent(out) :: msg
       real(wp), allocatable :: v(:,:), top_chem(:), bottom_chem(:)
       integer(ik) :: k
@@ -217,7 +196,7 @@ contains
          character(len=*),      intent(in)  :: path, var, layer_dim
          real(wp), allocatable, intent(out) :: values(:,:)
          integer(ik) :: st, c
-         call read_cells(trim(path), var, layer_dim, static_path, cells, values, st)
+         call read_cells(trim(path), var, layer_dim, grid, cells, values, st)
          if (st /= MAP_OK) then
             msg = 'map '//trim(path)//' '//map_status_message(st)//': '//var
             return
@@ -268,145 +247,14 @@ contains
    end subroutine read_map_inputs
 
    !=======================================================================================!
-   ! apply_map_inputs -- cell k's inputs into the configuration its polygon runs           !
-   ! (docs/science/soil_biophysics.md §The column from the soil maps): the soil column on  !
-   ! the default layers to the map's depth, each layer's curve, Ks and thermal properties  !
-   ! from the map layers it overlaps; the bottom water boundary from bc_class; the thermal !
-   ! anchor at deep_temp, ANNUAL_DAMPING_DEPTH / sqrt(2) below the bottom node (eq. (13)); !
-   ! and the Chave allometry's E.                                                          !
-   !=======================================================================================!
-   subroutine apply_map_inputs(inp, k, cfg)
-      type(map_inputs_t), intent(in)    :: inp
-      integer(ik),            intent(in)    :: k
-      type(meds_config_t),    intent(inout) :: cfg
-      type(soil_texture_t) :: tex
-      type(soil_params_t)  :: soil
-      real(wp)    :: bottoms(n_soil_layer_max), top
-      integer(ik) :: n, l
-
-      if (inp%soil) then
-         associate (sc => cfg%soil_column)
-            sc%depth = inp%soil_depth(k)
-            sc%n_layer_bottoms = 0_ik
-            sc%retention = SOIL_RETENTION_VG
-            call soil_column_layers(sc, bottoms, n)
-            top = 0.0_wp
-            do l = 1_ik, n
-               tex = layer_texture(inp, k, top, bottoms(l))
-               call soil_texture_to_hydraulics(tex, sc%layer_theta_sat(l), sc%layer_theta_res(l),      &
-                                                 sc%layer_curve_par_a(l), sc%layer_curve_par_n(l),       &
-                                                 sc%layer_ksat(l))
-               call soil_texture_to_thermal(tex%sand, tex%clay, sc%layer_theta_sat(l),                     &
-                                              sc%layer_solid_conductivity(l), sc%layer_dry_conductivity(l),  &
-                                              sc%layer_dry_heat_capacity(l))
-               top = bottoms(l)
-            end do
-            sc%n_layer_values = n
-         end associate
-         select case (nint(inp%bc_class(k), ik))
-         case (MAP_BC_AQUIFER)
-            cfg%soil%water_bottom_bc = SOIL_BC_AQUIFER
-         case (MAP_BC_LEAKY)
-            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
-            cfg%soil%drain_factor = inp%f_leak(k)
-         case (MAP_BC_SEALED)
-            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
-            cfg%soil%drain_factor = 0.0_wp
-         case default
-            cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
-            cfg%soil%drain_factor = 1.0_wp
-         end select
-         call soil_column_params(cfg%soil_column, soil)
-         cfg%energy%deep_temp  = inp%deep_temp(k)
-         cfg%energy%deep_depth = abs(soil%z_node(soil%n_active)) + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)
-      end if
-      if (inp%chave) cfg%pft%allom(:)%chave_e = inp%chave_e(k)
-   end subroutine apply_map_inputs
-
-   !----- The soil of the column's layer [top, bottom]: the map layers it overlaps, each weighted  !
-   !      by the overlap. The deepest map layer reaches down without end. ----------------------------!
-   pure function layer_texture(inp, k, top, bottom) result(tex)
-      type(map_inputs_t), intent(in) :: inp
-      integer(ik),            intent(in) :: k
-      real(wp),               intent(in) :: top, bottom
-      type(soil_texture_t) :: tex
-      real(wp)    :: w, wsum, hi
-      integer(ik) :: m, nm
-      nm = size(inp%layer_top, kind=ik)
-      tex%sand = 0.0_wp
-      tex%silt = 0.0_wp
-      tex%clay = 0.0_wp
-      tex%org_carbon = 0.0_wp
-      tex%cec  = 0.0_wp
-      tex%ph   = 0.0_wp
-      tex%bulk_density = 0.0_wp
-      tex%coarse_frag = 0.0_wp
-      wsum = 0.0_wp
-      do m = 1_ik, nm
-         hi = bottom
-         if (m < nm) hi = min(bottom, inp%layer_bottom(m))
-         w = hi - max(top, inp%layer_top(m))
-         if (w <= 0.0_wp) cycle
-         wsum = wsum + w
-         associate (t => inp%texture(m, k))
-            tex%sand         = tex%sand         + w * t%sand
-            tex%silt         = tex%silt         + w * t%silt
-            tex%clay         = tex%clay         + w * t%clay
-            tex%org_carbon   = tex%org_carbon   + w * t%org_carbon
-            tex%cec          = tex%cec          + w * t%cec
-            tex%ph           = tex%ph           + w * t%ph
-            tex%bulk_density = tex%bulk_density + w * t%bulk_density
-            tex%coarse_frag  = tex%coarse_frag  + w * t%coarse_frag
-         end associate
-      end do
-      tex%sand = tex%sand / wsum
-      tex%silt = tex%silt / wsum
-      tex%clay = tex%clay / wsum
-      tex%org_carbon = tex%org_carbon / wsum
-      tex%cec = tex%cec / wsum
-      tex%ph = tex%ph / wsum
-      tex%bulk_density = tex%bulk_density / wsum
-      tex%coarse_frag = tex%coarse_frag / wsum
-   end function layer_texture
-
-   !=======================================================================================!
-   ! site_map_inputs -- a site run's [maps] inputs, at the forcing cell its [site]         !
-   ! location reads (the archive's own choice, era5land_select_site), into cfg, which is   !
-   ! then validated again. msg is '' on success, else why the inputs could not be had.     !
-   !=======================================================================================!
-   subroutine site_map_inputs(cfg, msg)
-      type(meds_config_t),           intent(inout) :: cfg
-      character(len=:), allocatable, intent(out)   :: msg
-      type(met_cells_t)      :: cell
-      type(map_inputs_t) :: inp
-      character(len=:), allocatable :: static
-      real(wp)    :: distance_km
-      integer(ik) :: st
-      static = trim(era5land_static_file(cfg%forcing))
-      call era5land_select_site(static, cfg%forcing%latitude, cfg%forcing%longitude,              &
-                                cfg%forcing%max_distance_km, cell, distance_km, st)
-      if (st /= ERA_OK) then
-         if (st == ERA_ERR_NO_CELL) then
-            msg = 'no valid forcing cell near the site for the [maps] maps'
-         else
-            msg = 'cannot read the forcing''s static file '//static//' for the [maps] maps'
-         end if
-         return
-      end if
-      call read_map_inputs(cfg%maps, static, cell, inp, msg)
-      if (len(msg) > 0) return
-      call apply_map_inputs(inp, 1_ik, cfg)
-      call validate_config(cfg)
-   end subroutine site_map_inputs
-
-   !=======================================================================================!
    ! The read: check the grid, read the band of rows the cells span (every column and      !
    ! layer, in one read per variable, which also serves a box across 180 degrees), then    !
    ! pick each cell's values. _FillValue, missing_value and NaN read as NaN, and packed    !
    ! values are unpacked. layer_dim = '' reads a 2-D variable as one layer.                !
    !=======================================================================================!
-   subroutine read_cells(path, var, layer_dim, static_path, cells, values, stat)
-      character(len=*),      intent(in)  :: path, var, layer_dim, static_path
+   subroutine read_cells(path, var, layer_dim, grid, cells, values, stat)
+      character(len=*),      intent(in)  :: path, var, layer_dim
+      type(met_grid_t),      intent(in)  :: grid
       type(met_cells_t),     intent(in)  :: cells
       real(wp), allocatable, intent(out) :: values(:,:)
       integer(ik),           intent(out) :: stat
@@ -418,9 +266,9 @@ contains
 
       allocate(values(1, cells%ncell))
       values = ieee_value(1.0_wp, ieee_quiet_nan)
-      call era5land_same_grid(path, static_path, stat)
-      if (stat /= ERA_OK) then
-         stat = merge(MAP_ERR_OPEN, MAP_ERR_GRID, stat == ERA_ERR_OPEN)
+      call same_grid(path, grid, stat)
+      if (stat /= GRID_OK) then
+         stat = merge(MAP_ERR_OPEN, MAP_ERR_GRID, stat == GRID_ERR_OPEN)
          return
       end if
       stat = MAP_ERR_OPEN
@@ -499,4 +347,4 @@ contains
 
    end subroutine read_cells
 
-end module meds_surface_maps
+end module meds_maps

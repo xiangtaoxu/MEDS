@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_diagnostic_reduce -- stage [3] of the diagnostic output (docs/science/diagnostics.md  !
+! meds_output_reduce -- stage [3] of the diagnostic output (docs/science/diagnostics.md  !
 ! §1-§2): one weighted reduction of a per-cohort field to each patch, the polygon, each PFT  !
 ! or each DBH class, and of a per-patch field to the polygon or to each site's soil column.  !
 ! The weight kind and the sum or mean come from the variable's descriptor. An empty set is   !
@@ -8,11 +8,10 @@
 ! Also the polygon totals the driver and the C API read. Keep each sum(array-expression) as  !
 ! written: a loop may associate differently and move every reported total in its last bit.   !
 !==========================================================================================!
-module meds_diagnostic_reduce
+module meds_output_reduce
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, cm2_to_m2, n_soil_layer_max
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area, patch_polygon_areas
-   use meds_diagnostic_kernels, only : dbh_class_index
    use meds_output_types,       only : MISSING_VALUE
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan, ieee_is_finite
    implicit none
@@ -26,7 +25,8 @@ module meds_diagnostic_reduce
    !----- Polygon totals for the callers that want one number (the driver's summaries, the C  !
    !      API, the tests). ------------------------------------------------------------------!
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area
-   public :: has_nan, print_summary
+   public :: print_summary
+   public :: dbh_class_index
 
    !=======================================================================================!
    !  Weight kinds: a per-cohort weight w_i. Patch area enters only at the patch -> polygon   !
@@ -387,38 +387,6 @@ contains
    !=======================================================================================!
 
 
-   !----- True if any diameter, density, AGB or wood carbon is NaN, or any cohort's leaf or wood !
-   !      temperature, or any patch's canopy air, is not finite. The fast loop's integrators      !
-   !      commit a non-finite state rather than hang when even their smallest step fails, and the !
-   !      canopy air and the tissue temperatures are where such a failure lands. ------------------!
-   pure logical function has_nan(poly) result(bad)
-      type(polygon_t), intent(in) :: poly
-      integer(ik) :: i
-      bad = .false.
-      do i = 1_ik, poly%cohort%n
-         if (ieee_is_nan(poly%cohort%dbh(i))    .or. ieee_is_nan(poly%cohort%nplant(i)) .or.   &
-             ieee_is_nan(poly%cohort%agb(i))    .or. ieee_is_nan(poly%cohort%wood_carbon(i)))  &
-            bad = .true.
-         if (allocated(poly%cohort%leaf_temp)) then
-            if (.not. ieee_is_finite(poly%cohort%leaf_temp(i))) bad = .true.
-         end if
-         if (allocated(poly%cohort%wood_temp)) then
-            if (.not. ieee_is_finite(poly%cohort%wood_temp(i))) bad = .true.
-         end if
-         if (allocated(poly%cohort%leaf_energy)) then
-            if (.not. (ieee_is_finite(poly%cohort%leaf_energy(i)) .and. ieee_is_finite(poly%cohort%wood_energy(i)))) &
-               bad = .true.
-         end if
-      end do
-      if (allocated(poly%patch%cas)) then
-         do i = 1_ik, poly%patch%n
-            if (.not. (ieee_is_finite(poly%patch%cas(i)%can_enthalpy) .and.                      &
-                       ieee_is_finite(poly%patch%cas(i)%can_shv)      .and.                      &
-                       ieee_is_finite(poly%patch%cas(i)%can_co2))) bad = .true.
-         end do
-      end if
-   end function has_nan
-
    !----- Human-readable one-line summary. ------------------------------------------------!
    subroutine print_summary(poly, label)
       type(polygon_t), intent(in) :: poly
@@ -429,4 +397,23 @@ contains
          '  AGB=', total_agb(poly), '  Dmean=', mean_dbh(poly)
    end subroutine print_summary
 
-end module meds_diagnostic_reduce
+   !----- 1-based DBH class of a dbh (docs/science/diagnostics.md §3). Over n_class+1 ascending !
+   !      edges, bin k is [edges(k), edges(k+1)); the last bin also takes every dbh above its  !
+   !      top edge, and a dbh below edges(1) falls in bin 1, so no plant is dropped and        !
+   !      sum(nplant_size) == nplant_site holds. ----------------------------------------------!
+   pure integer(ik) function dbh_class_index(dbh, edges, n_class) result(k)
+      real(wp),    intent(in) :: dbh
+      real(wp),    intent(in) :: edges(:)   !< (n_class+1) ascending
+      integer(ik), intent(in) :: n_class
+      integer(ik) :: j
+      k = 1_ik
+      if (n_class <= 0_ik) return
+      do j = n_class, 1_ik, -1_ik
+         if (dbh >= edges(j)) then
+            k = j
+            return
+         end if
+      end do
+   end function dbh_class_index
+
+end module meds_output_reduce

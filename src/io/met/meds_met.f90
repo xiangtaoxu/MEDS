@@ -1,28 +1,28 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_driver -- the meteorological-forcing reader (docs/science/forcing.md §1-§3, §10-§12).   !
-! met_open opens a MEDS forcing file, the ED_ERA5land archive or the no-file CONST backend into the !
+! meds_met -- the meteorological-forcing reader (docs/science/forcing.md §1-§3, §10-§12).   !
+! met_open opens a MEDS forcing file or the ED_ERA5land archive into the                            !
 ! met_source_t a run shares; met_cursor_init binds a polygon's met_cursor_t to it; met_prefetch     !
 ! loads what a step reads; met_advance and met_instant step and sample a cursor with no file        !
-! access. read_record is the one ingest for both file sources (meds_met_file_source,                !
-! meds_met_archive_source): it checks, converts, lapses and partitions a record, and a missing      !
+! access. read_record is the one ingest for both file sources (meds_met_default,                !
+! meds_met_era5land): it checks, converts, lapses and partitions a record, and a missing      !
 ! value stops the run. CO2 comes from [forcing].co2_source on model time, never from the met file.  !
 !==========================================================================================!
-module meds_met_driver
+module meds_met
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use iso_c_binding, only : c_int
    use meds_kinds, only : wp, ik
    use meds_therm_lib, only : air_density
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,   &
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT,                      &
                                    MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN, METAVG_CENTER, &
                                    SWPART_PASSTHROUGH, CLAMP_ERROR, INTERP_LINEAR,                &
                                    LW_SYNTHESIZE, CO2_SOURCE_FILE
-   use meds_forcing_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
+   use meds_met_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
                                   met_cells_t, HUMIDITY_RHAIR, HUMIDITY_TDEW, MEDS_FIELD
    use meds_lapse_rate, only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,         &
                                lapse_specific_humidity, lapse_longwave
-   use meds_co2_series, only : co2_series_read, co2_series_at, co2_series_covers,                 &
+   use meds_met_co2, only : co2_series_read, co2_series_at, co2_series_covers,                 &
                                co2_series_end, co2_series_free
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,                 &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,     &
@@ -30,33 +30,25 @@ module meds_met_driver
                                     synthesize_lwdown, dewpoint_to_specific_humidity,             &
                                     rh_to_specific_humidity
    use meds_netcdf_c, only : nc_close, nc_check
-   use meds_met_source_common, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
-                                      MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,     &
-                                      MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,              &
-                                      MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE,   &
-                                      MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE,           &
-                                      MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, file_lookup_sec,         &
-                                      humidity_field
-   use meds_met_file_source, only : file_source_open, file_source_record
-   use meds_met_archive_source, only : archive_source_open, archive_prefetch,                     &
-                                       archive_source_record
+   use meds_met_share, only : MET_OK, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, file_lookup_sec,    &
+                              humidity_field, add_line
+   use meds_met_default, only : default_file_open, default_file_record
+   use meds_met_era5land, only : era5land_open, era5land_prefetch,                     &
+                                       era5land_record
    implicit none
    private
 
    public :: met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
-   public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                  &
-             MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,           &
-             MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED,   &
-             MET_ERR_CO2_IN_MET_FILE, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY
 
    integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
 
 contains
 
    !=======================================================================================!
-   !  OPEN: the CO2, then the backend: CONST (the reference climate), a MEDS forcing file     !
-   !  (file_source_open) or the archive (archive_source_open). With `stat` present a          !
-   !  rejection returns its code, so the tests can exercise it; absent, it stops the run.     !
+   !  OPEN: the CO2, then the source: a MEDS forcing file                                     !
+   !  (default_file_open) or the archive (era5land_open). A rejection prints the reader's    !
+   !  reason, then returns its code with `stat` present, so the tests can exercise it, and    !
+   !  stops the run without.                                                                 !
    !  run_start and run_end bound what a non-recycling run reads and the CO2 must cover.      !
    !=======================================================================================!
    subroutine met_open(src, fcfg, stat, run_start, run_end, cells)
@@ -66,9 +58,10 @@ contains
       type(meds_time_t), optional, intent(in) :: run_start, run_end
       type(met_cells_t), optional, intent(in) :: cells   !< a region's cells (archive only); absent: the site's
       integer(ik)       :: vstat
-      character(len=160):: why
+      character(len=:), allocatable :: why
 
       if (present(stat)) stat = MET_OK
+      why = ''
 
       src%fcfg       = fcfg
       src%backend    = fcfg%format
@@ -77,29 +70,25 @@ contains
       src%has_wind_vector = .false.
 
       !----- CO2 first, so every backend takes it the same way. ---------------------------------!
-      call open_co2(src, run_start, run_end, vstat)
-      why = 'met_open: the CO2 file cannot drive this run (see the message above)'
+      call open_co2(src, run_start, run_end, vstat, why)
       if (vstat == MET_OK) then
          select case (fcfg%format)
-         case (MET_BACKEND_CONST)                                  ! the reference climate: no file
-            src%ngrid = 1_ik
-            src%nrec = 0_ik
          case (MET_BACKEND_ED_ERA5LAND)
-            call archive_source_open(src, vstat, why, run_start, run_end, cells)
+            call era5land_open(src, vstat, why, run_start, run_end, cells)
          case default                                              ! MET_BACKEND_ED_DEFAULT
-            call file_source_open(src, vstat, why, run_start, run_end)
+            call default_file_open(src, vstat, why, run_start, run_end)
          end select
       end if
       if (vstat /= MET_OK) then
          !----- Close the file first: an open netCDF handle keeps an HDF5 lock on the path, and a  !
          !      later open of the same file fails with a bare "permission denied". ---------------!
          call met_close(src)
+         write(*,'(a)') why
          if (present(stat)) then
             stat = vstat
             return
          end if
-         !----- The reason, then a fixed stop code: ifx garbles a stop code that is not a constant. -!
-         write(*,'(1x,a)') trim(why)
+         !----- A fixed stop code after the reason: ifx garbles a stop code that is not a constant. -!
          error stop 'met_open: the forcing cannot drive this run (see the messages above)'
       end if
    end subroutine met_open
@@ -107,28 +96,29 @@ contains
    !----- CO2 (docs/science/forcing.md §12): with co2_source = "file", read the MEDS CO2 file   !
    !      and check it covers the run. MEDS does not extrapolate CO2, so a run the file does not  !
    !      cover stops here rather than decades in. The run span is absent only in unit tests. ---!
-   subroutine open_co2(src, run_start, run_end, stat)
-      type(met_source_t),          intent(inout) :: src
-      type(meds_time_t), optional, intent(in)    :: run_start, run_end
-      integer(ik),                 intent(out)   :: stat
+   subroutine open_co2(src, run_start, run_end, stat, why)
+      type(met_source_t),            intent(inout) :: src
+      type(meds_time_t), optional,   intent(in)    :: run_start, run_end
+      integer(ik),                   intent(out)   :: stat
+      character(len=:), allocatable, intent(inout) :: why
       character(len=512) :: msg
       logical :: ok
       stat = MET_OK
       if (src%fcfg%co2_source /= CO2_SOURCE_FILE) return
       call co2_series_read(src%fcfg%co2_file, src%co2, ok, msg)
       if (.not. ok) then
-         write(*,'(2a)') ' met_open: [forcing].co2_file = ', trim(src%fcfg%co2_file)
-         write(*,'(2a)') '   ', trim(msg)
+         call add_line(why, ' met_open: [forcing].co2_file = '//trim(src%fcfg%co2_file))
+         call add_line(why, '   '//trim(msg))
          stat = MET_ERR_CO2_FILE
          return
       end if
       if (present(run_start) .and. present(run_end)) then
          if (.not. co2_series_covers(src%co2, run_start, run_end)) then
-            write(*,'(2a)') ' met_open: the CO2 file does not cover the run: ', trim(src%fcfg%co2_file)
-            write(*,'(4a)') '   run  ', time_to_string(run_start), ' .. ', time_to_string(run_end)
-            write(*,'(4a)') '   file ', time_to_string(src%co2%first_start), ' .. ',               &
-                            time_to_string(co2_series_end(src%co2))
-            write(*,'(a)')  '   MEDS does not extrapolate CO2: extend the file, or shorten the run.'
+            call add_line(why, ' met_open: the CO2 file does not cover the run: '//trim(src%fcfg%co2_file))
+            call add_line(why, '   run  '//time_to_string(run_start)//' .. '//time_to_string(run_end))
+            call add_line(why, '   file '//time_to_string(src%co2%first_start)//' .. '//                  &
+                               time_to_string(co2_series_end(src%co2)))
+            call add_line(why, '   MEDS does not extrapolate CO2: extend the file, or shorten the run.')
             stat = MET_ERR_CO2_NOT_COVERED
             return
          end if
@@ -151,11 +141,6 @@ contains
       cur%elevation_m  = elevation_m
       cur%grid_elevation_m = src%fcfg%grid_elevation
       if (src%backend == MET_BACKEND_ED_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
-      if (src%backend == MET_BACKEND_CONST) then
-         cur%rec_prev = met_record_t()
-         cur%rec_next = met_record_t()
-         return
-      end if
       call load_bracket(src, cur, src%rec_first)
    end subroutine met_cursor_init
 
@@ -166,7 +151,7 @@ contains
    subroutine met_prefetch(src, step_start)
       type(met_source_t), intent(inout)  :: src
       type(meds_time_t),  intent(in)    :: step_start
-      if (src%backend == MET_BACKEND_ED_ERA5LAND) call archive_prefetch(src, step_start)
+      if (src%backend == MET_BACKEND_ED_ERA5LAND) call era5land_prefetch(src, step_start)
    end subroutine met_prefetch
 
    !=======================================================================================!
@@ -180,8 +165,6 @@ contains
       type(meds_time_t),  intent(in)    :: now
       real(wp)    :: now_sec
       integer(ik) :: i
-
-      if (src%backend == MET_BACKEND_CONST) return
 
       !----- The same recycle-mapped seconds on the file axis that met_instant uses. ----------!
       now_sec = file_lookup_sec(src, now)
@@ -290,54 +273,51 @@ contains
          met%co2 = f%co2_const
       end if
 
-      !----- CONST keeps the type's defaults; a file backend interpolates its bracket. ----------!
-      if (src%backend /= MET_BACKEND_CONST) then
-         !----- The weight within the bracket, on the same recycle-mapped seconds as met_advance. -!
-         now_sec = file_lookup_sec(src, now)
-         if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
-            tprev = src%time_sec(src%irec_cycle_last)
-            tnext = tprev + src%dt_forcing
-         else
-            tprev = src%time_sec(cur%irec_prev)
-            tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
-         end if
-         if (tnext > tprev) then
-            w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
-         else
-            w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
-         end if
-
-         !----- States linear; wind in energy form (docs/science/forcing.md eq. (1)). ----------!
-         met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
-         met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
-         met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
-         met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
-         met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next)   ! floored at aerodynamics.ubmin where used
-         !----- The vector interpolates linearly, which keeps its direction; never floored. --------!
-         if (src%has_wind_vector) then
-            met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
-            met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
-            met%has_wind_vector = .true.
-         end if
-
-         !----- Rain and shortwave both come from the record whose interval contains `now`. -----!
-         mean_rec = interval_mean_record(src, cur)
-
-         !----- Precipitation: the interval's total rate, held across it; each patch splits it. -!
-         met%precip = mean_rec%rainf
-
-         !----- Shortwave: each mean stream times cosz(now)/<cosz>_win (docs/science/forcing.md      !
-         !      eq. (5)), the window anchored on the model calendar (mws), so both see the same sun. !
-         mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
-         win_start_sec = seconds_into_day(mws)
-         factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
-                                          (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
-                                          cur%latitude_deg, cur%longitude_deg)
-         met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
-         met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
-         met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
-         met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
+      !----- The weight within the bracket, on the same recycle-mapped seconds as met_advance. -!
+      now_sec = file_lookup_sec(src, now)
+      if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
+         tprev = src%time_sec(src%irec_cycle_last)
+         tnext = tprev + src%dt_forcing
+      else
+         tprev = src%time_sec(cur%irec_prev)
+         tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
       end if
+      if (tnext > tprev) then
+         w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
+      else
+         w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
+      end if
+
+      !----- States linear; wind in energy form (docs/science/forcing.md eq. (1)). ----------!
+      met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
+      met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
+      met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
+      met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
+      met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next)   ! floored at aerodynamics.ubmin where used
+      !----- The vector interpolates linearly, which keeps its direction; never floored. --------!
+      if (src%has_wind_vector) then
+         met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
+         met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
+         met%has_wind_vector = .true.
+      end if
+
+      !----- Rain and shortwave both come from the record whose interval contains `now`. -----!
+      mean_rec = interval_mean_record(src, cur)
+
+      !----- Precipitation: the interval's total rate, held across it; each patch splits it. -!
+      met%precip = mean_rec%rainf
+
+      !----- Shortwave: each mean stream times cosz(now)/<cosz>_win (docs/science/forcing.md      !
+      !      eq. (5)), the window anchored on the model calendar (mws), so both see the same sun. !
+      mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
+      win_start_sec = seconds_into_day(mws)
+      factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
+                                       (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
+                                       cur%latitude_deg, cur%longitude_deg)
+      met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
+      met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
+      met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
+      met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
 
       !----- The longwave synthesis (docs/science/forcing.md §11), after the shortwave: this      !
       !      instant's clearness index by day, the remembered one after dark. ----------------------!
@@ -419,9 +399,9 @@ contains
       rec%when   = time_advance_seconds(src%base_time, src%time_sec(irec))
       !----- The values as the source stores them; from here on, one ingest for both. -----------!
       if (src%backend == MET_BACKEND_ED_ERA5LAND) then
-         call archive_source_record(src, cur, irec, rec, humidity_value, sw_total)
+         call era5land_record(src, cur, irec, rec, humidity_value, sw_total)
       else
-         call file_source_record(src, irec, rec, humidity_value, sw_total)
+         call default_file_record(src, irec, rec, humidity_value, sw_total)
       end if
       call assert_finite(rec%tair_k, 'Tair', irec, src%grid_index)
       call assert_finite(humidity_value, MEDS_FIELD(humidity_field(src%humidity)), irec, src%grid_index)
@@ -519,4 +499,4 @@ contains
       end if
    end subroutine assert_finite
 
-end module meds_met_driver
+end module meds_met

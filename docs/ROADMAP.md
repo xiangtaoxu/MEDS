@@ -354,8 +354,8 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
 
   Example 06 runs as two region runs.
 - **A source interface for the met reader.** *Done in beta.* [#311](https://github.com/xiangtaoxu/MEDS/issues/311) The two file sources
-  are modules of their own (`meds_met_file_source`, `meds_met_archive_source`), each an open and one
-  record's values as stored, over what they share (`meds_met_source_common`). The reader keeps
+  are modules of their own (`meds_met_default`, `meds_met_era5land`), each an open and one
+  record's values as stored, over what they share (`meds_met_share`). The reader keeps
   opening, the cursor, the stepping and the one ingest. F7-F12 went in with the efficiency sweep.
 - **The shortwave-to-PAR partition.** *Open question.* [#369](https://github.com/xiangtaoxu/MEDS/issues/369) The PAR share, the beam/diffuse
   split and the Weiss–Norman form are uncertain by about ±10 %: against towers' PAR sensors the

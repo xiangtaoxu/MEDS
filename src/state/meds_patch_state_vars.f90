@@ -15,6 +15,7 @@
 ! are config (meds_soil_params), not state.                                                !
 !==========================================================================================!
 module meds_patch_state_vars
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max, n_snow_layer_max, tiny_num, t_3ple
    use meds_therm_lib,        only : cas_molar_density
@@ -31,6 +32,7 @@ module meds_patch_state_vars
    public :: blend_xi_accum, blend_litter_input
    public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block
    public :: patch_physical_state
+   public :: canopy_air_bad_field, canopy_air_field_name
    public :: DIST_PRIMARY, DIST_TREEFALL
 
    !----- A patch's disturbance class (patch_block%dist_type). ------------------------------------!
@@ -535,5 +537,34 @@ contains
       end if
    end subroutine patch_physical_state
 
+   !=======================================================================================!
+   !  BOUNDS: the check the driver runs every step                                         !
+   !=======================================================================================!
+
+   !----- The first of a canopy air's prognostic numbers -- enthalpy, humidity, CO2 -- that is   !
+   !      not finite, 0 if none: what a fast-loop integrator that could not take even its smallest !
+   !      step leaves behind. The driver checks it every step. -------------------------------------!
+   pure integer(ik) function canopy_air_bad_field(cas) result(k)
+      type(cas_state_t), intent(in) :: cas
+      real(wp)    :: x(3)
+      integer(ik) :: j
+      x = [cas%can_enthalpy, cas%can_shv, cas%can_co2]
+      k = 0_ik
+      do j = 1_ik, size(x, kind=ik)
+         if (.not. ieee_is_finite(x(j))) then
+            k = j
+            return
+         end if
+      end do
+   end function canopy_air_bad_field
+
+   !----- Name for the index canopy_air_bad_field returns. ----------------------------------------!
+   pure function canopy_air_field_name(k) result(nm)
+      integer(ik), intent(in) :: k
+      character(len=12)       :: nm
+      character(len=12), parameter :: NAMES(3) = [character(len=12) :: 'can_enthalpy', 'can_shv', 'can_co2']
+      nm = '(none)'
+      if (k >= 1_ik .and. k <= size(NAMES, kind=ik)) nm = NAMES(k)
+   end function canopy_air_field_name
 
 end module meds_patch_state_vars
