@@ -66,13 +66,12 @@ pft_config   = "pft_parameters.toml"
 soil_temp    = 300.0              # [K]
 soil_theta   = 0.42               # [m3/m3] wet: wet-season start (87 % of the way from residual to saturation)
 
-[state]
-output_dir     = "output"
-output_prefix  = "regrowth"
-write_state    = false
-interval_years = 20
 
 [output]
+state_write       = false
+state_interval    = "20 years"
+state_file_dir    = "output"
+state_file_prefix = "regrowth"
 enabled       = true
 dir           = "output"
 prefix        = "regrowth"
@@ -137,7 +136,7 @@ apply_elevation_lapse = false
 forcing_on     = true
 # ERA5-Land at Palo Verde's cell, 2003-2022 (run_palo_verde.py cuts it from the archive), repeated: model
 # year Y reads 2003 + (Y - 2003) mod 20.
-format         = "ED_default"
+format         = "default"
 path           = "data/pv_era5land_2003-2022.nc"
 grid_index     = 1
 grid_match     = "explicit"

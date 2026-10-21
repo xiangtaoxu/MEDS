@@ -52,7 +52,9 @@ Every variable of the diagnostic and restart files is named `[mean_]<quantity>[_
 name at every tier, each fast twin merged into its daily variable (#473). Every mean has its snapshot,
 its value at the period's end, under the name without `mean_`, off until an `io_config` names its tiers
 (#474). An `io_config` line names a variable or a pattern (`"*_co" = false`, `"mean_*_py" = "M Y"`), the
-most specific line winning, and `[output]`'s group and axis switches go (#475).
+most specific line winning, and `[output]`'s group and axis switches go (#475). The state files are
+`[output]`'s too (`state_write`, `state_interval` in days, months or years, `state_file_dir`,
+`state_file_prefix`), and `[forcing].format` is `"default"` or `"ERA5land"` (#476).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -69,6 +71,24 @@ most specific line winning, and `[output]`'s group and axis switches go (#475).
     calibration and `meds.canopy` do.
   - The restart file is `restart_format = "2"`: a state file this release wrote before the rename does
     not restart either.
+- **`[state]` is gone: the state files are `[output]`'s** (#476). Rename the keys, and move them into
+  `[output]`; a `[state]` key stops the run as unknown:
+
+  | was | is |
+  |---|---|
+  | `[state].write_state` | `[output].state_write` |
+  | `[state].interval_years = N` | `[output].state_interval = "N years"` |
+  | `[state].output_dir` | `[output].state_file_dir` |
+  | `[state].output_prefix` | `[output].state_file_prefix` |
+
+  `state_write` is required, as `write_state` was, and the other three with it. `state_interval` also
+  takes `"N days"` (whole slow steps) and `"N months"`, so a run can leave a state file every day or
+  month. A script that sets `state.*` sets `output.state_*`, as the examples and `scripts/calibrate_fast`
+  do.
+- **`[forcing].format` is `"default"` or `"ERA5land"`** (#476): `"ED_default"` and `"ED_ERA5land"`
+  stop the run. `"ERA5land"` still reads the ED_ERA5land archive that `scripts/prepare_era5` builds.
+- **State files are `restart_format = "3"`** (#476): they carry the forcing reader's night-time
+  clearness. A state file written before does not restart.
 - **`[output]`'s group and axis switches are gone** (#475): `structure`, `carbon`, `water`, `energy`,
   `biogeochem`, `numerics`, `forcing`, `radiation`, `ecophys` and `axes_cohort`, `axes_patch`,
   `axes_pft`, `axes_size`, `axes_soil_patch` stop the run as unknown keys; delete them. The defaults
@@ -332,6 +352,11 @@ most specific line winning, and `[output]`'s group and axis switches go (#475).
   `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
   only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
   `hydraulics.root_beta`.
+- **Fortran: the state-file settings** (#476): `state_opts_t` and `meds_config_t%state` go;
+  `output_config_t` holds `state_write`, `state_every`, `state_unit` (`STATE_DAYS`, `STATE_MONTHS`,
+  `STATE_YEARS`), `state_file_dir` and `state_file_prefix`. `MET_BACKEND_ED_DEFAULT` and
+  `MET_BACKEND_ED_ERA5LAND` are `MET_BACKEND_DEFAULT` and `MET_BACKEND_ERA5LAND`. `polygon_t` gains
+  `kt_last_day`, which the forcing cursor copies in and out around each fast loop.
 - **Fortran: the output selection** (#475): `output_config_t` loses `grp_on` and `axis_on`, and
   `meds_output_params` its `AXIS_*` codes and `N_AXIS`; `apply_group_toggles`, `apply_axis_toggles`,
   `apply_freq_enables` and `dim_axis_index` go. `apply_selections(reg, sel)` applies `selection_t` lines
@@ -419,6 +444,10 @@ most specific line winning, and `[output]`'s group and axis switches go (#475).
 
 ### Changed
 
+- **State files at any interval** (#476). `[output].state_interval` writes a state file every N days
+  from the run's start, or at every N-th month or year boundary, and one at the run's end; a month's
+  batch of steps ends at a state time, so a daily state file falls mid-month. A yearly interval
+  batches and writes as before.
 - **Selection by name or pattern** (#475). An `io_config` line names a variable or a pattern of names
   (`*` any run of characters) and gives it tiers, `true` or `false`; each variable takes the most
   specific line that matches it, its own name over any pattern, more literal characters over fewer. A
@@ -883,6 +912,15 @@ most specific line winning, and `[output]`'s group and axis switches go (#475).
   `resid_water_site` move at round-off (at most 2.1×10⁻¹² J m⁻² and 1.3×10⁻¹⁷ kg m⁻², against closures
   of ~10⁻⁷ J m⁻² and ~10⁻¹³ kg m⁻²): with `store0` and `store1` no longer written, the optimised build
   adds the residual's terms in another order. Restoring the two writes alone restores the old bits.
+
+### Fixed
+
+- **A restart at night under synthesized longwave drifted** (#476). The forcing reader holds the last
+  daytime clearness index through the night for the longwave synthesis, and the state file did not
+  carry it, so a run restarted at night took a clear sky until sunrise and its fluxes, then its stand,
+  moved away from the continuous run's. The polygon holds it (`kt_last_day`) and the state file stores
+  it: a restart at local midnight from a daily state file continues bit for bit (the new forced case
+  of `test/python/test_restart_exact.py`).
 
 ## [0.3.5] — 2026-10-17
 

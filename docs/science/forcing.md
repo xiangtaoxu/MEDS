@@ -17,8 +17,8 @@ the disaggregation math is a separate `pure`/`elemental` kernel module from the 
 
 ## 1. The forcing file
 
-Two sources, chosen by `[forcing].format`: a single **MEDS forcing file** (`"ED_default"`, below) and
-the global **ED_ERA5land archive** (`"ED_ERA5land"`, at the end of this section). The single file is an
+Two sources, chosen by `[forcing].format`: a single **MEDS forcing file** (`"default"`, below) and
+the global **ED_ERA5land archive** (`"ERA5land"`, at the end of this section). The single file is an
 **unstructured multi-grid NetCDF** whose forcing variables are all shaped `(time, grid)`.
 `time` is the record axis; `grid` is a plain *list* of locations (`grid = 1` for a single site), because
 a polygon list is a list, not a raster — a regular reanalysis tile is flattened `y×x → grid`. Variables
@@ -133,7 +133,7 @@ writes `RHair` as measured, fills gaps explicitly with a per-variable `<Var>_qc`
 tower's heights; `examples/example04_column_biophysics/` builds Barro Colorado Island's file with it. Its
 conversions and checks are in `scripts/prepare_flux_tower/README.md`.
 
-**The ED_ERA5land archive (`format = "ED_ERA5land"`).** The global archive built by
+**The ED_ERA5land archive (`format = "ERA5land"`).** The global archive built by
 `scripts/prepare_era5/` holds one file per variable per month, `ED_ERA5land_<Var>_<YYYYMM>.nc`, each
 a regular `(time, lat, lon)` grid at 0.1°: `Tair`, `Tdew`, `PSurf`, `u10`, `v10` as ERA5-Land
 delivers them, and `Rainf`, `SWdown`, `LWdown` already de-accumulated to hourly means, end-stamped
@@ -604,7 +604,9 @@ time. Setting `lw_cloud_a = 0` gives a pure clear-sky sky and that bias back.
 **At night $`k_t`$ is undefined** — there is no shortwave to divide — and `clearness_index` returns a
 *negative sentinel* rather than zero, because a zero would read as fully overcast and apply the
 maximum cloud correction to every night. The driver holds the **last daytime** $`k_t`$ through the
-dark, which is dusk's cloudiness carried forward. That one scalar is updated in `met_advance`, not
+dark, which is dusk's cloudiness carried forward. The polygon owns it (`polygon_t%kt_last_day`), so a
+state file carries it and a restart at night resumes the same sky. That one scalar is updated in
+`met_advance`, not
 `met_instant`: `met_instant` is `intent(in)` and runs per sub-step, and the advance sits outside the
 patch loop, so the state cannot become a data race when the patch axis is threaded. The remembered
 index is formed from the bracketing record's interval-mean shortwave against the sun at the sample
@@ -745,7 +747,7 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | TOML block | `[forcing]` + `[site]` (documented in `meds_config_main.toml`) |
 | fast-loop join | `meds_fast_dynamics`: per-sub-step `met_advance`/`met_instant` sampling; `fill_forcing` and `fill_aenv` take the sampled `met_forcing_t` (`reference_met` without a forcing source); `apply_rt_forcing` hands the radiation to the canopy two-stream ([canopy radiative transfer](canopy_radiation_transfer.md) §3–§4) |
 | file production | the archive: `scripts/prepare_era5/download_era5land_gdex.py` or `download_era5land_cds.py`, then `build_era5land_archive.py`; a single file: `make_forcing_file.py`, from the archive or from `download_era5land_cds.py` and `postprocess_era5land.py` box files, or `scripts/prepare_flux_tower/make_tower_forcing.py` from flux-tower data; the shared writer: `scripts/meds_forcing_file.py`; the tower tool's Python mirror of the model's conversions: `scripts/prepare_flux_tower/tower_conversions.py`; the shipped CO₂ series: `scripts/prepare_co2/make_co2_file.py` |
-| test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years, prescribed CO₂ (format 1 at five resolutions, every rejection, CO₂ not recycled with the met, the shipped series); `test/test_met_era5land.f90` — a synthetic archive: templates, site and box selection (across 180°), month loads, the NaN rejection, the month seam, recycling across months, dewpoint and wind-vector conversion, static elevation, rejections at open; `test/test_met_tower.f90` — the flux-tower contract of an `ED_default` file: the three humidity forms and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval containing the instant under both stamp conventions, and the tower round trip (RH, VPD = 0 at saturation, the move to the canopy-air top) |
+| test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years, prescribed CO₂ (format 1 at five resolutions, every rejection, CO₂ not recycled with the met, the shipped series); `test/test_met_era5land.f90` — a synthetic archive: templates, site and box selection (across 180°), month loads, the NaN rejection, the month seam, recycling across months, dewpoint and wind-vector conversion, static elevation, rejections at open; `test/test_met_tower.f90` — the flux-tower contract of a MEDS forcing file: the three humidity forms and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval containing the instant under both stamp conventions, and the tower round trip (RH, VPD = 0 at saturation, the move to the canopy-air top) |
 
 ## References
 - Erbs, Klein & Duffie (1982), *Solar Energy* 28:293 — diffuse fraction vs the clearness index.

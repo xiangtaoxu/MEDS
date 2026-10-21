@@ -59,8 +59,8 @@ contains
       cfg%growth_memory_days = 90.0_wp ; cfg%min_recruit_size = 1.0e-2_wp ; cfg%conservation_tol = 0.001_wp
 
       cfg%init%init_mode = INIT_BARE ; cfg%init%restart_file = '' ; cfg%init%census_file = '' ; cfg%init%pft_config = ''
-      cfg%state%output_dir = '.' ; cfg%state%output_prefix = 'test'
-      cfg%state%write_state = .false. ; cfg%state%interval_years = 50_ik
+      cfg%output%state_file_dir = '.' ; cfg%output%state_file_prefix = 'test'
+      cfg%output%state_write = .false.
       cfg%gpp_ref = 0.3_wp
 
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!

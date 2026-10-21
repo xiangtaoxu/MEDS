@@ -66,13 +66,12 @@ pft_config   = "pft_parameters.toml"
 soil_temp    = 300.0              # [K]
 soil_theta   = 0.42               # [m3/m3] wet: wet-season start (87 % of the way from residual to saturation)
 
-[state]
-output_dir     = "output"
-output_prefix  = "pv"
-write_state    = false
-interval_years = 20
 
 [output]
+state_write       = false
+state_interval    = "20 years"
+state_file_dir    = "output"
+state_file_prefix = "pv"
 enabled       = true
 dir           = "output"
 prefix        = "pv"
@@ -136,7 +135,7 @@ apply_elevation_lapse = false
 # writes it (--era5-archive, or ERA5LAND_ARCHIVE) into the copy of this file it runs.
 [forcing]
 forcing_on     = true
-format         = "ED_ERA5land"
+format         = "ERA5land"
 data_path      = "/path/to/ED_ERA5land"
 max_distance_km = 15.0
 # ERA5-Land's own heights (2 m air, 10 m wind over open ground); each sample is moved to the top of

@@ -112,8 +112,8 @@ def build_trial(base: RunConfig, keys, values, window: Window, state_file, root:
     run = {"run.start_time": stamp(window.start), "run.end_time": stamp(window.end),
            "run.slow_on": False, "run.n_threads": 1,         # in the name as 1; the real count is set below
            "init.init_mode": 2, "init.restart_file": str(state_file), "init.reacclimate_traits": True,
-           "state.write_state": write_state, "state.output_prefix": PREFIX,
-           "state.interval_years": 1000, "output.enabled": True, "output.prefix": PREFIX,
+           "output.state_write": write_state, "output.state_file_prefix": PREFIX,
+           "output.state_interval": "1000 years", "output.enabled": True, "output.prefix": PREFIX,
            "output.fast.enabled": True, "output.fast.file_chunk": "year",
            "output.daily.enabled": False, "output.monthly.enabled": False,
            "output.annual.enabled": False}
@@ -126,7 +126,7 @@ def build_trial(base: RunConfig, keys, values, window: Window, state_file, root:
     (tdir / "out").mkdir(parents=True, exist_ok=True)
     (tdir / "output_variables.toml").write_text(
         "[variables]\n" + "".join(f'{v} = "F"\n' for v in TRIAL_VARIABLES))
-    for k, v in {"output.dir": str(tdir / "out"), "state.output_dir": str(tdir / "out"),
+    for k, v in {"output.dir": str(tdir / "out"), "output.state_file_dir": str(tdir / "out"),
                  "output.io_config": str(tdir / "output_variables.toml"), "run.n_threads": int(threads)}.items():
         cfg.set(k, v)
     cfg.write(tdir)

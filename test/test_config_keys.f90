@@ -12,7 +12,7 @@ program test_config_keys
    use meds_kinds,          only : ik
    use meds_toml,           only : toml_table_t, toml_parse_file
    use meds_config,         only : meds_config_t
-   use meds_forcing_params, only : MET_BACKEND_ED_ERA5LAND
+   use meds_forcing_params, only : MET_BACKEND_ERA5LAND
    use meds_config_check,   only : key_report_t, check_config_keys, check_key_use, nearest_key,     &
                                    MAIN_KEYS, PFT_KEYS
    use meds_test_support,   only : banner, check, build_test_config
@@ -40,8 +40,8 @@ program test_config_keys
    write(u,'(a)') 'n_threads = 4'                   ! listed there commented out, at its default
    write(u,'(a)') '[forcing]'
    write(u,'(a)') 'timestpe  = "3600s"'             ! misspelt
-   write(u,'(a)') '[state]'
-   write(u,'(a)') 'cohort_max = 2048'               ! moved to [output]
+   write(u,'(a)') '[init]'
+   write(u,'(a)') 'cohort_max = 2048'               ! an [output] key, in another table
    write(u,'(a)') '[output]'
    write(u,'(a)') 'strict_caps = true'              ! not a key
    close(u)
@@ -75,7 +75,7 @@ program test_config_keys
    call toml_parse_file('test_config_keys_pft.toml', tp, ok)
    cfg = build_test_config()
    cfg%forcing%forcing_on = .true.
-   cfg%forcing%format    = MET_BACKEND_ED_ERA5LAND
+   cfg%forcing%format    = MET_BACKEND_ERA5LAND
    report = key_report_t()
    call check_key_use(t, tp, cfg, report)
    call check(report%n == 2_ik, 'both inapplicable keys are reported')

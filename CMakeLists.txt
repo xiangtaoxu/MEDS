@@ -746,7 +746,7 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_surface_maps PRIVATE meds_maps meds_testassert meds_testarchive)
    meds_fortran_flags(test_surface_maps)
    add_test(NAME surface_maps COMMAND test_surface_maps ${CMAKE_CURRENT_BINARY_DIR}/surface_maps_tmp)
-   #      The flux-tower contract of an ED_default file (docs/science/forcing.md §1).
+   #      The flux-tower contract of a MEDS forcing file (docs/science/forcing.md §1).
    add_executable(test_met_tower test/test_met_tower.f90)
    target_link_libraries(test_met_tower PRIVATE meds_met meds_testassert)
    meds_fortran_flags(test_met_tower)

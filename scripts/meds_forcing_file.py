@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""meds_forcing_file.py -- the one writer of an ED_default forcing file ([forcing].format =
-"ED_default"), shared by every tool that makes one: scripts/prepare_era5/make_forcing_file.py (a
+"""meds_forcing_file.py -- the one writer of a MEDS forcing file ([forcing].format =
+"default"), shared by every tool that makes one: scripts/prepare_era5/make_forcing_file.py (a
 site file cut from the ERA5-Land archive) and scripts/prepare_flux_tower/make_tower_forcing.py (a
 file from flux-tower data).
 
@@ -68,7 +68,7 @@ def check_complete(times, arrays):
 
 def write_forcing_file(path, times, grid, arrays, attrs, qc=None, variable_attributes=None,
                        elevation_long_name="elevation of the grid point"):
-    """Write an ED_default forcing file.
+    """Write a MEDS forcing file.
 
     times   UTC stamps (numpy datetime64), uniform
     grid    [(latitude, longitude, elevation or None), ...], one per grid point

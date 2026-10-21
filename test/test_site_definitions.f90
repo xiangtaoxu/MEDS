@@ -44,7 +44,7 @@ program test_site_definitions
 
    !=== 1. Two sites: the config, the polygon, its files and its state. =====================!
    call derive(cfg_path, run_block('2024-07-01', '2024-07-04', 0_ik, '')//                      &
-                         '[state]'//nl//'write_state = true'//nl//two_sites())
+                         '[output]'//nl//'state_write = true'//nl//two_sites())
    call load_meds_config(cfg_path, cfg)
    call check(allocated(cfg%sites), 'the config holds the [[sites]]')
    if (allocated(cfg%sites)) then
@@ -149,8 +149,8 @@ contains
           '[carbon]'//nl//'gpp_ref = 0.3'//nl//                                                    &
           '[forcing]'//nl//'forcing_on = false'//nl//                                              &
           '[init]'//nl//'init_mode = '//trim(m)//nl//'restart_file = "'//restart//'"'//nl//         &
-          '[state]'//nl//'output_dir = "'//trim(work)//'"'//nl//'output_prefix = "sites"'//nl//     &
-          '[output]'//nl//'dir = "'//trim(work)//'"'//nl//'prefix = "sites"'//nl//                  &
+          '[output]'//nl//'state_file_dir = "'//trim(work)//'"'//nl//'state_file_prefix = "sites"'//nl// &
+          'dir = "'//trim(work)//'"'//nl//'prefix = "sites"'//nl//                                  &
           'io_config = ""'//nl//                                                                    &
           '[output.fast]'//nl//'enabled = false'//nl//'[output.daily]'//nl//'enabled = true'//nl//  &
           'file_chunk = "run"'//nl

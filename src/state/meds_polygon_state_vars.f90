@@ -58,7 +58,14 @@ module meds_polygon_state_vars
       logical            :: restructure_pending  = .false.
       logical            :: restructure_new_year = .false.
       !==========================================================================================!
-      ! 4. TENDENCIES (scratch)                                                                     !
+      ! 4. THE FORCING'S MEMORY                                                                  !
+      !==========================================================================================!
+      !----- The last daytime clearness index, which the longwave synthesis holds through the night  !
+      !      (docs/science/forcing.md §11). The forcing cursor works on a copy during each fast loop  !
+      !      (fast_dynamics), so a state file carries it and a restart resumes the same night. ---------!
+      real(wp)           :: kt_last_day = 1.0_wp
+      !==========================================================================================!
+      ! 5. TENDENCIES (scratch)                                                                     !
       !==========================================================================================!
       !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
       !      step and update_cohort_states applies. Held here so it allocates once (resize-on-      !
@@ -66,7 +73,7 @@ module meds_polygon_state_vars
       !      NOT serialized (a scratch buffer, not prognostic state).                               !
       type(cohort_deriv_block) :: deriv
       !==========================================================================================!
-      ! 5. OUTPUT ACCUMULATORS (only output reads them; never restarted)                         !
+      ! 6. OUTPUT ACCUMULATORS (only output reads them; never restarted)                         !
       !==========================================================================================!
       !----- TRANSIENT fast-loop diagnostics that are the same across the polygon -- its forcing   !
       !      (PY_* in meds_diag_vars): one slot, the cohort and patch blocks' polygon twin. ---      !

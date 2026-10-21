@@ -314,7 +314,7 @@ does not list.
 | `soil_depth_si` | `site_soil_depth` |
 | `chave_e_py` | `chave_e` |
 
-## The restart file (`restart_format = "2"`)
+## The restart file (`restart_format = "3"`)
 
 Every variable is the state at the file's instant, so none carries `mean_`. Unchanged: `n_cohort`,
 `n_patch`, `n_site`, `n_window`, `meta_int`, `meta_real`, `global_cohort_id`, `owner_patch`,

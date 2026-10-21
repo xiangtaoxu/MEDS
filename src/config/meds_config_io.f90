@@ -27,11 +27,11 @@ module meds_config_io
    use meds_forcing_params, only : CO2_SOURCE_CONST, CO2_SOURCE_FILE
    use meds_forcing_params, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN,      &
                                    WIND_EXPOSURE_LOCAL
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND,                   &
                                    METAVG_END, METAVG_BEGIN, LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,     &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_output_params, only : output_config_t, MAX_DBH_EDGE, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH,      &
-                                 FC_YEAR, FC_RUN
+                                 FC_YEAR, FC_RUN, STATE_DAYS, STATE_MONTHS, STATE_YEARS
    use meds_time,       only : meds_time_t, string_to_time
    use meds_biophysics_params, only : snow_params_t, aero_cfg_t
    use meds_biogeochem_params, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,          &
@@ -172,6 +172,42 @@ contains
          call note_missing(m, key)          ! present but unparseable -> aggregated required-key error
       end if
    end subroutine req_dur
+
+   !----- A state-file interval, "N days", "N months" or "N years" (the singular too), into N and its  !
+   !      unit (STATE_*). Absent, it is recorded missing; unreadable, recorded with what it may be. ------!
+   subroutine req_interval(t, key, n, unit, m)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      integer(ik),        intent(out)   :: n, unit
+      type(keymiss_t),    intent(inout) :: m
+      character(len=64) :: s, word
+      integer           :: ios, sp
+      n = 1_ik
+      unit = STATE_YEARS
+      if (.not. toml_has(t, key)) then
+         call note_missing(m, key)
+         return
+      end if
+      s = adjustl(toml_string(t, key, ''))
+      sp = index(trim(s), ' ')
+      ios = 1
+      if (sp > 1) then
+         read(s(1:sp - 1), *, iostat=ios) n
+         word = adjustl(s(sp + 1:))
+         select case (trim(word))
+         case ('day', 'days')
+            unit = STATE_DAYS
+         case ('month', 'months')
+            unit = STATE_MONTHS
+         case ('year', 'years')
+            unit = STATE_YEARS
+         case default
+            ios = 1
+         end select
+      end if
+      if (ios /= 0 .or. n < 1_ik)                                                                 &
+         call note_missing(m, key//' = "'//trim(s)//'" is not "N days", "N months" or "N years", N >= 1')
+   end subroutine req_interval
 
    !----- A selector: a string key naming one of `names`, read into the matching code of `codes`.  !
    !      Absent, a required one is recorded missing and an optional one keeps `out`. A name not in   !
@@ -464,11 +500,11 @@ contains
       cfg%forcing = forcing_config_t()                                  ! Ithaca/ERA5-Land defaults
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! off by default
       if (.not. cfg%forcing%forcing_on) return
-      call req_choice(t, 'forcing.format', [character(len=NAME_LEN) :: 'ED_default', 'ED_ERA5land'],             &
-                      [MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND], cfg%forcing%format, m)
-      !----- The archive (format = "ED_ERA5land"; docs/science/forcing.md §1) finds the site's cell  !
+      call req_choice(t, 'forcing.format', [character(len=NAME_LEN) :: 'default', 'ERA5land'],                   &
+                      [MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND], cfg%forcing%format, m)
+      !----- The ED_ERA5land archive (format = "ERA5land"; docs/science/forcing.md §1) finds the site's cell !
       !      and its orography itself; a forcing file is named, with its grid slot. -----------------!
-      if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
+      if (cfg%forcing%format == MET_BACKEND_ERA5LAND) then
          call req_s(t, 'forcing.data_path', cfg%forcing%data_path, m)
          !----- A region's polygons sit on their cells, so no site-to-cell distance exists. ------!
          if (cfg%mode /= RUN_MODE_REGION)                                                     &
@@ -543,7 +579,7 @@ contains
       else
          call note_missing(m, 'site.lapse_rate_tair')
       end if
-      if (cfg%forcing%format /= MET_BACKEND_ED_ERA5LAND)                                        &
+      if (cfg%forcing%format /= MET_BACKEND_ERA5LAND)                                           &
          call req_r(t, 'site.grid_elevation', cfg%forcing%grid_elevation, m)
    end subroutine load_forcing_config
 
@@ -659,6 +695,13 @@ contains
       type(keymiss_t),     intent(inout) :: m
       character(len=NAME_LEN), parameter :: CHUNKS(4) = [character(len=NAME_LEN) :: 'day', 'month', 'year', 'run']
       cfg%output = output_config_t()                                     ! defaults
+      !----- The state files, whatever the diagnostics: state_write is required, and the rest with it. !
+      call req_l(t, 'output.state_write', cfg%output%state_write, m)
+      if (cfg%output%state_write) then
+         call req_interval(t, 'output.state_interval', cfg%output%state_every, cfg%output%state_unit, m)
+         call req_s(t, 'output.state_file_dir',    cfg%output%state_file_dir,    m)
+         call req_s(t, 'output.state_file_prefix', cfg%output%state_file_prefix, m)
+      end if
       cfg%output%enabled = toml_logical(t, 'output.enabled', .false.)    ! off by default
       if (.not. cfg%output%enabled) return
       cfg%output%dir                 = toml_string (t, 'output.dir',                 '.')
@@ -994,12 +1037,6 @@ contains
       cfg%init%soil_temp  = toml_real(tm, 'init.soil_temp',  cfg%init%soil_temp)
       cfg%init%soil_theta = toml_real(tm, 'init.soil_theta', cfg%init%soil_theta)
       cfg%init%reacclimate_traits = toml_logical(tm, 'init.reacclimate_traits', cfg%init%reacclimate_traits)
-
-      !----- [state]: the restart stream; every diagnostic is [output]'s. ------------------------!
-      call req_s(tm, 'state.output_dir',     cfg%state%output_dir,         miss)
-      call req_s(tm, 'state.output_prefix',  cfg%state%output_prefix,      miss)
-      call req_l(tm, 'state.write_state',    cfg%state%write_state,        miss)
-      call req_i(tm, 'state.interval_years', cfg%state%interval_years, miss)
 
 
       !----- Carbon growth: the stub GPP of a run without the fast loop, required there only. ---!

@@ -462,12 +462,14 @@ contains
       !      state, t). The sample TIMES are kept per sub-step too: the probe writes them.          !
       if (do_forcing) then
          allocate(met_sample(nsub), t_sample(nsub))
+         met_cur%kt_last_day = poly%kt_last_day          ! the polygon's memory of the sky, carried over
          do isub = 1_ik, nsub
             t_sample(isub) = time_advance_seconds(step_start,                                          &
                        (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
             call met_advance(met_src, met_cur, t_sample(isub))
             met_sample(isub) = met_instant(met_src, met_cur, t_sample(isub))
          end do
+         poly%kt_last_day = met_cur%kt_last_day
          !----- Each site's: the sample moved to the site's elevation and its beam to the site's     !
          !      slope (met_at_site, docs/science/forcing.md §8). A flat site at the polygon's        !
          !      elevation takes the sample as it is. ------------------------------------------------!

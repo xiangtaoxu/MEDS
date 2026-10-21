@@ -39,7 +39,7 @@ module meds_region
                                            restart_file_slots
    use meds_init,                   only : init_polygon
    use meds_met_types,              only : met_source_t, met_grid_t, met_cells_t
-   use meds_forcing_params,         only : MET_BACKEND_ED_ERA5LAND
+   use meds_forcing_params,         only : MET_BACKEND_ERA5LAND
    use meds_met,             only : met_open, met_close, met_prefetch
    use meds_met_share,       only : MET_OK
    use meds_maps,                   only : apply_cell_mask, map_status_message, MAP_OK, read_map_inputs
@@ -52,6 +52,7 @@ module meds_region
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
                                            DRIVER_ERR_BOUNDS
    use meds_output_types,           only : output_files_t, output_buffers_t
+   use meds_output_params,          only : output_config_t, STATE_DAYS, STATE_MONTHS, STATE_YEARS
    use meds_output_stream,          only : output_serialize, output_close
    use meds_output_setup,           only : open_output_files, attach_output
    use meds_toml,                   only : toml_write_record
@@ -84,7 +85,8 @@ module meds_region
       type(meds_time_t)     :: now
       integer(ik)           :: step_days = 1_ik
       integer(ik)           :: istep = 0_ik       !< slow steps taken
-      integer(ik)           :: iyear = 0_ik       !< years stepped, for [state].interval_years
+      integer(ik)           :: iyear = 0_ik       !< year boundaries stepped across, for the state files
+      integer(ik)           :: imonth = 0_ik      !< month boundaries stepped across, likewise
       !----- The time spent loading the forcing before each month (met_prefetch), over the run and   !
       !      this year, and the archive month files read before this year: the year summary and the  !
       !      end of the run report them, so a run shows what its forcing reads cost. -----------------!
@@ -129,6 +131,7 @@ contains
       !----- The C-API reuses a freed registry slot, so the counters start again here. ------------!
       reg%istep = 0_ik
       reg%iyear = 0_ik
+      reg%imonth = 0_ik
       reg%read_seconds = 0.0_wp
       reg%year_read_seconds = 0.0_wp
       reg%year_loads0 = 0_ik
@@ -196,7 +199,7 @@ contains
          end if
          if (st /= MET_OK) return
          if (reg%verbose) then
-            if (cfg%forcing%format == MET_BACKEND_ED_ERA5LAND) then
+            if (cfg%forcing%format == MET_BACKEND_ERA5LAND) then
                write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(cfg%forcing%data_path), ')'
             else
                write(*,'(3a)') ' force : met forcing ON (', trim(cfg%forcing%path), ')'
@@ -254,11 +257,11 @@ contains
                max(1_ik, nint(yr_day / real(reg%step_days, wp), ik))
       end if
 
-      !----- The STATE stream and the run's PFT provenance table. ------------------------------------!
-      if (cfg%state%write_state) then
-         call ensure_output_dir(trim(cfg%state%output_dir))
-         call write_pft_params_csv(cfg, trim(cfg%state%output_dir)//'/'//trim(cfg%state%output_prefix)// &
-                                   '_pft_parameters.csv')
+      !----- The state files and the run's PFT provenance table. -------------------------------------!
+      if (cfg%output%state_write) then
+         call ensure_output_dir(trim(cfg%output%state_file_dir))
+         call write_pft_params_csv(cfg, trim(cfg%output%state_file_dir)//'/'//                           &
+                                   trim(cfg%output%state_file_prefix)//'_pft_parameters.csv')
       end if
 
       !----- DIAGNOSTIC output ([output].enabled): every configured variable and tier, behind the     !
@@ -280,8 +283,8 @@ contains
       !      never read. ---------------------------------------------------------------------------------!
       if (cfg%output%enabled)                                                                      &
          call toml_write_record(trim(cfg%output%dir)//'/'//trim(cfg%output%prefix)//'_parameters.csv')
-      if (cfg%state%write_state)                                                                   &
-         call toml_write_record(trim(cfg%state%output_dir)//'/'//trim(cfg%state%output_prefix)//        &
+      if (cfg%output%state_write)                                                                  &
+         call toml_write_record(trim(cfg%output%state_file_dir)//'/'//trim(cfg%output%state_file_prefix)// &
                                 '_parameters.csv')
 
       if (reg%verbose .and. n == 1_ik) then
@@ -451,7 +454,8 @@ contains
    !---------------------------------------------------------------------------------------!
    ! region_step_month -- one month of every polygon: load the month's forcing for every cell, !
    ! advance each polygon through it, then write the queued output. The month runs from the   !
-   ! current date to the next month boundary, or to end_time.                                  !
+   ! current date to the next month boundary, to end_time, or to the next state file, which a  !
+   ! state file every N days can put inside a month.                                           !
    !---------------------------------------------------------------------------------------!
    subroutine region_step_month(reg, status)
       type(meds_region_t), intent(inout) :: reg
@@ -476,6 +480,8 @@ contains
          nstep = nstep + 1_ik
          if (clk%year /= reg%now%year .or. clk%month /= reg%now%month) exit
          if (.not. time_lt(clk, reg%cfg%end_time)) exit
+         if (state_due(reg%cfg%output, reg%istep + nstep, reg%step_days, .false., .false.,          &
+                       reg%imonth, reg%iyear)) exit
       end do
       allocate(step_start(nstep), step_end(nstep), new_month(nstep), new_year(nstep))
       clk = reg%now
@@ -555,6 +561,7 @@ contains
       end do
       reg%now   = step_end(nstep)
       reg%istep = reg%istep + nstep
+      if (new_month(nstep)) reg%imonth = reg%imonth + 1_ik
 
       !----- A year's end: the summary line(s), and the forcing-read accounting. -------------------!
       if (new_year(nstep)) then
@@ -566,13 +573,33 @@ contains
       end if
 
       !----- The I/O phase: the records the steps closed, after a month's last step, a failure or the  !
-      !      run's last step, and at a year's end every interval_years the state file. -----------------!
+      !      run's last step, and the state file when one is due. ------------------------------------!
       if (cfg%output%enabled .and. (new_month(nstep) .or. status /= DRIVER_OK .or. region_done(reg)))  &
          call output_serialize(reg%out_files, reg%out_bufs)
-      if (new_year(nstep) .and. cfg%state%write_state .and. mod(reg%iyear, cfg%state%interval_years) == 0_ik) &
-         call region_write_state(reg)
+      if (state_due(cfg%output, reg%istep, reg%step_days, new_month(nstep), new_year(nstep), reg%imonth, &
+                    reg%iyear)) call region_write_state(reg)
       end associate
    end subroutine step_polygons
+
+   !----- Is a state file due at the end of the step that brings the run to `istep` steps, which     !
+   !      crosses a month and a year boundary as new_month and new_year say, the run having crossed  !
+   !      imonth and iyear of them by then? Every state_every days from the run's start, or at every  !
+   !      state_every-th month or year boundary ([output].state_interval). ----------------------------!
+   pure logical function state_due(out, istep, step_days, new_month, new_year, imonth, iyear) result(due)
+      type(output_config_t), intent(in) :: out
+      integer(ik),           intent(in) :: istep, step_days, imonth, iyear
+      logical,               intent(in) :: new_month, new_year
+      due = .false.
+      if (.not. out%state_write) return
+      select case (out%state_unit)
+      case (STATE_DAYS)
+         due = mod(istep * step_days, out%state_every) == 0_ik
+      case (STATE_MONTHS)
+         due = new_month .and. mod(imonth, out%state_every) == 0_ik
+      case (STATE_YEARS)
+         due = new_year .and. mod(iyear, out%state_every) == 0_ik
+      end select
+   end function state_due
 
    !----- The state file: every polygon's row, at the current date (meds_init_restart). The cohort, patch and   !
    !      site axes are the largest polygon's. The polygons share the calendar, so they owe the same  !
@@ -595,7 +622,7 @@ contains
          n_patch  = max(n_patch, reg%poly(p)%patch%n)
          n_site   = max(n_site, reg%poly(p)%site%n)
       end do
-      call restart_file_open(sf, trim(reg%cfg%state%output_dir), trim(reg%cfg%state%output_prefix), reg%now, &
+      call restart_file_open(sf, trim(reg%cfg%output%state_file_dir), trim(reg%cfg%output%state_file_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
                            n_patch, n_site, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,              &
                            restructure_pending=reg%poly(1)%restructure_pending,                            &
@@ -647,7 +674,7 @@ contains
       n_bad = 0_ik
       failed = any(reg%run(:)%status /= DRIVER_OK)
       !----- The true terminal state, so a restart resumes exactly here. -----------------------------!
-      if (reg%cfg%state%write_state .and. .not. failed) call region_write_state(reg)
+      if (reg%cfg%output%state_write .and. .not. failed) call region_write_state(reg)
       if (size(reg%poly) == 1) then
          associate (poly => reg%poly(1), run => reg%run(1))
             if (reg%verbose) call print_summary(poly, 'final')

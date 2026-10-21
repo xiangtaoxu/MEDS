@@ -18,7 +18,7 @@ module meds_met
                               dry_adiabat_temperature, sat_specific_humidity, rh_to_specific_humidity
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string, solar_cosz_utc,     &
                          mean_solar_cosz
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND,             &
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND,                   &
                                    METAVG_END, METAVG_BEGIN, METAVG_CENTER, CLAMP_ERROR, LW_SYNTHESIZE,           &
                                    CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_OPEN_TERRAIN
    use meds_radiation_lib,  only : COSZ_MIN, SWPART_PASSTHROUGH, lapse_longwave, partition_shortwave, clearness_index,      &
@@ -74,9 +74,9 @@ contains
       call open_co2(src, run_start, run_end, vstat, why)
       if (vstat == MET_OK) then
          select case (fcfg%format)
-         case (MET_BACKEND_ED_ERA5LAND)
+         case (MET_BACKEND_ERA5LAND)
             call era5land_open(src, vstat, why, run_start, run_end, cells)
-         case default                                              ! MET_BACKEND_ED_DEFAULT
+         case default                                              ! MET_BACKEND_DEFAULT
             call default_file_open(src, vstat, why, run_start, run_end)
          end select
       end if
@@ -141,7 +141,7 @@ contains
       cur%longitude_deg = longitude_deg
       cur%elevation_m  = elevation_m
       cur%grid_elevation_m = src%fcfg%grid_elevation
-      if (src%backend == MET_BACKEND_ED_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
+      if (src%backend == MET_BACKEND_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
       call load_bracket(src, cur, src%rec_first)
    end subroutine met_cursor_init
 
@@ -152,7 +152,7 @@ contains
    subroutine met_prefetch(src, step_start)
       type(met_source_t), intent(inout)  :: src
       type(meds_time_t),  intent(in)    :: step_start
-      if (src%backend == MET_BACKEND_ED_ERA5LAND) call era5land_prefetch(src, step_start)
+      if (src%backend == MET_BACKEND_ERA5LAND) call era5land_prefetch(src, step_start)
    end subroutine met_prefetch
 
    !=======================================================================================!
@@ -465,7 +465,7 @@ contains
    subroutine met_close(src)
       type(met_source_t), intent(inout)  :: src
       integer(c_int) :: st
-      if (src%backend == MET_BACKEND_ED_DEFAULT .and. src%ncid >= 0_ik) then
+      if (src%backend == MET_BACKEND_DEFAULT .and. src%ncid >= 0_ik) then
          st = nc_close(int(src%ncid, c_int))
          call nc_check(st, 'met_close: nc_close')
          src%ncid = -1_ik
@@ -521,7 +521,7 @@ contains
       real(wp)    :: sw_total, humidity_value
       rec%when   = time_advance_seconds(src%base_time, src%time_sec(irec))
       !----- The values as the source stores them; from here on, one ingest for both. -----------!
-      if (src%backend == MET_BACKEND_ED_ERA5LAND) then
+      if (src%backend == MET_BACKEND_ERA5LAND) then
          call era5land_record(src, cur, irec, rec, humidity_value, sw_total)
       else
          call default_file_record(src, irec, rec, humidity_value, sw_total)

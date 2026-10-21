@@ -87,7 +87,7 @@ ustar_threshold = 0.4
 
 
 def synthetic_forcing(path, start="2001-05-31", days=7):
-    """An hourly ED_default file with a clear diurnal cycle (the fast output needs a forcing file)."""
+    """An hourly MEDS forcing file with a clear diurnal cycle (the fast output needs a forcing file)."""
     t = np.arange(np.datetime64(start), np.datetime64(start) + np.timedelta64(days, "D"),
                   np.timedelta64(1, "h"))
     hour = (t - t.astype("datetime64[D]")).astype("timedelta64[h]").astype(int).astype(float)
@@ -111,7 +111,7 @@ def make_site(tmp_path, windows, head=""):
     main["fast"]["fast_biophysics_on"] = True
     synthetic_forcing(tmp_path / "forcing.nc")
     main["site"] = {"latitude": 42.4, "longitude": -76.5, "elevation": 300.0, "apply_elevation_lapse": False}
-    main["forcing"] = {"forcing_on": True, "format": "ED_default", "path": str(tmp_path / "forcing.nc"),
+    main["forcing"] = {"forcing_on": True, "format": "default", "path": str(tmp_path / "forcing.nc"),
                        "grid_index": 1, "grid_match": "explicit", "tq_height": 10.0, "wind_height": 10.0,
                        "height_above": "ground", "wind_exposure": "local", "timestep": "3600s",
                        "avg_convention": "begin", "sw_partition": "clearidx", "lwdown_source": "file",

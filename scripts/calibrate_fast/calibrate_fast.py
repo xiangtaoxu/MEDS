@@ -96,7 +96,7 @@ def base_record(cal, work, workers, runner, log):
         cfg = trials.with_keys(cal.base, [], [], cal.overrides)
         w = cal.windows[0]
         for k, v in {"run.start_time": trials.stamp(w.start), "run.end_time": trials.stamp(w.start + dt.timedelta(days=1)),
-                     "run.slow_on": False, "run.n_threads": 1, "state.write_state": False, "output.enabled": True,
+                     "run.slow_on": False, "run.n_threads": 1, "output.state_write": False, "output.enabled": True,
                      "output.dir": str(rdir / "out"), "output.prefix": trials.PREFIX, "output.daily.enabled": False,
                      "output.fast.enabled": False, "output.monthly.enabled": False,
                      "output.annual.enabled": False}.items():

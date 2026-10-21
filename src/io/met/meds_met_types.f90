@@ -11,7 +11,7 @@
 module meds_met_types
    use meds_kinds,          only : wp, sp, ik
    use meds_time,           only : meds_time_t
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_ED_DEFAULT, MET_PATH_LEN
+   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_DEFAULT, MET_PATH_LEN
    implicit none
    private
 
@@ -140,7 +140,7 @@ module meds_met_types
    !==========================================================================================!
    type :: met_source_t
       type(forcing_config_t)  :: fcfg                       !< [forcing]/[site] config
-      integer(ik) :: backend    = MET_BACKEND_ED_DEFAULT    !< MET_BACKEND_*: ED_DEFAULT | ED_ERA5LAND
+      integer(ik) :: backend    = MET_BACKEND_DEFAULT    !< MET_BACKEND_*: ED_DEFAULT | ED_ERA5LAND
       integer(ik) :: humidity   = HUMIDITY_TDEW             !< the humidity the source carries (HUMIDITY_*)
       integer(ik) :: ncid       = -1_ik                     !< NetCDF handle (via meds_netcdf_c), -1 if closed
       integer(ik) :: grid_index = 1_ik                      !< MEDS forcing file: the location (1..ngrid) read

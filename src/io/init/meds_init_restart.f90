@@ -35,7 +35,7 @@ module meds_init_restart
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    !----- The layout written and read, a global attribute of every file; a change to it counts up. -!
-   character(len=*), parameter :: RESTART_FORMAT = '2'
+   character(len=*), parameter :: RESTART_FORMAT = '3'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
    character(len=*), parameter :: FILM_UNITS  = 'kg/plant'   !< the canopy films' units attribute
 
@@ -287,6 +287,29 @@ contains
       call nc_check(nc_put_vara_int(r%ncid, var_id(r%ncid, name), st, ct, x), 'put '//name)
    end subroutine put_polygon_int
 
+   subroutine put_polygon_dbl(r, name, x)
+      type(file_row_t), intent(in) :: r
+      character(len=*), intent(in) :: name
+      real(wp),         intent(in) :: x
+      integer(c_size_t) :: st(1), ct(1)
+      real(wp)          :: y(1)
+      st = int(r%row - 1_ik, c_size_t)
+      ct = 1_c_size_t
+      y = x
+      call nc_check(nc_put_vara_double(r%ncid, var_id(r%ncid, name), st, ct, y), 'put '//name)
+   end subroutine put_polygon_dbl
+
+   real(wp) function get_polygon_dbl(r, name) result(x)
+      type(file_row_t), intent(in) :: r
+      character(len=*), intent(in) :: name
+      integer(c_size_t) :: st(1), ct(1)
+      real(wp)          :: y(1)
+      st = int(r%row - 1_ik, c_size_t)
+      ct = 1_c_size_t
+      call nc_check(nc_get_vara_double(r%ncid, var_id(r%ncid, name), st, ct, y), 'get '//name)
+      x = y(1)
+   end function get_polygon_dbl
+
    integer(ik) function get_polygon_int(r, name) result(n)
       type(file_row_t), intent(in) :: r
       character(len=*), intent(in) :: name
@@ -389,6 +412,8 @@ contains
       !----- 3. Calendar: the cohorts' ring-buffer slot (the restructuring owed is a global      !
       !      attribute). ----------------------------------------------------------------------!
       call def_var(d, 'growth_hist_pos_py', NC_INT, [d%meta_real], 'ring-buffer write slot (element 1)')
+      !----- 4. The forcing's memory. ------------------------------------------------------------!
+      call def_polygon_var(d, 'kt_last_day_py', NC_DOUBLE, 'the last daytime clearness index [-]')
       !----- The sites: 1. each one's area and 3. the surface it was made with, as the diagnostic    !
       !      files carry them (its layer count is checked on read); 4. thermal acclimation's       !
       !      running mean (docs/science/leaf_gas_exchange.md §2). ------------------------------!
@@ -416,6 +441,8 @@ contains
       call put_dbl(r, 'meta_real', [sum(poly%site%area(1:ns)), time_to_decimal_year(now)])
       !----- 3. Calendar. --------------------------------------------------------------------!
       call put_int(r, 'growth_hist_pos_py', [poly%growth_hist_pos])
+      !----- 4. The forcing's memory. ---------------------------------------------------------!
+      call put_polygon_dbl(r, 'kt_last_day_py', poly%kt_last_day)
       !----- The sites, the surface's numbers through contiguous buffers. --------------------!
       do is = 1_ik, ns
          associate (surf => poly%site%surface(is))
@@ -468,6 +495,7 @@ contains
       call alloc_polygon(poly, cfg%pft%n, max(meta_i(1), 1_ik), max(meta_i(2), 1_ik), growth_window_steps(cfg), &
                          cfg%pft, n_site=ns)
       poly%cohort%n = meta_i(1)
+      poly%kt_last_day = get_polygon_dbl(r, 'kt_last_day_py')
       poly%patch%n = meta_i(2)
       poly%next_cohort_id = meta_i(4)
       poly%next_patch_id = meta_i(5)

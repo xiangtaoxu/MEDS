@@ -14,7 +14,7 @@ module meds_forcing_params
    private
 
    public :: forcing_config_t
-   public :: MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND
+   public :: MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND
    public :: MET_PATH_LEN, ARCHIVE_DT_SEC, MAX_RECYCLE_YEARS
    public :: METAVG_END, METAVG_BEGIN, METAVG_CENTER
    public :: LW_FILE, LW_SYNTHESIZE
@@ -28,8 +28,8 @@ module meds_forcing_params
    !----- Search bound of the whole-year test on the recycle window [calendar years]. -----!
    integer(ik), parameter :: MAX_RECYCLE_YEARS = 200_ik
    !----- [forcing].format: the forcing file, the ED_ERA5land archive, or no file. --------!
-   integer(ik), parameter :: MET_BACKEND_ED_DEFAULT  = 1_ik  !< the multi-grid forcing NetCDF (format = "ED_default")
-   integer(ik), parameter :: MET_BACKEND_ED_ERA5LAND = 2_ik  !< the monthly ED_ERA5land archive (format = "ED_ERA5land")
+   integer(ik), parameter :: MET_BACKEND_DEFAULT  = 1_ik  !< the multi-grid forcing NetCDF (format = "default")
+   integer(ik), parameter :: MET_BACKEND_ERA5LAND = 2_ik  !< the monthly ED_ERA5land archive (format = "ERA5land")
 
    integer, parameter :: MET_PATH_LEN = 1024                !< length of every forcing path field
 
@@ -70,8 +70,8 @@ module meds_forcing_params
    !=======================================================================================!
    type :: forcing_config_t
       logical            :: forcing_on   = .false.               !< master gate (indep. of fast_biophysics_on)
-      integer(ik)        :: format       = MET_BACKEND_ED_DEFAULT !< MET_BACKEND_*: "ED_default" | "ED_ERA5land"
-      character(len=MET_PATH_LEN) :: path = ''                   !< forcing NetCDF path (format = "ED_default")
+      integer(ik)        :: format       = MET_BACKEND_DEFAULT !< MET_BACKEND_*: "default" | "ERA5land"
+      character(len=MET_PATH_LEN) :: path = ''                   !< forcing NetCDF path (format = "default")
       !----- The archive (docs/science/forcing.md §1); '' derives from data_path. ---------!
       character(len=MET_PATH_LEN) :: data_path     = ''          !< archive folder
       character(len=MET_PATH_LEN) :: file_template = ''          !< '' -> {data_path}/ED_ERA5land_{var}_{yyyy}{mm}.nc

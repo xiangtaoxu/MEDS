@@ -57,13 +57,12 @@ pft_config   = "pft_parameters.toml"
 soil_temp    = 298.65             # [K] the tower's mean air temperature, as [soil].deep_temp
 soil_theta   = 0.42               # [m3/m3] wet season: August is three months into it ([soil] field capacity)
 
-[state]
-output_dir     = "output"
-output_prefix  = "eval"
-write_state    = false
-interval_years = 5
 
 [output]
+state_write       = false
+state_interval    = "5 years"
+state_file_dir    = "output"
+state_file_prefix = "eval"
 enabled       = true
 dir           = "output"
 prefix        = "eval"
@@ -131,7 +130,7 @@ apply_elevation_lapse = false         # the tower measures at the site: no terra
 
 [forcing]
 forcing_on     = true
-format         = "ED_default"
+format         = "default"
 path           = "data/bci_forcing.nc"             # run_example.py builds it (make_tower_forcing.py)
 grid_index     = 1
 grid_match     = "explicit"
