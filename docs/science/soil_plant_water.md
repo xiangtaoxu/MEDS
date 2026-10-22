@@ -251,7 +251,7 @@ Each is a mean per fast step over the record's period.
 
 | Concept | Routine |
 |---|---|
-| the solver: assembly, Newton, sub-steps, commit | `meds_spac_solver` (`numerics/`): `spac_allocate`, `spac_set_state`, `spac_advance` |
+| the solver: assembly, Newton, sub-steps, commit | `meds_spac_solver` (`integrator/`): `spac_allocate`, `spac_set_state`, `spac_advance` |
 | the linear solve (block arrowhead, Schur complement) | `meds_linear_algebra`: `arrowhead_allocate`, `arrowhead_factor`, `arrowhead_solve` |
 | the stores' water relations in their unknowns | `meds_soil_hydr_lib`: `soil_water_relations`, `pond_water_relations` and their inverses, `VG_PORE_CONNECTIVITY`; `meds_plant_hydr_lib`: `tissue_water_relations` and its inverses |
 | plant flows | `meds_plant_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`; the leaves' supply limit `supply_limited_transpiration` (`meds_plant_hydraulics`); the flows' rounded corner `smooth_max0` (`meds_numerics`) |

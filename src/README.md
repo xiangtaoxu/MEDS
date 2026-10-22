@@ -55,7 +55,7 @@ src/                                    37.2 k lines · 106 modules · 21 CMake 
 │   │              respiration, tissue energy                                1 063
 │   ├── soil/      the ground: soil water, soil energy, the ground skin,
 │   │              the snow store                                              749
-│   ├── numerics/  the integrator machinery: the state vector, the frozen
+│   ├── integrator/ the integrator machinery: the state vector, the frozen
 │   │              work record, ARK and RK45, error control, the pre-pass    5 034
 │   └── driver/    the fast loop's setup from the configuration, and the
 │                  walk of one slow step in dt_fast sub-steps over the
