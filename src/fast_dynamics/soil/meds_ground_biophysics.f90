@@ -1,20 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_ground_biophysics -- the stateless LAND-SURFACE-INTERFACE kernels: the bare-ground  !
-! skin energy balance and the snow / temporary-surface-water store                         !
-! (docs/science/snow_biophysics.md). These are the two mutually-exclusive MODES of one     !
-! interface (bare vs snow-covered, blended by snowfac), both producing the soil-top        !
-! thermal BC and the surface->CAS fluxes.                                                  !
-!                                                                                          !
-! GROUND skin:                                                                             !
-!   * ground_surface_fluxes -- the BARE-ground sensible + latent fluxes to the CAS         !
-!     (soil_evap is the frozen hydrology-authority mass flux); the caller assembles G_top  !
-!     and the snow blend.                                                                  !
-! SNOW store (one bulk layer, see docs/ROADMAP.md; temperature + liquid fraction are a     !
-! read-off of the shared inverter internal_energy_to_temp, so MELT/refreeze is the         !
-! internal-energy plateau):                                                                !
-!   * snow_cover_fraction / snow_accumulate / snow_drain_meltwater  -- the MASS side.      !
-!   * snow_surface_fluxes / snow_base_conductance / snow_energy_step -- the ENERGY side.   !
+! meds_ground_biophysics -- the stateless land-surface interface kernels: the bare-ground  !
+! skin and the one-layer snow / temporary-surface-water store, blended by snowfac, each    !
+! giving the soil-top boundary and the canopy-air fluxes (docs/science/snow_biophysics.md):!
+!   * ground_surface_fluxes -- the bare ground's sensible and latent fluxes;               !
+!   * snow_cover_fraction / snow_accumulate / snow_drain_meltwater -- the snow's mass;     !
+!   * snow_surface_fluxes / snow_base_conductance / snow_energy_step -- its energy.        !
 !==========================================================================================!
 module meds_ground_biophysics
    use meds_kinds,              only : wp, ik
@@ -37,16 +28,13 @@ module meds_ground_biophysics
 contains
 
    !=======================================================================================!
-   !  GROUND / surface skin                                                                 !
+   !  Ground / surface skin                                                                 !
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Bare-ground surface fluxes to the CAS -- INSTANTANEOUS, no state advance. Sensible from   !
-   ! the ground<->CAS conductance ggnet; latent from the FROZEN hydrology-authority mass flux   !
-   ! soil_evap (already area-weighted by the caller via chydro_forcing_t%snow_free_frac), on the SAME !
-   ! enthalpy twin the CAS receives. t_ground = soil_temp(1) is supplied by the soil kernel.      !
-   ! The caller assembles G_top (net into the soil surface) and the snow-fraction blend, since    !
-   ! those diverge between the bare and snow-covered paths.                                         !
+   ! Bare-ground fluxes to the canopy air, instantaneous: sensible through ggnet, latent   !
+   ! from the water network's soil evaporation (already area-weighted) at the vapour       !
+   ! enthalpy the canopy air receives. The caller assembles G_top and the snow blend.      !
    !---------------------------------------------------------------------------------------!
    elemental pure subroutine ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
       real(wp), intent(in)  :: t_ground, t_cas, ggnet, rho, soil_evap
@@ -56,13 +44,11 @@ contains
    end subroutine ground_surface_fluxes
 
    !=======================================================================================!
-   !  SNOW -- MASS side: cover fraction, accumulation, meltwater drainage.                  !
+   !  Snow -- mass side: cover fraction, accumulation, meltwater drainage.                  !
    !=======================================================================================!
 
-   !----- Niu-Yang (2007) snow-cover / burial fraction from geometric depth. Monotone tanh in       !
-   !      [0,1]; the (rho_snow/rho_fresh) normalization folds into the tuned scale. Used to RAMP    !
-   !      the ground optics and the soil-top-BC blend, and to area-weight the pack's boundary       !
-   !      exchange (docs/science/snow_biophysics.md).                                               !
+   !----- Niu-Yang (2007) snow-cover fraction tanh(depth/scale): it ramps the ground optics and the  !
+   !      soil-top blend and area-weights the pack's exchange (docs/science/snow_biophysics.md). ----!
    pure function snow_cover_fraction(swe, snow_depth, params, snow_rough) result(snowfac)
       real(wp),            intent(in) :: swe, snow_depth
       type(snow_params_t), intent(in) :: params
@@ -76,12 +62,9 @@ contains
       end if
    end function snow_cover_fraction
 
-   !----- Accumulation: frozen rainfall (snowfall) + rain-on-snow (rainf) onto the single bulk layer, !
-   !      carrying precip_enthalpy (snow as ice, rain as liquid that refreezes automatically via the  !
-   !      inverter downstream). A layer is CREATED only when the total new snow mass reaches          !
-   !      min_new_snow_mass; below that (and on bare ground, nlayer=0) NOTHING is added here -- the   !
-   !      caller routes sub-threshold snowfall and rain to the ground with the throughfall. Mass +    !
-   !      enthalpy are conserved on the shared datum.                                                 !
+   !----- Accumulation of snowfall (as ice) and rain-on-snow (as liquid) with their precip_enthalpy.  !
+   !      A layer is created only from min_new_snow_mass of new snow; with no layer and less, the      !
+   !      caller routes the precipitation to the ground with the throughfall. -----------------------!
    pure subroutine snow_accumulate(snow, snowfall, rainf, air_temp, dt, params)
       type(snow_column_t), intent(inout) :: snow
       real(wp),            intent(in)    :: snowfall, rainf, air_temp, dt
@@ -98,10 +81,8 @@ contains
       snow%nlayer         = 1_ik
    end subroutine snow_accumulate
 
-   !----- Percolation: after the energy step, drain the FREE liquid (above the holding capacity) as a !
-   !      PAIRED (mass, enthalpy) transfer (melt%melt_*), and handle full melt-out (residual dump%).  !
-   !      The caller hands both to the pond, the mass with the temperature that values its enthalpy.  !
-   !      temp/fliq are re-diagnosed from the drained (swe, energy). Mass conserved.                  !
+   !----- Percolation after the energy step: drain the free liquid above the holding capacity as a   !
+   !      paired (mass, enthalpy) hand-off to the pond (melt_*), and dump the residual at melt-out. --!
    pure subroutine snow_drain_meltwater(snow, params, melt)
       type(snow_column_t), intent(inout) :: snow
       type(snow_params_t), intent(in)    :: params
@@ -156,20 +137,12 @@ contains
    end subroutine clear_layer
 
    !=======================================================================================!
-   !  SNOW -- ENERGY side: surface fluxes, base conduction, backward-Euler energy advance.  !
+   !  Snow -- energy side: surface fluxes, base conduction, backward-Euler energy advance.  !
    !=======================================================================================!
 
-   !----- Turbulent + latent surface fluxes at a given snow-surface temperature (positive UPWARD).  !
-   !      Latent uses the SAME vapour-enthalpy twin the CAS receives: because the store is          !
-   !      ice-referenced, removing enthalpy_vapor from an ice layer debits sublimation (=           !
-   !      vaporization + fusion) automatically; a wet layer's liquid reference supplies only        !
-   !      vaporization.                                                                             !
-   !                                                                                                !
-   !      SATURATION IS OVER ICE when the pack is frozen (docs/science/snow_biophysics.md eq. (1)), !
-   !      so the vapour side is as ice-aware as the enthalpy side: over ice e_sat is 10 % lower at  !
-   !      -10 C, 22 % at -20 C and 34 % at -30 C, and the liquid curve would overstate sublimation  !
-   !      by those factors. `fliq` is the pack's own prognostic liquid fraction, so a melting pack  !
-   !      moves continuously back onto the liquid curve. -------------------------------------------!
+   !----- Sensible and latent fluxes at a snow-surface temperature (positive up), the latent at the  !
+   !      vapour enthalpy the canopy air receives, and saturated over ice by the pack's own liquid  !
+   !      fraction (docs/science/snow_biophysics.md eq. (1)). ---------------------------------------!
    pure subroutine snow_surface_fluxes(t_surf, fliq, env, h_flux, w_flux, le_flux)
       real(wp),         intent(in)  :: t_surf
       real(wp),         intent(in)  :: fliq      !< [-] liquid fraction of the snow surface
@@ -180,10 +153,8 @@ contains
       le_flux = w_flux * enthalpy_vapor(t_surf)
    end subroutine snow_surface_fluxes
 
-   !----- Snow-base -> soil-top conduction CONDUCTANCE [W/m2/K] (series resistance of the half snow  !
-   !      layer + the top soil node). k_snow << k_soil throttles this as the pack deepens -- the     !
-   !      physical decoupling that caps the winter soil surface                                      !
-   !      (docs/science/snow_biophysics.md). --------------------------------------------------------!
+   !----- Snow-base to soil-top conductance [W/m2/K]: the half snow layer and the top soil node in    !
+   !      series, so a deepening pack decouples the soil (docs/science/snow_biophysics.md). ----------!
    pure function snow_base_conductance(snow_depth, env, params) result(gcond)
       real(wp),            intent(in) :: snow_depth
       type(snow_env_t),    intent(in) :: env
@@ -194,31 +165,16 @@ contains
       gcond    = 1.0_wp / max(r_series, tiny_num)
    end function snow_base_conductance
 
-   !----- Advance the snow store one dt by a linearized backward-Euler step on its ENTHALPY            !
-   !      (docs/science/snow_biophysics.md, "The energy step"). Prognostic = extensive internal energy !
-   !      (J/m2) + water-equivalent mass (swe); temperature + liquid fraction are read-offs.          !
-   !                                                                                                  !
-   !      Every boundary flux is linearized about T^n, so the net flux into the pack is linear in its  !
-   !      new temperature T and falls as T rises. The pack's enthalpy rises with T: along the ice      !
-   !      line below t_3ple, across the melt plateau at t_3ple, along the liquid line above. Their     !
-   !      balance, swe e(T) = E^n + dt af R(T), therefore has exactly one root, found segment by       !
-   !      segment in closed form: on the plateau when the plateau's enthalpy range holds it, else on   !
-   !      the ice or the liquid line. The update is the linearization's own, so the read-off           !
-   !      temperature is T exactly: a thin pack under a strong coupling relaxes toward its balance and !
-   !      cannot overshoot it, and a melting pack freezes through the plateau and stops where the      !
-   !      balance does, not where an explicit flux at t_3ple would drive it.                           !
-   !                                                                                                  !
-   !      Sublimation takes vapour at its own enthalpy: the latent part comes out of the balance and   !
-   !      the mass leaves with the pack's specific energy, so what stays keeps T. A pack that would    !
-   !      sublimate whole does, and the vapour takes all the energy left. Reports the area-weighted    !
-   !      turbulent + conduction fluxes for the CAS + soil coupling; the energy residual is 0 by       !
-   !      construction.                                                                                !
+   !----- Advance the snow store one dt by a linearized backward-Euler step on its enthalpy           !
+   !      (docs/science/snow_biophysics.md, "The snow store"): with every flux linearized about T^n,   !
+   !      swe e(T) = E^n + dt af R(T) has one root, found in closed form on the plateau or the ice or  !
+   !      liquid line. Sublimating mass leaves with the pack's specific energy, so the rest keeps T. -!
    pure subroutine snow_energy_step(snow, env, params, dt, area_frac, flux)
       type(snow_column_t), intent(inout) :: snow
       type(snow_env_t),    intent(in)    :: env
       type(snow_params_t), intent(in)    :: params
       real(wp),            intent(in)    :: dt
-      real(wp),            intent(in)    :: area_frac    !< snow-cover fraction: scales ALL boundary exchange (sub-column)
+      real(wp),            intent(in)    :: area_frac    !< snow-cover fraction: scales all boundary exchange (sub-column)
       type(snow_flux_t),   intent(out)   :: flux
       real(wp) :: t_n, fliq_n, e_old, swe0, swe1, gcond, af, dtaf
       real(wp) :: h_n, w_n, le_n, g_n, dh_dt, dw_dt, demit_dt, l_vap, r0, drdt
@@ -279,7 +235,7 @@ contains
          swe1 = 0.0_wp
       end if
 
-      !----- ENERGY + MASS update: the pack keeps e(T) per kilogram, so it reads off at T. -----------!
+      !----- Energy and mass update: the pack keeps e(T) per kilogram, so it reads off at T. ---------!
       net_flux = af * (env%abs_sw + env%abs_lw - emit - h_s - le_s - g_s)   ! sub-column area weight
       snow%snow_energy(1) = e_old + dt * net_flux
       snow%swe(1)         = swe1

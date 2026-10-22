@@ -1,25 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_column_state_ops -- the algebra and bookkeeping helpers on the fast loop's column state     !
-! (column_state_t / column_tend_t / stage_bflux_t / column_bflux_t), owned by the types they act   !
-! on rather than by one integrator. Both schemes (meds_fast_ark, meds_fast_rk45) import from here,  !
-! so RK45 does not depend on the ARK module.                                                         !
-!                                                                                          !
-!   * the state's fields, listed once -- state_to_array / array_to_state / tend_to_array, and      !
-!                           state_entry_rules (how each field is treated)                          !
-!   * state combinators  -- state_init / state_axpy / state_accum / state_extrap / state_sub /       !
-!                           state_err_diff / zero_like, as operations on the flat array              !
-!   * boundary-flux ledger accumulators -- bflux_zero / bflux_add / bflux_bweight                   !
-!   * the stage-domain clamp -- clamp_cas                                                            !
-!   * whole-column store totals for the ledgers -- soil_water_store / soil_energy_store /            !
-!                           plant_water_store / canopy_film_store  (one loop order, so the two       !
-!                           schemes' ledgers are the same arithmetic)                                !
-!   * post-march commits shared by both schemes -- clamp_canopy_film / deposit_condensate /          !
-!                           unpack_column_state / diagnose_soil_temps / commit_tissue_energy         !
-!                                                                                          !
-! ADDING A STATE FIELD: list it in state_to_array, array_to_state, tend_to_array and                !
-! state_entry_rules (and in the type, the frozen-record pack, unpack_column_state and                !
-! test_state_combinators). The combinators themselves never name a field.                            !
+! meds_column_state_ops -- algebra and bookkeeping on the fast loop's column state, shared by both !
+! schemes (meds_fast_ark, meds_fast_rk45): the state's fields listed once (state_to_array,          !
+! array_to_state, tend_to_array, state_entry_rules) and the combinators on the flat array; the      !
+! boundary-flux ledger (bflux_*); the stage clamp clamp_cas; the store totals the ledgers read; the  !
+! soil-energy forcing; and the post-march commits (clamp_canopy_film, deposit_condensate,            !
+! unpack_column_state, diagnose_soil_temps, commit_tissue_energy, apply_process_mask). A new state   !
+! field goes in the four listing routines, the type, the frozen-record pack, unpack_column_state     !
+! and test_state_combinators; the combinators never name a field.                                    !
 !==========================================================================================!
 module meds_column_state_ops
    use meds_kinds,            only : wp, ik
@@ -46,19 +34,12 @@ module meds_column_state_ops
 contains
 
    !=======================================================================================!
-   ! THE STATE'S FIELDS, LISTED ONCE.                                                          !
-   !                                                                                          !
-   ! The integrator's bookkeeping -- copy, y + a*k, accumulate, extrapolate, subtract, the      !
-   ! embedded error and the step-size error norm -- works on one flat array per state. The      !
-   ! three routines below are the only ones that name column_state_t's fields for it, and       !
-   ! state_entry_rules is the only place that says how each field is treated. Fortran cannot     !
-   ! check that a field is listed, so test_state_combinators runs every field through every     !
-   ! combinator.                                                                                !
-   !                                                                                          !
-   ! Layout, in the order the step-size norm adds its terms:                                    !
-   !   canopy air: enthalpy, humidity, CO2 | soil energy (1:nsl) | soil water (1:nsl) |         !
-   !   per cohort: leaf water, wood water | per cohort: leaf film, wood film |                  !
-   !   pond: water, enthalpy                                                                    !
+   ! The state's fields, listed once. The integrator's bookkeeping works on one flat array per     !
+   ! state; the three routines below are the only ones that name column_state_t's fields, and     !
+   ! state_entry_rules the only one that says how each is treated. Fortran cannot check that a     !
+   ! field is listed, so test_state_combinators runs every field through every combinator.         !
+   ! Layout: CAS enthalpy, humidity, CO2 | soil energy (1:nsl) | soil water (1:nsl) |             !
+   !   per cohort: leaf, wood water | per cohort: leaf, wood film | pond: water, enthalpy         !
    !=======================================================================================!
    pure integer(ik) function state_size(n, nsl) result(m)
       integer(ik), intent(in) :: n, nsl
@@ -120,9 +101,8 @@ contains
       y%w_surface_energy = v(o+2)
    end subroutine array_to_state
 
-   !----- A tendency in the same layout. The pond has no tendency (it is passed through the stages  !
-   !      and committed from the water network), so its entries are 0, and y + a*k then             !
-   !      leaves it exactly as it was, with no special case. -------------------------------------!
+   !----- A tendency in the same layout. The pond has none (it is committed from the water network),  !
+   !      so its entries are 0 and y + a*k leaves it as it was. ---------------------------------!
    pure subroutine tend_to_array(k, n, nsl, v)
       type(column_tend_t), intent(in)  :: k
       integer(ik),         intent(in)  :: n, nsl
@@ -148,12 +128,10 @@ contains
       v(o+2) = 0.0_wp
    end subroutine tend_to_array
 
-   !----- How entry j of the flat array is treated, for every field in one place:                  !
-   !        norm_group         its tolerance group in the step-size error norm (0: not counted);    !
-   !        in_embedded_error  whether the embedded error estimate counts it.                       !
-   !      The films and the pond are outside the norm. The plant water, the films and the pond ride !
-   !      operator-split maps outside the ESDIRK stages, so their embedded difference is set to 0   !
-   !      rather than computed: the extrapolation would leave rounding noise in it. --------------!
+   !----- How entry j of the flat array is treated: norm_group, its group in the step-size error norm !
+   !      (0: not counted), and in_embedded_error. The films and the pond are outside the norm; the    !
+   !      plant water, films and pond ride operator-split maps outside the stages, so their embedded    !
+   !      difference is set to 0 rather than left as the extrapolation's rounding noise. ------------!
    pure subroutine state_entry_rules(j, n, nsl, norm_group, in_embedded_error)
       integer(ik), intent(in)  :: j, n, nsl
       integer(ik), intent(out) :: norm_group
@@ -201,7 +179,7 @@ contains
    end subroutine ensure_cohort_arrays
 
    !=======================================================================================!
-   ! THE COMBINATORS, on the flat array. Each fills its output in place.                       !
+   ! The combinators, on the flat array. Each fills its output in place.                       !
    !=======================================================================================!
    !----- copy: y_stage = y. ---------------------------------------------------------------------!
    pure subroutine state_init(y, n, nsl, y_stage)
@@ -213,9 +191,7 @@ contains
       call array_to_state(v, n, nsl, y_stage)
    end subroutine state_init
 
-   !----- y_stage = y + a*k, the single-term combination classical RK4's stages use. Cash-Karp's    !
-   !      later stages read several prior k's, for which state_init + repeated state_accum is the   !
-   !      pattern. -------------------------------------------------------------------------------!
+   !----- y_stage = y + a*k; a stage of several k's is state_init and repeated state_accum. ------!
    pure subroutine state_axpy(y, a, k, n, nsl, y_stage)
       type(column_state_t), intent(in)    :: y
       real(wp),             intent(in)    :: a
@@ -242,8 +218,8 @@ contains
       call array_to_state(vy, n, nsl, y_stage)
    end subroutine state_accum
 
-   !----- ledger helpers: b-weight two stage RATE structs into accumulated AMOUNTS over dt (weights   !
-   !      b^I = (1-gamma, gamma) times dt); zero an accumulator; add one substep's amounts. -----------!
+   !----- Ledger helpers: b-weight two stage rates into amounts over dt (weights (1-gamma, gamma)      !
+   !      times dt); zero an accumulator; add one sub-step's amounts. --------------------------------!
    pure subroutine bflux_bweight(acc, s2, s3, dt, gam)
       type(column_bflux_t), intent(out) :: acc
       type(stage_bflux_t),  intent(in)  :: s2, s3
@@ -274,9 +250,7 @@ contains
    pure subroutine bflux_zero(acc, n)
       type(column_bflux_t), intent(out) :: acc
       integer(ik), optional, intent(in) :: n   !< allocate + zero the per-cohort tissue integrals
-      !----- intent(out) already default-initialises every scalar to zero and deallocates the tissue  !
-      !      integrals on entry (F2018 8.5.10). An explicit `acc = column_bflux_t()` here is redundant !
-      !      and nvfortran 25.11 rejects it in this module ("Empty structure constructor", F-0155). ---!
+      !----- intent(out) zeroes the scalars; no empty structure constructor (docs/building.md traps). -!
       if (present(n)) then
          allocate(acc%tissue_leaf_int(n), acc%tissue_wood_int(n), acc%transp_coh(n))
          acc%tissue_leaf_int = 0.0_wp
@@ -306,8 +280,8 @@ contains
       acc%whole_cond_enth = acc%whole_cond_enth + s%whole_cond_enth
       acc%atm_heat_out  = acc%atm_heat_out  + s%atm_heat_out
       acc%atm_vap_out   = acc%atm_vap_out   + s%atm_vap_out
-      !----- Only ACCEPTED sub-steps reach here, so the tissue integrals accumulate over exactly the  !
-      !      accepted march -- the same set of sub-steps every other amount above is summed over. -----!
+      !----- Only accepted sub-steps reach here, so the tissue integrals cover the same sub-steps as  !
+      !      every other amount. -------------------------------------------------------------------!
       if (allocated(acc%tissue_leaf_int) .and. allocated(s%tissue_leaf_int)) then
          acc%tissue_leaf_int = acc%tissue_leaf_int + s%tissue_leaf_int
          acc%tissue_wood_int = acc%tissue_wood_int + s%tissue_wood_int
@@ -315,9 +289,8 @@ contains
       if (allocated(acc%transp_coh) .and. allocated(s%transp_coh)) acc%transp_coh = acc%transp_coh + s%transp_coh
    end subroutine bflux_add
 
-   !----- A cohort's transpiration over a fast step, as the rate per leaf area the diagnostics report  !
-   !      [mol H2O/m2 leaf/s], from its amount over the step [kg/m2 ground]. A leafless cohort reports  !
-   !      zero. --------------------------------------------------------------------------------------!
+   !----- A cohort's transpiration over a step [kg/m2 ground] as the rate per leaf area the            !
+   !      diagnostics report [mol H2O/m2 leaf/s]; zero for a leafless cohort. -------------------------!
    elemental pure function transp_per_leaf_area(amount, dt, nplant, leaf_area) result(rate)
       real(wp), intent(in) :: amount      !< [kg/m2 ground] over dt
       real(wp), intent(in) :: dt          !< [s]
@@ -343,11 +316,9 @@ contains
       call array_to_state(vy, n, nsl, out)
    end subroutine state_extrap
 
-   !----- clamp the extrapolated CAS enthalpy + humidity into a wide PHYSICAL range so a BETA=2.414   !
-   !      overshoot cannot drive cas_enthalpy_to_temp to a wild T where qsat(T) overflows to NaN. Only  !
-   !      active on a pathological overshoot (then the step is rejected); an in-range base3 is untouched.!
-   !      `nfire` (optional) counts this call as an activation when the clamp actually moved the      !
-   !      state -- see column_budget_t's clamp_* fields for why activations are tracked at all.       !
+   !----- Clamp the extrapolated CAS enthalpy and humidity into a wide physical range, so an overshoot  !
+   !      of the ARS base (b = 1 + sqrt(2)) cannot reach a temperature where qsat overflows; in range it !
+   !      is an identity. nfire counts the calls that moved the state (column_budget_t's clamp_*). ---!
    pure subroutine clamp_cas(s, nfire)
       type(column_state_t), intent(inout) :: s
       integer(ik), optional, intent(inout) :: nfire
@@ -359,9 +330,8 @@ contains
       t     = min(max(t, T_LO), T_HI)
       s%cas_shv      = shv_c
       s%cas_enthalpy = cas_temp_to_enthalpy(t, shv_c)
-      !----- an in-range state round-trips through cas_enthalpy_to_temp/cas_temp_to_enthalpy, so    !
-      !      compare against the INPUT rather than testing the bounds -- that also catches a         !
-      !      shv-only clamp, which moves enthalpy through the humidity term. ------------------------!
+      !----- An in-range state round-trips, so compare with the input: that also catches a          !
+      !      humidity-only clamp, which moves the enthalpy. ------------------------------------------!
       if (present(nfire)) then
          if (s%cas_enthalpy /= enth_in) nfire = nfire + 1_ik
       end if
@@ -417,7 +387,7 @@ contains
    end function zero_like
 
    !---------------------------------------------------------------------------------------!
-   ! Whole-column STORE TOTALS for the conservation ledgers [per m2 ground]. Plain ascending loops, !
+   ! Whole-column store totals for the conservation ledgers [per m2 ground]. Plain ascending loops, !
    ! shared by both schemes, so a ledger built from these is the same arithmetic on both.           !
    !---------------------------------------------------------------------------------------!
    pure function soil_water_store(theta, dz, nsl) result(w)     ! [kg/m2]
@@ -457,7 +427,7 @@ contains
    end function canopy_film_store
 
    !---------------------------------------------------------------------------------------!
-   ! Canopy-film capacity clamp on the COMMITTED state: cap each cohort's leaf/wood film at        !
+   ! Canopy-film capacity clamp on the committed state: cap each cohort's leaf/wood film at        !
    ! leaf_max*LAI / wood_max*WAI and floor it at 0; the clipped excess (overflow) and the floored    !
    ! shortfall (deficit) are returned so the caller books them in the whole-column ledger.          !
    !---------------------------------------------------------------------------------------!
@@ -493,9 +463,8 @@ contains
    end subroutine deposit_condensate
 
    !---------------------------------------------------------------------------------------!
-   ! Unpack the committed column state into the patch biophysics record: CAS twins (+ diagnosed    !
-   ! temperature), soil energy and moisture, plant internal water, canopy films. The ponding       !
-   ! store is NOT unpacked here -- both schemes commit it separately under the soil-water mask.    !
+   ! Unpack the committed column state into the patch biophysics record: CAS twins (and their      !
+   ! temperature), soil energy and moisture, plant internal water, canopy films; not the pond.    !
    !---------------------------------------------------------------------------------------!
    pure subroutine unpack_column_state(y_out, n, nsl, biophys)
       type(column_state_t),  intent(in)    :: y_out
@@ -511,12 +480,8 @@ contains
       biophys%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
       biophys%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
       biophys%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
-      !----- w_surface / w_surface_energy are EXCLUDED, not forgotten. The pond is committed from the  !
-      !      water network by each scheme's commit (column_fast_step_ark/_rk45), so writing it here  !
-      !      would commit it twice. THIS IS THE COMMIT PATH: a                                        !
-      !      field genuinely omitted here is computed, balanced by every ledger, and then dropped on !
-      !      the floor -- which is why the exclusion is stated rather than left to be inferred, and  !
-      !      asserted in test_state_combinators.  ----------------------------------------------------!
+      !----- The pond (w_surface, w_surface_energy) is left out on purpose: each scheme commits it from  !
+      !      the water network, so writing it here would commit it twice (test_state_combinators). ---!
    end subroutine unpack_column_state
 
    !----- Re-diagnose every layer's temperature and liquid fraction from the committed energy + water. -!
@@ -533,15 +498,11 @@ contains
 
    !------------------------------------------------------------------------------------------------!
    ! commit_tissue_energy -- each tissue's end-of-step energy and temperature, and the tissue store !
-   ! the whole-column ledger counts (docs/science/vegetation_energy_dynamics.md eqs. (9)-(10)).     !
-   ! Each tissue relaxed from its start-of-step temperature at the heat capacity held over the      !
-   ! step, and t_leaf_avg/t_wood_avg are the march's time-average of where it relaxed to: the       !
-   ! temperature whose heat matches what the canopy air received. Its energy gains that heat,       !
-   ! cap*(t_avg - t0), and the enthalpy its own water gained (docs/science/soil_plant_water.md      !
-   ! eq. (5)). Its temperature is then what that energy gives with the water it holds at the end    !
-   ! of the step. With the vegetation-energy mask off there is no heat, so water that arrived at    !
-   ! the tissue's temperature leaves the temperature where it was; with the hydraulics mask off     !
-   ! no water moved. A leaf with no heat capacity takes its wood's temperature.                     !
+   ! the whole-column ledger counts (docs/science/vegetation_energy_dynamics.md eqs. (9)-(10)). The  !
+   ! energy gains the heat cap*(t_avg - t0), t_avg being the march's time-average of where the      !
+   ! tissue relaxed to, and the enthalpy its water gained (docs/science/soil_plant_water.md eq. (5)); !
+   ! the temperature is read back with the end-of-step water. A masked-off process adds nothing; a  !
+   ! leaf with no heat capacity takes its wood's temperature.                                        !
    !------------------------------------------------------------------------------------------------!
    pure subroutine commit_tissue_energy(tissue, nplant, veg_energy_on, water_on, dt, t_leaf_avg, t_wood_avg, n, &
                                         biophys, store0, store1)
@@ -585,23 +546,13 @@ contains
    end subroutine commit_tissue_energy
 
    !---------------------------------------------------------------------------------------!
-   ! assemble_soil_energy_forcing -- the soil-heat column's boundary and volumetric forcing from       !
-   ! the surface ground heat flux and the water that moves through it. The ONE assembler for the       !
-   ! ARK stage (meds_fast_be_stage%column_be_stage) and the whole-column RHS                           !
-   ! (meds_fast_time_derivs%column_derivs); both take every water flow from the soil-plant water       !
-   ! network's step, so the energy advects the water the committed theta actually moved                !
-   ! (docs/science/numerical_scheme.md §5b, docs/science/soil_plant_water.md §5). One sign             !
-   ! convention:                                                                                       !
-   !                                                                                                   !
-   !   * face_flux(k) [m/s] is the network's DOWN-positive time-mean flow at layer k's lower face;     !
-   !     the energy kernel wants UP-positive, hence the sign flip;                                     !
-   !   * water_heat_out(k) [W/m2] is the enthalpy leaving layer k with water that leaves it other      !
-   !     than across a face -- root uptake at the layer's temperature, and in the top layer the        !
-   !     water it pushes up into the pond -- plus, in the bottom layer, the drainage enthalpy e_drain; !
-   !   * the TOP face carries infiltration at the pond temperature t_infil as a kernel term with the   !
-   !     same upwind rule as the interior faces; the BOTTOM face is 0 here because the drainage        !
-   !     enthalpy is charged through the bottom layer's sink instead (the ledger's convention). There  !
-   !     is deliberately NO runoff term: runoff leaves the POND, not soil layer 1.                     !
+   ! assemble_soil_energy_forcing -- the soil-heat column's forcing from the ground heat flux and the  !
+   ! water network's flows, for the ARK stage and column_derivs alike                                  !
+   ! (docs/science/numerical_scheme.md §5b, docs/science/soil_plant_water.md §5). face_flux is down-   !
+   ! positive (the kernel wants up, hence the flip); water_heat_out is the enthalpy leaving each layer !
+   ! other than across a face, plus the drainage's in the bottom layer, whose face is therefore 0; the !
+   ! top face carries infiltration at t_infil with the interior faces' upwind rule. No runoff term:    !
+   ! runoff leaves the pond.                                                                           !
    !---------------------------------------------------------------------------------------!
    pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, theta, water_heat_out,                  &
                                                 face_flux, infiltration, t_infil, e_drain)
@@ -627,12 +578,10 @@ contains
    end subroutine assemble_soil_energy_forcing
 
    !---------------------------------------------------------------------------------------!
-   ! apply_process_mask -- hold every masked-OFF process at its start-of-step state. The process      !
-   ! mask reduces the column for diagnosis (a frozen store still exchanges with its neighbours, so a  !
-   ! reduced column cannot conserve -- see mask_is_full); the march integrates everything and the     !
-   ! masked fields are then restored here, once, on the committed state. ONE routine for both         !
-   ! schemes, so the two cannot restore different fields. The pond rides with soil water; on a scheme !
-   ! that passes it through the stages the restore is an identity.                                    !
+   ! apply_process_mask -- restore every masked-off process to its start-of-step state, once, on the  !
+   ! committed state, for both schemes. The mask reduces the column for diagnosis: a held store still  !
+   ! exchanges with its neighbours, so a reduced column does not conserve (mask_is_full). The pond     !
+   ! rides with soil water.                                                                            !
    !---------------------------------------------------------------------------------------!
    pure subroutine apply_process_mask(mask, y, y_out, n, nsl)
       type(process_mask_t), intent(in)    :: mask

@@ -15,7 +15,7 @@ module meds_fast_params
 
    !----- [fast].time_integrator (docs/science/numerical_scheme.md §3). -------------------!
    integer(ik), parameter :: INTEG_ARK  = 2_ik   !< ESDIRK2 coupled implicit column (default)
-   integer(ik), parameter :: INTEG_RK45 = 3_ik   !< adaptive Cash-Karp RK45, the accuracy baseline
+   integer(ik), parameter :: INTEG_RK45 = 3_ik   !< adaptive Cash-Karp RK45, the explicit alternative
 
    !----- [fast].error_level. -------------------------------------------------------------!
    integer(ik), parameter :: CTRL_L0_FIXED    = 0_ik   !< fixed sub-steps

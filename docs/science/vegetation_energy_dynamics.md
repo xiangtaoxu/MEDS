@@ -47,6 +47,10 @@ $`f_{wet}`$ evaporates the intercepted film through the boundary layer alone, pa
 enthalpy the film's liquid arrived with. Wood has only the film pathway. Once the water network has
 fixed the step's transpiration, the dry share carries it as a fixed latent term
 ($`\mathrm{LE}_{slope}=0`$), so the transpiration the leaf reports is exactly the water it lost.
+The tissue is charged the full $`h_v`$, not the latent heat alone: charging it only $`L`$, with the
+liquid part $`h_v-L`$ charged to the soil, would charge the soil twice beside the explicit soil → wood
+→ leaf chain of advected enthalpy, and heat the leaf for free. $`h_v`$ is taken at $`T_{cas}`$, the
+linearization base; the difference $`c_{p,vap}(T_{leaf}-T_{cas})`$ is about 0.2 % of $`h_v`$.
 
 **A thin tissue is a small tissue.** Every term of eq. (1), and the heat capacity of eq. (8), is a
 per-plant quantity times the plant density: the absorbed radiation, the sapflow's enthalpy, the
@@ -126,8 +130,10 @@ R_{net} = A_{sw} + A_{lw} - 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI}\,\Del
 ```
 
 ($E$ per latent pathway; $`Q_{adv}`$ stays out of $`R_{net}`$ because it is an internal soil-to-plant
-transfer, not a radiative input at the column boundary). Using one weight for both is what breaks
-conservation; pairing them closes the balance identically:
+transfer, not a radiative input at the column boundary: the soil's `root_heat_sink` has already
+debited it, and $H$ and $E$ carry it on into the canopy air through $`\Delta T_{\rm avg}`$, so counting
+it in $`R_{net}`$ as well would count it twice in the whole-column ledger). Using one weight for both is
+what breaks conservation; pairing them closes the balance identically:
 
 ```math
 a_{\rm store}\,(\Delta T_{\rm end}-\Delta T_{\rm prev})+\mathrm{denom}\cdot\Delta T_{\rm avg}=\mathrm{numer}
@@ -168,7 +174,8 @@ internal water, both from the water network. Fresh wood's specific heat (about 2
 100 % moisture) is not used: the water is counted on its own, so a fresh-wood value would count it
 twice. The fast loop and the state layer's `cohort_tissue_heat_capacity` build the capacity the same
 way, so the fusion weights and the slow ledger use the same capacity. The intercepted film is a
-separate store and is not in $`\mathrm{cap}_{leaf}`$.
+separate store and is not in $`\mathrm{cap}_{leaf}`$: it has its own phase, and folding it into a
+temperature-based capacity would commit to a film that can never freeze.
 
 The wood's area and its sapwood come from stem-size allometries (`meds_allometry_lib`; each PFT's
 `[allometry]` `wai_b1/b2`, `sapwood_area_b1/b2`), with $D$ the diameter [cm]. The wood area index is

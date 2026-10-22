@@ -1,20 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_be_stage -- the IMPLICIT STAGE of the fast-loop march, and the water-mass      !
-! advance that rides with it.                                                              !
-!                                                                                          !
-! One ESDIRK stage (docs/science/numerical_scheme.md §3 `ark`, eq. (1)) is a               !
-! backward-Euler solve of the coupled surface system: the canopy air's enthalpy and        !
-! humidity against the leaf, wood and ground temperatures, closed by a small Newton        !
-! iteration over a forward-difference Jacobian, with CO2 riding the same backward-Euler    !
-! box. That machinery is independent of WHICH tableau calls it, which is the point of      !
-! pulling it out: `meds_fast_ark` keeps the tableau and the march, and the RHS test        !
-! (test_column_derivs) reaches the same stage solver directly.                             !
-!                                                                                          !
-! Contents: `column_be_stage` (the stage), `newton_surface_solve` + `jac_surface` +        !
-! `cas_box_commit` (its inner solve), and `advance_plant_water` /                          !
-! `advance_surf_water_full` (the mass-form water advance a stage commits alongside the     !
-! energy solve).                                                                           !
+! meds_fast_be_stage -- the implicit stage of the fast-loop march, and the water advance that  !
+! rides with it. One ESDIRK stage (docs/science/numerical_scheme.md §3 `ark`, eq. (1)) is a     !
+! backward-Euler solve of the canopy air against the leaf, wood and ground temperatures, by a   !
+! small Newton on a forward-difference Jacobian. column_be_stage is the stage,                  !
+! newton_surface_solve and jac_surface its inner solve, cas_box_commit the box commit;          !
+! advance_plant_water and advance_surf_water_full move plant and film water once per step.      !
+! meds_fast_ark keeps the tableau and the march.                                                !
 !==========================================================================================!
 module meds_fast_be_stage
    use meds_kinds, only : wp, ik
@@ -37,12 +29,10 @@ module meds_fast_be_stage
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! column_be_stage -- ONE backward-Euler stage of the STIFF block: the CAS twins (implicit in the     !
-   ! atmospheric exchange; np > 1 -> the coupled 2x2 Newton) and soil heat (implicit, Thomas solve),    !
-   ! driven by the frozen surface sources. Water is the soil-plant water network's: soil water moves    !
-   ! at its steady rate and plant water is passed through, then advanced once over the step             !
-   ! (advance_plant_water). It solves Y = base + dt*f(Y), so each ESDIRK2 stage (dt = gamma*h) is       !
-   ! one call.                                                                                          !
+   ! column_be_stage -- one backward-Euler stage Y = base + dt*f(Y) of the stiff block (each ESDIRK2   !
+   ! stage, dt = gamma*h, is one call): the CAS twins, implicit in the atmospheric exchange (niter > 1:  !
+   ! the coupled 2x2 Newton), and soil heat (implicit, Thomas). Soil water moves at the water network's !
+   ! steady rate; plant water is passed through and advanced once (advance_plant_water).               !
    !---------------------------------------------------------------------------------------!
    subroutine column_be_stage(y, frozen, col_config, n, nsl, dt, y_out, surf_tend, niter, bf)
       type(column_state_t),  intent(in)  :: y
@@ -50,18 +40,16 @@ contains
       type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
-      !----- The stage's state and its OWN surface tendencies (incl. transp_c), for the caller to        !
-      !      b-weight into the plant water-mass update -- the SAME surf_tend the stage's own bf/CAS      !
-      !      source used, so the leaves' water debit and the canopy air's vapour credit agree            !
-      !      (docs/science/numerical_scheme.md §5a). Both are filled in place (the caller's              !
-      !      workspace keeps their arrays). -------------------------------------------------------------!
+      !----- The stage's state and its own surface tendencies, the ones its CAS source and bf used; the   !
+      !      caller b-weights transp_c into the plant water, so the leaves' water debit and the canopy     !
+      !      air's vapour credit agree (docs/science/numerical_scheme.md §5a). Both filled in place. -----!
       type(column_state_t),  intent(inout) :: y_out
       type(surface_tend_t),  intent(inout) :: surf_tend
       integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton
-      type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux RATES for the ARK ledger
+      type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux rates for the ARK ledger
 
       type(surface_state_t)      :: y_stage
-      type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with THIS stage's conductances
+      type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with this stage's conductances
       type(soil_energy_column_t) :: se
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
@@ -84,25 +72,18 @@ contains
       cas_molar_capacity = frozen%cas%cas_molar_capacity
       cas_stage = frozen%cas              ! plain scalars: a cheap copy, overridden with this stage's conductances below
 
-      !----- Re-solve the Monin-Obukhov surface layer at THIS STAGE's canopy-air state, so the    !
-      !      ventilation the stage is charged for is the ventilation its own temperature earns.    !
-      !      Everything downstream (the BE commit, the Newton, and the boundary-flux ledger) reads !
-      !      the LOCAL g_atm_heat/g_atm_vapour/g_atm_co2, so refreshing them here keeps "one flux, both sides"           !
-      !      automatically -- the state update and the ledger cannot disagree.                     !
-      !                                                                                          !
-      !      Mirror into cas_stage and CLEAR ITS mo_live: surface_derivs would otherwise re-solve the !
-      !      surface layer on every one of the Newton's residual evaluations (up to 24 per stage)  !
-      !      to fill a CAS tendency this scheme does not even read -- it commits the CAS through   !
-      !      its own backward-Euler denominator.  So ARK pays for exactly ONE solve per stage. ----!
+      !----- Re-solve the surface layer at this stage's canopy-air state, so the stage pays for the       !
+      !      ventilation its own temperature earns (docs/science/numerical_scheme.md §2); the box commit,  !
+      !      the Newton and the ledger all read these values. cas_stage carries them with mo_live cleared,  !
+      !      so surface_derivs does not re-solve on each Newton residual evaluation. ---------------------!
       call cas_conductances(frozen%cas, y%cas_enthalpy, y%cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       cas_stage%g_atm_heat = g_atm_heat
       cas_stage%g_atm_vapour = g_atm_vapour
       cas_stage%g_atm_co2 = g_atm_co2
       cas_stage%mo_live = .false.
 
-      !----- CAS enthalpy + humidity. np==1: the uncoupled single-BE-pass baseline. np>1: a DIRECT 2x2  !
-      !      Newton solve of the coupled backward-Euler surface block (the arrowhead). The FINAL surf_tend     !
-      !      drives the soil sinks (single-flux-per-interface).                                         !
+      !----- np == 1: one evaluation at the stage start; np > 1: the coupled 2x2 Newton. The final      !
+      !      surf_tend drives the box commit and the soil sinks, one flux per interface. ------------!
       if (np <= 1_ik) then
          y_stage%cas_enthalpy = y%cas_enthalpy
          y_stage%cas_shv = y%cas_shv
@@ -121,15 +102,13 @@ contains
       y_out%cas_shv      = shv1
       y_out%cas_co2      = co21
 
-      !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
+      !----- Soil heat: implicit backward Euler, Thomas solve. -------------------------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      !----- The water the soil-plant network moved over the step carries its enthalpy: across the      !
-      !      faces at the network's time-mean flows, in from the pond at the pond's temperature, out with !
-      !      root uptake and the top layer's exfiltration at each layer's start-of-step temperature (the  !
-      !      numbers the wood and the pond were credited), and out of the bottom with drainage. The       !
-      !      leaf pays the full vapour enthalpy of what it transpires (surface_derivs). The stages move    !
-      !      theta at the network's steady rate (below), so the water the faces carry and the water the   !
-      !      layers hold stay in step. --------------------------------------------------------------!
+      !----- The enthalpy of the water the network moved: across the faces at its time-mean flows, in     !
+      !      from the pond at t_infil, out with root uptake and exfiltration at each layer's start-of-step  !
+      !      temperature (what the wood and the pond were credited), and out with drainage                !
+      !      (docs/science/soil_plant_water.md §5). The leaf pays its transpiration's full vapour         !
+      !      enthalpy in surface_derivs. ---------------------------------------------------------------!
       water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
       water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
       e_infil = frozen%hydrology%infiltration * internal_energy_liquid(frozen%hydrology%t_infil)
@@ -140,33 +119,23 @@ contains
       call soil_energy_step_implicit(se, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
-      !----- Soil water is the water network's: the end-of-step theta is committed once, from the          !
-      !      network (frozen%hydrology%theta1), in column_fast_step_ark -- one authority for soil          !
-      !      water (docs/science/numerical_scheme.md §5b, "Every soil-water flow comes from one            !
-      !      solve").                                                                                      !
-      !                                                                                                    !
-      !      The stages move theta at the network's steady rate rather than holding it at theta^n. The     !
-      !      energy step above carries the enthalpy of the water the faces move, at the same steady        !
-      !      rates; with theta held back, the next stage would read that enthalpy as heat in a too-dry     !
-      !      layer: in heavy rain the top layer reads tens of kelvin too warm late in a step (up to        !
-      !      ~50 K at BCI), and the next stage's ground skin sees it. A steady rate is integrated          !
-      !      exactly by both the step and its error estimate, so theta adds nothing to the error, and      !
-      !      the step ends at theta1.                                                                      !
+      !----- Soil water is the network's, its end-of-step theta committed once in column_fast_step_ark     !
+      !      (docs/science/numerical_scheme.md §5b). The stages move theta at its steady rate, so each      !
+      !      layer holds the water whose enthalpy the faces brought in; a steady rate is integrated exactly !
+      !      and adds nothing to the error estimate. ---------------------------------------------------!
       y_out%theta(1:nsl) = y%theta(1:nsl) + dt * frozen%hydrology%theta_rate(1:nsl)
 
-      !----- pond PASSED THROUGH at state^n (state_init above already copied it): the network's        !
-      !      end-of-step pond is committed once per dt_fast in column_fast_step_ark, and the pond      !
-      !      is outside the error norm. ---------------------------------------------------------------!
+      !----- The pond is passed through: column_fast_step_ark commits the network's end-of-step pond,  !
+      !      and the pond is outside the error norm. --------------------------------------------------!
       y_out%w_surface      = y%w_surface
       y_out%w_surface_energy = y%w_surface_energy
 
-      !----- plant water MASS PASSED THROUGH (advanced by advance_plant_water, not here). ----!
+      !----- Plant water mass is passed through (advance_plant_water advances it). -----------!
       y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
       y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
 
-      !----- emit this stage's boundary-flux RATES for the conservation ledger. The b-weight           !
-      !      + cross-substep accumulation happens in ark2_column_step / adaptive_ark_march. Every      !
-      !      quantity is the committed-state flux, so the accumulated amounts telescope to closure.    !
+      !----- This stage's boundary-flux rates for the ledger, all at the committed state, so the amounts   !
+      !      ark2_column_step and adaptive_ark_march b-weight and accumulate telescope to closure. -------!
       if (present(bf)) then
          t_cas1 = cas_enthalpy_to_temp(enth1, shv1)         ! committed CAS temperature, for the reported H
             bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enthalpy_atm
@@ -175,33 +144,26 @@ contains
             bf%cas_vap_out  = g_atm_vapour*shv1
             bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%co2_atm
             bf%cas_co2_out  = g_atm_co2*y_out%cas_co2
-            !----- The bottom face is the flux the soil solve committed: zero on the adiabatic base,      !
-            !      the conduction to deep_temp under the Dirichlet anchor. It crosses the boundary of     !
-            !      both books, the soil's and the whole column's. ----------------------------------------!
+            !----- The bottom face the soil solve committed (zero on the adiabatic base, the conduction  !
+            !      to deep_temp under the Dirichlet anchor) crosses both the soil's and the column's book. !
             bf%soil_enth_in = surf_tend%g_top - eflux%bottom_heat + e_infil
             bf%soil_enth_out= sum(water_heat(1:nsl)) + e_drain
-            !----- Soil water's storage change and its q_top/drainage/uptake flows are the water           !
-            !      network's, booked once per step in column_fast_step_ark, so the per-stage soil-water    !
-            !      amounts are zero and the whole-column water carries only the CAS-vapour exchange        !
-            !      (drainage, runoff and rainfall are fixed for the step). --------------------------------!
+            !----- Soil water's storage change and flows are the network's, booked once per step in     !
+            !      column_fast_step_ark: the per-stage soil-water amounts are zero, and the whole-column   !
+            !      water here is only the CAS-vapour exchange. ------------------------------------------!
             bf%soil_wat_in  = 0.0_wp
             bf%soil_wat_out = 0.0_wp
-            !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare). ---!
-            !----- e_infil (pond -> soil) and the exfiltration (soil -> pond) move water between two       !
-            !      TRACKED stores, so they telescope and are not boundary terms; the root uptake's         !
-            !      enthalpy moves soil -> tissue, also tracked. The rainfall input and the runoff          !
-            !      output are added once at the outer level (docs/science/numerical_scheme.md §5b,         !
-            !      "The pond holds heat"). ----------------------------------------------------------------!
+            !----- ground_rad is the snowfac-blended radiation (abs_sw + abs_lw when bare). Infiltration,  !
+            !      exfiltration and uptake move enthalpy between tracked stores and cancel; rain and runoff  !
+            !      are added once at the outer level (docs/science/numerical_scheme.md §5b). -------------!
             bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad - eflux%bottom_heat
-            !----- The condensate is not a boundary loss: the caller deposits it into soil layer 1         !
-            !      with the enthalpy surface_derivs debited from the CAS (whole_cond,                      !
-            !      whole_cond_enth); the CAS-side loss is already in src_vap/src_enth, so the CAS          !
-            !      water and energy budgets close as they are. --------------------------------------------!
+            !----- The condensate is not a boundary loss: the caller deposits it in soil layer 1 with the  !
+            !      enthalpy surface_derivs debited from the CAS (whole_cond, whole_cond_enth). -----------!
             bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%enthalpy_atm) + e_drain
             bf%whole_wat_in = 0.0_wp
             bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%shv_atm)
             bf%whole_cond   = surf_tend%cond                     ! deposited into soil layer 1, not lost
-            bf%whole_cond_enth = surf_tend%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
+            bf%whole_cond_enth = surf_tend%cond_enth   ! exactly what surface_derivs debited from the CAS
             !----- The reported H, against theta_atm (T at zref), the ledger's basis. ----------------------!
             bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)
             bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%shv_atm)
@@ -209,14 +171,12 @@ contains
    end subroutine column_be_stage
 
    !---------------------------------------------------------------------------------------!
-   ! newton_surface_solve -- the ARROWHEAD: a direct 2x2 Newton solve of the coupled backward-Euler     !
-   ! CAS surface block { R_H, R_q } = 0 for (cas_enthalpy H1, cas_shv q1), where the surface sources    !
-   ! src_enth/src_vap depend nonlinearly on (H1,q1) through tcas, qcas and qsat. Converges              !
-   ! quadratically (~1 step) and stays robust near saturation, where a leaf<->CAS Picard iteration      !
-   ! does not. Numerical Jacobian (forward-difference surface_derivs, jac_surface) -- captures the      !
-   ! strong VPD self-limiting d src_vap/dq with no derivation risk. Singular-Jacobian guard + line      !
-   ! search + eval cap, and no supersaturation clamp (below); never error stops (GPU-safe). Returns     !
-   ! the surface tendencies at the solution; column_be_stage commits the box from them in flux form.    !
+   ! newton_surface_solve -- a direct 2x2 Newton solve of the coupled backward-Euler canopy-air block   !
+   ! {R_H, R_q} = 0 in (cas_enthalpy, cas_shv), whose surface sources depend on both through tcas,    !
+   ! qcas and qsat; robust near saturation, where a leaf <-> CAS Picard iteration is not. The forward- !
+   ! difference Jacobian (jac_surface) captures the strong VPD self-limiting d src_vap/dq. A singular- !
+   ! Jacobian fallback, a line search and an evaluation cap; it never stops the run. Returns surf_tend !
+   ! at the solution, from which column_be_stage commits the box.                                      !
    !---------------------------------------------------------------------------------------!
    subroutine newton_surface_solve(y, cas, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, &
                                    surf_tend, nfeval, ok)
@@ -278,10 +238,8 @@ contains
          do ls = 1_ik, LS_MAX
             Ht = Hk + lam*delH
             qt = qk + lam*delq
-            !----- NO supersaturation STATE clamp: ED2 never clamps can_shv to SAT*qsat -- doing so is a   !
-            !      harsh state discontinuity that inflates the ARK2 embedded error in cas_shv AND cas_     !
-            !      enthalpy near RH=1 and thrashes the adaptive controller. Like ED2 we TOLERATE transient !
-            !      supersaturation; the smooth condensation SINK in surface_derivs relaxes it physically.  !
+            !----- No supersaturation clamp on the state: a jump there inflates the embedded error near  !
+            !      RH = 1. Transient supersaturation is relaxed by surface_derivs' condensation sink. ----!
             y_stage%cas_enthalpy = Ht
             y_stage%cas_shv = qt
             call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,         &
@@ -303,7 +261,7 @@ contains
    end subroutine newton_surface_solve
 
    !---------------------------------------------------------------------------------------!
-   ! The backward-Euler canopy-air box commit, through the SHARED box kernel                           !
+   ! The backward-Euler canopy-air box commit, through the shared box kernel                           !
    ! meds_cas_biophysics%cas_column_step_implicit (docs/science/canopy_air_space_biophysics.md         !
    ! eq. (2)): one implementation of the box, not a copy of its formulas here.                         !
    !---------------------------------------------------------------------------------------!
@@ -370,12 +328,10 @@ contains
    end subroutine jac_surface
 
    !---------------------------------------------------------------------------------------!
-   ! advance_plant_water -- each cohort's leaf and wood water over an ARK step of length dt, at the   !
-   ! soil-plant water network's time-mean rates: sapflow and root uptake in, sapflow and the          !
-   ! transpiration the stages charged the canopy air (transp_c_bw, b-weighted over the step) out. The !
-   ! stages hold each cohort's transpiration at the network's (surface_derivs), so a step of dt_fast  !
-   ! ends exactly where the network did, and the canopy air received exactly the water the leaves     !
-   ! lost. Nothing is floored: the network keeps every store inside its curve.                       !
+   ! advance_plant_water -- each cohort's leaf and wood water over an ARK step at the network's      !
+   ! time-mean rates: sapflow and uptake in; sapflow and the b-weighted transpiration the stages     !
+   ! charged the canopy air out. The stages hold transpiration at the network's, so a dt_fast step  !
+   ! ends where the network did. Nothing is floored: the network keeps every store inside its curve. !
    !---------------------------------------------------------------------------------------!
    pure subroutine advance_plant_water(y, frozen, n, dt, transp_c_bw, y_out)
       type(column_state_t),  intent(in)    :: y
@@ -394,11 +350,10 @@ contains
    end subroutine advance_plant_water
 
    !---------------------------------------------------------------------------------------!
-   ! advance_surf_water_full -- operator-split canopy-SURFACE water over the FULL dt from               !
-   ! y%*_surf_water, the film analogue of advance_plant_water: frozen%film%intercept_leaf/wood is       !
-   ! the frozen interception inflow, film_evap_*_bw the b-weighted per-stage outflow (the SAME          !
-   ! number the caller's sf2/sf3 credited to the CAS). The raw, unclamped Euler step only:              !
-   ! capacity clamping and the overflow/deficit bookkeeping happen in column_fast_step_ark. ------------!
+   ! advance_surf_water_full -- the canopy film over the full dt, the film analogue of                 !
+   ! advance_plant_water: frozen interception in, b-weighted film evaporation out (the number the CAS  !
+   ! was credited). Unclamped: column_fast_step_ark clamps it and books the overflow and deficit.     !
+   !---------------------------------------------------------------------------------------!
    pure subroutine advance_surf_water_full(y, frozen, n, dt, film_evap_leaf_bw, film_evap_wood_bw, y_out)
       type(column_state_t),  intent(in)    :: y
       type(column_frozen_t), intent(in)    :: frozen
@@ -407,10 +362,8 @@ contains
       real(wp),               intent(in)    :: film_evap_leaf_bw(n), film_evap_wood_bw(n)
       type(column_state_t),  intent(inout) :: y_out
       integer(ik) :: i
-      !----- Not floored here: the caller's overflow/deficit bookkeeping (column_fast_step_ark, as       !
-      !      column_fast_step_rk45 does for its own films) must SEE a negative value to credit the       !
-      !      shortfall back to the whole-column outflow; clamping here would silently create that        !
-      !      water. -------------------------------------------------------------------------------------!
+      !----- Not floored: the caller's deficit bookkeeping must see a negative film to credit the       !
+      !      shortfall to the whole-column outflow; a floor here would create that water. ------------!
       do i = 1_ik, n
          y_out%leaf_surf_water(i) = y%leaf_surf_water(i) + dt*(frozen%film%intercept_leaf(i) - film_evap_leaf_bw(i))
          y_out%wood_surf_water(i) = y%wood_surf_water(i) + dt*(frozen%film%intercept_wood(i) - film_evap_wood_bw(i))

@@ -1,26 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_plant_respiration -- non-leaf autotrophic-respiration COMPUTE kernels (an ED2 port; !
-! docs/science/plant_respiration.md).                                                      !
-!                                                                                          !
-!   * stem_maintenance_respiration -- woody-tissue maintenance respiration, eq. (3): a     !
-!       peaked temperature response times two terms, each with its own 25 degC rate -- the !
-!       ED2 Chambers (2004) surface-area form on the stem                                  !
-!       surface (cylinder + WAI branch term), and a sapwood term on the sapwood volume     !
-!       (the living wood; Ryan 1990). A PFT sets either rate to 0 to use the other basis   !
-!       alone.                                                                             !
-!   * fine_root_maintenance_respiration -- fine-root maintenance respiration, eq. (4), ED2 !
-!       per-broot form: a 25 degC per-kgC baseline times the layer-summed temperature      !
-!       scale (root_zone_temp_scale), times fine-root biomass.                             !
-! (Growth/construction respiration lives with the growth it charges, in                    !
-! meds_plant_carbon_allocation.)                                                           !
-!                                                                                          !
-! The maintenance factors are 25 degC-referenced (MEDS's single model-wide reference). ED2 !
-! references stem/root respiration at 15 degC, so seeding a MEDS default from an           !
-! ED2/Chambers number is a one-time conversion done at PARAMETER INIT (where PFT params    !
-! are chosen), NOT here -- the kernels just consume the 25 degC factor. All fluxes are per !
-! plant [umol CO2 / plant / s]; x nplant -> per ground. Stateless. Leaf Rd is in the leaf  !
-! solver, not here. The fast-loop pre-pass (meds_fast_prepass) is the caller.              !
+! meds_plant_respiration -- stateless non-leaf maintenance respiration, per plant          !
+! [umol CO2/plant/s], at rates referenced to 25 degC (docs/science/plant_respiration.md):  !
+!   * stem_maintenance_respiration      -- stem surface and sapwood terms, eq. (3);        !
+!   * fine_root_maintenance_respiration -- per unit fine-root carbon, eq. (4), with the    !
+!                                          layer-summed scale root_zone_temp_scale.        !
+! Leaf Rd is in the leaf solver; growth respiration is in meds_plant_carbon_allocation.    !
 !==========================================================================================!
 module meds_plant_respiration
    use meds_kinds,         only : wp, ik
@@ -36,13 +21,9 @@ module meds_plant_respiration
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Stem maintenance respiration [umol CO2 / plant / s],                                  !
-   ! docs/science/plant_respiration.md eq. (3). `elemental pure` over the per-plant SCALAR !
-   ! inputs (MEDS_NUMERICS_SCOPING.md §11): a scalar call does one cohort; an array call   !
-   ! (`wood_temp(:)`, `dbh(:)`, ...) does a whole patch, with the uniform `params` POD     !
-   ! broadcast -- so no separate batch wrapper is needed (the elemental broadcast IS the   !
-   ! batch), and a Python/ctypes wrapper vectorises over numpy arrays. Grasses             !
-   ! (is_woody=.false.) have no stem => 0.                                                 !
+   ! Stem maintenance respiration [umol CO2/plant/s], docs/science/plant_respiration.md    !
+   ! eq. (3). Elemental: a scalar call does one cohort, an array call a patch, with params !
+   ! broadcast. A grass (is_woody = .false.) respires nothing here.                        !
    !---------------------------------------------------------------------------------------!
    elemental pure subroutine stem_maintenance_respiration(wood_temp, dbh, height, wai, nplant,          &
                                                          aboveground_frac, is_woody, resp_factor25,     &
@@ -52,18 +33,13 @@ contains
       real(wp),            intent(in)  :: height      !< [m]  cohort height
       real(wp),            intent(in)  :: wai         !< [m2/m2 ground] wood area index
       real(wp),            intent(in)  :: nplant      !< [plant/m2] stem density
-      !----- PER-COHORT, not a run constant: this is the PFT's aboveground fraction of woody     !
-      !      carbon, the same trait demography and cohort fusion read, so a run whose PFTs       !
-      !      differ in allocation uses their values here too. -----------------------------------!
       real(wp),            intent(in)  :: aboveground_frac  !< [--] cohort PFT's aboveground fraction
       logical,             intent(in)  :: is_woody          !< cohort PFT is woody (grass => 0)
       real(wp),            intent(in)  :: resp_factor25     !< [umol CO2/m2 stem/s @25C] cohort PFT's surface rate
-      !----- The sapwood term: the living wood respires by its volume, so a small stem, all of it  !
-      !      sapwood but little of it per m2 of surface, pays less than the surface form charges   !
-      !      it, and a large one more. The volume includes the coarse roots, as the surface does. --!
+      !----- The sapwood term: the living wood respires by its volume, coarse roots included (§2). ---!
       real(wp),            intent(in)  :: sap_volume        !< [m3/plant] sapwood volume
       real(wp),            intent(in)  :: resp_sapwood25    !< [umol CO2/m3 sapwood/s @25C] cohort PFT's sapwood rate
-      type(wood_args_t),   intent(in)  :: params      !< run-uniform trait POD (broadcast)
+      type(wood_args_t),   intent(in)  :: params      !< run-wide temperature-response parameters
       real(wp),            intent(out) :: stem_resp   !< [umol CO2 / plant / s]
       real(wp) :: tscale, stem_area
 
@@ -74,8 +50,8 @@ contains
 
       !----- Peaked temperature response (= 1 at 25 degC), shared with leaf Rd. ---------------!
       tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, wood_temp)
-      !----- Per-plant stem surface area: cylinder lateral area + the WAI branch term, scaled !
-      !      by the aboveground structural fraction (ED2). WAI is per-ground => /nplant.        !
+      !----- Per-plant stem surface: the cylinder plus the WAI branch term (WAI is per ground, !
+      !      hence /nplant), over the aboveground fraction to cover the whole woody plant.      !
       stem_area = ( pi * (dbh * 1.0e-2_wp) * height                                             &
                   + pi * wai / max(nplant, tiny_num) ) / max(aboveground_frac, tiny_num)
       !----- The surface and sapwood terms share the temperature response (eq. (3)); a PFT with   !
@@ -84,11 +60,8 @@ contains
    end subroutine stem_maintenance_respiration
 
    !---------------------------------------------------------------------------------------!
-   ! Fine-root maintenance respiration [umol CO2 / plant / s],                             !
-   ! docs/science/plant_respiration.md eq. (4). `elemental pure` over the per-plant SCALAR !
-   ! inputs (MEDS_NUMERICS_SCOPING.md §11): scalar => one cohort, array => a patch (the    !
-   ! root-zone temperature scale is patch-uniform, so a scalar `tscale_root` broadcasts    !
-   ! over the `broot(:)` array). broot=0 => 0.                                             !
+   ! Fine-root maintenance respiration [umol CO2/plant/s], docs/science/plant_respiration.md !
+   ! eq. (4). Elemental; the patch-uniform tscale_root broadcasts over the cohorts.        !
    !---------------------------------------------------------------------------------------!
    elemental pure subroutine fine_root_maintenance_respiration(tscale_root, broot, resp_factor25,      &
                                                               root_resp)
@@ -100,15 +73,9 @@ contains
    end subroutine fine_root_maintenance_respiration
 
    !---------------------------------------------------------------------------------------!
-   ! root_zone_temp_scale -- the root-weighted temperature scale for fine-root maintenance !
-   ! respiration, summed OVER LAYERS rather than evaluated at a mean temperature:          !
-   !                                                                                       !
-   !     sum_k root_frac_k * f(T_k)     NOT     f( sum_k root_frac_k * T_k )               !
-   !                                                                                       !
-   ! f is nonlinear, and the peaked form is convex below its optimum and concave near it,  !
-   ! so a mean temperature would make a SEASONAL error that flips sign                     !
-   ! (docs/science/plant_respiration.md §3, eq. (4)). Patch-uniform, so the caller         !
-   ! evaluates it ONCE and broadcasts it over the cohort array.                            !
+   ! The root-weighted temperature scale sum_k root_frac_k * f(T_k): summed over layers,   !
+   ! not f at the mean temperature, whose error flips sign with the season                 !
+   ! (docs/science/plant_respiration.md §3). Patch-uniform: evaluated once per patch.      !
    !---------------------------------------------------------------------------------------!
    pure function root_zone_temp_scale(soil_temp, root_frac, n, params) result(tscale)
       real(wp),            intent(in) :: soil_temp(:)  !< [K] per-layer soil temperature

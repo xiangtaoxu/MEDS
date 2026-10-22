@@ -192,10 +192,11 @@ Heterotrophic respiration must reach the canopy air **sub-daily**, but the pools
 **daily** — the classic double-counting hazard. MEDS resolves it by having both ends read the same
 object: once per day the fast driver copies the patch's pools into the fast state, and that **frozen**
 copy is what every sub-step respires, through the very kernel the daily step's bookkeeping uses. Each
-sub-step, `heterotrophic_respiration_matrix` evaluates eq. (2) on it and converts $`R_h`$ to
-$`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the canopy-air CO₂ twin; the driver
-integrates $`\xi_j`$ into the per-patch `xi_accum` (the $`\xi^{\mathrm{int}}`$ of eq. (5)) and $`R_h`$
-into `rh_fast_accum`, both reset once per slow step; and the daily `soil_carbon_step` is the **sole
+sub-step, `heterotrophic_respiration_matrix` evaluates eq. (2) on it, and the fast pre-pass converts
+$`R_h`$ to $`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the canopy-air CO₂ twin;
+the driver integrates $`\xi_j`$ into the per-patch `xi_accum` (the $`\xi^{\mathrm{int}}`$ of eq. (5))
+and $`R_h`$, still in the pools' kgC m⁻² day⁻¹ so the seam check below compares like with like, into
+`rh_fast_accum`, both reset once per slow step; and the daily `soil_carbon_step` is the **sole
 writer** of the real pools, debiting them with exactly that $`\xi^{\mathrm{int}}`$.
 
 The day's total fast Rh therefore equals the daily pool debit **by construction**, and
@@ -296,9 +297,10 @@ and `er_micr_slp` 0.17.
 
 **`soil_carbon_on = false` is no soil carbon, not a coarser one.** Litter is discarded at the slow
 step and heterotrophic respiration is zero, so ecosystem respiration carries only its autotrophic
-part. Over a year at Ithaca, annual-mean NEE then reads −4.657 µmol m⁻² s⁻¹ against −2.464 with soil
-carbon on, an 89 % stronger apparent sink (Rh 0 against 0.833 kgC m⁻² yr⁻¹), for no saving in wall
-clock.
+part. A prescribed pool respired through an empirical Q10 form would not be a coarser approximation
+either: the pools are empty and take no litter, so its CO₂ would be carbon from nothing. Over a year
+at Ithaca, annual-mean NEE then reads −4.657 µmol m⁻² s⁻¹ against −2.464 with soil carbon on, an
+89 % stronger apparent sink (Rh 0 against 0.833 kgC m⁻² yr⁻¹), for no saving in wall clock.
 
 The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`, `f_labile_stem`,
 `aboveground_frac`, `struct_lignin_frac`.

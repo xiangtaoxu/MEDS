@@ -49,11 +49,16 @@ each bitten at least once, and each was invisible to ifx:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's whole-program
   optimizer miscompiles the temporary descriptor — silently wrong values at `-O2`, a segfault at
-  `-O0` — while `ifx -stand f18 -check all` emits only a remark. Bind to a named array first.
+  `-O0` — while `ifx -stand f18 -check all` emits only a remark. Bind to a named array first. The
+  same optimizer returned 0 for a flux the fast driver formed from fields it read back after the
+  call that filled them, which is why `column_fast_step` returns the sensible flux `h_flux` itself.
 - **nvfortran rejects a `BLOCK` construct** anywhere inside a parallel region.
 - **ifx builds `private` and `firstprivate` copies of a derived type through a compiler-generated
-  static mold** that every thread writes. This is why the fast loop's per-patch scratch is an
-  explicit per-thread pool indexed by thread number rather than an OpenMP data-sharing clause.
+  static mold** that every thread writes. Nor does ifx default-initialise a derived type declared
+  in a `BLOCK` inside an outlined region: its allocatable components hold garbage, an `allocated`
+  test reads them as allocated, and the first deallocate segfaults, even on one thread. This is why
+  the fast loop's per-patch scratch is an explicit per-thread pool indexed by thread number rather
+  than an OpenMP data-sharing clause or a block-local.
 - **Never pass a component section `a(:)%c` as an actual argument when `c`'s type has
   allocatable components.** gfortran copies the section into a temporary and back, and the
   copy-out leaves the originals' allocatable components dangling: a segfault a step later, with

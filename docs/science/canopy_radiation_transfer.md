@@ -175,8 +175,10 @@ band the ground reflectance is the (per-band) soil albedo and its emission is ze
 band the reflectance is $1-\varepsilon_{soil}$ and the emission is $`\varepsilon_{soil}\,\sigma\,
 T_{soil}^4`$. Its state (`ground_optics_state_t`) is **bare soil plus snow**: the per-band soil albedo,
 the emissivity and the skin temperature, which the driver blends toward the snowpack's albedo,
-emissivity and temperature by the Niu-Yang snow-cover fraction. Litter, standing water and soil moisture
-do not change the ground optics (see docs/ROADMAP.md).
+emissivity and temperature by the Niu-Yang snow-cover fraction, so a partial pack changes the ground
+continuously; the snow's own albedo moves from its fresh to its aged value with the liquid fraction of
+the pack's surface layer. Litter, standing water and soil moisture do not change the ground optics (see
+docs/ROADMAP.md).
 
 `canopy_radiation` (the sealed public seam, `meds_canopy_radiation`) loops the configured bands,
 blends optics per cohort, and dispatches each band to `solve_band`.
@@ -193,8 +195,10 @@ A_{b,i} = A_{b,\ell}\,\frac{(1-\omega_i)\,\mathrm{ETAI}_i}{\sum_{j\in\ell}(1-\om
 
 and every member sees the light reaching the layer's top. A one-member layer is exactly the per-cohort
 solve. Stacking tied cohorts instead would put whichever sorts first on top, so the light split between
-PFTs would follow the PFT index rather than the ecology; recruits tie exactly, because they all enter at
-one recruit size.
+PFTs would follow the PFT index rather than the ecology. The canopy total barely moves when they are
+stacked, so no whole-canopy albedo or GPP check would show the error; only the split between the tied
+cohorts changes. Ties arise at recruitment: every PFT recruits at the one smallest tracked height,
+`min_cohort_height`.
 
 `canopy_radiation` then splits each cohort's absorbed radiation into leaves and wood by the same
 `leaf_frac` weight the optics blend produced:

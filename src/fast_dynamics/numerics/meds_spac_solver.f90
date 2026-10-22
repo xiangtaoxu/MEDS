@@ -1,39 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_spac_solver -- one patch's soil and plant water over one fast step, solved together as    !
-! one network (docs/science/soil_plant_water.md).                                                !
-!                                                                                                !
-! THE NETWORK (docs/science/soil_plant_water.md §1). Water sits in stores joined by paths:       !
-!   * the soil nodes: the pond (node 1) and the soil layers (node 1 + k);                        !
-!   * two stores per cohort, its wood and its leaves, which touch only each other and the        !
-!     soil layers its roots reach;                                                               !
-!   * paths: soil water flux between adjacent layers and between the pond and the top layer;     !
-!     root water uptake from each layer into each cohort's wood; sapflow up each cohort's        !
-!     xylem;                                                                                     !
-!   * boundaries: rain into the pond, ground evaporation from the top layer, drainage from       !
-!     the bottom one, and each cohort's transpiration, limited by what its leaves hold           !
-!     (docs/science/soil_plant_water.md eq. (3)).                                                !
-! How much each store holds is meds_soil_hydr_lib's and meds_plant_hydr_lib's (the               !
-! *_water_relations); how fast water moves along each path is meds_plant_hydr_lib's              !
-! (rhizosphere, xylem, transpiration) and meds_soil_water's (soil water flux, evaporation,       !
-! drainage). This module only joins them.                                                        !
-!                                                                                                !
-! THE SOLVE (docs/science/soil_plant_water.md §3, eq. (2)). Implicit Euler on sub-steps. Each    !
-! sub-step is a Newton solve of the water balance of every store at the sub-step's end,          !
-!     (W(tau) - W_start) / h - (net inflow at tau) = 0,                                          !
-! in each store's own unknown tau: a soil layer's saturation (dry) or potential (wet), a         !
-! tissue's relative water content, the pond's head. Its linear systems are block arrowheads --   !
-! the soil nodes bordered by the cohorts -- solved by eliminating each cohort onto the soil      !
-! (meds_linear_algebra). Newton steps are bounded so no store is driven past empty, and         !
-! backtracked until the balance improves. A sub-step's error is the implicit-Euler local         !
-! error, estimated from the change in the inflows across the sub-step and filtered twice         !
-! through the Newton matrix so a stiff exchange that has already settled does not read as        !
-! error; it sets the next sub-step.                                                              !
-!                                                                                                !
-! WHAT IS KEPT EXACT. Each store's water is advanced by the flows themselves, W += h * inflow,   !
-! never re-read from its curve, so every kilogram that leaves one store arrives in another or    !
-! crosses a boundary: the solve conserves water to round-off whatever Newton's residual. The     !
-! amounts each path moved over the step are reported for the energy integrator and the ledgers.  !
+! meds_spac_solver -- one patch's soil and plant water over one fast step, solved as one network  !
+! (docs/science/soil_plant_water.md §1-§3): the pond, the soil layers, and each cohort's wood and !
+! leaves. Implicit Euler on sub-steps, each a Newton solve (eq. (2)) in every store's own unknown, !
+! with a block-arrowhead linear solve (meds_linear_algebra) and a filtered local-error estimate.   !
+! Water moves by the flows themselves, so it is conserved to round-off whatever Newton's residual; !
+! the amounts each path moved are reported for the energy integrator and the ledgers. The stores' !
+! curves and the paths' flows are the process libraries'; this module only joins them.            !
 !==========================================================================================!
 module meds_spac_solver
    use meds_kinds,           only : wp, ik
@@ -111,7 +84,7 @@ module meds_spac_solver
       real(wp) :: rain       = 0.0_wp           !< [kg/m2/s] water reaching the pond
       real(wp) :: t_rain     = 298.15_wp        !< [K] the temperature that values it
       real(wp) :: w_pond_max = 5.0_wp           !< [kg/m2] pond capacity; above it, runoff
-      real(wp) :: rtol = 1.0e-3_wp, atol = 1.0e-4_wp   !< sub-step error tolerances ([soil] rtol, atol)
+      real(wp) :: rtol = 1.0e-3_wp, atol = 1.0e-4_wp   !< sub-step error tolerances ([fast] rtol, water_atol)
       !----- The cohorts. ----------------------------------------------------------------!
       integer(ik), allocatable :: pft(:)        !< (ncoh) PFT, selecting curves and vulnerability
       real(wp), allocatable :: nplant(:)        !< (ncoh) [plants/m2]
@@ -212,11 +185,9 @@ contains
          spac%tau_soil(1_ik + k)   = soil_theta_to_unknown(spac%layer(k), theta(k))
          spac%water_soil(1_ik + k) = rho_h2o * params%dz(k) * theta(k)
       end do
-      !----- The pond starts at its water's head, but no higher than the head at which it would     !
-      !      neither give nor take water from the top layer. Over dry soil the pond face drains tens of !
-      !      millimetres an hour, so a pond holding a trace of water empties within the step: starting !
-      !      it at that trace's head would put the step's first Newton iterate at a flow thousands of   !
-      !      times what the pond holds, far outside the linear model's reach. ----------------------!
+      !----- The pond starts at its water's head, but no higher than the head at which it neither   !
+      !      gives nor takes water from the top layer: over dry soil a trace pond empties within the  !
+      !      step, and its own head would start Newton at a flow thousands of times what it holds. --!
       spac%water_soil(POND) = w_pond
       spac%e_pond = e_pond
       call soil_water_relations(spac%layer(1), spac%tau_soil(2), psi, dpsi, w, dw, kk, dk)
@@ -305,11 +276,9 @@ contains
       spac%psi_coh  = spac%ev(spac%i_start)%psi_coh
    end subroutine spac_advance
 
-   !----- How far the assembled Jacobian is from the residual's own derivative, at the current     !
-   !      state for a sub-step of h: the largest difference between J v and a central difference   !
-   !      of the residual along v, relative to the largest entry of either, with v a fixed pattern !
-   !      of small changes in every unknown. For the test suite: it checks the whole Jacobian     !
-   !      against the flows it is built from. -----------------------------------------------------!
+   !----- For the tests: how far the assembled Jacobian is from the residual's own derivative, at   !
+   !      the current state for a sub-step of h -- the largest difference between J v and a central !
+   !      difference of the residual along v, relative to the largest entry of either. -----------!
    real(wp) function spac_jacobian_error(spac, params, opts, forcing, hyd, h) result(err)
       type(spac_solver_t),        intent(inout) :: spac
       type(soil_params_t),        intent(in)    :: params
@@ -697,14 +666,10 @@ contains
    !     Error, commit, and bookkeeping.                                                    !
    !=======================================================================================!
 
-   !----- The sub-step's local error relative to its tolerance (<= 1 to accept). Implicit Euler's   !
-   !      error is half the change in the inflows across the sub-step, h (F_end - F_start)/2. Taken !
-   !      raw that over-states a stiff exchange that has already settled -- after rain, the 0.4 s   !
-   !      soil-to-wood exchange -- by a factor of its stiffness, so it is filtered twice through    !
-   !      (I - h dF/dW)^-1, which leaves slow modes alone and divides a stiff one's error by its    !
-   !      stiffness squared: what step doubling would measure, at the price of two back-            !
-   !      substitutions with the last Newton factorisation (docs/science/soil_plant_water.md §3).   !
-   !      Each store's error is weighed against atol of its scale plus rtol of its water. ----------!
+   !----- The sub-step's local error relative to its tolerance (<= 1 to accept): implicit Euler's   !
+   !      h (F_end - F_start)/2, filtered twice through (I - h dF/dW)^-1 so a stiff exchange that   !
+   !      has already settled does not read as error (docs/science/soil_plant_water.md §3). Each    !
+   !      store is weighed against atol of its scale plus rtol of its water. --------------------!
    real(wp) function substep_error(spac, h, ev0, ev1, scale_soil, scale_coh) result(err)
       type(spac_solver_t), intent(in) :: spac
       real(wp),            intent(in) :: h
@@ -728,18 +693,11 @@ contains
       if (err /= err) err = huge(1.0_wp)
    end function substep_error
 
-   !----- Accept a sub-step: advance each store's water by the flows themselves, so water is        !
-   !      conserved to round-off; spill the pond above its capacity; carry the pond's enthalpy; and  !
-   !      add what each path moved to the step's amounts.                                             !
-   !                                                                                                   !
-   !      Newton balances every store only to a tolerance, and the flows carry that slack into the     !
-   !      water they move. For a store hanging off the network by one path -- a cohort's leaves on     !
-   !      its xylem, the pond on its face to the top layer -- the slack can be many times what the     !
-   !      store holds (a near-leafless cohort's leaves hold 1e-26 kg/m2, its plant's tolerance is     !
-   !      1e-9). So such a store takes its water from its own curve, and its one path carries the     !
-   !      flow that closes its balance exactly; the store across that path (the wood, the top layer)   !
-   !      absorbs the slack, which is small against what it holds. Every kilogram is still counted     !
-   !      once. -----------------------------------------------------------------------------------!
+   !----- Accept a sub-step: advance each store's water by the flows themselves, spill the pond above !
+   !      its capacity, carry the pond's enthalpy, and add what each path moved to the step's amounts.  !
+   !      A store on one path (the pond, a cohort's leaves) takes its water from its own curve, and its !
+   !      path carries the flow that closes its balance; the store across the path absorbs Newton's    !
+   !      slack (docs/science/soil_plant_water.md §3, "Conservation"). ----------------------------!
    subroutine commit_substep(spac, h, tau_soil, tau_coh, ev, spilled)
       type(spac_solver_t), intent(inout) :: spac
       real(wp),            intent(in)    :: h, tau_soil(:), tau_coh(:,:)

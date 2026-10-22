@@ -93,9 +93,8 @@ g_{ac} = \rho_{mol}\,u_*\,\mathrm{temp2} \qquad(5)
 $g_{ah}$ [kg m⁻² s⁻¹] drives the enthalpy twin, $g_{aw}$ the vapour twin, and $g_{ac}$ [mol m⁻² s⁻¹]
 the CO₂ twin (molar, using dry-air molar density). Dropping the profile factor ($`\mathrm{temp1}=1`$)
 over-couples the CAS to the free atmosphere by $`\sim1/\mathrm{temp1}`$ and damps the nocturnal
-sub-canopy CO₂ build-up. The kernel also reports the scale stars
-$`t_*=\mathrm{temp1}\,\Delta\theta`$, $`q_*=\mathrm{temp2}\,\Delta q`$, $`c_*=\mathrm{temp2}\,\Delta
-C`$, and $`\mathrm{Rib}`$, $\zeta$, $L$ as diagnostics.
+sub-canopy CO₂ build-up. The kernel also reports the temperature scale
+$`t_*=\mathrm{temp1}\,\Delta\theta`$, and $`\mathrm{Rib}`$, $\zeta$, $L$ as diagnostics.
 
 **The reference level.** $`z_{ref}`$ is the canopy-air top, where the forcing is moved to
 ([forcing](forcing.md) §8), and both potential temperatures are referenced to it: $`\theta_{atm}`$ is

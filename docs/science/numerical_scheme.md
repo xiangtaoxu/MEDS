@@ -162,7 +162,10 @@ how far the group drifted apart on the last stretch.
 - Warm-started: the last accepted sub-step size carries over to the next `dt_fast`, which keeps the
   rejection rate under 20% (about 31% when every `dt_fast` starts cold). Each patch keeps its own
   (`adapt_dt_last`), so a patch's first sub-step depends neither on the patch run before it nor,
-  with the patch axis threaded, on the thread schedule.
+  with the patch axis threaded, on the thread schedule. The seed is the step that was accepted, before
+  the controller grows it, and the last one the end of the interval did not cut short: a grown
+  proposal over-estimates and is rejected more often, and a short remainder would bias the next
+  `dt_fast` small.
 
 In symbols, with $h$ the sub-step, $f$ the right-hand side of the stiff block and $`\gamma = 1-1/\sqrt{2}`$,
 a step is two backward-Euler solves, the second from the base $`y_n + (Y_2-y_n)(1-\gamma)/\gamma`$:
@@ -207,8 +210,8 @@ $`f_{max} = 5`$, $\alpha = 0.35$ and $\beta = 0.20$.
 ### `rk45` — adaptive explicit Cash–Karp 5(4), ED2-style
 
 A fully explicit fifth-order Runge–Kutta with an embedded fourth-order estimate, marched adaptively
-over the *whole* column state — this is the closest analogue of ED2's own `rk4` integrator. Kept as
-the **accuracy baseline**, deliberately not optimised.
+over the *whole* column state — this is the closest analogue of ED2's own `rk4` integrator. It is a
+full alternative a run can choose, and the explicit reference the tests compare `ark` against.
 
 *Analogy:* the same group ride, but nobody is allowed to look ahead; if the road gets steep the only
 option is to take smaller steps.
@@ -216,13 +219,22 @@ option is to take smaller steps.
 - Everything — including soil moisture and plant water mass — is inside the tableau. Soil moisture
   moves there at the water network's steady rate, which any consistent tableau integrates exactly, so
   RK45's committed θ is the network's, as ARK's is.
+- Explicit is affordable here because of the freeze. With the Category-0 fluxes held, the stiffest
+  mode the march integrates is the canopy air (τ ≈ 130 s), so it needs sub-steps of a few minutes —
+  a few per 900 s `dt_fast` — rather than the seconds an explicit solve of the unfrozen column would
+  need. Plant water adds no stiffness, since its rates are the network's constants over the step.
 - **It is a hybrid, not a pure explicit scheme.** When the explicit march cannot resolve a step (a
   cold night under a closed canopy, where the leaf↔canopy-air coupling is stiff and the state rails
   against its physical bounds), the driver **discards the RK45 step and redoes that `dt_fast` on
   `ark`**. The counter `mean_work_rk45_rescue_py` reports how often. *Read it before reading any RK45
   result* — a run whose winter months all rescue is substantially an ARK run wearing an RK45 label.
   ARK is the rescue target because what is being rescued from *is* a coupled stiff canopy-air
-  problem, which is exactly what its Newton solves.
+  problem, which is exactly what its Newton solves. Two signs trigger it: the march gives up after 64
+  trial sub-steps, which bounds the explicit work spent on a step that will be redone, or it finishes
+  on a railed state — its fifth- and fourth-order solutions can rail together, so the error estimate
+  alone would accept it. The whole `dt_fast` is redone rather than resumed from the failure: a resume
+  would sum two schemes' boundary fluxes in one step's ledger, and a railed final state has no
+  sub-step to resume from.
 
 ---
 
@@ -367,7 +379,10 @@ Both schemes close the whole-column water and energy ledgers to machine precisio
 regime every production run lives in (residuals ~10⁻¹³ kg m⁻² and ~10⁻⁷ J m⁻²), with a snow pack
 present and with condensation active. This holds with the tissue heat store active: the heat each
 tissue's energy gains is taken from a b-weighted time integral of its temperature, so it is exactly
-the complement of the flux the canopy air received.
+the complement of the flux the canopy air received. The tissue's temperature differs from stage to
+stage as the canopy air moves, so committing the last stage's temperature instead would leave the
+difference out of every ledger; with canopy air that does not move over a step, every stage returns
+the same temperature and the time average is that temperature.
 
 **How a ledger is judged.** A ledger's residual $r$ is the change in its store minus the net amount
 that crossed its boundary over the window, and the ledger closes when
@@ -394,14 +409,31 @@ column saturates. A **whole-column** ledger cannot detect that error at all, bec
 *vertical*: enthalpy placed in the wrong layer still sums correctly against the boundary. Only a
 per-layer face check, or a temperature that stops being plausible, exposes it. Taking the face
 fluxes, infiltration, drainage and uptake from the water network, and committing the network's θ,
-makes that class impossible for water.
+makes that class impossible for water. The per-layer check is kept as a ledger of its own
+(`soil_face_mass`): summed over layers, the water each layer's θ moved against the water its faces
+were charged for. Both schemes check the network's own faces; RK45 also checks the faces its
+soil-energy equation advected on, over the interior layers only, because the water column's top face
+nets out ground evaporation, whose enthalpy is paid at the surface rather than advected, and its
+bottom face is the drainage; the whole-column ledgers cover both. The same rule holds at the canopy
+air's boundary: each stage's exchange with the atmosphere is booked at the conductances that stage's
+tendency used, re-solved at its own state (§2), not at the step-start values.
+
+**Within a step the stages move θ at the network's steady rate.** Holding θ at θⁿ through the
+stages would not do: the soil-energy stage carries the enthalpy of the water the faces move at those
+rates, and with θ held back the next stage would read that enthalpy as heat in a layer too dry to hold
+it (in heavy rain the top layer reads tens of kelvin too warm late in a step, and the next stage's
+ground skin sees it). A steady rate is integrated exactly by the step and by its error estimate, so θ
+adds nothing to the error and the step ends at the network's θ.
 
 **Saturation is the water network's, and nothing is clipped.** The network treats the pond as a store
 with a head and each layer above saturation as storing water through a specific storage of
 10⁻⁴ m⁻¹, so a saturated column raises its potential and drives the excess to the pond and the next
 layer within the step, on both schemes. θ exceeds θ_sat only by that storage: on the sealed
 29 mm h⁻¹ fixture the worst excursion `theta_ood_max` reports is 5.5×10⁻⁶. A clip would remove water
-with no face to carry it, and so no enthalpy to go with it.
+with no face to carry it, and so no enthalpy to go with it. The constitutive kernels clamp their own
+effective saturation, so an explicit stage that reads θ slightly above θ_sat evaluates it as
+saturated; `theta_ood_max` is the largest excursion an RK45 sub-step started from, a watch on that
+excursion staying small rather than a correction (ARK has no explicit stage and reports 0).
 
 **The pond holds heat.** It carries a prognostic enthalpy, and every seam moves mass and enthalpy as a
 pair: rain in at its own temperature, snowmelt in at the pack's, infiltration out at the *mixed* pond
@@ -419,6 +451,21 @@ No tissue needs a floor that routes energy elsewhere. With the budget hard-stop 
 (`[fast].debug_error`), a forced January month at Ithaca (a deciduous stand in winter) closes on
 both schemes: none of the 8928 whole-column checks fails, and the worst residual is 1.2×10⁻⁶ J m⁻²
 (ARK and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
+
+**Condensate keeps the enthalpy it was debited.** Dew and fog are booked apart from the vapour
+export, because they land inside the column, and are deposited into soil layer 1 (§7, item 4) with
+the liquid enthalpy the canopy air lost, $b$-weighted at each stage's own canopy-air temperature.
+Valuing the deposit at the end-of-step temperature instead would leave
+$`\sum_i b_i\,c_i\,[u(T_{end}) - u(T_i)]`$ unbooked on every dew step, with $`c_i`$ the stage's
+condensation and $u$ the liquid's internal energy.
+
+**The reported fluxes are the ledger's.** H and LE are the canopy air's net export to the atmosphere
+over the step, $b$-weighted at the stage states and conductances exactly as the ledger books it, so
+the reported ET is the conserved vapour export rather than a recomputation from the end-of-step
+state. H is the sensible flux $`g_{ah}\,c_p\,(T_{cas} - \theta_{atm})`$ in its own right, not the
+enthalpy export less $`L_v`$ times the vapour export: the canopy air's enthalpy values vapour from a
+liquid-water datum, so that difference would put the vapour's liquid-datum enthalpy, about 40 % of
+LE, inside H.
 
 ---
 
@@ -446,7 +493,7 @@ Configuration essentials:
 
 ```toml
 [fast]
-time_integrator     = "ark"      # "ark" (default, ESDIRK2) | "rk45" (accuracy baseline)
+time_integrator     = "ark"      # "ark" (default, ESDIRK2) | "rk45" (explicit Cash-Karp)
 dt_fast             = "900s"     # ACCURACY-limited (sec 5a). Warned above 900 s, the measured
                                  # range; canopy-air temperature is not the constraint. 300 s for
                                  # the timing of dry-season leaf habits.
@@ -504,6 +551,13 @@ Verified over a 12-patch / 115-cohort forced month: 35 netCDF files across all f
 identical at 1, 2 and 4 threads; and over the five-year BCI census example at 1, 4, 8 and 16 threads.
 An OpenMP build is not bit-identical to a serial build, because compiling the loop as a parallel region
 changes its rounding (`docs/building.md`, "Parallel builds").
+
+The patch loop uses `schedule(dynamic, 1)`: the adaptive march makes patches very unequal in cost
+(one collapsed patch can take many times the others), and a static schedule would wait on the slowest.
+Each thread's per-patch scratch is an explicit pool indexed by thread number rather than an OpenMP
+`private` clause, because ifx builds private copies of a derived type through a static mold that every
+thread writes: a data race that gives exactly the thread-count-dependent answers the patch-order fold
+exists to prevent (`docs/building.md`, the portability traps).
 
 One knob is deliberately incompatible: `[fast].fast_probe` writes a single, order-significant CSV from
 a saved unit, so `fast_probe` together with `n_threads > 1` is a hard configuration error rather than a

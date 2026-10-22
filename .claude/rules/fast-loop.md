@@ -33,7 +33,7 @@ measured range.
 - **`ark`** (default) — an L-stable ESDIRK2 on the ARS(2,2,2) tableau, with a 2×2 Newton arrowhead
   for the leaf ↔ canopy-air surface solve. Despite the `ark` label the explicit part is empty, so it
   is diagonally implicit, not IMEX.
-- **`rk45`** — adaptive Cash-Karp 5(4), the accuracy baseline.
+- **`rk45`** — adaptive Cash-Karp 5(4), the explicit alternative and the tests' explicit reference.
 
 `meds_fast_step` dispatches and owns the **RK45-to-ARK stiff rescue**. There is no operator-split
 scheme: it converges to a different limit that refinement does not remove

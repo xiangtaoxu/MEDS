@@ -1,20 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_soil_water -- how water moves through and out of the soil column                    !
-! (docs/science/soil_biophysics.md eqs. (1)-(4)), in the form the soil-plant water solver  !
-! takes it (docs/science/soil_plant_water.md): each flux with its derivatives in the state !
-! at its ends.                                                                             !
+! meds_soil_water -- how water moves through and out of the soil column, each flux with    !
+! its derivatives for meds_spac_solver (docs/science/soil_biophysics.md eqs. (1)-(4)):     !
 !   * soil_water_flux         -- Darcy flow between two layers, or the pond and the top    !
 !                                layer, eqs. (3)-(4);                                      !
-!   * ground_evaporation_rate -- evaporation from the top layer: Philip's pore-space       !
-!                                humidity and the Swenson-Lawrence dry-surface-layer       !
-!                                resistance;                                               !
-!   * bottom_flux             -- drainage through the bottom face, free or leaky or none   !
-!                                (sealed bedrock), or a head-driven aquifer.               !
-! How much water a layer holds is in meds_soil_hydr_lib, the flow from a layer into the    !
-! roots in meds_plant_hydr_lib; meds_spac_solver solves them together with the plants'     !
-! water.                                                                                   !
-! Canopy interception lives in meds_plant_biophysics (a per-cohort film).                  !
+!   * ground_evaporation_rate -- evaporation from the top layer;                           !
+!   * bottom_flux             -- drainage through the bottom face, or a head-driven aquifer.!
+! A layer's water relations are in meds_soil_hydr_lib, root uptake in meds_plant_hydr_lib. !
 !==========================================================================================!
 module meds_soil_water
    use meds_kinds,            only : wp, ik
@@ -39,13 +31,10 @@ module meds_soil_water
 
 contains
 
-   !----- The Darcy flux of soil water [kg/m2/s] between two soil nodes a and b (two layers, or the !
-   !      pond and the top layer), positive from a to b, with its derivatives in the potentials and !
-   !      conductivities at the two ends (docs/science/soil_biophysics.md eqs. (3)-(4)). The face   !
-   !      conductivity is the thickness-weighted geometric mean K_a^(1-w_b) K_b^w_b (ED2's rule for !
-   !      soil layers; the pond counts as a saturated layer as thick as the top one, w_b = 1/2).    !
-   !      The driving force is the difference of potentials plus the drop in elevation z_a - z_b    !
-   !      [m], over the node distance [m]. Potentials in MPa, conductivities in m/s. ---------------!
+   !----- The Darcy flux of soil water [kg/m2/s] from node a to node b (two layers, or the pond and  !
+   !      the top layer), with its derivatives (docs/science/soil_biophysics.md eqs. (3)-(4)): the     !
+   !      thickness-weighted geometric-mean face conductivity times the potential difference [MPa]  !
+   !      plus the elevation drop z_drop [m], over the node distance [m]. ----------------------------!
    elemental subroutine soil_water_flux(k_a, k_b, w_b, psi_a, psi_b, z_drop, dist, q,               &
                                         dq_dpsi_a, dq_dpsi_b, dq_dk_a, dq_dk_b)
       real(wp), intent(in)  :: k_a, k_b, w_b, psi_a, psi_b, z_drop, dist
@@ -61,25 +50,10 @@ contains
    end subroutine soil_water_flux
 
    !---------------------------------------------------------------------------------------!
-   ! BOTTOM-FACE Darcy flux [m/s, DOWN-positive]. One authority for the bottom boundary        !
-   ! (docs/science/soil_biophysics.md §Boundary conditions).                                   !
-   !                                                                                           !
-   !   drainage   : q = f K(theta_n), the unit-gradient flux scaled by the drainage factor     !
-   !                f = opts%drain_factor: 1 is free drainage (the DEEP-water-table limit), a  !
-   !                soil map's f_leak a leaky base on weathered rock, 0 a sealed bedrock.      !
-   !   aquifer    : head-driven against a SATURATED zone at the column base -- psi_wt = 0 at   !
-   !                z_wt = z_bottom, so the soil column IS the unsaturated zone above the      !
-   !                water table (docs/science/soil_biophysics.md, "Boundary conditions, and    !
-   !                what the aquifer option actually means"):                                  !
-   !                    q = K_bot * (psi_n / Delta + 1),   Delta = z_n - z_bottom = dz(n)/2    !
-   !                It reduces to free drainage when psi_n -> 0, and REVERSES (upward,         !
-   !                capillary rise) once |psi_n| > Delta.  This is a pure BOUNDARY CONDITION:  !
-   !                there is no aquifer store, no baseflow bucket and no water-table state.    !
-   !                                                                                           !
-   ! K_bot is UPSTREAM-weighted on the head gradient (which is K-independent, so there is no   !
-   ! circularity): K(theta_n) for downward flow, K_sat for upward flow OUT of the saturated    !
-   ! zone.  Using K(theta_n) upward would silently under-predict capillary rise, which is      !
-   ! the entire point of the boundary.                                                         !
+   ! The bottom-face Darcy flux [m/s, down-positive] (docs/science/soil_biophysics.md,     !
+   ! "Boundary conditions, and what the aquifer option actually means"): drainage          !
+   ! q = drain_factor * K(theta_n), or the aquifer boundary q = K_bot (psi_n/Delta + 1),   !
+   ! Delta = dz(n)/2, with K_bot upstream: K(theta_n) downward, K_sat upward.              !
    !---------------------------------------------------------------------------------------!
    pure subroutine bottom_flux(params, opts, n, psi_n, k_n, qbot, dq_dpsi, dq_dk)
       type(soil_params_t), intent(in)  :: params
@@ -113,26 +87,10 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! ground_evaporation_rate -- ground evaporation [kg/m2/s] from the top layer at water content        !
-   ! theta1 [m3/m3] and matric head psi1 [m], with its derivatives, for the soil-plant water            !
-   ! network, which takes it at the end-of-step state.                                                  !
-   !   * The surface's humidity is Philip's pore-space humidity, alpha = exp(psi g / (R_v T)),          !
-   !     times saturation over ice when the top layer is frozen (docs/science/snow_biophysics.md        !
-   !     eq. (1): the liquid curve overstates e_sat by 10 % at -10 C and 34 % at -30 C, and a           !
-   !     frozen surface sublimes). As the layer dries its potential falls without bound and             !
-   !     alpha with it, so evaporation stops by itself before the layer empties; there is no            !
-   !     cap at the water above residual.                                                               !
-   !   * The dry-surface-layer resistance (Swenson and Lawrence; CLM5 eq 5.77-5.80) grows as the        !
-   !     layer dries below theta_init. Its thickness and tortuosity are referenced to the 'air dry'     !
-   !     water content theta_air, a texture constant at PSI_AIR_DRY: referenced to the bulk theta1      !
-   !     instead, tortuosity falls faster than the layer thickens and a wetter soil evaporates LESS.    !
-   !     Tortuosity is Millington-Quirk rather than CLM5's phi_air^2 (phi_air/phi)^(3/b): b is a        !
-   !     Clapp-Hornberger parameter and the shipped curve is van Genuchten; with phi_air constant the   !
-   !     two differ only by a constant factor, so the shape of the moisture response is unaffected.     !
-   !   * Only the snow-free share of the ground evaporates, at the bare-soil resistance                 !
-   !     (chydro_forcing_t%snow_free_frac): an area-weighted tile flux, not an inflated r_aero.         !
-   !   * The two corners -- evaporation stops where the surface's humidity meets the air's (there is    !
-   !     no dew), and the dry surface layer starts below theta_init -- are rounded over                 !
-   !     EVAP_HUMIDITY_WIDTH and DSL_THETA_WIDTH, so Newton sees them.                                  !
+   ! theta1 [m3/m3] and matric head psi1 [m], with its derivatives (docs/science/soil_biophysics.md,    !
+   ! "The soil water column"): Philip's pore-space humidity (over ice when frozen) through the          !
+   ! Swenson-Lawrence dry-surface-layer resistance (CLM5 eqs. 5.77-5.80) in series with r_aero, from    !
+   ! the snow-free share only (docs/science/snow_biophysics.md). Both corners are rounded for Newton.   !
    !---------------------------------------------------------------------------------------!
    pure subroutine ground_evaporation_rate(theta1, psi1, params, forcing, opts, e_soil, de_dtheta, de_dpsi)
       real(wp),               intent(in)  :: theta1      !< [m3/m3] top-layer water content

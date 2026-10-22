@@ -31,7 +31,8 @@ as for soil. The fast-loop driver orchestrates **accumulate → energy step → 
   that root exactly: a thin pack under an open patch's bare-ground conductance relaxes toward its
   balance and cannot overshoot it, and a melting pack under cold air freezes through the plateau and
   stops where the balance does. Sublimation takes its latent heat from the balance, and the mass
-  that leaves takes the pack's specific energy with it, so the rest keeps $T$. The **snow-base →
+  that leaves takes the pack's specific energy with it, so the rest keeps $T$; a pack that would
+  sublimate whole does, the vapour taking all the energy left. The **snow-base →
   soil-top conductance** is the series resistance of the half snow layer and the top soil node;
   $`k_{snow}\ll k_{soil}`$ throttles it as the pack deepens, the physical decoupling that caps the
   winter soil surface, and it becomes the soil's top BC.
@@ -69,8 +70,13 @@ The same blend is used for ground evaporation from frozen soil, weighted by the 
 The **Niu-Yang (2007) snow-cover fraction** $`\mathrm{snowfac}=\tanh(\text{depth}/\text{scale})`$
 (`snow_cover_fraction`), with scale = `ny07_a` × `[aerodynamics].snow_rough` ×
 ($`\rho_{snow}`$/100 kg m⁻³)^`ny07_m`, the snow surface's one roughness length, ramps the ground optics albedo and the soil-top-BC blend, and area-weights ("sub-column") all boundary exchange so a thin patchy pack barely exchanges
-(stable and continuous through $`\mathrm{snowfac}\to0`$). Snow-off is bit-identical to no store. The
-aerodynamic roughness does not see the pack: the driver passes `snowfac = 0` to the aerodynamics
+(stable and continuous through $`\mathrm{snowfac}\to0`$). Snow-off is bit-identical to no store.
+Ground evaporation is such a tile flux: only the snow-free share evaporates, at the bare soil's own
+resistances, $`E=(1-\mathrm{snowfac})\,\rho\,(q_g-q_{air})/(r_{aero}+r_{soil})`$. Inflating $`r_{aero}`$ by
+$`1/(1-\mathrm{snowfac})`$ instead is not the same whenever the dry-surface-layer resistance $`r_{soil}`$
+is positive: it divides only the aerodynamic leg, so it over-predicts bare-soil evaporation at
+intermediate cover, most where a dry surface makes $`r_{soil}`$ dominant. The two agree only at no cover
+and full cover. The aerodynamic roughness does not see the pack: the driver passes `snowfac = 0` to the aerodynamics
 ([canopy_aerodynamics](canopy_aerodynamics.md) §1; see `docs/ROADMAP.md`).
 
 ---

@@ -156,6 +156,13 @@ credited the liquid enthalpy of the sapflow that replaces it; the credit is esti
 solve, as if the sapflow matched the transpiration, and the solve is repeated. (Without the credit,
 the leaf in that solve is charged ~4.4×10⁵ J kg⁻¹ too much, runs cooler and transpires about 4 % less.)
 
+The same solve caps the canopy films' evaporation. A film's evaporation conductance is a start-of-step
+value that does not see the film deplete within the step, so between the two solves each cohort's
+film conductance is scaled down until the first solve's film evaporation over `dt_fast` is no more
+than the film holds plus the step's interception; the solve that sets $`E_{demand}`$ uses the scaled
+value. An overdrawn film would end the step below zero, and the floor on the next step's starting
+film would then create water.
+
 The energy stages then **hold each cohort's transpiration at the network's** for the whole step, as
 they hold ground evaporation: the leaf energy balance takes `le_slope = 0` and
 $`\text{le\_ref} = h_{evap}E/(1-f_{wet})`$. The canopy air's vapour credit is then the leaf's water
@@ -200,15 +207,18 @@ H_{store} = (U-s)\,u(T_W) + (s-E)\,u(T_L) \qquad(5)
 
 ($`q_{wl}`$ and $`q_{w}`$ are `qwflux_wl` and `q_wood_net`, and $`H_{store}`$ the per-cohort
 `leaf_water_enth` and `wood_water_enth`, in `build_column_frozen`; the upwind temperatures are
-frozen at the start of the step, which keeps the energy ledger exact.) Water that arrives at a
+frozen at the start of the step, which keeps the energy ledger exact; a stage's own temperatures
+cannot be used, since the energy stages compute them from these terms.) Water that arrives at a
 tissue's own temperature changes its energy and not its temperature. Counting the arriving water's
 whole enthalpy (about 4.4×10⁵ J kg⁻¹ from the liquid datum) as heat, into the temperature at the
 held capacity, would warm the wood whenever it refills: about 10 W m⁻² every night at BCI, and at a storm
 front, where wet soil refills dry-season wood with about 7 kg m⁻² in a quarter hour, 13 K above the
 canopy air and +600 W m⁻² of sensible heat at zero net radiation.
 
-**The ground inflow.** Under a pack the water reaching the pond is meltwater, at the melt temperature.
-On bare ground it is the rain plus the snowfall too light to start a pack, both valued at the air
+**The ground inflow.** Under a pack, which takes the rain as well as the snow, the water reaching the
+pond is meltwater, at the melt temperature. On bare ground it is the throughfall: the rain plus the
+snowfall too light to start a pack, less what the canopy films hold back (the intercepted share is
+the films', and feeding the soil the whole rainfall as well would create water), valued at the air
 temperature above the canopy (the forcing moved to the canopy-air top, [forcing](forcing.md) §8), as
 `snow_accumulate` values a pack's snowfall (`precip_enthalpy`). The mixture's enthalpy per kilogram
 becomes a temperature through `liquid_energy_to_temp`, the exact inverse of
@@ -217,7 +227,14 @@ which the pond and the soil melt with soil heat. Valuing the snow as liquid woul
 kilogram at the boundary, and valuing the rain at the canopy air's temperature would hand the canopy
 and the soil heat the rain did not bring: at a cold front the canopy air is still warm (297.2 K under
 294.9 K air at BCI on 2017-04-17). To either the shed water adds itself, with its own enthalpy, and
-the pond takes the mixture; the canopy film keeps the rain's valuation, since it holds rain.
+the pond takes the mixture. Across the column's boundary that inflow brings all of its enthalpy on
+bare ground, but under a pack only the shed water's: the meltwater's comes from the pack, inside the
+column.
+
+The canopy film keeps the rain's valuation, since it holds rain; under a pack, where nothing is
+intercepted, it is valued at `tsupercool_liq`, where the liquid energy is zero. The valuation is a
+reference: the film's store, its interception and its evaporation all use it, so the film's ledger
+closes whatever it is.
 
 ## 6. Work counters
 

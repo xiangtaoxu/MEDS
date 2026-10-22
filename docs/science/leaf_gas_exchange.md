@@ -92,7 +92,9 @@ Then $A = A_g - R_d$.
 **Temperature.** $`K_c`$, $`K_o`$ and $`\Gamma^*`$ scale from 25 °C by the plain Arrhenius form, with
 Bernacchi et al. (2001)'s activation energies ($`f_{\mathrm{Arr}}`$ in eq. (3)). $`V_{cmax}`$,
 $`J_{max}`$, TPU, $`R_d`$ and the C4 $`k_p`$ take the form `[leaf_physiology].temp_response_form`
-selects, plain or peaked (`meds_therm_lib`; `plant_respiration.md` eq. (5)).
+selects, plain or peaked (`meds_therm_lib`; `plant_respiration.md` eq. (5)). TPU and $`k_p`$ have no
+temperature parameters of their own: both take $`V_{cmax}`$'s, and with them its high-temperature
+deactivation under the peaked form.
 
 ### The co-limitation curvatures are not $`\theta_J`$
 
@@ -268,7 +270,9 @@ An exponential in the **predawn** water potential, downregulating the *aperture*
 
 Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp` ($e$), and
 `stomata_psi_onset` ($`\psi_{onset}`$, default half the PFT's turgor-loss point, so the gravity head a
-tall tree has in wet soil does not read as drought).
+tall tree has in wet soil does not read as drought). Above the onset $`\beta_s = 1`$: Sabot et al.
+(2022, eq. 5) apply no stress while the soil is at field capacity, and $`\psi_{onset}`$ stands in for
+their field-capacity threshold because a tall tree's gravity head is there even in wet soil.
 
 > **Note.** The stomatal driver is the *supply-side* potential $\psi$ (via `leaf_env_t%psi`,
 > default 0 = well-watered); the capacity driver is the current $\psi_{leaf}$, the *demand-side*
