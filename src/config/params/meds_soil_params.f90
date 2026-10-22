@@ -2,14 +2,15 @@
 !==========================================================================================!
 ! meds_soil_params -- the [soil] block, the ground a site is set on (soil_params_t: its    !
 ! column, its surface and its two bottom boundaries), and the profile the soil kernels     !
-! read, soil_profile_t (the layers, their hydraulic and thermal texture and the field      !
-! capacity), which meds_soil_derive builds from it once per site (build_soil_profile). A   !
-! config leaf (src/share only): the soil kernels import it without meds_config.            !
+! read, soil_profile_t (the layers, their hydraulic and thermal texture, the field         !
+! capacity and the water network's layer curves), which meds_soil_derive builds from it    !
+! once per site (build_soil_profile). A config leaf (src/share only): the soil kernels     !
+! import it without meds_config.                                                           !
 !==========================================================================================!
 module meds_soil_params
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : n_soil_layer_max
-   use meds_soil_hydr_lib,    only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,    only : SOIL_RETENTION_VG, soil_layer_curve_t
    implicit none
    private
 
@@ -108,6 +109,10 @@ module meds_soil_params
       real(wp) :: curve_par_a(n_soil_layer_max) = 0.0_wp     !< [1/m] VG alpha, or [m] Campbell psi_sat
       real(wp) :: curve_par_n(n_soil_layer_max) = 0.0_wp     !< [-] VG n, or Campbell b
       real(wp) :: theta_fc(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] field capacity (DERIVED)
+      !----- What the soil-plant water network reads (DERIVED): each layer's curve in the   !
+      !      network's unknown, and the lower layer's weight in each face's conductivity. --!
+      type(soil_layer_curve_t) :: layer_curve(n_soil_layer_max)
+      real(wp) :: face_weight(n_soil_layer_max) = 0.0_wp     !< [-] the face below layer k
       !----- Thermal texture. ---------------------------------------------------------------!
       real(wp) :: solid_conductivity(n_soil_layer_max) = 0.0_wp   !< [W/m/K] kappa_solid
       real(wp) :: dry_conductivity(n_soil_layer_max)   = 0.0_wp   !< [W/m/K] kappa_dry

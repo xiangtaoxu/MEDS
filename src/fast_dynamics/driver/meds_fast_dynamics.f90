@@ -16,13 +16,13 @@ module meds_fast_dynamics
    use meds_output_types,       only : output_buffers_t
    use meds_met_types,          only : met_source_t, met_cursor_t, met_forcing_t
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_fast_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,   &
+   use meds_fast_integ_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,   &
                                        fast_workspace_t, step_report_t, ensure_static_capacity,                  &
                                        ensure_dynamic_capacity, ensure_forcing_capacity, ensure_output_capacity, &
                                        N_WORK, WORK_INTEG_STEPS, WORK_INTEG_REJECT, WORK_WATER_NSUB,             &
                                        WORK_WATER_NEWTON, WORK_WATER_REJECT, WORK_WATER_NFAIL, WORK_RK45_RESCUE, &
                                        WORK_CLAMP_STAGE
-   use meds_fast_step,          only : fast_step
+   use meds_fast_integ_stepper,          only : fast_step
    use meds_fast_state,         only : reset_fast_to_slow, gather_patch, scatter_patch, accumulate_fast_to_slow
    use meds_fast_forcing,       only : sample_window, site_forcing, patch_forcing
    use meds_fast_diag,          only : size_staging, record_substep, fold_window

@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_state_combinators -- every field of column_state_t, through every combinator.        !
+! test_state_combinators -- every field of march_state_t, through every combinator.        !
 !                                                                                          !
 ! WHY THIS EXISTS. The fast integrator's state vector is enumerated by hand in a dozen      !
 ! places -- copy, axpy, accumulate, extrapolate, subtract, embedded-error, zero -- and       !
@@ -17,19 +17,20 @@
 !==========================================================================================!
 program test_state_combinators
    use meds_kinds,            only : wp, ik
-   use meds_fast_types,       only : column_state_t, column_tend_t, fast_dynamic_state_t
-   use meds_column_state_ops, only : state_init, state_axpy, state_sub, state_err_diff, zero_like,  &
-                                     state_accum, state_extrap, unpack_column_state,                  &
-                                     state_size, state_to_array, array_to_state, state_entry_rules
+   use meds_fast_integ_types,       only : march_state_t, march_tend_t, fast_dynamic_state_t
+   use meds_fast_integ_types,       only : state_init, state_axpy, state_sub, state_err_diff, zero_like,  &
+                                     state_accum, state_extrap, state_size, state_to_array,           &
+                                     array_to_state, state_entry_rules
+   use meds_fast_integ_update,      only : unpack_column_state
    use meds_therm_lib,        only : cas_enthalpy_to_temp
    use meds_test_support, only : banner, check, check_close
    implicit none
 
    integer(ik), parameter :: N = 2_ik, NSL = 3_ik
-   type(column_state_t) :: a, b, out
-   type(column_tend_t)  :: k
+   type(march_state_t) :: a, b, out
+   type(march_tend_t)  :: k
 
-   call banner('state combinators: every column_state_t field')
+   call banner('state combinators: every march_state_t field')
 
    call fill_state(a, 1.0_wp)
    call fill_state(b, 0.25_wp)
@@ -99,11 +100,11 @@ program test_state_combinators
 
    !=== 6. state_accum accumulates EVERY field that has a stage tendency -- and the pond, which  !
    !       has none, must be left ALONE rather than zeroed. That distinction is the whole point:   !
-   !       `column_tend_t` carries no d_w_surface, so the pond is passed through the stages and    !
+   !       `march_tend_t` carries no d_w_surface, so the pond is passed through the stages and    !
    !       committed by the hydrology path. Without this test, "accum does not touch the pond"    !
    !       and "somebody forgot the pond in accum" are the same observable. -----------------------!
    block
-      type(column_state_t) :: acc
+      type(march_state_t) :: acc
       real(wp) :: pond0, pond_enth0
       call fill_state(acc, 1.0_wp)
       call fill_tend(k)
@@ -131,7 +132,7 @@ program test_state_combinators
 
    !=== 7. state_extrap blends EVERY field, pond included. ==================================!
    block
-      type(column_state_t) :: ex
+      type(march_state_t) :: ex
       real(wp), parameter  :: BB = 0.25_wp
       call state_extrap(a, BB, b, N, NSL, ex)
       call check_close(ex%cas_enthalpy, (1.0_wp-BB)*a%cas_enthalpy + BB*b%cas_enthalpy,           &
@@ -155,7 +156,7 @@ program test_state_combinators
    !       on the floor. That makes this the most consequential of the enumerations.               !
    !                                                                                          !
    !       It writes 9 of the 11 fields. The pond is EXCLUDED ON PURPOSE -- it is passed through   !
-   !       the stages and committed from the water network (see column_state_t's own               !
+   !       the stages and committed from the water network (see march_state_t's own               !
    !       comment) -- so the exclusion is asserted here too, and the routine says so in a         !
    !       comment. Exclusion and omission must not be the same observable. -----------------------!
    block
@@ -211,7 +212,7 @@ contains
    !----- Every field a DISTINCT non-zero multiple of `s`, so a combinator that copies the      !
    !      wrong field, or leaves one at its default, cannot pass by coincidence. ---------------!
    subroutine fill_state(y, s)
-      type(column_state_t), intent(out) :: y
+      type(march_state_t), intent(out) :: y
       real(wp),             intent(in)  :: s
       integer(ik) :: j
       y%cas_enthalpy   = 11.0_wp * s
@@ -234,7 +235,7 @@ contains
    end subroutine fill_state
 
    subroutine fill_tend(t)
-      type(column_tend_t), intent(out) :: t
+      type(march_tend_t), intent(out) :: t
       integer(ik) :: j
       t%d_cas_enthalpy = 1.5_wp ; t%d_cas_shv = 2.5_wp ; t%d_cas_co2 = 3.5_wp
       t%dedt = 0.0_wp ; t%dtheta_dt = 0.0_wp
@@ -250,7 +251,7 @@ contains
    end subroutine fill_tend
 
    subroutine same(x, y, tag)
-      type(column_state_t), intent(in) :: x, y
+      type(march_state_t), intent(in) :: x, y
       character(len=*),     intent(in) :: tag
       call check_close(x%cas_enthalpy,       y%cas_enthalpy,       1.0e-14_wp, tag//': cas_enthalpy')
       call check_close(x%cas_shv,            y%cas_shv,            1.0e-14_wp, tag//': cas_shv')

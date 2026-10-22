@@ -47,7 +47,7 @@ and held fixed. This is inherited from ED2 and it is deliberate.
 
 MEDS sorts the column into three categories.
 
-**Category 0 — frozen once per `dt_fast`** (`column_prepass`, `build_column_frozen`):
+**Category 0 — frozen once per `dt_fast`** (`build_frozen`, `water_step`, `record_water_flows`):
 
 - leaf photosynthesis, stomatal conductance and dark respiration (GPP, $g_s$, $R_d$)
 - canopy radiative transfer (absorbed shortwave and net longwave per cohort)
@@ -121,7 +121,7 @@ and the same conservation ledgers.
 
 > **Why there is no operator-split scheme.** An operator-split backward-Euler stepper, advancing the
 > stores one after another, is the obvious third option, and MEDS does not offer one. It converges to
-> a **different limit** than ARK and RK45 (~0.45 K on canopy-air temperature), so a test anchored on
+> a **different limit** than ESDIRK2 and RK45 (~0.45 K on canopy-air temperature), so a test anchored on
 > it is anchored on something that is not the answer. It cannot carry the coupled tissue heat store:
 > with correctly sized wood, `cap_wood/cap_cas ≈ 0.5` while `τ_wood ≪ dt_fast`, so tissue and canopy
 > air are a coupled stiff pair that needs a joint implicit solve. And a third scheme makes every
@@ -132,17 +132,17 @@ and the same conservation ledgers.
 > split — scheme 3, "hybrid", implicit canopy via `bdf2_solver` — but as an alternative, not the
 > default. MEDS's `rk45` covers the ED2 default lineage.
 
-### `ark` (default) — 2-solve ESDIRK2
+### `esdirk2` (default) — 2-solve ESDIRK2
 
 Advance the coupled stiff block with a **second-order, L-stable, two-stage implicit** method
 (γ = 1 − 1/√2, the ARS(2,2,2) value), with an **embedded error estimate** that drives adaptive
 sub-stepping inside each `dt_fast`.
 
-> **Naming, stated once because it propagates.** Despite the `ark` label this is **not an
-> IMEX method.** The biotic CO₂ source is folded implicit, so the explicit tableau is empty
-> (`f_E == 0`) and the scheme reduces to a clean 2-solve ESDIRK2. The config string stays `"ark"` for
-> compatibility; the *scheme* is ESDIRK2. Do not rename it "IMEX-ARK" — that asserts a property the
-> implementation does not have.
+> **Naming, stated once because it propagates.** The ARS(2,2,2) tableau is usually presented as an
+> IMEX (additive Runge–Kutta) pair, but this is **not an IMEX method.** The biotic CO₂ source is folded
+> implicit, so the explicit tableau is empty (`f_E == 0`) and the scheme reduces to a clean 2-solve
+> ESDIRK2, which is what the config string says (`"esdirk2"`). Do not call it
+> "IMEX-ARK" — that asserts a property the implementation does not have.
 
 *Analogy:* a group ride with a pace-setter. Everyone moves together, and the pace is adjusted from
 how far the group drifted apart on the last stretch.
@@ -155,7 +155,7 @@ how far the group drifted apart on the last stretch.
   lets it carry the tissue heat store.
 - Adaptive: the step size is chosen from the difference between the second-order and first-order
   solutions, measured by **one weighted norm over the whole column state** with a per-variable-group
-  tolerance (`[fast].rtol`, `atol_scale`). The ARK's soil-moisture and plant-water
+  tolerance (`[fast].rtol`, `atol_scale`). ESDIRK2's soil-moisture and plant-water
   terms in that norm are structurally zero (both ride operator-split maps outside the tableau), so
   they dilute it slightly — accepted deliberately: one norm with no per-scheme opt-outs means no
   scheme can leave a state it *integrates* unmeasured.
@@ -184,7 +184,7 @@ stages' increments is the free first-order error estimate:
 ```
 
 Both schemes judge a sub-step by the same weighted root-mean-square of their error estimate
-(`meds_fast_control`), each of the $N$ counted state entries scaled by its group's tolerances:
+(`meds_fast_integ_control`), each of the $N$ counted state entries scaled by its group's tolerances:
 
 ```math
 \lVert\varepsilon\rVert
@@ -204,37 +204,39 @@ scaled by the I controller or, with `step_controller = "pi"`, the PI controller:
 \qquad(4)
 ```
 
-with $p$ the order of the embedded estimate (1 for `ark`, 4 for `rk45`), $s = 0.9$, $`f_{min} = 0.2`$,
+with $p$ the order of the embedded estimate (1 for `esdirk2`, 4 for `rk45`), $s = 0.9$, $`f_{min} = 0.2`$,
 $`f_{max} = 5`$, $\alpha = 0.35$ and $\beta = 0.20$.
 
 ### `rk45` — adaptive explicit Cash–Karp 5(4), ED2-style
 
 A fully explicit fifth-order Runge–Kutta with an embedded fourth-order estimate, marched adaptively
 over the *whole* column state — this is the closest analogue of ED2's own `rk4` integrator. It is a
-full alternative a run can choose, and the explicit reference the tests compare `ark` against.
+full alternative a run can choose, and the explicit reference the tests compare `esdirk2` against.
 
 *Analogy:* the same group ride, but nobody is allowed to look ahead; if the road gets steep the only
 option is to take smaller steps.
 
 - Everything — including soil moisture and plant water mass — is inside the tableau. Soil moisture
   moves there at the water network's steady rate, which any consistent tableau integrates exactly, so
-  RK45's committed θ is the network's, as ARK's is.
+  RK45's committed θ is the network's, as ESDIRK2's is.
 - Explicit is affordable here because of the freeze. With the Category-0 fluxes held, the stiffest
   mode the march integrates is the canopy air (τ ≈ 130 s), so it needs sub-steps of a few minutes —
   a few per 900 s `dt_fast` — rather than the seconds an explicit solve of the unfrozen column would
   need. Plant water adds no stiffness, since its rates are the network's constants over the step.
 - **It is a hybrid, not a pure explicit scheme.** When the explicit march cannot resolve a step (a
   cold night under a closed canopy, where the leaf↔canopy-air coupling is stiff and the state rails
-  against its physical bounds), the driver **discards the RK45 step and redoes that `dt_fast` on
-  `ark`**. The counter `mean_work_rk45_rescue_py` reports how often. *Read it before reading any RK45
-  result* — a run whose winter months all rescue is substantially an ARK run wearing an RK45 label.
-  ARK is the rescue target because what is being rescued from *is* a coupled stiff canopy-air
+  against its physical bounds), the stepper **discards the RK45 march and marches that `dt_fast`
+  again on `esdirk2`**, from the same frozen record. The counter `mean_work_rk45_rescue_py` reports
+  how often. *Read it before reading any RK45 result* — a run whose winter months all rescue is
+  substantially an ESDIRK2 run wearing an RK45 label.
+  ESDIRK2 is the rescue target because what is being rescued from *is* a coupled stiff canopy-air
   problem, which is exactly what its Newton solves. Two signs trigger it: the march gives up after 64
   trial sub-steps, which bounds the explicit work spent on a step that will be redone, or it finishes
   on a railed state — its fifth- and fourth-order solutions can rail together, so the error estimate
-  alone would accept it. The whole `dt_fast` is redone rather than resumed from the failure: a resume
-  would sum two schemes' boundary fluxes in one step's ledger, and a railed final state has no
-  sub-step to resume from.
+  alone would accept it. The whole `dt_fast` is marched again rather than resumed from the failure:
+  a resume would sum two schemes' boundary fluxes in one step's ledger, and a railed final state has
+  no sub-step to resume from. Nothing needs rolling back: the dynamic state is written only by the
+  update, after the march that is kept.
 
 ---
 
@@ -244,7 +246,7 @@ Three categories, because they demand different responses. A *physics* differenc
 solve different equations and no refinement will reconcile them; a *numerics* difference shrinks as
 you refine; a *bookkeeping* difference is a conservation defect.
 
-| difference | ark | rk45 | kind |
+| difference | esdirk2 | rk45 | kind |
 |---|---|---|---|
 | snow | shared stage, always active | same | unified |
 | canopy surface water | present | present | unified |
@@ -262,7 +264,7 @@ you refine; a *bookkeeping* difference is a conservation defect.
 **There are no *physics* rows.** The two schemes solve the same equations; what remains is one
 numerics row (where clamps apply).
 
-**The family boundary is the semi-discretisation, not the tableau.** ARK and RK45 agree closely (§5)
+**The family boundary is the semi-discretisation, not the tableau.** ESDIRK2 and RK45 agree closely (§5)
 despite being an implicit method and an explicit one — about as different as two integrators get.
 What they share is the frozen set and the right-hand side built from it. That is where the difference
 lives, and it is why §2's freeze is the first thing on this page.
@@ -271,7 +273,7 @@ lives, and it is why §2's freeze is the first thing on this page.
 
 ## 5. What the measurements say
 
-**Cross-scheme accuracy is measured at stable cadences.** `ark` and `rk45` agree to **1.3 mK** on
+**Cross-scheme accuracy is measured at stable cadences.** `esdirk2` and `rk45` agree to **1.3 mK** on
 canopy-air temperature at `dt_fast = 150 s` with tightened tolerances — an implicit and an explicit
 method landing on the same answer. With the conductances frozen the same comparison reads 0.49 K and
 does not shrink when the tolerance is tightened, because it measures the oscillation rather than
@@ -280,8 +282,8 @@ regime measures the instability, not the schemes**, and a measurement at `dt_fas
 the conductances frozen is a phase-sample of the oscillation, not a convergence measurement.
 
 Two further results from the same sweep. **The freeze dominates the residual error**: tightening the
-integrator tolerance at `dt_fast = 150 s` moves `ark` from 0.0174 K to 0.0180 K, so ~97% of what is
-left is the Category-0 freeze and the integrator tolerance is not the lever. And **`ark` converges at
+integrator tolerance at `dt_fast = 150 s` moves `esdirk2` from 0.0174 K to 0.0180 K, so ~97% of what is
+left is the Category-0 freeze and the integrator tolerance is not the lever. And **`esdirk2` converges at
 roughly second order** in `dt_fast`; with the conductances frozen there is no order to measure at
 all, only a discontinuity at the stability boundary.
 
@@ -321,7 +323,7 @@ and the canopy air's vapour credit is the leaves' water debit. Measured on BCI's
 −0.2 W m⁻² and the mean diurnal cycle by at most 1.9 W m⁻² in any hour (refreshing transpiration at
 every stage instead gives +0.3 and 2.9 W m⁻²; at 150 s the two agree to 0.1 W m⁻² in the mean and 0.6
 in any hour). The 3-hour midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s
-(`test_column_ark`). Over a wet and a dry season at BCI (example 04 on the tower forcing, 2012-08 to
+(`test_column_esdirk2`). Over a wet and a dry season at BCI (example 04 on the tower forcing, 2012-08 to
 2013-05, 900 against 150 s) GPP differs by +0.08 %, LE by −0.37 W m⁻² and H by +0.25 W m⁻², and the
 daily leaf and wood potentials by at most 0.004 MPa.
 
@@ -433,7 +435,7 @@ layer within the step, on both schemes. θ exceeds θ_sat only by that storage: 
 with no face to carry it, and so no enthalpy to go with it. The constitutive kernels clamp their own
 effective saturation, so an explicit stage that reads θ slightly above θ_sat evaluates it as
 saturated; `theta_ood_max` is the largest excursion an RK45 sub-step started from, a watch on that
-excursion staying small rather than a correction (ARK has no explicit stage and reports 0).
+excursion staying small rather than a correction (ESDIRK2 has no explicit stage and reports 0).
 
 **The pond holds heat.** It carries a prognostic enthalpy, and every seam moves mass and enthalpy as a
 pair: rain in at its own temperature, snowmelt in at the pack's, infiltration out at the *mixed* pond
@@ -450,12 +452,13 @@ from and carries no flux ([vegetation_energy_dynamics](vegetation_energy_dynamic
 No tissue needs a floor that routes energy elsewhere. With the budget hard-stop armed
 (`[fast].debug_error`), a forced January month at Ithaca (a deciduous stand in winter) closes on
 both schemes: none of the 8928 whole-column checks fails, and the worst residual is 1.2×10⁻⁶ J m⁻²
-(ARK and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
+(ESDIRK2 and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
 
 **Condensate keeps the enthalpy it was debited.** Dew and fog are booked apart from the vapour
 export, because they land inside the column, and are deposited into soil layer 1 (§7, item 4) with
 the liquid enthalpy the canopy air lost, $b$-weighted at each stage's own canopy-air temperature.
-Valuing the deposit at the end-of-step temperature instead would leave
+The deposit lands before the step's soil temperatures are diagnosed, so the top layer's temperature,
+which the next step's ground and respiration read, includes it. Valuing the deposit at the end-of-step temperature instead would leave
 $`\sum_i b_i\,c_i\,[u(T_{end}) - u(T_i)]`$ unbooked on every dew step, with $`c_i`$ the stage's
 condensation and $u$ the liquid's internal energy.
 
@@ -476,10 +479,10 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 
 | you want | use |
 |---|---|
-| general production, including spin-ups and coupled carbon–water | `ark` at `dt_fast = 900 s` (the default) |
-| sub-daily fidelity — flux-tower comparison, diel cycles, energy partitioning | `ark`, `dt_fast` ≤ 150 s |
-| anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
-| the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `ark`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
+| general production, including spin-ups and coupled carbon–water | `esdirk2` at `dt_fast = 900 s` (the default) |
+| sub-daily fidelity — flux-tower comparison, diel cycles, energy partitioning | `esdirk2`, `dt_fast` ≤ 150 s |
+| anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `esdirk2` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
+| the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `esdirk2`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
 | a reference solution to check anything else against | `rk45` with `rtol = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
 | ED2 comparison at the algorithmic level | `rk45` (but check `mean_work_rk45_rescue_py` first) |
 
@@ -493,7 +496,7 @@ Configuration essentials:
 
 ```toml
 [fast]
-time_integrator     = "ark"      # "ark" (default, ESDIRK2) | "rk45" (explicit Cash-Karp)
+time_integrator     = "esdirk2"  # "esdirk2" (default) | "rk45" (explicit Cash-Karp)
 dt_fast             = "900s"     # ACCURACY-limited (sec 5a). Warned above 900 s, the measured
                                  # range; canopy-air temperature is not the constraint. 300 s for
                                  # the timing of dry-season leaf habits.
@@ -552,14 +555,14 @@ exists to prevent (`docs/building.md`, the portability traps).
 
 ### What it buys, measured
 
-A 50-year spin-up at Ithaca NY on ERA5-Land forcing (bare-ground start, `ark`, 4 threads on 4 physical cores):
+A 50-year spin-up at Ithaca NY on ERA5-Land forcing (bare-ground start, `esdirk2`, 4 threads on 4 physical cores):
 
 | `dt_fast` | wall | CPU | final stand |
 |---|---|---|---|
 | 150 s | **2321.8 s** (38 min 42 s) | 7622.9 s (3.28 cores avg) | 113 cohorts / 12 patches |
 | 900 s | **545.1 s** (9 min 05 s) | 1510.6 s (2.77 cores avg) | 115 cohorts / 12 patches |
 
-**The 900 s default is worth 4.26× here, not the 6× the step-size ratio suggests** — the ARK march
+**The 900 s default is worth 4.26× here, not the 6× the step-size ratio suggests** — the ESDIRK2 march
 takes *two* sub-steps at 900 s where it takes one at 150 s, so 6× fewer steps each cost ~1.4× more, and
 the slow tier does not scale at all. That matches the 4.0–4.6× measured independently per simulated
 day.
@@ -609,10 +612,10 @@ than a convergence proof.
    second difference is −0.06, where a period-2 oscillation gives −1. §5a′ gives the multiplier
    across wind speeds and `dt_fast`. It is scored at one site.
 
-3. **The ARK's error norm carries structurally-zero terms.** Soil moisture and plant water mass are
+3. **ESDIRK2's error norm carries structurally-zero terms.** Soil moisture and plant water mass are
    operator-split out of its tableau, so their contributions to the norm are exactly zero and only
-   dilute it — the ARK therefore runs slightly looser than its stated `rtol`. Measured cost on a
-   summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. Bringing soil water into the ARK
+   dilute it — ESDIRK2 therefore runs slightly looser than its stated `rtol`. Measured cost on a
+   summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. Bringing soil water into the ESDIRK2
    tableau would remove the dilution, at a cost (see `docs/ROADMAP.md`).
 4. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
    evapotranspiration at BCI, so routing it onto the leaves would change little, and would need the
@@ -636,15 +639,17 @@ than a convergence proof.
 
 | piece | file |
 |---|---|
-| dispatch + the RK45→ARK stiff rescue | `src/fast_dynamics/integrator/meds_fast_step.f90` (`fast_step`) |
-| ESDIRK2 scheme (config name `ark`), eqs. (1)–(2) | `src/fast_dynamics/integrator/meds_fast_ark.f90` (`ark2_column_step`, `adaptive_ark_march`) |
-| adaptive Cash–Karp scheme | `src/fast_dynamics/integrator/meds_fast_rk45.f90` |
-| the shared right-hand side | `src/fast_dynamics/integrator/meds_fast_time_derivs.f90` (`column_derivs`) |
-| the frozen pre-pass | `src/fast_dynamics/integrator/meds_fast_prepass.f90` (`column_prepass`), `meds_fast_frozen.f90` (`build_column_frozen`) |
-| the implicit stage and its leaf↔canopy-air Newton | `src/fast_dynamics/integrator/meds_fast_be_stage.f90` (`column_be_stage`, `newton_surface_solve`) |
-| the soil–plant water network | `src/fast_dynamics/integrator/meds_spac_solver.f90` ([soil_plant_water](soil_plant_water.md)) |
-| error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/integrator/meds_fast_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set and the error control from config: `build_tol_set`, `build_error_control` there |
-| shared snow stage | `meds_fast_frozen.f90` (`advance_snow_stage`) |
+| the step, the shared adaptive march (eqs. (3)–(4)) and the RK45→ESDIRK2 stiff rescue | `src/fast_dynamics/integrator/meds_fast_integ_stepper.f90` (`fast_step`, `adaptive_march`) |
+| the records and the march state's arithmetic | `src/fast_dynamics/integrator/meds_fast_integ_types.f90` |
+| ESDIRK2 scheme (config name `esdirk2`), eqs. (1)–(2) | `src/fast_dynamics/integrator/meds_fast_integ_esdirk2.f90` (`esdirk2_step`) |
+| adaptive Cash–Karp scheme | `src/fast_dynamics/integrator/meds_fast_integ_rk45.f90` (`rk45_step`, `rk45_state_railed`) |
+| the shared right-hand side | `src/fast_dynamics/integrator/meds_fast_integ_derivs.f90` (`march_derivs`, `surface_derivs`) |
+| the frozen record, Category 0 | `src/fast_dynamics/integrator/meds_fast_integ_frozen.f90` (`build_frozen`, `record_water_flows`) |
+| the implicit stage and its leaf↔canopy-air Newton | `src/fast_dynamics/integrator/meds_fast_integ_backward_euler.f90` (`backward_euler_stage`, `newton_surface_solve`) |
+| the soil–plant water network | `meds_fast_integ_backward_euler.f90` (`water_step`), its flows and Jacobian in `meds_fast_integ_derivs.f90` (`water_derivs`) ([soil_plant_water](soil_plant_water.md)) |
+| the commit and the seven ledgers (§5b) | `src/fast_dynamics/integrator/meds_fast_integ_update.f90` (`update_dynamic_state`, `close_ledgers`) |
+| error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/integrator/meds_fast_integ_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set and the error control from config: `build_tol_set`, `build_error_control` there |
+| shared snow stage | `meds_fast_integ_frozen.f90` (`advance_snow_stage`) |
 | patch loop, per-thread step data, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
 | the linear solvers and the conservation test (§9) | `src/share/meds_linear_algebra.f90`, `src/share/meds_numerics.f90` (`conserved`) |
 

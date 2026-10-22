@@ -13,7 +13,7 @@ module meds_config_io
    use meds_config,     only : meds_config_t, derive_parameters, alloc_pft_table, INIT_CENSUS,        &
                                INIT_RESTART
    use meds_pft_derive, only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
-   use meds_fast_params,   only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
+   use meds_fast_params,   only : INTEG_ESDIRK2, INTEG_RK45, CTRL_I, CTRL_PI
    use meds_soil_params,   only : soil_params_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,           &
                                   SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_region_params, only : RUN_MODE_SITE, RUN_MODE_REGION
@@ -284,11 +284,11 @@ contains
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
       cfg%intercept_alpha     = toml_real(tm, 'fast.intercept_alpha', cfg%intercept_alpha)
       cfg%intercept_k         = toml_real(tm, 'fast.intercept_k',     cfg%intercept_k)
-      !----- The fast-loop time integrator: ARK (ESDIRK2) when absent                                    !
+      !----- The fast-loop time integrator: ESDIRK2 when absent                                         !
       !      (docs/science/numerical_scheme.md §3). -----------------------------------------------------!
-      call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'ark', 'rk45'],              &
-                      [INTEG_ARK, INTEG_RK45], cfg%time_integrator, m)
-      cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
+      call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'esdirk2', 'rk45'],          &
+                      [INTEG_ESDIRK2, INTEG_RK45], cfg%time_integrator, m)
+      cfg%esdirk2_adaptive  = toml_logical(tm, 'fast.esdirk2_adaptive',  .true.)
       cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
       !----- Optional error-control settings. -------------------------------------------------!
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
@@ -296,7 +296,7 @@ contains
       cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
       call opt_choice(tm, 'fast.step_controller', [character(len=NAME_LEN) :: 'i', 'pi'],                  &
                       [CTRL_I, CTRL_PI], cfg%step_controller, m)
-      cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
+      cfg%esdirk2_fixed_substep = toml_int    (tm, 'fast.esdirk2_fixed_substep', 4_ik)
       cfg%soil_energy_budget_atol = toml_real(tm, 'fast.soil_energy_budget_atol', cfg%soil_energy_budget_atol)
       !----- fast.debug_error: true stops the run on a budget that does not close (the               !
       !      integrators' budget checks and the soil heat's closure check), false reports the        !

@@ -33,10 +33,9 @@ program test_water_processes
                                     water_curve_t, tissue_rwc_to_psi, tissue_psi_to_water
    use meds_plant_hydraulics, only : supply_limited_transpiration
    use meds_numerics,    only : smooth_max0
-   use meds_soil_water, only : ground_evaporation_rate, soil_water_flux
+   use meds_soil_water, only : ground_evaporation_rate, soil_water_flux, ground_evap_env_t
    use meds_constants,  only : pi, grav, r_wv, p_std
    use meds_therm_lib,  only : sat_specific_humidity
-   use meds_soil_types, only : chydro_forcing_t
    use meds_soil_params, only : soil_profile_t, soil_params_t
    implicit none
 
@@ -353,7 +352,7 @@ contains
    !=======================================================================================!
    subroutine test_evaporation()
       type(soil_profile_t)   :: sp
-      type(chydro_forcing_t) :: f
+      type(ground_evap_env_t) :: f
       type(soil_params_t)    :: o
       real(wp) :: theta, head, e, det, dep, ep, em, dum, ref, h
       integer  :: i

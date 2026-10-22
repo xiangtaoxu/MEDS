@@ -108,7 +108,7 @@ module meds_polygon_state_vars
       !      outside the conservation ledger. Without them a run cannot report whether it            !
       !      actually ran the integrator it was configured for (docs/science/numerical_scheme.md     !
       !      §3, `rk45`). ---------------------------------------------------------------------------!
-      real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid with the ARK
+      real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid with the ESDIRK2
       real(wp)           :: work_clamp_stage = 0.0_wp   !< stage-input clamp activations (throwaway states)
    end type polygon_t
 

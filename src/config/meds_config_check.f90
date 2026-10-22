@@ -31,7 +31,7 @@ module meds_config_check
    use meds_pft_derive,         only : pft_wstress_psi_open, pft_wstress_psi_close
    use meds_soil_derive,        only : soil_layers, soil_layer_textures, build_soil_profile,          &
                                        SOIL_LAYER_TEMPLATE
-   use meds_fast_params,        only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
+   use meds_fast_params,        only : INTEG_ESDIRK2, INTEG_RK45, CTRL_I, CTRL_PI
    implicit none
    private
 
@@ -296,7 +296,7 @@ contains
       if (cfg%dt_fast > cfg%dt_slow) error stop TAG//'dt_fast > dt_slow'
       if (abs(cfg%dt_slow / cfg%dt_fast - real(nint(cfg%dt_slow / cfg%dt_fast, ik), wp)) > 1.0e-6_wp)   &
          error stop TAG//'dt_slow must be an integer multiple of dt_fast'
-      if (cfg%time_integrator /= INTEG_ARK .and. cfg%time_integrator /= INTEG_RK45)                    &
+      if (cfg%time_integrator /= INTEG_ESDIRK2 .and. cfg%time_integrator /= INTEG_RK45)                    &
          error stop TAG//'time_integrator out of range'
       if (cfg%rtol <= 0.0_wp)       error stop TAG//'fast.rtol <= 0'
       if (cfg%atol_scale <= 0.0_wp) error stop TAG//'atol_scale <= 0 (1 = unset)'
@@ -304,7 +304,7 @@ contains
          error stop TAG//'forcing_sample_frac outside [0,1]'
       if (cfg%step_controller /= CTRL_I .and. cfg%step_controller /= CTRL_PI)                          &
          error stop TAG//'step_controller out of range (I|PI)'
-      if (cfg%ark_fixed_substep < 1_ik) error stop TAG//'ark_fixed_substep < 1'
+      if (cfg%esdirk2_fixed_substep < 1_ik) error stop TAG//'esdirk2_fixed_substep < 1'
    end subroutine check_fast
 
    !----- [soil]: the ground's optics, its column and its thermal bottom. Each column fault     !

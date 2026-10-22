@@ -4,7 +4,7 @@
 ! (docs/science/plant_hydraulics.md §2, §4): the crown gravity head, the leaf node's water !
 ! potential, the rooting depth and root profile (eqs. (12)-(13)), and the leaves' supply   !
 ! limit on transpiration (docs/science/soil_plant_water.md eq. (3)). The flows and tissue  !
-! curves are in meds_plant_hydr_lib; meds_spac_solver solves the soil-plant network.       !
+! curves are in meds_plant_hydr_lib; the integrator solves the soil-plant network.         !
 !==========================================================================================!
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik

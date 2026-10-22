@@ -44,7 +44,7 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  THE AUTOMATIC-ARRAY STACK CEILING (opt-in flag below).
 #
 #  The fast loop carries ~740 B of automatic (stack) arrays per COHORT, live simultaneously across
-#  four nested frames (fast_step -> build_column_frozen -> column_prepass ->
+#  four nested frames (fast_step -> build_frozen -> canopy_leaf_gas_exchange /
 #  aero_bottom_to_top). On an 8 MB stack that is a hard SIGSEGV ceiling near 10-12k cohorts, and in
 #  a threaded run the ceiling follows each thread's stack, OMP_STACKSIZE, instead.
 #
@@ -301,14 +301,13 @@ target_link_libraries(meds_maps PUBLIC meds_met meds_config meds_netcdf_c)
 meds_fortran_flags(meds_maps)
 
 
-#----- The FAST loop: the integrator machinery (integrator/ -- the state vector, the frozen work  #
-#      records, the ARK and RK45 marches, the step controller and the pre-pass) and the         #
+#----- The FAST loop: the integrator machinery (integrator/ -- the records, the frozen build, the #
+#      water network's step, the ESDIRK2 and RK45 steps, the march and the update) and the        #
 #      driver that walks a slow step in dt_fast sub-steps over the patch axis (driver/).          #
 #                                                                                                  #
-#      meds_fast_prepass sits in integrator/, not driver/, because the step calls it: both schemes   #
-#      build their frozen record through build_column_frozen, which runs column_prepass once per   #
-#      dt_fast, so filing it under driver/ would make a cycle. It links meds_slow_kernels for the  #
-#      one fast->slow seam                                                                          #
+#      The frozen build's process rates sit in integrator/, not driver/, because the step calls   #
+#      them once per dt_fast, so filing them under driver/ would make a cycle. It links            #
+#      meds_slow_kernels for the one fast->slow seam                                               #
 #      (docs/science/soil_carbon.md §7): the sub-daily heterotrophic respiration must respire       #
 #      the SAME CENTURY matrix the daily step debits.                                               #
 file(GLOB FAST_SOURCES CONFIGURE_DEPENDS
@@ -689,17 +688,17 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_hydrology)
    add_test(NAME column_hydrology COMMAND test_column_hydrology)
 
-   #----- The soil-plant water solver's water relations and flows: values and derivatives. ---#
+   #----- The soil-plant water network's water relations and flows: values and derivatives. --#
    add_executable(test_water_processes test/test_water_processes.f90)
    target_link_libraries(test_water_processes PRIVATE meds_fast_kernels meds_testassert)
    meds_fortran_flags(test_water_processes)
    add_test(NAME water_processes COMMAND test_water_processes)
 
-   #----- The soil-plant water solver on synthetic stands and soils. -------------------------#
-   add_executable(test_spac_solver test/test_spac_solver.f90)
-   target_link_libraries(test_spac_solver PRIVATE meds_fast meds_testassert)
-   meds_fortran_flags(test_spac_solver)
-   add_test(NAME spac_solver COMMAND test_spac_solver)
+   #----- The soil-plant water network on synthetic stands and soils. ------------------------#
+   add_executable(test_water_network test/test_water_network.f90)
+   target_link_libraries(test_water_network PRIVATE meds_fast meds_testassert)
+   meds_fortran_flags(test_water_network)
+   add_test(NAME water_network COMMAND test_water_network)
 
    #----- Energy-balance + snow tests link meds_fast_kernels (state-free). ----------------#
    foreach(t column_energy surface_energy snow)
@@ -822,17 +821,17 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_dynamics)
    add_test(NAME column_dynamics COMMAND test_column_dynamics)
 
-   #----- Pure fast-loop RHS; links meds_model for meds_fast_time_derivs.                    #
+   #----- Pure fast-loop RHS; links meds_model for meds_fast_integ_derivs.                    #
    add_executable(test_column_derivs test/test_column_derivs.f90)
    target_link_libraries(test_column_derivs PRIVATE meds_model meds_testassert)
    meds_fortran_flags(test_column_derivs)
-   add_test(NAME column_derivs COMMAND test_column_derivs)
+   add_test(NAME march_derivs COMMAND test_column_derivs)
 
-   #----- INTEG_ARK wiring test: the coupled ARK (ESDIRK2) path through fast_step. ----------#
-   add_executable(test_column_ark test/test_column_ark.f90)
-   target_link_libraries(test_column_ark PRIVATE meds_model meds_testsupport)
-   meds_fortran_flags(test_column_ark)
-   add_test(NAME column_ark COMMAND test_column_ark)
+   #----- INTEG_ESDIRK2 wiring test: the coupled ESDIRK2 (ESDIRK2) path through fast_step. ----------#
+   add_executable(test_column_esdirk2 test/test_column_esdirk2.f90)
+   target_link_libraries(test_column_esdirk2 PRIVATE meds_model meds_testsupport)
+   meds_fortran_flags(test_column_esdirk2)
+   add_test(NAME column_esdirk2 COMMAND test_column_esdirk2)
 
    #----- INTEG_RK45 wiring test: the ED2-faithful adaptive Cash-Karp RK45 path. --------------#
    add_executable(test_column_rk45 test/test_column_rk45.f90)

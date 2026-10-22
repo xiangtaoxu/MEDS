@@ -68,7 +68,12 @@ no change to any result (#482). The PFT table holds the per-PFT tables the fast 
 acclimated leaf table, and the fast step takes the configuration, the site and five records: its static
 state, its forcing, the dynamic state it advances, its output and its workspace; the fast driver is four
 modules, one per job, and `src/fast_dynamics/numerics` is `integrator`, with no change to any result on
-gfortran (#483).
+gfortran (#483). The fast integrator is nine modules, one per stage of the step: the frozen record, the
+soil-plant water network's step, the march, and one update through which both schemes commit and close
+their ledgers. Each site's soil-layer curves and the cohorts' water paths are computed once rather than
+every step, and the implicit scheme's `[fast].time_integrator` value and its two keys are named
+`esdirk2`. The condensate now lands before the soil temperatures are diagnosed, which moves ESDIRK2's
+results a little on dew steps and RK45's within its tolerance (#484).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -547,6 +552,47 @@ gfortran (#483).
   - `src/fast_dynamics/numerics` is `src/fast_dynamics/integrator`.
 
   No netCDF variable name, TOML key or C API changes.
+- **`[fast].time_integrator = "ark"` is `"esdirk2"`, and its two keys follow** (#484), the name of the
+  scheme they set: `"ark"` stops the run, listing `esdirk2 | rk45`, and `[fast].ark_adaptive` and
+  `ark_fixed_substep` are `esdirk2_adaptive` and `esdirk2_fixed_substep`, the old names stopping the run
+  as unknown keys. `"esdirk2"` is still the default. A script that sets `fast.time_integrator` or
+  `fast.ark_*` sets the new value and names, as examples 04 and 05, `test/region` and
+  `meds_config_main.toml` do.
+- **Fortran names in the fast integrator** (#484), for code built against MEDS's modules:
+  - the modules are named by stage: `meds_fast_types`, `meds_fast_control` and `meds_fast_time_derivs`
+    are `meds_fast_integ_types`, `_control` and `_derivs`; `meds_fast_be_stage` is
+    `meds_fast_integ_backward_euler`, `meds_fast_ark` is `_esdirk2`, `meds_fast_rk45` is `_rk45`, and
+    `meds_fast_frozen` with `meds_fast_prepass` is `_frozen`; `meds_fast_step` is `_stepper`, beside
+    the new `_update`. `meds_column_state_ops` is gone: the state's arithmetic and
+    `diagnose_soil_temps` are `_types`', the commits and the store totals `_update`'s, and
+    `assemble_soil_energy_forcing` is `_derivs`';
+  - `meds_spac_solver` is gone with `spac_solver_t`, `spac_eval_t`, `spac_allocate`, `spac_set_state`,
+    `spac_advance` and `spac_jacobian_error`. The water network's records are `meds_fast_integ_types`'
+    `water_drive_t`, `water_state_t`, `water_tend_t`, `water_flows_t` and `water_work_t` (sized by
+    `ensure_water_capacity`); `set_water_state` and `water_derivs` are `_derivs`', `water_step` and
+    `water_jacobian_error` `_backward_euler`'s, and `water_scales` `_control`'s. `record_water_flows`
+    (`_frozen`) checks the soil faces for both schemes;
+  - `column_state_t`, `column_tend_t`, `column_frozen_t` and `column_bflux_t` are `march_state_t`,
+    `march_tend_t`, `frozen_t` and `boundary_flux_t`; `cas_column_t`, `cas_column_time_deriv` and
+    `cas_column_step_implicit` are `cas_box_t`, `cas_box_time_deriv` and `cas_box_step_implicit`, and
+    `cas_boundary_t` holds a `cas_box_t` as `box` in place of its eight copied fields;
+    `chydro_forcing_t` is `meds_soil_water`'s `ground_evap_env_t`;
+  - `ark2_column_step` is `esdirk2_step`, `ark_stages_t` is `esdirk2_stages_t`, `rk45_column_step` is
+    `rk45_step`, `build_column_frozen` is `build_frozen`, `column_derivs` is `march_derivs`,
+    `adaptive_ark_march` is `adaptive_march` (both schemes), `column_be_stage` is
+    `backward_euler_stage`, and `INTEG_ARK` is `INTEG_ESDIRK2`; `cfg%ark_adaptive` and
+    `cfg%ark_fixed_substep` are `cfg%esdirk2_adaptive` and `cfg%esdirk2_fixed_substep`.
+    `column_fast_step_ark`, `column_fast_step_rk45` and `column_prepass` are gone into `fast_step` and
+    `build_frozen`. `update_dynamic_state` and `close_ledgers` (`_update`) commit the step and close its
+    ledgers for both schemes, so `rk45_ledgers_stop` is gone;
+  - `soil_profile_t` gains each layer's water-retention curve (`layer_curve`) and the faces' weights
+    (`face_weight`), built with the profile. `meds_fast_state`'s `derive_cohort_terms` fills the static
+    state's root profiles, xylem and rhizosphere conductances, crown head, wood water mass and dry heat
+    capacities, and `static_state_fixture` takes the site's `soil_profile_t`;
+  - the tests `test_spac_solver` and `test_column_ark` are `test_water_network` and
+    `test_column_esdirk2` (ctest `water_network`, `column_esdirk2`).
+
+  No netCDF variable name or C API changes.
 
 ### Changed
 
@@ -557,6 +603,29 @@ gfortran (#483).
   the scatter, and the sums the slow step reads), `meds_fast_forcing` and `meds_fast_diag`; the cohorts'
   order from the ground up is formed once a day where the radiation and the aerodynamics each sorted the
   cohorts every sub-step. Results do not change on gfortran; on ifx they move at round-off.
+- **One fast step, in stages, for both schemes** (#484). `fast_step` runs the frozen record's build, the
+  soil-plant water network's step, the record of its flows, the march (ESDIRK2's or RK45's, under one
+  step controller, each scheme keeping its own error norm) and the update, the only writer of the
+  dynamic state, which then closes the ledgers. The frozen build reads the dynamic state and the snow
+  stage advances a copy of the pack, so a step the RK45 march cannot finish (its work cap, or a railed
+  temperature) marches again with ESDIRK2 on the same frozen record, with nothing to save and restore.
+  RK45 now closes all seven ledgers, as ESDIRK2 does, where it closed the two whole-column ones; the
+  soil faces' check is the water network's, for both schemes. Each site's soil-layer curves and face
+  weights are built with its soil profile, and the cohorts' root profiles, conductances, crown head and
+  dry heat capacities at the gather, where each step rebuilt them. RK45 now commits the water network's
+  end-of-step soil water, as ESDIRK2 did.
+- **The condensate lands before the soil temperatures are diagnosed** (#484). The update deposited the
+  step's dew and fog into soil layer 1 after diagnosing the soil temperatures, so the top layer's
+  temperature lagged its energy by the condensate until the next step, whose ground temperature and
+  respiration read it. Both schemes now deposit first; the ledgers do not change. ESDIRK2's results move
+  a little on and after dew steps: example 04 in August 2012 by at most 2×10⁻⁵ K in canopy-air
+  temperature and 5×10⁻⁴ W/m² in H or LE in any hour; the region test's two months by at most 0.003 K
+  and 0.17 W/m² in a daily mean, its GPP by +0.005%; example 05's first year from bare ground by under
+  10⁻⁵ in annual GPP. RK45's results move within its tolerance through its accept/reject decisions: with
+  this and the soil-water commit, example 04's configuration forced to `rk45` for August 2012 differs
+  from #483's by 0.011 K in canopy-air temperature at the median hour and 0.24 K at most, and by
+  0.8 W/m² in H or LE at the median hour and 28 W/m² at most; the month's mean H and LE change by
+  −0.07 and +0.07 W/m². On ifx, results also move at round-off with the code layout.
 
 - **One record per configuration block** (#482). `[soil]` was read into three records, two of which
   also held five `[fast]` keys; it is one, `soil_params_t`, and each site holds its own, with its

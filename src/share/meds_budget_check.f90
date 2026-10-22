@@ -106,7 +106,7 @@ contains
 
    !----- Whether the last budget_check on b closed, by the tolerance it applied. A caller !
    !      can check with halt = .false. and decide later: RK45 does, because a step it     !
-   !      hands to the ARK rescue is discarded and must not stop the run. -----------------!
+   !      hands to the ESDIRK2 rescue is discarded and must not stop the run. -------------!
    pure logical function last_check_closed(b, dt_window, rate_floor) result(ok)
       type(budget_t), intent(in) :: b
       real(wp),       intent(in) :: dt_window, rate_floor

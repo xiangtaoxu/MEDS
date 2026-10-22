@@ -19,7 +19,7 @@ program test_column_dynamics
                                         tissue_c_wood_dry
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
-   use meds_fast_params,         only : INTEG_ARK, INTEG_RK45
+   use meds_fast_params,         only : INTEG_ESDIRK2, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, tissue_temp_to_energy,  &
                                            internal_energy_liquid, tissue_dry_heat_capacity
@@ -29,16 +29,16 @@ program test_column_dynamics
    use meds_soil_params,         only : SOIL_BC_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_fast_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
+   use meds_fast_integ_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
                                         fast_output_t, fast_workspace_t, alloc_static_state,          &
                                         alloc_dynamic_state, ensure_forcing_capacity,                 &
                                         ensure_output_capacity, step_report_t, error_control_t
    use meds_site_state_vars,     only : site_surface_t
-   use meds_fast_control,        only : build_tol_set, build_error_control
-   use meds_fast_step,           only : fast_step
-   use meds_fast_prepass,        only : aero_bottom_to_top, cohort_leaf_par
+   use meds_fast_integ_control,        only : build_tol_set, build_error_control
+   use meds_fast_integ_stepper,           only : fast_step
+   use meds_fast_integ_frozen,         only : aero_bottom_to_top, cohort_leaf_par
    use meds_numerics,            only : ascending_order
-   use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
+   use meds_fast_integ_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water
    use meds_test_support, only : build_test_config, check_true, test_report
    implicit none
@@ -77,7 +77,7 @@ program test_column_dynamics
    real(wp) :: snowf_rate = 2.0e-5_wp, col_water_end
    real(wp) :: cw_on, cw_off, cw_split_gain, cw_gain, snowf_total
    integer(ik) :: isch
-   character(len=9) :: schnm
+   character(len=16) :: schnm
    type(meds_config_t)    :: cfg
    type(site_surface_t)       :: site      !< the column's soil and its boundaries
    type(fast_static_state_t)  :: static    !< the cohorts, the canopy geometry and its top
@@ -97,11 +97,17 @@ program test_column_dynamics
    !----- Full model config (PFT traits for leaf gas exchange) + geometry. ----------------!
    cfg = build_test_config()
 
+   !----- The soil column, which the fixture's roots are laid out on. -----------------------!
+   call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
+
    !----- Cohort SoA (single cohort): a 20 cm tree at 224 stems/ha, which gives an LAI of ~3.    !
    !      On-allometry fixture: born through the canonical path (init_cohort + set_cohort_size)  !
    !      and gathered by the production gather, so every field -- height, leaf area, the wood   !
    !      carbon the wood heat capacity is sized from -- is mutually consistent. ----------------!
-   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp], site%soil_profile)
    static%geom%veg_height = 18.0_wp ; static%geom%opencan_frac = 0.0_wp ; static%geom%snowfac = 0.0_wp
    static%z_top = 30.0_wp                    ! the forcing's reference height
    !----- The hydraulics take the sapwood area in m2; the cohort keeps it in cm2. Passed through  !
@@ -110,11 +116,6 @@ program test_column_dynamics
                    static%sap_area(1) > 0.0_wp .and. static%sap_area(1) <= pio4*0.2_wp**2, &
                    static%sap_area(1))
 
-   !----- Static column config: soil column + respiration parameters. ---------------------!
-   call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
-   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
 
    call ensure_output_capacity(out, N, .false.)
@@ -136,7 +137,7 @@ program test_column_dynamics
    !  RUN 1 -- the full physical-sanity suite. The soil thermal column is coupled to the water  !
    !  column by interior-face liquid-enthalpy advection, unconditionally: it is a conservation  !
    !  requirement, not an accuracy knob. The RUN numbers stay fixed (RUN 2 is an empty slot)    !
-   !  because test_column_ark and test_column_rk45 cite them. ----------------------------------!
+   !  because test_column_esdirk2 and test_column_rk45 cite them. ------------------------------!
    !=====================================================================================!
    call integrate_day()
    psileaf_single = psileaf_noon                 ! RUN 1's midday leaf psi (recorded, not compared)
@@ -234,7 +235,7 @@ program test_column_dynamics
    iso_dark = .true.
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ARK  ; schnm = 'ISO ARK  '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'ISO ESDIRK2'
       else
          cfg%time_integrator = INTEG_RK45 ; schnm = 'ISO RK45 '
       end if
@@ -245,7 +246,7 @@ program test_column_dynamics
             gah_first * grav * static%z_top, ' W/m2)'
    end do
    iso_dark = .false.
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
 
    !=====================================================================================!
    !  RUN 6 -- opt-in CANOPY-SURFACE WATER: reruns the SAME diurnal-cycle-plus-morning-rain-  !
@@ -314,7 +315,7 @@ program test_column_dynamics
    !      budgets above stay at 0 fails through that error, even when it takes the soil surface to      !
    !      345 K, because a misplacement between LAYERS still sums correctly against the boundary.       !
    !                                                                                                    !
-   !      This run is on the ARK path, which commits the water network's theta -- so its faces          !
+   !      This run is on the ESDIRK2 path, which commits the water network's theta -- so its faces      !
    !      ARE this column's own and the invariant holds by construction. What is asserted               !
    !      here is that construction: the network's own per-layer face closure, at the saturated        !
    !      corner where its pond and runoff paths are live. The RK45 statement of the same invariant is  !
@@ -364,19 +365,20 @@ program test_column_dynamics
            out%report%ledgers%whole_energy%worst < 1.0e-3_wp, out%report%ledgers%whole_energy%worst)
    call test_report('test_column_dynamics')
 
-   !----- The SAME scenario under ARK and RK45 explicitly. A scheme that imports the snow kernels  !
-   !      but never calls them runs silently snow-free, and these assertions catch that; snow-off  !
-   !      bit-identity (which the rest of the suite covers) only proves the OFF path, which is the !
-   !      half that cannot break. -----------------------------------------------------------------!
+   !----- The SAME scenario under ESDIRK2 and RK45 explicitly. A scheme that imports the snow      !
+   !      kernels but never calls them runs silently snow-free, and these assertions catch that;   !
+   !      snow-off bit-identity (which the rest of the suite covers) only proves the OFF path,     !
+   !      which is the half that cannot break. ----------------------------------------------------!
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ARK  ; schnm = 'SNOW ARK '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'SNOW ESDIRK2'
       else
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SNOW RK45'
       end if
       !----- re-arm the scenario: the block above switches snow back OFF when it finishes, so         !
-      !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
-      !      ledgers close trivially) and is the exact failure mode these assertions exist to catch.  !
+      !      without this the ESDIRK2/RK45 runs are silently snow-FREE -- which looks like success    !
+      !      (their ledgers close trivially) and is the exact failure mode these assertions exist to  !
+      !      catch.                                                                                   !
       snow_seed = 60.0_wp ; snowfall_on = .true.
       call integrate_day()
       call check_true(trim(schnm)//': pack + soil stay physical with a pack', snow_physical, snow_temp_end)
@@ -400,7 +402,7 @@ program test_column_dynamics
       print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
             ' kg/m2  worst water resid=', out%report%ledgers%whole_water%worst
    end do
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
 
    !=====================================================================================!
    !  RUN 8b -- SHED WATER UNDER A PACK. The daily leaf/root-turnover shed water is routed into   !
@@ -411,7 +413,7 @@ program test_column_dynamics
    !  pass the tolerance, so closure is asked at round-off, on both schemes. =====================!
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ARK  ; schnm = 'SHED ARK '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'SHED ESDIRK2'
       else
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SHED RK45'
       end if
@@ -425,7 +427,7 @@ program test_column_dynamics
             ' J/m2  swe=', snow_swe_end, ' kg/m2)'
    end do
    snow_seed = 0.0_wp ; shed_seed = 0.0_wp
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
 
    !=====================================================================================!
    !  RUN 9 -- SNOWFALL IS CONSERVED, ON EVERY INTEGRATOR.                                      !
@@ -454,8 +456,8 @@ program test_column_dynamics
    snowf_total = 2.0e-5_wp * real(NSTEP, wp) * DT_FAST     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
-      case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ref'
-      case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
+      case (1_ik) ; cfg%time_integrator = INTEG_ESDIRK2 ; schnm = 'SNOWF ref'
+      case (2_ik) ; cfg%time_integrator = INTEG_ESDIRK2   ; schnm = 'SNOWF esdirk2'
       case default; cfg%time_integrator = INTEG_RK45   ; schnm = 'SNOWF r45'
       end select
       !----- snowfall ON: cold air + frozen rainfall. -------------------------------------------!
@@ -484,7 +486,7 @@ program test_column_dynamics
       print '(3a,f8.4,a,f8.4,a)', '   (RUN 9 ', trim(schnm), ' column water gain=', &
             cw_gain, ' kg/m2  expected=', snowf_total, ' kg/m2)'
    end do
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
    snow_seed = 0.0_wp
 
    !=====================================================================================!
@@ -728,7 +730,7 @@ contains
       call check_true('reference level: equal canopy and reference air is neutral', a3%zeta == 0.0_wp, a3%zeta)
    end subroutine test_reference_level
 
-   !----- One tolerance set for every adaptive error estimate in the fast loop (the ARK march plus       !
+   !----- One tolerance set for every adaptive error estimate in the fast loop (the ESDIRK2 march plus   !
    !      the nested sub-solvers). build_tol_set is the single authority: the schemes build their error  !
    !      control from it (build_error_control) and the water network takes its GRP_THETA pair, so no   !
    !      solver carries a tolerance config cannot reach.                                                !
@@ -752,7 +754,7 @@ contains
       t = build_tol_set(c)
       call check_true('tol: rtol sets ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
       call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%water_atol * 1.0e-2_wp, t%atol(GRP_THETA))
-      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ARK march: the     !
+      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ESDIRK2 march: the !
       !      soil-plant water network takes the GRP_THETA pair for soil and plant stores alike. -------!
       ec = build_error_control(c)
       call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &

@@ -84,7 +84,7 @@ than the canopy air loses an extra $`4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,
 cooler one gains it. Linearizing about the lagged tissue temperature $`T_{rad}`$ instead
 removes the residual but adds a lagged positive feedback (a warmer leaf raises the next step's $`T_{rad}`$), which drove a single-pass
 integrator to NaN when it was tried (`docs/dev_plans/archive/MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5) and has
-not been tried under `ark`.
+not been tried under `esdirk2`.
 
 ## One formulation: the tissue relaxes exactly
 
@@ -147,7 +147,7 @@ temperature. Nothing switches; the physics chooses, per cohort, every step, cont
 
 ### The store is ON, and how its capacity is sized
 
-The store is always on (`build_column_frozen` in `meds_fast_frozen`). The capacity splits its two
+The store is always on (`build_frozen` in `meds_fast_integ_frozen`). The capacity splits its two
 halves across **different** masses, which is a physical distinction and not a detail:
 
 - **dry tissue → ALL the wood**, at the dry specific heat. Heartwood is dead structure but still
@@ -292,10 +292,10 @@ hour in which wet soil refills dry-season wood at a BCI storm front.
 |---|---|
 | leaf/wood balance + exact exponential relaxation, eqs. (1), (3)–(7) | `meds_plant_biophysics`: `veg_energy_balance` |
 | coefficients $h$, $g$, emission slope | `sensible_heat_coeff`, `leaf_transp_coeff`, `leaf_film_coeff`, `lw_emission_slope` |
-| latent terms, eq. (2); the per-cohort call | `meds_fast_time_derivs`: `surface_derivs` |
-| tissue heat capacity, eq. (8), and $`a_{\rm store}`$ | `meds_fast_frozen`: `build_column_frozen` |
+| latent terms, eq. (2); the per-cohort call | `meds_fast_integ_derivs`: `surface_derivs` |
+| tissue heat capacity, eq. (8), and $`a_{\rm store}`$ | `meds_fast_integ_frozen`: `build_frozen` |
 | tissue energy and temperature, eqs. (9)–(10) | `meds_therm_lib`: `tissue_temp_to_energy`, `tissue_energy_to_temp` |
-| the fast step's energy commit | `meds_column_state_ops`: `commit_tissue_energy` |
+| the fast step's energy commit | `meds_fast_integ_update`: `commit_tissue_energy` |
 | a cohort's temperatures from its energies; holding them through a change of mass | `meds_cohort_state_vars`: `cohort_tissue_temps`, `set_cohort_tissue_temps`, `hold_cohort_tissue_temps` |
 | ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |
 

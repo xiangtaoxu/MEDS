@@ -30,17 +30,17 @@ measured range.
 
 ## Two integrators, one dispatch
 
-- **`ark`** (default) — an L-stable ESDIRK2 on the ARS(2,2,2) tableau, with a 2×2 Newton arrowhead
-  for the leaf ↔ canopy-air surface solve. Despite the `ark` label the explicit part is empty, so it
-  is diagonally implicit, not IMEX.
+- **`esdirk2`** (default) — an L-stable ESDIRK2 on the ARS(2,2,2) tableau, with a 2×2 Newton
+  arrowhead for the leaf ↔ canopy-air surface solve. The tableau's explicit part is empty, so it is
+  diagonally implicit, not IMEX.
 - **`rk45`** — adaptive Cash-Karp 5(4), the explicit alternative and the tests' explicit reference.
 
-`meds_fast_step` dispatches and owns the **RK45-to-ARK stiff rescue**. There is no operator-split
+`meds_fast_integ_stepper` marches both and owns the **RK45-to-ESDIRK2 stiff rescue**. There is no operator-split
 scheme: it converges to a different limit that refinement does not remove
 (`numerical_scheme.md` §3, "Why there is no operator-split scheme").
 
-**Soil and plant water are one network, on both schemes.** `run_spac_solver` (in
-`build_column_frozen`) solves the pond, soil layers and every cohort's wood and leaves together; the
+**Soil and plant water are one network, on both schemes.** `water_step`, run after `build_frozen`,
+solves the pond, soil layers and every cohort's wood and leaves together; the
 stages only move water at its time-mean rates, and hold each cohort's transpiration at the network's.
 A new water flow belongs in the network (its law in `meds_plant_hydr_lib` or `meds_soil_water`), not in a scheme.
 
@@ -73,6 +73,6 @@ compiler-generated static mold that every thread writes.
 
 ## The one fast/slow seam
 
-`heterotrophic_respiration_matrix`, called from the pre-pass so the sub-daily respiration debits the
+`heterotrophic_respiration_matrix`, called from `build_frozen` so the sub-daily respiration debits the
 same CENTURY pool the daily step does. The residual is asserted and closes to machine precision.
 Do not add a second cross-tier kernel call without the same treatment.

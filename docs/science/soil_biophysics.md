@@ -17,7 +17,7 @@ thermodynamic inverter, and both sub-columns close a machine-precision budget ev
 ## The soil water column
 
 One patch's prognostic soil moisture $`\theta_k`$ (+ ponded surface water) is advanced over `dt_fast`
-by the soil-plant water solver (`meds_spac_solver`): implicit Euler on adaptive sub-steps, with
+by the soil-plant water network's step (`water_step`): implicit Euler on adaptive sub-steps, with
 Newton on every store at once ([soil_plant_water](soil_plant_water.md)). For the soil layers this is the
 mixed-form Richards equation on the ED2 negative-$z$ grid. Per layer,
 
@@ -269,7 +269,7 @@ point while `soil_fliq` absorbs the fusion enthalpy). The closed residual is `en
 $`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\approx0`$, with the
 infiltrating water's enthalpy, the top face's $`qwf_0`$, among the inputs. A sibling
 `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
-RK45 integrator; ARK's implicit stages take the BE step.
+RK45 integrator; ESDIRK2's implicit stages take the BE step.
 
 The conductivity is Johansen's, made ice-aware (`soil_thermal_conductivity`, `meds_therm_lib`). With the
 relative saturation $`S_r=\theta/\theta_{sat}`$, floored at 0.05 where the logarithm leaves its range of
@@ -423,7 +423,7 @@ and passes the resulting flux into the CO₂ source.
 
 | Concept | Routine |
 |---|---|
-| soil water (the network) | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)); a layer's water relations: `meds_soil_hydr_lib`: `soil_water_relations` |
+| soil water (the network) | `meds_fast_integ_backward_euler`: `water_step` ([soil_plant_water](soil_plant_water.md)); a layer's water relations: `meds_soil_hydr_lib`: `soil_water_relations` |
 | soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
 | soil layers and profile | `meds_soil_derive`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`, `soil_layers`, `build_soil_profile`; the types, `soil_params_t` ([soil]) and `soil_profile_t` (what the solvers read), in `meds_soil_params` |
 | retention curves (vG / Campbell) | `meds_soil_hydr_lib`, with the matric potential `soil_matric_potential` [MPa] |
@@ -434,7 +434,7 @@ and passes the resulting flux into the CO₂ source.
 | bottom thermal boundary, eqs. (12)–(13) | `meds_soil_energy`: `bottom_heat_face`, `deep_conductance` |
 | the column from the soil maps | `meds_maps`: `read_map_inputs`; `meds_config`: `apply_map_inputs` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
-| soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; `meds_fast_prepass`: `patch_heterotrophic_respiration` |
+| soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
 | prognostic soil types | `meds_patch_state_vars`: `soil_water_column_t`, `soil_energy_column_t` |
 
 ## References
