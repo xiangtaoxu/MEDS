@@ -71,8 +71,9 @@ modules, one per job, and `src/fast_dynamics/numerics` is `integrator`, with no 
 gfortran (#483). The fast integrator is nine modules, one per stage of the step: the frozen record, the
 soil-plant water network's step, the march, and one update through which both schemes commit and close
 their ledgers. Each site's soil-layer curves and the cohorts' water paths are computed once rather than
-every step, and the implicit scheme's `[fast].time_integrator` value is `"esdirk2"`. ESDIRK2's results do
-not change on gfortran; RK45's move within its tolerance (#484).
+every step, and the implicit scheme's `[fast].time_integrator` value and its two keys are named
+`esdirk2`. The condensate now lands before the soil temperatures are diagnosed, which moves ESDIRK2's
+results a little on dew steps and RK45's within its tolerance (#484).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -551,9 +552,11 @@ not change on gfortran; RK45's move within its tolerance (#484).
   - `src/fast_dynamics/numerics` is `src/fast_dynamics/integrator`.
 
   No netCDF variable name, TOML key or C API changes.
-- **`[fast].time_integrator = "ark"` is `"esdirk2"`** (#484), the name of the scheme it runs: `"ark"`
-  stops the run, listing `esdirk2 | rk45`. `"esdirk2"` is still the default, and the `[fast].ark_*` keys
-  keep their names. A script that sets `fast.time_integrator` sets `"esdirk2"`, as examples 04 and 05 and
+- **`[fast].time_integrator = "ark"` is `"esdirk2"`, and its two keys follow** (#484), the name of the
+  scheme they set: `"ark"` stops the run, listing `esdirk2 | rk45`, and `[fast].ark_adaptive` and
+  `ark_fixed_substep` are `esdirk2_adaptive` and `esdirk2_fixed_substep`, the old names stopping the run
+  as unknown keys. `"esdirk2"` is still the default. A script that sets `fast.time_integrator` or
+  `fast.ark_*` sets the new value and names, as examples 04 and 05, `test/region` and
   `meds_config_main.toml` do.
 - **Fortran names in the fast integrator** (#484), for code built against MEDS's modules:
   - the modules are named by stage: `meds_fast_types`, `meds_fast_control` and `meds_fast_time_derivs`
@@ -576,7 +579,9 @@ not change on gfortran; RK45's move within its tolerance (#484).
     `chydro_forcing_t` is `meds_soil_water`'s `ground_evap_env_t`;
   - `ark2_column_step` is `esdirk2_step`, `ark_stages_t` is `esdirk2_stages_t`, `rk45_column_step` is
     `rk45_step`, `build_column_frozen` is `build_frozen`, `column_derivs` is `march_derivs`,
-    `adaptive_ark_march` is `adaptive_march` (both schemes), and `INTEG_ARK` is `INTEG_ESDIRK2`;
+    `adaptive_ark_march` is `adaptive_march` (both schemes), `column_be_stage` is
+    `backward_euler_stage`, and `INTEG_ARK` is `INTEG_ESDIRK2`; `cfg%ark_adaptive` and
+    `cfg%ark_fixed_substep` are `cfg%esdirk2_adaptive` and `cfg%esdirk2_fixed_substep`.
     `column_fast_step_ark`, `column_fast_step_rk45` and `column_prepass` are gone into `fast_step` and
     `build_frozen`. `update_dynamic_state` and `close_ledgers` (`_update`) commit the step and close its
     ledgers for both schemes, so `rk45_ledgers_stop` is gone;
@@ -584,9 +589,10 @@ not change on gfortran; RK45's move within its tolerance (#484).
     (`face_weight`), built with the profile. `meds_fast_state`'s `derive_cohort_terms` fills the static
     state's root profiles, xylem and rhizosphere conductances, crown head, wood water mass and dry heat
     capacities, and `static_state_fixture` takes the site's `soil_profile_t`;
-  - the test `test_spac_solver` is `test_water_network`.
+  - the tests `test_spac_solver` and `test_column_ark` are `test_water_network` and
+    `test_column_esdirk2` (ctest `water_network`, `column_esdirk2`).
 
-  No netCDF variable name, TOML key or C API changes.
+  No netCDF variable name or C API changes.
 
 ### Changed
 
@@ -604,15 +610,22 @@ not change on gfortran; RK45's move within its tolerance (#484).
   stage advances a copy of the pack, so a step the RK45 march cannot finish (its work cap, or a railed
   temperature) marches again with ESDIRK2 on the same frozen record, with nothing to save and restore.
   RK45 now closes all seven ledgers, as ESDIRK2 does, where it closed the two whole-column ones; the
-  soil faces' check is the water network's, for both schemes. Each
-  site's soil-layer curves and face weights are built with its soil profile, and the cohorts' root
-  profiles, conductances, crown head and dry heat capacities at the gather, where each step rebuilt
-  them. ESDIRK2's results do not change on gfortran (ifx moves at round-off, from the code layout; ifx
-  Debug builds are identical). RK45 now commits the water network's end-of-step soil water and
-  diagnoses the soil temperatures before the condensate lands, as ESDIRK2 does, so its runs move within
-  its tolerance: example 04's configuration forced to `rk45` for August 2012 moves canopy-air
-  temperature by 0.011 K at the median hour and 0.16 K at most, and H by 0.7 W/m² at the median and
-  32 W/m² in one hour.
+  soil faces' check is the water network's, for both schemes. Each site's soil-layer curves and face
+  weights are built with its soil profile, and the cohorts' root profiles, conductances, crown head and
+  dry heat capacities at the gather, where each step rebuilt them. RK45 now commits the water network's
+  end-of-step soil water, as ESDIRK2 did.
+- **The condensate lands before the soil temperatures are diagnosed** (#484). The update deposited the
+  step's dew and fog into soil layer 1 after diagnosing the soil temperatures, so the top layer's
+  temperature lagged its energy by the condensate until the next step, whose ground temperature and
+  respiration read it. Both schemes now deposit first; the ledgers do not change. ESDIRK2's results move
+  a little on and after dew steps: example 04 in August 2012 by at most 2×10⁻⁵ K in canopy-air
+  temperature and 5×10⁻⁴ W/m² in H or LE in any hour; the region test's two months by at most 0.003 K
+  and 0.17 W/m² in a daily mean, its GPP by +0.005%; example 05's first year from bare ground by under
+  10⁻⁵ in annual GPP. RK45's results move within its tolerance through its accept/reject decisions: with
+  this and the soil-water commit, example 04's configuration forced to `rk45` for August 2012 differs
+  from #483's by 0.011 K in canopy-air temperature at the median hour and 0.24 K at most, and by
+  0.8 W/m² in H or LE at the median hour and 28 W/m² at most; the month's mean H and LE change by
+  −0.07 and +0.07 W/m². On ifx, results also move at round-off with the code layout.
 
 - **One record per configuration block** (#482). `[soil]` was read into three records, two of which
   also held five `[fast]` keys; it is one, `soil_params_t`, and each site holds its own, with its
