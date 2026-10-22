@@ -107,7 +107,8 @@ contains
             type(patch_biophys_t) :: bio_save
             type(column_budget_t) :: budg_save
             logical               :: rk45_stiff
-            bio_save = biophys ; budg_save = budget
+            bio_save = biophys
+            budg_save = budget
             call column_fast_step_rk45(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                        ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh,        &
                                        converged, iters, stiff_bail=rk45_stiff, cdiag=cdiag)
@@ -129,7 +130,8 @@ contains
             !      stiff_bail trigger: rk45_state_railed tests the FINAL state, so on that path there    !
             !      is no identified sub-step to resume from. It would pay only on a forcing where        !
             !      rescues are common. ------------------------------------------------------------------!
-            biophys = bio_save ; budget = budg_save         ! discard the railed/bailed RK45 step (rollback)
+            biophys = bio_save
+            budget = budg_save         ! discard the railed/bailed RK45 step (rollback)
             budget%integ_nrej  = budget%integ_nrej  + 1_ik   ! count the rescue as a rejected integrator step
             budget%rk45_rescue = budget%rk45_rescue + 1_ik   ! ...and as an RK45->ARK rescue (diagnostic)
          end block

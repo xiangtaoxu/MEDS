@@ -523,16 +523,26 @@ contains
       logical,            intent(out) :: converged
       real(wp)    :: a, b, flo, fhi, mid, fmid
       integer(ik) :: it
-      a = lo ; b = hi
-      flo = ci_residual(prob, a) ; fhi = ci_residual(prob, b)
-      converged = .false. ; ci = 0.5_wp * (a + b)
+      a = lo
+      b = hi
+      flo = ci_residual(prob, a)
+      fhi = ci_residual(prob, b)
+      converged = .false.
+      ci = 0.5_wp * (a + b)
       if (flo * fhi <= 0.0_wp) then
          do it = 1_ik, MAX_ITER
-            mid = 0.5_wp * (a + b) ; fmid = ci_residual(prob, mid)
-            if (flo * fmid <= 0.0_wp) then ; b = mid ; else ; a = mid ; flo = fmid ; end if
+            mid = 0.5_wp * (a + b)
+            fmid = ci_residual(prob, mid)
+            if (flo * fmid <= 0.0_wp) then
+               b = mid
+            else
+               a = mid
+               flo = fmid
+            end if
             if (b - a < CI_TOL_PPM) exit
          end do
-         ci = 0.5_wp * (a + b) ; converged = (b - a < CI_TOL_PPM)
+         ci = 0.5_wp * (a + b)
+         converged = (b - a < CI_TOL_PPM)
       end if
    end subroutine bisect_ci
 
@@ -589,13 +599,24 @@ contains
       type(leaf_photo_args_t)   :: p
       integer(ik) :: i
       do i = 1_ik, n
-         env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
-         env%ca = ca ; env%pressure = pressure ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
-         if (present(psi)) then ; env%psi = psi(i) ; else ; env%psi = 0.0_wp ; end if
+         env%par = par(i)
+         env%leaf_temp = leaf_temp(i)
+         env%vpd = vpd(i)
+         env%ca = ca
+         env%pressure = pressure
+         env%psi_leaf = psi_leaf(i)
+         env%gb = gb(i)
+         if (present(psi)) then
+            env%psi = psi(i)
+         else
+            env%psi = 0.0_wp
+         end if
          p = leaf_params_at_capacity(table, pft(i), vcmax25(i), rd25(i))
          call solve_leaf_gas_exchange(env, p, table%stomatal_model, table%temp_response_form,   &
                                       table%colimitation, table%use_boundary_layer, flux)
-         a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd
+         a_gross(i) = flux%A_gross
+         gs(i) = flux%gs
+         rd(i) = flux%rd
          if (present(a_net))        a_net(i)        = flux%A_net
          if (present(ci))           ci(i)           = flux%ci
          if (present(cs))           cs(i)           = flux%cs

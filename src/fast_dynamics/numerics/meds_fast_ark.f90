@@ -93,7 +93,8 @@ contains
       real(wp)              :: film_evap_leaf_bw(n), film_evap_wood_bw(n)
       integer(ik) :: np
       associate (Y2 => stages%y2, base3 => stages%base3, Y3 => stages%y3, sf2 => stages%sf2, sf3 => stages%sf3)
-         np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
+         np = 1_ik
+         if (present(niter)) np = max(1_ik, niter)
 
          !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; mass frozen -- it is split out). -----!
          call column_be_stage(y, frozen, col_config, n, nsl, GAMMA*dt, Y2, sf2, niter=np, bf=bf2)
@@ -185,7 +186,8 @@ contains
       real(wp)             :: dt_try, dt_warm
       logical              :: clamped
       associate (y => ws%y_march, y_new => ws%y_new, y_err => ws%y_err, y_lo => ws%y_lo)
-         np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
+         np = 8_ik
+         if (present(niter)) np = max(1_ik, niter)
          if (present(acc)) call bflux_zero(acc, n)
          !----- Sub-step FLOOR, t_end/64 (never below 1e-2 s). The BE stages are L-stable, so a floor-size   !
          !      step is STABLE (bounded) even when the embedded error stays above tolerance -- e.g. a        !
@@ -196,7 +198,10 @@ contains
          dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)   ! clamp-ok: the smallest sub-step [s] (above)
 
          call state_init(y0, n, nsl, y)
-         t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
+         t = 0.0_wp
+         dt = min(dt_init, t_end)
+         nsteps = 0_ik
+         nrej = 0_ik
          err_prev = -1.0_wp                                          ! < 0 => first step uses the I-controller
          dt_warm = dt                                                ! fallback if every step is end-clamped
          do
@@ -223,10 +228,14 @@ contains
             !      hanging.                                                                                    !
             if (err /= err .or. dt /= dt) then
                if (dt <= dt_floor) then
-                  call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik
+                  call state_init(y_new, n, nsl, y)
+                  t = t + dt_floor
+                  nsteps = nsteps + 1_ik
                   exit
                end if
-               nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
+               nrej = nrej + 1_ik
+               dt = max(dt * ec%fmin, dt_floor)
+               cycle
             end if
             fac = step_control_factor(err, err_prev, ec)             ! I (default) or PI (Gustafsson) controller
             if (err <= 1.0_wp .or. dt <= dt_floor) then
@@ -237,7 +246,8 @@ contains
                   error stop 'adaptive_ark_march: L2 strict -- floor step cannot meet tolerance'
                call state_init(y_new, n, nsl, y)
                if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
-               t = t + dt ; nsteps = nsteps + 1_ik
+               t = t + dt
+               nsteps = nsteps + 1_ik
                err_prev = err                                        ! remember for the PI controller
                !----- WARM-START SEED = the step just ACCEPTED, recorded BEFORE the controller's growth       !
                !      factor is applied. Seeding the next call with the GROWN proposal (dt*fac, fac up to     !
@@ -301,12 +311,14 @@ contains
       integer(ik) :: n, nsl, isub, nsub, nsteps, nrej
       logical     :: halt_budgets     !< hard-stop on a non-closing budget (debug_error, full column only)
 
-      n = col_cohort%n ; nsl = col_config%soil%n_active
+      n = col_cohort%n
+      nsl = col_config%soil%n_active
       !----- The clamp counter is ACCUMULATED down the call chain (intent(inout) to the kernels), so    !
       !      this sub-step's tally starts clean here. The ARK clamps only its stage-3 extrapolation     !
       !      base, never y_out; theta_ood_max stays 0 on this path, which has no explicit stage that    !
       !      could carry theta out of its domain. ------------------------------------------------------!
-      budget%clamp_stage_n = 0_ik ; budget%theta_ood_max = 0.0_wp
+      budget%clamp_stage_n = 0_ik
+      budget%theta_ood_max = 0.0_wp
 
       !----- A reduced column (process_mask_t) freezes a store while its fluxes still act on the          !
       !      neighbours, so it cannot conserve by construction: suppress the HARD stops (the soft         !
@@ -349,7 +361,10 @@ contains
                                  clamp_n=budget%clamp_stage_n)
          biophys%adapt_dt_last = dt_warm_next
       else
-         nsub = max(1_ik, col_config%integrator%fixed_substeps) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
+         nsub = max(1_ik, col_config%integrator%fixed_substeps)
+         nrej = 0_ik
+         ycur = y
+         call bflux_zero(acc, n)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, frozen, col_config, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr, ws%stages, &
                                   niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
@@ -357,11 +372,13 @@ contains
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
-         y_out = ycur ; nsteps = nsub
+         y_out = ycur
+         nsteps = nsub
       end if
       !----- WORK counters: what the march cost (the water network's own work is recorded where it     !
       !      ran, in build_column_frozen). ------------------------------------------------------------!
-      budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
+      budget%integ_nsteps = nsteps
+      budget%integ_nrej = nrej
 
       !----- SOIL WATER is the water network's: the ESDIRK stages moved theta at its steady rate; commit !
       !      its end-of-step theta HERE, once, so a single consistent theta feeds the state commit, the    !
@@ -388,7 +405,8 @@ contains
       !      at 0 and book the shortfall as a NEGATIVE addition to the outflow (the mirror of              !
       !      surf_overflow's sign). Gated behind canopy_water_on, so with the store off no film            !
       !      arithmetic runs. -----------------------------------------------------------------------------!
-      surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
+      surf_overflow = 0.0_wp
+      surf_deficit = 0.0_wp
       if (col_config%canopy_water_on) then
          call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai,                                  &
                                 col_config%leaf_surf_water_max(col_cohort%pft(1:n)),                    &
@@ -444,7 +462,8 @@ contains
       !      (docs/science/numerical_scheme.md §7, item 4, says why not onto the foliage). Applied to    !
       !      y_out BEFORE the store snapshot below, and mirrored into biophys (already unpacked).        !
       !      acc%whole_cond is 0 whenever cas_condensation is off. --------------------------------------!
-      cond_dep_mass = 0.0_wp ; cond_dep_enth = 0.0_wp
+      cond_dep_mass = 0.0_wp
+      cond_dep_enth = 0.0_wp
       if (acc%whole_cond > 0.0_wp) then
          cond_dep_mass = acc%whole_cond
          cond_dep_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (see column_bflux_t)
@@ -456,9 +475,14 @@ contains
       !----- No separate wood-radiation term: surface_derivs' balance carries the wood's absorbed       !
       !      radiation, so it is already inside coh_rnet / acc%whole_enth_in. --------------------------!
 
-      cas_mass_capacity = frozen%cas%cas_mass_capacity ; cas_molar_capacity = frozen%cas%cas_molar_capacity
-      enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
-      enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
+      cas_mass_capacity = frozen%cas%cas_mass_capacity
+      cas_molar_capacity = frozen%cas%cas_molar_capacity
+      enth0 = y%cas_enthalpy
+      shv0 = y%cas_shv
+      co20 = y%cas_co2
+      enth1 = y_out%cas_enthalpy
+      shv1 = y_out%cas_shv
+      co21 = y_out%cas_co2
       e_pond1 = frozen%hydrology%w_surface_energy1
       e_soil0 = soil_energy_store(y%soil_energy,     col_config%soil%dz, nsl)
       e_soil1 = soil_energy_store(y_out%soil_energy, col_config%soil%dz, nsl)
@@ -483,7 +507,8 @@ contains
       !      `error stop` (docs/science/numerical_scheme.md §5b); off by default. Tolerances are        !
       !      FLUX-scaled (meds_budget_check header): rtol * gross boundary flux over the step plus a    !
       !      rate floor * dt_fast, because a store-scaled tolerance lets a ~1 W/m2 leak through. -------!
-      budget%atm_heat_export = acc%atm_heat_out ; budget%atm_vap_export = acc%atm_vap_out
+      budget%atm_heat_export = acc%atm_heat_out
+      budget%atm_vap_export = acc%atm_vap_out
       call budget_check(budget%cas_energy, cas_mass_capacity*enth0, cas_mass_capacity*enth1, acc%cas_enth_in, acc%cas_enth_out, &
                         dt_fast, BUDGET_ENERGY_RATE_FLOOR, 'cas_energy (ark)', halt_budgets)
       call budget_check(budget%cas_water,  cas_mass_capacity*shv0,  cas_mass_capacity*shv1,  acc%cas_vap_in,  acc%cas_vap_out, &

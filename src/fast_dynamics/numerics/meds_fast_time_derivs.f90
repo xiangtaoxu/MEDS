@@ -93,7 +93,9 @@ contains
       if (cas%mo_live) then
          call refresh_cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       else
-         g_atm_heat = cas%g_atm_heat ; g_atm_vapour = cas%g_atm_vapour ; g_atm_co2 = cas%g_atm_co2
+         g_atm_heat = cas%g_atm_heat
+         g_atm_vapour = cas%g_atm_vapour
+         g_atm_co2 = cas%g_atm_co2
       end if
    end subroutine cas_conductances
 
@@ -144,7 +146,10 @@ contains
       qsat_c = sat_specific_humidity(tcas, cas%press)
       dqdt   = sat_specific_humidity_temp_deriv(tcas, cas%press)
 
-      coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
+      coh_h = 0.0_wp
+      coh_qw = 0.0_wp
+      coh_transp = 0.0_wp
+      coh_rnet = 0.0_wp
       coh_film_evap = 0.0_wp
       do i = 1_ik, n
          lw_slope = lw_emission_slope(tissue%leaf_emiss(i), tcas, tissue%lai(i))
@@ -335,11 +340,16 @@ contains
       call internal_energy_to_temp(y%soil_energy(1), wmass1, col_config%soil_thermal%soil_dry_heat_capacity(1), t_ground, fliq1)
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
-      y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
+      y_stage%cas_enthalpy = y%cas_enthalpy
+      y_stage%cas_shv = y%cas_shv
+      y_stage%cas_co2 = y%cas_co2
       call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,    &
                           t_ground, n, surf_tend)
-      f%d_cas_enthalpy = surf_tend%d_cas_enthalpy ; f%d_cas_shv = surf_tend%d_cas_shv ; f%d_cas_co2 = surf_tend%d_cas_co2
-      f%g_top = surf_tend%g_top ; f%leaf_temp(1:n) = surf_tend%leaf_temp(1:n)
+      f%d_cas_enthalpy = surf_tend%d_cas_enthalpy
+      f%d_cas_shv = surf_tend%d_cas_shv
+      f%d_cas_co2 = surf_tend%d_cas_co2
+      f%g_top = surf_tend%g_top
+      f%leaf_temp(1:n) = surf_tend%leaf_temp(1:n)
 
       !----- 2. Soil water moves at the soil-plant water network's steady rate over the step: the     !
       !      network is the one authority for soil water on every scheme, as it is on ARK, so RK45's    !

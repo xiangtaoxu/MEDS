@@ -71,7 +71,8 @@ contains
       integer(ik) :: np, nfeval
       logical     :: ok
 
-      np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
+      np = 1_ik
+      if (present(niter)) np = max(1_ik, niter)
 
       call state_init(y, n, nsl, y_out)
 
@@ -79,7 +80,8 @@ contains
       wmass1 = y%theta(1) * rho_h2o
       call internal_energy_to_temp(y%soil_energy(1), wmass1, col_config%soil_thermal%soil_dry_heat_capacity(1), t_ground, fliq1)
 
-      cas_mass_capacity = frozen%cas%cas_mass_capacity ; cas_molar_capacity = frozen%cas%cas_molar_capacity
+      cas_mass_capacity = frozen%cas%cas_mass_capacity
+      cas_molar_capacity = frozen%cas%cas_molar_capacity
       cas_stage = frozen%cas              ! plain scalars: a cheap copy, overridden with this stage's conductances below
 
       !----- Re-solve the Monin-Obukhov surface layer at THIS STAGE's canopy-air state, so the    !
@@ -93,14 +95,18 @@ contains
       !      to fill a CAS tendency this scheme does not even read -- it commits the CAS through   !
       !      its own backward-Euler denominator.  So ARK pays for exactly ONE solve per stage. ----!
       call cas_conductances(frozen%cas, y%cas_enthalpy, y%cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
-      cas_stage%g_atm_heat = g_atm_heat ; cas_stage%g_atm_vapour = g_atm_vapour ; cas_stage%g_atm_co2 = g_atm_co2
+      cas_stage%g_atm_heat = g_atm_heat
+      cas_stage%g_atm_vapour = g_atm_vapour
+      cas_stage%g_atm_co2 = g_atm_co2
       cas_stage%mo_live = .false.
 
       !----- CAS enthalpy + humidity. np==1: the uncoupled single-BE-pass baseline. np>1: a DIRECT 2x2  !
       !      Newton solve of the coupled backward-Euler surface block (the arrowhead). The FINAL surf_tend     !
       !      drives the soil sinks (single-flux-per-interface).                                         !
       if (np <= 1_ik) then
-         y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
+         y_stage%cas_enthalpy = y%cas_enthalpy
+         y_stage%cas_shv = y%cas_shv
+         y_stage%cas_co2 = y%cas_co2
          call surface_derivs(y_stage, cas_stage, frozen%tissue, frozen%film, frozen%ground, frozen%snow,    &
                              t_ground, n, surf_tend)
       else
@@ -163,9 +169,12 @@ contains
       !      quantity is the committed-state flux, so the accumulated amounts telescope to closure.    !
       if (present(bf)) then
          t_cas1 = cas_enthalpy_to_temp(enth1, shv1)         ! committed CAS temperature, for the reported H
-            bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enthalpy_atm    ; bf%cas_enth_out = g_atm_heat*enth1
-            bf%cas_vap_in   = surf_tend%src_vap  + g_atm_vapour*frozen%cas%shv_atm     ; bf%cas_vap_out  = g_atm_vapour*shv1
-            bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%co2_atm  ; bf%cas_co2_out  = g_atm_co2*y_out%cas_co2
+            bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enthalpy_atm
+            bf%cas_enth_out = g_atm_heat*enth1
+            bf%cas_vap_in   = surf_tend%src_vap  + g_atm_vapour*frozen%cas%shv_atm
+            bf%cas_vap_out  = g_atm_vapour*shv1
+            bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%co2_atm
+            bf%cas_co2_out  = g_atm_co2*y_out%cas_co2
             !----- The bottom face is the flux the soil solve committed: zero on the adiabatic base,      !
             !      the conduction to deep_temp under the Dirichlet anchor. It crosses the boundary of     !
             !      both books, the soil's and the whole column's. ----------------------------------------!
@@ -175,7 +184,8 @@ contains
             !      network's, booked once per step in column_fast_step_ark, so the per-stage soil-water    !
             !      amounts are zero and the whole-column water carries only the CAS-vapour exchange        !
             !      (drainage, runoff and rainfall are fixed for the step). --------------------------------!
-            bf%soil_wat_in  = 0.0_wp                            ; bf%soil_wat_out = 0.0_wp
+            bf%soil_wat_in  = 0.0_wp
+            bf%soil_wat_out = 0.0_wp
             !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare). ---!
             !----- e_infil (pond -> soil) and the exfiltration (soil -> pond) move water between two       !
             !      TRACKED stores, so they telescope and are not boundary terms; the root uptake's         !
@@ -188,7 +198,8 @@ contains
             !      whole_cond_enth); the CAS-side loss is already in src_vap/src_enth, so the CAS          !
             !      water and energy budgets close as they are. --------------------------------------------!
             bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%enthalpy_atm) + e_drain
-            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%shv_atm)
+            bf%whole_wat_in = 0.0_wp
+            bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%shv_atm)
             bf%whole_cond   = surf_tend%cond                     ! deposited into soil layer 1, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
             !----- The reported H, against theta_atm (T at zref), the ledger's basis. ----------------------!
@@ -227,19 +238,26 @@ contains
       real(wp),    parameter :: DETEPS = 1.0e-30_wp
       integer(ik), parameter :: NEWT_MAX = 4_ik, LS_MAX = 6_ik, FEVAL_CAP = 24_ik
 
-      H0 = y%cas_enthalpy ; q0 = y%cas_shv
-      Hk = H0 ; qk = q0 ; nfeval = 0_ik ; ok = .false.
+      H0 = y%cas_enthalpy
+      q0 = y%cas_shv
+      Hk = H0
+      qk = q0
+      nfeval = 0_ik
+      ok = .false.
       y_stage%cas_co2 = y%cas_co2
-      y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk
+      y_stage%cas_enthalpy = Hk
+      y_stage%cas_shv = qk
       call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
-         t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
+         t_ground, n, surf_tend)
+      nfeval = nfeval + 1_ik
       R_H = cas_mass_capacity*(Hk - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enthalpy_atm - Hk)
       R_q = cas_mass_capacity*(qk - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qk)
 
       do it = 1_ik, NEWT_MAX
          if ( abs(R_H)*dt/cas_mass_capacity <= ATOL_H + RTOL_N*abs(Hk) .and.                                  &
               abs(R_q)*dt/cas_mass_capacity <= ATOL_Q + RTOL_N*abs(qk) ) then
-            ok = .true. ; exit
+            ok = .true.
+            exit
          end if
          call jac_surface(Hk, qk, y%cas_co2, cas, frozen, t_ground, surf_tend, n, cas_mass_capacity, g_atm_heat, g_atm_vapour, dt, &
                           J11, J12, J21, J22, nfeval)
@@ -251,22 +269,33 @@ contains
             delH = (-R_H*J22 + R_q*J12)/detJ
             delq = (-R_q*J11 + R_H*J21)/detJ
          end if
-         lam = 1.0_wp ; rn0 = R_H*R_H + R_q*R_q ; Ht = Hk ; qt = qk ; RHt = R_H ; Rqt = R_q
+         lam = 1.0_wp
+         rn0 = R_H*R_H + R_q*R_q
+         Ht = Hk
+         qt = qk
+         RHt = R_H
+         Rqt = R_q
          do ls = 1_ik, LS_MAX
-            Ht = Hk + lam*delH ; qt = qk + lam*delq
+            Ht = Hk + lam*delH
+            qt = qk + lam*delq
             !----- NO supersaturation STATE clamp: ED2 never clamps can_shv to SAT*qsat -- doing so is a   !
             !      harsh state discontinuity that inflates the ARK2 embedded error in cas_shv AND cas_     !
             !      enthalpy near RH=1 and thrashes the adaptive controller. Like ED2 we TOLERATE transient !
             !      supersaturation; the smooth condensation SINK in surface_derivs relaxes it physically.  !
-            y_stage%cas_enthalpy = Ht ; y_stage%cas_shv = qt
+            y_stage%cas_enthalpy = Ht
+            y_stage%cas_shv = qt
             call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,         &
-               t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
+               t_ground, n, surf_tend)
+            nfeval = nfeval + 1_ik
             RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enthalpy_atm - Ht)
             Rqt = cas_mass_capacity*(qt - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qt)
             if (sufficient_decrease(RHt*RHt + Rqt*Rqt, rn0, lam)) exit
             lam = 0.5_wp*lam
          end do
-         Hk = Ht ; qk = qt ; R_H = RHt ; R_q = Rqt
+         Hk = Ht
+         qk = qt
+         R_H = RHt
+         R_q = Rqt
          if (nfeval >= FEVAL_CAP) exit
       end do
       !----- surf_tend holds the last evaluation, which is at (Hk, qk): the start when the first test  !
@@ -287,10 +316,16 @@ contains
       real(wp),               intent(out) :: h1, q1, c1
       type(cas_column_t) :: box
       type(cas_source_t) :: src
-      box%air_mass_capacity        = cas_mass_capacity ; box%air_molar_capacity     = cas_molar_capacity
-      box%atm_conductance_enthalpy = g_atm_heat  ; box%atm_conductance_vapor  = g_atm_vapour ; box%atm_conductance_co2 = g_atm_co2
-      box%atm_enthalpy             = cas%enthalpy_atm ; box%atm_specific_humidity = cas%shv_atm ; box%atm_co2 = cas%co2_atm
-      src%surface_enthalpy_source  = surf_tend%src_enth ; src%surface_vapor_source = surf_tend%src_vap
+      box%air_mass_capacity        = cas_mass_capacity
+      box%air_molar_capacity     = cas_molar_capacity
+      box%atm_conductance_enthalpy = g_atm_heat
+      box%atm_conductance_vapor  = g_atm_vapour
+      box%atm_conductance_co2 = g_atm_co2
+      box%atm_enthalpy             = cas%enthalpy_atm
+      box%atm_specific_humidity = cas%shv_atm
+      box%atm_co2 = cas%co2_atm
+      src%surface_enthalpy_source  = surf_tend%src_enth
+      src%surface_vapor_source = surf_tend%src_vap
       src%biotic_co2_source        = cas%nee_biotic
       call cas_column_step_implicit(h0, q0, c0, src, box, dt, h1, q1, c1)
    end subroutine cas_box_commit
@@ -314,16 +349,24 @@ contains
       dH = SQEPS * max(abs(Hk), HSCALE)
       dq = SQEPS * max(abs(qk), QSCALE)
       y_stage%cas_co2 = co2
-      y_stage%cas_enthalpy = Hk + dH ; y_stage%cas_shv = qk
+      y_stage%cas_enthalpy = Hk + dH
+      y_stage%cas_shv = qk
       call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
-         t_ground, n, sfp) ; nfeval = nfeval + 1_ik
-      dse_dH = (sfp%src_enth - surf_tend%src_enth)/dH ; dsv_dH = (sfp%src_vap - surf_tend%src_vap)/dH
-      y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk + dq
+         t_ground, n, sfp)
+      nfeval = nfeval + 1_ik
+      dse_dH = (sfp%src_enth - surf_tend%src_enth)/dH
+      dsv_dH = (sfp%src_vap - surf_tend%src_vap)/dH
+      y_stage%cas_enthalpy = Hk
+      y_stage%cas_shv = qk + dq
       call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
-         t_ground, n, sfp) ; nfeval = nfeval + 1_ik
-      dse_dq = (sfp%src_enth - surf_tend%src_enth)/dq ; dsv_dq = (sfp%src_vap - surf_tend%src_vap)/dq
-      J11 = cas_mass_capacity/dt + g_atm_heat - dse_dH ; J12 =              - dse_dq
-      J21 =              - dsv_dH  ; J22 = cas_mass_capacity/dt + g_atm_vapour - dsv_dq
+         t_ground, n, sfp)
+      nfeval = nfeval + 1_ik
+      dse_dq = (sfp%src_enth - surf_tend%src_enth)/dq
+      dsv_dq = (sfp%src_vap - surf_tend%src_vap)/dq
+      J11 = cas_mass_capacity/dt + g_atm_heat - dse_dH
+      J12 =              - dse_dq
+      J21 =              - dsv_dH
+      J22 = cas_mass_capacity/dt + g_atm_vapour - dsv_dq
    end subroutine jac_surface
 
    !---------------------------------------------------------------------------------------!

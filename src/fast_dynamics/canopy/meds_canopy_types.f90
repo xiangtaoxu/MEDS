@@ -255,8 +255,10 @@ contains
    pure subroutine set_aero_env_canopy(aenv, can_temp, can_shv, can_co2, t_ground)
       type(aero_env_t), intent(inout) :: aenv
       real(wp),         intent(in)    :: can_temp, can_shv, can_co2, t_ground
-      aenv%can_theta = can_temp ; aenv%can_temp = can_temp
-      aenv%can_shv   = can_shv  ; aenv%can_co2  = can_co2
+      aenv%can_theta = can_temp
+      aenv%can_temp = can_temp
+      aenv%can_shv   = can_shv
+      aenv%can_co2  = can_co2
       aenv%t_ground  = t_ground
    end subroutine set_aero_env_canopy
 

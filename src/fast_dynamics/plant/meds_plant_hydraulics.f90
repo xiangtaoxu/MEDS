@@ -35,7 +35,11 @@ contains
    pure real(wp) function crown_gravity_head(height, o) result(grav)
       real(wp),           intent(in) :: height   !< [m] cohort height
       type(hydro_opts_t), intent(in) :: o
-      if (o%gravity_on) then ; grav = grav_head*height ; else ; grav = 0.0_wp ; end if
+      if (o%gravity_on) then
+         grav = grav_head*height
+      else
+         grav = 0.0_wp
+      end if
    end function crown_gravity_head
 
    !----- The leaf node's water potential [MPa], read from the leaf water and its pressure-volume    !

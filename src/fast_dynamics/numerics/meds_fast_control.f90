@@ -88,7 +88,8 @@ contains
       call state_to_array(a, n, nsl, va)
       call state_to_array(b, n, nsl, vb)
       call state_to_array(y_ref, n, nsl, vr)
-      s = 0.0_wp ; cnt = 0_ik
+      s = 0.0_wp
+      cnt = 0_ik
       do j = 1_ik, size(va, kind=ik)            ! the layout's order is the order the terms are added
          call state_entry_rules(j, n, nsl, grp, counted)
          if (grp == 0_ik) cycle

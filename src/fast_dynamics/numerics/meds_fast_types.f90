@@ -783,15 +783,27 @@ contains
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
       col_cohort%pft = 1_ik
-      col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp
-      col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp ; col_cohort%aboveground_frac = 0.7_wp
+      col_cohort%lai = 0.0_wp
+      col_cohort%wai = 0.0_wp
+      col_cohort%height = 0.0_wp
+      col_cohort%leaf_width = 0.04_wp
+      col_cohort%branch_diam = 0.02_wp
+      col_cohort%aboveground_frac = 0.7_wp
       col_cohort%is_woody = .true.
-      col_cohort%stem_resp_factor25 = 0.0_wp ; col_cohort%root_resp_factor25 = 0.0_wp
-      col_cohort%stem_resp_sapwood25 = 0.0_wp ; col_cohort%sap_volume = 0.0_wp
-      col_cohort%leaf_area = 0.0_wp ; col_cohort%nplant = 0.0_wp ; col_cohort%dbh = 0.0_wp ; col_cohort%broot = 0.0_wp
-      col_cohort%bleaf = 0.0_wp ; col_cohort%bsap = 0.0_wp ; col_cohort%sap_area = 0.0_wp
+      col_cohort%stem_resp_factor25 = 0.0_wp
+      col_cohort%root_resp_factor25 = 0.0_wp
+      col_cohort%stem_resp_sapwood25 = 0.0_wp
+      col_cohort%sap_volume = 0.0_wp
+      col_cohort%leaf_area = 0.0_wp
+      col_cohort%nplant = 0.0_wp
+      col_cohort%dbh = 0.0_wp
+      col_cohort%broot = 0.0_wp
+      col_cohort%bleaf = 0.0_wp
+      col_cohort%bsap = 0.0_wp
+      col_cohort%sap_area = 0.0_wp
       col_cohort%bwood = 0.0_wp
-      col_cohort%vcmax25 = 0.0_wp ; col_cohort%rd25 = 0.0_wp
+      col_cohort%vcmax25 = 0.0_wp
+      col_cohort%rd25 = 0.0_wp
       !----- UNSET, not 0. A 0 here would read as FULLY TURGID and silently disable the stomatal    !
       !      stress limb for any caller that forgets to fill it; the sentinel makes column_prepass    !
       !      seed from the soil instead, which is the safe default. --------------------------------!

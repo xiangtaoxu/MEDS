@@ -72,7 +72,8 @@ contains
 
       type(snow_stage_t)     :: snow_st   !< the shared pre-column snow stage's outcome
       type(chydro_forcing_t) :: hforc
-      type(surface_state_t)  :: y_stage ; type(surface_tend_t) :: sf0
+      type(surface_state_t)  :: y_stage
+      type(surface_tend_t) :: sf0
       real(wp) :: tcas, qcas, press, rho, t_ground, nee_biotic, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
            g_atm_co2
       integer(ik) :: i, k
@@ -114,7 +115,8 @@ contains
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
-      y%leaf_surf_water(1:n) = biophys%leaf_surf_water(1:n) ; y%wood_surf_water(1:n) = biophys%wood_surf_water(1:n)
+      y%leaf_surf_water(1:n) = biophys%leaf_surf_water(1:n)
+      y%wood_surf_water(1:n) = biophys%wood_surf_water(1:n)
 
       !----- Each cohort's fine roots by layer, within its own rooting depth, and the patch's profile:   !
       !      the cohorts' weighted by their fine-root carbon. A patch with no roots puts its weight in the !
@@ -131,7 +133,8 @@ contains
       if (root_carbon > tiny_num) then
          root_frac_patch(1:nsl) = root_frac_patch(1:nsl) / root_carbon
       else
-         root_frac_patch(1:nsl) = 0.0_wp ; root_frac_patch(1) = 1.0_wp
+         root_frac_patch(1:nsl) = 0.0_wp
+         root_frac_patch(1) = 1.0_wp
       end if
 
       !----- the SHARED pre-pass (meds_fast_prepass%column_prepass): gas exchange / respiration / CAS   !
@@ -171,8 +174,11 @@ contains
       !      here; leaving it out would drop that water while the whole-column ledgers count it as             !
       !      an input. Under a pack this term is unused: snow_accumulate has taken both rainfall and           !
       !      snowfall, and precip_ground is the meltwater (below). --------------------------------------------!
-      frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp
-      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_leaf = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
+      frozen%film%intercept_leaf = 0.0_wp
+      frozen%film%intercept_wood = 0.0_wp
+      frozen%film%f_wet_c = 0.0_wp
+      frozen%film%g_film_leaf = 0.0_wp
+      frozen%film%g_film_w = 0.0_wp
       throughfall_total = forc%rainfall + forc%snowfall
       if (col_config%canopy_water_on .and. .not. snow_st%exists) then
          rain_above = forc%rainfall + forc%snowfall
@@ -204,7 +210,8 @@ contains
       !----- Per-cohort geometry, radiation and tissue heat-capacity inputs. ---------------------------!
       do i = 1_ik, n
          frozen%tissue%lai(i)    = col_cohort%lai(i)
-         frozen%tissue%abs_sw(i) = forc%abs_sw(i) ; frozen%tissue%abs_lw(i) = forc%abs_lw(i)
+         frozen%tissue%abs_sw(i) = forc%abs_sw(i)
+         frozen%tissue%abs_lw(i) = forc%abs_lw(i)
          !----- The two halves of the wood heat capacity take DIFFERENT masses                            !
          !      (docs/science/vegetation_energy_dynamics.md eq. (8)). DRY tissue is ALL the wood          !
          !      (col_cohort%bwood), at the dry specific heat -- heartwood is dead structure but it still  !
@@ -259,25 +266,36 @@ contains
 
       !----- the rest of the frozen surface inputs: CAS caps/conductances from column_prepass + atm     !
       !      state + NEE. ---------------------------------------------------------------------------!
-      frozen%cas%cas_mass_capacity = cas_mass_capacity ; frozen%cas%cas_molar_capacity = cas_molar_capacity
-      frozen%cas%g_atm_heat  = g_atm_heat  ; frozen%cas%g_atm_vapour  = g_atm_vapour ; frozen%cas%g_atm_co2 = g_atm_co2
+      frozen%cas%cas_mass_capacity = cas_mass_capacity
+      frozen%cas%cas_molar_capacity = cas_molar_capacity
+      frozen%cas%g_atm_heat  = g_atm_heat
+      frozen%cas%g_atm_vapour  = g_atm_vapour
+      frozen%cas%g_atm_co2 = g_atm_co2
       !----- Everything refresh_cas_conductances needs that is NOT the live CAS state. The         !
       !      geometry pair (displacement, roughness) is taken from the pre-pass's OWN aero output   !
       !      rather than recomputed, so a stage re-solve starts from the identical surface the      !
       !      state^n solve used, and the two agree exactly when the state has not moved. ----------!
       frozen%cas%aero_cfg     = col_config%aero
-      frozen%cas%mo_u_ref     = aenv%u_ref     ; frozen%cas%mo_zref      = aenv%zref
-      frozen%cas%mo_displace  = aero%displace  ; frozen%cas%mo_rough     = aero%rough
-      frozen%cas%mo_theta_atm = aenv%theta_atm ; frozen%cas%mo_shv_atm   = aenv%shv_atm
+      frozen%cas%mo_u_ref     = aenv%u_ref
+      frozen%cas%mo_zref      = aenv%zref
+      frozen%cas%mo_displace  = aero%displace
+      frozen%cas%mo_rough     = aero%rough
+      frozen%cas%mo_theta_atm = aenv%theta_atm
+      frozen%cas%mo_shv_atm   = aenv%shv_atm
       frozen%cas%mo_rho       = rho
       !----- ...and declare the inputs live, which is what licenses a per-stage re-solve. A bundle       !
       !      that has NOT been through here (a unit-test fixture) leaves                                 !
       !      this false, and its supplied g_atm_heat/g_atm_vapour/g_atm_co2 are used verbatim. ----------!
       frozen%cas%mo_live      = .true.
-      frozen%cas%enthalpy_atm = forc%enthalpy_atm ; frozen%cas%shv_atm = forc%shv_atm ; frozen%cas%co2_atm = forc%co2_atm
+      frozen%cas%enthalpy_atm = forc%enthalpy_atm
+      frozen%cas%shv_atm = forc%shv_atm
+      frozen%cas%co2_atm = forc%co2_atm
       frozen%cas%nee_biotic = nee_biotic
-      frozen%ground%abs_sw_ground = forc%abs_sw_ground ; frozen%ground%abs_lw_ground = forc%abs_lw_ground
-      frozen%ground%ggnet = aero%ggnet ; frozen%cas%rho = rho ; frozen%cas%press = press
+      frozen%ground%abs_sw_ground = forc%abs_sw_ground
+      frozen%ground%abs_lw_ground = forc%abs_lw_ground
+      frozen%ground%ggnet = aero%ggnet
+      frozen%cas%rho = rho
+      frozen%cas%press = press
 
       !----- params + hydraulics BCs. -----------------------------------------------------------!
       frozen%cas%cas_condensation = col_config%integrator%cas_condensation      ! the per-stage condensation sink
@@ -330,7 +348,9 @@ contains
       end if
       precip_ground            = water_base + biophys%shed_water_rate
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
-      hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
+      hforc%t_ground           = t_ground
+      hforc%q_air = qcas
+      hforc%rho_air = rho
       !----- Phase of the evaporating surface, for the ice saturation branch                             !
       !      (docs/science/snow_biophysics.md eq. (1)). -------------------------------------------------!
       hforc%ground_fliq        = biophys%soil_energy%soil_fliq(1)
@@ -416,7 +436,8 @@ contains
       !      report says so. -----------------------------------------------------------------------------!
       face_resid = 0.0_wp
       do k = 1_ik, nsl
-         f_in = 0.0_wp ; f_out = 0.0_wp
+         f_in = 0.0_wp
+         f_out = 0.0_wp
          if (k > 1_ik)   f_in  = spac%face(k-1)
          if (k < nsl)    f_out = spac%face(k)
          if (k == nsl)   f_out = spac%drain
@@ -496,7 +517,9 @@ contains
 
       !----- Pack the prognostic state; plant water MASS is itself prognostic, so it is copied           !
       !      directly. ----------------------------------------------------------------------------------!
-      y%cas_enthalpy = biophys%cas%can_enthalpy ; y%cas_shv = biophys%cas%can_shv ; y%cas_co2 = biophys%cas%can_co2
+      y%cas_enthalpy = biophys%cas%can_enthalpy
+      y%cas_shv = biophys%cas%can_shv
+      y%cas_co2 = biophys%cas%can_co2
       y%soil_energy(1:nsl) = biophys%soil_energy%soil_energy(1:nsl)
       y%theta(1:nsl)       = biophys%soil_water%theta(1:nsl)
       !----- The pond rides the state vector: the stages pass it through, and each scheme commits      !
@@ -618,8 +641,10 @@ contains
       !      reduces exactly to bare ground. Sub-threshold snowfall onto bare ground still reaches     !
       !      the soil as liquid through the caller's throughfall routing, so nothing is dropped. ------!
       st%ground_rad = abs_sw_ground + abs_lw_ground
-      st%swe0       = snow%swe(1)         ; st%swe1  = snow%swe(1)
-      st%enth0      = snow%snow_energy(1) ; st%enth1 = snow%snow_energy(1)
+      st%swe0       = snow%swe(1)
+      st%swe1  = snow%swe(1)
+      st%enth0      = snow%snow_energy(1)
+      st%enth1 = snow%snow_energy(1)
       snow_e0 = snow%snow_energy(1)
       call snow_accumulate(snow, snowfall, rainfall, t_air, dt_fast, snow_params)
       st%acc_enth = snow%snow_energy(1) - snow_e0   ! rainfall enthalpy into the pack (boundary in)
@@ -631,14 +656,20 @@ contains
          !      -- continuous and stable, with no threshold cliff -- and its returned fluxes are      !
          !      already snowfac-weighted. The bare-soil share is blended by the consumer. -----------!
          st%snowfac       = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), snow_params, snow_rough)
-         senv%abs_sw      = abs_sw_ground ; senv%abs_lw = abs_lw_ground
-         senv%can_temp    = tcas ; senv%can_shv = qcas ; senv%ggnet = ggnet
-         senv%rho_air     = rho ; senv%press = press
+         senv%abs_sw      = abs_sw_ground
+         senv%abs_lw = abs_lw_ground
+         senv%can_temp    = tcas
+         senv%can_shv = qcas
+         senv%ggnet = ggnet
+         senv%rho_air     = rho
+         senv%press = press
          senv%t_soil_top  = t_soil_top
          senv%dz_soil_top = dz_soil_top
          call snow_energy_step(snow, senv, snow_params, dt_fast, st%snowfac, sfx)
          call snow_drain_meltwater(snow, snow_params, smelt)
-         st%h_snow  = sfx%h_snow ; st%le_snow = sfx%le_snow ; st%g_base = sfx%g_base
+         st%h_snow  = sfx%h_snow
+         st%le_snow = sfx%le_snow
+         st%g_base = sfx%g_base
          st%snowfac = sfx%snowfac                         ! the clamped fraction the kernel actually used
          !----- ground radiation boundary in = snow's snowfac-weighted net + bare's (1-snowfac) share !
          st%ground_rad = sfx%rnet + (1.0_wp - st%snowfac) * (abs_sw_ground + abs_lw_ground)

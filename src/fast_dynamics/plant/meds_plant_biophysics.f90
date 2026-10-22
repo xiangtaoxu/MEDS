@@ -83,9 +83,14 @@ contains
       real(wp), intent(in),  optional :: h_evap_wet  !< [J/kg] for film evaporation
       real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom, he, hw
       real(wp) :: numer, imbalance, dt_prev, dt_avg, x, w_avg, w_flux
-      fw = 0.0_wp ; les_wet = 0.0_wp ; ler_wet = 0.0_wp ; qx = 0.0_wp
-      he = latent_heat_vap ; if (present(h_evap))     he = h_evap
-      hw = latent_heat_vap ; if (present(h_evap_wet)) hw = h_evap_wet
+      fw = 0.0_wp
+      les_wet = 0.0_wp
+      ler_wet = 0.0_wp
+      qx = 0.0_wp
+      he = latent_heat_vap
+      if (present(h_evap))     he = h_evap
+      hw = latent_heat_vap
+      if (present(h_evap_wet)) hw = h_evap_wet
       if (present(f_wet)) fw = f_wet
       if (present(le_slope_wet)) les_wet = fw * le_slope_wet
       if (present(le_ref_wet))   ler_wet = fw * le_ref_wet

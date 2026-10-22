@@ -179,50 +179,63 @@ contains
 
       call column_derivs(y, frozen, col_config, n, nsl, k1, sf_out=surf_tend)
       call stage_bnd(y, frozen, surf_tend, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1), atm_heat(1))
-      tleaf_s(1:n,1) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,1) = surf_tend%wood_temp(1:n)
+      tleaf_s(1:n,1) = surf_tend%leaf_temp(1:n)
+      twood_s(1:n,1) = surf_tend%wood_temp(1:n)
       transp_s(1:n,1) = surf_tend%transp_c(1:n)
 
-      call state_init(y, n, nsl, y_stage) ; call state_accum(y_stage, dt*A21, k1, n, nsl)
+      call state_init(y, n, nsl, y_stage)
+      call state_accum(y_stage, dt*A21, k1, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k2, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2), atm_heat(2))
-      tleaf_s(1:n,2) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,2) = surf_tend%wood_temp(1:n)
+      tleaf_s(1:n,2) = surf_tend%leaf_temp(1:n)
+      twood_s(1:n,2) = surf_tend%wood_temp(1:n)
       transp_s(1:n,2) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage)
-      call state_accum(y_stage, dt*A31, k1, n, nsl) ; call state_accum(y_stage, dt*A32, k2, n, nsl)
+      call state_accum(y_stage, dt*A31, k1, n, nsl)
+      call state_accum(y_stage, dt*A32, k2, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k3, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3), atm_heat(3))
-      tleaf_s(1:n,3) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,3) = surf_tend%wood_temp(1:n)
+      tleaf_s(1:n,3) = surf_tend%leaf_temp(1:n)
+      twood_s(1:n,3) = surf_tend%wood_temp(1:n)
       transp_s(1:n,3) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage)
-      call state_accum(y_stage, dt*A41, k1, n, nsl) ; call state_accum(y_stage, dt*A42, k2, n, nsl)
+      call state_accum(y_stage, dt*A41, k1, n, nsl)
+      call state_accum(y_stage, dt*A42, k2, n, nsl)
       call state_accum(y_stage, dt*A43, k3, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k4, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4), atm_heat(4))
-      tleaf_s(1:n,4) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,4) = surf_tend%wood_temp(1:n)
+      tleaf_s(1:n,4) = surf_tend%leaf_temp(1:n)
+      twood_s(1:n,4) = surf_tend%wood_temp(1:n)
       transp_s(1:n,4) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage)
-      call state_accum(y_stage, dt*A51, k1, n, nsl) ; call state_accum(y_stage, dt*A52, k2, n, nsl)
-      call state_accum(y_stage, dt*A53, k3, n, nsl) ; call state_accum(y_stage, dt*A54, k4, n, nsl)
+      call state_accum(y_stage, dt*A51, k1, n, nsl)
+      call state_accum(y_stage, dt*A52, k2, n, nsl)
+      call state_accum(y_stage, dt*A53, k3, n, nsl)
+      call state_accum(y_stage, dt*A54, k4, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k5, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5), atm_heat(5))
-      tleaf_s(1:n,5) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,5) = surf_tend%wood_temp(1:n)
+      tleaf_s(1:n,5) = surf_tend%leaf_temp(1:n)
+      twood_s(1:n,5) = surf_tend%wood_temp(1:n)
       transp_s(1:n,5) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage)
-      call state_accum(y_stage, dt*A61, k1, n, nsl) ; call state_accum(y_stage, dt*A62, k2, n, nsl)
-      call state_accum(y_stage, dt*A63, k3, n, nsl) ; call state_accum(y_stage, dt*A64, k4, n, nsl)
+      call state_accum(y_stage, dt*A61, k1, n, nsl)
+      call state_accum(y_stage, dt*A62, k2, n, nsl)
+      call state_accum(y_stage, dt*A63, k3, n, nsl)
+      call state_accum(y_stage, dt*A64, k4, n, nsl)
       call state_accum(y_stage, dt*A65, k5, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k6, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6), atm_heat(6))
-      tleaf_s(1:n,6) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,6) = surf_tend%wood_temp(1:n)
+      tleaf_s(1:n,6) = surf_tend%leaf_temp(1:n)
+      twood_s(1:n,6) = surf_tend%wood_temp(1:n)
       transp_s(1:n,6) = surf_tend%transp_c(1:n)
 
       !----- y_out = y + dt*(B1*k1 + B3*k3 + B4*k4 + B6*k6)  [5th order; b2=b5=0]. -----------!
@@ -381,7 +394,9 @@ contains
       integer(ik) :: kood
       logical  :: clamped
 
-      w_out_acc = 0.0_wp ; e_in_acc = 0.0_wp ; e_out_acc = 0.0_wp
+      w_out_acc = 0.0_wp
+      e_in_acc = 0.0_wp
+      e_out_acc = 0.0_wp
       !----- Sub-step FLOOR: t_end/64, as in adaptive_ark_march. A floor step is not guaranteed        !
       !      stable here (RK45 is explicit), but the module header's stability estimate bounds         !
       !      normal operation to ~3 sub-steps, so a stiffness-driven runaway signals a genuinely       !
@@ -389,7 +404,10 @@ contains
       dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)   ! clamp-ok: the smallest sub-step [s] (above)
 
       call state_init(y0, n, nsl, y)
-      t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
+      t = 0.0_wp
+      dt = min(dt_init, t_end)
+      nsteps = 0_ik
+      nrej = 0_ik
       err_prev = -1.0_wp
       dt_warm = dt
       do
@@ -422,9 +440,14 @@ contains
                if (present(cond_enth_acc))  cond_enth_acc  = cond_enth_acc  + cond_enth_i
             if (present(atm_heat_acc))   atm_heat_acc   = atm_heat_acc   + atm_heat_i
             if (present(atm_vap_acc))    atm_vap_acc    = atm_vap_acc    + atm_vap_i
-               call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik ; exit
+               call state_init(y_new, n, nsl, y)
+               t = t + dt_floor
+               nsteps = nsteps + 1_ik
+               exit
             end if
-            nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
+            nrej = nrej + 1_ik
+            dt = max(dt * ec%fmin, dt_floor)
+            cycle
          end if
          fac = step_control_factor(err, err_prev, ec)
          if (err <= 1.0_wp .or. dt <= dt_floor) then
@@ -436,14 +459,17 @@ contains
             if (present(cond_enth_acc))  cond_enth_acc  = cond_enth_acc  + cond_enth_i
             if (present(atm_heat_acc))   atm_heat_acc   = atm_heat_acc   + atm_heat_i
             if (present(atm_vap_acc))    atm_vap_acc    = atm_vap_acc    + atm_vap_i
-            w_out_acc = w_out_acc + w_out ; e_in_acc = e_in_acc + e_in ; e_out_acc = e_out_acc + e_out
+            w_out_acc = w_out_acc + w_out
+            e_in_acc = e_in_acc + e_in
+            e_out_acc = e_out_acc + e_out
             !----- Accumulate over ACCEPTED sub-steps only, exactly like every amount above. --------!
             if (present(tissue_leaf_acc)) then
                tissue_leaf_acc(1:n) = tissue_leaf_acc(1:n) + tl_int_i(1:n)
                tissue_wood_acc(1:n) = tissue_wood_acc(1:n) + tw_int_i(1:n)
             end if
             if (present(transp_acc)) transp_acc(1:n) = transp_acc(1:n) + tr_int_i(1:n)
-            t = t + dt ; nsteps = nsteps + 1_ik
+            t = t + dt
+            nsteps = nsteps + 1_ik
             err_prev = err
             if (.not. clamped) dt_warm = dt
             dt = dt * fac
@@ -505,17 +531,22 @@ contains
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, nsteps, nrej
 
-      n = col_cohort%n ; nsl = col_config%soil%n_active
+      n = col_cohort%n
+      nsl = col_config%soil%n_active
       !----- The stage-clamp counter accumulates down the call chain, so this sub-step's tally starts  !
       !      clean. ------------------------------------------------------------------------------------!
-      budget%clamp_stage_n = 0_ik ; budget%theta_ood_max = 0.0_wp
+      budget%clamp_stage_n = 0_ik
+      budget%theta_ood_max = 0.0_wp
       !----- state^n ponding store, captured BEFORE the unpack below overwrites it. ------------------!
       w_surface0 = biophys%soil_water%w_surface
       e_pond0    = biophys%soil_water%w_surface_energy
       if (present(stiff_bail)) stiff_bail = .false.
 
-      cond_dep = 0.0_wp ; cond_dep_enth = 0.0_wp ; face_acc = 0.0_wp
-      budget%atm_heat_export = 0.0_wp ; budget%atm_vap_export = 0.0_wp
+      cond_dep = 0.0_wp
+      cond_dep_enth = 0.0_wp
+      face_acc = 0.0_wp
+      budget%atm_heat_export = 0.0_wp
+      budget%atm_vap_export = 0.0_wp
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
                                n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
@@ -524,7 +555,9 @@ contains
       if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
       ec = col_config%integrator%error_control
       ec%p_order = RK45_P_ORDER
-      tl_int_acc(1:n) = 0.0_wp ; tw_int_acc(1:n) = 0.0_wp ; tr_int_acc(1:n) = 0.0_wp
+      tl_int_acc(1:n) = 0.0_wp
+      tw_int_acc(1:n) = 0.0_wp
+      tr_int_acc(1:n) = 0.0_wp
       call adaptive_rk45_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
                               w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
                               clamp_stage_n=budget%clamp_stage_n,                                  &
@@ -533,7 +566,8 @@ contains
                               ood_max=budget%theta_ood_max, face_resid_acc=face_acc,                 &
                               tissue_leaf_acc=tl_int_acc, tissue_wood_acc=tw_int_acc, transp_acc=tr_int_acc)
       biophys%adapt_dt_last = dt_warm_next
-      budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
+      budget%integ_nsteps = nsteps
+      budget%integ_nrej = nrej
       !----- PER-LAYER FACE CLOSURE: the theta the stages committed against the face flows and        !
       !      root uptake they were given, layer by layer. --------------------------------------------!
       budget%soil_face_mass%resid   = face_acc
@@ -570,7 +604,8 @@ contains
       !      shortfall as a NEGATIVE addition to w_out/e_out (flooring up to 0 makes the store             !
       !      appear to gain, so the outflow must shrink by the same amount) -- the mirror of               !
       !      surf_overflow's sign. ------------------------------------------------------------------------!
-      surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
+      surf_overflow = 0.0_wp
+      surf_deficit = 0.0_wp
       if (col_config%canopy_water_on) then
          call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai,                                  &
                                 col_config%leaf_surf_water_max(col_cohort%pft(1:n)),                    &
@@ -587,7 +622,8 @@ contains
       if (cond_dep > 0.0_wp) then
          !----- at the b-weighted STAGE enthalpy the CAS was debited, not u_liq(T_end). ---------------!
          call deposit_condensate(y_out, col_config%soil%dz(1), cond_dep, cond_dep_enth)
-         biophys%soil_energy%soil_energy(1) = y_out%soil_energy(1) ; biophys%soil_water%theta(1) = y_out%theta(1)
+         biophys%soil_energy%soil_energy(1) = y_out%soil_energy(1)
+         biophys%soil_water%theta(1) = y_out%theta(1)
       end if
       call diagnose_soil_temps(y_out, col_config%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
             biophys%soil_energy%soil_fliq)
@@ -605,7 +641,10 @@ contains
          biophys%soil_water%w_surface      = w_pond_rk
          biophys%soil_water%w_surface_energy = e_pond_rk
       else
-         w_pond_rk = w_surface0 ; e_pond_rk = e_pond0 ; runoff_rk = 0.0_wp ; over_enth_rk = 0.0_wp
+         w_pond_rk = w_surface0
+         e_pond_rk = e_pond0
+         runoff_rk = 0.0_wp
+         over_enth_rk = 0.0_wp
       end if
 
       !----- Commit the tissues' energy from the TIME-AVERAGE of where they relaxed to over the march,!
@@ -622,8 +661,10 @@ contains
       !      the WHOLE-COLUMN water and energy budgets only -- every store advances through the         !
       !      SAME column_derivs RHS, so the whole-column ledger is the individual-store ledger here. ---!
       cas_mass_capacity = frozen%cas%cas_mass_capacity
-      enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
-      enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv
+      enth0 = y%cas_enthalpy
+      shv0 = y%cas_shv
+      enth1 = y_out%cas_enthalpy
+      shv1 = y_out%cas_shv
       e_soil0 = soil_energy_store(y%soil_energy,     col_config%soil%dz, nsl)
       e_soil1 = soil_energy_store(y_out%soil_energy, col_config%soil%dz, nsl)
       w_soil0 = soil_water_store(y%theta,     col_config%soil%dz, nsl)

@@ -148,10 +148,12 @@ contains
       out%uh = uh
       ico = n
       do while (ico >= 1_ik)
-         ico0 = ico ; lai_layer = lai(ico)
+         ico0 = ico
+         lai_layer = lai(ico)
          do while (ico0 > 1_ik)
             if (height(ico0 - 1_ik) /= height(ico)) exit
-            ico0 = ico0 - 1_ik ; lai_layer = lai_layer + lai(ico0)
+            ico0 = ico0 - 1_ik
+            lai_layer = lai_layer + lai(ico0)
          end do
          out%wind(ico0:ico) = max(cfg%ugbmin, uh * safe_exp(-0.25_wp * lai_layer))   ! wind at crown mid-depth
          uh                 = uh * safe_exp(-0.50_wp * lai_layer)                     ! attenuate for the layer below

@@ -161,7 +161,9 @@ contains
       type(spac_solver_t), intent(inout) :: spac
       integer(ik),         intent(in)    :: nsl, ncoh
       if (.not. allocated(spac%layer) .or. spac%nsl /= nsl .or. spac%ncoh /= ncoh) then
-         spac%nsl = nsl ; spac%ncoh = ncoh ; spac%nsoil = 1_ik + nsl
+         spac%nsl = nsl
+         spac%ncoh = ncoh
+         spac%nsoil = 1_ik + nsl
          if (allocated(spac%layer)) deallocate(spac%layer, spac%z_node, spac%dz_node, spac%face_weight,          &
               spac%t_soil, spac%pft, spac%nplant, spac%bleaf, spac%bwood, spac%grav, spac%k_xylem,               &
               spac%e_demand, spac%r_close, spac%g_rhizo, spac%soil_fixed, spac%tau_soil, spac%tau_coh,           &
@@ -174,10 +176,14 @@ contains
                   spac%water_soil(spac%nsoil), spac%water_coh(COHORT_STORES, ncoh))
          allocate(spac%face(nsl), spac%uptake(nsl, ncoh), spac%sapflow(ncoh), spac%transp(ncoh),                &
                   spac%psi_soil(spac%nsoil), spac%psi_coh(COHORT_STORES, ncoh))
-         call eval_allocate(spac%ev(1), spac) ; call eval_allocate(spac%ev(2), spac)
+         call eval_allocate(spac%ev(1), spac)
+         call eval_allocate(spac%ev(2), spac)
       end if
-      spac%t_soil = 298.15_wp ; spac%soil_fixed = .false. ; spac%g_rhizo = 0.0_wp
-      spac%e_demand = 0.0_wp ; spac%r_close = 0.5_wp
+      spac%t_soil = 298.15_wp
+      spac%soil_fixed = .false.
+      spac%g_rhizo = 0.0_wp
+      spac%e_demand = 0.0_wp
+      spac%r_close = 0.5_wp
    end subroutine spac_allocate
 
    !----- Set the solver's state from the model's: soil water content, the pond's water and       !
@@ -256,12 +262,16 @@ contains
       call water_scales(spac, hyd, scale_soil, scale_coh)
       spac%start_ready = .false.
 
-      t = 0.0_wp ; h = dt ; h_min = H_MIN_SHARE * dt ; trials = 0_ik
+      t = 0.0_wp
+      h = dt
+      h_min = H_MIN_SHARE * dt
+      trials = 0_ik
       do while (t < dt * (1.0_wp - 1.0e-12_wp))
          h = min(h, dt - t)
          last = (h <= h_min) .or. (trials >= TRIALS_MAX)
          trials = trials + 1_ik
-         tau_soil = spac%tau_soil ; tau_coh = spac%tau_coh
+         tau_soil = spac%tau_soil
+         tau_coh = spac%tau_coh
          call newton_substep(spac, params, opts, forcing, hyd, h, scale_soil, scale_coh, tau_soil, tau_coh,     &
                              converged, iters, i_sol)
          spac%nnewton = spac%nnewton + iters
@@ -327,7 +337,8 @@ contains
       end do
       call evaluate(spac, params, opts, forcing, hyd, spac%tau_soil, spac%tau_coh, ev, .true.)
       call storage_diagonal(spac, h, ev, add_soil, add_coh)
-      jv_soil = matmul(spac%sys%a, v_soil) + add_soil * v_soil ; jv_coh = 0.0_wp
+      jv_soil = matmul(spac%sys%a, v_soil) + add_soil * v_soil
+      jv_coh = 0.0_wp
       do i = 1_ik, spac%ncoh
          jv_soil = jv_soil + spac%sys%b(:, i) * v_coh(WOOD, i)
          do l = 1_ik, COHORT_STORES
@@ -342,7 +353,8 @@ contains
       call evaluate(spac, params, opts, forcing, hyd, spac%tau_soil - eps * v_soil, spac%tau_coh - eps * v_coh,   &
                     ev, .false.)
       call residual(spac, h, ev, rm_soil, rm_coh)
-      rp_soil = (rp_soil - rm_soil) / (2.0_wp * eps) ; rp_coh = (rp_coh - rm_coh) / (2.0_wp * eps)
+      rp_soil = (rp_soil - rm_soil) / (2.0_wp * eps)
+      rp_coh = (rp_coh - rm_coh) / (2.0_wp * eps)
       where (spac%soil_fixed) jv_soil = 0.0_wp
       big = max(maxval(abs(jv_soil)), maxval(abs(rp_soil)), tiny_num)
       err = maxval(abs(jv_soil - rp_soil)) / big
@@ -375,10 +387,12 @@ contains
       integer(ik) :: it, ib, i_try
       logical  :: ok
 
-      converged = .false. ; iters = 0_ik
+      converged = .false.
+      iters = 0_ik
       !----- The network at the start, evaluated unless it already is; the iterates are evaluated into  !
       !      the other slot, and the solution is the start until one is taken. ------------------------!
-      i_sol = spac%i_start ; i_try = 3_ik - spac%i_start
+      i_sol = spac%i_start
+      i_try = 3_ik - spac%i_start
       if (.not. spac%start_ready) then
          call evaluate(spac, params, opts, forcing, hyd, tau_soil, tau_coh, spac%ev(i_sol), .true.)
          spac%start_ready = .true.
@@ -398,7 +412,8 @@ contains
          !----- A trial's evaluation replaces the Jacobian sys held, so the start's is gone. ---------!
          spac%start_ready = .false.
          do ib = 1_ik, BACKTRACK_MAX
-            try_soil = tau_soil + lam * step_soil ; try_coh = tau_coh + lam * step_coh
+            try_soil = tau_soil + lam * step_soil
+            try_coh = tau_coh + lam * step_coh
             call evaluate(spac, params, opts, forcing, hyd, try_soil, try_coh, spac%ev(i_try), .true.)
             call residual(spac, h, spac%ev(i_try), res2_soil, res2_coh)
             merit_try = residual_merit(spac, h, res2_soil, res2_coh, scale_soil, scale_coh)
@@ -406,8 +421,12 @@ contains
             lam = 0.5_wp * lam
          end do
          if (merit_try /= merit_try) return
-         tau_soil = try_soil ; tau_coh = try_coh ; res_soil = res2_soil ; res_coh = res2_coh
-         merit = merit_try ; i_sol = i_try
+         tau_soil = try_soil
+         tau_coh = try_coh
+         res_soil = res2_soil
+         res_coh = res2_coh
+         merit = merit_try
+         i_sol = i_try
          worst = residual_worst(spac, h, res_soil, res_coh, scale_soil, scale_coh)
       end do
       !----- Factor the Newton matrix at the solution: the error estimate solves with it. -----------!
@@ -496,7 +515,8 @@ contains
       real(wp) :: e, de_dtheta, de_dpsi, de, qbot, dqbot_dpsi, dqbot_dk, theta1, head
       real(wp) :: psi_w, dpsi_w, u_sum, dqb_sum, du_dpsi(spac%nsl), du_dk(spac%nsl)
 
-      ev%inflow_soil = 0.0_wp ; ev%inflow_coh = 0.0_wp
+      ev%inflow_soil = 0.0_wp
+      ev%inflow_coh = 0.0_wp
       !----- The Jacobian's entries are written afresh: the soil block's band, which the flows add  !
       !      into, is cleared; every other entry an evaluation touches is set outright below, and the  !
       !      rest stay zero from arrowhead_allocate. ---------------------------------------------------!
@@ -504,7 +524,8 @@ contains
          do c = 1_ik, spac%nsoil
             spac%sys%a(c, c) = 0.0_wp
             if (c < spac%nsoil) then
-               spac%sys%a(c, c + 1_ik) = 0.0_wp ; spac%sys%a(c + 1_ik, c) = 0.0_wp
+               spac%sys%a(c, c + 1_ik) = 0.0_wp
+               spac%sys%a(c + 1_ik, c) = 0.0_wp
             end if
          end do
       end if
@@ -512,7 +533,8 @@ contains
       !----- Storage. ------------------------------------------------------------------!
       call pond_water_relations(tau_soil(POND), ev%psi_soil(1), ev%dpsi_soil(1), ev%water_soil(1),             &
                                 ev%dwater_soil(1))
-      ev%k_soil(1) = params%ksat(1) ; ev%dk_soil(1) = 0.0_wp      ! the pond conducts as saturated soil
+      ev%k_soil(1) = params%ksat(1)
+      ev%dk_soil(1) = 0.0_wp      ! the pond conducts as saturated soil
       do k = 1_ik, spac%nsl
          c = 1_ik + k
          call soil_water_relations(spac%layer(k), tau_soil(c), ev%psi_soil(c), ev%dpsi_soil(c), ev%water_soil(c), &
@@ -530,7 +552,8 @@ contains
       end do
 
       !----- The pond and the top layer: Darcy, the pond a saturated layer as thick as the top one. !
-      ca = POND ; cb = 2_ik
+      ca = POND
+      cb = 2_ik
       call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), 0.5_wp, ev%psi_soil(ca), ev%psi_soil(cb), -spac%z_node(1),  &
                            -spac%z_node(1), q, dq_pa, dq_pb, dq_ka, dq_kb)
       ev%pond_flux = q
@@ -538,7 +561,8 @@ contains
 
       !----- Between soil layers. --------------------------------------------------------!
       do k = 1_ik, spac%nsl - 1_ik
-         ca = 1_ik + k ; cb = 2_ik + k
+         ca = 1_ik + k
+         cb = 2_ik + k
          call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), spac%face_weight(k), ev%psi_soil(ca), ev%psi_soil(cb), &
                               spac%dz_node(k), spac%dz_node(k), q, dq_pa, dq_pb, dq_ka, dq_kb)
          ev%face_flux(k) = q
@@ -569,16 +593,19 @@ contains
       !      cohort's uptake comes from its whole root profile at once; its own sums are kept in       !
       !      scalars over its layers and written once. ------------------------------------------!
       do i = 1_ik, spac%ncoh
-         psi_w = ev%psi_coh(WOOD, i) ; dpsi_w = ev%dpsi_coh(WOOD, i)
+         psi_w = ev%psi_coh(WOOD, i)
+         dpsi_w = ev%dpsi_coh(WOOD, i)
          call root_water_uptake_profile(spac%nsl, spac%g_rhizo(1:spac%nsl, i), ev%k_soil(2:spac%nsoil),             &
                                         ev%psi_soil(2:spac%nsoil), spac%z_node(1:spac%nsl), psi_w,                &
                                         ev%uptake(1:spac%nsl, i), du_dpsi, du_dk)
-         u_sum = 0.0_wp ; dqb_sum = 0.0_wp
+         u_sum = 0.0_wp
+         dqb_sum = 0.0_wp
          do k = 1_ik, spac%nsl
             c = 1_ik + k
             if (spac%g_rhizo(k, i) <= 0.0_wp) then
                if (with_jacobian) then
-                  spac%sys%b(c, i) = 0.0_wp ; spac%sys%c(c, i) = 0.0_wp
+                  spac%sys%b(c, i) = 0.0_wp
+                  spac%sys%c(c, i) = 0.0_wp
                end if
                cycle
             end if
@@ -657,7 +684,8 @@ contains
       integer(ik) :: c
       do c = 1_ik, spac%nsoil
          if (spac%soil_fixed(c)) then
-            spac%sys%a(c, :) = 0.0_wp ; spac%sys%a(c, c) = 1.0_wp
+            spac%sys%a(c, :) = 0.0_wp
+            spac%sys%a(c, c) = 1.0_wp
             spac%sys%b(c, :) = 0.0_wp
          end if
       end do
@@ -737,7 +765,8 @@ contains
       u_mix = internal_energy_liquid(t_mix)
       if (pond_flux >= 0.0_wp) then
          amount = h * pond_flux
-         spac%infil = spac%infil + amount ; spac%infil_enth = spac%infil_enth + amount * u_mix
+         spac%infil = spac%infil + amount
+         spac%infil_enth = spac%infil_enth + amount * u_mix
          spac%e_pond = e_mix - amount * u_mix
       else
          amount = -h * pond_flux
@@ -756,7 +785,8 @@ contains
          spac%water_coh(LEAF, i) = ev%water_coh(LEAF, i)
          spac%water_coh(WOOD, i) = spac%water_coh(WOOD, i) - h * (sap(i) - ev%sapflow(i))
       end do
-      spac%tau_soil = tau_soil ; spac%tau_coh = tau_coh
+      spac%tau_soil = tau_soil
+      spac%tau_coh = tau_coh
       do c = 1_ik, spac%nsoil
          if (spac%soil_fixed(c)) spac%water_soil(c) = ev%water_soil(c)
       end do
@@ -810,18 +840,31 @@ contains
 
    subroutine clear_amounts(spac)
       type(spac_solver_t), intent(inout) :: spac
-      spac%face = 0.0_wp ; spac%uptake = 0.0_wp ; spac%sapflow = 0.0_wp ; spac%transp = 0.0_wp
-      spac%infil = 0.0_wp ; spac%infil_enth = 0.0_wp ; spac%exfil = 0.0_wp ; spac%exfil_enth = 0.0_wp
-      spac%drain = 0.0_wp ; spac%evap = 0.0_wp ; spac%spill = 0.0_wp ; spac%spill_enth = 0.0_wp
+      spac%face = 0.0_wp
+      spac%uptake = 0.0_wp
+      spac%sapflow = 0.0_wp
+      spac%transp = 0.0_wp
+      spac%infil = 0.0_wp
+      spac%infil_enth = 0.0_wp
+      spac%exfil = 0.0_wp
+      spac%exfil_enth = 0.0_wp
+      spac%drain = 0.0_wp
+      spac%evap = 0.0_wp
+      spac%spill = 0.0_wp
+      spac%spill_enth = 0.0_wp
       spac%rain_enth = 0.0_wp
-      spac%nsub = 0_ik ; spac%nnewton = 0_ik ; spac%nreject = 0_ik ; spac%nfail = 0_ik
+      spac%nsub = 0_ik
+      spac%nnewton = 0_ik
+      spac%nreject = 0_ik
+      spac%nfail = 0_ik
    end subroutine clear_amounts
 
    subroutine eval_allocate(ev, spac)
       type(spac_eval_t),   intent(inout) :: ev
       type(spac_solver_t), intent(in)    :: spac
       integer(ik) :: ns, nc
-      ns = spac%nsoil ; nc = spac%ncoh
+      ns = spac%nsoil
+      nc = spac%ncoh
       if (allocated(ev%psi_soil)) deallocate(ev%psi_soil, ev%dpsi_soil, ev%water_soil, ev%dwater_soil, ev%k_soil, &
                                              ev%dk_soil, ev%inflow_soil, ev%psi_coh, ev%dpsi_coh, ev%water_coh,   &
                                              ev%dwater_coh, ev%inflow_coh, ev%face_flux, ev%uptake, ev%sapflow,  &

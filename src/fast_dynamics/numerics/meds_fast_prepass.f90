@@ -119,7 +119,8 @@ contains
       !      atmosphere -- ~23% of everything entering growth. It also carries the                 !
       !      opposite-signed starvation correction (docs/science/plant_respiration.md §6).         !
       nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp + biophys%slow_co2_rate
-      budget%gpp_last = gpp ; budget%nee_last = nee_biotic
+      budget%gpp_last = gpp
+      budget%nee_last = nee_biotic
 
       !----- 6. CAS capacities + atm-exchange conductances (frozen across the macro-step). --------!
       call cas_capacities_and_conductances(rho, qcas, biophys%cas%can_depth, aero%ustar, aero%temp1,    &
@@ -145,8 +146,14 @@ contains
       type(aero_out_t),      intent(inout) :: aero
       real(wp),              intent(out)   :: tcas, qcas, press, rho, t_ground
       tcas = cas_enthalpy_to_temp(cas%can_enthalpy, cas%can_shv)
-      qcas = cas%can_shv ; press = aenv%press ; rho = aenv%rho_air ; t_ground = soil_temp_top
-      aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = cas%can_co2
+      qcas = cas%can_shv
+      press = aenv%press
+      rho = aenv%rho_air
+      t_ground = soil_temp_top
+      aenv%can_temp = tcas
+      aenv%can_theta = tcas
+      aenv%can_shv = qcas
+      aenv%can_co2 = cas%can_co2
       aenv%t_ground = t_ground
       call aero_bottom_to_top(aero_cfg, aenv, ageom, col_cohort%n, col_cohort%height, col_cohort%lai,      &
                               col_cohort%leaf_width, col_cohort%branch_diam, leaf_temp, wood_temp, aero)
@@ -226,7 +233,8 @@ contains
       integer(ik) :: i, n
 
       n = col_cohort%n
-      gpp = 0.0_wp ; ra_leaf = 0.0_wp
+      gpp = 0.0_wp
+      ra_leaf = 0.0_wp
       if (present(gpp_coh))       gpp_coh(1:n)       = 0.0_wp
       if (present(leaf_resp_coh)) leaf_resp_coh(1:n) = 0.0_wp
       e_air = qcas * press / (0.622_wp + 0.378_wp * qcas)          ! loop-invariant
@@ -336,7 +344,8 @@ contains
       !      (docs/science/plant_respiration.md eq. (4)). It is patch-uniform, so it is evaluated  !
       !      once here and broadcast over the cohort array. ---------------------------------------!
       tscale_root = root_zone_temp_scale(soil_temp, root_frac, soil%n_active, root)
-      ra_stem = 0.0_wp ; ra_root = 0.0_wp
+      ra_stem = 0.0_wp
+      ra_root = 0.0_wp
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
       if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
       call stem_maintenance_respiration(wood_temp(1:n), col_cohort%dbh(1:n), col_cohort%height(1:n),   &
@@ -386,7 +395,8 @@ contains
          !      debit (rh_seam_gap). That comparison lives in the pools' currency, so converting at  !
          !      the source would break the seam check instead. --------------------------------------!
          rh_kgc = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)
-         budget%xi_step = xi ; budget%rh_matrix_step = rh_kgc      ! [kgC/m2/day] -- the seam's currency
+         budget%xi_step = xi
+         budget%rh_matrix_step = rh_kgc      ! [kgC/m2/day] -- the seam's currency
          rh = rh_kgc * kgcday_2_umols                              ! [umol/m2/s]  -- what the CAS gets
       else
          !----- NO SOIL CARBON MODELLED => NO SOIL RESPIRATION. A prescribed constant pool respired    !
@@ -449,22 +459,30 @@ contains
       call ascending_order(height, n, ord)
       do k = 1_ik, n
          i = ord(k)
-         h_bt(k)   = height(i)     ; lai_bt(k) = lai(i)
-         lt_bt(k)  = leaf_temp(i)  ; wt_bt(k)  = wood_temp(i)
-         lw_bt(k)  = leaf_width(i) ; bd_bt(k)  = branch_diam(i)
+         h_bt(k)   = height(i)
+         lai_bt(k) = lai(i)
+         lt_bt(k)  = leaf_temp(i)
+         wt_bt(k)  = wood_temp(i)
+         lw_bt(k)  = leaf_width(i)
+         bd_bt(k)  = branch_diam(i)
       end do
 
       call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, lt_bt, wt_bt, lw_bt, bd_bt, aero)
 
       !----- aero%*(k) is now bottom->top; copy out, then scatter back to gather order. ----------!
       do k = 1_ik, n
-         wind_bt(k) = aero%wind(k)     ; lgbh_bt(k) = aero%leaf_gbh(k) ; lgbw_bt(k) = aero%leaf_gbw(k)
-         wgbh_bt(k) = aero%wood_gbh(k) ; wgbw_bt(k) = aero%wood_gbw(k)
+         wind_bt(k) = aero%wind(k)
+         lgbh_bt(k) = aero%leaf_gbh(k)
+         lgbw_bt(k) = aero%leaf_gbw(k)
+         wgbh_bt(k) = aero%wood_gbh(k)
+         wgbw_bt(k) = aero%wood_gbw(k)
       end do
       do k = 1_ik, n
          aero%wind(ord(k))     = wind_bt(k)
-         aero%leaf_gbh(ord(k)) = lgbh_bt(k) ; aero%leaf_gbw(ord(k)) = lgbw_bt(k)
-         aero%wood_gbh(ord(k)) = wgbh_bt(k) ; aero%wood_gbw(ord(k)) = wgbw_bt(k)
+         aero%leaf_gbh(ord(k)) = lgbh_bt(k)
+         aero%leaf_gbw(ord(k)) = lgbw_bt(k)
+         aero%wood_gbh(ord(k)) = wgbh_bt(k)
+         aero%wood_gbw(ord(k)) = wgbw_bt(k)
       end do
    end subroutine aero_bottom_to_top
 

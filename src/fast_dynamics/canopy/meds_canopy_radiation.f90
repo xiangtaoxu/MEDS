@@ -346,7 +346,9 @@ contains
          lyr(i) = nlayer
       end do
       nmemb(1:nlayer) = 0_ik
-      do i = 1_ik, ncoh ; nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik ; end do
+      do i = 1_ik, ncoh
+         nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik
+      end do
 
       !----- Ross-G beam extinction is band-independent: compute once per cohort, reuse each band. -!
       kdir_coh(1:ncoh) = 0.0_wp
@@ -374,8 +376,12 @@ contains
          !      gc is recovered exactly from beta = 0.5*(1+gc), averaged, and re-formed -- averaging    !
          !      beta directly would be the same thing, but going through gc keeps beta0, which divides  !
          !      gc by kdir, consistent with it. ---------------------------------------------------!
-         etai_l(1:nlayer) = 0.0_wp ; omega_l(1:nlayer) = 0.0_wp ; beta_l(1:nlayer) = 0.0_wp
-         beta0_l(1:nlayer) = 0.0_wp ; kdir_l(1:nlayer) = 0.0_wp ; emis_l(1:nlayer) = 0.0_wp
+         etai_l(1:nlayer) = 0.0_wp
+         omega_l(1:nlayer) = 0.0_wp
+         beta_l(1:nlayer) = 0.0_wp
+         beta0_l(1:nlayer) = 0.0_wp
+         kdir_l(1:nlayer) = 0.0_wp
+         emis_l(1:nlayer) = 0.0_wp
          do i = 1_ik, ncoh
             il = lyr(i)
             etai_l(il)  = etai_l(il)  + etai(i)
@@ -392,7 +398,10 @@ contains
                kdir_l(il)  = kdir_l(il)  / etai_l(il)
                emis_l(il)  = emis_l(il)  / etai_l(il)
             else
-               omega_l(il) = 0.0_wp ; gc_l = 0.0_wp ; kdir_l(il) = 0.0_wp ; emis_l(il) = 0.0_wp
+               omega_l(il) = 0.0_wp
+               gc_l = 0.0_wp
+               kdir_l(il) = 0.0_wp
+               emis_l(il) = 0.0_wp
             end if
             beta_l(il) = 0.5_wp * (1.0_wp + gc_l)
             if (optics%has_beam(b)) then
@@ -405,8 +414,12 @@ contains
          do i = 1_ik, ncoh
             if (nmemb(lyr(i)) /= 1_ik) cycle
             il = lyr(i)
-            etai_l(il) = etai(i) ; omega_l(il) = omega(i) ; beta_l(il) = beta(i)
-            beta0_l(il) = beta0(i) ; kdir_l(il) = kdir(i) ; emis_l(il) = emission(i)
+            etai_l(il) = etai(i)
+            omega_l(il) = omega(i)
+            beta_l(il) = beta(i)
+            beta0_l(il) = beta0(i)
+            kdir_l(il) = kdir(i)
+            emis_l(il) = emission(i)
          end do
 
          call solve_band(nlayer, etai_l(1:nlayer), omega_l(1:nlayer),                          &

@@ -68,12 +68,24 @@ contains
          p%psi_onset      = pft_stomata_psi_onset(cfg, ipft)
       end associate
       !----- Copy the shared biochemistry constants. --------------------------------------!
-      p%kc25 = cfg%kc25 ; p%ko25 = cfg%ko25 ; p%gstar25 = cfg%gstar25
-      p%ea_kc = cfg%ea_kc ; p%ea_ko = cfg%ea_ko ; p%ea_gstar = cfg%ea_gstar
-      p%ea_vcmax = cfg%ea_vcmax ; p%ea_jmax = cfg%ea_jmax ; p%ea_rd = cfg%ea_rd
-      p%hd_vcmax = cfg%hd_vcmax ; p%hd_jmax = cfg%hd_jmax ; p%hd_rd = cfg%hd_rd
-      p%ds_vcmax = cfg%ds_vcmax ; p%ds_jmax = cfg%ds_jmax ; p%ds_rd = cfg%ds_rd
-      p%o2_mol_frac = cfg%o2_mol_frac ; p%absorptance = cfg%leaf_absorptance ; p%phi_psii = cfg%phi_psii
+      p%kc25 = cfg%kc25
+      p%ko25 = cfg%ko25
+      p%gstar25 = cfg%gstar25
+      p%ea_kc = cfg%ea_kc
+      p%ea_ko = cfg%ea_ko
+      p%ea_gstar = cfg%ea_gstar
+      p%ea_vcmax = cfg%ea_vcmax
+      p%ea_jmax = cfg%ea_jmax
+      p%ea_rd = cfg%ea_rd
+      p%hd_vcmax = cfg%hd_vcmax
+      p%hd_jmax = cfg%hd_jmax
+      p%hd_rd = cfg%hd_rd
+      p%ds_vcmax = cfg%ds_vcmax
+      p%ds_jmax = cfg%ds_jmax
+      p%ds_rd = cfg%ds_rd
+      p%o2_mol_frac = cfg%o2_mol_frac
+      p%absorptance = cfg%leaf_absorptance
+      p%phi_psii = cfg%phi_psii
       p%medlyn_vpd_min = cfg%medlyn_vpd_min
    end subroutine leaf_photo_params_for_pft
 
@@ -147,19 +159,27 @@ contains
       !      physics, so it is derived here rather than offered as two more knobs a user could   !
       !      set inconsistently. ----------------------------------------------------------------!
       associate (t => cfg%pft)
-         rl(RAD_VIS,1:np) = t%leaf_reflect_vis(1:np) ; tl(RAD_VIS,1:np) = t%leaf_transmit_vis(1:np)
-         rl(RAD_NIR,1:np) = t%leaf_reflect_nir(1:np) ; tl(RAD_NIR,1:np) = t%leaf_transmit_nir(1:np)
-         rl(RAD_LW ,1:np) = 1.0_wp - t%leaf_emissivity(1:np) ; tl(RAD_LW,1:np) = 0.0_wp
-         rw(RAD_VIS,1:np) = t%wood_reflect_vis(1:np) ; tw(RAD_VIS,1:np) = t%wood_transmit_vis(1:np)
-         rw(RAD_NIR,1:np) = t%wood_reflect_nir(1:np) ; tw(RAD_NIR,1:np) = t%wood_transmit_nir(1:np)
-         rw(RAD_LW ,1:np) = 1.0_wp - t%wood_emissivity(1:np) ; tw(RAD_LW,1:np) = 0.0_wp
-         cl(1:np) = t%leaf_clumping(1:np) ; cw(1:np) = t%wood_clumping(1:np)
+         rl(RAD_VIS,1:np) = t%leaf_reflect_vis(1:np)
+         tl(RAD_VIS,1:np) = t%leaf_transmit_vis(1:np)
+         rl(RAD_NIR,1:np) = t%leaf_reflect_nir(1:np)
+         tl(RAD_NIR,1:np) = t%leaf_transmit_nir(1:np)
+         rl(RAD_LW ,1:np) = 1.0_wp - t%leaf_emissivity(1:np)
+         tl(RAD_LW,1:np) = 0.0_wp
+         rw(RAD_VIS,1:np) = t%wood_reflect_vis(1:np)
+         tw(RAD_VIS,1:np) = t%wood_transmit_vis(1:np)
+         rw(RAD_NIR,1:np) = t%wood_reflect_nir(1:np)
+         tw(RAD_NIR,1:np) = t%wood_transmit_nir(1:np)
+         rw(RAD_LW ,1:np) = 1.0_wp - t%wood_emissivity(1:np)
+         tw(RAD_LW,1:np) = 0.0_wp
+         cl(1:np) = t%leaf_clumping(1:np)
+         cw(1:np) = t%wood_clumping(1:np)
          !----- The Beta leaf-angle shape is a TRANSFORM of (mean, std), so it is derived per  !
          !      PFT rather than configured: the two shape parameters are not quantities anyone  !
          !      measures, and an inconsistent pair has no leaf-angle distribution behind it. ---!
          do ipf = 1_ik, np
             call moments_to_beta_params(t%leaf_angle_mean(ipf), t%leaf_angle_std(ipf), bpp, bqq)
-            bp(ipf) = bpp ; bq(ipf) = bqq
+            bp(ipf) = bpp
+            bq(ipf) = bqq
          end do
       end associate
       hb = [.true.,  .true.,  .false.]                         ! VIS/NIR have a beam; LW does not

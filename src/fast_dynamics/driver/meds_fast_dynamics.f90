@@ -211,19 +211,23 @@ contains
          associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
                     surf => poly%site%surface(poly%patch%owner_site(ip)))
             nsl = surf%soil%n_active
-            sw%theta(1:nsl)  = surf%theta_start(1:nsl) ; sw%w_surface = 0.0_wp
+            sw%theta(1:nsl)  = surf%theta_start(1:nsl)
+            sw%w_surface = 0.0_wp
             sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
             do k = 1_ik, nsl
                se%soil_energy(k) = temp_to_internal_energy(surf%soil_thermal%soil_dry_heat_capacity(k),             &
                                    surf%theta_start(k) * rho_h2o, ctx%soil_temp_init, 1.0_wp)
-               se%soil_temp(k)   = ctx%soil_temp_init ; se%soil_fliq(k) = 1.0_wp
+               se%soil_temp(k)   = ctx%soil_temp_init
+               se%soil_fliq(k) = 1.0_wp
             end do
-            cas%can_shv      = ctx%shv_atm ; cas%can_co2 = ctx%co2_atm
+            cas%can_shv      = ctx%shv_atm
+            cas%can_co2 = ctx%co2_atm
             cas%can_enthalpy = cas_temp_to_enthalpy(ctx%air_temp, ctx%shv_atm)
             cas%can_temp     = ctx%air_temp
             psi = top_soil_psi(surf%soil, sw%theta(1))
             do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
-               poly%cohort%leaf_temp(i) = cas%can_temp ; poly%cohort%wood_temp(i) = cas%can_temp
+               poly%cohort%leaf_temp(i) = cas%can_temp
+               poly%cohort%wood_temp(i) = cas%can_temp
                associate (hyd => ctx%col_config%hydraulics_table%pft(poly%cohort%pft(i)))
                   call set_cohort_tissue_water(poly%cohort, i, psi, hyd%leaf_curve, hyd%wood_curve)
                end associate
@@ -428,8 +432,10 @@ contains
          out_bufs%fast_n_cohort = poly%cohort%n
          out_bufs%fast_n_patch  = npatch
          out_bufs%fast_site = 0.0_wp
-         out_bufs%fast_soil_temp = 0.0_wp ; out_bufs%fast_soil_water = 0.0_wp
-         out_bufs%fast_cohort_gpp = 0.0_wp ; out_bufs%fast_cohort_height = 0.0_wp
+         out_bufs%fast_soil_temp = 0.0_wp
+         out_bufs%fast_soil_water = 0.0_wp
+         out_bufs%fast_cohort_gpp = 0.0_wp
+         out_bufs%fast_cohort_height = 0.0_wp
          if (do_cdiag) out_bufs%fast_cohort_diag = 0.0_wp
       end if
 
@@ -545,7 +551,8 @@ contains
          !      forms). Capacity was ensured above (ncoh <= ncoh_max always); this just updates the !
          !      ACTIVE count -- no allocation. -----------------------------------------------------!
          call copy_column_cohort(col_cohort, poly%cohort, i0, ncoh)
-         sum_lai = 0.0_wp ; sum_wai = 0.0_wp
+         sum_lai = 0.0_wp
+         sum_wai = 0.0_wp
          do j = 1_ik, ncoh
             sum_lai = sum_lai + col_cohort%lai(j)
             sum_wai = sum_wai + col_cohort%wai(j)
@@ -848,11 +855,17 @@ contains
       !=========================================================================================!
       poly%site%pheno_tair_sum = 0.0_wp
       poly%site%pheno_tair_n = 0_ik
-      poly%et_accum       = 0.0_wp ; poly%runoff_surf_accum = 0.0_wp ; poly%drainage_accum = 0.0_wp
-      poly%work_integ_steps = 0.0_wp ; poly%work_integ_rej  = 0.0_wp
-      poly%work_water_nsub  = 0.0_wp ; poly%work_water_newton = 0.0_wp
-      poly%work_water_nfail = 0.0_wp ; poly%work_water_reject = 0.0_wp
-      poly%work_rk45_rescue = 0.0_wp ; poly%work_clamp_stage  = 0.0_wp
+      poly%et_accum       = 0.0_wp
+      poly%runoff_surf_accum = 0.0_wp
+      poly%drainage_accum = 0.0_wp
+      poly%work_integ_steps = 0.0_wp
+      poly%work_integ_rej  = 0.0_wp
+      poly%work_water_nsub  = 0.0_wp
+      poly%work_water_newton = 0.0_wp
+      poly%work_water_nfail = 0.0_wp
+      poly%work_water_reject = 0.0_wp
+      poly%work_rk45_rescue = 0.0_wp
+      poly%work_clamp_stage  = 0.0_wp
       do ip = 1_ik, npatch
          do isub = 1_ik, nsub
             poly%et_accum          = poly%et_accum          + red_site(RED_ET,            isub, ip)
@@ -896,7 +909,8 @@ contains
       !      daily, monthly and yearly tiers. -----------------------------------------------------!
       if (do_fast .or. poly%diag%active) then
          do isub = 1_ik, nsub
-            rain_s = 0.0_wp ; snow_s = 0.0_wp
+            rain_s = 0.0_wp
+            snow_s = 0.0_wp
             do ip = 1_ik, npatch
                rain_s = rain_s + red_site(RED_RAINF,    isub, ip)
                snow_s = snow_s + red_site(RED_SNOWFALL, isub, ip)
@@ -925,15 +939,21 @@ contains
 
       if (present(worst_energy)) then
          worst_energy = 0.0_wp
-         do ip = 1_ik, npatch ; worst_energy = max(worst_energy, red_worst_energy(ip)) ; end do
+         do ip = 1_ik, npatch
+            worst_energy = max(worst_energy, red_worst_energy(ip))
+         end do
       end if
       if (present(worst_water)) then
          worst_water = 0.0_wp
-         do ip = 1_ik, npatch ; worst_water = max(worst_water, red_worst_water(ip)) ; end do
+         do ip = 1_ik, npatch
+            worst_water = max(worst_water, red_worst_water(ip))
+         end do
       end if
       if (present(n_budget_fail)) n_budget_fail = sum(red_nfail(1:npatch))
       if (present(run_energy_budget) .or. present(run_water_budget) .or. present(run_face_budget)) then
-         site_energy_budget = budget_t() ; site_water_budget = budget_t() ; site_face_budget = budget_t()
+         site_energy_budget = budget_t()
+         site_water_budget = budget_t()
+         site_face_budget = budget_t()
          do ip = 1_ik, npatch
             call budget_merge(site_energy_budget, red_budget_energy(ip), patch_polygon_area(poly, ip))
             call budget_merge(site_water_budget,  red_budget_water(ip),  patch_polygon_area(poly, ip))
@@ -991,7 +1011,9 @@ contains
          opened = .true.
       end if
 
-      gpp_patch = 0.0_wp ; leaf_temp_mean = 0.0_wp ; wood_temp_mean = 0.0_wp
+      gpp_patch = 0.0_wp
+      leaf_temp_mean = 0.0_wp
+      wood_temp_mean = 0.0_wp
       if (ncoh > 0_ik) then
          gpp_patch      = sum(gpp_coh(1:ncoh) * col_cohort%nplant(1:ncoh))    ! per-plant [umol/plant/s] x nplant -> [umol/m2/s]
          leaf_temp_mean = sum(biophys%leaf_temp(1:ncoh)) / real(ncoh, wp)
@@ -1060,11 +1082,17 @@ contains
    pure function reference_met(ctx) result(met)
       type(fast_context_t), intent(in) :: ctx
       type(met_forcing_t) :: met
-      met%tair_k   = ctx%air_temp ; met%qair = ctx%shv_atm ; met%psurf_pa = ctx%press
-      met%rho_air  = ctx%rho_air  ; met%co2  = ctx%co2_atm ; met%wind     = ctx%u_ref
+      met%tair_k   = ctx%air_temp
+      met%qair = ctx%shv_atm
+      met%psurf_pa = ctx%press
+      met%rho_air  = ctx%rho_air
+      met%co2  = ctx%co2_atm
+      met%wind     = ctx%u_ref
       met%precip   = ctx%precip
       met%par_beam = ctx%rad_sw_top
-      met%par_diffuse = 0.0_wp ; met%nir_beam = 0.0_wp ; met%nir_diffuse = 0.0_wp
+      met%par_diffuse = 0.0_wp
+      met%nir_beam = 0.0_wp
+      met%nir_diffuse = 0.0_wp
    end function reference_met
 
    !----- RT join (docs/science/canopy_radiation_transfer.md §4): run the two-stream canopy         !
@@ -1113,7 +1141,9 @@ contains
       call ascending_order(height, ncoh, perm)
       do j = 1_ik, ncoh
          i = perm(j)
-         pft_bt(j) = pft(i) ; lai_bt(j) = lai(i) ; hgt_bt(j) = height(i)
+         pft_bt(j) = pft(i)
+         lai_bt(j) = lai(i)
+         hgt_bt(j) = height(i)
          wai_bt(j) = wai(i)
          !----- LW emission temperature: the cohort's AREA-WEIGHTED effective radiative temperature     !
          !      T_rad = (f_l*T_leaf^4 + (1-f_l)*T_wood^4)^(1/4), f_l = LAI/(LAI+WAI), from the lagged   !
@@ -1131,14 +1161,18 @@ contains
       !----- rad_forcing_t from met (all W/m2, direct assignment). --------------------------------!
       call alloc_rad_forcing(rf, N_RAD_BAND_DEFAULT)
       rf%cosz = met%cosz
-      rf%incid_beam(RAD_VIS) = met%par_beam ; rf%incid_diff(RAD_VIS) = met%par_diffuse
-      rf%incid_beam(RAD_NIR) = met%nir_beam ; rf%incid_diff(RAD_NIR) = met%nir_diffuse
-      rf%incid_beam(RAD_LW)  = 0.0_wp       ; rf%incid_diff(RAD_LW)  = met%lwdown
+      rf%incid_beam(RAD_VIS) = met%par_beam
+      rf%incid_diff(RAD_VIS) = met%par_diffuse
+      rf%incid_beam(RAD_NIR) = met%nir_beam
+      rf%incid_diff(RAD_NIR) = met%nir_diffuse
+      rf%incid_beam(RAD_LW)  = 0.0_wp
+      rf%incid_diff(RAD_LW)  = met%lwdown
 
       !----- Ground optics: bare-soil albedo/emissivity from [soil], skin temperature from the top soil node. --!
       surf%n_band = N_RAD_BAND_DEFAULT
       allocate(surf%soil_albedo(N_RAD_BAND_DEFAULT))
-      surf%soil_albedo = soil_albedo ; surf%soil_emiss = soil_emiss
+      surf%soil_albedo = soil_albedo
+      surf%soil_emiss = soil_emiss
       surf%soil_temp   = soil_temp_top
       !----- Snow raises the ground albedo/emissivity + emits off the snow surface                     !
       !      (docs/science/canopy_radiation_transfer.md §4), RAMPED by the Niu-Yang07 snow-cover       !
@@ -1195,7 +1229,10 @@ contains
       type(patch_biophys_t), intent(in)    :: biophys
       type(met_forcing_t),   intent(in)    :: met
       real(wp),              intent(in)    :: zref     !< [m] the reference height the forcing is applied at
-      aenv%u_ref = met%wind ; aenv%zref = zref ; aenv%press = met%psurf_pa ; aenv%rho_air = met%rho_air
+      aenv%u_ref = met%wind
+      aenv%zref = zref
+      aenv%press = met%psurf_pa
+      aenv%rho_air = met%rho_air
       !----- The atmospheric reference state and the CAS/ground refresh go through               !
       !      set_aero_env_atm and set_aero_env_canopy (meds_canopy_types), the routines the      !
       !      column tests use too, so no caller assembles `aenv` by a parallel hand-written copy !

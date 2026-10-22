@@ -70,19 +70,24 @@ contains
       integer(ik),          intent(in)  :: n, nsl
       real(wp),             intent(out) :: v(:)
       integer(ik) :: i, o
-      v(1) = y%cas_enthalpy ; v(2) = y%cas_shv ; v(3) = y%cas_co2
+      v(1) = y%cas_enthalpy
+      v(2) = y%cas_shv
+      v(3) = y%cas_co2
       v(4:3+nsl)       = y%soil_energy(1:nsl)
       v(4+nsl:3+2*nsl) = y%theta(1:nsl)
       o = 3_ik + 2_ik*nsl
       do i = 1_ik, n
-         v(o+2*i-1) = y%leaf_water_mass(i) ; v(o+2*i) = y%wood_water_mass(i)
+         v(o+2*i-1) = y%leaf_water_mass(i)
+         v(o+2*i) = y%wood_water_mass(i)
       end do
       o = o + 2_ik*n
       do i = 1_ik, n
-         v(o+2*i-1) = y%leaf_surf_water(i) ; v(o+2*i) = y%wood_surf_water(i)
+         v(o+2*i-1) = y%leaf_surf_water(i)
+         v(o+2*i) = y%wood_surf_water(i)
       end do
       o = o + 2_ik*n
-      v(o+1) = y%w_surface ; v(o+2) = y%w_surface_energy
+      v(o+1) = y%w_surface
+      v(o+2) = y%w_surface_energy
    end subroutine state_to_array
 
    !----- The inverse. The per-cohort arrays are allocated only when they are missing or of another !
@@ -93,20 +98,26 @@ contains
       type(column_state_t), intent(inout) :: y
       integer(ik) :: i, o
       call ensure_cohort_arrays(y, n)
-      y%cas_enthalpy = v(1) ; y%cas_shv = v(2) ; y%cas_co2 = v(3)
-      y%soil_energy = 0.0_wp ; y%theta = 0.0_wp
+      y%cas_enthalpy = v(1)
+      y%cas_shv = v(2)
+      y%cas_co2 = v(3)
+      y%soil_energy = 0.0_wp
+      y%theta = 0.0_wp
       y%soil_energy(1:nsl) = v(4:3+nsl)
       y%theta(1:nsl)       = v(4+nsl:3+2*nsl)
       o = 3_ik + 2_ik*nsl
       do i = 1_ik, n
-         y%leaf_water_mass(i) = v(o+2*i-1) ; y%wood_water_mass(i) = v(o+2*i)
+         y%leaf_water_mass(i) = v(o+2*i-1)
+         y%wood_water_mass(i) = v(o+2*i)
       end do
       o = o + 2_ik*n
       do i = 1_ik, n
-         y%leaf_surf_water(i) = v(o+2*i-1) ; y%wood_surf_water(i) = v(o+2*i)
+         y%leaf_surf_water(i) = v(o+2*i-1)
+         y%wood_surf_water(i) = v(o+2*i)
       end do
       o = o + 2_ik*n
-      y%w_surface = v(o+1) ; y%w_surface_energy = v(o+2)
+      y%w_surface = v(o+1)
+      y%w_surface_energy = v(o+2)
    end subroutine array_to_state
 
    !----- A tendency in the same layout. The pond has no tendency (it is passed through the stages  !
@@ -117,19 +128,24 @@ contains
       integer(ik),         intent(in)  :: n, nsl
       real(wp),            intent(out) :: v(:)
       integer(ik) :: i, o
-      v(1) = k%d_cas_enthalpy ; v(2) = k%d_cas_shv ; v(3) = k%d_cas_co2
+      v(1) = k%d_cas_enthalpy
+      v(2) = k%d_cas_shv
+      v(3) = k%d_cas_co2
       v(4:3+nsl)       = k%dedt(1:nsl)
       v(4+nsl:3+2*nsl) = k%dtheta_dt(1:nsl)
       o = 3_ik + 2_ik*nsl
       do i = 1_ik, n
-         v(o+2*i-1) = k%d_leaf_water_mass(i) ; v(o+2*i) = k%d_wood_water_mass(i)
+         v(o+2*i-1) = k%d_leaf_water_mass(i)
+         v(o+2*i) = k%d_wood_water_mass(i)
       end do
       o = o + 2_ik*n
       do i = 1_ik, n
-         v(o+2*i-1) = k%d_leaf_surf_water(i) ; v(o+2*i) = k%d_wood_surf_water(i)
+         v(o+2*i-1) = k%d_leaf_surf_water(i)
+         v(o+2*i) = k%d_wood_surf_water(i)
       end do
       o = o + 2_ik*n
-      v(o+1) = 0.0_wp ; v(o+2) = 0.0_wp
+      v(o+1) = 0.0_wp
+      v(o+2) = 0.0_wp
    end subroutine tend_to_array
 
    !----- How entry j of the flat array is treated, for every field in one place:                  !
@@ -145,19 +161,26 @@ contains
       integer(ik) :: o
       o = 3_ik + 2_ik*nsl
       if (j == 1_ik) then
-         norm_group = GRP_ENTH ; in_embedded_error = .true.
+         norm_group = GRP_ENTH
+         in_embedded_error = .true.
       else if (j == 2_ik) then
-         norm_group = GRP_SHV  ; in_embedded_error = .true.
+         norm_group = GRP_SHV
+         in_embedded_error = .true.
       else if (j == 3_ik) then
-         norm_group = GRP_CO2  ; in_embedded_error = .true.
+         norm_group = GRP_CO2
+         in_embedded_error = .true.
       else if (j <= 3_ik + nsl) then
-         norm_group = GRP_SE   ; in_embedded_error = .true.
+         norm_group = GRP_SE
+         in_embedded_error = .true.
       else if (j <= o) then
-         norm_group = GRP_THETA ; in_embedded_error = .true.
+         norm_group = GRP_THETA
+         in_embedded_error = .true.
       else if (j <= o + 2_ik*n) then
-         norm_group = merge(GRP_LEAF_W, GRP_WOOD_W, mod(j - o, 2_ik) == 1_ik) ; in_embedded_error = .false.
+         norm_group = merge(GRP_LEAF_W, GRP_WOOD_W, mod(j - o, 2_ik) == 1_ik)
+         in_embedded_error = .false.
       else
-         norm_group = 0_ik ; in_embedded_error = .false.         ! films and pond
+         norm_group = 0_ik
+         in_embedded_error = .false.         ! films and pond
       end if
    end subroutine state_entry_rules
 
@@ -226,7 +249,8 @@ contains
       type(stage_bflux_t),  intent(in)  :: s2, s3
       real(wp),             intent(in)  :: dt, gam
       real(wp) :: b2, b3
-      b2 = (1.0_wp - gam) * dt ; b3 = gam * dt
+      b2 = (1.0_wp - gam) * dt
+      b3 = gam * dt
       acc%cas_enth_in   = b2*s2%cas_enth_in   + b3*s3%cas_enth_in
       acc%cas_enth_out  = b2*s2%cas_enth_out  + b3*s3%cas_enth_out
       acc%cas_vap_in    = b2*s2%cas_vap_in    + b3*s3%cas_vap_in
@@ -255,7 +279,9 @@ contains
       !      and nvfortran 25.11 rejects it in this module ("Empty structure constructor", F-0155). ---!
       if (present(n)) then
          allocate(acc%tissue_leaf_int(n), acc%tissue_wood_int(n), acc%transp_coh(n))
-         acc%tissue_leaf_int = 0.0_wp ; acc%tissue_wood_int = 0.0_wp ; acc%transp_coh = 0.0_wp
+         acc%tissue_leaf_int = 0.0_wp
+         acc%tissue_wood_int = 0.0_wp
+         acc%transp_coh = 0.0_wp
       end if
    end subroutine bflux_zero
 
@@ -352,8 +378,10 @@ contains
       real(wp)    :: v2(5_ik + 2_ik*nsl + 4_ik*n), vy(5_ik + 2_ik*nsl + 4_ik*n)
       integer(ik) :: j, grp
       logical     :: counted
-      call state_to_array(Y3, n, nsl, v3) ; call state_to_array(base3, n, nsl, vb)
-      call state_to_array(Y2, n, nsl, v2) ; call state_to_array(y, n, nsl, vy)
+      call state_to_array(Y3, n, nsl, v3)
+      call state_to_array(base3, n, nsl, vb)
+      call state_to_array(Y2, n, nsl, v2)
+      call state_to_array(y, n, nsl, vy)
       do j = 1_ik, size(v3, kind=ik)
          call state_entry_rules(j, n, nsl, grp, counted)
          if (counted) then
@@ -442,7 +470,8 @@ contains
       real(wp)    :: leaf_cap_i, wood_cap_i
       integer(ik) :: i
       do i = 1_ik, n
-         leaf_cap_i = leaf_max(i) * lai(i) ; wood_cap_i = wood_max(i) * wai(i)
+         leaf_cap_i = leaf_max(i) * lai(i)
+         wood_cap_i = wood_max(i) * wai(i)
          surf_overflow = surf_overflow + max(0.0_wp, y_out%leaf_surf_water(i) - leaf_cap_i)          &
                                         + max(0.0_wp, y_out%wood_surf_water(i) - wood_cap_i)
          surf_deficit  = surf_deficit  + max(0.0_wp, -y_out%leaf_surf_water(i))                      &
@@ -472,7 +501,9 @@ contains
       type(column_state_t),  intent(in)    :: y_out
       integer(ik),           intent(in)    :: n, nsl
       type(patch_biophys_t), intent(inout) :: biophys
-      biophys%cas%can_enthalpy = y_out%cas_enthalpy ; biophys%cas%can_shv = y_out%cas_shv ; biophys%cas%can_co2 = y_out%cas_co2
+      biophys%cas%can_enthalpy = y_out%cas_enthalpy
+      biophys%cas%can_shv = y_out%cas_shv
+      biophys%cas%can_co2 = y_out%cas_co2
       biophys%cas%can_temp = cas_enthalpy_to_temp(y_out%cas_enthalpy, y_out%cas_shv)
       biophys%soil_energy%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
       biophys%soil_water%theta(1:nsl)       = y_out%theta(1:nsl)
