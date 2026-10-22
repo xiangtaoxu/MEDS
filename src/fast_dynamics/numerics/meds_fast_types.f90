@@ -1,37 +1,36 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_types -- the shared types of the fast loop: the working bundles the dispatch   !
-! hands to either integrator (column_config_t, column_cohort_t, column_forcing_t,          !
-! column_budget_t, patch_biophys_t) and the column state, frozen record, tendency and      !
-! boundary-flux types the integrators advance (column_state_t, column_frozen_t,             !
-! column_tend_t, stage_bflux_t, column_bflux_t). A leaf module, so meds_fast_ark,           !
-! meds_fast_rk45 and the shared right-hand side import it rather than each other           !
-! (docs/science/numerical_scheme.md §2-§3, docs/science/column_biophysics.md).              !
+! hands to either integrator (the run and site parts of the configuration, column_config_t !
+! and column_site_t; column_cohort_t, column_forcing_t, column_budget_t, patch_biophys_t)  !
+! and the column state, frozen record, tendency and boundary-flux types the integrators    !
+! advance (column_state_t, column_frozen_t, column_tend_t, stage_bflux_t, column_bflux_t). !
+! A leaf module, so meds_fast_ark, meds_fast_rk45 and the shared right-hand side import it !
+! rather than each other (docs/science/numerical_scheme.md §2-§3,                          !
+! docs/science/column_biophysics.md).                                                      !
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max
-   use meds_plant_types, only : hydro_args_table_t, veg_thermal_args_t, wood_args_t, root_args_t, hydro_opts_t,   &
-                                leaf_photo_table_t
+   use meds_plant_types, only : hydro_args_table_t, leaf_photo_table_t
    use meds_soil_params, only : soil_params_t, soil_thermal_params_t, soil_opts_t, energy_opts_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_params, only : aero_cfg_t, snow_params_t
    use meds_biogeochem_types, only : N_SOIL_POOL
+   use meds_biogeochem_params, only : decomp_opts_t
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
    use meds_fast_params, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I, process_mask_t
-   use meds_plant_hydr_lib, only : build_hydro_table
-   use meds_pft_params, only : pft_table_t
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
    private
 
-   public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
+   public :: column_config_t, column_site_t, column_cohort_t, column_forcing_t, column_budget_t
    public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
    public :: tol_set_t, error_control_t, integrator_opts_t
    public :: mask_is_full
-   public :: ensure_column_cohort_capacity, apply_hydraulics_config, apply_canopy_film_config
+   public :: ensure_column_cohort_capacity
    public :: surface_state_t, surface_tend_t
    public :: patch_biophys_t, ensure_patch_biophys_capacity
    public :: snow_stage_t
@@ -99,22 +98,17 @@ module meds_fast_types
       type(error_control_t) :: error_control       !< tolerances + controller + strictness
    end type integrator_opts_t
 
-   !----- The column's configuration, built once per run and constant across dt_fast steps. ------!
+   !----- The run part of the column's configuration, built once per run (build_fast_context) and  !
+   !      shared by every site: what the run's configuration and the PFT table set. ---------------!
    type :: column_config_t
       type(process_mask_t)        :: mask            !< process-complexity mask (all on = full column)
       type(aero_cfg_t)            :: aero            !< aerodynamics constants
-      type(veg_thermal_args_t)    :: veg_thermal    !< leaf/wood thermal params
-      type(soil_params_t)         :: soil           !< soil geometry + texture (n_active layers)
-      type(soil_thermal_params_t) :: soil_thermal   !< soil thermal texture
-      type(energy_opts_t)         :: energy         !< soil-thermal solver options
-      type(soil_opts_t)           :: soil_water_opts !< soil water and water-network options
-      type(wood_args_t)           :: wood           !< stem-respiration parameters
-      type(root_args_t)           :: root           !< fine-root-respiration parameters
+      !----- Stem and fine-root maintenance respiration's peaked temperature response: leaf Rd's,     !
+      !      [leaf_physiology] ea_rd, hd_rd, ds_rd (docs/science/plant_respiration.md §4). ----------!
+      real(wp)                    :: ea_rd, hd_rd, ds_rd
       !----- Per-PFT plant hydraulics, built by apply_hydraulics_config. There is no PFT-uniform copy,
       !      so a caller cannot run every PFT on the first PFT's hydraulics by mistake.
       type(hydro_args_table_t)    :: hydraulics_table   !< per-PFT PV curves, vulnerability, conductance
-      type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
-      type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       !----- Canopy-surface water, the interception film and its evaporation and dew                 !
       !      (docs/science/soil_biophysics.md §Canopy interception); opt-in. RK45 integrates the     !
@@ -125,13 +119,25 @@ module meds_fast_types
       !      leaf_max*LAI + wood_max*WAI. Built by apply_canopy_film_config. ----------------------!
       real(wp), allocatable       :: leaf_surf_water_max(:), wood_surf_water_max(:)
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
+      type(decomp_opts_t) :: soil_carbon             !< [soil_carbon]: the switch and the CENTURY parameters (Rh)
       !----- The ARK's Newton iteration cap is NEWT_MAX in meds_fast_be_stage, not a config field. ---!
    end type column_config_t
+
+   !----- The site part: what differs from site to site, made for each site every slow step       !
+   !      (site_column_configs): its soil column, the water and heat solvers' options with its     !
+   !      bottom boundary, and its leaf table, acclimated to its own air. ------------------------!
+   type :: column_site_t
+      type(soil_params_t)         :: soil            !< soil geometry + texture (n_active layers)
+      type(soil_thermal_params_t) :: soil_thermal    !< soil thermal texture
+      type(soil_opts_t)           :: soil_water_opts !< soil water and water-network options, the bottom boundary
+      type(energy_opts_t)         :: energy          !< soil-thermal solver options, the deep temperature
+      type(leaf_photo_table_t)    :: leaf_photo      !< per-PFT leaf-photosynthesis parameters
+   end type column_site_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
    type :: column_cohort_t
       integer(ik)              :: n = 0_ik
-      integer(ik), allocatable :: pft(:)                       !< PFT index (into cfg%pft)
+      integer(ik), allocatable :: pft(:)                       !< PFT index (into the PFT table)
       real(wp),    allocatable :: lai(:), wai(:), height(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
@@ -140,6 +146,7 @@ module meds_fast_types
       real(wp),    allocatable :: stem_resp_sapwood25(:)        !< [umol CO2/m3 sapwood/s @25C] gathered per-PFT
       real(wp),    allocatable :: sap_volume(:)                 !< [m3/plant] sapwood volume (stem respiration)
       real(wp),    allocatable :: root_resp_factor25(:)         !< [umol CO2/kgC root/s @25C] gathered per-PFT
+      real(wp),    allocatable :: leaf_emissivity(:), wood_emissivity(:)   !< [-] gathered per-PFT (tissue longwave)
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
       real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
       !----- Total wood carbon, not interchangeable with bsap: the sapwood sets the hydraulic      !
@@ -595,6 +602,7 @@ contains
                col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
                col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
                col_cohort%stem_resp_sapwood25(n), col_cohort%sap_volume(n),                                         &
+               col_cohort%leaf_emissivity(n), col_cohort%wood_emissivity(n),                                         &
                col_cohort%leaf_area(n), col_cohort%nplant(n),                                                          &
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
@@ -610,6 +618,8 @@ contains
       col_cohort%root_resp_factor25 = 0.0_wp
       col_cohort%stem_resp_sapwood25 = 0.0_wp
       col_cohort%sap_volume = 0.0_wp
+      col_cohort%leaf_emissivity = 1.0_wp
+      col_cohort%wood_emissivity = 1.0_wp
       col_cohort%leaf_area = 0.0_wp
       col_cohort%nplant = 0.0_wp
       col_cohort%dbh = 0.0_wp
@@ -639,29 +649,6 @@ contains
          col_cohort%n = n
       end if
    end subroutine ensure_column_cohort_capacity
-
-   !----- The per-PFT hydraulics table: each PFT's [hydraulics] traits and the Kirchhoff lookup     !
-   !      built from its own wood_kexp (docs/science/plant_hydraulics.md eq. (8)), which makes a   !
-   !      non-integer vulnerability exponent affordable on the hot path. ------------------------!
-   subroutine apply_hydraulics_config(pft, table)
-      type(pft_table_t),          intent(in)  :: pft
-      type(hydro_args_table_t),   intent(out) :: table
-      integer(ik) :: i
-      table%n_pft = pft%n
-      allocate(table%pft(max(pft%n, 1_ik)))
-      do i = 1_ik, pft%n
-         table%pft(i)%plant_hydraulics_t = pft%hydro(i)
-         call build_hydro_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
-      end do
-   end subroutine apply_hydraulics_config
-
-   !----- The canopy films' per-PFT capacities, from the PFT table (both default to 0.1). -------!
-   subroutine apply_canopy_film_config(pft, leaf_max, wood_max)
-      type(pft_table_t),     intent(in)  :: pft
-      real(wp), allocatable, intent(out) :: leaf_max(:), wood_max(:)
-      leaf_max = pft%leaf_surf_water_max(1:pft%n)
-      wood_max = pft%wood_surf_water_max(1:pft%n)
-   end subroutine apply_canopy_film_config
 
    !----- Allocate a patch_biophys_t and seed it from an initial canopy-air state. --------------!
    subroutine alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)

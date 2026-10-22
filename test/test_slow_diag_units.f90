@@ -44,9 +44,10 @@ program test_slow_diag_units
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,       only : SOIL_RETENTION_VG
-   use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
-   use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config
-   use meds_fast_config,         only : build_leaf_photo_table, build_integrator_opts
+   use meds_fast_config,         only : fast_context_t, apply_hydraulics_config, apply_canopy_film_config,        &
+                                        build_leaf_photo_table, build_integrator_opts
+   use meds_fast_dynamics,       only : fast_dynamics
+   use meds_init,                only : init_fast_state
    use meds_slow_dynamics,       only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, check_true, &
                                         test_report
@@ -72,21 +73,25 @@ program test_slow_diag_units
 
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
-   call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil)
+   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_thermal)
+   call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-   call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
+   call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
+   ctx%col_config%soil_carbon = cfg%soil_carbon
+   ctx%col_config%ea_rd = cfg%ea_rd
+   ctx%col_config%hd_rd = cfg%hd_rd
+   ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
-   ctx%soil_temp_init = 295.0_wp
+   cfg%init%soil_temp = 295.0_wp
 
    call init_bare_ground(poly, cfg, 1_ik)
 
    call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)     ! one climax cohort (turnover -> litter)
    call finalize_init(poly)
-   call init_fast_reservoirs(poly, ctx)
+   call init_fast_state(poly, cfg)
 
    !----- Turn the patch diagnostic block on by hand. In production meds_output_registry does this !
    !      from the enabled-variable set; a test has no registry, and the block is a no-op at every !
@@ -184,8 +189,8 @@ contains
    !      at 0.30 in every layer. ------------------------------------------------------------!
    subroutine use_test_column(p)
       type(polygon_t), intent(inout) :: p
-      p%site%surface(1)%soil         = ctx%col_config%soil
-      p%site%surface(1)%soil_thermal = ctx%col_config%soil_thermal
+      p%site%surface(1)%soil         = ctx%col_site%soil
+      p%site%surface(1)%soil_thermal = ctx%col_site%soil_thermal
       p%site%surface(1)%theta_start  = 0.30_wp
    end subroutine use_test_column
 

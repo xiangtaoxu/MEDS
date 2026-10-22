@@ -57,7 +57,8 @@ contains
          cc%vcmax25(j)       = cohort%vcmax25(i)
          cc%rd25(j)          = cohort%rd25(i)
          cc%dmax_psi_leaf(j) = cohort%dmax_psi_leaf(i)
-         !----- Canopy-element geometry and respiration traits (the PFT's, from the block's table). !
+         !----- Canopy-element geometry, emissivities and respiration traits (the PFT's, from the     !
+         !      block's table). -----------------------------------------------------------------!
          cc%leaf_width(j)    = pft%leaf_width(pf)
          cc%branch_diam(j)   = pft%branch_diameter(pf)
          cc%aboveground_frac(j) = pft%allom(pf)%aboveground_frac
@@ -68,6 +69,8 @@ contains
          !      [g/cm3 = 1000 kg/m3]; biomass grows as density^0.976, so it barely depends on it. !
          cc%sap_volume(j)    = cohort%sapwood_carbon(i) * c2b_wood / (1.0e3_wp * pft%wood_density(pf))
          cc%root_resp_factor25(j) = pft%root_resp_factor25(pf)
+         cc%leaf_emissivity(j)    = pft%leaf_emissivity(pf)
+         cc%wood_emissivity(j)    = pft%wood_emissivity(pf)
       end do
       end associate
    end subroutine copy_column_cohort

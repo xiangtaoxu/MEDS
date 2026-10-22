@@ -18,7 +18,8 @@ program test_several_sites
    use meds_config,               only : meds_config_t
    use meds_polygon_state_vars,   only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
-   use meds_fast_dynamics,        only : fast_context_t, build_fast_context, init_fast_reservoirs
+   use meds_fast_config,          only : fast_context_t, build_fast_context
+   use meds_init,                 only : init_fast_state
    use meds_stepper,              only : advance_one_step, advance_boundary
    use meds_output_reduce,    only : total_agb, total_nplant, total_area
    use meds_init_restart,                   only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
@@ -136,7 +137,7 @@ contains
          call add_cohort(poly, run_cfg, 2_ik*k + 2_ik, 3_ik, 0.50_wp,  2.0_wp)
       end do
       call finalize_init(poly)
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, run_cfg)
    end subroutine stand
 
    !----- N_DAY daily steps, a month's restructuring every 15 days and a year's every 30. -----!

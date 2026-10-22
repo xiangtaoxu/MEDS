@@ -14,18 +14,17 @@ module meds_fast_frozen
                               tissue_c_wood_dry
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
-   use meds_plant_hydr_lib,  only : tissue_psi_to_rwc, conductance_retained_fraction, xylem_max_conductance,  &
+   use meds_plant_hydr_lib,  only : conductance_retained_fraction, xylem_max_conductance,                         &
                                     rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
-   use meds_config, only : meds_config_t, pft_wstress_psi_close
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_soil_types, only : chydro_forcing_t, snow_melt_t, snow_env_t, snow_flux_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
                                column_budget_t, column_state_t, column_frozen_t, surface_state_t,                 &
-                               surface_tend_t, snow_stage_t
+                               surface_tend_t, snow_stage_t, column_site_t
    use meds_fast_time_derivs, only : surface_derivs
    use meds_fast_prepass, only : column_prepass
-   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
+   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer, EFFAREA_EVAP
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction,                 &
                                       snow_energy_step
    use meds_therm_lib, only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy, tissue_dry_heat_capacity
@@ -42,11 +41,11 @@ contains
    !      the shared column_prepass, the snow stage, canopy interception, the per-cohort tissue         !
    !      coefficients, the soil-plant water network's step and the plant water's advective enthalpy;   !
    !      also packs the prognostic state into y. -------------------------------------------------------!
-   subroutine build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, spac, &
+   subroutine build_column_frozen(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, spac, &
                                   n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       real(wp),                intent(in)    :: dt_fast
-      type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
+      type(column_site_t),     intent(in)    :: col_site
       type(aero_env_t),        intent(inout) :: aenv
       type(aero_geom_t),       intent(in)    :: ageom
       type(column_cohort_t),   intent(in)    :: col_cohort
@@ -107,8 +106,8 @@ contains
       !----- Each cohort's fine roots by layer, within its own rooting depth, and the patch's profile:   !
       !      the cohorts' weighted by their fine-root carbon. A patch with no roots puts its weight in the !
       !      top layer (it has no root respiration to weight). -----------------------------------------!
-      z_top(1:nsl) = -col_config%soil%soil_layer_z(1:nsl)
-      z_bot(1:nsl) = -col_config%soil%soil_layer_z(2:nsl+1)
+      z_top(1:nsl) = -col_site%soil%soil_layer_z(1:nsl)
+      z_bot(1:nsl) = -col_site%soil%soil_layer_z(2:nsl+1)
       root_frac_patch(1:nsl) = 0.0_wp
       do i = 1_ik, n
          call cohort_root_profile(col_cohort%height(i), col_config%hydraulics_table%pft(col_cohort%pft(i)),       &
@@ -124,7 +123,7 @@ contains
       end if
 
       !----- The shared pre-pass: gas exchange, respiration, aerodynamics, CAS capacities. --------------!
-      call column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac_patch(1:nsl), &
+      call column_prepass(col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac_patch(1:nsl), &
                           tcas, qcas, press, rho, t_ground, frozen%tissue%h_coeff_leaf, frozen%tissue%g_transp_leaf,      &
                           cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                           gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
@@ -133,7 +132,7 @@ contains
       !      whose CAS state, air properties and ground conductance it reads; before the water network, !
       !      so this step's meltwater reaches the pond this step. A no-op without a pack. -------------!
       call advance_snow_stage(biophys%snow, col_config%snow, col_config%aero%snow_rough,                   &
-                              max(-col_config%soil%z_node(1), tiny_num),                                    &
+                              max(-col_site%soil%z_node(1), tiny_num),                                      &
                               forc%abs_sw_ground, forc%abs_lw_ground, forc%snowfall, forc%rainfall, forc%air_temp,  &
                               aero%ggnet, biophys%soil_energy%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
                               snow_st)
@@ -158,8 +157,8 @@ contains
             call intercept_canopy_layer(combined_w, rain_above, col_cohort%lai(i), col_cohort%wai(i), 0.0_wp, dt_fast, &
                                         col_config%leaf_surf_water_max(col_cohort%pft(i)),                  &
                                         col_config%wood_surf_water_max(col_cohort%pft(i)),                  &
-                                        col_config%soil_water_opts%intercept_k, &
-                                             col_config%soil_water_opts%intercept_alpha, &
+                                        col_site%soil_water_opts%intercept_k, &
+                                             col_site%soil_water_opts%intercept_alpha, &
                                         throughfall_i, drip_i, frozen%film%f_wet_c(i))
             !----- the combined film shared by capacity, so neither film is left above its own cap -------!
             if (leaf_cap_i + wood_cap_i > tiny_num) then
@@ -206,14 +205,14 @@ contains
                                               / dt_fast
          frozen%tissue%t_leaf0(i) = biophys%leaf_temp(i)
          frozen%tissue%t_wood0(i) = biophys%wood_temp(i)
-         frozen%tissue%leaf_emiss(i) = cfg%pft%leaf_emissivity(col_cohort%pft(i))
-         frozen%tissue%wood_emiss(i) = cfg%pft%wood_emissivity(col_cohort%pft(i))
+         frozen%tissue%leaf_emiss(i) = col_cohort%leaf_emissivity(i)
+         frozen%tissue%wood_emiss(i) = col_cohort%wood_emissivity(i)
          frozen%plant%nplant(i)   = col_cohort%nplant(i)
          !----- Film-evaporation conductances, from the pre-pass's boundary layers; none with the canopy  !
          !      water store off. ---------------------------------------------------------------------------!
          if (col_config%canopy_water_on) then
-            frozen%film%g_film_leaf(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%lai(i), aero%leaf_gbw(i))
-            frozen%film%g_film_w(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%wai(i), aero%wood_gbw(i))
+            frozen%film%g_film_leaf(i) = leaf_film_coeff(EFFAREA_EVAP, col_cohort%lai(i), aero%leaf_gbw(i))
+            frozen%film%g_film_w(i) = leaf_film_coeff(EFFAREA_EVAP, col_cohort%wai(i), aero%wood_gbw(i))
          end if
       end do
 
@@ -314,7 +313,7 @@ contains
       !----- The soil-plant water network (docs/science/soil_plant_water.md): the pond, the soil layers and !
       !      every cohort's wood and leaves, solved together on the transpiration demand above. The march  !
       !      reads all its water from it and holds its flows fixed. ------------------------------------!
-      call run_spac_solver(dt_fast, cfg, col_config, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
+      call run_spac_solver(dt_fast, col_config, col_site, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
                            root_frac(1:nsl, 1:n), sf0%transp_c(1:n), n, nsl, spac)
 
       !----- The network's work counters (docs/science/soil_plant_water.md §6). -----------------------!
@@ -351,7 +350,7 @@ contains
       frozen%hydrology%w_flux_frozen(1:nsl-1) = spac%face(1:nsl-1) / (rho_h2o * dt_fast)
       allocate(frozen%hydrology%theta1(nsl))
       do k = 1_ik, nsl
-         frozen%hydrology%theta1(k) = spac%water_soil(1_ik + k) / (rho_h2o * col_config%soil%dz(k))
+         frozen%hydrology%theta1(k) = spac%water_soil(1_ik + k) / (rho_h2o * col_site%soil%dz(k))
       end do
       frozen%hydrology%theta_rate(1:nsl) = (frozen%hydrology%theta1(1:nsl) - biophys%soil_water%theta(1:nsl)) / dt_fast
 
@@ -367,7 +366,7 @@ contains
          if (k == nsl)   f_out = spac%drain
          if (k == 1_ik)  f_in  = spac%infil - spac%exfil - spac%evap
          face_resid = face_resid + abs((frozen%hydrology%theta1(k) - biophys%soil_water%theta(k))              &
-                                       * col_config%soil%dz(k) * rho_h2o - (f_in - f_out - sum(spac%uptake(k, 1:n))))
+                                       * col_site%soil%dz(k) * rho_h2o - (f_in - f_out - sum(spac%uptake(k, 1:n))))
       end do
       budget%soil_face_mass%resid   = face_resid
       budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, face_resid)
@@ -450,11 +449,11 @@ contains
    ! advances it. e_demand is each cohort's transpiration demand; the network takes less where a leaf  !
    ! runs short (eq. (3)).                                                                              !
    !---------------------------------------------------------------------------------------!
-   subroutine run_spac_solver(dt_fast, cfg, col_config, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
+   subroutine run_spac_solver(dt_fast, col_config, col_site, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
                               root_frac, e_demand, n, nsl, spac)
       real(wp),               intent(in)    :: dt_fast
-      type(meds_config_t),    intent(in)    :: cfg
       type(column_config_t),  intent(in)    :: col_config
+      type(column_site_t),    intent(in)    :: col_site
       type(column_cohort_t),  intent(in)    :: col_cohort
       type(patch_biophys_t),  intent(in)    :: biophys
       type(chydro_forcing_t), intent(in)    :: hforc
@@ -473,12 +472,11 @@ contains
             spac%nplant(i)   = col_cohort%nplant(i)
             spac%bleaf(i)    = col_cohort%bleaf(i)
             spac%bwood(i)    = col_cohort%bsap(i) + col_cohort%broot(i)
-            spac%grav(i)     = crown_gravity_head(col_cohort%height(i), col_config%hydraulics_opts)
+            spac%grav(i)     = crown_gravity_head(col_cohort%height(i))
             spac%k_xylem(i)  = col_cohort%nplant(i) * xylem_max_conductance(hp%wood_kmax, col_cohort%sap_area(i), &
                                                                            col_cohort%height(i), hp%vessel_curl)
             spac%e_demand(i) = e_demand(i)
-            spac%r_close(i)  = tissue_psi_to_rwc(pft_wstress_psi_close(cfg, col_cohort%pft(i)), hp%leaf_curve%pi0,      &
-                                           hp%leaf_curve%elastic_mod)
+            spac%r_close(i)  = hp%rwc_close
             root_len(1:nsl, i) = col_cohort%broot(i) * root_frac(1:nsl, i) * hp%specific_root_length
          end associate
       end do
@@ -486,7 +484,7 @@ contains
       !      cohort's rhizosphere conductance in it (docs/science/plant_hydraulics.md eq. (14)). ---------!
       do k = 1_ik, nsl
          half_spacing(k) = 1.0_wp / sqrt(pi * max(sum(col_cohort%nplant(1:n) * root_len(k, 1:n))                &
-                                                  / col_config%soil%dz(k), tiny_num))
+                                                  / col_site%soil%dz(k), tiny_num))
          do i = 1_ik, n
             spac%g_rhizo(k, i) = rhizosphere_conductance(col_cohort%nplant(i), root_len(k, i), half_spacing(k),   &
                                                          col_config%hydraulics_table%pft(col_cohort%pft(i))%fine_root_radius)
@@ -495,13 +493,13 @@ contains
       spac%rain       = precip_ground
       spac%t_rain     = t_pond_inflow
       spac%t_soil(1:nsl) = biophys%soil_energy%soil_temp(1:nsl)
-      spac%w_pond_max = col_config%soil_water_opts%w_pond_max
-      spac%rtol       = col_config%soil_water_opts%rtol
-      spac%atol       = col_config%soil_water_opts%water_atol
-      call spac_set_state(spac, col_config%soil, col_config%hydraulics_table, biophys%soil_water%theta(1:nsl),      &
+      spac%w_pond_max = col_site%soil_water_opts%w_pond_max
+      spac%rtol       = col_site%soil_water_opts%rtol
+      spac%atol       = col_site%soil_water_opts%water_atol
+      call spac_set_state(spac, col_site%soil, col_config%hydraulics_table, biophys%soil_water%theta(1:nsl),        &
                           biophys%soil_water%w_surface, biophys%soil_water%w_surface_energy,                              &
                           biophys%leaf_water_mass(1:n), biophys%wood_water_mass(1:n))
-      call spac_advance(spac, col_config%soil, col_config%soil_water_opts, hforc, col_config%hydraulics_table,    &
+      call spac_advance(spac, col_site%soil, col_site%soil_water_opts, hforc, col_config%hydraulics_table,        &
                         dt_fast)
    end subroutine run_spac_solver
 

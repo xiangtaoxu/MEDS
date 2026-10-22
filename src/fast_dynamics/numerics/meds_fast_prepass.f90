@@ -10,24 +10,23 @@
 module meds_fast_prepass
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, r_gas, kgcday_2_umols
-   use meds_config,           only : meds_config_t, top_soil_psi
+   use meds_config,           only : top_soil_psi
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM, CO_BETA_NONSTOM, &
                                      CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, &
                                      CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_GPP_RATE, CO_LEAF_PAR, CO_GB_MOL, CO_PSI_PREDAWN, &
                                      CO_CA, CO_PRESSURE
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_plant_types, only : veg_thermal_args_t, leaf_photo_table_t, hydro_args_table_t, hydro_opts_t,         &
-                                wood_args_t, root_args_t
+   use meds_plant_types, only : leaf_photo_table_t, hydro_args_table_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
-                               column_budget_t
+                               column_budget_t, column_site_t
    use meds_soil_params,      only : soil_params_t
    use meds_state_defaults, only : is_unset_negative
    use meds_biophysics_params, only : aero_cfg_t
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
-   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
+   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff, EFFAREA_HEAT, EFFAREA_TRANSP
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration, &
                                      root_zone_temp_scale
@@ -49,12 +48,12 @@ contains
    ! the canopy air (docs/science/plant_respiration.md eq. (7)). biophys is read-only: a caller     !
    ! that persists the CAS temperature writes biophys%cas%can_temp = tcas itself.                   !
    !---------------------------------------------------------------------------------------!
-   subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac, &
+   subroutine column_prepass(col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac, &
                              tcas, qcas, press, rho, t_ground, h_coeff_leaf, g_transp_leaf,                     &
                              cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                              gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
-      type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
+      type(column_site_t),     intent(in)    :: col_site
       type(aero_env_t),        intent(inout) :: aenv
       type(aero_geom_t),       intent(in)    :: ageom
       type(column_cohort_t),   intent(in)    :: col_cohort
@@ -80,23 +79,23 @@ contains
                                        biophys%wood_temp, aero, tcas, qcas, press, rho, t_ground)
 
       !----- 2. root-zone environment (root + heterotrophic respiration drivers). ------------------!
-      call root_zone_environment(col_config%soil, root_frac, biophys%soil_energy%soil_temp, biophys%soil_water%theta, &
+      call root_zone_environment(col_site%soil, root_frac, biophys%soil_energy%soil_temp, biophys%soil_water%theta, &
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
-      call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydraulics_table,                   &
-                                    col_config%hydraulics_opts, col_config%veg_thermal,                &
-                                    col_config%soil, col_cohort, forc, aero, biophys,                   &
+      call canopy_leaf_gas_exchange(col_site%leaf_photo, col_config%hydraulics_table, col_site%soil,       &
+                                    col_cohort, forc, aero, biophys,                                       &
                                     qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,                  &
                                     gpp_coh, leaf_resp_coh, cdiag)
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
-      call canopy_maintenance_respiration(col_config%wood, col_config%root, col_config%soil, root_frac, col_cohort, &
+      call canopy_maintenance_respiration(col_config%ea_rd, col_config%hd_rd, col_config%ds_rd, col_site%soil,   &
+                                          root_frac, col_cohort,                                                 &
                                           biophys%wood_temp, biophys%soil_energy%soil_temp, ra_stem, ra_root, &
                                           stem_resp_coh, root_resp_coh)
 
       !----- 5. heterotrophic respiration. -------------------------------------------------------!
-      call patch_heterotrophic_respiration(cfg, col_config, biophys%soil_carbon, t_ground,              &
+      call patch_heterotrophic_respiration(col_config, col_site, biophys%soil_carbon, t_ground,    &
                                            soil_temp_root, theta_mean, rh, budget)
 
       !----- NEE (docs/science/plant_respiration.md eq. (7)). slow_co2_rate is the autotrophic part this !
@@ -172,14 +171,12 @@ contains
    ! dmax_psi_leaf, through the kernel's psi keyword; a cohort with no history yet (a recruit, a run's !
    ! first step) starts from its patch's top-layer soil potential rather than at fully turgid.        !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_leaf_gas_exchange(leaf_photo, hyd_table, hyd_opts, veg_thermal, soil, col_cohort,    &
+   subroutine canopy_leaf_gas_exchange(leaf_photo, hyd_table, soil, col_cohort,                         &
                                        forc, aero,                                                       &
                                        biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
       type(hydro_args_table_t),   intent(in)  :: hyd_table              !< per-PFT leaf PV curve
-      type(hydro_opts_t),         intent(in)  :: hyd_opts               !< gravity switch (leafless cohorts)
-      type(veg_thermal_args_t),   intent(in)  :: veg_thermal  !< effective exchange areas
       type(soil_params_t),        intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
       type(column_cohort_t),      intent(in)  :: col_cohort
       type(column_forcing_t),     intent(in)  :: forc         !< absorbed PAR per cohort
@@ -214,7 +211,7 @@ contains
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
          psi_leaf_arr(i) = leaf_node_psi(biophys%leaf_water_mass(i), col_cohort%bleaf(i),                 &
                biophys%wood_water_mass(i), col_cohort%bsap(i) + col_cohort%broot(i), col_cohort%height(i),   &
-               hyd_table%pft(col_cohort%pft(i)), hyd_opts)
+               hyd_table%pft(col_cohort%pft(i)))
       end do
       dmax_psi_seed = top_soil_psi(soil, biophys%soil_water%theta(1))
       do i = 1_ik, n
@@ -272,8 +269,8 @@ contains
          if (present(cdiag))   cdiag(CO_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
          ra_leaf = ra_leaf + rd_arr(i)      * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = rd_arr(i) * col_cohort%leaf_area(i)
-         h_coeff_leaf(i) = sensible_heat_coeff(veg_thermal%effarea_heat * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
-         g_transp_leaf(i)    = leaf_transp_coeff(veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
+         h_coeff_leaf(i) = sensible_heat_coeff(EFFAREA_HEAT * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
+         g_transp_leaf(i)    = leaf_transp_coeff(EFFAREA_TRANSP, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
       end do
    end subroutine canopy_leaf_gas_exchange
 
@@ -292,13 +289,12 @@ contains
    !---------------------------------------------------------------------------------------!
    ! canopy_maintenance_respiration -- stem and fine-root maintenance respiration, per cohort       !
    ! [umol/plant/s] and as patch totals [umol/m2 ground/s] (docs/science/plant_respiration.md       !
-   ! eqs. (3)-(4)). Elemental kernels: the array actuals drive the broadcast; the parameter records !
-   ! and the patch-uniform soil temperature scale broadcast.                                        !
+   ! eqs. (3)-(4)), both on leaf Rd's temperature response. Elemental kernels: the array actuals    !
+   ! drive the broadcast; the response and the patch-uniform soil temperature scale broadcast.      !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_maintenance_respiration(wood, root, soil, root_frac, col_cohort, wood_temp, soil_temp, &
+   subroutine canopy_maintenance_respiration(ea_rd, hd_rd, ds_rd, soil, root_frac, col_cohort, wood_temp, soil_temp, &
                                              ra_stem, ra_root, stem_resp_coh, root_resp_coh)
-      type(wood_args_t),     intent(in)  :: wood
-      type(root_args_t),     intent(in)  :: root
+      real(wp),              intent(in)  :: ea_rd, hd_rd, ds_rd !< leaf Rd's peaked response (stem and roots)
       real(wp),              intent(in)  :: root_frac(:)        !< [-] the patch's fine roots by layer
       type(soil_params_t),   intent(in)  :: soil                !< active layer count
       type(column_cohort_t), intent(in)  :: col_cohort
@@ -311,7 +307,7 @@ contains
       n = col_cohort%n
       !----- The temperature response, summed over layers (docs/science/plant_respiration.md eq. (4)), !
       !      is patch-uniform: evaluated once and broadcast over the cohorts. ---------------------!
-      tscale_root = root_zone_temp_scale(soil_temp, root_frac, soil%n_active, root)
+      tscale_root = root_zone_temp_scale(soil_temp, root_frac, soil%n_active, ea_rd, hd_rd, ds_rd)
       ra_stem = 0.0_wp
       ra_root = 0.0_wp
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
@@ -320,7 +316,8 @@ contains
                                    col_cohort%wai(1:n), col_cohort%nplant(1:n),                          &
                                    col_cohort%aboveground_frac(1:n), col_cohort%is_woody(1:n),          &
                                    col_cohort%stem_resp_factor25(1:n), col_cohort%sap_volume(1:n),      &
-                                   col_cohort%stem_resp_sapwood25(1:n), wood, stem_resp_arr(1:n))
+                                   col_cohort%stem_resp_sapwood25(1:n), ea_rd, hd_rd, ds_rd,          &
+                                   stem_resp_arr(1:n))
       call fine_root_maintenance_respiration(tscale_root, col_cohort%broot(1:n),                        &
                                    col_cohort%root_resp_factor25(1:n), root_resp_arr(1:n))
       do i = 1_ik, n
@@ -337,20 +334,20 @@ contains
    ! pool debit by construction; xi goes to budget%xi_step for the caller to accumulate. Zero with     !
    ! soil carbon off.                                                                                  !
    !---------------------------------------------------------------------------------------!
-   subroutine patch_heterotrophic_respiration(cfg, col_config, soil_carbon, t_ground, soil_temp_root,  &
+   subroutine patch_heterotrophic_respiration(col_config, col_site, soil_carbon, t_ground, soil_temp_root,  &
                                               theta_mean, rh, budget)
-      type(meds_config_t),   intent(in)    :: cfg
       type(column_config_t), intent(in)    :: col_config
+      type(column_site_t),   intent(in)    :: col_site
       type(soil_carbon_t),   intent(in)    :: soil_carbon
       real(wp),              intent(in)    :: t_ground, soil_temp_root, theta_mean
       real(wp),              intent(out)   :: rh              !< [umol/m2/s]
       type(column_budget_t), intent(inout) :: budget
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
-      if (cfg%soil_carbon%soil_carbon_on) then
-         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_config%soil%theta_res(1),      &
-                                  col_config%soil%theta_sat(1), soil_carbon, cfg%soil_carbon, xi)
-         call assemble_transfer_matrix(soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)
+      if (col_config%soil_carbon%soil_carbon_on) then
+         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_site%soil%theta_res(1),        &
+                                  col_site%soil%theta_sat(1), soil_carbon, col_config%soil_carbon, xi)
+         call assemble_transfer_matrix(soil_carbon, col_config%soil_carbon, a_mat, k_diag, er)
          !----- The matrix returns kgC/m2/day, the pools' currency, which budget%rh_matrix_step keeps for  !
          !      the seam check; the canopy air gets umol/m2/s (docs/science/soil_carbon.md §7). ----------!
          rh_kgc = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)

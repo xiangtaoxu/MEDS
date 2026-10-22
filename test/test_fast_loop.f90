@@ -21,10 +21,10 @@ program test_fast_loop
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
-   use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
-                                        build_fast_context
-   use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config
-   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
+   use meds_fast_config,         only : fast_context_t, build_fast_context, apply_hydraulics_config,              &
+                                        apply_canopy_film_config, build_leaf_photo_table, build_integrator_opts
+   use meds_fast_dynamics,       only : fast_dynamics
+   use meds_init,                only : init_fast_state
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds
@@ -60,25 +60,29 @@ program test_fast_loop
    !----- Build the column config + reference met inside the fast context. -----------------!
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
-   call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil)
+   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_thermal)
+   call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-   call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
+   call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
+   ctx%col_config%soil_carbon = cfg%soil_carbon
+   ctx%col_config%ea_rd = cfg%ea_rd
+   ctx%col_config%hd_rd = cfg%hd_rd
+   ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
-   ctx%soil_temp_init = 288.0_wp
+   cfg%init%soil_temp = 288.0_wp
 
    !----- Two patches: patch 1 vegetated, patch 2 BARE (zero cohorts). ---------------------!
    call init_bare_ground(poly, cfg, 2_ik)
    call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)     ! patch 1: one tree cohort
    call finalize_init(poly)
-   call init_fast_reservoirs(poly, ctx)
+   call init_fast_state(poly, cfg)
 
    t_cas0    = poly%patch%cas(1)%can_temp
    theta0_1  = poly%patch%soil_water(1)%theta(1)
-   !----- init_fast_reservoirs starts the cohort in its patch's state: holding the water its tissues !
+   !----- init_fast_state starts the cohort in its patch's state: holding the water its tissues      !
    !      hold at the top soil layer's potential, so the fast loop's first touch reads a real store,  !
    !      not a sentinel to seed. --------------------------------------------------------------------!
    mass0_leaf = poly%cohort%leaf_water_mass(1)
@@ -95,7 +99,7 @@ program test_fast_loop
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(poly%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
-   call check_close(mass0_leaf, tissue_psi_to_water(top_soil_psi(ctx%col_config%soil, theta0_1),           &
+   call check_close(mass0_leaf, tissue_psi_to_water(top_soil_psi(ctx%col_site%soil, theta0_1),             &
                     ctx%col_config%hydraulics_table%pft(1)%leaf_curve, poly%cohort%leaf_carbon(1)),     &
                     1.0e-12_wp, 'a cohort starts with its leaf water at its patch''s top-soil potential')
    !----- To round-off: the temperatures are what the energies the cohort was born with give. ------!
@@ -120,14 +124,14 @@ program test_fast_loop
       real(wp) :: t_before
       !----- Gate OFF (fast_biophysics_on = .false.): the fast loop must NOT run, even with a ctx. !
       cfg%fast_biophysics_on = .false.
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       t_before = poly%patch%cas(1)%can_temp
       call advance_one_step(poly, cfg, ctx)     ! gate off -> fast loop skipped
       call check_close(poly%patch%cas(1)%can_temp, t_before, 1.0e-12_wp, &
                        'fast loop must NOT run when fast_biophysics_on is off')
       !----- Gate ON (fast_biophysics_on = .true. + context): the hook fires, reservoirs change. -!
       cfg%fast_biophysics_on = .true.
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       t_before = poly%patch%cas(1)%can_temp
       call advance_one_step(poly, cfg, ctx)
       call check(abs(poly%patch%cas(1)%can_temp - t_before) > 0.05_wp, &
@@ -173,7 +177,7 @@ program test_fast_loop
    call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(poly)
-   call init_fast_reservoirs(poly, ctx)
+   call init_fast_state(poly, cfg)
    call advance_one_step(poly, cfg, ctx)
    cbal1 = poly%cohort%leaf_carbon(1) + poly%cohort%fineroot_carbon(1)                          &
          + poly%cohort%wood_carbon(1) + poly%cohort%nonstructural_carbon(1)
@@ -217,14 +221,14 @@ program test_fast_loop
                            cfg%forcing%longitude,                            &
                            cfg%forcing%elevation)
 
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,2_ik))    ! 02-04 UTC (night)
       gpp_night = poly%cohort%gpp_accum(1)
       light_night = poly%cohort%light_hours_accum(1)
       tcas_n    = poly%patch%cas(1)%can_temp      ! night canopy-air temp after the SW=0 window
 
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       gpp_day = poly%cohort%gpp_accum(1)
@@ -246,7 +250,7 @@ program test_fast_loop
          t0 = meds_time_t(2020_ik,7_ik,1_ik,15_ik)
          poly%diag%active = .true.
          ob%fast_on = .true.
-         call init_fast_reservoirs(poly, ctx)
+         call init_fast_state(poly, cfg)
          call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
          call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude, &
                               cfg%forcing%elevation)
@@ -270,10 +274,10 @@ program test_fast_loop
                     'the fast tier stages each sub-step''s forcing sample exactly')
          !----- The soil slabs fold the ACTIVE layers only, so the inactive tail reads back as the   !
          !      fill value, as on the coarse tiers. The fixture needs such a tail. ------------------!
-         call check(ctx%col_config%soil%n_active < n_soil_layer_max,                               &
+         call check(ctx%col_site%soil%n_active < n_soil_layer_max,                                 &
                     'fixture has an inactive soil tail to be worth anything')
          call check(ob%fast_n_site == 1_ik .and. count(ob%fast_soil_live(1:n_soil_layer_max))       &
-                    == ctx%col_config%soil%n_active, 'the fast tier folds only the active soil layers')
+                    == ctx%col_site%soil%n_active, 'the fast tier folds only the active soil layers')
          !----- The patch axis: each patch's staged row is its own, unweighted -- the last           !
          !      sub-step's is the state the step wrote back -- and the site mean is their area-      !
          !      weighted sum, in patch order (docs/science/diagnostics.md §4, The FAST tier by       !
@@ -282,7 +286,7 @@ program test_fast_loop
             integer(ik) :: ip, nsub, na, kb
             real(wp)    :: site_cas
             logical     :: own, folded, skin
-            nsub = cfg%n_fast_per_slow ; na = ctx%col_config%soil%n_active
+            nsub = cfg%n_fast_per_slow ; na = ctx%col_site%soil%n_active
             own = ob%fast_n_patch == poly%patch%n ; site_cas = 0.0_wp ; skin = .true.
             do ip = 1_ik, poly%patch%n
                kb = (ip - 1_ik) * n_soil_layer_max
@@ -346,7 +350,7 @@ program test_fast_loop
          call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude,      &
                               cfg%forcing%longitude,                            &
                               cfg%forcing%elevation)
-         call init_fast_reservoirs(poly, ctx)
+         call init_fast_state(poly, cfg)
          call fast_dynamics(poly, ctx, cfg, met_src=drv3, met_cur=cur3,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
          call met_close(drv3)
@@ -394,7 +398,7 @@ program test_fast_loop
          call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude,      &
                               cfg%forcing%longitude,                            &
                               cfg%forcing%elevation)
-         call init_fast_reservoirs(poly, ctx)
+         call init_fast_state(poly, cfg)
          ctx_mt = ctx ; ctx_mt%patch_threads = 4_ik
          call fast_dynamics(poly, ctx_mt, cfg, met_src=drv4, met_cur=cur4,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
@@ -459,7 +463,7 @@ program test_fast_loop
                            cfg%forcing%longitude,                            &
                            cfg%forcing%elevation)
 
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
@@ -502,7 +506,7 @@ program test_fast_loop
       call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
                            cfg%forcing%longitude,                            &
                            cfg%forcing%elevation)
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
@@ -528,7 +532,7 @@ program test_fast_loop
       call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(poly)
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
 
       !----- One normal call evolves the birth water (the round trip block 1 exercises). ----------!
       call fast_dynamics(poly, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
@@ -634,7 +638,7 @@ program test_fast_loop
          call met_open(drv, cfg%forcing)
          call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude,        &
                               cfg%forcing%elevation)
-         call init_fast_reservoirs(poly, ctx)
+         call init_fast_state(poly, cfg)
          call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur, step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik), &
                             n_budget_fail=nfail(icase))
          call met_close(drv)
@@ -667,8 +671,8 @@ contains
    !      at 0.30 in every layer. ------------------------------------------------------------!
    subroutine use_test_column(p)
       type(polygon_t), intent(inout) :: p
-      p%site%surface(1)%soil         = ctx%col_config%soil
-      p%site%surface(1)%soil_thermal = ctx%col_config%soil_thermal
+      p%site%surface(1)%soil         = ctx%col_site%soil
+      p%site%surface(1)%soil_thermal = ctx%col_site%soil_thermal
       p%site%surface(1)%theta_start  = 0.30_wp
    end subroutine use_test_column
 

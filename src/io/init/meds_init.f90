@@ -4,12 +4,16 @@
 ! (bare ground, a census or a restart file; docs/configuration.md, How a run starts) and   !
 ! that start's own finishing: a census stand is restructured and its plastic traits        !
 ! acclimated at once, a restart's traits re-acclimated when [init].reacclimate_traits asks !
-! (docs/science/order_of_processes.md §1, setup step 2).                                    !
+! (docs/science/order_of_processes.md §1, setup step 2). Bare ground and a census then     !
+! seed the fast loop's stores (init_fast_state); a restart read them from its file.        !
 !==========================================================================================!
 module meds_init
    use meds_kinds,               only : wp, ik
+   use meds_constants,           only : rho_h2o
    use meds_time,                only : meds_time_t, time_to_string
-   use meds_config,              only : meds_config_t, INIT_CENSUS, INIT_RESTART
+   use meds_config,              only : meds_config_t, INIT_CENSUS, INIT_RESTART, top_soil_psi
+   use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp, cas_temp_to_enthalpy
+   use meds_cohort_state_vars,   only : set_cohort_tissue_water, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
    use meds_demography_update,   only : update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : max_cohort_count
@@ -21,6 +25,13 @@ module meds_init
    private
 
    public :: init_polygon
+   public :: init_fast_state   ! used only by the tests
+
+   !----- The canopy air a start begins in, the same at every site; the first steps relax it to the  !
+   !      air above. ------------------------------------------------------------------------------!
+   real(wp), parameter :: CAS_TEMP_START = 288.0_wp   !< [K]
+   real(wp), parameter :: CAS_SHV_START  = 0.008_wp   !< [kg/kg]
+   real(wp), parameter :: CAS_CO2_START  = 400.0_wp   !< [umol/mol]
 
 contains
 
@@ -101,8 +112,73 @@ contains
          call reacclimate_plant_traits(poly, cfg)
          if (verbose) write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
       end if
+      !----- The fast loop's stores, once the stand is final; a restart read them instead. -------!
+      if (cfg%fast_biophysics_on .and. cfg%init%init_mode /= INIT_RESTART) then
+         call init_fast_state(poly, cfg)
+         if (verbose .and. cfg%snow_init_swe > 0.0_wp)                                             &
+            write(*,'(a,f6.1,a)') ' snow  : seeded initial pack SWE = ', cfg%snow_init_swe, ' kg/m2'
+      end if
       ok = .true.
    end subroutine init_polygon
+
+   !----- Seed every patch's fast stores to a horizontally uniform equilibrium, and its cohorts with  !
+   !      them as a recruit is born: the soil at its site's theta_start and [init].soil_temp, the    !
+   !      canopy air at the start values above, each cohort's tissues at the canopy-air temperature  !
+   !      holding the water they hold at the top soil layer's potential, and the snowpack            !
+   !      [snow].init_swe asks for. -------------------------------------------------------------!
+   subroutine init_fast_state(poly, cfg)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: cfg
+      integer(ik) :: ip, k, nsl, i
+      real(wp)    :: psi
+      do ip = 1_ik, poly%patch%n
+         associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
+                    surf => poly%site%surface(poly%patch%owner_site(ip)))
+            nsl = surf%soil%n_active
+            sw%theta(1:nsl)  = surf%theta_start(1:nsl)
+            sw%w_surface = 0.0_wp
+            sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
+            do k = 1_ik, nsl
+               se%soil_energy(k) = temp_to_internal_energy(surf%soil_thermal%soil_dry_heat_capacity(k),             &
+                                   surf%theta_start(k) * rho_h2o, cfg%init%soil_temp, 1.0_wp)
+               se%soil_temp(k)   = cfg%init%soil_temp
+               se%soil_fliq(k) = 1.0_wp
+            end do
+            cas%can_shv      = CAS_SHV_START
+            cas%can_co2 = CAS_CO2_START
+            cas%can_enthalpy = cas_temp_to_enthalpy(CAS_TEMP_START, CAS_SHV_START)
+            cas%can_temp     = CAS_TEMP_START
+            psi = top_soil_psi(surf%soil, sw%theta(1))
+            do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
+               poly%cohort%leaf_temp(i) = cas%can_temp
+               poly%cohort%wood_temp(i) = cas%can_temp
+               associate (hyd => cfg%pft%hydro(poly%cohort%pft(i)))
+                  call set_cohort_tissue_water(poly%cohort, i, psi, hyd%leaf_curve, hyd%wood_curve)
+               end associate
+               call hold_cohort_tissue_temps(poly%cohort, i)
+            end do
+         end associate
+      end do
+      if (cfg%snow_init_swe > 0.0_wp) call seed_snow(poly, cfg)
+   end subroutine init_fast_state
+
+   !----- The initial snowpack, [snow].init_swe at [snow].init_temp, one layer on every patch. -------!
+   subroutine seed_snow(poly, cfg)
+      type(polygon_t),      intent(inout) :: poly
+      type(meds_config_t),  intent(in)    :: cfg
+      integer(ik) :: ipp
+      do ipp = 1_ik, poly%patch%n
+         poly%patch%snow(ipp)%swe(1)         = cfg%snow_init_swe
+         poly%patch%snow(ipp)%snow_energy(1) =                                                   &
+            temp_to_internal_energy(0.0_wp, cfg%snow_init_swe, cfg%snow_init_temp, 0.0_wp)
+         poly%patch%snow(ipp)%snow_depth(1)  = cfg%snow_init_swe / 250.0_wp
+         poly%patch%snow(ipp)%nlayer         = 1_ik
+         call internal_energy_to_temp(poly%patch%snow(ipp)%snow_energy(1),                       &
+                                      cfg%snow_init_swe, 0.0_wp,                                 &
+                                      poly%patch%snow(ipp)%snow_temp(1),                         &
+                                      poly%patch%snow(ipp)%snow_fliq(1))
+      end do
+   end subroutine seed_snow
 
    !----- What a restart read: its file and time, and a restructuring the stand still owes. ------!
    subroutine report_restart(cfg, now, pending)

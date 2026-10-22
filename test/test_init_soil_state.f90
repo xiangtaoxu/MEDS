@@ -4,7 +4,7 @@
 !                                                                                          !
 ! A run without a spin-up starts from the initial soil state, so the keys matter only if   !
 ! they reach the column: this asserts the path from the config through build_fast_context  !
-! to init_fast_reservoirs, and pins the defaults (288 K, theta = 0.30). A column with a    !
+! to init_fast_state, and pins the defaults (288 K, theta = 0.30). A column with a         !
 ! texture per layer (the soil maps) builds each layer's own curve and starts each layer at !
 ! its own field capacity. A bare-ground start is empty unless a PFT's nbg_init_density     !
 ! seeds it, at min_cohort_height.                                                          !
@@ -15,7 +15,8 @@ program test_init_soil_state
    use meds_polygon_state_vars, only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, seed_bare_ground, finalize_init
    use meds_constants,        only : n_soil_layer_max
-   use meds_fast_dynamics,    only : fast_context_t, build_fast_context, init_fast_reservoirs
+   use meds_fast_config,      only : fast_context_t, build_fast_context
+   use meds_init,             only : init_fast_state
    use meds_test_support,     only : banner, build_test_config, check, check_close
    implicit none
    type(meds_config_t)  :: cfg
@@ -35,12 +36,11 @@ program test_init_soil_state
    cfg%init%soil_temp  = 298.65_wp
    cfg%init%soil_theta = 0.25_wp
    call build_fast_context(cfg, ctx)
-   call check_close(ctx%soil_temp_init, 298.65_wp, 1.0e-14_wp, 'soil_temp did not reach the fast context')
    call init_bare_ground(poly, cfg, 3_ik)
    call check_close(poly%site%surface(1)%theta_start(1), 0.25_wp, 1.0e-14_wp, 'soil_theta did not reach the site')
    call finalize_init(poly)
-   call init_fast_reservoirs(poly, ctx)
-   nsl = ctx%col_config%soil%n_active
+   call init_fast_state(poly, cfg)
+   nsl = ctx%col_site%soil%n_active
    do ip = 1_ik, poly%patch%n
       call check(all(abs(poly%patch%soil_energy(ip)%soil_temp(1:nsl) - 298.65_wp) < 1.0e-12_wp),         &
                  'a soil layer did not start at [init].soil_temp')
@@ -63,11 +63,11 @@ program test_init_soil_state
       end do
    end associate
    call build_fast_context(cfg, ctx)
-   associate (soil => ctx%col_config%soil)
+   associate (soil => ctx%col_site%soil)
       call check(soil%n_active == n .and. all(soil%theta_sat(1:n) == cfg%soil_column%layer_theta_sat(1:n))  &
                  .and. all(soil%curve_par_n(1:n) == cfg%soil_column%layer_curve_par_n(1:n)),                       &
                  'a layer did not take its own curve')
-      call check(all(ctx%col_config%soil_thermal%soil_dry_heat_capacity(1:n) ==                             &
+      call check(all(ctx%col_site%soil_thermal%soil_dry_heat_capacity(1:n) ==                               &
                      cfg%soil_column%layer_dry_heat_capacity(1:n)), 'a layer did not take its own heat capacity')
    end associate
    call init_bare_ground(poly, cfg, 3_ik)
@@ -76,8 +76,8 @@ program test_init_soil_state
                  surf%soil%theta_fc(1) /= surf%soil%theta_fc(n), 'a layer did not start at its own field capacity')
    end associate
    call finalize_init(poly)
-   call init_fast_reservoirs(poly, ctx)
-   call check(all(poly%patch%soil_water(2)%theta(1:n) == ctx%col_config%soil%theta_fc(1:n)),                    &
+   call init_fast_state(poly, cfg)
+   call check(all(poly%patch%soil_water(2)%theta(1:n) == ctx%col_site%soil%theta_fc(1:n)),                      &
               'a patch''s soil did not start at field capacity')
 
    !=== 4. Bare ground is empty by default; nbg_init_density seeds each patch with each PFT. ======!

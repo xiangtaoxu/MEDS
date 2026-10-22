@@ -10,7 +10,7 @@ calculators: device-eligible, netCDF-free (forcing arrives as passed-in value ty
 | `plant/` | the **organisms** — leaf gas exchange, hydraulics, maintenance respiration, tissue energy |
 | `soil/` | the **ground** — soil water's flows (between layers, evaporation, drainage), soil energy, the ground skin, the snow store |
 | `numerics/` | the integrator machinery: the state vector, the frozen work record, ARK and RK45, the soil-plant water solver, the pre-pass, error control |
-| `driver/` | the loop that walks one slow step in `dt_fast` sub-steps over the patch axis |
+| `driver/` | the fast loop's setup from the configuration (`meds_fast_config`), and the loop that walks one slow step in `dt_fast` sub-steps over the patch axis |
 
 `numerics/` and `driver/` may see `polygon_t`; **the kernel folders may not**, and that is what
 keeps them device-eligible and standalone-buildable. The slow half is `src/slow_dynamics/`; the

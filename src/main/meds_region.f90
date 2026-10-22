@@ -235,10 +235,9 @@ contains
             poly%elevation_m   = cells%elevation(p)
             call set_site_terrain(poly, pcfg)
 
-            !----- The fast context and reservoirs, the forcing cursor, snow, soil-carbon spin-up. One  !
+            !----- The fast context, the forcing cursor, the soil-carbon spin-up. One                   !
             !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
             call polygon_prepare(cfg, reg%met_src, poly, run,                                          &
-                                 keep_fast_state=cfg%init%init_mode == INIT_RESTART,                      &
                                  keep_soil_carbon=cfg%init%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)

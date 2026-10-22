@@ -128,8 +128,9 @@ run's configured selection; stem and root call `peaked_arrhenius_scale` directly
 Both routes end in the same code, and that is the point: the temperature response (`meds_therm_lib`) sits
 in the shared library at the root of the dependency DAG precisely so leaf, stem and root cannot drift
 into three near-copies of an Arrhenius — a change to the deactivation normalisation or to the clamped
-`safe_exp` reaches every tissue at once. $`E_a, H_d, \Delta S`$ live separately on `wood_args_t` and `root_args_t`, defaulted to the leaf
-$R_d$ values (46390 / 200000 / 490), so the three tissues share one thermal shape but may diverge.
+`safe_exp` reaches every tissue at once. Stem and root take the leaf's $`E_a, H_d, \Delta S`$ too,
+`[leaf_physiology]`'s `ea_rd`, `hd_rd` and `ds_rd` (46390 / 200000 / 490 in the reference config): the three
+tissues share one thermal shape, set in one place.
 
 ## 5. Growth respiration on realized growth
 
@@ -203,7 +204,7 @@ See `docs/ROADMAP.md` §7 for the open items.
 | $`f_{\mathrm{ag}}`$ | `aboveground_frac` | aboveground fraction of woody carbon; scales the stem area (eq. (3)) |
 | $g$ | `growth_resp_factor` | construction-cost fraction charged on realized growth (shipped 0.3) |
 | $`R_{d25}`$ | `rd25` (plastic per cohort) | leaf dark-respiration capacity — see `plant_traits.md`, `leaf_gas_exchange.md` |
-| $`E_a, H_d, \Delta S`$ | `wood_args_t` / `root_args_t` | peaked-Arrhenius parameters, defaulted to the leaf $R_d$ values |
+| $`E_a, H_d, \Delta S`$ | `[leaf_physiology]` `ea_rd`, `hd_rd`, `ds_rd` | peaked-Arrhenius parameters, the leaf $R_d$'s, shared by stem and root |
 
 ## Where the code is
 

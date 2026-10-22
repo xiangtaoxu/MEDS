@@ -520,7 +520,7 @@ contains
    !      layer [MPa] (top_soil_psi), which a new cohort takes so it starts in equilibrium !
    !      with where it stands. A patch the fast loop has not seeded yet -- at setup, or in!
    !      a run without the fast loop -- gives the run's [init] temperature and the site's   !
-   !      starting water instead. init_fast_reservoirs re-seeds the setup cohorts once it  !
+   !      starting water instead. init_fast_state re-seeds the setup cohorts once it       !
    !      has seeded their patch. `surf` is the patch's site's surface. --------------------!
    pure subroutine patch_physical_state(cas, soil_water, cfg, surf, temp, psi)
       type(cas_state_t),         intent(in)  :: cas          !< the patch's canopy air
