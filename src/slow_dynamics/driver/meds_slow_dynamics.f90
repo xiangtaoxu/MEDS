@@ -16,6 +16,8 @@ module meds_slow_dynamics
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_patch_state_vars,   only : cas_set_depth
+   use meds_state_defaults,     only : is_unset_positive
+   use meds_plant_trait_dynamics, only : acclimate_leaf_photo_table
    use meds_slow_ledger,           only : slow_ledger_t, slow_ledger_open, slow_ledger_mark,       &
                                           slow_ledger_rebase, slow_tissue_energy,                   &
                                           slow_ledger_declare, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC, &
@@ -24,6 +26,7 @@ module meds_slow_dynamics
    private
 
    public :: advance_slow_dynamics, advance_boundary_dynamics, refresh_canopy_depth, settle_tissue_water
+   public :: acclimate_site_leaf_tables
 
 contains
 
@@ -168,5 +171,36 @@ contains
          end if
       end do
    end subroutine refresh_canopy_depth
+
+   !---------------------------------------------------------------------------------------!
+   ! acclimate_site_leaf_tables -- advance each site's growth-temperature running mean and   !
+   ! acclimate its leaf table to it (docs/science/leaf_gas_exchange.md §2 Thermal             !
+   ! acclimation, eq. (4)). Exponential mean with weight dt/window, from the daily mean the   !
+   ! last fast loop accumulated; UNSEEDED (negative) adopts the first day's mean outright, so !
+   ! the acclimated optimum starts from the site's own climate rather than relaxing toward it !
+   ! from an arbitrary origin over the first month.                                           !
+   !---------------------------------------------------------------------------------------!
+   subroutine acclimate_site_leaf_tables(poly, cfg, step_days)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: cfg
+      integer(ik),         intent(in)    :: step_days
+      real(wp)    :: t_day, w
+      integer(ik) :: is
+      do is = 1_ik, poly%site%n
+         if (poly%site%pheno_tair_n(is) < 1_ik) cycle      ! no fast sub-steps ran: nothing to average
+         t_day = poly%site%pheno_tair_sum(is) / real(poly%site%pheno_tair_n(is), wp)
+         associate (t_growth => poly%site%t_growth_avg(is))
+            if (is_unset_positive(t_growth)) then
+               t_growth = t_day
+            else
+               w = min(1.0_wp, real(step_days, wp) / max(cfg%acclim_window_days, real(step_days, wp)))
+               t_growth = t_growth + w * (t_day - t_growth)
+            end if
+            call acclimate_leaf_photo_table(t_growth, cfg%acclim_ds_vcmax_a, cfg%acclim_ds_vcmax_b,          &
+                                            cfg%acclim_ds_jmax_a, cfg%acclim_ds_jmax_b, cfg%acclim_jv_a,     &
+                                            cfg%acclim_jv_b, poly%site%leaf_photo(is))
+         end associate
+      end do
+   end subroutine acclimate_site_leaf_tables
 
 end module meds_slow_dynamics

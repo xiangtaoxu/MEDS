@@ -133,7 +133,7 @@ contains
       !      patch starts in the first. --------------------------------------------------------!
       ns = 1_ik
       if (present(n_site)) ns = max(n_site, 1_ik)
-      call alloc_site_block(poly%site, ns)
+      call alloc_site_block(poly%site, ns, pft%leaf_photo)
       poly%site%n          = ns
       poly%site%area(1:ns) = 1.0_wp / real(ns, wp)
       call alloc_patch_block(poly%patch, max(pat_cap, 1_ik), n_pft)

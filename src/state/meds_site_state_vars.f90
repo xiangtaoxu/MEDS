@@ -8,8 +8,9 @@
 ! and the site block maps each site to its slice with an offset and a count, as the patch   !
 ! block maps each patch to its cohorts. A patch's area is a fraction of its site, and a     !
 ! site's area a fraction of the polygon. Each site has its own surface: its soil column and !
-! the parameters derived from it, the column's bottom, and its terrain; and its own climate,!
-! the polygon's forcing after its terrain (docs/science/forcing.md §8).                     !
+! the parameters derived from it, the column's bottom, and its terrain; its own climate,    !
+! the polygon's forcing after its terrain (docs/science/forcing.md §8); and its own leaf    !
+! table, acclimated to that climate.                                                        !
 !==========================================================================================!
 module meds_site_state_vars
    use meds_kinds,              only : wp, ik
@@ -19,6 +20,7 @@ module meds_site_state_vars
    use meds_config,             only : meds_config_t
    use meds_soil_derive,        only : build_soil_profile, soil_start_theta
    use meds_soil_params,        only : soil_params_t, soil_profile_t
+   use meds_pft_params,         only : leaf_photo_table_t
    implicit none
    private
 
@@ -70,6 +72,10 @@ module meds_site_state_vars
       !      jump. Until it is seeded, the first slow step adopts that day's mean outright       !
       !      rather than relaxing from an arbitrary origin. -------------------------------------!
       real(wp),    allocatable :: t_growth_avg(:)   !< [K] running-mean growth temperature
+      !----- Each site's leaf table: the PFT table's, its entropy terms and Jmax:Vcmax ratio      !
+      !      acclimated to the site's growth temperature (acclimate_site_leaf_tables). Derived    !
+      !      from t_growth_avg, so never restarted. ---------------------------------------------!
+      type(leaf_photo_table_t), allocatable :: leaf_photo(:)
       !==========================================================================================!
       ! 5. FAST-TO-SLOW ACCUMULATORS (the model reads them)                                      !
       !==========================================================================================!
@@ -91,9 +97,10 @@ contains
    !  THE SITE LOCKSTEP: the routines that list every site field, in section order         !
    !=======================================================================================!
 
-   subroutine alloc_site_block(site, cap)
-      type(site_block), intent(inout) :: site
-      integer(ik),      intent(in)    :: cap
+   subroutine alloc_site_block(site, cap, leaf_photo)
+      type(site_block),         intent(inout) :: site
+      integer(ik),              intent(in)    :: cap
+      type(leaf_photo_table_t), intent(in)    :: leaf_photo   !< the PFT table's, each site's until it acclimates
       site%cap = cap
       site%n = 0_ik
       !----- 1. Area ----------------------------------------------------------------------------!
@@ -108,6 +115,7 @@ contains
       !----- 4. Climate memory -----------------------------------------------------------------!
       allocate(site%t_growth_avg(cap))
       site%t_growth_avg = UNSET_POSITIVE
+      allocate(site%leaf_photo(cap), source=leaf_photo)
       !----- 5. Fast-to-slow accumulators ------------------------------------------------------!
       allocate(site%pheno_tair_sum(cap), site%pheno_tair_n(cap))
       site%pheno_tair_sum = 0.0_wp
@@ -120,7 +128,8 @@ contains
       site%n = 0_ik
       site%cap = 0_ik
       if (allocated(site%area)) deallocate(site%area, site%patch_offset, site%patch_count, site%surface,     &
-                                           site%t_growth_avg, site%pheno_tair_sum, site%pheno_tair_n)
+                                           site%t_growth_avg, site%leaf_photo, site%pheno_tair_sum,          &
+                                           site%pheno_tair_n)
       if (allocated(site%diag%v)) deallocate(site%diag%v, site%diag%w)
       site%diag%active = .false.
    end subroutine free_site_block

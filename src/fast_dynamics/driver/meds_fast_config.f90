@@ -2,24 +2,22 @@
 !==========================================================================================!
 ! meds_fast_config -- the fast loop's setup from meds_config_t. build_fast_context builds  !
 ! the run's fast_context_t: the column configuration (the soil column, the PFT table's    !
-! hydraulics, film and leaf-photosynthesis tables, the integrator options) and the PFT    !
-! table's canopy optics. site_column_configs gives each site its copy, with its own soil  !
-! and its leaf table, which acclimate_leaf_photo_table refreshes each slow step. Nothing   !
-! below this module reads meds_config_t: the kernels and the numerics take these records. !
+! hydraulics and film tables, the integrator options) and the PFT table's canopy optics.  !
+! site_column_configs gives each site its copy, with its own soil and its own leaf table, !
+! acclimated to its growth temperature. Nothing below this module reads meds_config_t:     !
+! the kernels and the numerics take these records.                                         !
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
    use meds_config,      only : meds_config_t
    use meds_soil_derive, only : build_soil_profile
-   use meds_pft_params,  only : pft_table_t, leaf_photo_table_t, rad_pft_optics_t
+   use meds_pft_params,  only : pft_table_t, rad_pft_optics_t
    use meds_polygon_state_vars, only : polygon_t
-   use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_fast_types,  only : column_config_t, column_site_t, tol_set_t, error_control_t, integrator_opts_t, GRP_THETA
    implicit none
    private
 
    public :: fast_context_t, build_fast_context, site_column_configs
-   public :: acclimate_leaf_photo_table
    public :: build_integrator_opts
    public :: apply_canopy_film_config
    public :: build_tol_set   ! used only by the tests
@@ -31,8 +29,6 @@ module meds_fast_config
       !      the PFT table set, from which each site's own is made (site_column_configs). ------------!
       type(column_config_t) :: col_config
       type(column_site_t)   :: col_site
-      !----- Each site's leaf table, acclimated to its growth temperature; until then col_site's. ---!
-      type(leaf_photo_table_t), allocatable :: site_leaf_photo(:)
       !----- [kg/m3] The air density the slow step values the canopy air at when its depth changes. --!
       real(wp) :: rho_air = 1.2_wp
       !----- Patch-loop threads: [run].n_threads in a one-polygon run, else 1 (polygon_prepare). --!
@@ -56,10 +52,10 @@ contains
       type(fast_context_t), intent(out) :: ctx
       !----- The soil column from [soil]: one texture for the column or one per layer (soil maps). -!
       call build_soil_profile(cfg%soil, ctx%col_site%soil_profile)
-      !----- The PFT table's hydraulics, films and leaf parameters (derive_pft_tables). -------------!
+      !----- The PFT table's hydraulics and films (derive_pft_tables); each site's leaf table is the  !
+      !      site's (site_column_configs). ------------------------------------------------------------!
       ctx%col_config%hydraulics_table = cfg%pft%hydraulics
       call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-      ctx%col_site%leaf_photo = cfg%pft%leaf_photo
       !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
       ctx%col_config%canopy_water_on    = cfg%canopy_water_on
       !----- The [soil], [snow], [aerodynamics] and [fast] options, copied as they are. -----------!
@@ -102,30 +98,10 @@ contains
          associate (col => site_col(is), surf => poly%site%surface(is))
             col%soil_profile = surf%soil_profile
             col%soil         = surf%soil
-            if (allocated(ctx%site_leaf_photo)) col%leaf_photo = ctx%site_leaf_photo(is)
+            col%leaf_photo   = poly%site%leaf_photo(is)
          end associate
       end do
    end subroutine site_column_configs
-
-   !=======================================================================================!
-   !  Refresh a site's leaf table, the peaked-form entropy terms and the Jmax:Vcmax ratio, !
-   !  from its running-mean growth temperature (Kattge & Knorr 2007;                       !
-   !  docs/science/leaf_gas_exchange.md §2, Thermal acclimation, eq. (4)). The reference   !
-   !  coefficients stay in cfg, so the refresh is idempotent.                              !
-   !=======================================================================================!
-   subroutine acclimate_leaf_photo_table(cfg, t_growth, table)
-      type(meds_config_t),      intent(in)    :: cfg
-      real(wp),                 intent(in)    :: t_growth     !< [K] running-mean growth temperature
-      type(leaf_photo_table_t), intent(inout) :: table
-      integer(ik) :: ipft
-      if (.not. cfg%thermal_acclimation) return
-      if (t_growth <= 0.0_wp) return                          ! not yet seeded: leave the fixed values
-      do ipft = 1_ik, table%n_pft
-         table%pft(ipft)%ds_vcmax = kattge_knorr_entropy(cfg%acclim_ds_vcmax_a, cfg%acclim_ds_vcmax_b, t_growth)
-         table%pft(ipft)%ds_jmax  = kattge_knorr_entropy(cfg%acclim_ds_jmax_a,  cfg%acclim_ds_jmax_b,  t_growth)
-         table%jmax_vcmax_ratio(ipft) = kattge_knorr_jv_ratio(cfg%acclim_jv_a, cfg%acclim_jv_b, t_growth)
-      end do
-   end subroutine acclimate_leaf_photo_table
 
    !----- The canopy films' per-PFT capacities, from the PFT table (both default to 0.1). -------!
    subroutine apply_canopy_film_config(pft, leaf_max, wood_max)
