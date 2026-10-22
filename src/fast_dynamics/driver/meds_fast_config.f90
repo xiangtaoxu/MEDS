@@ -33,7 +33,7 @@ module meds_fast_config
    public :: leaf_photo_params_for_pft, leaf_gas_exchange, build_tol_set   ! used only by the tests
 
    !----- What the fast loop needs beyond the polygon and cfg (build_fast_context): the column      !
-   !      configuration, and the constant reference climate a run without a forcing source uses. ---!
+   !      configuration, the canopy optics and the ground surface. ------------------------------!
    type :: fast_context_t
       !----- The column configuration: the run part every site shares, and the site part [soil] and  !
       !      the PFT table set, from which each site's own is made (site_column_configs). ------------!
@@ -41,15 +41,8 @@ module meds_fast_config
       type(column_site_t)   :: col_site
       !----- Each site's leaf table, acclimated to its growth temperature; until then col_site's. ---!
       type(leaf_photo_table_t), allocatable :: site_leaf_photo(:)
-      real(wp) :: u_ref   = 2.0_wp                  !< [m/s] reference wind (at the canopy-air top)
-      real(wp) :: press   = 101325.0_wp             !< [Pa]
-      real(wp) :: rho_air = 1.2_wp                  !< [kg/m3]
-      real(wp) :: air_temp = 288.0_wp               !< [K]        reference-level air temperature
-      real(wp) :: shv_atm  = 0.008_wp               !< [kg/kg]    reference-level specific humidity
-      real(wp) :: co2_atm  = 400.0_wp               !< [umol/mol] free-atmosphere CO2
-      real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
-      real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
-      real(wp) :: precip          = 0.0_wp            !< [kg/m2/s] total precipitation (split like any record)
+      !----- [kg/m3] The air density the slow step values the canopy air at when its depth changes. --!
+      real(wp) :: rho_air = 1.2_wp
       !----- Patch-loop threads: [run].n_threads in a one-polygon run, else 1 (polygon_prepare). --!
       integer(ik) :: patch_threads = 1_ik
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
@@ -100,7 +93,6 @@ contains
          ctx%col_site%energy%soil_energy_budget_atol  = cfg%energy%soil_energy_budget_atol * cfg%atol_scale
       end associate
 
-      ctx%col_config%mask   = cfg%mask        ! [fast].mask    -> the stores that evolve (all on: the column)
 
       !----- The canopy-RT optics table, built once and read-only downstream. --------------------!
       call build_rad_optics(cfg, ctx%rad_opt)
@@ -320,13 +312,12 @@ contains
       tols%atol = tols%atol * cfg%atol_scale
    end function build_tol_set
 
-   !----- The error-control bundle: the tolerance set, the step controller and the strictness. -------!
+   !----- The error-control bundle: the tolerance set and the step controller. ----------------------!
    pure function build_error_control(cfg) result(ec)
       type(meds_config_t), intent(in) :: cfg
       type(error_control_t)           :: ec
       ec%tols       = build_tol_set(cfg)
       ec%controller = cfg%step_controller
-      ec%level      = cfg%error_level
    end function build_error_control
 
    !----- The integrator's whole configuration, once per run (carried on column_config_t%integrator). -!
@@ -335,10 +326,7 @@ contains
       type(integrator_opts_t)         :: opts
       opts%scheme           = cfg%time_integrator
       opts%adaptive         = cfg%ark_adaptive
-      opts%dt_init          = cfg%ark_dt_init
-      opts%coupled_newton   = cfg%ark_coupled
       opts%fixed_substeps   = cfg%ark_fixed_substep
-      opts%cas_condensation = cfg%cas_condensation
       opts%error_control    = build_error_control(cfg)
    end function build_integrator_opts
 

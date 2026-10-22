@@ -108,14 +108,14 @@ It then freezes, for the day, its soil-carbon pools and the tissue water the slo
 **Each fast sub-step `k`, in order:**
 
 1. **Forcing.** The sub-step's meteorological sample, which already carries the terrain lapse; with
-   forcing off, the fast context's constant reference climate. Its air temperature joins the phenology
+   forcing off, one fixed record, the reference climate ([forcing](forcing.md) §2). Its air temperature
+   joins the phenology
    sum. The patch takes a copy moved to its own canopy-air top: the wind
    along its log profile, the temperature conserving potential temperature ([forcing](forcing.md) §8).
    The aerodynamics and the canopy air's exchange with the atmosphere use that copy.
-2. **Radiation.** With forcing on, the canopy radiation transfer splits absorbed shortwave and
-   longwave among the cohorts and the ground ([canopy_radiation_transfer](canopy_radiation_transfer.md)).
-   It runs in the driver (`apply_rt_forcing`), before the column step. With forcing off, the shortwave
-   is split by LAI share.
+2. **Radiation.** The canopy radiation transfer splits absorbed shortwave and longwave among the
+   cohorts and the ground ([canopy_radiation_transfer](canopy_radiation_transfer.md)), with forcing on
+   or off. It runs in the driver (`apply_rt_forcing`), before the column step.
 3. **The aerodynamic environment** above the canopy ([canopy_aerodynamics](canopy_aerodynamics.md)).
 4. **The coupled column step** (`column_fast_step`, [column_biophysics](column_biophysics.md)).
    - Its pre-pass computes leaf gas exchange (GPP, stomatal conductance, leaf respiration), stem and

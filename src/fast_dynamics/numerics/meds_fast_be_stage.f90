@@ -16,8 +16,8 @@ module meds_fast_be_stage
    use meds_fast_time_derivs, only : surface_derivs, cas_conductances
    use meds_cas_biophysics, only : cas_column_step_implicit, cas_column_t, cas_source_t
    use meds_column_state_ops, only : state_init, assemble_soil_energy_forcing
-   use meds_fast_types, only : column_config_t, column_state_t, column_frozen_t, surface_state_t,                 &
-                               cas_boundary_t, surface_tend_t, stage_bflux_t, column_site_t
+   use meds_fast_types, only : column_state_t, column_frozen_t, surface_state_t, cas_boundary_t,                  &
+                               surface_tend_t, stage_bflux_t, column_site_t
    use meds_soil_energy, only : soil_energy_step_implicit
    use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp
    use meds_numerics,     only : sufficient_decrease
@@ -30,11 +30,11 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! column_be_stage -- one backward-Euler stage Y = base + dt*f(Y) of the stiff block (each ESDIRK2   !
-   ! stage, dt = gamma*h, is one call): the CAS twins, implicit in the atmospheric exchange (niter > 1:  !
-   ! the coupled 2x2 Newton), and soil heat (implicit, Thomas). Soil water moves at the water network's !
+   ! stage, dt = gamma*h, is one call): the CAS twins, implicit in the atmospheric exchange through the  !
+   ! coupled 2x2 Newton, and soil heat (implicit, Thomas). Soil water moves at the water network's      !
    ! steady rate; plant water is passed through and advanced once (advance_plant_water).               !
    !---------------------------------------------------------------------------------------!
-   subroutine column_be_stage(y, frozen, col_site, n, nsl, dt, y_out, surf_tend, niter, bf)
+   subroutine column_be_stage(y, frozen, col_site, n, nsl, dt, y_out, surf_tend, bf)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       type(column_site_t),   intent(in)  :: col_site
@@ -45,7 +45,6 @@ contains
       !      air's vapour credit agree (docs/science/numerical_scheme.md §5a). Both filled in place. -----!
       type(column_state_t),  intent(inout) :: y_out
       type(surface_tend_t),  intent(inout) :: surf_tend
-      integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton
       type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux rates for the ARK ledger
 
       type(surface_state_t)      :: y_stage
@@ -56,11 +55,8 @@ contains
       real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp)    :: enth1, shv1, e_infil, e_drain, t_cas1, water_heat(nsl)
       real(wp)    :: co21
-      integer(ik) :: np, nfeval
+      integer(ik) :: nfeval
       logical     :: ok
-
-      np = 1_ik
-      if (present(niter)) np = max(1_ik, niter)
 
       call state_init(y, n, nsl, y_out)
 
@@ -82,18 +78,10 @@ contains
       cas_stage%g_atm_co2 = g_atm_co2
       cas_stage%mo_live = .false.
 
-      !----- np == 1: one evaluation at the stage start; np > 1: the coupled 2x2 Newton. The final      !
-      !      surf_tend drives the box commit and the soil sinks, one flux per interface. ------------!
-      if (np <= 1_ik) then
-         y_stage%cas_enthalpy = y%cas_enthalpy
-         y_stage%cas_shv = y%cas_shv
-         y_stage%cas_co2 = y%cas_co2
-         call surface_derivs(y_stage, cas_stage, frozen%tissue, frozen%film, frozen%ground, frozen%snow,    &
-                             t_ground, n, surf_tend)
-      else
-         call newton_surface_solve(y, cas_stage, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, &
-                                   surf_tend, nfeval, ok)
-      end if
+      !----- The coupled 2x2 Newton for the leaves and the canopy air; its final surf_tend drives the box !
+      !      commit and the soil sinks, one flux per interface. --------------------------------------!
+      call newton_surface_solve(y, cas_stage, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, &
+                                surf_tend, nfeval, ok)
       !----- One box commit for all three twins, in flux form, so the budgets close for any surf_tend: !
       !      CO2 rides the same box as enthalpy and humidity. -----------------------------------------!
       call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, cas_mass_capacity, cas_molar_capacity, &

@@ -245,8 +245,6 @@ contains
       frozen%cas%rho = rho
       frozen%cas%press = press
 
-      frozen%cas%cas_condensation = col_config%integrator%cas_condensation      ! the per-stage condensation sink
-
       !----- The start-of-step surface solve, at the state^n canopy air: it gives the water network      !
       !      each cohort's transpiration demand (docs/science/soil_plant_water.md §4). ------------------!
       y_stage%cas_enthalpy = biophys%cas%can_enthalpy

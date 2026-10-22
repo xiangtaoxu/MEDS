@@ -31,8 +31,7 @@ module meds_config_check
                                        pft_wstress_psi_close, INIT_CENSUS, INIT_RESTART,              &
                                        soil_column_layers, soil_column_texture, soil_column_params,   &
                                        SOIL_LAYER_TEMPLATE
-   use meds_fast_params,        only : INTEG_ARK, INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE,        &
-                                       CTRL_L2_STRICT, CTRL_I, CTRL_PI
+   use meds_fast_params,        only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
    implicit none
    private
 
@@ -305,13 +304,7 @@ contains
          error stop TAG//'forcing_sample_frac outside [0,1]'
       if (cfg%step_controller /= CTRL_I .and. cfg%step_controller /= CTRL_PI)                          &
          error stop TAG//'step_controller out of range (I|PI)'
-      if (cfg%error_level /= CTRL_L0_FIXED .and. cfg%error_level /= CTRL_L1_ADAPTIVE .and.              &
-          cfg%error_level /= CTRL_L2_STRICT)                                                           &
-         error stop TAG//'error_level out of range (L0|L1|L2)'
       if (cfg%ark_fixed_substep < 1_ik) error stop TAG//'ark_fixed_substep < 1'
-      if (cfg%fast_probe .and. cfg%n_threads > 1_ik)                                                   &
-         error stop TAG//'fast_probe requires n_threads = 1 (the probe writes one shared, &
-                        &order-significant CSV)'
    end subroutine check_fast
 
    !----- [soil]: the ground's optics, its column and its thermal bottom. Each column fault     !
@@ -526,8 +519,6 @@ contains
          error stop TAG//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
       if (cfg%forcing%format /= MET_BACKEND_ERA5LAND)                                                  &
          error stop TAG//'[run].mode = "region" needs forcing.format = "ERA5land"'
-      if (cfg%fast_probe)                                                                               &
-         error stop TAG//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
       if (cfg%init%init_mode == INIT_CENSUS)                                                                 &
          error stop TAG//'[run].mode = "region" starts from bare ground or a region state file '//      &
                          '(init.init_mode = 0 or 2), not a census'

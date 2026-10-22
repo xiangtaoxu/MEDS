@@ -10,8 +10,6 @@ start_time = "2074-07-01"
 end_time   = "2074-08-01"
 
 [fast]
-fast_probe      = true
-fast_probe_file = "out/fast_probe.csv"
 fast_biophysics_on  = true
 dt_fast             = "900s"
 time_integrator     = "ark"

@@ -13,22 +13,19 @@ module meds_config_io
    use meds_config,     only : meds_config_t, derive_parameters, alloc_pft_table, INIT_CENSUS,        &
                                INIT_RESTART, pft_stomata_psi_onset, pft_wstress_psi_open,             &
                                pft_wstress_psi_close
-   use meds_fast_params,   only : INTEG_ARK, INTEG_RK45, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE,             &
-                                  CTRL_L2_STRICT, CTRL_I, CTRL_PI
+   use meds_fast_params,   only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
    use meds_soil_params,   only : soil_column_config_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,    &
                                   soil_opts_t, energy_opts_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_region_params, only : RUN_MODE_SITE, RUN_MODE_REGION
-   use meds_maps_params,   only : soil_maps_on
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_params,   only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_therm_lib,     only : TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED
    use meds_radiation_lib,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_PASSTHROUGH, SWPART_CLEARIDX,        &
                                    SWPART_WEISS_NORMAN
-   use meds_forcing_params, only : CO2_SOURCE_CONST, CO2_SOURCE_FILE
-   use meds_forcing_params, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN,      &
-                                   WIND_EXPOSURE_LOCAL
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND,                   &
-                                   METAVG_END, METAVG_BEGIN, LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,     &
+   use meds_forcing_params, only : CO2_SOURCE_CONST, CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE,                    &
+                                   HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL,          &
+                                   forcing_config_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND, METAVG_END,       &
+                                   METAVG_BEGIN, LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,                 &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_output_params, only : output_config_t, MAX_DBH_EDGE, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH,      &
                                  FC_YEAR, FC_RUN, STATE_DAYS, STATE_MONTHS, STATE_YEARS
@@ -952,27 +949,12 @@ contains
                       [INTEG_ARK, INTEG_RK45], cfg%time_integrator, miss)
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
       cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
-      !----- Optional error-control and process settings. -------------------------------------!
+      !----- Optional error-control settings. -------------------------------------------------!
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
       cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
-      cfg%cas_condensation  = toml_logical(tm, 'fast.cas_condensation', .true.)
-      !----- The process mask: all on by default, the full column. ------------------------------!
-      cfg%mask%veg_energy   = toml_logical(tm, 'fast.mask.veg_energy', .true.)
-      cfg%mask%cas_energy   = toml_logical(tm, 'fast.mask.cas_energy', .true.)
-      cfg%mask%cas_vapour   = toml_logical(tm, 'fast.mask.cas_vapour', .true.)
-      cfg%mask%cas_co2      = toml_logical(tm, 'fast.mask.cas_co2',    .true.)
-      cfg%mask%soil_heat    = toml_logical(tm, 'fast.mask.soil_heat',  .true.)
-      cfg%mask%soil_water   = toml_logical(tm, 'fast.mask.soil_water', .true.)
-      cfg%mask%hydraulics   = toml_logical(tm, 'fast.mask.hydraulics', .true.)
       call opt_choice(tm, 'fast.step_controller', [character(len=NAME_LEN) :: 'i', 'pi'],                  &
                       [CTRL_I, CTRL_PI], cfg%step_controller, miss)
-      call opt_choice(tm, 'fast.error_level', [character(len=NAME_LEN) :: 'fixed', 'adaptive', 'strict'],  &
-                      [CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT], cfg%error_level, miss)
-      cfg%ark_dt_init       = toml_real   (tm, 'fast.ark_dt_init',       0.0_wp)
       cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
-      cfg%ark_coupled       = toml_logical(tm, 'fast.ark_coupled',       .true.)
-      cfg%fast_probe        = toml_logical(tm, 'fast.fast_probe',        .false.)
-      cfg%fast_probe_file   = toml_string (tm, 'fast.fast_probe_file',   'fast_probe.csv')
 
       !----- [soil], [snow], [aerodynamics] and their solver settings in [fast], every key        !
       !      optional; build_fast_context copies them into the column config. --------------------!

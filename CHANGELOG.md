@@ -60,7 +60,8 @@ drops the code and fields nothing read and three evaluations whose results nothi
 statement per line and keeps its longer explanations on the science pages, with no change to any result
 (#478). The fast loop's setup is one module, nothing below it reads `meds_config_t`, its configuration has
 a run part and a site part, three constants no key set become one source each, and its starting stores
-are set in `io/init` (#479).
+are set in `io/init` (#479). Six `[fast]` options no shipped run changes retire, and a run without forcing
+gets the same canopy radiation as a forced one (#480).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -472,9 +473,30 @@ are set in `io/init` (#479).
     `init_polygon`; `polygon_prepare` takes no `keep_fast_state`.
 
   No netCDF variable name, TOML key or C API changes.
+- **Six `[fast]` keys retire** (#480): `error_level`, `ark_coupled`, `ark_dt_init`, `cas_condensation`,
+  `mask.*` (`veg_energy`, `cas_energy`, `cas_vapour`, `cas_co2`, `soil_heat`, `soil_water`,
+  `hydraulics`) and `fast_probe` with `fast_probe_file`. A configuration that sets one stops on an
+  unknown key: delete the line. Each one's default is what the model now always does; for sub-daily
+  output use the F tier or the snapshots ([diagnostics](docs/science/diagnostics.md) §5). In Fortran,
+  `CTRL_L0_FIXED`/`_L1_ADAPTIVE`/`_L2_STRICT`, `process_mask_t`, `mask_is_full` and `apply_process_mask`
+  are gone; `column_be_stage`, `ark2_column_step` and `adaptive_ark_march` take no `niter`, and
+  `commit_tissue_energy` no mask flags.
+- **The no-forcing climate** (#480): `fast_context_t`'s `u_ref`, `press`, `air_temp`, `shv_atm`,
+  `co2_atm`, `rad_sw_top`, `rad_sw_ground` and `precip` are gone. A run without forcing reads
+  `met_forcing_t`'s defaults, or the record a caller passes to `fast_dynamics` as `met_fixed`.
+  `ensure_patch_biophys_capacity` takes no seed values.
 
 ### Changed
 
+- **A run without forcing runs the canopy radiation** (#480). It was a different model: the shortwave
+  split by LAI share with all of it taken as PAR, a fixed 15% at the ground, and no longwave. It now
+  runs the two-stream on one fixed record, the reference climate (`met_forcing_t`'s defaults: 288 K,
+  0.008 kg/kg, 400 W/m² of shortwave with the sun 60° from the zenith, 380 W/m² of longwave). Forced runs
+  do not change. A year without forcing (the all1y case), annual means: net radiation 460 → 283 W/m²,
+  H 375 → 243 W/m², LE 29.1 → 28.1 W/m², GPP 5.63 → 7.00 µmol/m²/s, AGB 6.40 → 6.53 kgC/m².
+- **Every ARK stage takes the coupled leaf ↔ canopy-air Newton, the canopy air's supersaturation sink
+  is always on, and the budget stops follow `[fast].debug_error` alone** (#480): what the retired keys'
+  defaults did. No result changes for a configuration that left them at their defaults.
 - **The fast loop's setup is one module** (#479). `meds_fast_config` builds the run's `fast_context_t`
   and each site's configuration; nothing below it reads `meds_config_t`. What the numerics read from it
   arrives in the fast loop's own records: the leaf and wood emissivities, PFT parameters, gathered per
@@ -937,6 +959,9 @@ are set in `io/init` (#479).
 
 ### Removed
 
+- **The process mask, the probe and the uncoupled stage** (#480): `apply_process_mask` and
+  `mask_is_full`, `write_fast_probe`, the uncoupled backward-Euler pass of `column_be_stage`, the
+  strict floor-step stop, and the LAI-split radiation and `reference_met` of a run without forcing.
 - **The RK4 oracle** (#478), `meds_fast_rk4_oracle` with `rk4_column_step`, and `test_column_derivs`'
   RK4 march test.
 - **Fast-loop fields nothing read** (#478): `aero_out_t%qstar`, `%cstar` and `%can_depth`;

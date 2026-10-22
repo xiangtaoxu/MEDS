@@ -30,6 +30,9 @@ program test_several_sites
 
    integer(ik), parameter :: N_DAY = 60_ik            ! two short years of two 15-day months
    real(wp),    parameter :: RTOL  = 1.0e-12_wp
+   !----- A site in a polygon of two against the same site alone: gfortran and an ifx Debug build   !
+   !      agree to RTOL, an optimized ifx build of the two-stream to ~1e-9 over the 60 days. --------!
+   real(wp),    parameter :: RTOL_SITE = 1.0e-7_wp
    type(meds_config_t)  :: cfg, cfg_shallow
    type(fast_context_t) :: ctx, ctx4
    type(polygon_t)      :: one, two, two_mt, one_shallow, mixed, back
@@ -93,12 +96,12 @@ program test_several_sites
               'the two sites have different soil columns')
    call check(abs(site_water(mixed, 1_ik) - site_water(mixed, 2_ik)) > 1.0_wp,                      &
               'the two soils hold different water')
-   call check_close(site_carbon(mixed, 1_ik), site_carbon(one, 1_ik), RTOL * site_carbon(one, 1_ik),  &
+   call check_close(site_carbon(mixed, 1_ik), site_carbon(one, 1_ik), RTOL_SITE * site_carbon(one, 1_ik), &
                     'the deep site grows the one-site stand on the deep soil')
    call check_close(site_carbon(mixed, 2_ik), site_carbon(one_shallow, 1_ik),                      &
-                    RTOL * site_carbon(one_shallow, 1_ik), 'the shallow site grows the one-site stand on its soil')
+                    RTOL_SITE * site_carbon(one_shallow, 1_ik), 'the shallow site grows the one-site stand on its soil')
    call check_close(site_water(mixed, 2_ik), site_water(one_shallow, 1_ik),                        &
-                    RTOL * site_water(one_shallow, 1_ik), 'the shallow site keeps the one-site water on its soil')
+                    RTOL_SITE * site_water(one_shallow, 1_ik), 'the shallow site keeps the one-site water on its soil')
 
    !=== 4. The mixed polygon through a state file. ==========================================!
    now = meds_time_t(year=2000, month=3, day=1)

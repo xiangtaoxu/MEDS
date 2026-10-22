@@ -138,8 +138,7 @@ cost of layers; it also moves the root profile and the drainage, so it is not a 
   folded in patch order, so the output is byte-identical at any thread count: it is a wall-clock
   setting only, bounded by the patch count and by how unevenly the patches cost. The default of 1
   keeps a build compiled with OpenMP serial until asked; a build without OpenMP ignores the key. MEDS
-  does not read `OMP_NUM_THREADS`, so a run's config records its thread count. The
-  sub-daily probe (`[fast].fast_probe`) writes one shared CSV in order, so it needs one thread
+  does not read `OMP_NUM_THREADS`, so a run's config records its thread count
   ([`science/numerical_scheme.md`](science/numerical_scheme.md) §6a).
 - **`[run].slow_on = false`** skips the whole slow tier every step: growth, mortality, phenology,
   traits, demography and soil carbon. The stand stays as it is while the fast loop runs. It is broader
@@ -374,8 +373,8 @@ a mean.
 ## The forcing file
 
 `[forcing].forcing_on` turns the meteorological driver on; `[site]` says where the site is.
-Without it the fast loop runs against a constant reference climate, which is useful for tests and
-useless for science.
+Without it the fast loop runs against a constant reference climate, `met_forcing_t`'s defaults
+([forcing](science/forcing.md) §2), which is useful for tests and useless for science.
 
 `[forcing].format` picks the source:
 

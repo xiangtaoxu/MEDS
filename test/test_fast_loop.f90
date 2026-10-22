@@ -22,7 +22,8 @@ program test_fast_loop
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_config,         only : fast_context_t, build_fast_context, apply_hydraulics_config,              &
-                                        apply_canopy_film_config, build_leaf_photo_table, build_integrator_opts
+                                        apply_canopy_film_config, build_leaf_photo_table,                         &
+                                        build_integrator_opts, build_rad_optics
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
    use meds_stepper,             only : advance_one_step
@@ -70,7 +71,7 @@ program test_fast_loop
    ctx%col_config%hd_rd = cfg%hd_rd
    ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
-   ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
+   call build_rad_optics(cfg, ctx%rad_opt)               ! the two-stream's per-PFT optics
    cfg%init%soil_temp = 288.0_wp
 
    !----- Two patches: patch 1 vegetated, patch 2 BARE (zero cohorts). ---------------------!
@@ -560,37 +561,29 @@ program test_fast_loop
                                        poly%cohort%leaf_water_mass(1), ' kg/plant after a 100x bleaf collapse)'
 
       !----- A BARE cohort (leaf_carbon = 0 -> leaf_water_mass = 0, its physical state) keeps its    !
-      !      wood water: nothing re-seeds a store, so a dormant cohort carries its deficit through    !
-      !      the winter. Perturb the wood store to a value a seed cannot produce, run a              !
-      !      day with no leaves (no transpiration, so the wood store barely moves), and assert it    !
-      !      carried through. ----------------------------------------------------------------------!
+      !      wood water: nothing re-seeds a store. Set the wood store 2% above the value a seed would  !
+      !      give: with no leaves nothing draws on it and the roots take up no water from soil drier   !
+      !      than the wood, so it barely moves, while a re-seed would pull it back by 2%. ------------!
       block
          real(wp)    :: wood_set, wood_after, dt_fast_save
          integer(ik) :: nsub_save
          poly%cohort%leaf_carbon(1)     = 0.0_wp
          poly%cohort%leaf_water_mass(1) = 0.0_wp
-         wood_set = 0.98_wp * poly%cohort%wood_water_mass(1)  ! a 2% deficit a seed cannot produce
+         wood_set = 1.02_wp * poly%cohort%wood_water_mass(1)  ! a 2% surplus a seed cannot produce
          poly%cohort%wood_water_mass(1) = wood_set
          call hold_cohort_tissue_temps(poly%cohort, 1_ik)
-         !----- ONE short sub-step with a SMALL deficit: near saturation the PV curve gives a small    !
-         !      driving potential, so root uptake moves the store by << 0.5% in 60 s (a 30% deficit,   !
-         !      by contrast, refills a third of the way in that minute). A re-seed from the soil puts  !
-         !      the store back to 100% -- a 2% jump this check sees. ----------------------------------!
-         !----- ...and with the plant-hydraulics process MASKED (frozen tissue water), because the    !
-         !      fixture's leafless cohort refills even a 2% wood deficit within the minute: the store   !
-         !      must come out exactly as it went in, so the only thing that can move it is the seed. --!
+         !----- ONE short sub-step: a re-seed from the soil puts the store back to 100% -- a 2% drop   !
+         !      this check sees. -------------------------------------------------------------------!
          dt_fast_save = cfg%dt_fast ; nsub_save = cfg%n_fast_per_slow
          cfg%dt_fast = 60.0_wp ; cfg%n_fast_per_slow = 1_ik
-         ctx%col_config%mask%hydraulics = .false.        ! the fast loop reads the mask from the context, not cfg
          call fast_dynamics(poly, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
          cfg%dt_fast = dt_fast_save ; cfg%n_fast_per_slow = nsub_save
-         ctx%col_config%mask%hydraulics = .true.
          wood_after = poly%cohort%wood_water_mass(1)
          write(*,'(a,es10.3,a,es10.3,a)') '   (dormant seam: wood water set ', wood_set, ' -> ', wood_after, &
                ' kg/plant after one 60 s step)'
-         call check(abs(wood_after - wood_set) < 1.0e-9_wp * wood_set,                               &
+         call check(abs(wood_after - wood_set) < 0.005_wp * wood_set,                                &
                     'dormant seam: bare cohort keeps its integrated wood water (not re-seeded)')
-         call check(poly%cohort%leaf_water_mass(1) == 0.0_wp,                                        &
+         call check(abs(poly%cohort%leaf_water_mass(1)) < 1.0e-12_wp,                                &
                     'dormant seam: a bare cohort holds no leaf water')
       end block
    end block

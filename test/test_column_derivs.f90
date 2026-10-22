@@ -449,66 +449,32 @@ contains
       call check_true('first-order BE ~ RK45 reference: mass agree < 1e-4 kg/plant', dmass < 1.0e-4_wp, dmass)
    end subroutine test_be_euler
 
-   !----- 12. the leaf<->CAS Newton coupling (niter>1) removes the large-dt over-humidification that  !
-   !          the uncoupled baseline (niter=1) suffers under a harsh constant-noon forcing at 900 s.  !
+   !----- 12. the leaf<->CAS Newton coupling keeps the canopy air physical and sub-saturated under a   !
+   !          harsh constant-noon forcing at 900 s, where an uncoupled pass over-humidifies.          !
    subroutine test_be_coupled()
-      type(column_state_t)  :: y, yb, yc, ytmp
+      type(column_state_t)  :: y, yc, ytmp
       type(column_frozen_t) :: frozen
-      real(wp)    :: tcas_base, tcas_coup, qsat_base, qsat_coup
+      real(wp)    :: tcas_coup, qsat_coup
       integer(ik) :: step, n, nsl
-      logical     :: base_diverged
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_be_coupled:'
       !----- HARSH forcing: constant noon, modest venting (the case that over-humidifies at 900 s). -!
-      call make_column(y, frozen, n, nsl)      ! no ventilation boost -> baseline over-humidifies
+      call make_column(y, frozen, n, nsl)
       !----- The leaves transpire at the canopy air's humidity here, as the stages do whenever the    !
-      !      transpiration is not held at the water network's: that leaf-vapour feedback is what makes !
-      !      the uncoupled iteration collapse at 900 s. With it held (the model's ARK stages), only the !
-      !      sensible and film couplings remain and the baseline stays in band. ---------------------!
+      !      transpiration is not held at the water network's: that leaf-vapour feedback is the        !
+      !      coupling the Newton resolves. -------------------------------------------------------!
       frozen%tissue%transp_held = .false.
-
-      !----- STOP the baseline the moment it has demonstrably collapsed.  It is DELIBERATELY unstable,  !
-      !      and once it has left the physical band there is nothing further to learn from it -- but      !
-      !      marching it on regardless takes it to -3.0e79 J/kg by step 10 and then into IEEE overflow,    !
-      !      which is a landmine rather than a test: on a Release build the assertion below silently       !
-      !      compares against NaN, and on the -fpe0 Debug build the overflow TRAPS inside the integrator   !
-      !      before any assertion runs.  Which of those happens depends on rounding in an already-          !
-      !      diverged trajectory, so ANY perturbation elsewhere in the surface kernel can flip it, even    !
-      !      one that is bit-identical here through step 10.  Detecting the collapse and                   !
-      !      stopping states the intent exactly and removes the dependence on how the collapse ends. -------!
-      call copy_state(y, yb, n) ; call copy_state(y, yc, n)
-      base_diverged = .false.
+      call copy_state(y, yc, n)
       do step = 1_ik, 12_ik                 ! 12 * 900 s = 3 h of constant noon
-         if (.not. base_diverged) then
-            call be_euler_step(yb, frozen, n, nsl, 900.0_wp, ytmp)                     ! niter=1 (baseline)
-            call copy_state(ytmp, yb, n)
-            tcas_base = cas_enthalpy_to_temp(yb%cas_enthalpy, yb%cas_shv)
-            base_diverged = .not. (tcas_base > 270.0_wp .and. tcas_base < 325.0_wp)
-         end if
-         call be_euler_step(yc, frozen, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
+         call be_euler_step(yc, frozen, n, nsl, 900.0_wp, ytmp)
          call copy_state(ytmp, yc, n)
       end do
-      tcas_base = cas_enthalpy_to_temp(yb%cas_enthalpy, yb%cas_shv)
       tcas_coup = cas_enthalpy_to_temp(yc%cas_enthalpy, yc%cas_shv)
-      qsat_base = sat_specific_humidity(tcas_base, frozen%cas%press)
       qsat_coup = sat_specific_humidity(tcas_coup, frozen%cas%press)
-      !----- coupled stays physical (sub-saturated, physical temperature); baseline collapses. ------!
       call check_true('coupled CAS stays physical (270-325 K) at 900 s constant noon',            &
                       tcas_coup > 270.0_wp .and. tcas_coup < 325.0_wp, tcas_coup)
       call check_true('coupled CAS stays sub-saturated (shv <= qsat)', yc%cas_shv <= qsat_coup + 1.0e-4_wp, &
                       yc%cas_shv - qsat_coup)
-      !----- COUPLING MATTERS: assert the baseline LEAVES the physical band, rather than comparing    !
-      !      the two temperatures.  The baseline is deliberately unstable -- by step 9 its specific     !
-      !      humidity is already NEGATIVE (-9.7e-2 kg/kg) and by step 10 its enthalpy is -3.0e79 J/kg,  !
-      !      so tcas_base is not a number any arithmetic comparison can rest on.  Whether that garbage  !
-      !      reaches IEEE overflow (-> NaN, which makes every comparison .false.) within these 12 steps  !
-      !      depends on rounding in an already-diverged trajectory, so a comparison such as             !
-      !      `tcas_coup > tcas_base + 1` is green by accident of overflow TIMING, not by physics; a     !
-      !      change to the surface kernel that is bit-identical through step 10 can flip it.            !
-      !      The band test states the intent directly (the coupled run stays physical where the          !
-      !      uncoupled one collapses) and is immune to how the collapse ends. -------------------------!
-      call check_true('coupling matters: the uncoupled baseline leaves the physical band',         &
-                      base_diverged, tcas_base)
    end subroutine test_be_coupled
 
    !----- 12b. the arrowhead Newton surface solve: robust near saturation (clamp + line search), and  !
@@ -523,14 +489,14 @@ contains
       print '(a)', 'test_arrowhead:'
 
       !----- (a) START the CAS at 99% saturation under harsh noon: exercises the supersaturation      !
-      !          clamp + line search. Newton (niter>1) must keep it physical + sub-saturated at 900 s. !
+      !          clamp + line search. the Newton must keep it physical + sub-saturated at 900 s. !
       call make_column(y, frozen, n, nsl)
       tcas = 297.0_wp ; qsat = sat_specific_humidity(tcas, frozen%cas%press)
       y%cas_enthalpy = cas_temp_to_enthalpy(tcas, 0.99_wp*qsat) ; y%cas_shv = 0.99_wp*qsat
       call copy_state(y, yi, n)
       physical = .true. ; worst_super = -1.0_wp
       do step = 1_ik, 12_ik
-         call be_euler_step(yi, frozen, n, nsl, 900.0_wp, ytmp, niter=8_ik)
+         call be_euler_step(yi, frozen, n, nsl, 900.0_wp, ytmp)
          call copy_state(ytmp, yi, n)
          tcas = cas_enthalpy_to_temp(yi%cas_enthalpy, yi%cas_shv)
          qsat = sat_specific_humidity(tcas, frozen%cas%press)
@@ -540,20 +506,20 @@ contains
       call check_true('Newton stays sub-saturated from a 99%-saturated start (900 s)', worst_super <= 1.0e-4_wp, worst_super)
       call check_true('Newton stays physical (270-325 K) near saturation', physical, tcas)
 
-      !----- (b) Newton (niter=8) matches the RK45 reference at small dt (converges to the coupled    !
+      !----- (b) Newton matches the RK45 reference at small dt (converges to the coupled    !
       !          solution); theta stays put through the fixture's zero theta_rate, as in             !
       !          test_be_euler (b). ----------------------------------------------------------------!
       call make_column(y, frozen, n, nsl)
       call copy_state(y, yi, n)
       do step = 1_ik, 60_ik                     ! 60 * 4 s = 4 min
-         call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp, niter=8_ik)
+         call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp)
          call copy_state(ytmp, yi, n)
       end do
       call march_rk45(y, frozen, n, nsl, 4.0_wp, 60_ik, yr)
       dcas   = abs(cas_enthalpy_to_temp(yi%cas_enthalpy, yi%cas_shv) - cas_enthalpy_to_temp(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
-      call check_true('Newton (niter=8) ~ RK45 reference: CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
-      call check_true('Newton (niter=8) ~ RK45 reference: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, &
+      call check_true('Newton ~ RK45 reference: CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
+      call check_true('Newton ~ RK45 reference: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, &
                       dtheta)
    end subroutine test_arrowhead
 
@@ -612,7 +578,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call ark2_column_step(y, frozen, col_site, n, nsl, dt, ytmp, yerr, ws%stages, niter=8_ik)
+         call ark2_column_step(y, frozen, col_site, n, nsl, dt, ytmp, yerr, ws%stages)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -627,18 +593,17 @@ contains
    !      It is a probe, not an oracle: it returns no reference trajectory, and it shares              !
    !      column_be_stage with the scheme it degrades, so it is independent in the tableau only, not   !
    !      in the machinery. What it IS good for is exactly what the tests below use it for --          !
-   !      deliberately breaking the production scheme in ONE known way (drop to first order, or turn   !
-   !      the leaf<->CAS Newton off with niter = 1) and watching what fails. A degraded-configuration  !
+   !      deliberately breaking the production scheme in ONE known way (drop to first order) and       !
+   !      watching what fails. A degraded-configuration                                                !
    !      probe belongs in the test that degrades it, not in the shipped source.                       !
-   subroutine be_euler_step(y, frozen, n, nsl, dt, y_out, niter)
+   subroutine be_euler_step(y, frozen, n, nsl, dt, y_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
-      integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled Newton
       type(surface_tend_t) :: surf_tend
-      call column_be_stage(y, frozen, col_site, n, nsl, dt, y_out, surf_tend, niter)
+      call column_be_stage(y, frozen, col_site, n, nsl, dt, y_out, surf_tend)
       call advance_plant_water(y, frozen, n, dt, surf_tend%transp_c(1:n), y_out)
    end subroutine be_euler_step
 
@@ -653,7 +618,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call be_euler_step(y, frozen, n, nsl, dt, ytmp, niter=8_ik)
+         call be_euler_step(y, frozen, n, nsl, dt, ytmp)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -718,7 +683,7 @@ contains
       !----- (b) plant water mass stays physical (finite, positive) at production dt=900. ------------!
       call copy_state(y, y1, n) ; physical = .true.
       do step = 1_ik, 24_ik
-         call ark2_column_step(y1, frozen, col_site, n, nsl, 900.0_wp, ytmp, yerr, ws%stages, niter=8_ik)
+         call ark2_column_step(y1, frozen, col_site, n, nsl, 900.0_wp, ytmp, yerr, ws%stages)
          call copy_state(ytmp, y1, n)
          physical = physical .and. all(y1%leaf_water_mass(1:n) == y1%leaf_water_mass(1:n)) .and.   &
                     all(y1%wood_water_mass(1:n) == y1%wood_water_mass(1:n)) .and.                  &
@@ -728,7 +693,7 @@ contains
                       minval(y1%leaf_water_mass(1:n)))
 
       !----- (c) embedded error estimate is bounded (not detonating). ---------------------------------!
-      call ark2_column_step(y, frozen, col_site, n, nsl, 900.0_wp, ynew, yerr, ws%stages, niter=8_ik)
+      call ark2_column_step(y, frozen, col_site, n, nsl, 900.0_wp, ynew, yerr, ws%stages)
       call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
       call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
 

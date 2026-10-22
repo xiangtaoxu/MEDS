@@ -151,7 +151,7 @@ how far the group drifted apart on the last stretch.
   water are **operator-split out**: soil water moves at the water network's steady rate, and plant
   and surface water are advanced once over the full `dt_fast`.
 - The leaf↔canopy-air coupling is solved implicitly *within* every stage by a direct 2×2 Newton
-  (`newton_surface_solve`, `[fast].ark_coupled`, default true) with a numerical Jacobian — which is what
+  (`newton_surface_solve`) with a numerical Jacobian — which is what
   lets it carry the tissue heat store.
 - Adaptive: the step size is chosen from the difference between the second-order and first-order
   solutions, measured by **one weighted norm over the whole column state** with a per-variable-group
@@ -519,15 +519,6 @@ numerics = true                  # the work + health counters; turn this on for 
   ~10⁻⁶ J while canopy-air temperature oscillates 8 K step to step. If you change `dt_fast`, look at a
   consecutive-step trace of `mean_cas_temp_py` and at daily GPP, not just the residuals.
 
-**The process mask.** `[fast].mask.<store>` switches one prognostic store off, to attribute a
-column's behaviour to a process or to isolate its stiffest mode (everything off but `hydraulics`). A
-store switched off is held at its start-of-step state while its kernel still runs, so its couplings
-to the other stores act as constants and no consumer reads an unset flux. Two things follow. A
-reduced column costs as much as the full one, so its work counters do not measure a cheaper system.
-And it does not conserve, because a held store's fluxes still act on its neighbours, so the budget
-halts are off unless every store is on (`mask_is_full`). Every scheme applies the mask at its one
-state-commit point (`apply_process_mask`).
-
 ---
 
 ## 6a. Multi-core: threading the patch axis
@@ -558,10 +549,6 @@ Each thread's per-patch scratch is an explicit pool indexed by thread number rat
 `private` clause, because ifx builds private copies of a derived type through a static mold that every
 thread writes: a data race that gives exactly the thread-count-dependent answers the patch-order fold
 exists to prevent (`docs/building.md`, the portability traps).
-
-One knob is deliberately incompatible: `[fast].fast_probe` writes a single, order-significant CSV from
-a saved unit, so `fast_probe` together with `n_threads > 1` is a hard configuration error rather than a
-silently interleaved file.
 
 ### What it buys, measured
 

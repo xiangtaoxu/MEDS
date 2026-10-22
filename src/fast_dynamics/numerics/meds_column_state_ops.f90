@@ -5,7 +5,7 @@
 ! array_to_state, tend_to_array, state_entry_rules) and the combinators on the flat array; the      !
 ! boundary-flux ledger (bflux_*); the stage clamp clamp_cas; the store totals the ledgers read; the  !
 ! soil-energy forcing; and the post-march commits (clamp_canopy_film, deposit_condensate,            !
-! unpack_column_state, diagnose_soil_temps, commit_tissue_energy, apply_process_mask). A new state   !
+! unpack_column_state, diagnose_soil_temps, commit_tissue_energy). A new state                      !
 ! field goes in the four listing routines, the type, the frozen-record pack, unpack_column_state     !
 ! and test_state_combinators; the combinators never name a field.                                    !
 !==========================================================================================!
@@ -17,7 +17,6 @@ module meds_column_state_ops
    use meds_fast_types,       only : column_state_t, column_tend_t, stage_bflux_t, column_bflux_t, GRP_ENTH,      &
                                      GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W,                 &
                                      patch_biophys_t, tissue_coefficients_t
-   use meds_fast_params,      only : process_mask_t
    use meds_soil_types, only : energy_forcing_t
    implicit none
    private
@@ -25,7 +24,7 @@ module meds_column_state_ops
    public :: state_to_array, state_entry_rules
    public :: state_init, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight, transp_per_leaf_area
-   public :: assemble_soil_energy_forcing, apply_process_mask, commit_tissue_energy
+   public :: assemble_soil_energy_forcing, commit_tissue_energy
    public :: clamp_cas
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
    public :: clamp_canopy_film, deposit_condensate, unpack_column_state, diagnose_soil_temps
@@ -504,11 +503,10 @@ contains
    ! the temperature is read back with the end-of-step water. A masked-off process adds nothing; a  !
    ! leaf with no heat capacity takes its wood's temperature.                                        !
    !------------------------------------------------------------------------------------------------!
-   pure subroutine commit_tissue_energy(tissue, nplant, veg_energy_on, water_on, dt, t_leaf_avg, t_wood_avg, n, &
+   pure subroutine commit_tissue_energy(tissue, nplant, dt, t_leaf_avg, t_wood_avg, n,                          &
                                         biophys, store0, store1)
       type(tissue_coefficients_t), intent(in)    :: tissue
       real(wp),                    intent(in)    :: nplant(:)                     !< [plant/m2]
-      logical,                     intent(in)    :: veg_energy_on, water_on       !< the process mask
       real(wp),                    intent(in)    :: dt                            !< [s] dt_fast
       real(wp),                    intent(in)    :: t_leaf_avg(:), t_wood_avg(:)  !< [K]
       integer(ik),                 intent(in)    :: n
@@ -519,18 +517,10 @@ contains
       store0 = 0.0_wp
       store1 = 0.0_wp
       do i = 1_ik, n
-         heat_leaf = 0.0_wp
-         heat_wood = 0.0_wp
-         if (veg_energy_on) then
-            heat_leaf = tissue%leaf_hcap_per_dt(i) * dt * (t_leaf_avg(i) - tissue%t_leaf0(i))
-            heat_wood = tissue%wood_hcap_per_dt(i) * dt * (t_wood_avg(i) - tissue%t_wood0(i))
-         end if
-         enth_leaf = 0.0_wp
-         enth_wood = 0.0_wp
-         if (water_on) then
-            enth_leaf = tissue%leaf_water_enth(i) * dt
-            enth_wood = tissue%wood_water_enth(i) * dt
-         end if
+         heat_leaf = tissue%leaf_hcap_per_dt(i) * dt * (t_leaf_avg(i) - tissue%t_leaf0(i))
+         heat_wood = tissue%wood_hcap_per_dt(i) * dt * (t_wood_avg(i) - tissue%t_wood0(i))
+         enth_leaf = tissue%leaf_water_enth(i) * dt
+         enth_wood = tissue%wood_water_enth(i) * dt
          store0 = store0 + biophys%leaf_energy(i) + biophys%wood_energy(i)
          biophys%leaf_energy(i) = biophys%leaf_energy(i) + heat_leaf + enth_leaf
          biophys%wood_energy(i) = biophys%wood_energy(i) + heat_wood + enth_wood
@@ -576,33 +566,5 @@ contains
       eforc%t_water_top = t_infil
       eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
    end subroutine assemble_soil_energy_forcing
-
-   !---------------------------------------------------------------------------------------!
-   ! apply_process_mask -- restore every masked-off process to its start-of-step state, once, on the  !
-   ! committed state, for both schemes. The mask reduces the column for diagnosis: a held store still  !
-   ! exchanges with its neighbours, so a reduced column does not conserve (mask_is_full). The pond     !
-   ! rides with soil water.                                                                            !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine apply_process_mask(mask, y, y_out, n, nsl)
-      type(process_mask_t), intent(in)    :: mask
-      type(column_state_t), intent(in)    :: y        !< start-of-step state
-      type(column_state_t), intent(inout) :: y_out    !< integrated state, masked fields restored
-      integer(ik),          intent(in)    :: n, nsl
-      if (.not. mask%cas_energy) y_out%cas_enthalpy        = y%cas_enthalpy
-      if (.not. mask%cas_vapour) y_out%cas_shv             = y%cas_shv
-      if (.not. mask%cas_co2)    y_out%cas_co2             = y%cas_co2
-      if (.not. mask%soil_heat)  y_out%soil_energy(1:nsl)  = y%soil_energy(1:nsl)
-      if (.not. mask%soil_water) then
-         y_out%theta(1:nsl)   = y%theta(1:nsl)
-         y_out%w_surface      = y%w_surface
-         y_out%w_surface_energy = y%w_surface_energy
-      end if
-      if (.not. mask%hydraulics) then
-         y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
-         y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
-         y_out%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
-         y_out%wood_surf_water(1:n) = y%wood_surf_water(1:n)
-      end if
-   end subroutine apply_process_mask
 
 end module meds_column_state_ops
