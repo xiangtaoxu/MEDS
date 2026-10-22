@@ -49,8 +49,8 @@ program test_init_soil_state
    end do
 
    !=== 3. A texture per layer: each layer's own curve, each starting at its field capacity. ======!
-   call soil_column_layers(cfg%soil_column, bottoms, n)
-   associate (sc => cfg%soil_column)
+   call soil_column_layers(cfg%soil, bottoms, n)
+   associate (sc => cfg%soil)
       sc%n_layer_values = n
       do k = 1_ik, n
          sc%layer_theta_sat(k)   = 0.40_wp + 0.01_wp * real(k, wp)
@@ -64,11 +64,11 @@ program test_init_soil_state
    end associate
    call build_fast_context(cfg, ctx)
    associate (soil => ctx%col_site%soil_profile)
-      call check(soil%n_active == n .and. all(soil%theta_sat(1:n) == cfg%soil_column%layer_theta_sat(1:n))  &
-                 .and. all(soil%curve_par_n(1:n) == cfg%soil_column%layer_curve_par_n(1:n)),                       &
+      call check(soil%n_active == n .and. all(soil%theta_sat(1:n) == cfg%soil%layer_theta_sat(1:n))         &
+                 .and. all(soil%curve_par_n(1:n) == cfg%soil%layer_curve_par_n(1:n)),                              &
                  'a layer did not take its own curve')
       call check(all(ctx%col_site%soil_profile%dry_heat_capacity(1:n) ==                               &
-                     cfg%soil_column%layer_dry_heat_capacity(1:n)), 'a layer did not take its own heat capacity')
+                     cfg%soil%layer_dry_heat_capacity(1:n)), 'a layer did not take its own heat capacity')
    end associate
    call init_bare_ground(poly, cfg, 3_ik)
    associate (surf => poly%site%surface(1))

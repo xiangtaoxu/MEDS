@@ -18,7 +18,7 @@ module meds_soil_types
 
    !=======================================================================================!
    !  Soil-column water: the boundary ground evaporation reads. The soil's profile and     !
-   !  options are soil_profile_t and soil_opts_t (meds_soil_params).                       !
+   !  parameters are soil_profile_t and soil_params_t (meds_soil_params).                  !
    !=======================================================================================!
 
    !----- The surface boundary ground_evaporation_rate reads (read-only). ---------------------------!
@@ -53,6 +53,7 @@ module meds_soil_types
    type :: energy_flux_t
       real(wp) :: bottom_heat  = 0.0_wp                     !< [W/m2] heat conducted out through the bottom face
       real(wp) :: energy_resid = 0.0_wp                     !< [J/m2] closed-budget residual (~0)
+      real(wp) :: heat_capacity = 0.0_wp                    !< [J/m2/K] the column's, at the step's start
    end type energy_flux_t
 
    !=======================================================================================!

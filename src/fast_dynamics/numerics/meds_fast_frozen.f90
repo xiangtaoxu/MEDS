@@ -21,7 +21,7 @@ module meds_fast_frozen
    use meds_soil_types, only : chydro_forcing_t, snow_melt_t, snow_env_t, snow_flux_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
                                column_budget_t, column_state_t, column_frozen_t, surface_state_t,                 &
-                               surface_tend_t, snow_stage_t, column_site_t
+                               surface_tend_t, snow_stage_t, column_site_t, GRP_THETA
    use meds_fast_time_derivs, only : surface_derivs
    use meds_fast_prepass, only : column_prepass
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer, EFFAREA_EVAP
@@ -157,8 +157,8 @@ contains
             call intercept_canopy_layer(combined_w, rain_above, col_cohort%lai(i), col_cohort%wai(i), 0.0_wp, dt_fast, &
                                         col_config%leaf_surf_water_max(col_cohort%pft(i)),                  &
                                         col_config%wood_surf_water_max(col_cohort%pft(i)),                  &
-                                        col_site%soil_water_opts%intercept_k, &
-                                             col_site%soil_water_opts%intercept_alpha, &
+                                        col_config%intercept_k,               &
+                                             col_config%intercept_alpha,               &
                                         throughfall_i, drip_i, frozen%film%f_wet_c(i))
             !----- the combined film shared by capacity, so neither film is left above its own cap -------!
             if (leaf_cap_i + wood_cap_i > tiny_num) then
@@ -491,13 +491,13 @@ contains
       spac%rain       = precip_ground
       spac%t_rain     = t_pond_inflow
       spac%t_soil(1:nsl) = biophys%soil_energy%soil_temp(1:nsl)
-      spac%w_pond_max = col_site%soil_water_opts%w_pond_max
-      spac%rtol       = col_site%soil_water_opts%rtol
-      spac%atol       = col_site%soil_water_opts%water_atol
+      spac%w_pond_max = col_site%soil%w_pond_max
+      spac%rtol       = col_config%integrator%error_control%tols%rtol(GRP_THETA)
+      spac%atol       = col_config%integrator%error_control%tols%atol(GRP_THETA)
       call spac_set_state(spac, col_site%soil_profile, col_config%hydraulics_table, biophys%soil_water%theta(1:nsl),        &
                           biophys%soil_water%w_surface, biophys%soil_water%w_surface_energy,                              &
                           biophys%leaf_water_mass(1:n), biophys%wood_water_mass(1:n))
-      call spac_advance(spac, col_site%soil_profile, col_site%soil_water_opts, hforc, col_config%hydraulics_table,        &
+      call spac_advance(spac, col_site%soil_profile, col_site%soil, hforc, col_config%hydraulics_table,                   &
                         dt_fast)
    end subroutine run_spac_solver
 

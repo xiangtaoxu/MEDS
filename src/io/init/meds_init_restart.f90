@@ -433,10 +433,10 @@ contains
             slope(is, 1)  = surf%slope_deg
             aspect(is, 1) = surf%aspect_deg
             nsoil(is, 1)  = surf%soil_profile%n_active
-            depth(is, 1)  = surf%soil_column%depth
-            bc(is, 1)     = surf%water_bottom_bc
-            drain(is, 1)  = merge(real(NC_FILL_DOUBLE, wp), surf%drain_factor, surf%water_bottom_bc == SOIL_BC_AQUIFER)
-            tdeep(is, 1)  = surf%deep_temp
+            depth(is, 1)  = surf%soil%depth
+            bc(is, 1)     = surf%soil%water_bottom_bc
+            drain(is, 1)  = merge(real(NC_FILL_DOUBLE, wp), surf%soil%drain_factor, surf%soil%water_bottom_bc == SOIL_BC_AQUIFER)
+            tdeep(is, 1)  = surf%soil%deep_temp
          end associate
       end do
       call write_site_statics(r%ncid, r%row - 1_ik, area, elev, slope, aspect, nsoil, depth, bc, drain, tdeep)

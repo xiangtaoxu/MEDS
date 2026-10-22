@@ -25,8 +25,7 @@ module meds_config
                                        soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,          only : soil_texture_to_thermal
    use meds_fast_params,        only : INTEG_ARK, CTRL_I
-   use meds_soil_params,        only : soil_column_config_t, soil_texture_layers_t, soil_profile_t,   &
-                                       soil_opts_t, energy_opts_t,                                    &
+   use meds_soil_params,        only : soil_params_t, soil_texture_layers_t, soil_profile_t,          &
                                        SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
    use meds_biophysics_params,  only : snow_params_t, aero_cfg_t
    use meds_biogeochem_params,  only : decomp_opts_t
@@ -97,16 +96,19 @@ module meds_config
       real(wp)    :: rtol                = 1.0e-3_wp      !< [-] relative tolerance of every group
       real(wp)    :: atol_scale          = 1.0_wp         !< [-] multiplier on every group's atol
       integer(ik) :: step_controller     = CTRL_I         !< CTRL_I | CTRL_PI
+      real(wp)    :: water_atol          = 1.0e-4_wp      !< [-] the water network's absolute tolerance
+      real(wp)    :: soil_energy_budget_atol = 1.0e-2_wp  !< [K] the soil heat's budget stop; not a step tolerance
+      logical     :: debug_error         = .false.        !< a budget breach stops the run; else it is reported
       real(wp)    :: forcing_sample_frac = 0.5_wp         !< [-] where in the sub-step the forcing is sampled
       logical     :: canopy_water_on     = .false.        !< the canopy interception films
+      real(wp)    :: intercept_alpha     = 1.0_wp         !< [-] Beer interception efficiency
+      real(wp)    :: intercept_k         = 0.5_wp         !< [1/PAI] Beer interception extinction
       real(wp)    :: snow_init_swe       = 0.0_wp         !< [kg/m2] snow seeded at the run start
       real(wp)    :: snow_init_temp      = 270.0_wp       !< [K] its temperature
       integer(ik) :: n_fast_per_slow                      !< DERIVED nint(dt_slow / dt_fast), at least 1
 
-      !----- [soil]: the ground; its solver settings come from [fast]. ------------------------!
-      type(soil_column_config_t) :: soil_column           !< its layers and texture
-      type(soil_opts_t)          :: soil                  !< its water: surface, bottom, the network's atol
-      type(energy_opts_t)        :: energy                !< its heat: the thermal bottom, the budget check
+      !----- [soil]: the ground: its column, surface and bottom boundaries. ---------------------!
+      type(soil_params_t) :: soil
       !----- [snow], [aerodynamics]. -----------------------------------------------------------!
       type(snow_params_t) :: snow
       type(aero_cfg_t)    :: aero
@@ -279,12 +281,7 @@ contains
       integer(ik),         intent(in) :: is
       type(meds_config_t)             :: scfg
       scfg = cfg
-      if (.not. cfg%sites(is)%own_ground) return
-      scfg%soil_column            = cfg%sites(is)%soil_column
-      scfg%soil%water_bottom_bc   = cfg%sites(is)%water_bottom_bc
-      scfg%soil%drain_factor      = cfg%sites(is)%drain_factor
-      scfg%energy%deep_temp       = cfg%sites(is)%deep_temp
-      scfg%energy%deep_depth      = cfg%sites(is)%deep_depth
+      if (cfg%sites(is)%own_ground) scfg%soil = cfg%sites(is)%soil
    end function site_config
 
    !=======================================================================================!
@@ -370,7 +367,7 @@ contains
    ! config sets it, else SOIL_LAYER_TEMPLATE, cut at `depth` (soil_layer_grid).           !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_column_layers(sc, bottoms, n_layer)
-      type(soil_column_config_t), intent(in)  :: sc
+      type(soil_params_t),        intent(in)  :: sc
       real(wp),                   intent(out) :: bottoms(n_soil_layer_max)
       integer(ik),                intent(out) :: n_layer
       if (sc%n_layer_bottoms > 0_ik) then
@@ -383,7 +380,7 @@ contains
 
    !----- The texture per layer: the maps' per-layer values, or the one texture. ----------!
    pure subroutine soil_column_texture(sc, tex)
-      type(soil_column_config_t),  intent(in)  :: sc
+      type(soil_params_t),         intent(in)  :: sc
       type(soil_texture_layers_t), intent(out) :: tex
       if (sc%n_layer_values > 0_ik) then
          tex%theta_sat = sc%layer_theta_sat
@@ -412,7 +409,7 @@ contains
    ! validate_config all build the profile here.                                           !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_column_params(sc, profile)
-      type(soil_column_config_t), intent(in)  :: sc
+      type(soil_params_t),        intent(in)  :: sc
       type(soil_profile_t),       intent(out) :: profile
       type(soil_texture_layers_t) :: tex
       real(wp)    :: bottoms(n_soil_layer_max)
@@ -429,7 +426,7 @@ contains
    ! field capacity for a column with a texture per layer (the soil maps).                 !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_column_start_theta(sc, profile, init_soil_theta, theta)
-      type(soil_column_config_t), intent(in)  :: sc
+      type(soil_params_t),        intent(in)  :: sc
       type(soil_profile_t),       intent(in)  :: profile
       real(wp),                   intent(in)  :: init_soil_theta   !< [m3/m3] [init].soil_theta
       real(wp),                   intent(out) :: theta(n_soil_layer_max)
@@ -470,7 +467,7 @@ contains
       integer(ik) :: n, l
 
       if (inp%soil) then
-         associate (sc => cfg%soil_column)
+         associate (sc => cfg%soil)
             sc%depth = inp%soil_depth(k)
             sc%n_layer_bottoms = 0_ik
             sc%retention = SOIL_RETENTION_VG
@@ -501,9 +498,9 @@ contains
             cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
             cfg%soil%drain_factor = 1.0_wp
          end select
-         call soil_column_params(cfg%soil_column, profile)
-         cfg%energy%deep_temp  = inp%deep_temp(k)
-         cfg%energy%deep_depth = abs(profile%z_node(profile%n_active)) + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)
+         call soil_column_params(cfg%soil, profile)
+         cfg%soil%deep_temp  = inp%deep_temp(k)
+         cfg%soil%deep_depth = abs(profile%z_node(profile%n_active)) + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)
       end if
       if (inp%chave) cfg%pft%allom(:)%chave_e = inp%chave_e(k)
    end subroutine apply_map_inputs

@@ -258,7 +258,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 0.0_wp
+      col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 0.0_wp
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
@@ -274,7 +274,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_site%soil_water_opts%water_bottom_bc = SOIL_BC_AQUIFER
+      col_site%soil%water_bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_water%theta(1:col_site%soil_profile%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_water%theta(col_site%soil_profile%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
@@ -293,7 +293,7 @@ contains
       !      an explicit march may not, so report the substep cost rather than assume it. ------------!
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
             ' , rejects = ', budget%integ_nrej, ' , rescues = ', budget%rk45_rescue
-      col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 1.0_wp
+      col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 1.0_wp
    end subroutine test_rk45_bedrock_and_aquifer
 
    !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert the                     !
@@ -588,7 +588,7 @@ contains
       call check_true('RK45 saturated: column reached theta_sat (saturation path is live)',                           &
               theta_peak >= 0.43_wp - 1.0e-12_wp, theta_peak)
       call check_true('RK45 saturated: ponding store overflowed (runoff path is live)',                               &
-              pond_peak >= col_site%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
+              pond_peak >= col_site%soil%w_pond_max - 1.0e-9_wp, pond_peak)
       !----- ENERGY is asserted as a BOUND, not exact closure. Nothing clamps the committed state, but   !
       !      whether a stage clamp bites is trajectory- and compiler-dependent. A clamp that rebuilt the !
       !      COMMITTED soil_energy at a clamped temperature with no ledger term would show here (1.5e5   !

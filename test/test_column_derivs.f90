@@ -22,8 +22,7 @@ program test_column_derivs
    use meds_budget_check,   only : budget_t, budget_accumulate
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_params,      only : soil_profile_t, energy_opts_t,                                    &
-                                     soil_opts_t
+   use meds_soil_params,      only : soil_profile_t, soil_params_t
    use meds_config,             only : build_soil_hydr_params, build_soil_therm_params
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
@@ -280,7 +279,7 @@ contains
    subroutine test_soil_energy_tendency()
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
-      type(energy_opts_t)         :: eopts
+      type(soil_params_t)         :: eopts
       type(soil_energy_column_t)  :: col, col0
       type(energy_flux_t)         :: eflux
       real(wp)    :: dedt(n_soil_layer_max), dt, worst, fd
@@ -387,7 +386,7 @@ contains
                                     + frozen%hydrology%drainage * internal_energy_liquid(frozen%hydrology%t_bot)
       eforc_chk%w_flux_top  = -frozen%hydrology%infiltration / rho_h2o
       eforc_chk%t_water_top = frozen%hydrology%t_infil
-      call soil_energy_time_deriv(se_chk, eforc_chk, col_site%soil_profile, col_site%energy, dedt_chk)
+      call soil_energy_time_deriv(se_chk, eforc_chk, col_site%soil_profile, col_site%soil, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
    end subroutine test_column_assembler
@@ -915,13 +914,12 @@ contains
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
-      col_site%soil_water_opts = soil_opts_t()
+      col_site%soil = soil_params_t()
       hp%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
       hp%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       hp%wood_psi50 = -2.0_wp
       hp%wood_kexp = 2.0_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
       frozen%hydrology%q_top = 1.0e-6_wp
-      col_site%energy = energy_opts_t()
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))

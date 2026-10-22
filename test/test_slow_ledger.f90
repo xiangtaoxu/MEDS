@@ -63,7 +63,7 @@ program test_slow_ledger
    call finalize_init(poly)
    call check(poly%cohort%n == 2_ik .and. poly%patch%n == 1_ik, 'fixture: 2 cohorts in 1 patch')
 
-   associate (sc => cfg%soil_column)
+   associate (sc => cfg%soil)
       call soil_column_layers(sc, soil_bottoms, n_soil_layer)
       call build_soil_hydr_params(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat, sc%theta_res, &
                                   sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, soil)
@@ -225,8 +225,8 @@ contains
                  'tissue water (a): the recruit phase''s water residual is zero')
       leaf_curve = c%pft%hydro(2_ik)%leaf_curve
       wood_curve = c%pft%hydro(2_ik)%wood_curve
-      call soil_column_params(c%soil_column, sp)
-      call soil_column_start_theta(c%soil_column, sp, c%init%soil_theta, theta_start)
+      call soil_column_params(c%soil, sp)
+      call soil_column_start_theta(c%soil, sp, c%init%soil_theta, theta_start)
       call check_close(tissue_water_to_psi(st%cohort%leaf_water_mass(1), leaf_curve,            &
                        st%cohort%leaf_carbon(1)), top_soil_psi(sp, theta_start(1)), 1.0e-9_wp,     &
                        'tissue water (a): a recruit''s leaves are born at the starting top-soil potential')

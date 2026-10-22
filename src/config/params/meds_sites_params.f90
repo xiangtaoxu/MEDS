@@ -6,7 +6,7 @@
 !==========================================================================================!
 module meds_sites_params
    use meds_kinds,              only : wp, ik
-   use meds_soil_params, only : soil_column_config_t
+   use meds_soil_params, only : soil_params_t
    implicit none
    private
 
@@ -23,11 +23,7 @@ module meds_sites_params
       real(wp)    :: aspect         = 0.0_wp      !< [degrees] clockwise from north
       integer(ik) :: census_site_id = 0_ik        !< the census rows it reads; 0: not given
       logical     :: own_ground     = .false.     !< .false.: the polygon's ground
-      type(soil_column_config_t) :: soil_column
-      integer(ik) :: water_bottom_bc = 0_ik       !< SOIL_BC_*
-      real(wp)    :: drain_factor    = 1.0_wp     !< [-]
-      real(wp)    :: deep_temp       = 0.0_wp     !< [K]
-      real(wp)    :: deep_depth      = 0.0_wp     !< [m]
+      type(soil_params_t) :: soil                 !< its ground: [soil] with the table's keys
    end type site_spec_t
 
 end module meds_sites_params

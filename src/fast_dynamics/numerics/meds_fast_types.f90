@@ -13,7 +13,7 @@ module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max
    use meds_plant_types, only : hydro_args_table_t, leaf_photo_table_t
-   use meds_soil_params, only : soil_profile_t, soil_opts_t, energy_opts_t
+   use meds_soil_params, only : soil_profile_t, soil_params_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_params, only : aero_cfg_t, snow_params_t
@@ -59,7 +59,7 @@ module meds_fast_types
    real(wp), parameter :: ATOL_SE_DEF     = 1.0e3_wp    !< [J/m3]
    real(wp), parameter :: ATOL_LEAF_W_DEF = 1.0e-4_wp   !< [kg/plant]
    real(wp), parameter :: ATOL_WOOD_W_DEF = 1.0e-4_wp   !< [kg/plant]
-   real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== soil_opts_t's own default)
+   real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== [fast].water_atol's default)
    !----- Default PI gains for a first-order embedded pair (Gustafsson 1988; Soderlind), eq. (4). --!
    real(wp), parameter :: PI_ALPHA_DEF = 0.35_wp
    real(wp), parameter :: PI_BETA_DEF  = 0.20_wp
@@ -109,6 +109,8 @@ module meds_fast_types
       !      films in its stages, ARK advances them once per step. Off, the wetted fraction stays 0  !
       !      and every film term vanishes. ----------------------------------------------------------!
       logical                     :: canopy_water_on  = .false.
+      real(wp)                    :: intercept_alpha  = 1.0_wp    !< [-] Beer interception efficiency ([fast])
+      real(wp)                    :: intercept_k      = 0.5_wp    !< [1/PAI] Beer interception extinction ([fast])
       !----- The films' capacities per PFT [kg/m2 leaf], [kg/m2 wood]: a cohort holds              !
       !      leaf_max*LAI + wood_max*WAI. Built by apply_canopy_film_config. ----------------------!
       real(wp), allocatable       :: leaf_surf_water_max(:), wood_surf_water_max(:)
@@ -122,8 +124,11 @@ module meds_fast_types
    !      bottom boundary, and its leaf table, acclimated to its own air. ------------------------!
    type :: column_site_t
       type(soil_profile_t)        :: soil_profile    !< layers, hydraulic and thermal texture (n_active layers)
-      type(soil_opts_t)           :: soil_water_opts !< soil water and water-network options, the bottom boundary
-      type(energy_opts_t)         :: energy          !< soil-thermal solver options, the deep temperature
+      type(soil_params_t)         :: soil            !< its [soil]: surface and bottom boundaries
+      !----- [fast]'s budget stop: debug_error and the soil heat's closure threshold [K], scaled  !
+      !      by atol_scale, which the soil heat step checks. -----------------------------------!
+      logical                     :: debug_error = .false.
+      real(wp)                    :: soil_energy_budget_atol = 1.0e-2_wp
       type(leaf_photo_table_t)    :: leaf_photo      !< per-PFT leaf-photosynthesis parameters
    end type column_site_t
 

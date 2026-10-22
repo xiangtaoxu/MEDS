@@ -320,7 +320,7 @@ contains
          error stop TAG//'soil.ground_albedo_vis and ground_albedo_nir must lie in [0, 1)'
       if (cfg%soil%ground_emissivity <= 0.0_wp .or. cfg%soil%ground_emissivity > 1.0_wp)              &
          error stop TAG//'soil.ground_emissivity must lie in (0, 1]'
-      associate (sc => cfg%soil_column)
+      associate (sc => cfg%soil)
          if (sc%depth <= 0.0_wp) error stop TAG//'soil.depth <= 0'
          if (sc%n_layer_bottoms > 0_ik) then
             if (sc%layer_bottoms(1) <= 0.0_wp .or. any(sc%layer_bottoms(2:sc%n_layer_bottoms)          &
@@ -366,16 +366,16 @@ contains
       !      bottom node (docs/science/soil_biophysics.md, "The bottom thermal boundary"). With the    !
       !      soil maps a polygon's anchor comes from its cell, so a configuration the maps have not   !
       !      filled yet has none to check. ----------------------------------------------------------!
-      if (cfg%energy%thermal_bottom_bc == ENERGY_BC_DIRICHLET .and.                                            &
-          .not. (soil_maps_on(cfg%maps) .and. cfg%soil_column%n_layer_values == 0_ik)) then
-         if (cfg%energy%deep_temp <= 0.0_wp)                                                           &
+      if (cfg%soil%thermal_bottom_bc == ENERGY_BC_DIRICHLET .and.                                              &
+          .not. (soil_maps_on(cfg%maps) .and. cfg%soil%n_layer_values == 0_ik)) then
+         if (cfg%soil%deep_temp <= 0.0_wp)                                                             &
             error stop TAG//'soil.thermal_bottom_bc = "dirichlet" requires soil.deep_temp [K] -- '//     &
                        'the mean annual soil temperature below the damping depth. It is a site '//     &
                        'property, like latitude; there is no safe default.'
-         if (cfg%energy%deep_temp < 200.0_wp .or. cfg%energy%deep_temp > 330.0_wp)                     &
+         if (cfg%soil%deep_temp < 200.0_wp .or. cfg%soil%deep_temp > 330.0_wp)                         &
             error stop TAG//'soil.deep_temp outside 200..330 K -- it is an absolute temperature'
-         call soil_column_params(cfg%soil_column, sp)
-         if (cfg%energy%deep_depth <= abs(sp%z_node(sp%n_active)))                                     &
+         call soil_column_params(cfg%soil, sp)
+         if (cfg%soil%deep_depth <= abs(sp%z_node(sp%n_active)))                                       &
             error stop TAG//'soil.deep_depth must lie BELOW the bottom soil node '//                    &
                        '(it is measured down from the surface, and the anchor conducts to it)'
       end if

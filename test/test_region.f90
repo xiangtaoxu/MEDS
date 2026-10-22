@@ -92,13 +92,13 @@ program test_region
       associate (s => reg%poly(p)%site%surface(1))
          call check_true('each polygon''s site takes its soil column, bottom boundary and deep '//         &
                          'temperature from its own cell', s%soil_profile%n_active == N_LAYER(p)                 &
-                         .and. s%water_bottom_bc == BOTTOM(p) .and. s%soil_column%n_layer_values == N_LAYER(p) &
-                         .and. abs(s%deep_temp - deep_temp_at(ROW(p), COL(p))) < 1.0e-9_wp)
+                         .and. s%soil%water_bottom_bc == BOTTOM(p) .and. s%soil%n_layer_values == N_LAYER(p)   &
+                         .and. abs(s%soil%deep_temp - deep_temp_at(ROW(p), COL(p))) < 1.0e-9_wp)
       end associate
    end do
    call check_true('the sealed polygon drains at f = 0 and the leaky one at its cell''s f_leak',       &
-                   reg%poly(1)%site%surface(1)%drain_factor == 0.0_wp .and.                           &
-                   reg%poly(2)%site%surface(1)%drain_factor == f_leak_at(ROW(2), COL(2)))
+                   reg%poly(1)%site%surface(1)%soil%drain_factor == 0.0_wp .and.                      &
+                   reg%poly(2)%site%surface(1)%soil%drain_factor == f_leak_at(ROW(2), COL(2)))
    do while (.not. region_done(reg))
       call region_step_month(reg, st)
       if (st /= DRIVER_OK) error stop 'test_region: a region month failed'

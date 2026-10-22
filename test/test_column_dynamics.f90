@@ -308,13 +308,13 @@ program test_column_dynamics
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
-   col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN           ! sealed: the water has nowhere to drain
-   col_site%soil_water_opts%drain_factor = 0.0_wp
+   col_site%soil%water_bottom_bc = SOIL_BC_DRAIN           ! sealed: the water has nowhere to drain
+   col_site%soil%drain_factor = 0.0_wp
    call integrate_day()
    call check_true('SATURATED: the column reached theta_sat (saturation path is live)',                               &
            theta_peak_col >= 0.43_wp - 1.0e-12_wp, theta_peak_col)
    call check_true('SATURATED: ponding store filled and overflowed (runoff path is live)',                            &
-           pond_peak >= col_site%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
+           pond_peak >= col_site%soil%w_pond_max - 1.0e-9_wp, pond_peak)
    call check_true('SATURATED: whole-column water still closes', budget%whole_water%n_fail  == 0_ik,                  &
            real(budget%whole_water%n_fail, wp))
    call check_true('SATURATED: whole-column energy still closes', budget%whole_energy%n_fail == 0_ik,                 &
@@ -349,7 +349,7 @@ program test_column_dynamics
    !  enthalpy or sublimation vapour shows up directly in the residual as an unpaired term.   !
    !=====================================================================================!
    theta_seed = THETA0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
-   col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 1.0_wp
+   col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 1.0_wp
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. A pack that ends   !
    !      near zero makes a "pack still present" assertion test the last few percent of the melt   !
    !      energy rather than the wiring. A surviving pack lets the schemes be compared on melt     !
@@ -466,7 +466,7 @@ program test_column_dynamics
    !  difference. The first pass (the default scheme) is the reference the others are compared to.   !
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = THETA0
-   col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 1.0_wp
+   col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 1.0_wp
    snowf_total = 2.0e-5_wp * real(NSTEP, wp) * DT_FAST     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
@@ -764,27 +764,28 @@ contains
       !----- (a) DEFAULT: each group is seeded from the config key that governs it. -------------------!
       t = build_tol_set(c)
       call check_true('tol: every group takes [fast].rtol', all(t%rtol == c%rtol), maxval(abs(t%rtol - c%rtol)))
-      call check_true('tol: theta group seeded from [fast].water_atol', t%atol(GRP_THETA)  == c%soil%water_atol,           &
+      call check_true('tol: theta group seeded from [fast].water_atol', t%atol(GRP_THETA)  == c%water_atol,                &
               t%atol(GRP_THETA))
       !----- (b) THE DIALS: rtol sets every group; atol_scale multiplies every atol. ------------------!
       c%rtol       = 1.0e-7_wp
       c%atol_scale = 1.0e-2_wp
       t = build_tol_set(c)
       call check_true('tol: rtol sets ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
-      call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%soil%water_atol * 1.0e-2_wp, t%atol(GRP_THETA))
+      call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%water_atol * 1.0e-2_wp, t%atol(GRP_THETA))
       !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ARK march: the     !
       !      soil-plant water network takes the GRP_THETA pair for soil and plant stores alike. -------!
       call build_fast_context(c, fx)
       call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &
-              fx%col_site%soil_water_opts%rtol   == 1.0e-7_wp, fx%col_site%soil_water_opts%rtol)
+              fx%col_config%integrator%error_control%tols%rtol(GRP_THETA) == 1.0e-7_wp,                            &
+              fx%col_config%integrator%error_control%tols%rtol(GRP_THETA))
       !----- The soil heat has NO integrator tolerance to push into: the soil-thermal solve is one      !
       !      unconditionally-stable BE step, and the accuracy of the integrated soil energy belongs to   !
       !      GRP_SE. What the dial must still reach is [fast].soil_energy_budget_atol, the               !
       !      BUDGET-CLOSURE threshold, which atol_scale scales directly, outside the tolerance groups.    !
       !      This assertion catches a dropped path.                                                      !
       call check_true('tol: atol_scale reaches the soil-energy BUDGET threshold',                                     &
-              fx%col_site%energy%soil_energy_budget_atol == c%energy%soil_energy_budget_atol * 1.0e-2_wp,            &
-              fx%col_site%energy%soil_energy_budget_atol)
+              fx%col_site%soil_energy_budget_atol == c%soil_energy_budget_atol * 1.0e-2_wp,                          &
+              fx%col_site%soil_energy_budget_atol)
    end subroutine test_tolerance_unification
 
 end program test_column_dynamics

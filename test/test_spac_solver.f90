@@ -38,7 +38,7 @@ program test_spac_solver
                                     soil_theta_to_head
    use meds_plant_types,   only : hydro_args_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
-   use meds_soil_params, only : soil_profile_t, soil_opts_t, SOIL_BC_DRAIN
+   use meds_soil_params, only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN
    use meds_config,             only : build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_types,    only : chydro_forcing_t
@@ -46,8 +46,10 @@ program test_spac_solver
 
    type(hydro_args_table_t)   :: hyd
    type(soil_profile_t)       :: soil
-   type(soil_opts_t)          :: sopts
+   type(soil_params_t)        :: sopts
    type(chydro_forcing_t)     :: forc
+   !----- The water network's tolerances: [fast].rtol and water_atol at their defaults. ---------!
+   real(wp), parameter :: WATER_RTOL = 1.0e-3_wp, WATER_ATOL = 1.0e-4_wp
 
    call make_pft(hyd)
    call make_soil(soil, 10_ik, 1.44_wp, 3.0_wp)
@@ -152,7 +154,7 @@ contains
                                                          hyd%pft(1)%fine_root_radius)
          end do
       end do
-      spac%rtol = sopts%rtol ; spac%atol = sopts%water_atol ; spac%w_pond_max = sopts%w_pond_max
+      spac%rtol = WATER_RTOL ; spac%atol = WATER_ATOL ; spac%w_pond_max = sopts%w_pond_max
       spac%t_soil = 299.0_wp ; spac%t_rain = 297.0_wp
       call spac_set_state(spac, soil, hyd, theta, w_pond, 0.0_wp, leaf_w, wood_w)
    end subroutine make_stand
@@ -300,7 +302,7 @@ contains
    !      equilibrium, the total head (matric head plus elevation) the same in every layer. ---------!
    subroutine test_soil_only()
       type(spac_solver_t)  :: spac
-      type(soil_opts_t)      :: sealed
+      type(soil_params_t)    :: sealed
       type(chydro_forcing_t) :: still
       real(wp) :: theta(soil%n_active), head(soil%n_active), w0
       integer(ik) :: step, nsl
@@ -448,7 +450,7 @@ contains
       end do
       worst_theta = maxval(abs(spac%water_soil(2:nsl+1) - ref%water_soil(2:nsl+1)) / (rho_h2o * soil%dz(1:nsl)))
       worst_rwc   = maxval(abs(spac%tau_coh - ref%tau_coh))
-      call check_true('accuracy: soil water within 10 atol of the tight run', worst_theta < 10.0_wp * sopts%water_atol,  &
+      call check_true('accuracy: soil water within 10 atol of the tight run', worst_theta < 10.0_wp * WATER_ATOL,  &
                       worst_theta)
       call check_true('accuracy: tissue water within 1e-2 RWC of the tight run', worst_rwc < 1.0e-2_wp, worst_rwc)
       print '(a,i6)', '  info : sub-steps over the day at the default tolerances: ', isub

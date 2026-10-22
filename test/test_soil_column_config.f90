@@ -15,14 +15,14 @@
 program test_soil_column_config
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : n_soil_layer_max
-   use meds_soil_params,   only : soil_column_config_t, soil_profile_t
+   use meds_soil_params,   only : soil_params_t, soil_profile_t
    use meds_config,             only : soil_column_layers, build_soil_hydr_params,                    &
                                        build_soil_therm_params
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_test_support, only : banner, check, check_close
    implicit none
 
-   type(soil_column_config_t)  :: sc
+   type(soil_params_t)  :: sc
    type(soil_profile_t)        :: p, p2, th
    real(wp)                    :: bottoms(n_soil_layer_max)
    integer(ik)                 :: n_layer, k
@@ -118,7 +118,7 @@ contains
 
    !----- Exactly the call build_fast_context makes, so the test cannot drift from it. -------!
    subroutine build_column(c, out)
-      type(soil_column_config_t), intent(in)  :: c
+      type(soil_params_t), intent(in)  :: c
       type(soil_profile_t),       intent(out) :: out
       real(wp)    :: column_bottoms(n_soil_layer_max)
       integer(ik) :: n_column

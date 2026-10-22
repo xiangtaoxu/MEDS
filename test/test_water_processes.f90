@@ -37,7 +37,7 @@ program test_water_processes
    use meds_constants,  only : pi, grav, r_wv, p_std
    use meds_therm_lib,  only : sat_specific_humidity
    use meds_soil_types, only : chydro_forcing_t
-   use meds_soil_params, only : soil_profile_t, soil_opts_t
+   use meds_soil_params, only : soil_profile_t, soil_params_t
    implicit none
 
    call test_soil_water_relations()
@@ -354,7 +354,7 @@ contains
    subroutine test_evaporation()
       type(soil_profile_t)   :: sp
       type(chydro_forcing_t) :: f
-      type(soil_opts_t)      :: o
+      type(soil_params_t)    :: o
       real(wp) :: theta, head, e, det, dep, ep, em, dum, ref, h
       integer  :: i
       logical  :: ok_d, ok_v

@@ -304,7 +304,7 @@ contains
       !----- The faces the energy equation was given, read from eforc, for the stepper to check      !
       !      against the theta it commits. ---------------------------------------------------------!
       f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store downward
-      call soil_energy_time_deriv(soil_energy, eforc, col_site%soil_profile, col_site%energy, &
+      call soil_energy_time_deriv(soil_energy, eforc, col_site%soil_profile, col_site%soil,   &
                                   f%dedt, bottom_face=f%g_bottom)
 
       !----- 4. Plant water mass per plant: the network's sapflow and uptake in, and out the          !

@@ -104,7 +104,11 @@ contains
       call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, y%theta,          &
                                         water_heat, frozen%hydrology%w_flux_frozen,                                &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
-      call soil_energy_step_implicit(se, eforc, col_site%soil_profile, col_site%energy, dt, eflux)
+      call soil_energy_step_implicit(se, eforc, col_site%soil_profile, col_site%soil, dt, eflux)
+      !----- [fast].debug_error stops the run when the soil heat's own budget misses by more than  !
+      !      soil_energy_budget_atol [K] of the column's heat capacity. -----------------------------!
+      if (col_site%debug_error .and. abs(eflux%energy_resid) > col_site%soil_energy_budget_atol * eflux%heat_capacity) &
+         error stop 'soil heat step: energy budget did not close'
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
       !----- Soil water is the network's, its end-of-step theta committed once in column_fast_step_ark     !

@@ -51,8 +51,8 @@ program test_site_definitions
       call check(size(cfg%sites) == 2, 'two [[sites]] tables are two sites')
       call check(cfg%sites(1)%own_ground .and. .not. cfg%sites(2)%own_ground,                     &
                  'a table with [soil] keys has its own ground, one without takes the run''s')
-      call check_close(cfg%sites(1)%soil_column%depth, 0.6_wp, 1.0e-12_wp, 'the first site is 0.6 m deep')
-      call check_close(cfg%sites(1)%soil_column%theta_sat, cfg%soil_column%theta_sat, 0.0_wp,      &
+      call check_close(cfg%sites(1)%soil%depth, 0.6_wp, 1.0e-12_wp, 'the first site is 0.6 m deep')
+      call check_close(cfg%sites(1)%soil%theta_sat, cfg%soil%theta_sat, 0.0_wp,                    &
                        'a key the table leaves out takes [soil]''s value')
       call check(cfg%sites(1)%has_elevation .and. .not. cfg%sites(2)%has_elevation,               &
                  'the first site has its own elevation, the second the polygon''s')

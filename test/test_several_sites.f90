@@ -47,7 +47,7 @@ program test_several_sites
    ctx4 = ctx
    ctx4%patch_threads = 4_ik
    cfg_shallow = cfg
-   cfg_shallow%soil_column%depth = 0.6_wp
+   cfg_shallow%soil%depth = 0.6_wp
 
    !=== 1. Two identical sites, 0.3 and 0.7 of the polygon. ================================!
    call stand(one, cfg, [cfg], [1.0_wp])

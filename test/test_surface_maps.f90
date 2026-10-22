@@ -183,7 +183,7 @@ program test_surface_maps
    tex%coarse_frag  = (0.4_wp*t5%coarse_frag + 0.1_wp*t6%coarse_frag) / 0.5_wp
    call soil_texture_to_hydraulics(tex, ts, tr, al, vn, ks)
    call soil_texture_to_thermal(tex%sand, tex%clay, ts, kso, kd, cv)
-   associate (sc => cfg%soil_column)
+   associate (sc => cfg%soil)
       call check_true('the column ends at the map''s depth, on the default layers',                      &
                       close(sc%depth, soil_depth_at(1_ik, 0_ik)) .and. sc%n_layer_values == 5_ik)
       call check_true('a layer across two map layers takes their overlap-weighted soil',                 &
@@ -200,8 +200,8 @@ program test_surface_maps
                    cfg%soil%water_bottom_bc == SOIL_BC_DRAIN .and. cfg%soil%drain_factor == f_leak_at(1_ik, 0_ik) &
                    .and. f_leak_at(1_ik, 0_ik) < 1.0_wp)
    call check_true('the thermal anchor: the map''s temperature, d/sqrt(2) below the bottom node',          &
-                   close(cfg%energy%deep_temp, deep_temp_at(1_ik, 0_ik)) .and.                            &
-                   close(cfg%energy%deep_depth, 0.85_wp + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)))
+                   close(cfg%soil%deep_temp, deep_temp_at(1_ik, 0_ik)) .and.                              &
+                   close(cfg%soil%deep_depth, 0.85_wp + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)))
    call check_true('Chave''s E is the cell''s', close(cfg%pft%allom(1)%chave_e, chave_e_at(1_ik, 0_ik)))
 
    !----- Rows 2-3, columns 14-17: cell (3, 17) is 2.55 m deep, 8 layers, the last 2.0-2.55 m, below    !
@@ -216,8 +216,8 @@ program test_surface_maps
    call apply_map_inputs(inp, k, cfg2)
    call soil_texture_to_hydraulics(texture_at(6_ik, 3_ik, 17_ik), ts, tr, al, vn, ks)
    call check_true('a layer below the maps'' 2 m takes the deepest map layer''s soil',                     &
-                   cfg2%soil_column%n_layer_values == 8_ik .and. close(cfg2%soil_column%layer_theta_sat(8), ts) &
-                   .and. close(cfg2%soil_column%layer_curve_par_n(8), vn))
+                   cfg2%soil%n_layer_values == 8_ik .and. close(cfg2%soil%layer_theta_sat(8), ts)               &
+                   .and. close(cfg2%soil%layer_curve_par_n(8), vn))
    call check_true('a free-draining bottom drains at f = 1', bc_class_at(3_ik, 17_ik) == 1_ik .and.     &
                    cfg2%soil%water_bottom_bc == SOIL_BC_DRAIN .and. cfg2%soil%drain_factor == 1.0_wp)
    do k = 1_ik, cells%ncell

@@ -33,7 +33,7 @@ program test_column_energy
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_params,      only : soil_profile_t, energy_opts_t,                                    &
+   use meds_soil_params,      only : soil_profile_t, soil_params_t,                                    &
                                      ENERGY_BC_DIRICHLET
    use meds_config,             only : build_soil_hydr_params, build_soil_therm_params
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
@@ -124,7 +124,7 @@ contains
       real(wp),    intent(out) :: amp(:), z(:), dd
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: eflux
       type(soil_energy_column_t)  :: col
       real(wp)    :: tmin(n_soil_layer_max), tmax(n_soil_layer_max), tnow, kap, cef
@@ -286,7 +286,7 @@ contains
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_energy_column_t)  :: col
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       integer(ik) :: step
       real(wp)    :: worst, worst_adv
@@ -315,7 +315,7 @@ contains
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_energy_column_t)  :: col
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       integer(ik) :: step, k
       real(wp)    :: drift
@@ -368,7 +368,7 @@ contains
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_energy_column_t)  :: col
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
       real(wp) :: latent_expect, e_enter, e_exit, worst_pin, worst_res, fl_prev, fl, tp, e_col
@@ -403,7 +403,7 @@ contains
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_energy_column_t)  :: col
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
       real(wp) :: worst_pin, fl, tp

@@ -14,8 +14,8 @@ module meds_config_io
                                INIT_RESTART, pft_stomata_psi_onset, pft_wstress_psi_open,             &
                                pft_wstress_psi_close
    use meds_fast_params,   only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
-   use meds_soil_params,   only : soil_column_config_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,    &
-                                  soil_opts_t, energy_opts_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
+   use meds_soil_params,   only : soil_params_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,           &
+                                  SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_region_params, only : RUN_MODE_SITE, RUN_MODE_REGION
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_params,   only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
@@ -43,7 +43,7 @@ module meds_config_io
    private
 
    public :: load_meds_config, write_pft_params_csv
-   public :: load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg   !< exposed for unit tests
+   public :: load_fast_params, load_soil, load_snow_params, load_aero_cfg   !< exposed for unit tests
 
    integer(ik), parameter :: MAXPFT  = 64_ik    !< largest PFT count the array buffers handle
    integer,     parameter :: MAXMISS = 256       !< largest missing-key list
@@ -268,50 +268,83 @@ contains
 
 
    !=======================================================================================!
-   !  Fast-loop biophysics loaders, public for unit tests: [soil], [snow], [aerodynamics]  !
-   !  and the solver settings in [fast]. Every key is optional, its fallback the value the !
-   !  type holds, so an absent key or block keeps the type's default; a selector naming no !
-   !  listed value stops the run. [soil] is the ground and fills three types, grouped by   !
-   !  the solver that reads them: soil_column_config_t (layers and texture), soil_opts_t   !
-   !  (surface and water bottom) and energy_opts_t (thermal bottom).                       !
+   !  Fast-loop biophysics loaders, public for unit tests: [fast], [soil], [snow] and      !
+   !  [aerodynamics]. Every key is optional, its fallback the value the record holds, so   !
+   !  an absent key or block keeps the record's default; a selector naming no listed value !
+   !  stops the run.                                                                       !
    !=======================================================================================!
-   !----- [soil]: the column's layers and its hydraulic and thermal texture. --------------!
-   subroutine load_soil_column(tm, c)
-      type(toml_table_t),         intent(in)    :: tm
-      type(soil_column_config_t), intent(inout) :: c
-      !----- A layer_bottoms list without a depth sets the column to end at its last bottom. ---!
-      call toml_real_array(tm, 'soil.layer_bottoms', c%layer_bottoms, c%n_layer_bottoms)
-      if (c%n_layer_bottoms > 0_ik) c%depth = c%layer_bottoms(c%n_layer_bottoms)
-      c%depth       = toml_real(tm, 'soil.depth',       c%depth)
-      call opt_choice(tm, 'soil.retention', [character(len=NAME_LEN) :: 'van_genuchten', 'campbell'],   &
-                      [SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL], c%retention)
-      c%theta_sat   = toml_real(tm, 'soil.theta_sat',   c%theta_sat)
-      c%theta_res   = toml_real(tm, 'soil.theta_res',   c%theta_res)
-      c%ksat        = toml_real(tm, 'soil.ksat',        c%ksat)
-      c%curve_par_a = toml_real(tm, 'soil.curve_par_a', c%curve_par_a)
-      c%curve_par_n = toml_real(tm, 'soil.curve_par_n', c%curve_par_n)
-      c%psi_fc      = toml_real(tm, 'soil.psi_fc',      c%psi_fc)
-      c%solid_conductivity = toml_real(tm, 'soil.solid_conductivity', c%solid_conductivity)
-      c%dry_conductivity   = toml_real(tm, 'soil.dry_conductivity',   c%dry_conductivity)
-      c%dry_heat_capacity  = toml_real(tm, 'soil.dry_heat_capacity',  c%dry_heat_capacity)
-   end subroutine load_soil_column
+   !----- [fast]'s optional keys: the integrator, its tolerances and budget stops, the       !
+   !      forcing's sampling, the canopy films and the starting snow. ---------------------!
+   subroutine load_fast_params(tm, cfg, m)
+      type(toml_table_t),        intent(in)    :: tm
+      type(meds_config_t),       intent(inout) :: cfg
+      type(keymiss_t), optional, intent(inout) :: m
+      cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
+      cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
+      cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
+      cfg%intercept_alpha     = toml_real(tm, 'fast.intercept_alpha', cfg%intercept_alpha)
+      cfg%intercept_k         = toml_real(tm, 'fast.intercept_k',     cfg%intercept_k)
+      !----- The fast-loop time integrator: ARK (ESDIRK2) when absent                                    !
+      !      (docs/science/numerical_scheme.md §3). -----------------------------------------------------!
+      call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'ark', 'rk45'],              &
+                      [INTEG_ARK, INTEG_RK45], cfg%time_integrator, m)
+      cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
+      cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
+      !----- Optional error-control settings. -------------------------------------------------!
+      cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
+      cfg%water_atol        = toml_real   (tm, 'fast.water_atol',        cfg%water_atol)
+      cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
+      call opt_choice(tm, 'fast.step_controller', [character(len=NAME_LEN) :: 'i', 'pi'],                  &
+                      [CTRL_I, CTRL_PI], cfg%step_controller, m)
+      cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
+      cfg%soil_energy_budget_atol = toml_real(tm, 'fast.soil_energy_budget_atol', cfg%soil_energy_budget_atol)
+      !----- fast.debug_error: true stops the run on a budget that does not close (the               !
+      !      integrators' budget checks and the soil heat's closure check), false reports the        !
+      !      breach and runs on (docs/science/numerical_scheme.md §6). Keep this reader: without     !
+      !      it no configured run can stop on a breach. ---------------------------------------------!
+      cfg%debug_error = toml_logical(tm, 'fast.debug_error', cfg%debug_error)
+   end subroutine load_fast_params
 
-   !----- The soil water's options: the ground's surface and water boundary from [soil], the   !
-   !      water network's tolerances and the canopy interception from [fast]. ------------------!
-   subroutine load_soil_opts(tm, s)
-      type(toml_table_t), intent(in)    :: tm
-      type(soil_opts_t),  intent(inout) :: s
-      call load_water_bottom_bc(tm, s%water_bottom_bc, s%drain_factor)
-      s%water_atol           = toml_real   (tm, 'fast.water_atol',      s%water_atol)
-      s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
-      s%intercept_alpha= toml_real   (tm, 'fast.intercept_alpha', s%intercept_alpha)
-      s%intercept_k    = toml_real   (tm, 'fast.intercept_k',     s%intercept_k)
-      s%dsl_dmax       = toml_real   (tm, 'soil.dsl_dmax',        s%dsl_dmax)
-      s%dsl_theta_init = toml_real   (tm, 'soil.dsl_theta_init',  s%dsl_theta_init)
+   !----- [soil]: the ground. Its column and bottom boundaries (load_soil_ground), its surface  !
+   !      (the pond, the dry surface layer, the bare-soil optics) and its thermal bottom. -----!
+   subroutine load_soil(tm, s)
+      type(toml_table_t),  intent(in)    :: tm
+      type(soil_params_t), intent(inout) :: s
+      call load_soil_ground(tm, s)
+      s%w_pond_max        = toml_real(tm, 'soil.w_pond_max',        s%w_pond_max)
+      s%dsl_dmax          = toml_real(tm, 'soil.dsl_dmax',          s%dsl_dmax)
+      s%dsl_theta_init    = toml_real(tm, 'soil.dsl_theta_init',    s%dsl_theta_init)
       s%ground_albedo_vis = toml_real(tm, 'soil.ground_albedo_vis', s%ground_albedo_vis)
       s%ground_albedo_nir = toml_real(tm, 'soil.ground_albedo_nir', s%ground_albedo_nir)
       s%ground_emissivity = toml_real(tm, 'soil.ground_emissivity', s%ground_emissivity)
-   end subroutine load_soil_opts
+      call opt_choice(tm, 'soil.thermal_bottom_bc', [character(len=NAME_LEN) :: 'geothermal', 'dirichlet'], &
+                      [ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET], s%thermal_bottom_bc)
+   end subroutine load_soil
+
+   !----- The [soil] keys a [[sites]] table may set as well (SITE_GROUND_KEYS): the column's layers, !
+   !      its hydraulic and thermal texture, the water bottom boundary and the thermal anchor. -----!
+   subroutine load_soil_ground(tm, s)
+      type(toml_table_t),  intent(in)    :: tm
+      type(soil_params_t), intent(inout) :: s
+      !----- A layer_bottoms list without a depth sets the column to end at its last bottom. ---!
+      call toml_real_array(tm, 'soil.layer_bottoms', s%layer_bottoms, s%n_layer_bottoms)
+      if (s%n_layer_bottoms > 0_ik) s%depth = s%layer_bottoms(s%n_layer_bottoms)
+      s%depth       = toml_real(tm, 'soil.depth',       s%depth)
+      call opt_choice(tm, 'soil.retention', [character(len=NAME_LEN) :: 'van_genuchten', 'campbell'],   &
+                      [SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL], s%retention)
+      s%theta_sat   = toml_real(tm, 'soil.theta_sat',   s%theta_sat)
+      s%theta_res   = toml_real(tm, 'soil.theta_res',   s%theta_res)
+      s%ksat        = toml_real(tm, 'soil.ksat',        s%ksat)
+      s%curve_par_a = toml_real(tm, 'soil.curve_par_a', s%curve_par_a)
+      s%curve_par_n = toml_real(tm, 'soil.curve_par_n', s%curve_par_n)
+      s%psi_fc      = toml_real(tm, 'soil.psi_fc',      s%psi_fc)
+      s%solid_conductivity = toml_real(tm, 'soil.solid_conductivity', s%solid_conductivity)
+      s%dry_conductivity   = toml_real(tm, 'soil.dry_conductivity',   s%dry_conductivity)
+      s%dry_heat_capacity  = toml_real(tm, 'soil.dry_heat_capacity',  s%dry_heat_capacity)
+      call load_water_bottom_bc(tm, s%water_bottom_bc, s%drain_factor)
+      s%deep_temp   = toml_real(tm, 'soil.deep_temp',   s%deep_temp)
+      s%deep_depth  = toml_real(tm, 'soil.deep_depth',  s%deep_depth)
+   end subroutine load_soil_ground
 
    !----- [soil].water_bottom_bc: the column's water boundary and its drainage factor, kept when   !
    !      the key is absent. ----------------------------------------------------------------------!
@@ -331,23 +364,6 @@ contains
       if (choice == FREE_DRAIN) drain_factor = 1.0_wp
       if (choice == BEDROCK)    drain_factor = 0.0_wp
    end subroutine load_water_bottom_bc
-
-   !----- The soil heat's options: the ground's thermal bottom boundary from [soil], the budget  !
-   !      check from [fast]. --------------------------------------------------------------------!
-   subroutine load_energy_opts(tm, e)
-      type(toml_table_t),  intent(in)    :: tm
-      type(energy_opts_t), intent(inout) :: e
-      call opt_choice(tm, 'soil.thermal_bottom_bc', [character(len=NAME_LEN) :: 'geothermal', 'dirichlet'], &
-                      [ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET], e%thermal_bottom_bc)
-      e%deep_temp   = toml_real(tm, 'soil.deep_temp',   e%deep_temp)
-      e%deep_depth  = toml_real(tm, 'soil.deep_depth',  e%deep_depth)
-      e%soil_energy_budget_atol        = toml_real(tm, 'fast.soil_energy_budget_atol', e%soil_energy_budget_atol)
-      !----- fast.debug_error: true stops the run on a budget that does not close (the               !
-      !      integrators' budget checks and the soil heat's closure check), false reports the        !
-      !      breach and runs on (docs/science/numerical_scheme.md §6). Keep this reader: without     !
-      !      it no configured run can stop on a breach. ---------------------------------------------!
-      e%debug_error = toml_logical(tm, 'fast.debug_error', e%debug_error)
-   end subroutine load_energy_opts
 
    subroutine load_snow_params(tm, s)                   ! [snow] -> snow physical params
       type(toml_table_t), intent(in)    :: tm
@@ -621,13 +637,8 @@ contains
             s%census_site_id = toml_int (v, 'sites.census_site_id', s%census_site_id)
             s%own_ground     = toml_has_section(v, 'soil')
             if (s%own_ground) then
-               s%soil_column = cfg%soil_column
-               call load_soil_column(v, s%soil_column)
-               s%water_bottom_bc = cfg%soil%water_bottom_bc
-               s%drain_factor    = cfg%soil%drain_factor
-               call load_water_bottom_bc(v, s%water_bottom_bc, s%drain_factor)
-               s%deep_temp  = toml_real(v, 'soil.deep_temp',  cfg%energy%deep_temp)
-               s%deep_depth = toml_real(v, 'soil.deep_depth', cfg%energy%deep_depth)
+               s%soil = cfg%soil
+               call load_soil_ground(v, s%soil)
             end if
          end associate
       end do
@@ -940,27 +951,10 @@ contains
       call req_l     (tm, 'fast.fast_biophysics_on', cfg%fast_biophysics_on, miss)
       call req_dur   (tm, 'fast.dt_fast',            cfg%dt_fast,            miss)
       !----- Optional fast-loop settings, at their defaults when absent. -------------------------!
-      cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
-      cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
-      cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
-      !----- The fast-loop time integrator: ARK (ESDIRK2) when absent                                    !
-      !      (docs/science/numerical_scheme.md §3). -----------------------------------------------------!
-      call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'ark', 'rk45'],              &
-                      [INTEG_ARK, INTEG_RK45], cfg%time_integrator, miss)
-      cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
-      cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
-      !----- Optional error-control settings. -------------------------------------------------!
-      cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
-      cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
-      call opt_choice(tm, 'fast.step_controller', [character(len=NAME_LEN) :: 'i', 'pi'],                  &
-                      [CTRL_I, CTRL_PI], cfg%step_controller, miss)
-      cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
+      call load_fast_params(tm, cfg, miss)
 
-      !----- [soil], [snow], [aerodynamics] and their solver settings in [fast], every key        !
-      !      optional; build_fast_context copies them into the column config. --------------------!
-      call load_soil_opts  (tm, cfg%soil)
-      call load_soil_column(tm, cfg%soil_column)
-      call load_energy_opts(tm, cfg%energy)
+      !----- [soil], [snow], [aerodynamics], every key optional. ---------------------------------!
+      call load_soil       (tm, cfg%soil)
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)
 

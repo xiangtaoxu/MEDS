@@ -302,7 +302,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_site%soil_water_opts%water_bottom_bc = SOIL_BC_AQUIFER
+      col_site%soil%water_bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_water%theta(1:col_site%soil_profile%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_water%theta(col_site%soil_profile%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
@@ -317,7 +317,7 @@ contains
       call check_true('AQUIFER/ARK: dry column wets from below',                                                      &
               biophys%soil_water%theta(col_site%soil_profile%n_active) > theta_bot0,                                              &
               biophys%soil_water%theta(col_site%soil_profile%n_active) - theta_bot0)
-      col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 1.0_wp
+      col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 1.0_wp
    end subroutine test_ark_aquifer
 
    !----- march 24 h of INTEG_ARK over MOIST free-draining soil (rainfall==0) and                   !
@@ -485,7 +485,7 @@ contains
       call check_true('ARK saturated: column reached theta_sat (saturation path is live)',                            &
               theta_peak >= 0.43_wp - 1.0e-12_wp, theta_peak)
       call check_true('ARK saturated: ponding store overflowed (runoff path is live)',                                &
-              pond_peak >= col_site%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
+              pond_peak >= col_site%soil%w_pond_max - 1.0e-9_wp, pond_peak)
       call check_true('ARK saturated: whole-column ENERGY still closes through saturation + runoff',                  &
               budget%whole_energy%n_fail == 0_ik, budget%whole_energy%worst)
       call check_true('ARK saturated: whole-column WATER still closes', budget%whole_water%n_fail == 0_ik,            &

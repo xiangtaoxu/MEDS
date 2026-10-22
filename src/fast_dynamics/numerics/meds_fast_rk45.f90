@@ -586,7 +586,7 @@ contains
       real(wp),              intent(in) :: dt_fast
       type(column_config_t), intent(in) :: col_config
       type(column_site_t),   intent(in) :: col_site
-      if (.not. col_site%energy%debug_error) return
+      if (.not. col_site%debug_error) return
       if (.not. last_check_closed(budget%whole_water, dt_fast, BUDGET_WATER_RATE_FLOOR)) then
          write(*, '(a,es13.5)') 'meds_fast_rk45: whole_water (rk45) did not close, resid = ',               &
                                 budget%whole_water%resid

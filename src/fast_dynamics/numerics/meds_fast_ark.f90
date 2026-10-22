@@ -228,7 +228,7 @@ contains
       budget%clamp_stage_n = 0_ik
       budget%theta_ood_max = 0.0_wp
 
-      halt_budgets = col_site%energy%debug_error
+      halt_budgets = col_site%debug_error
 
       !----- State^n pond mass, for the whole-water ledger. ------------------------------------------!
       w_surface0 = biophys%soil_water%w_surface
