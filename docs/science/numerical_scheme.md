@@ -457,7 +457,8 @@ both schemes: none of the 8928 whole-column checks fails, and the worst residual
 **Condensate keeps the enthalpy it was debited.** Dew and fog are booked apart from the vapour
 export, because they land inside the column, and are deposited into soil layer 1 (§7, item 4) with
 the liquid enthalpy the canopy air lost, $b$-weighted at each stage's own canopy-air temperature.
-Valuing the deposit at the end-of-step temperature instead would leave
+The deposit lands before the step's soil temperatures are diagnosed, so the top layer's temperature,
+which the next step's ground and respiration read, includes it. Valuing the deposit at the end-of-step temperature instead would leave
 $`\sum_i b_i\,c_i\,[u(T_{end}) - u(T_i)]`$ unbooked on every dew step, with $`c_i`$ the stage's
 condensation and $u$ the liquid's internal energy.
 

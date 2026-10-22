@@ -46,7 +46,8 @@ contains
    ! tissue's energy is committed from its time-average temperature over the march, the      !
    ! complement of what the canopy air received (docs/science/vegetation_energy_dynamics.md   !
    ! §One formulation). The condensate, dew and fog, lands inside the column, so it goes,      !
-   ! mass and enthalpy paired, into soil layer 1 (docs/science/numerical_scheme.md §7, item 4).!
+   ! mass and enthalpy paired, into soil layer 1 (docs/science/numerical_scheme.md §7, item 4) !
+   ! before the soil's temperatures are diagnosed.                                            !
    !---------------------------------------------------------------------------------------!
    subroutine update_dynamic_state(dt_fast, cfg, site, static, frozen, acc, dt_warm, y_out, dynamic, out, moved)
       real(wp),                   intent(in)    :: dt_fast
@@ -73,6 +74,13 @@ contains
                                 cfg%pft%wood_surf_water_max(static%pft(1:n)), n, moved%surf_overflow,          &
                                 moved%surf_deficit)
       end if
+      !----- The condensate lands before the soil's temperatures are diagnosed, so the top layer's  !
+      !      temperature includes its water and enthalpy. ------------------------------------------!
+      if (acc%whole_cond > 0.0_wp) then
+         moved%cond_mass = acc%whole_cond
+         moved%cond_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (boundary_flux_t)
+         call deposit_condensate(y_out, site%soil_profile%dz(1), moved%cond_mass, moved%cond_enth)
+      end if
 
       call unpack_column_state(y_out, n, nsl, dynamic)
       dynamic%soil_water%w_surface        = y_out%w_surface
@@ -87,13 +95,6 @@ contains
       if (out%capture .and. allocated(acc%transp_coh))                                                       &
          out%cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(acc%transp_coh(1:n), dt_fast, static%nplant(1:n),     &
                                                           static%leaf_area(1:n))
-      if (acc%whole_cond > 0.0_wp) then
-         moved%cond_mass = acc%whole_cond
-         moved%cond_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (boundary_flux_t)
-         call deposit_condensate(y_out, site%soil_profile%dz(1), moved%cond_mass, moved%cond_enth)
-         dynamic%soil_water%theta(1)        = y_out%theta(1)
-         dynamic%soil_energy%soil_energy(1) = y_out%soil_energy(1)
-      end if
       !----- The pack the snow stage advanced, and the warm start of the next march. --------------!
       dynamic%snow          = frozen%snow%pack
       dynamic%adapt_dt_last = dt_warm
