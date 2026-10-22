@@ -9,7 +9,7 @@
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : grav_head, tiny_num
-   use meds_plant_types, only : hydro_args_t, hydro_opts_t
+   use meds_plant_types, only : hydro_args_t
    use meds_plant_hydr_lib, only : root_fraction_profile, tissue_water_to_psi
    use meds_numerics,       only : smooth_max0
    implicit none
@@ -27,32 +27,26 @@ module meds_plant_hydraulics
 contains
 
    !----- The water-potential drop from the wood node to the crown [MPa]: the hydrostatic head of  !
-   !      the cohort's height, or zero with gravity switched off. ----------------------------------!
-   pure real(wp) function crown_gravity_head(height, o) result(grav)
-      real(wp),           intent(in) :: height   !< [m] cohort height
-      type(hydro_opts_t), intent(in) :: o
-      if (o%gravity_on) then
-         grav = grav_head*height
-      else
-         grav = 0.0_wp
-      end if
+   !      the cohort's height. -------------------------------------------------------------------!
+   pure real(wp) function crown_gravity_head(height) result(grav)
+      real(wp), intent(in) :: height   !< [m] cohort height
+      grav = grav_head*height
    end function crown_gravity_head
 
    !----- The leaf node's water potential [MPa], from the leaf water and its pressure-volume curve   !
    !      (docs/science/plant_hydraulics.md eqs. (4)-(5)). A leafless cohort has no curve to read: its !
    !      leaf node sits at the wood potential less the crown gravity head (§2). ---------------------!
-   pure real(wp) function leaf_node_psi(leaf_water, bleaf, wood_water, bwood, height, p, o) result(psi_l)
+   pure real(wp) function leaf_node_psi(leaf_water, bleaf, wood_water, bwood, height, p) result(psi_l)
       real(wp),             intent(in) :: leaf_water  !< [kg H2O/plant] leaf water
       real(wp),             intent(in) :: bleaf       !< [kgC/plant] leaf carbon
       real(wp),             intent(in) :: wood_water  !< [kg H2O/plant] wood (sapwood + fine-root) water
       real(wp),             intent(in) :: bwood       !< [kgC/plant] sapwood + fine-root carbon
       real(wp),             intent(in) :: height      !< [m] cohort height
       type(hydro_args_t),   intent(in) :: p
-      type(hydro_opts_t),   intent(in) :: o
       if (p%leaf_curve%water_sat*bleaf > tiny_num) then
          psi_l = tissue_water_to_psi(leaf_water, p%leaf_curve, bleaf)
       else
-         psi_l = tissue_water_to_psi(wood_water, p%wood_curve, bwood) - crown_gravity_head(height, o)
+         psi_l = tissue_water_to_psi(wood_water, p%wood_curve, bwood) - crown_gravity_head(height)
       end if
    end function leaf_node_psi
 

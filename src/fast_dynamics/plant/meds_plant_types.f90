@@ -3,8 +3,7 @@
 ! meds_plant_types -- the data types of the sub-daily plant kernels (no methods, no state):!
 !   * leaf        -- leaf_env_t / leaf_flux_t / leaf_photo_args_t / leaf_photo_table_t and !
 !                    the limitation flags (docs/science/leaf_gas_exchange.md);             !
-!   * hydraulics  -- hydro_args_t / hydro_args_table_t (per-PFT traits), hydro_opts_t;     !
-!   * respiration -- wood_args_t / root_args_t; thermal -- veg_thermal_args_t.             !
+!   * hydraulics  -- hydro_args_t / hydro_args_table_t (per-PFT traits).                   !
 ! Phenology's types live in meds_phenology_types.                                          !
 !==========================================================================================!
 module meds_plant_types
@@ -17,11 +16,7 @@ module meds_plant_types
    public :: leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t
    public :: LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    !----- Hydraulics -----------------------------------------------------------------------!
-   public :: hydro_args_t, hydro_opts_t, hydro_args_table_t
-   !----- Respiration: the kernels are elemental over bare scalars, so only their parameters live here. !
-   public :: wood_args_t, root_args_t
-   !----- Thermal ----------------------------------------------------------------------------!
-   public :: veg_thermal_args_t
+   public :: hydro_args_t, hydro_args_table_t
 
    !=======================================================================================!
    !     Leaf -- the leaf-level gas-exchange interface.                                     !
@@ -107,7 +102,7 @@ module meds_plant_types
    end type leaf_photo_table_t
 
    !=======================================================================================!
-   !     Hydraulics -- the per-PFT plant-water traits and the one run switch. How water moves  !
+   !     Hydraulics -- the per-PFT plant-water traits. How water moves                         !
    !     is the soil-plant water solver's (meds_spac_solver).                                 !
    !=======================================================================================!
    !----- A PFT's hydraulic traits (cfg%pft%hydro) and the Kirchhoff table its wood_kexp sets. !
@@ -124,37 +119,5 @@ module meds_plant_types
       integer(ik) :: n_pft = 0_ik
       type(hydro_args_t),   allocatable :: pft(:)
    end type hydro_args_table_t
-
-   !----- Run switch: whether the leaves sit a hydrostatic head above the wood. --------------!
-   type :: hydro_opts_t
-      logical :: gravity_on = .true.
-   end type hydro_opts_t
-
-
-   !=======================================================================================!
-   !     Respiration -- the peaked temperature response of non-leaf maintenance respiration  !
-   !     (docs/science/plant_respiration.md §4): run-wide defaults that no config key sets.  !
-   !=======================================================================================!
-   !----- Woody-tissue (stem) maintenance respiration. -------------------------------------!
-   type :: wood_args_t
-      real(wp) :: ea                    = 46390.0_wp   !< [J/mol]   peaked-Arrhenius activation energy (leaf ea_rd)
-      real(wp) :: hd                    = 200000.0_wp  !< [J/mol]   deactivation energy   (leaf hd_rd)
-      real(wp) :: ds                    = 490.0_wp     !< [J/mol/K] entropy term          (leaf ds_rd)
-   end type wood_args_t
-
-   !----- Fine-root maintenance respiration (its response summed over layers by root_zone_temp_scale). !
-   type :: root_args_t
-      real(wp) :: ea                 = 46390.0_wp  !< peaked-Arrhenius terms (default leaf ea_rd/hd_rd/ds_rd)
-      real(wp) :: hd                 = 200000.0_wp
-      real(wp) :: ds                 = 490.0_wp
-   end type root_args_t
-
-   !----- The tissues' sidedness factors (docs/science/vegetation_energy_dynamics.md eq. (1)): run-wide !
-   !      defaults that no config key sets. ----------------------------------------------------------!
-   type :: veg_thermal_args_t
-      real(wp) :: effarea_heat   = 2.0_wp                   !< [-] sensible sidedness (both leaf sides)
-      real(wp) :: effarea_evap   = 1.0_wp                   !< [-] film-evaporation sidedness
-      real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness
-   end type veg_thermal_args_t
 
 end module meds_plant_types

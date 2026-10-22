@@ -69,8 +69,7 @@ contains
          do jcoh = 1_ik, col_cohort%n
             psi_leaf_coh(jcoh) = leaf_node_psi(biophys%leaf_water_mass(jcoh), col_cohort%bleaf(jcoh),       &
                   biophys%wood_water_mass(jcoh), col_cohort%bsap(jcoh) + col_cohort%broot(jcoh),          &
-                  col_cohort%height(jcoh), col_config%hydraulics_table%pft(col_cohort%pft(jcoh)),         &
-                  col_config%hydraulics_opts)
+                  col_cohort%height(jcoh), col_config%hydraulics_table%pft(col_cohort%pft(jcoh)))
          end do
       end if
 

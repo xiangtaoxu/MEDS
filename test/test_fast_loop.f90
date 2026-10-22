@@ -65,6 +65,9 @@ program test_fast_loop
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
    ctx%col_config%soil_carbon = cfg%soil_carbon
+   ctx%col_config%ea_rd = cfg%ea_rd
+   ctx%col_config%hd_rd = cfg%hd_rd
+   ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%soil_temp_init = 288.0_wp

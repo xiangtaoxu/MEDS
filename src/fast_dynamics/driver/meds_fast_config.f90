@@ -89,6 +89,9 @@ contains
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
       ctx%col_config%soil_carbon = cfg%soil_carbon   ! [soil_carbon] -> heterotrophic respiration
+      ctx%col_config%ea_rd = cfg%ea_rd             ! [leaf_physiology] Rd response -> stem and root respiration
+      ctx%col_config%hd_rd = cfg%hd_rd
+      ctx%col_config%ds_rd = cfg%ds_rd
 
       !----- One tolerance set for the whole fast loop (build_tol_set); the water network takes the   !
       !      GRP_THETA pair (docs/science/soil_plant_water.md §3). --------------------------------!

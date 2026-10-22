@@ -123,6 +123,9 @@ program test_column_dynamics
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, col_site%leaf_photo)
    col_config%soil_carbon = cfg%soil_carbon
+   col_config%ea_rd = cfg%ea_rd
+   col_config%hd_rd = cfg%hd_rd
+   col_config%ds_rd = cfg%ds_rd
    col_config%integrator = build_integrator_opts(cfg)
 
    call alloc_aero_out(aero, N)

@@ -17,7 +17,13 @@ module meds_plant_biophysics
    public :: veg_energy_balance, intercept_canopy_layer
    public :: sensible_heat_coeff, lw_emission_slope, leaf_transp_coeff
    public :: leaf_film_coeff
+   public :: EFFAREA_HEAT, EFFAREA_EVAP, EFFAREA_TRANSP
 
+   !----- The leaves' sidedness (docs/science/vegetation_energy_dynamics.md eq. (1)): a flat leaf    !
+   !      exchanges heat from both sides, while its stomata and its film each use one. ----------!
+   real(wp), parameter :: EFFAREA_HEAT   = 2.0_wp   !< [-] sensible heat
+   real(wp), parameter :: EFFAREA_EVAP   = 1.0_wp   !< [-] film evaporation
+   real(wp), parameter :: EFFAREA_TRANSP = 1.0_wp   !< [-] transpiration
 
 contains
 

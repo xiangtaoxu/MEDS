@@ -24,7 +24,7 @@ module meds_fast_frozen
                                surface_tend_t, snow_stage_t, column_site_t
    use meds_fast_time_derivs, only : surface_derivs
    use meds_fast_prepass, only : column_prepass
-   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
+   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer, EFFAREA_EVAP
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction,                 &
                                       snow_energy_step
    use meds_therm_lib, only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy, tissue_dry_heat_capacity
@@ -211,8 +211,8 @@ contains
          !----- Film-evaporation conductances, from the pre-pass's boundary layers; none with the canopy  !
          !      water store off. ---------------------------------------------------------------------------!
          if (col_config%canopy_water_on) then
-            frozen%film%g_film_leaf(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%lai(i), aero%leaf_gbw(i))
-            frozen%film%g_film_w(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%wai(i), aero%wood_gbw(i))
+            frozen%film%g_film_leaf(i) = leaf_film_coeff(EFFAREA_EVAP, col_cohort%lai(i), aero%leaf_gbw(i))
+            frozen%film%g_film_w(i) = leaf_film_coeff(EFFAREA_EVAP, col_cohort%wai(i), aero%wood_gbw(i))
          end if
       end do
 
@@ -472,7 +472,7 @@ contains
             spac%nplant(i)   = col_cohort%nplant(i)
             spac%bleaf(i)    = col_cohort%bleaf(i)
             spac%bwood(i)    = col_cohort%bsap(i) + col_cohort%broot(i)
-            spac%grav(i)     = crown_gravity_head(col_cohort%height(i), col_config%hydraulics_opts)
+            spac%grav(i)     = crown_gravity_head(col_cohort%height(i))
             spac%k_xylem(i)  = col_cohort%nplant(i) * xylem_max_conductance(hp%wood_kmax, col_cohort%sap_area(i), &
                                                                            col_cohort%height(i), hp%vessel_curl)
             spac%e_demand(i) = e_demand(i)

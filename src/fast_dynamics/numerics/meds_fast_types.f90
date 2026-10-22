@@ -12,8 +12,7 @@
 module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max
-   use meds_plant_types, only : hydro_args_table_t, veg_thermal_args_t, wood_args_t, root_args_t, hydro_opts_t,   &
-                                leaf_photo_table_t
+   use meds_plant_types, only : hydro_args_table_t, leaf_photo_table_t
    use meds_soil_params, only : soil_params_t, soil_thermal_params_t, soil_opts_t, energy_opts_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
@@ -104,13 +103,12 @@ module meds_fast_types
    type :: column_config_t
       type(process_mask_t)        :: mask            !< process-complexity mask (all on = full column)
       type(aero_cfg_t)            :: aero            !< aerodynamics constants
-      type(veg_thermal_args_t)    :: veg_thermal    !< leaf/wood thermal params
-      type(wood_args_t)           :: wood           !< stem-respiration parameters
-      type(root_args_t)           :: root           !< fine-root-respiration parameters
+      !----- Stem and fine-root maintenance respiration's peaked temperature response: leaf Rd's,     !
+      !      [leaf_physiology] ea_rd, hd_rd, ds_rd (docs/science/plant_respiration.md §4). ----------!
+      real(wp)                    :: ea_rd, hd_rd, ds_rd
       !----- Per-PFT plant hydraulics, built by apply_hydraulics_config. There is no PFT-uniform copy,
       !      so a caller cannot run every PFT on the first PFT's hydraulics by mistake.
       type(hydro_args_table_t)    :: hydraulics_table   !< per-PFT PV curves, vulnerability, conductance
-      type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       !----- Canopy-surface water, the interception film and its evaporation and dew                 !
       !      (docs/science/soil_biophysics.md §Canopy interception); opt-in. RK45 integrates the     !

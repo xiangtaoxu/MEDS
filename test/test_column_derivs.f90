@@ -28,7 +28,7 @@ program test_column_derivs
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
-   use meds_plant_types, only : hydro_args_t, hydro_opts_t
+   use meds_plant_types, only : hydro_args_t
    use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_fast_types,       only : surface_state_t, surface_tend_t, column_state_t, column_frozen_t,            &

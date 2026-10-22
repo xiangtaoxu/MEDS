@@ -17,8 +17,7 @@ module meds_fast_prepass
                                      CO_CA, CO_PRESSURE
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_plant_types, only : veg_thermal_args_t, leaf_photo_table_t, hydro_args_table_t, hydro_opts_t,         &
-                                wood_args_t, root_args_t
+   use meds_plant_types, only : leaf_photo_table_t, hydro_args_table_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
                                column_budget_t, column_site_t
    use meds_soil_params,      only : soil_params_t
@@ -27,7 +26,7 @@ module meds_fast_prepass
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
-   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
+   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff, EFFAREA_HEAT, EFFAREA_TRANSP
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration, &
                                      root_zone_temp_scale
@@ -84,14 +83,14 @@ contains
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
-      call canopy_leaf_gas_exchange(col_site%leaf_photo, col_config%hydraulics_table,                     &
-                                    col_config%hydraulics_opts, col_config%veg_thermal,                &
-                                    col_site%soil, col_cohort, forc, aero, biophys,                     &
+      call canopy_leaf_gas_exchange(col_site%leaf_photo, col_config%hydraulics_table, col_site%soil,       &
+                                    col_cohort, forc, aero, biophys,                                       &
                                     qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,                  &
                                     gpp_coh, leaf_resp_coh, cdiag)
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
-      call canopy_maintenance_respiration(col_config%wood, col_config%root, col_site%soil, root_frac, col_cohort,   &
+      call canopy_maintenance_respiration(col_config%ea_rd, col_config%hd_rd, col_config%ds_rd, col_site%soil,   &
+                                          root_frac, col_cohort,                                                 &
                                           biophys%wood_temp, biophys%soil_energy%soil_temp, ra_stem, ra_root, &
                                           stem_resp_coh, root_resp_coh)
 
@@ -172,14 +171,12 @@ contains
    ! dmax_psi_leaf, through the kernel's psi keyword; a cohort with no history yet (a recruit, a run's !
    ! first step) starts from its patch's top-layer soil potential rather than at fully turgid.        !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_leaf_gas_exchange(leaf_photo, hyd_table, hyd_opts, veg_thermal, soil, col_cohort,    &
+   subroutine canopy_leaf_gas_exchange(leaf_photo, hyd_table, soil, col_cohort,                         &
                                        forc, aero,                                                       &
                                        biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
       type(hydro_args_table_t),   intent(in)  :: hyd_table              !< per-PFT leaf PV curve
-      type(hydro_opts_t),         intent(in)  :: hyd_opts               !< gravity switch (leafless cohorts)
-      type(veg_thermal_args_t),   intent(in)  :: veg_thermal  !< effective exchange areas
       type(soil_params_t),        intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
       type(column_cohort_t),      intent(in)  :: col_cohort
       type(column_forcing_t),     intent(in)  :: forc         !< absorbed PAR per cohort
@@ -214,7 +211,7 @@ contains
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
          psi_leaf_arr(i) = leaf_node_psi(biophys%leaf_water_mass(i), col_cohort%bleaf(i),                 &
                biophys%wood_water_mass(i), col_cohort%bsap(i) + col_cohort%broot(i), col_cohort%height(i),   &
-               hyd_table%pft(col_cohort%pft(i)), hyd_opts)
+               hyd_table%pft(col_cohort%pft(i)))
       end do
       dmax_psi_seed = top_soil_psi(soil, biophys%soil_water%theta(1))
       do i = 1_ik, n
@@ -272,8 +269,8 @@ contains
          if (present(cdiag))   cdiag(CO_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
          ra_leaf = ra_leaf + rd_arr(i)      * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = rd_arr(i) * col_cohort%leaf_area(i)
-         h_coeff_leaf(i) = sensible_heat_coeff(veg_thermal%effarea_heat * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
-         g_transp_leaf(i)    = leaf_transp_coeff(veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
+         h_coeff_leaf(i) = sensible_heat_coeff(EFFAREA_HEAT * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
+         g_transp_leaf(i)    = leaf_transp_coeff(EFFAREA_TRANSP, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
       end do
    end subroutine canopy_leaf_gas_exchange
 
@@ -292,13 +289,12 @@ contains
    !---------------------------------------------------------------------------------------!
    ! canopy_maintenance_respiration -- stem and fine-root maintenance respiration, per cohort       !
    ! [umol/plant/s] and as patch totals [umol/m2 ground/s] (docs/science/plant_respiration.md       !
-   ! eqs. (3)-(4)). Elemental kernels: the array actuals drive the broadcast; the parameter records !
-   ! and the patch-uniform soil temperature scale broadcast.                                        !
+   ! eqs. (3)-(4)), both on leaf Rd's temperature response. Elemental kernels: the array actuals    !
+   ! drive the broadcast; the response and the patch-uniform soil temperature scale broadcast.      !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_maintenance_respiration(wood, root, soil, root_frac, col_cohort, wood_temp, soil_temp, &
+   subroutine canopy_maintenance_respiration(ea_rd, hd_rd, ds_rd, soil, root_frac, col_cohort, wood_temp, soil_temp, &
                                              ra_stem, ra_root, stem_resp_coh, root_resp_coh)
-      type(wood_args_t),     intent(in)  :: wood
-      type(root_args_t),     intent(in)  :: root
+      real(wp),              intent(in)  :: ea_rd, hd_rd, ds_rd !< leaf Rd's peaked response (stem and roots)
       real(wp),              intent(in)  :: root_frac(:)        !< [-] the patch's fine roots by layer
       type(soil_params_t),   intent(in)  :: soil                !< active layer count
       type(column_cohort_t), intent(in)  :: col_cohort
@@ -311,7 +307,7 @@ contains
       n = col_cohort%n
       !----- The temperature response, summed over layers (docs/science/plant_respiration.md eq. (4)), !
       !      is patch-uniform: evaluated once and broadcast over the cohorts. ---------------------!
-      tscale_root = root_zone_temp_scale(soil_temp, root_frac, soil%n_active, root)
+      tscale_root = root_zone_temp_scale(soil_temp, root_frac, soil%n_active, ea_rd, hd_rd, ds_rd)
       ra_stem = 0.0_wp
       ra_root = 0.0_wp
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
@@ -320,7 +316,8 @@ contains
                                    col_cohort%wai(1:n), col_cohort%nplant(1:n),                          &
                                    col_cohort%aboveground_frac(1:n), col_cohort%is_woody(1:n),          &
                                    col_cohort%stem_resp_factor25(1:n), col_cohort%sap_volume(1:n),      &
-                                   col_cohort%stem_resp_sapwood25(1:n), wood, stem_resp_arr(1:n))
+                                   col_cohort%stem_resp_sapwood25(1:n), ea_rd, hd_rd, ds_rd,          &
+                                   stem_resp_arr(1:n))
       call fine_root_maintenance_respiration(tscale_root, col_cohort%broot(1:n),                        &
                                    col_cohort%root_resp_factor25(1:n), root_resp_arr(1:n))
       do i = 1_ik, n

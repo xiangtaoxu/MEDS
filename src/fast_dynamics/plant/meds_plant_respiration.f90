@@ -10,7 +10,6 @@
 module meds_plant_respiration
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, tiny_num
-   use meds_plant_types, only : wood_args_t, root_args_t
    use meds_therm_lib,     only : peaked_arrhenius_scale
    implicit none
    private
@@ -27,7 +26,7 @@ contains
    !---------------------------------------------------------------------------------------!
    elemental pure subroutine stem_maintenance_respiration(wood_temp, dbh, height, wai, nplant,          &
                                                          aboveground_frac, is_woody, resp_factor25,     &
-                                                         sap_volume, resp_sapwood25, params, stem_resp)
+                                                         sap_volume, resp_sapwood25, ea, hd, ds, stem_resp)
       real(wp),            intent(in)  :: wood_temp   !< [K]  woody-tissue temperature
       real(wp),            intent(in)  :: dbh         !< [cm] stem diameter at breast height
       real(wp),            intent(in)  :: height      !< [m]  cohort height
@@ -39,7 +38,10 @@ contains
       !----- The sapwood term: the living wood respires by its volume, coarse roots included (§2). ---!
       real(wp),            intent(in)  :: sap_volume        !< [m3/plant] sapwood volume
       real(wp),            intent(in)  :: resp_sapwood25    !< [umol CO2/m3 sapwood/s @25C] cohort PFT's sapwood rate
-      type(wood_args_t),   intent(in)  :: params      !< run-wide temperature-response parameters
+      !----- The peaked temperature response, leaf Rd's (docs/science/plant_respiration.md §4). ------!
+      real(wp),            intent(in)  :: ea          !< [J/mol]   activation energy
+      real(wp),            intent(in)  :: hd          !< [J/mol]   deactivation energy
+      real(wp),            intent(in)  :: ds          !< [J/mol/K] entropy term
       real(wp),            intent(out) :: stem_resp   !< [umol CO2 / plant / s]
       real(wp) :: tscale, stem_area
 
@@ -49,7 +51,7 @@ contains
       end if
 
       !----- Peaked temperature response (= 1 at 25 degC), shared with leaf Rd. ---------------!
-      tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, wood_temp)
+      tscale = peaked_arrhenius_scale(1.0_wp, ea, hd, ds, wood_temp)
       !----- Per-plant stem surface: the cylinder plus the WAI branch term (WAI is per ground, !
       !      hence /nplant), over the aboveground fraction to cover the whole woody plant.      !
       stem_area = ( pi * (dbh * 1.0e-2_wp) * height                                             &
@@ -77,17 +79,17 @@ contains
    ! not f at the mean temperature, whose error flips sign with the season                 !
    ! (docs/science/plant_respiration.md §3). Patch-uniform: evaluated once per patch.      !
    !---------------------------------------------------------------------------------------!
-   pure function root_zone_temp_scale(soil_temp, root_frac, n, params) result(tscale)
+   pure function root_zone_temp_scale(soil_temp, root_frac, n, ea, hd, ds) result(tscale)
       real(wp),            intent(in) :: soil_temp(:)  !< [K] per-layer soil temperature
       real(wp),            intent(in) :: root_frac(:)  !< [-] per-layer root fraction (sums to 1)
       integer(ik),         intent(in) :: n             !< active layers
-      type(root_args_t),   intent(in) :: params
+      real(wp),            intent(in) :: ea, hd, ds    !< [J/mol], [J/mol], [J/mol/K] leaf Rd's response
       real(wp)    :: tscale
       integer(ik) :: k
       tscale = 0.0_wp
       do k = 1_ik, n
          tscale = tscale + root_frac(k)                                                          &
-                * peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, soil_temp(k))
+                * peaked_arrhenius_scale(1.0_wp, ea, hd, ds, soil_temp(k))
       end do
    end function root_zone_temp_scale
 
