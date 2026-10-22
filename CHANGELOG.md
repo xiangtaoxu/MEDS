@@ -64,7 +64,11 @@ are set in `io/init` (#479). Six `[fast]` options no shipped run changes retire,
 gets the same canopy radiation as a forced one (#480). Each configuration block is read into one record,
 `<block>_params_t`: `[soil]` is one `soil_params_t` per site, its `[fast]` keys back in `[fast]`, and the
 soil kernels read one profile per site, `soil_profile_t`, derived in `src/config/meds_soil_derive`, with
-no change to any result (#482).
+no change to any result (#482). The PFT table holds the per-PFT tables the fast loop reads, each site its
+acclimated leaf table, and the fast step takes the configuration, the site and five records: its static
+state, its forcing, the dynamic state it advances, its output and its workspace; the fast driver is four
+modules, one per job, and `src/fast_dynamics/numerics` is `integrator`, with no change to any result on
+gfortran (#483).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -516,8 +520,43 @@ no change to any result (#482).
     is `column_be_stage`'s.
 
   No netCDF variable name, TOML key or C API changes.
+- **Fortran names in the fast loop** (#483), for code built against MEDS's modules:
+  - the PFT table holds the fast loop's per-PFT tables, built by `derive_parameters`:
+    `cfg%pft%leaf_photo` (`leaf_photo_table_t` of `leaf_photo_pft_t`, which was `leaf_photo_args_t`),
+    `cfg%pft%hydraulics` (`hydraulics_table_t` of `hydraulics_pft_t`) and `cfg%pft%optics`
+    (`rad_pft_optics_t`). Their types are `meds_pft_params`'s; `meds_pft_derive` has
+    `derive_leaf_params`, `derive_pft_tables`, `derive_rad_optics`, `moments_to_beta_params` and the
+    four per-PFT water-potential helpers, which take `(cfg%pft, pf)`. `leaf_gas_exchange` is gone: call
+    `leaf_gas_exchange_batch`;
+  - each site's acclimated leaf table is `poly%site%leaf_photo(is)`, set by the slow step's
+    `acclimate_site_leaf_tables`. `advance_growth_temperature` is gone;
+  - `xi_accum_t` is `decomp_xi_t` (`xi_days(N_SOIL_POOL)`, `rh_fast`), `patch%xi_accum` is
+    `patch%decomp_xi` and `blend_xi_accum` is `blend_decomp_xi`; `N_SOIL_POOL` and the `IP_*` pool
+    indices are `meds_biogeochem_params`'s;
+  - `column_fast_step` is `fast_step(dt_fast, cfg, site, static, forcing, dynamic, out, work)`.
+    `column_cohort_t` is `fast_static_state_t`, which also holds the canopy geometry, the canopy-air top,
+    the slow loop's daily inputs, the site's leaf table and the cohorts' order; `patch_biophys_t` is
+    `fast_dynamic_state_t`; `column_forcing_t` is `fast_forcing_t`, with `wind`, `press` and `rho_air`;
+    `column_budget_t` is `step_report_t` (`ledgers`, `exports`, `work(N_WORK)`), inside `fast_output_t`
+    with the aerodynamics, the per-cohort fluxes, H and LE. `column_config_t`, `column_site_t`,
+    `integrator_opts_t`, `fast_context_t` and `meds_fast_config` are gone: the step reads `cfg` and the
+    site, and builds its tolerances with `build_tol_set` and `build_error_control` (`meds_fast_control`);
+  - `fast_dynamics` and `advance_one_step` take no context, and their patch threads as `patch_threads`;
+    `polygon_run_t%patch_threads` holds them. `column_cohort_init` is `meds_fast_state`'s
+    `static_state_fixture`;
+  - `src/fast_dynamics/numerics` is `src/fast_dynamics/integrator`.
+
+  No netCDF variable name, TOML key or C API changes.
 
 ### Changed
+
+- **The fast step takes the configuration, the site and five records, and the fast driver is four
+  modules** (#483). The step reads `cfg` and its site in place of the copies a fast context made; the
+  per-PFT tables are the PFT table's, built at load, and each site holds its leaf table, acclimated by the
+  slow step. The driver's modules are `meds_fast_dynamics` (the window), `meds_fast_state` (the gather and
+  the scatter, and the sums the slow step reads), `meds_fast_forcing` and `meds_fast_diag`; the cohorts'
+  order from the ground up is formed once a day where the radiation and the aerodynamics each sorted the
+  cohorts every sub-step. Results do not change on gfortran; on ifx they move at round-off.
 
 - **One record per configuration block** (#482). `[soil]` was read into three records, two of which
   also held five `[fast]` keys; it is one, `soil_params_t`, and each site holds its own, with its
