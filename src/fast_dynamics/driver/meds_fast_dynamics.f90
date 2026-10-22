@@ -40,9 +40,9 @@ module meds_fast_dynamics
    use meds_state_defaults,    only : DMAX_PSI_LEAF_ACCUM_RESET
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity,                   &
-                                 rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_forcing,                  &
-                                 N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm,                  &
+                                 rad_forcing_t, rad_flux_t, alloc_rad_forcing, set_aero_env_atm,                  &
                                  set_aero_env_canopy, ground_optics_state_t
+   use meds_pft_params,   only : rad_pft_optics_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t,                  &
                                column_cohort_t, column_forcing_t, column_budget_t,                                &
                                ensure_column_cohort_capacity, column_site_t

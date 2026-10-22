@@ -1,11 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_canopy_types -- the argument records of the canopy kernels, pure data. Radiative    !
-! transfer: the per-PFT optics table, the per-band forcing, the returned fluxes and the    !
-! ground's optical state (docs/science/canopy_radiation_transfer.md). Aerodynamics: the    !
-! atmosphere and canopy-air state, the canopy geometry, and the returned conductances and  !
-! wind (docs/science/canopy_aerodynamics.md). set_aero_env_atm and set_aero_env_canopy     !
-! are the one way to fill aero_env_t; the aerodynamics options (aero_params_t) are in      !
+! transfer: the per-band forcing, the returned fluxes and the ground's optical state       !
+! (docs/science/canopy_radiation_transfer.md); the per-PFT optics table and its bands are  !
+! the PFT table's (meds_pft_params). Aerodynamics: the atmosphere and canopy-air state,    !
+! the canopy geometry, and the returned conductances and wind                              !
+! (docs/science/canopy_aerodynamics.md). set_aero_env_atm and set_aero_env_canopy are the  !
+! one way to fill aero_env_t; the aerodynamics options (aero_params_t) are in              !
 ! meds_biophysics_params.                                                                  !
 !==========================================================================================!
 module meds_canopy_types
@@ -13,37 +14,11 @@ module meds_canopy_types
    implicit none
    private
 
-   public :: RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
-   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t
-   public :: alloc_rad_pft_optics, alloc_rad_forcing, alloc_rad_flux
+   public :: rad_forcing_t, rad_flux_t, ground_optics_state_t
+   public :: alloc_rad_forcing, alloc_rad_flux
    public :: aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
    public :: set_aero_env_atm, set_aero_env_canopy
    public :: alloc_aero_out   ! used only by the tests
-
-   !----- Default three-band layout (indices into the band dimension). --------------------!
-   integer(ik), parameter :: RAD_VIS = 1_ik   !< visible / PAR (beam + diffuse, no emission)
-   integer(ik), parameter :: RAD_NIR = 2_ik   !< near-infrared (beam + diffuse, no emission)
-   integer(ik), parameter :: RAD_LW  = 3_ik   !< thermal / longwave (diffuse + emission, no beam)
-   integer(ik), parameter :: N_RAD_BAND_DEFAULT = 3_ik
-
-   !---------------------------------------------------------------------------------------!
-   ! Per-PFT optics (docs/science/canopy_radiation_transfer.md eqs. (4)-(6)), leaf and     !
-   ! wood apart, blended per cohort by clumped area; lidf is kept to evaluate G(mu).       !
-   !---------------------------------------------------------------------------------------!
-   type :: rad_pft_optics_t
-      integer(ik) :: n_pft  = 0_ik
-      integer(ik) :: n_band = 0_ik
-      real(wp), allocatable :: omega_leaf(:,:)     !< (band,pft) single-scatter albedo, leaves
-      real(wp), allocatable :: omega_wood(:,:)     !< (band,pft) single-scatter albedo, wood
-      real(wp), allocatable :: g_leaf(:,:)         !< (band,pft) bf*(rho-tau)/omega, leaves
-      real(wp), allocatable :: g_wood(:,:)         !< (band,pft) bf*(rho-tau)/omega, wood
-      real(wp), allocatable :: clumping_leaf(:)    !< (pft) leaf clumping factor (0,1]
-      real(wp), allocatable :: clumping_wood(:)    !< (pft) wood clumping factor (0,1]
-      real(wp), allocatable :: lidf(:,:)           !< (class,pft) leaf-angle distribution weights
-      real(wp), allocatable :: bf(:)               !< (pft) <cos^2(theta_leaf)>
-      logical,  allocatable :: has_beam(:)         !< (band) band has a collimated (solar) beam
-      logical,  allocatable :: has_emission(:)     !< (band) band has thermal emission (LW)
-   end type rad_pft_optics_t
 
    !----- Per-band incident forcing and ground boundary [W/m2]. In the thermal band the diffuse is   !
    !      the sky's longwave and grnd_emiss the ground's emission; in shortwave grnd_emiss = 0. -----!
@@ -115,28 +90,6 @@ module meds_canopy_types
    end type aero_out_t
 
 contains
-
-   subroutine alloc_rad_pft_optics(optics, n_band, n_pft, n_class)
-      type(rad_pft_optics_t), intent(out) :: optics
-      integer(ik),            intent(in)  :: n_band, n_pft, n_class
-      optics%n_band = n_band
-      optics%n_pft  = n_pft
-      allocate(optics%omega_leaf(n_band, n_pft), optics%omega_wood(n_band, n_pft))
-      allocate(optics%g_leaf(n_band, n_pft),     optics%g_wood(n_band, n_pft))
-      allocate(optics%clumping_leaf(n_pft),      optics%clumping_wood(n_pft))
-      allocate(optics%lidf(n_class, n_pft),      optics%bf(n_pft))
-      allocate(optics%has_beam(n_band),          optics%has_emission(n_band))
-      optics%omega_leaf = 0.0_wp
-      optics%omega_wood = 0.0_wp
-      optics%g_leaf = 0.0_wp
-      optics%g_wood = 0.0_wp
-      optics%clumping_leaf = 1.0_wp
-      optics%clumping_wood = 1.0_wp
-      optics%lidf = 0.0_wp
-      optics%bf = 0.0_wp
-      optics%has_beam = .false.
-      optics%has_emission = .false.
-   end subroutine alloc_rad_pft_optics
 
    subroutine alloc_rad_forcing(f, n_band)
       type(rad_forcing_t), intent(out) :: f

@@ -21,7 +21,8 @@
 !==========================================================================================!
 program test_phenology_driver
    use meds_kinds,                only : wp, ik
-   use meds_config,               only : meds_config_t, pft_leaf_psi_tlp
+   use meds_config,               only : meds_config_t
+   use meds_pft_derive,           only : pft_leaf_psi_tlp
    use meds_polygon_state_vars,   only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort
    use meds_vegetation_dynamics,  only : advance_leaf_phenology
@@ -132,7 +133,7 @@ program test_phenology_driver
       real(wp) :: tlp, dry7
       cfg%pft%pheno(1)%flush_cue_mask = CUE_NONE
       cfg%pft%pheno(1)%shed_cue_mask  = CUE_WATER
-      tlp = pft_leaf_psi_tlp(cfg, 1_ik)
+      tlp = pft_leaf_psi_tlp(cfg%pft, 1_ik)
       call reset_pheno_memory(poly)
       poly%cohort%dmax_psi_leaf(1) = tlp - 1.0_wp           ! 1 MPa below the TLP
       do doy = 1_ik, 7_ik
@@ -184,7 +185,7 @@ program test_phenology_driver
       integer(ik) :: d
       cfg%pft%pheno(1)%flush_cue_mask = CUE_WATER
       cfg%pft%pheno(1)%shed_cue_mask  = CUE_WATER
-      tlp = pft_leaf_psi_tlp(cfg, 1_ik)
+      tlp = pft_leaf_psi_tlp(cfg%pft, 1_ik)
       call reset_pheno_memory(poly)
       poly%cohort%dmax_psi_leaf(1) = 0.5_wp * tlp               ! well watered
       do d = 1_ik, 60_ik

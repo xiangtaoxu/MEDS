@@ -44,8 +44,7 @@ program test_slow_diag_units
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,       only : SOIL_RETENTION_VG
-   use meds_fast_config,         only : fast_context_t, apply_hydraulics_config, apply_canopy_film_config,        &
-                                        build_leaf_photo_table, build_integrator_opts, build_rad_optics
+   use meds_fast_config,         only : fast_context_t, apply_canopy_film_config, build_integrator_opts
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
    use meds_slow_dynamics,       only : advance_slow_dynamics, advance_boundary_dynamics
@@ -75,15 +74,15 @@ program test_slow_diag_units
    call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil_profile)
    call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
-   call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
+   ctx%col_config%hydraulics_table = cfg%pft%hydraulics
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-   call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
+   ctx%col_site%leaf_photo = cfg%pft%leaf_photo
    ctx%col_config%soil_carbon = cfg%soil_carbon
    ctx%col_config%ea_rd = cfg%ea_rd
    ctx%col_config%hd_rd = cfg%hd_rd
    ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
-   call build_rad_optics(cfg, ctx%rad_opt)               ! the two-stream's per-PFT optics
+   ctx%rad_opt = cfg%pft%optics                          ! the two-stream's per-PFT optics
    cfg%init%soil_temp = 295.0_wp
 
    call init_bare_ground(poly, cfg, 1_ik)

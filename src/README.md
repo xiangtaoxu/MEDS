@@ -128,9 +128,10 @@ belongs in the `state/` file of the level that holds it: a patch's stores in
 integrated, so they live with the configuration they are derived from: their types in
 `config/params/` (`soil_params_t` and `soil_profile_t` in `meds_soil_params`, `pft_table_t` in
 `meds_pft_params`), and the routines that derive them in `config/` (a site's soil profile in
-`meds_soil_derive`, the PFT table's leaf capacities in `meds_config`). A kernel's own argument types are not parameters in this
-sense: `*_args_t` (`leaf_photo_args_t`, `pheno_args_t`, …) carry the values a kernel reads, a driver
-fills them from the parameters, and they live with the kernel.
+`meds_soil_derive`, the PFT table's leaf capacities and the per-PFT tables the fast loop reads in
+`meds_pft_derive`). A per-PFT table is `<process>_table_t` and its entries `<process>_pft_t`. A
+kernel's own argument types are not parameters in this sense: `*_args_t` (`pheno_args_t`, …) carry
+the values a kernel reads, a driver fills them from the parameters, and they live with the kernel.
 
 **4. Laws and operators do not touch.** `demography/` holds both the vital-rate laws
 (`meds_demography_rates`) and the operators that apply them (`update_*`, `*_fusefiss`,

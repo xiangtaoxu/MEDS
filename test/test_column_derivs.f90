@@ -27,7 +27,7 @@ program test_column_derivs
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
-   use meds_plant_types, only : hydro_args_t
+   use meds_pft_params,  only : hydraulics_pft_t
    use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_fast_types,       only : surface_state_t, surface_tend_t, column_state_t, column_frozen_t,            &
@@ -908,7 +908,7 @@ contains
       !----- LOCAL hydraulics traits, needed only to seed y%*_water_mass at a representative psi:     !
       !      column_derivs' mass ODE takes only the frozen sapflow/uptake, not the PV-curve or        !
       !      conductance parameters, so column_frozen_t does not carry them. -------------------------!
-      type(hydro_args_t)   :: hp
+      type(hydraulics_pft_t)   :: hp
       integer(ik) :: i, k
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
       call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &

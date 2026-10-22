@@ -30,8 +30,8 @@ The shared temperature response (`meds_therm_lib`, Arrhenius and peaked deactiva
 `src/share/functions/`, so leaf, stem and root reach one code path rather than three drifting
 copies.
 
-The config-flattening assemblers that turn `meds_config_t` into these kernels' option records are
-driver code and live in `fast_dynamics/driver/meds_fast_config`.
+The per-PFT tables these kernels read (the leaf parameters and the hydraulics) are derived from the
+configuration once, at load, onto the PFT table (`config/meds_pft_derive`).
 
 ## Python
 

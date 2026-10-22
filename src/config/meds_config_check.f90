@@ -27,8 +27,8 @@ module meds_config_check
    use meds_radiation_lib,      only : SWPART_PASSTHROUGH
    use meds_region_params,      only : RUN_MODE_REGION
    use meds_maps_params,        only : soil_maps_on
-   use meds_config,             only : meds_config_t, site_config, pft_wstress_psi_open,              &
-                                       pft_wstress_psi_close, INIT_CENSUS, INIT_RESTART
+   use meds_config,             only : meds_config_t, site_config, INIT_CENSUS, INIT_RESTART
+   use meds_pft_derive,         only : pft_wstress_psi_open, pft_wstress_psi_close
    use meds_soil_derive,        only : soil_layers, soil_layer_textures, build_soil_profile,          &
                                        SOIL_LAYER_TEMPLATE
    use meds_fast_params,        only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
@@ -637,8 +637,8 @@ contains
             if (p%leaf_angle_mean(pf) <= 0.0_wp .or. p%leaf_angle_mean(pf) >= 90.0_wp)                  &
                error stop TAG//'pft.leaf_angle_mean outside (0,90) degrees'
             if (p%leaf_angle_std(pf) < 0.0_wp) error stop TAG//'pft.leaf_angle_std < 0'
-            if (pft_wstress_psi_open(cfg, pf) > 0.0_wp) error stop TAG//'wstress_psi_open must be <= 0'
-            if (pft_wstress_psi_close(cfg, pf) >= pft_wstress_psi_open(cfg, pf))                        &
+            if (pft_wstress_psi_open(p, pf) > 0.0_wp) error stop TAG//'wstress_psi_open must be <= 0'
+            if (pft_wstress_psi_close(p, pf) >= pft_wstress_psi_open(p, pf))                            &
                error stop TAG//'wstress_psi_close must be below wstress_psi_open'
          end do
          if (any(p%nbg_init_density < 0.0_wp))       error stop TAG//'pft.nbg_init_density must be >= 0'

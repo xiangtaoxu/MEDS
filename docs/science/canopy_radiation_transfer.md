@@ -274,13 +274,13 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 
 | Concept | Routine |
 |---|---|
-| Beta LIDF + params | `meds_optics_lib`: `beta_lidf`, `beta_pdf_kernel`, `moments_to_beta_params` |
+| Beta LIDF + params | `meds_optics_lib`: `beta_lidf`, `beta_pdf_kernel`; `meds_pft_derive`: `moments_to_beta_params` |
 | moments $`\mathrm{bf}`$, $G(\mu)$ | `meds_optics_lib`: `leaf_bf`, `gfun_direct` |
 | $\omega, g$ single-scatter pair (per PFT) | `meds_optics_lib`: `scatter_pair` |
-| per-PFT optics table ($\omega, g$), eq. (4) | `meds_canopy_radiation`: `derive_rad_optics` |
+| per-PFT optics table ($\omega, g$), eq. (4) | `meds_pft_derive`: `derive_rad_optics`, once at load onto the PFT table (`cfg%pft%optics`) |
 | per-cohort blend ($\beta, \beta_0, k$, leaf_frac), eqs. (5)–(7) | `meds_canopy_radiation`: `blend_cohort_optics` |
 | ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`ground_optics_state_t`) |
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | public per-patch seam (+ tied-cohort layers) | `meds_canopy_radiation`: `canopy_radiation` |
-| types | `meds_canopy_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `ground_optics_state_t` |
+| types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_types`: `rad_forcing_t`, `rad_flux_t`, `ground_optics_state_t` |
 | fast-loop join (PAR renorm, LW emission temperature, snow on the ground) | `meds_fast_dynamics`: `apply_rt_forcing` |

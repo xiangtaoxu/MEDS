@@ -5,7 +5,7 @@
 ! WHY THIS TEST EXISTS -- and why it is MANDATORY, not gated on the pylib option. Outside  !
 ! this target the shim is compiled only by the optional shared library                     !
 ! (`-DMEDS_BUILD_PYLIB=ON`), which is in neither the default build nor ctest. So a change  !
-! to `leaf_env_t` or `leaf_photo_args_t` -- a component inserted mid-type shifts every     !
+! to `leaf_env_t` or `leaf_photo_pft_t` -- a component inserted mid-type shifts every     !
 ! trailing value of a POSITIONAL structure constructor -- could pass the whole suite on    !
 ! both back ends while leaving the C API unable to compile. Every C-API shim is therefore  !
 ! compiled into a ctest target, so an interface mismatch fails the build (docs/building.md !

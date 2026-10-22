@@ -547,7 +547,7 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 |---|---|---|
 | `meds_canopy_radiation` (`canopy_radiation`) | `radiate_driver.f90 :: sfcrad_ed` | Per-patch orchestration: per-cohort optics, band loop, leaf/wood split, absorbed radiation + albedo. State-free — arrays in, `rad_flux_t` out — rather than mutating `csite`. |
 | `solve_band` / `layer_rt` | `sw_two_stream` **and** `lw_two_stream` | **Unified.** ED2's two ~600-line routines collapse to one: SW is beam with no emission, LW is emission with no beam, and the diffuse operator is identical. Absolute W m⁻² throughout, dropping ED2's normalise-to-unit-incidence. O(N) adding method in place of the dense `lisys_solver8`. |
-| `meds_optics_lib` (`derive_rad_optics`) | `init_can_rad_params` + the scatter/backscatter block | ED2/CLM's `(1+χ)²` backscatter fit → **SCOPE/4SAIL**: Beta leaf-angle distribution → `bf`, exact Ross `G(μ)`, `β = ½(1 + bf(ρ−τ)/ω)`. Fixes the near-horizontal-leaf inaccuracy of the fit. |
+| `meds_pft_derive` (`derive_rad_optics`) | `init_can_rad_params` + the scatter/backscatter block | ED2/CLM's `(1+χ)²` backscatter fit → **SCOPE/4SAIL**: Beta leaf-angle distribution → `bf`, exact Ross `G(μ)`, `β = ½(1 + bf(ρ−τ)/ω)`. Fixes the near-horizontal-leaf inaccuracy of the fit. |
 | `ground_optics` | `sfcrad_ed` ground-albedo block | Per-band albedo + thermal emission, implemented B6-correct. |
 | `meds_canopy_types` | `canopy_radiation_coms.f90` | ED2's mutable module globals → explicit derived types passed as arguments. |
 

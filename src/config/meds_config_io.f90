@@ -11,8 +11,8 @@ module meds_config_io
    use meds_kinds,      only : wp, ik
    use meds_allometry_lib, only : HEIGHT_POWER, HEIGHT_CHAVE
    use meds_config,     only : meds_config_t, derive_parameters, alloc_pft_table, INIT_CENSUS,        &
-                               INIT_RESTART, pft_stomata_psi_onset, pft_wstress_psi_open,             &
-                               pft_wstress_psi_close
+                               INIT_RESTART
+   use meds_pft_derive, only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    use meds_fast_params,   only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
    use meds_soil_params,   only : soil_params_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,           &
                                   SOIL_BC_DRAIN, SOIL_BC_AQUIFER
@@ -1291,8 +1291,8 @@ contains
                  p%rd25(pf), p%kp25(pf), p%stomatal_g0(pf), p%stomatal_g1(pf), p%stomatal_d0(pf),       &
                  p%quantum_yield_c4(pf), p%theta_j(pf), p%theta_cj_c3(pf), p%theta_ip_c3(pf),           &
                  p%theta_cj_c4(pf), p%theta_ic_c4(pf),                                                  &
-                 p%katul_lambda25(pf), pft_wstress_psi_open(cfg, pf), pft_wstress_psi_close(cfg, pf),   &
-                 p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf), pft_stomata_psi_onset(cfg, pf),   &
+                 p%katul_lambda25(pf), pft_wstress_psi_open(p, pf), pft_wstress_psi_close(p, pf),       &
+                 p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf), pft_stomata_psi_onset(p, pf),     &
                  p%leaf_surf_water_max(pf), p%wood_surf_water_max(pf),                                &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%allom(pf)%aboveground_frac,                     &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &

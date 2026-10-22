@@ -226,7 +226,7 @@ flows themselves, so the plant and soil water budgets close to round-off.
 > PFT, or an array with one value per PFT, and every key is required: the model holds no default
 > and derives no trait from another. Each PFT's traits are one record, `pft%hydro(pf)`.
 >
-> `apply_hydraulics_config` builds the fast loop's per-PFT table from those records. Each entry
+> `derive_pft_tables` builds the fast loop's per-PFT table from those records, once at load. Each entry
 > carries its **own** Kirchhoff lookup, built from that PFT's `wood_kexp` — sharing one would give
 > every PFT the first one's vulnerability shape while every budget still closes.
 
@@ -264,4 +264,4 @@ flows themselves, so the plant and soil water budgets close to round-off.
 | xylem and root flows | `meds_plant_hydr_lib`: `xylem_max_conductance`, `xylem_sapflow`, `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`; the leaves' supply limit `supply_limited_transpiration` is in `meds_plant_hydraulics` |
 | rooting depth and profile | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`; `crown_gravity_head`, `leaf_node_psi` |
 | the solve | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)) |
-| config flatten | `meds_fast_config`: `apply_hydraulics_config` |
+| the per-PFT table (`cfg%pft%hydraulics`) | `meds_pft_derive`: `derive_pft_tables` |

@@ -12,7 +12,7 @@
 !==========================================================================================!
 program test_fast_loop
    use meds_kinds,               only : wp, ik
-   use meds_config,              only : meds_config_t
+   use meds_config,              only : meds_config_t, derive_parameters
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal, top_soil_psi
    use meds_cohort_state_vars,   only : set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
@@ -21,9 +21,8 @@ program test_fast_loop
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
-   use meds_fast_config,         only : fast_context_t, build_fast_context, apply_hydraulics_config,              &
-                                        apply_canopy_film_config, build_leaf_photo_table,                         &
-                                        build_integrator_opts, build_rad_optics
+   use meds_fast_config,         only : fast_context_t, build_fast_context, apply_canopy_film_config,             &
+                                        build_integrator_opts
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
    use meds_stepper,             only : advance_one_step
@@ -63,15 +62,15 @@ program test_fast_loop
    call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil_profile)
    call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
-   call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
+   ctx%col_config%hydraulics_table = cfg%pft%hydraulics
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-   call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
+   ctx%col_site%leaf_photo = cfg%pft%leaf_photo
    ctx%col_config%soil_carbon = cfg%soil_carbon
    ctx%col_config%ea_rd = cfg%ea_rd
    ctx%col_config%hd_rd = cfg%hd_rd
    ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
-   call build_rad_optics(cfg, ctx%rad_opt)               ! the two-stream's per-PFT optics
+   ctx%rad_opt = cfg%pft%optics                          ! the two-stream's per-PFT optics
    cfg%init%soil_temp = 288.0_wp
 
    !----- Two patches: patch 1 vegetated, patch 2 BARE (zero cohorts). ---------------------!
@@ -446,9 +445,10 @@ program test_fast_loop
       real(wp)           :: gpp_la_top, gpp_la_under
       real(wp), parameter :: LAI_EACH = 2.0_wp
       ! forcing cfg + the diurnal NetCDF are still in place from block 5.
-      call build_fast_context(cfg, ctx)                          ! ctx WITH the RT optics table (rad_opt)
       cfg%pft%wstress_psi_open  = -50.0_wp                        ! neutralize hydraulic stress (beta==1),
       cfg%pft%wstress_psi_close = -100.0_wp                       !   so the LIGHT/gb ordering drives GPP
+      call derive_parameters(cfg)                                ! the leaf table takes them
+      call build_fast_context(cfg, ctx)                          ! ctx WITH the RT optics table (rad_opt)
       call init_bare_ground(poly, cfg, 1_ik)
       call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 1.0_wp, 45.0_wp)     ! tall overstory  (big dbh -> tall)

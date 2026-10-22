@@ -12,7 +12,7 @@
 module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max
-   use meds_plant_types, only : hydro_args_table_t, leaf_photo_table_t
+   use meds_pft_params, only : hydraulics_table_t, leaf_photo_table_t
    use meds_soil_params, only : soil_profile_t, soil_params_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
@@ -100,9 +100,9 @@ module meds_fast_types
       !----- Stem and fine-root maintenance respiration's peaked temperature response: leaf Rd's,     !
       !      [leaf_physiology] ea_rd, hd_rd, ds_rd (docs/science/plant_respiration.md §4). ----------!
       real(wp)                    :: ea_rd, hd_rd, ds_rd
-      !----- Per-PFT plant hydraulics, built by apply_hydraulics_config. There is no PFT-uniform copy,
+      !----- Per-PFT plant hydraulics, the PFT table's (derive_pft_tables). There is no PFT-uniform copy,
       !      so a caller cannot run every PFT on the first PFT's hydraulics by mistake.
-      type(hydro_args_table_t)    :: hydraulics_table   !< per-PFT PV curves, vulnerability, conductance
+      type(hydraulics_table_t)    :: hydraulics_table   !< per-PFT PV curves, vulnerability, conductance
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       !----- Canopy-surface water, the interception film and its evaporation and dew                 !
       !      (docs/science/soil_biophysics.md §Canopy interception); opt-in. RK45 integrates the     !

@@ -17,7 +17,7 @@ module meds_fast_prepass
                                      CO_CA, CO_PRESSURE
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_plant_types, only : leaf_photo_table_t, hydro_args_table_t
+   use meds_pft_params, only : leaf_photo_table_t, hydraulics_table_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
                                column_budget_t, column_site_t
    use meds_soil_params,      only : soil_profile_t
@@ -176,7 +176,7 @@ contains
                                        biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
-      type(hydro_args_table_t),   intent(in)  :: hyd_table              !< per-PFT leaf PV curve
+      type(hydraulics_table_t),   intent(in)  :: hyd_table              !< per-PFT leaf PV curve
       type(soil_profile_t),       intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
       type(column_cohort_t),      intent(in)  :: col_cohort
       type(column_forcing_t),     intent(in)  :: forc         !< absorbed PAR per cohort

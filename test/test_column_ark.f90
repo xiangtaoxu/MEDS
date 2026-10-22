@@ -30,8 +30,7 @@ program test_column_ark
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t,      &
                                         alloc_column_cohort
-   use meds_fast_config,         only : apply_hydraulics_config, apply_canopy_film_config,                        &
-                                        build_leaf_photo_table, build_integrator_opts
+   use meds_fast_config,         only : apply_canopy_film_config, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_fast_frozen,        only : build_column_frozen
    use meds_fast_types,         only : column_frozen_t, column_state_t, fast_workspace_t
@@ -86,9 +85,9 @@ program test_column_ark
    call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
    call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
-   call apply_hydraulics_config(cfg, col_config%hydraulics_table)
+   col_config%hydraulics_table = cfg%pft%hydraulics
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
-   call build_leaf_photo_table(cfg, col_site%leaf_photo)
+   col_site%leaf_photo = cfg%pft%leaf_photo
    col_config%soil_carbon = cfg%soil_carbon
    col_config%ea_rd = cfg%ea_rd
    col_config%hd_rd = cfg%hd_rd

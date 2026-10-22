@@ -10,16 +10,17 @@
 ! curves (leaf_pi0 is hydro(pft)%leaf_curve%pi0). The reference config describes each key; !
 ! a field without an initializer is a required key or a derived value (marked DERIVED).    !
 !                                                                                          !
-! The routines derive what the parameters imply: the run's derived values and the PFT     !
-! table's arrays and leaf capacities; apply_map_inputs writes a map cell's inputs into its !
-! polygon's configuration. A site's soil profile is meds_soil_derive's.                    !
+! The routines derive what the parameters imply: the run's derived values, and through    !
+! meds_pft_derive the PFT table's leaf capacities and the tables the fast loop reads;      !
+! apply_map_inputs writes a map cell's inputs into its polygon's configuration. A site's   !
+! soil profile is meds_soil_derive's.                                                      !
 !==========================================================================================!
 module meds_config
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : yr_day, yr_sec, n_soil_layer_max
    use meds_time,               only : meds_time_t
-   use meds_pft_params,         only : pft_table_t, HYD_UNSET
-   use meds_plant_hydr_lib,     only : tissue_psi_tlp
+   use meds_pft_params,         only : pft_table_t, HYD_UNSET, leaf_photo_pft_t
+   use meds_pft_derive,         only : derive_leaf_params, derive_pft_tables
    use meds_soil_hydr_lib,      only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,          only : soil_texture_to_thermal
    use meds_fast_params,        only : INTEG_ARK, CTRL_I
@@ -40,12 +41,11 @@ module meds_config
    public :: meds_config_t, init_params_t
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: derive_config, derive_parameters, growth_window_steps, site_config
-   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_params_t, output_params_t
    public :: soil_carbon_params_t
    public :: region_params_t, RUN_MODE_SITE, RUN_MODE_REGION
    public :: maps_params_t, soil_maps_on
-   public :: alloc_pft_table, derive_leaf_params, apply_map_inputs
+   public :: alloc_pft_table, apply_map_inputs
 
    !----- [init].init_mode. -------------------------------------------------------------------!
    integer(ik), parameter :: INIT_BARE    = 0_ik    !< near-bare ground
@@ -200,13 +200,41 @@ contains
    end subroutine derive_config
 
    !----- Every derived value, in one place for the loader and the test builder: the run's     !
-   !      (derive_config) and the leaf capacities from their ratios to Vcmax25. Callers validate  !
-   !      after this returns. -----------------------------------------------------------------!
+   !      (derive_config), the leaf capacities from their ratios to Vcmax25, and the PFT tables   !
+   !      the fast loop reads. A caller that changes a PFT trait or a [leaf_physiology] key      !
+   !      afterwards calls it again. Callers validate after this returns. ----------------------!
    subroutine derive_parameters(cfg)
       type(meds_config_t), intent(inout) :: cfg
       call derive_config(cfg)
       call derive_leaf_params(cfg%pft)
+      call derive_pft_tables(cfg%pft, leaf_photo_shared(cfg), cfg%stomatal_model, cfg%temp_response_form,   &
+                             cfg%colimitation, cfg%use_boundary_layer)
    end subroutine derive_parameters
+
+   !----- [leaf_physiology]'s constants: the part of every PFT's leaf parameters the PFTs share. --!
+   pure function leaf_photo_shared(cfg) result(p)
+      type(meds_config_t), intent(in) :: cfg
+      type(leaf_photo_pft_t)          :: p
+      p%kc25 = cfg%kc25
+      p%ko25 = cfg%ko25
+      p%gstar25 = cfg%gstar25
+      p%ea_kc = cfg%ea_kc
+      p%ea_ko = cfg%ea_ko
+      p%ea_gstar = cfg%ea_gstar
+      p%ea_vcmax = cfg%ea_vcmax
+      p%ea_jmax = cfg%ea_jmax
+      p%ea_rd = cfg%ea_rd
+      p%hd_vcmax = cfg%hd_vcmax
+      p%hd_jmax = cfg%hd_jmax
+      p%hd_rd = cfg%hd_rd
+      p%ds_vcmax = cfg%ds_vcmax
+      p%ds_jmax = cfg%ds_jmax
+      p%ds_rd = cfg%ds_rd
+      p%o2_mol_frac = cfg%o2_mol_frac
+      p%absorptance = cfg%leaf_absorptance
+      p%phi_psii = cfg%phi_psii
+      p%medlyn_vpd_min = cfg%medlyn_vpd_min
+   end function leaf_photo_shared
 
    !----- The steps the growth-memory window spans (at least 1): the length of each cohort's   !
    !      moving-average ring. --------------------------------------------------------------!
@@ -214,51 +242,6 @@ contains
       type(meds_config_t), intent(in) :: cfg
       nw = max(1_ik, nint(cfg%growth_memory_days / (cfg%dt_years * yr_day), ik))
    end function growth_window_steps
-
-   !----- A PFT's leaf turgor-loss point [MPa], from its own leaf pressure-volume curve, so the      !
-   !      stomatal closure and the phenology's drought counter see the curve the solver stores leaf  !
-   !      water on. -----------------------------------------------------------------------------------!
-   pure real(wp) function pft_leaf_psi_tlp(cfg, ipft) result(psi_tlp)
-      type(meds_config_t), intent(in) :: cfg
-      integer(ik),         intent(in) :: ipft
-      associate (leaf_curve => cfg%pft%hydro(ipft)%leaf_curve)
-         psi_tlp = tissue_psi_tlp(leaf_curve%pi0, leaf_curve%elastic_mod)
-      end associate
-   end function pft_leaf_psi_tlp
-
-   !----- Where a PFT's stomatal water stress begins [MPa of predawn leaf potential]: the [pft]       !
-   !      stomata_psi_onset where given, else half the PFT's turgor-loss point, so the gravity head  !
-   !      of a tall tree in wet soil does not read as drought (docs/science/leaf_gas_exchange.md     !
-   !      eq. (10)). ----------------------------------------------------------------------------------!
-   pure real(wp) function pft_stomata_psi_onset(cfg, ipft) result(psi_onset)
-      type(meds_config_t), intent(in) :: cfg
-      integer(ik),         intent(in) :: ipft
-      psi_onset = 0.5_wp * pft_leaf_psi_tlp(cfg, ipft)
-      if (allocated(cfg%pft%stomata_psi_onset)) then
-         if (cfg%pft%stomata_psi_onset(ipft) > HYD_UNSET) psi_onset = cfg%pft%stomata_psi_onset(ipft)
-      end if
-   end function pft_stomata_psi_onset
-
-   !----- The leaf potential [MPa] at which the fast water-stress limb on Vcmax/Jmax/TPU starts and   !
-   !      completes: the [pft] wstress_psi_open / wstress_psi_close where given, else the PFT's      !
-   !      turgor-loss point and twice it (docs/science/leaf_gas_exchange.md eq. (9)). ----------------!
-   pure real(wp) function pft_wstress_psi_open(cfg, ipft) result(psi_open)
-      type(meds_config_t), intent(in) :: cfg
-      integer(ik),         intent(in) :: ipft
-      psi_open = pft_leaf_psi_tlp(cfg, ipft)
-      if (allocated(cfg%pft%wstress_psi_open)) then
-         if (cfg%pft%wstress_psi_open(ipft) > HYD_UNSET) psi_open = cfg%pft%wstress_psi_open(ipft)
-      end if
-   end function pft_wstress_psi_open
-
-   pure real(wp) function pft_wstress_psi_close(cfg, ipft) result(psi_close)
-      type(meds_config_t), intent(in) :: cfg
-      integer(ik),         intent(in) :: ipft
-      psi_close = 2.0_wp * pft_leaf_psi_tlp(cfg, ipft)
-      if (allocated(cfg%pft%wstress_psi_close)) then
-         if (cfg%pft%wstress_psi_close(ipft) > HYD_UNSET) psi_close = cfg%pft%wstress_psi_close(ipft)
-      end if
-   end function pft_wstress_psi_close
 
    !----- Site `is`'s configuration: the polygon's, with the site's ground when its table gives  !
    !      one. make_site_surface builds the site's surface from it. -----------------------------!
@@ -331,17 +314,6 @@ contains
       allocate(pft%kplastic_sla(n), pft%kplastic_vcmax(n), pft%kplastic_rd(n), pft%kplastic_leaf_turnover(n))
       allocate(pft%pheno(n))                ! a PFT without a [phenology] block keeps the defaults
    end subroutine alloc_pft_table
-
-   !---------------------------------------------------------------------------------------!
-   ! Derive the per-PFT leaf-photosynthesis capacities (Jmax25, TPU25, Rd25) as fixed      !
-   ! ratios of Vcmax25. Call after vcmax25 and the ratio arrays are set from the PFT file. !
-   !---------------------------------------------------------------------------------------!
-   subroutine derive_leaf_params(pft)
-      type(pft_table_t), intent(inout) :: pft
-      pft%jmax25 = pft%jmax_vcmax_ratio * pft%vcmax25
-      pft%tpu25  = pft%tpu_vcmax_ratio  * pft%vcmax25
-      pft%rd25   = pft%rd_vcmax_ratio   * pft%vcmax25
-   end subroutine derive_leaf_params
 
    !---------------------------------------------------------------------------------------!
    ! apply_map_inputs -- cell k's inputs into the configuration its polygon runs           !
