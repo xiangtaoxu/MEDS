@@ -15,7 +15,7 @@ module meds_met_era5land
    use meds_constants,      only : day_sec
    use meds_time,           only : meds_time_t, time_advance_seconds, seconds_between, seconds_into_day,    &
                                    time_to_string, days_in_month, time_units_base
-   use meds_forcing_params, only : MET_PATH_LEN, ARCHIVE_DT_SEC, forcing_config_t
+   use meds_forcing_params, only : MET_PATH_LEN, ARCHIVE_DT_SEC, forcing_params_t
    use meds_radiation_lib,  only : SWPART_PASSTHROUGH
    use meds_met_types,      only : met_record_t, met_source_t, met_cursor_t, met_grid_t, met_cells_t,       &
                                    met_month_t, HUMIDITY_TDEW
@@ -461,7 +461,7 @@ contains
    !----- The archive's grid: the static file a [forcing] block names (static_file, or the default, -!
    !      in the archive's folder) and the files' 16 x 16 chunks. ---------------------------------!
    function era5land_grid(f) result(grid)
-      type(forcing_config_t), intent(in) :: f
+      type(forcing_params_t), intent(in) :: f
       type(met_grid_t) :: grid
       grid%static_file = f%static_file
       if (len_trim(grid%static_file) == 0) grid%static_file = era5land_default_static()

@@ -12,7 +12,7 @@ module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : grav, pi, tiny_num, von_karman, safe_exp
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_biophysics_params, only : aero_cfg_t
+   use meds_biophysics_params, only : aero_params_t
    implicit none
 
    !----- Bounds of the Monin-Obukhov initial guess (CLM5 MoninObukIni; Zeng et al. 1998, J. Climate  !
@@ -62,7 +62,7 @@ contains
    !----- Roughness length and displacement of a patch (docs/science/canopy_aerodynamics.md eq. (1)): !
    !      one definition, shared with the move of the forcing to the patch's canopy-air top. ------!
    pure subroutine canopy_roughness(cfg, geom, rough, displace)
-      type(aero_cfg_t),  intent(in)  :: cfg
+      type(aero_params_t), intent(in)  :: cfg
       type(aero_geom_t), intent(in)  :: geom
       real(wp),          intent(out) :: rough      !< [m] roughness length (z0m)
       real(wp),          intent(out) :: displace   !< [m] zero-plane displacement height
@@ -79,7 +79,7 @@ contains
    !=======================================================================================!
    pure subroutine canopy_aerodynamics(cfg, env, geom, n, height, lai, leaf_temp, wood_temp,  &
                                             leaf_width, branch_diam, out)
-      type(aero_cfg_t),  intent(in)    :: cfg
+      type(aero_params_t), intent(in)    :: cfg
       type(aero_env_t),  intent(in)    :: env
       type(aero_geom_t), intent(in)    :: geom
       integer(ik),       intent(in)    :: n
@@ -153,7 +153,7 @@ contains
    !=======================================================================================!
    pure subroutine mo_surface_layer(cfg, u_ref, zref, displace, rough, theta_atm, shv_atm,     &
                                     can_theta, can_shv, ustar, temp1, zeta, rib, obu)
-      type(aero_cfg_t), intent(in)  :: cfg
+      type(aero_params_t), intent(in)  :: cfg
       real(wp),         intent(in)  :: u_ref, zref, displace, rough, theta_atm, shv_atm
       real(wp),         intent(in)  :: can_theta, can_shv
       real(wp),         intent(out) :: ustar, temp1, zeta, rib, obu
@@ -202,7 +202,7 @@ contains
    !----- Momentum profile denominator D_m (ustar = vonk*um/D_m), four CLM5 ranges. ----------!
    pure function d_mom(zeta, zldis, z0m, cfg) result(dm)
       real(wp),         intent(in) :: zeta, zldis, z0m
-      type(aero_cfg_t), intent(in) :: cfg
+      type(aero_params_t), intent(in) :: cfg
       real(wp) :: dm, zeta0m
       zeta0m = z0m * zeta / zldis                                  ! = z0m / L  (no division by zeta)
       if (zeta < -cfg%zeta_m) then                                 ! very unstable
@@ -220,7 +220,7 @@ contains
    !----- Heat/vapour profile denominator D_h (temp1 = vonk/D_h), four CLM5 ranges. ----------!
    pure function d_heat(zeta, zldis, z0h, cfg) result(dh)
       real(wp),         intent(in) :: zeta, zldis, z0h
-      type(aero_cfg_t), intent(in) :: cfg
+      type(aero_params_t), intent(in) :: cfg
       real(wp) :: dh, zeta0h
       zeta0h = z0h * zeta / zldis
       if (zeta < -cfg%zeta_t) then                                 ! very unstable
@@ -266,7 +266,7 @@ contains
    !----- The log-profile wind at `height`, floored at ugbmin: the canopy-top wind              !
    !      (docs/science/canopy_aerodynamics.md eq. (7)). ------------------------------------!
    pure function reduced_wind(cfg, ustar, zeta, height, displace, rough, zldis) result(u)
-      type(aero_cfg_t), intent(in) :: cfg
+      type(aero_params_t), intent(in) :: cfg
       real(wp),         intent(in) :: ustar, zeta, height, displace, rough, zldis
       real(wp) :: u, hd, zeta_h, zeta_0
       hd     = max(height - displace, rough * 1.001_wp)
@@ -282,7 +282,7 @@ contains
    !  (docs/science/canopy_aerodynamics.md eqs. (9)-(10)).                                 !
    !=======================================================================================!
    pure function boundary_gbh_mos(cfg, wind, elem_temp, can_temp, lchar, is_leaf) result(gbh_mos)
-      type(aero_cfg_t), intent(in) :: cfg
+      type(aero_params_t), intent(in) :: cfg
       real(wp),         intent(in) :: wind, elem_temp, can_temp, lchar
       logical,          intent(in) :: is_leaf
       real(wp) :: gbh_mos, nu_v, al_th, re, gr, nu_forced, nu_free

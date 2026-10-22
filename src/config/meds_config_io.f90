@@ -24,14 +24,14 @@ module meds_config_io
                                    SWPART_WEISS_NORMAN
    use meds_forcing_params, only : CO2_SOURCE_CONST, CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE,                    &
                                    HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL,          &
-                                   forcing_config_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND, METAVG_END,       &
+                                   forcing_params_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND, METAVG_END,       &
                                    METAVG_BEGIN, LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,                 &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
-   use meds_output_params, only : output_config_t, MAX_DBH_EDGE, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH,      &
+   use meds_output_params, only : output_params_t, MAX_DBH_EDGE, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH,      &
                                  FC_YEAR, FC_RUN, STATE_DAYS, STATE_MONTHS, STATE_YEARS
    use meds_time,       only : meds_time_t, string_to_time
-   use meds_biophysics_params, only : snow_params_t, aero_cfg_t
-   use meds_biogeochem_params, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,          &
+   use meds_biophysics_params, only : snow_params_t, aero_params_t
+   use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,   &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
                               toml_int, toml_real, toml_table_count,                        &
@@ -43,7 +43,7 @@ module meds_config_io
    private
 
    public :: load_meds_config, write_pft_params_csv
-   public :: load_fast_params, load_soil, load_snow_params, load_aero_cfg   !< exposed for unit tests
+   public :: load_fast_params, load_soil, load_snow_params, load_aero_params   !< exposed for unit tests
 
    integer(ik), parameter :: MAXPFT  = 64_ik    !< largest PFT count the array buffers handle
    integer,     parameter :: MAXMISS = 256       !< largest missing-key list
@@ -382,9 +382,9 @@ contains
       s%ny07_m              = toml_real(tm, 'snow.ny07_m',              s%ny07_m)
    end subroutine load_snow_params
 
-   subroutine load_aero_cfg(tm, a)                      ! [aerodynamics] -> canopy-aero constants
+   subroutine load_aero_params(tm, a)                      ! [aerodynamics] -> canopy-aero constants
       type(toml_table_t), intent(in)    :: tm            !  (the Nusselt coefficients have no key;
-      type(aero_cfg_t),   intent(inout) :: a             !   they keep their aero_cfg_t values)
+      type(aero_params_t),   intent(inout) :: a             !   they keep their aero_params_t values)
       a%z0m_ratio        = toml_real(tm, 'aerodynamics.z0m_ratio',        a%z0m_ratio)
       a%d_ratio          = toml_real(tm, 'aerodynamics.d_ratio',          a%d_ratio)
       a%snow_rough       = toml_real(tm, 'aerodynamics.snow_rough',       a%snow_rough)
@@ -407,13 +407,13 @@ contains
       a%th_diff0         = toml_real(tm, 'aerodynamics.th_diff0',         a%th_diff0)
       a%dth_diff         = toml_real(tm, 'aerodynamics.dth_diff',         a%dth_diff)
       a%t_ref_air        = toml_real(tm, 'aerodynamics.t_ref_air',        a%t_ref_air)
-   end subroutine load_aero_cfg
+   end subroutine load_aero_params
 
    !----- [soil_carbon]: the switch, the decomposition selectors and rates, and the cold start.        !
    !      Each absent key keeps the type's default, so the type, not the reader, decides it. ----------!
-   subroutine load_soil_carbon_opts(tm, s, m)
+   subroutine load_soil_carbon_params(tm, s, m)
       type(toml_table_t),  intent(in)    :: tm
-      type(decomp_opts_t), intent(inout) :: s
+      type(soil_carbon_params_t), intent(inout) :: s
       type(keymiss_t),     intent(inout) :: m
       s%soil_carbon_on     = toml_logical(tm, 'soil_carbon.soil_carbon_on',     s%soil_carbon_on)
       s%spinup_steady      = toml_logical(tm, 'soil_carbon.spinup_steady',      s%spinup_steady)
@@ -452,7 +452,7 @@ contains
       s%resp_opt_water        = toml_real(tm, 'soil_carbon.resp_opt_water',        s%resp_opt_water)
       s%resp_water_below_opt  = toml_real(tm, 'soil_carbon.resp_water_below_opt',  s%resp_water_below_opt)
       s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
-   end subroutine load_soil_carbon_opts
+   end subroutine load_soil_carbon_params
 
 
    !----- [allometry].height_allometry, one name for every PFT or one per PFT, and for        !
@@ -504,13 +504,13 @@ contains
    !----- [forcing] and [site] (docs/configuration.md, "The forcing file"). forcing.forcing_on    !
    !      is off by default (constant forcing); on, the keys the source, the location and the     !
    !      switches pick are required, and check_key_use refuses the rest. ------------------------!
-   subroutine load_forcing_config(t, cfg, m)
+   subroutine load_forcing_params(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t),     intent(inout) :: m
       real(wp)    :: gamma_month(12)
       integer(ik) :: nout
-      cfg%forcing = forcing_config_t()                                  ! Ithaca/ERA5-Land defaults
+      cfg%forcing = forcing_params_t()                                  ! Ithaca/ERA5-Land defaults
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! off by default
       if (.not. cfg%forcing%forcing_on) return
       call req_choice(t, 'forcing.format', [character(len=NAME_LEN) :: 'default', 'ERA5land'],                   &
@@ -594,11 +594,11 @@ contains
       end if
       if (cfg%forcing%format /= MET_BACKEND_ERA5LAND)                                           &
          call req_r(t, 'site.grid_elevation', cfg%forcing%grid_elevation, m)
-   end subroutine load_forcing_config
+   end subroutine load_forcing_params
 
    !----- [maps] (docs/configuration.md, "Input maps"): the static maps' paths. The three soil      !
    !      maps go together, and check_key_use refuses each key they provide. -----------------------!
-   subroutine load_maps_config(t, cfg)
+   subroutine load_maps_params(t, cfg)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       integer(ik) :: n_set
@@ -611,7 +611,7 @@ contains
       if (n_set /= 0_ik .and. n_set /= 3_ik)                                                         &
          error stop 'load_meds_config: [maps] needs soil_depth_map, soil_texture_map and '//       &
                     'soil_chemistry_map together'
-   end subroutine load_maps_config
+   end subroutine load_maps_params
 
    !----- [[sites]] (docs/configuration.md, "Several sites"), after [soil] and [maps]: a table       !
    !      that sets a [soil] column key gives its site its own ground, [soil]'s values filling       !
@@ -673,7 +673,7 @@ contains
    !----- [run].mode, "site" by default, and the [region] block (docs/configuration.md,             !
    !      "Regional runs"). A region requires its box; the land-fraction rule and the cell mask     !
    !      are optional. ----------------------------------------------------------------------------!
-   subroutine load_region_config(t, cfg, m)
+   subroutine load_region_params(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t),     intent(inout) :: m
@@ -692,17 +692,17 @@ contains
       cfg%region%cell_mask         = toml_string(t, 'region.cell_mask', '')
       cfg%region%cell_mask_var     = toml_string(t, 'region.cell_mask_var', 'mask')
       cfg%region%cell_mask_min     = toml_real(t, 'region.cell_mask_min', 0.5_wp)
-   end subroutine load_region_config
+   end subroutine load_region_params
 
    !----- [output] (docs/science/diagnostics.md §5), off by default: a config with no [output]    !
    !      block writes no diagnostics. Every key is optional; output.io_config names the          !
    !      per-variable overrides, which the driver applies. --------------------------------------!
-   subroutine load_output_config(t, cfg, m)
+   subroutine load_output_params(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t),     intent(inout) :: m
       character(len=NAME_LEN), parameter :: CHUNKS(4) = [character(len=NAME_LEN) :: 'day', 'month', 'year', 'run']
-      cfg%output = output_config_t()                                     ! defaults
+      cfg%output = output_params_t()                                     ! defaults
       !----- The state files, whatever the diagnostics: state_write is required, and the rest with it. !
       call req_l(t, 'output.state_write', cfg%output%state_write, m)
       if (cfg%output%state_write) then
@@ -736,7 +736,7 @@ contains
                       cfg%output%file_chunk(3), m)
       call opt_choice(t, 'output.annual.file_chunk',  CHUNKS, [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN],              &
                       cfg%output%file_chunk(4), m)
-   end subroutine load_output_config
+   end subroutine load_output_params
 
    !----- [phenology], per PFT, from the PFT file (docs/science/plant_phenology.md). Absent,      !
    !      every PFT keeps the alloc_pft_table defaults (no cues); present, every key is           !
@@ -945,7 +945,7 @@ contains
       !      config of a run records its thread count. ---------------------------------------------!
       cfg%n_threads = toml_int(tm, 'run.n_threads', 1_ik)
       !----- [run].mode ("site" by default) and, for a region, the [region] block. ---------------!
-      call load_region_config(tm, cfg, miss)
+      call load_region_params(tm, cfg, miss)
 
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       call req_l     (tm, 'fast.fast_biophysics_on', cfg%fast_biophysics_on, miss)
@@ -956,10 +956,10 @@ contains
       !----- [soil], [snow], [aerodynamics], every key optional. ---------------------------------!
       call load_soil       (tm, cfg%soil)
       call load_snow_params(tm, cfg%snow)
-      call load_aero_cfg   (tm, cfg%aero)
+      call load_aero_params   (tm, cfg%aero)
 
       !----- [soil_carbon] (docs/science/soil_carbon.md): every key optional, at its type default. ---!
-      call load_soil_carbon_opts(tm, cfg%soil_carbon, miss)
+      call load_soil_carbon_params(tm, cfg%soil_carbon, miss)
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)
@@ -1027,15 +1027,15 @@ contains
       cfg%fineroot_turnover_plastic = toml_logical(tm, 'trait_dynamics.fineroot_turnover_plastic', .false.)
 
       !----- Meteorological forcing, off unless forcing.forcing_on. ------------------------!
-      call load_forcing_config(tm, cfg, miss)
+      call load_forcing_params(tm, cfg, miss)
       !----- [maps]: the maps a run takes its soil (and its Chave site index) from. ----------!
-      call load_maps_config(tm, cfg)
+      call load_maps_params(tm, cfg)
       !----- [[sites]]: the polygon's sites, after the [soil] they inherit and the maps that    !
       !      refuse their soil. ----------------------------------------------------------------!
       call load_sites(tm, cfg, miss)
 
       !----- Diagnostic output, off unless output.enabled. -----------------------------------!
-      call load_output_config(tm, cfg, miss)
+      call load_output_params(tm, cfg, miss)
 
       !----- Leaf physiology: model selectors + shared biochemistry (non-PFT). ------------!
       call req_choice(tm, 'leaf_physiology.stomatal_model', [character(len=NAME_LEN) :: 'leuning', 'medlyn', 'katul'], &
@@ -1329,7 +1329,7 @@ contains
    !      user who set the key meant to control the binning. -------------------------------------!
    subroutine load_dbh_edges(t, out_cfg)
       type(toml_table_t),    intent(in)    :: t
-      type(output_config_t), intent(inout) :: out_cfg
+      type(output_params_t), intent(inout) :: out_cfg
       real(wp)    :: tmp(MAX_DBH_EDGE)
       integer(ik) :: nout
       out_cfg%n_dbh_class = 0_ik

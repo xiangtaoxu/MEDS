@@ -22,7 +22,7 @@ module meds_fast_prepass
                                column_budget_t, column_site_t
    use meds_soil_params,      only : soil_profile_t
    use meds_state_defaults, only : is_unset_negative
-   use meds_biophysics_params, only : aero_cfg_t
+   use meds_biophysics_params, only : aero_params_t
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
@@ -118,7 +118,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine refresh_canopy_aerodynamics(aero_cfg, aenv, ageom, col_cohort, cas, soil_temp_top,      &
                                           leaf_temp, wood_temp, aero, tcas, qcas, press, rho, t_ground)
-      type(aero_cfg_t),      intent(in)    :: aero_cfg
+      type(aero_params_t),   intent(in)    :: aero_cfg
       type(aero_env_t),      intent(inout) :: aenv
       type(aero_geom_t),     intent(in)    :: ageom
       type(column_cohort_t), intent(in)    :: col_cohort
@@ -386,7 +386,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine aero_bottom_to_top(acfg, aenv, ageom, n, height, lai, leaf_width, branch_diam,           &
                                  leaf_temp, wood_temp, aero)
-      type(aero_cfg_t),      intent(in)    :: acfg
+      type(aero_params_t),   intent(in)    :: acfg
       type(aero_env_t),      intent(in)    :: aenv
       type(aero_geom_t),     intent(in)    :: ageom
       integer(ik),           intent(in)    :: n

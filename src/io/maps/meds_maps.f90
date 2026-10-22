@@ -17,7 +17,7 @@ module meds_maps
                                      nc_inq_varid_f, nc_open_f, NC_NOERR, NC_NOWRITE
    use meds_met_types,        only : met_grid_t, met_cells_t
    use meds_met_grid,         only : same_grid, keep_cells, GRID_OK, GRID_ERR_OPEN
-   use meds_maps_params,      only : maps_opts_t, soil_maps_on, map_inputs_t, MAP_BC_FREE_DRAIN, MAP_BC_LEAKY, &
+   use meds_maps_params,      only : maps_params_t, soil_maps_on, map_inputs_t, MAP_BC_FREE_DRAIN, MAP_BC_LEAKY, &
                                      MAP_BC_SEALED, MAP_BC_AQUIFER
    implicit none
    private
@@ -104,7 +104,7 @@ contains
    ! is there.                                                                             !
    !=======================================================================================!
    subroutine read_map_inputs(opts, grid, cells, inp, msg)
-      type(maps_opts_t),             intent(in)  :: opts
+      type(maps_params_t),           intent(in)  :: opts
       type(met_grid_t),              intent(in)  :: grid
       type(met_cells_t),             intent(in)  :: cells
       type(map_inputs_t),            intent(out) :: inp

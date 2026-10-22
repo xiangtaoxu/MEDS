@@ -52,7 +52,7 @@ module meds_region
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
                                            DRIVER_ERR_BOUNDS
    use meds_output_types,           only : output_files_t, output_buffers_t
-   use meds_output_params,          only : output_config_t, STATE_DAYS, STATE_MONTHS, STATE_YEARS
+   use meds_output_params,          only : output_params_t, STATE_DAYS, STATE_MONTHS, STATE_YEARS
    use meds_output_stream,          only : output_serialize, output_close
    use meds_output_setup,           only : open_output_files, attach_output
    use meds_toml,                   only : toml_write_record
@@ -585,7 +585,7 @@ contains
    !      imonth and iyear of them by then? Every state_every days from the run's start, or at every  !
    !      state_every-th month or year boundary ([output].state_interval). ----------------------------!
    pure logical function state_due(out, istep, step_days, new_month, new_year, imonth, iyear) result(due)
-      type(output_config_t), intent(in) :: out
+      type(output_params_t), intent(in) :: out
       integer(ik),           intent(in) :: istep, step_days, imonth, iyear
       logical,               intent(in) :: new_month, new_year
       due = .false.

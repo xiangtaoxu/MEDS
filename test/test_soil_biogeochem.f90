@@ -27,7 +27,7 @@ program test_soil_biogeochem
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL, &
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_patch_state_vars,   only : soil_carbon_t
-   use meds_biogeochem_params, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2, &
+   use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2, &
                                     DECOMP_SCHEME_CENTURY5
    use meds_soil_biogeochem,  only : soil_carbon_bad_pool, soil_carbon_pool_name,                   &
                                      SOILC_NEG_TOL, SOILC_MAX_PLAUSIBLE,                            &
@@ -69,7 +69,7 @@ contains
    !=======================================================================================!
    subroutine test_mass_closure()
       type(soil_carbon_t) :: pools
-      type(decomp_opts_t) :: opts
+      type(soil_carbon_params_t) :: opts
       type(soilc_audit_t) :: audit
       real(wp) :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh, x(N_SOIL_POOL), sx
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), x1(N_SOIL_POOL)
@@ -136,7 +136,7 @@ contains
    !=======================================================================================!
    subroutine test_rh_complement()
       type(soil_carbon_t) :: pools
-      type(decomp_opts_t) :: opts
+      type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL), rh_fun, rh_hand, colsum, worst
       integer(ik) :: i, j
@@ -173,7 +173,7 @@ contains
    !=======================================================================================!
    subroutine test_scalar_placement()
       type(soil_carbon_t) :: pools
-      type(decomp_opts_t) :: opts
+      type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL)
       real(wp) :: dcorrect(N_SOIL_POOL), dwrong(N_SOIL_POOL), rh, loss_correct, loss_wrong
@@ -206,13 +206,13 @@ contains
    !=======================================================================================!
    subroutine test_scheme_topology()
       type(soil_carbon_t) :: pools
-      type(decomp_opts_t) :: opts
+      type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), offsum
       real(wp) :: er_micr, ex_mp, ex_sp
       integer(ik) :: i, j
       print '(a)', '-- test 4: decomp scheme topology --'
       ! ---- scheme 0 (default 3-active): only a(6,3),a(6,4) off-diagonal; micr/pass inert. ----
-      opts = decomp_opts_t()                            ! defaults: scheme 0, er_struct=0.3, k_micr=k_pass=0
+      opts = soil_carbon_params_t()                            ! defaults: scheme 0, er_struct=0.3, k_micr=k_pass=0
       call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
       call check('scheme0 K_micr = 0', k_diag(IP_MICR),    0.0_wp, 0.0_wp)
       call check('scheme0 K_pass = 0', k_diag(IP_PASSIVE), 0.0_wp, 0.0_wp)
@@ -232,7 +232,7 @@ contains
       call check_true('scheme0 no other transfers', offsum < 1.0e-14_wp, offsum)
 
       ! ---- scheme 5 (5-active): clay/sand-controlled transfers (hand values, f_lignin=0). ----
-      opts = decomp_opts_t()
+      opts = soil_carbon_params_t()
       opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
       opts%k_micr=6.0_wp; opts%k_pass=0.012_wp; opts%k_slow=0.15_wp; opts%k_struct=1.5_wp; opts%k_fast=12.0_wp
       opts%er_fast=0.55_wp; opts%er_struct_nonlig=0.50_wp; opts%er_struct_lig=0.20_wp
@@ -265,13 +265,13 @@ contains
       integer(ik),      intent(in) :: scheme
       character(len=*), intent(in) :: tag
       type(soil_carbon_t) :: pools, pss, p
-      type(decomp_opts_t) :: opts
+      type(soil_carbon_params_t) :: opts
       type(soilc_audit_t) :: audit
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL), x1(N_SOIL_POOL)
       real(wp) :: rh, worst, relerr
       integer(ik) :: it
-      opts = decomp_opts_t()
+      opts = soil_carbon_params_t()
       opts%decomp_scheme = scheme
       if (scheme == DECOMP_SCHEME_CENTURY5) then
          opts%k_micr=6.0_wp; opts%k_pass=0.012_wp; opts%k_slow=0.15_wp; opts%k_struct=1.5_wp; opts%k_fast=12.0_wp
@@ -337,14 +337,14 @@ contains
    !=======================================================================================!
    subroutine test_residence_capacity()
       type(soil_carbon_t) :: pss, pert, p
-      type(decomp_opts_t) :: opts
+      type(soil_carbon_params_t) :: opts
       type(soilc_diag_t)  :: diag
       type(soilc_audit_t) :: audit
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL)
       real(wp) :: x_before, x_after, rh
       print '(a)', '-- test 6: residence time / storage capacity --'
-      opts = decomp_opts_t()
+      opts = soil_carbon_params_t()
       xi = [0.7_wp, 0.5_wp, 0.7_wp, 0.5_wp, 0.5_wp, 0.5_wp, 0.5_wp]
       u  = 0.0_wp
       u(IP_FAST_GRND)=0.03_wp; u(IP_FAST_SOIL)=0.05_wp; u(IP_STRUCT_GRND)=0.02_wp; u(IP_STRUCT_SOIL)=0.04_wp
@@ -373,7 +373,7 @@ contains
    !=======================================================================================!
    subroutine test_litter_and_lignin()
       type(soil_carbon_t) :: pools, p
-      type(decomp_opts_t) :: opts
+      type(soil_carbon_params_t) :: opts
       type(litter_input_t):: lit
       type(soilc_audit_t) :: audit
       real(wp) :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh
@@ -409,7 +409,7 @@ contains
                       u(IP_SLOW))
 
       ! (b) lignin tracer: proportional decay conserves f_lignin under pure decomposition (no input).
-      opts = decomp_opts_t()
+      opts = soil_carbon_params_t()
       pools = soil_carbon_t()
       pools%struct_grnd_carbon = 2.0_wp ; pools%struct_grnd_lignin = 0.8_wp   ! f_lignin = 0.4
       c_before = pools%struct_grnd_carbon ; l_before = pools%struct_grnd_lignin
@@ -437,7 +437,7 @@ contains
       ! (c) EXPM at a LARGE accelerated-spin-up step: lignin must decay in lockstep with its host
       ! carbon (exp(-d_s)), so f_lignin stays conserved and 0 <= L <= C. The linear survival (1 - d_s)
       ! would drive L NEGATIVE here (d_s = 3.0 => L = 0.8*(1-3) = -1.6; docs/science/soil_carbon.md §6).
-      opts = decomp_opts_t() ; opts%step_solver = DECOMP_STEP_EXPM
+      opts = soil_carbon_params_t() ; opts%step_solver = DECOMP_STEP_EXPM
       pools = soil_carbon_t() ; pools%struct_grnd_carbon = 2.0_wp ; pools%struct_grnd_lignin = 0.8_wp  ! f_lignin=0.4
       c_before = pools%struct_grnd_carbon ; l_before = pools%struct_grnd_lignin ; f_lig_before = l_before/c_before
       xi_int = 0.0_wp ; xi_int(IP_STRUCT_GRND) = 3.0_wp / (opts%k_struct/yr_day)   ! force d_s = xi_int*K = 3.0
@@ -543,19 +543,19 @@ contains
    !=======================================================================================!
    subroutine test_temperature_moisture()
       type(soil_carbon_t) :: pools
-      type(decomp_opts_t) :: opts
+      type(soil_carbon_params_t) :: opts
       real(wp) :: xi_a(N_SOIL_POOL), xi_b(N_SOIL_POOL), xi_lo(N_SOIL_POOL), xi_hi(N_SOIL_POOL)
       real(wp) :: xi_opt(N_SOIL_POOL), xi_dry(N_SOIL_POOL)
       print '(a)', '-- test 8: temperature / moisture response --'
       pools = soil_carbon_t()
       ! Q10 = 2 doubling per 10 K (scheme 5, uncapped):
-      opts = decomp_opts_t() ; opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
+      opts = soil_carbon_params_t() ; opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
       opts%rh_q10 = 2.0_wp ; opts%rh_t_ref = 288.15_wp
       call assemble_env_scalar(298.15_wp, 298.15_wp, 0.5_wp, 0.1_wp, 0.6_wp, pools, opts, xi_a)  ! T
       call assemble_env_scalar(308.15_wp, 308.15_wp, 0.5_wp, 0.1_wp, 0.6_wp, pools, opts, xi_b)  ! T+10
       call check('Q10=2 doubling per 10K', xi_b(IP_FAST_SOIL)/xi_a(IP_FAST_SOIL), 2.0_wp, 1.0e-12_wp)
       ! ED2 capped exp: saturates (min(1,.)) at/above 45 C (318.15 K):
-      opts = decomp_opts_t() ; opts%decomp_scheme = DECOMP_SCHEME_ED2
+      opts = soil_carbon_params_t() ; opts%decomp_scheme = DECOMP_SCHEME_ED2
       call assemble_env_scalar(320.15_wp, 320.15_wp, opts%resp_opt_water*0.6_wp+0.1_wp, 0.1_wp, 0.6_wp, &
                                pools, opts, xi_hi)
       ! at rel = resp_opt_water the water factor = 1, so xi(fast) = min(1,exp(pos)) = 1
@@ -563,7 +563,7 @@ contains
                                pools, opts, xi_opt)
       call check('ED2 cap: f_temp<=1 at 47C, rel=opt => xi=1', xi_opt(IP_FAST_SOIL), 1.0_wp, 1.0e-12_wp)
       ! moisture: rel=opt gives f_water=1 (peak); a drier rel gives f_water<1 (lower xi):
-      opts = decomp_opts_t()
+      opts = soil_carbon_params_t()
       call assemble_env_scalar(298.15_wp, 298.15_wp, 0.1_wp + opts%resp_opt_water*(0.6_wp-0.1_wp), 0.1_wp, 0.6_wp, &
                                pools, opts, xi_opt)
       call assemble_env_scalar(298.15_wp, 298.15_wp, 0.2_wp, 0.1_wp, 0.6_wp, pools, opts, xi_dry)   ! rel < opt
@@ -579,7 +579,7 @@ contains
    !=======================================================================================!
    subroutine test_fast_slow_seam()
       type(soil_carbon_t) :: pools
-      type(decomp_opts_t) :: dopts
+      type(soil_carbon_params_t) :: dopts
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: theta, theta_dry, theta_sat, xpool
       real(wp) :: xi_int, today_rh, tmean, ftemp, fwater, rel, dt_sub, ttime, k2
@@ -593,7 +593,7 @@ contains
       !      rh_seam_gap (the matrix against the fast loop's accumulation of the SAME matrix), and
       !      test_biogeochem_dynamics asserts it. Part (b) below builds its own Q10 and moisture
       !      factors inline.
-      dopts = decomp_opts_t() ; dopts%decomp_scheme = DECOMP_SCHEME_CENTURY5   ! Q10 temp form
+      dopts = soil_carbon_params_t() ; dopts%decomp_scheme = DECOMP_SCHEME_CENTURY5   ! Q10 temp form
       dopts%rh_q10 = 1.5_wp ; dopts%rh_t_ref = 288.15_wp ; dopts%k_fast = 12.0_wp
       k2 = dopts%k_fast / yr_day
 

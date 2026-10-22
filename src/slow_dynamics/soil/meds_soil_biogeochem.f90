@@ -34,7 +34,7 @@ module meds_soil_biogeochem
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL, &
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_patch_state_vars,   only : soil_carbon_t
-   use meds_biogeochem_params, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_CENTURY5
+   use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_CENTURY5
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
    implicit none
    private
@@ -108,7 +108,7 @@ contains
       real(wp),            intent(in)  :: soil_temp_surf, soil_temp_active     !< [K]
       real(wp),            intent(in)  :: theta_active, theta_dry, theta_sat   !< [m3/m3]
       type(soil_carbon_t), intent(in)  :: pools                               !< for f_lignin
-      type(decomp_opts_t), intent(in)  :: opts
+      type(soil_carbon_params_t), intent(in)  :: opts
       real(wp),            intent(out) :: xi(N_SOIL_POOL)                     !< [-] diagonal scalar, > 0
       real(wp) :: f_temp_surf, f_temp_active, f_water, rel, f_lig_g, f_lig_s, brake_g, brake_s
 
@@ -134,7 +134,7 @@ contains
    !----- Decomposition temperature factor: scheme-5 UNCAPPED Q10; else ED2 capped exp. ----------!
    pure function decomp_temperature_factor(soil_temp, opts) result(f_temp)
       real(wp),            intent(in) :: soil_temp
-      type(decomp_opts_t), intent(in) :: opts
+      type(soil_carbon_params_t), intent(in) :: opts
       real(wp) :: f_temp
       if (opts%decomp_scheme == DECOMP_SCHEME_CENTURY5) then         ! Collatz/K13 Q10 (uncapped, > 1 above ref)
          f_temp = opts%rh_q10 ** ((soil_temp - opts%rh_t_ref) * 0.1_wp)
@@ -146,7 +146,7 @@ contains
    !----- One-sided moisture/oxygen modifier about resp_opt_water (SAME form as the fast Rh). ----!
    pure function decomp_water_factor(rel, opts) result(f_water)
       real(wp),            intent(in) :: rel
-      type(decomp_opts_t), intent(in) :: opts
+      type(soil_carbon_params_t), intent(in) :: opts
       real(wp) :: f_water
       if (rel <= opts%resp_opt_water) then
          f_water = exp((rel - opts%resp_opt_water) * opts%resp_water_below_opt)      ! dry side
@@ -175,7 +175,7 @@ contains
    !=======================================================================================!
    pure subroutine assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
       type(soil_carbon_t), intent(in)  :: pools
-      type(decomp_opts_t), intent(in)  :: opts
+      type(soil_carbon_params_t), intent(in)  :: opts
       real(wp),            intent(out) :: a_mat(N_SOIL_POOL, N_SOIL_POOL)   !< [-] a_ii=-1, a_ij transfer frac
       real(wp),            intent(out) :: k_diag(N_SOIL_POOL)               !< [1/day] baseline decay rates
       real(wp),            intent(out) :: er(N_SOIL_POOL)                   !< [-] respired fraction 1 - sum_i a_ij
@@ -300,7 +300,7 @@ contains
       type(soil_carbon_t), intent(inout) :: pools
       real(wp),            intent(in)    :: u(N_SOIL_POOL), lignin_in(2)
       real(wp),            intent(in)    :: xi_int(N_SOIL_POOL)   !< [day] INT_day xi_j dt (fast accumulator)
-      type(decomp_opts_t), intent(in)    :: opts
+      type(soil_carbon_params_t), intent(in)    :: opts
       real(wp),            intent(out)   :: rh_today              !< [kgC/m2/day] actual pool loss = fast loop's Rh
       type(soilc_audit_t), intent(out)   :: audit
       real(wp) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
@@ -400,7 +400,7 @@ contains
    pure subroutine solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, opts, pools_ss)
       real(wp),            intent(in)  :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
       real(wp),            intent(in)  :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL)
-      type(decomp_opts_t), intent(in)  :: opts
+      type(soil_carbon_params_t), intent(in)  :: opts
       type(soil_carbon_t), intent(out) :: pools_ss
       real(wp)    :: x_ss(N_SOIL_POOL)
       !----- opts is not read: the active set {K_j>0} is derived inside steady_state_vector,           !

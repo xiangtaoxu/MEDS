@@ -9,7 +9,7 @@ module meds_biophysics_params
    implicit none
    private
 
-   public :: snow_params_t, aero_cfg_t
+   public :: snow_params_t, aero_params_t
 
    !----- The [snow] block (docs/science/snow_biophysics.md): one layer of fixed density   !
    !      and conductivity. ---------------------------------------------------------------!
@@ -30,7 +30,7 @@ module meds_biophysics_params
 
    !----- The [aerodynamics] block (docs/science/canopy_aerodynamics.md); the von Karman   !
    !      constant is in meds_constants. --------------------------------------------------!
-   type :: aero_cfg_t
+   type :: aero_params_t
       real(wp) :: z0m_ratio = 0.13_wp               !< z0m / canopy height
       real(wp) :: d_ratio   = 0.63_wp               !< displacement / canopy height
       real(wp) :: snow_rough = 0.001_wp             !< [m] snow-surface roughness (blend floor)
@@ -61,6 +61,6 @@ module meds_biophysics_params
       real(wp) :: ocyli_turb = 0.0_wp,  acyli_turb = 0.24_wp, ncyli_turb = 0.60_wp
       real(wp) :: bcyli_lami = 0.48_wp, mcyli_lami = 0.25_wp
       real(wp) :: bcyli_turb = 0.09_wp, mcyli_turb = 1.0_wp/3.0_wp
-   end type aero_cfg_t
+   end type aero_params_t
 
 end module meds_biophysics_params

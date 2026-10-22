@@ -5,7 +5,7 @@
 ! ground's optical state (docs/science/canopy_radiation_transfer.md). Aerodynamics: the    !
 ! atmosphere and canopy-air state, the canopy geometry, and the returned conductances and  !
 ! wind (docs/science/canopy_aerodynamics.md). set_aero_env_atm and set_aero_env_canopy     !
-! are the one way to fill aero_env_t; the aerodynamics options (aero_cfg_t) are in         !
+! are the one way to fill aero_env_t; the aerodynamics options (aero_params_t) are in      !
 ! meds_biophysics_params.                                                                  !
 !==========================================================================================!
 module meds_canopy_types

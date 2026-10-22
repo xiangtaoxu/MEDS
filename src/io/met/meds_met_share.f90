@@ -75,7 +75,7 @@ contains
       if (.not. src%fcfg%recycle) return
 
       !----- The whole-year span, checked here as well as in validate_config, so a driver built   !
-      !      directly from a forcing_config_t (as the unit tests build one) cannot skip it. -------!
+      !      directly from a forcing_params_t (as the unit tests build one) cannot skip it. -------!
       src%n_cycle_years = whole_years_between(src%fcfg%recycle_start, src%fcfg%recycle_end,     &
                                               MAX_RECYCLE_YEARS)
       if (src%n_cycle_years < 1_ik) then

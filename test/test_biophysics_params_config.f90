@@ -11,12 +11,12 @@
 program test_biophysics_params_config
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
-   use meds_biophysics_params, only : snow_params_t, aero_cfg_t
+   use meds_biophysics_params, only : snow_params_t, aero_params_t
    use meds_soil_params,     only : soil_params_t, SOIL_BC_AQUIFER, SOIL_BC_DRAIN,                    &
                                     ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_config,          only : meds_config_t
    use meds_toml,            only : toml_table_t, toml_parse_file, toml_write_record
-   use meds_config_io,       only : load_fast_params, load_soil, load_snow_params, load_aero_cfg
+   use meds_config_io,       only : load_fast_params, load_soil, load_snow_params, load_aero_params
    implicit none
 
    character(len=*), parameter :: TOMLFILE = 'test_biophysics_params_tmp.toml'
@@ -24,7 +24,7 @@ program test_biophysics_params_config
    type(soil_params_t)  :: s
    type(meds_config_t)  :: c
    type(snow_params_t)  :: sn
-   type(aero_cfg_t)     :: a
+   type(aero_params_t)  :: a
    integer(ik) :: u
    logical     :: ok
 
@@ -58,7 +58,7 @@ program test_biophysics_params_config
    call load_fast_params(tm, c)
    call load_soil(tm, s)
    call load_snow_params(tm, sn)
-   call load_aero_cfg(tm, a)
+   call load_aero_params(tm, a)
 
    print '(a)', 'test_biophysics_params_config:'
 

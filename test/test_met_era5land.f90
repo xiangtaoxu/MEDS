@@ -12,7 +12,7 @@ program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_time,            only : meds_time_t
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_ERA5LAND, METAVG_END, CLAMP_ERROR
+   use meds_forcing_params,  only : forcing_params_t, MET_BACKEND_ERA5LAND, METAVG_END, CLAMP_ERROR
    use meds_radiation_lib,   only : SWPART_CLEARIDX, SWPART_PASSTHROUGH, clear_sky_emissivity
    use meds_met_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
    use meds_therm_lib,       only : sat_specific_humidity, lapse_pressure, sat_vapor_pressure
@@ -63,7 +63,7 @@ contains
    subroutine site_cursor(src, cur, fc)
       type(met_source_t),     intent(in)  :: src
       type(met_cursor_t),     intent(out) :: cur
-      type(forcing_config_t), intent(in)  :: fc
+      type(forcing_params_t), intent(in)  :: fc
       call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude,                   &
                            fc%elevation)
    end subroutine site_cursor
@@ -196,7 +196,7 @@ contains
 
    !----- A reader config on the synthetic archive at the valid cell (1,3), 35 N 120 W. ----------!
    function archive_config() result(fc)
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       fc%format = MET_BACKEND_ERA5LAND ; fc%data_path = DIR ; fc%max_distance_km = 50.0_wp
       fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%latitude = 35.0_wp ; fc%longitude = -120.0_wp
@@ -210,7 +210,7 @@ contains
    subroutine test_driver_months()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: t
       integer(ik) :: st, g
@@ -301,7 +301,7 @@ contains
    subroutine test_driver_recycle()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: t
       integer(ik) :: st, g
@@ -343,7 +343,7 @@ contains
    !=======================================================================================!
    subroutine test_driver_rejections()
       type(met_source_t)     :: src
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       integer(ik) :: st
       print '(a)', '-- era5land 7: rejections at open --'
       fc = archive_config()
@@ -371,7 +371,7 @@ contains
       type(met_source_t)     :: region, site(2)
       type(met_cursor_t)     :: cur(2), cur_site(2)
       type(met_cells_t)      :: cells
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met, met_site
       type(meds_time_t)      :: t, times(3)
       integer(ik) :: st, k, j, loads
@@ -453,7 +453,7 @@ contains
    subroutine test_driver_recycle_anchors()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: t
       integer(ik) :: st, loads, d

@@ -29,7 +29,7 @@ program test_surface_maps
                                           MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
                                           read_map_inputs
    use meds_config,                only : meds_config_t, alloc_pft_table, apply_map_inputs
-   use meds_maps_params,           only : maps_opts_t, map_inputs_t
+   use meds_maps_params,           only : maps_params_t, map_inputs_t
    use meds_soil_hydr_lib,         only : soil_texture_t, soil_texture_to_hydraulics
    use meds_therm_lib,             only : soil_texture_to_thermal
    use meds_soil_params,           only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
@@ -45,7 +45,7 @@ program test_surface_maps
    real(wp), allocatable :: v(:), v3(:,:)
    integer(ik) :: st, r, c, l, k, n_dropped
    logical :: ok
-   type(maps_opts_t)   :: opts
+   type(maps_params_t) :: opts
    type(map_inputs_t) :: inp
    type(meds_config_t)    :: cfg, cfg2
    type(soil_texture_t)   :: t5, t6, tex

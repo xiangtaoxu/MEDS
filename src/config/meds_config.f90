@@ -27,25 +27,25 @@ module meds_config
    use meds_fast_params,        only : INTEG_ARK, CTRL_I
    use meds_soil_params,        only : soil_params_t, soil_texture_layers_t, soil_profile_t,          &
                                        SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
-   use meds_biophysics_params,  only : snow_params_t, aero_cfg_t
-   use meds_biogeochem_params,  only : decomp_opts_t
-   use meds_forcing_params,     only : forcing_config_t
-   use meds_output_params,      only : output_config_t
-   use meds_region_params,      only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
-   use meds_maps_params,        only : maps_opts_t, soil_maps_on, map_inputs_t, MAP_BC_LEAKY,          &
+   use meds_biophysics_params,  only : snow_params_t, aero_params_t
+   use meds_biogeochem_params,  only : soil_carbon_params_t
+   use meds_forcing_params,     only : forcing_params_t
+   use meds_output_params,      only : output_params_t
+   use meds_region_params,      only : region_params_t, RUN_MODE_SITE, RUN_MODE_REGION
+   use meds_maps_params,        only : maps_params_t, soil_maps_on, map_inputs_t, MAP_BC_LEAKY,        &
                                        MAP_BC_SEALED, MAP_BC_AQUIFER
    use meds_sites_params,       only : site_spec_t
    implicit none
    private
 
-   public :: meds_config_t, init_opts_t
+   public :: meds_config_t, init_params_t
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: derive_config, derive_parameters, growth_window_steps, site_config
    public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
-   public :: forcing_config_t, output_config_t
-   public :: decomp_opts_t
-   public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
-   public :: maps_opts_t, soil_maps_on
+   public :: forcing_params_t, output_params_t
+   public :: soil_carbon_params_t
+   public :: region_params_t, RUN_MODE_SITE, RUN_MODE_REGION
+   public :: maps_params_t, soil_maps_on
    public :: alloc_pft_table, derive_leaf_params
    public :: soil_column_layers, soil_column_texture, soil_column_params, soil_column_start_theta
    public :: top_soil_psi, SOIL_LAYER_TEMPLATE, soil_layer_grid, apply_map_inputs
@@ -67,7 +67,7 @@ module meds_config
    real(wp), parameter :: GRID_TOL = 1.0e-6_wp     !< [m] a depth this close to a list bottom ends on it
 
    !----- [init]: how the run starts. -----------------------------------------------------------!
-   type :: init_opts_t
+   type :: init_params_t
       integer(ik)        :: init_mode                     !< INIT_BARE | INIT_CENSUS | INIT_RESTART
       character(len=256) :: restart_file = ''             !< the state file init_mode = 2 reads
       character(len=256) :: census_file  = ''             !< the cohort CSV init_mode = 1 reads
@@ -75,7 +75,7 @@ module meds_config
       real(wp)           :: soil_temp    = 288.0_wp       !< [K] every soil layer's start
       real(wp)           :: soil_theta   = 0.30_wp        !< [m3/m3] every soil layer's start
       logical            :: reacclimate_traits = .false.  !< a restart's plastic traits from this PFT file
-   end type init_opts_t
+   end type init_params_t
 
    type :: meds_config_t
       !----- [run]. ---------------------------------------------------------------------------!
@@ -111,7 +111,7 @@ module meds_config
       type(soil_params_t) :: soil
       !----- [snow], [aerodynamics]. -----------------------------------------------------------!
       type(snow_params_t) :: snow
-      type(aero_cfg_t)    :: aero
+      type(aero_params_t) :: aero
 
       !----- [demography]. ---------------------------------------------------------------------!
       logical     :: demography_on                        !< .false.: the stand's structure is frozen
@@ -138,8 +138,8 @@ module meds_config
       real(wp) :: min_recruit_size                        !< [plant/m2]
 
       !----- [init], [output] (the diagnostics and the state files). -----------------------------!
-      type(init_opts_t)     :: init
-      type(output_config_t) :: output
+      type(init_params_t)   :: init
+      type(output_params_t) :: output
 
       !----- [carbon], [trait_dynamics]. --------------------------------------------------------!
       real(wp) :: gpp_ref = 0.0_wp                        !< [kgC/m2 leaf/yr] stub GPP, fast loop off
@@ -167,10 +167,10 @@ module meds_config
       real(wp)    :: acclim_window_days = 30.0_wp      !< [day]
 
       !----- [soil_carbon], [site]/[forcing], [region], [maps], [[sites]]. ----------------------!
-      type(decomp_opts_t)    :: soil_carbon
-      type(forcing_config_t) :: forcing
-      type(region_opts_t)    :: region
-      type(maps_opts_t)      :: maps
+      type(soil_carbon_params_t) :: soil_carbon
+      type(forcing_params_t)     :: forcing
+      type(region_params_t)      :: region
+      type(maps_params_t)        :: maps
       type(site_spec_t), allocatable :: sites(:)          !< not allocated: one site, the polygon
 
       !----- The PFT file. ------------------------------------------------------------------------!

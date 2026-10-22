@@ -22,7 +22,7 @@ program test_aerodynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : von_karman
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
-   use meds_biophysics_params,   only : aero_cfg_t
+   use meds_biophysics_params,   only : aero_params_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, mo_surface_layer,            &
                                         reduced_wind, boundary_gbh_mos, open_canopy_fraction
    implicit none
@@ -43,7 +43,7 @@ contains
 
    !----- 1. Neutral log-law recovery. -------------------------------------------------------!
    subroutine test_neutral()
-      type(aero_cfg_t) :: cfg
+      type(aero_params_t) :: cfg
       real(wp) :: ustar, temp1, zeta, rib, obu, uref, z0m, zldis, ln
       uref = 5.0_wp ; z0m = 0.1_wp ; zldis = 10.0_wp    ! displace = 0 => zldis = zref
       call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
@@ -56,7 +56,7 @@ contains
 
    !----- 2. Stability ordering: unstable > neutral > stable ustar. --------------------------!
    subroutine test_stability_order()
-      type(aero_cfg_t) :: cfg
+      type(aero_params_t) :: cfg
       real(wp) :: us_u, us_n, us_s, t1, z, r, o
       call mo_surface_layer(cfg, 3.0_wp, 10.0_wp, 0.0_wp, 0.1_wp, 298.15_wp, 0.010_wp,          &
                             298.15_wp, 0.010_wp, us_n, t1, z, r, o)                 ! neutral
@@ -70,7 +70,7 @@ contains
 
    !----- 3. Wind profile monotonic in height (neutral). -------------------------------------!
    subroutine test_wind_profile()
-      type(aero_cfg_t) :: cfg
+      type(aero_params_t) :: cfg
       real(wp) :: u_lo, u_hi
       u_lo = reduced_wind(cfg, 0.4_wp, 0.0_wp,  3.0_wp, 0.0_wp, 0.1_wp, 10.0_wp)
       u_hi = reduced_wind(cfg, 0.4_wp, 0.0_wp, 12.0_wp, 0.0_wp, 0.1_wp, 10.0_wp)
@@ -80,7 +80,7 @@ contains
 
    !----- 4. Boundary-layer conductance positive + increases with wind. ----------------------!
    subroutine test_boundary_layer()
-      type(aero_cfg_t) :: cfg
+      type(aero_params_t) :: cfg
       real(wp) :: g_lo, g_hi
       g_lo = boundary_gbh_mos(cfg, 0.5_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
       g_hi = boundary_gbh_mos(cfg, 5.0_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
@@ -90,7 +90,7 @@ contains
 
    !----- 5. Master kernel on a 2-cohort patch. ----------------------------------------------!
    subroutine test_master()
-      type(aero_cfg_t)  :: cfg
+      type(aero_params_t) :: cfg
       type(aero_env_t)  :: env
       type(aero_geom_t) :: geom
       type(aero_out_t)  :: out
@@ -130,7 +130,7 @@ contains
 
    !----- 6. The open-canopy blend of the ground conductance (eq. (6)). ----------------------!
    subroutine test_open_canopy()
-      type(aero_cfg_t)  :: cfg
+      type(aero_params_t) :: cfg
       type(aero_env_t)  :: env
       type(aero_geom_t) :: geom
       type(aero_out_t)  :: out
@@ -175,7 +175,7 @@ contains
    !      share one radiation layer: test_master's stand with its top crown split into two cohorts of  !
    !      half the leaf area each must give every cohort the wind the unsplit stand gives it. ------!
    subroutine test_tied_layer()
-      type(aero_cfg_t)  :: cfg
+      type(aero_params_t) :: cfg
       type(aero_env_t)  :: env
       type(aero_geom_t) :: geom
       type(aero_out_t)  :: one, split
