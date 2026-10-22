@@ -5,18 +5,17 @@
 ! stores and the cohorts' tissue energy, water and films, runs n_fast_per_slow sub-steps   !
 ! of column_fast_step, and writes the evolved state back. It accumulates the GPP and       !
 ! maintenance respiration the slow step's carbon allocation reads, and stages the output.  !
-! build_fast_context and init_fast_reservoirs prepare a polygon for it.                    !
+! build_fast_context (meds_fast_config) prepares a run for it.                             !
 !==========================================================================================!
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgc, latent_heat_vap, day_sec, p_std,              &
-                                     par_w_2_umol, stefan_boltzmann, n_soil_layer_max
+   use meds_constants,        only : tiny_num, umol_2_kgc, latent_heat_vap, day_sec, p_std, par_w_2_umol,         &
+                                     stefan_boltzmann, n_soil_layer_max
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t, top_soil_psi
+   use meds_config,           only : meds_config_t
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy,                            &
-                                        specific_humidity_to_vpd, precip_phase
+   use meds_therm_lib,           only : cas_temp_to_enthalpy, specific_humidity_to_vpd, precip_phase
    use meds_fast_config, only : fast_context_t, site_column_configs
    use meds_column_view, only : copy_column_cohort
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string, seconds_into_day,         &
@@ -38,8 +37,7 @@ module meds_fast_dynamics
    use meds_radiation_lib,    only : slope_beam_factor
    use meds_met,       only : met_advance, met_instant, met_to_cas_top, met_at_site
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
-   use meds_cohort_state_vars, only : set_cohort_tissue_water, hold_cohort_tissue_temps, cohort_tissue_temps, &
-                                      set_cohort_tissue_temps
+   use meds_cohort_state_vars, only : cohort_tissue_temps, set_cohort_tissue_temps
    use meds_state_defaults,    only : DMAX_PSI_LEAF_ACCUM_RESET
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity,                   &
@@ -47,7 +45,7 @@ module meds_fast_dynamics
                                  N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm,                  &
                                  set_aero_env_canopy, ground_optics_state_t
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t,                  &
-                               column_config_t, column_cohort_t, column_forcing_t, column_budget_t,               &
+                               column_cohort_t, column_forcing_t, column_budget_t,                                &
                                ensure_column_cohort_capacity, column_site_t
    use meds_biophysics_params, only : snow_params_t
    use meds_canopy_radiation, only : canopy_radiation, ground_optics
@@ -57,7 +55,7 @@ module meds_fast_dynamics
    implicit none
    private
 
-   public :: init_fast_reservoirs, fast_dynamics
+   public :: fast_dynamics
 
    !----- Slots of the reduction staging: each (patch, sub-step) writes its own cells, folded in patch !
    !      order after the loop, so the sums do not move with the thread count                       !
@@ -82,44 +80,6 @@ module meds_fast_dynamics
    real(wp),    parameter :: TISSUE_TEMP_TOL   = 1.0e-6_wp
 
 contains
-
-   !----- Seed every patch's fast stores to a horizontally uniform equilibrium, and its cohorts with  !
-   !      them as a recruit is born: at the canopy-air temperature, holding the water their tissues  !
-   !      hold at the top soil layer's potential. Called once, after the community is built. -------!
-   subroutine init_fast_reservoirs(poly, ctx)
-      type(polygon_t),      intent(inout) :: poly
-      type(fast_context_t), intent(in)    :: ctx
-      integer(ik) :: ip, k, nsl, i
-      real(wp)    :: psi
-      do ip = 1_ik, poly%patch%n
-         associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
-                    surf => poly%site%surface(poly%patch%owner_site(ip)))
-            nsl = surf%soil%n_active
-            sw%theta(1:nsl)  = surf%theta_start(1:nsl)
-            sw%w_surface = 0.0_wp
-            sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
-            do k = 1_ik, nsl
-               se%soil_energy(k) = temp_to_internal_energy(surf%soil_thermal%soil_dry_heat_capacity(k),             &
-                                   surf%theta_start(k) * rho_h2o, ctx%soil_temp_init, 1.0_wp)
-               se%soil_temp(k)   = ctx%soil_temp_init
-               se%soil_fliq(k) = 1.0_wp
-            end do
-            cas%can_shv      = ctx%shv_atm
-            cas%can_co2 = ctx%co2_atm
-            cas%can_enthalpy = cas_temp_to_enthalpy(ctx%air_temp, ctx%shv_atm)
-            cas%can_temp     = ctx%air_temp
-            psi = top_soil_psi(surf%soil, sw%theta(1))
-            do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
-               poly%cohort%leaf_temp(i) = cas%can_temp
-               poly%cohort%wood_temp(i) = cas%can_temp
-               associate (hyd => ctx%col_config%hydraulics_table%pft(poly%cohort%pft(i)))
-                  call set_cohort_tissue_water(poly%cohort, i, psi, hyd%leaf_curve, hyd%wood_curve)
-               end associate
-               call hold_cohort_tissue_temps(poly%cohort, i)
-            end do
-         end associate
-      end do
-   end subroutine init_fast_reservoirs
 
    !=======================================================================================!
    !  Advance every patch of the polygon by one slow step of fast biophysics:              !

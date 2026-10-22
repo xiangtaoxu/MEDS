@@ -23,7 +23,8 @@ program test_fast_loop
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_config,         only : fast_context_t, build_fast_context, apply_hydraulics_config,              &
                                         apply_canopy_film_config, build_leaf_photo_table, build_integrator_opts
-   use meds_fast_dynamics,       only : init_fast_reservoirs, fast_dynamics
+   use meds_fast_dynamics,       only : fast_dynamics
+   use meds_init,                only : init_fast_state
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds
@@ -70,18 +71,18 @@ program test_fast_loop
    ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
-   ctx%soil_temp_init = 288.0_wp
+   cfg%init%soil_temp = 288.0_wp
 
    !----- Two patches: patch 1 vegetated, patch 2 BARE (zero cohorts). ---------------------!
    call init_bare_ground(poly, cfg, 2_ik)
    call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)     ! patch 1: one tree cohort
    call finalize_init(poly)
-   call init_fast_reservoirs(poly, ctx)
+   call init_fast_state(poly, cfg)
 
    t_cas0    = poly%patch%cas(1)%can_temp
    theta0_1  = poly%patch%soil_water(1)%theta(1)
-   !----- init_fast_reservoirs starts the cohort in its patch's state: holding the water its tissues !
+   !----- init_fast_state starts the cohort in its patch's state: holding the water its tissues      !
    !      hold at the top soil layer's potential, so the fast loop's first touch reads a real store,  !
    !      not a sentinel to seed. --------------------------------------------------------------------!
    mass0_leaf = poly%cohort%leaf_water_mass(1)
@@ -123,14 +124,14 @@ program test_fast_loop
       real(wp) :: t_before
       !----- Gate OFF (fast_biophysics_on = .false.): the fast loop must NOT run, even with a ctx. !
       cfg%fast_biophysics_on = .false.
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       t_before = poly%patch%cas(1)%can_temp
       call advance_one_step(poly, cfg, ctx)     ! gate off -> fast loop skipped
       call check_close(poly%patch%cas(1)%can_temp, t_before, 1.0e-12_wp, &
                        'fast loop must NOT run when fast_biophysics_on is off')
       !----- Gate ON (fast_biophysics_on = .true. + context): the hook fires, reservoirs change. -!
       cfg%fast_biophysics_on = .true.
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       t_before = poly%patch%cas(1)%can_temp
       call advance_one_step(poly, cfg, ctx)
       call check(abs(poly%patch%cas(1)%can_temp - t_before) > 0.05_wp, &
@@ -176,7 +177,7 @@ program test_fast_loop
    call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(poly)
-   call init_fast_reservoirs(poly, ctx)
+   call init_fast_state(poly, cfg)
    call advance_one_step(poly, cfg, ctx)
    cbal1 = poly%cohort%leaf_carbon(1) + poly%cohort%fineroot_carbon(1)                          &
          + poly%cohort%wood_carbon(1) + poly%cohort%nonstructural_carbon(1)
@@ -220,14 +221,14 @@ program test_fast_loop
                            cfg%forcing%longitude,                            &
                            cfg%forcing%elevation)
 
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,2_ik))    ! 02-04 UTC (night)
       gpp_night = poly%cohort%gpp_accum(1)
       light_night = poly%cohort%light_hours_accum(1)
       tcas_n    = poly%patch%cas(1)%can_temp      ! night canopy-air temp after the SW=0 window
 
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       gpp_day = poly%cohort%gpp_accum(1)
@@ -249,7 +250,7 @@ program test_fast_loop
          t0 = meds_time_t(2020_ik,7_ik,1_ik,15_ik)
          poly%diag%active = .true.
          ob%fast_on = .true.
-         call init_fast_reservoirs(poly, ctx)
+         call init_fast_state(poly, cfg)
          call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
          call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude, &
                               cfg%forcing%elevation)
@@ -349,7 +350,7 @@ program test_fast_loop
          call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude,      &
                               cfg%forcing%longitude,                            &
                               cfg%forcing%elevation)
-         call init_fast_reservoirs(poly, ctx)
+         call init_fast_state(poly, cfg)
          call fast_dynamics(poly, ctx, cfg, met_src=drv3, met_cur=cur3,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
          call met_close(drv3)
@@ -397,7 +398,7 @@ program test_fast_loop
          call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude,      &
                               cfg%forcing%longitude,                            &
                               cfg%forcing%elevation)
-         call init_fast_reservoirs(poly, ctx)
+         call init_fast_state(poly, cfg)
          ctx_mt = ctx ; ctx_mt%patch_threads = 4_ik
          call fast_dynamics(poly, ctx_mt, cfg, met_src=drv4, met_cur=cur4,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
@@ -462,7 +463,7 @@ program test_fast_loop
                            cfg%forcing%longitude,                            &
                            cfg%forcing%elevation)
 
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
@@ -505,7 +506,7 @@ program test_fast_loop
       call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
                            cfg%forcing%longitude,                            &
                            cfg%forcing%elevation)
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
       call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
@@ -531,7 +532,7 @@ program test_fast_loop
       call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(poly)
-      call init_fast_reservoirs(poly, ctx)
+      call init_fast_state(poly, cfg)
 
       !----- One normal call evolves the birth water (the round trip block 1 exercises). ----------!
       call fast_dynamics(poly, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
@@ -637,7 +638,7 @@ program test_fast_loop
          call met_open(drv, cfg%forcing)
          call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude,        &
                               cfg%forcing%elevation)
-         call init_fast_reservoirs(poly, ctx)
+         call init_fast_state(poly, cfg)
          call fast_dynamics(poly, ctx, cfg, met_src=drv, met_cur=cur, step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik), &
                             n_budget_fail=nfail(icase))
          call met_close(drv)

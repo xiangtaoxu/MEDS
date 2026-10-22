@@ -27,7 +27,8 @@ program test_biogeochem_dynamics
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_fast_config,         only : fast_context_t, apply_hydraulics_config, apply_canopy_film_config,        &
                                         build_leaf_photo_table, build_integrator_opts
-   use meds_fast_dynamics,       only : init_fast_reservoirs, fast_dynamics
+   use meds_fast_dynamics,       only : fast_dynamics
+   use meds_init,                only : init_fast_state
    use meds_slow_dynamics,       only : advance_slow_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_test_support, only : banner, build_test_config, check, check_close, check_true, test_report
@@ -64,14 +65,14 @@ program test_biogeochem_dynamics
    ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
-   ctx%soil_temp_init = 295.0_wp
+   cfg%init%soil_temp = 295.0_wp
 
    call init_bare_ground(poly, cfg, 1_ik)
 
    call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)     ! one climax cohort (turnover -> litter)
    call finalize_init(poly)
-   call init_fast_reservoirs(poly, ctx)
+   call init_fast_state(poly, cfg)
 
    !----- Seed a nonzero starting pool so decomposition (and hence Rh) is actually active. -----!
    poly%patch%soil_carbon(1)%fast_grnd_carbon   = 2.0_wp
@@ -137,7 +138,7 @@ program test_biogeochem_dynamics
       call use_test_column(poly2)
       call add_cohort(poly2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)
       call finalize_init(poly2)
-      call init_fast_reservoirs(poly2, ctx)
+      call init_fast_state(poly2, cfg)
       poly2%patch%soil_carbon(1)%slow_carbon = 500.0_wp
       totalA = poly2%patch%soil_carbon(1)%slow_carbon
       call fast_dynamics(poly2, ctx, cfg)

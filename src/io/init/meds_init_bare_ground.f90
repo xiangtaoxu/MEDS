@@ -107,7 +107,7 @@ contains
       call expand_cohort_block(poly%cohort, poly%cohort%n + 1_ik)
       m = poly%cohort%n + 1_ik
       !----- Born in its patch's state (patch_physical_state); at setup the patch is not seeded yet, so !
-      !      that is the run's starting state, and init_fast_reservoirs re-seeds it from the patch. -!
+      !      that is the run's starting state, and init_fast_state re-seeds it from the patch. ------!
       call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg,                   &
                                 poly%site%surface(poly%patch%owner_site(ip)), t_birth, psi_birth)
       call init_cohort(poly%cohort, m, cfg%pft, ipft, ip, nplant, dbh, t_birth, psi_birth)

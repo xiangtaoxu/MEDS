@@ -50,7 +50,6 @@ module meds_fast_config
       real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
       real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
       real(wp) :: precip          = 0.0_wp            !< [kg/m2/s] total precipitation (split like any record)
-      real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       !----- Patch-loop threads: [run].n_threads in a one-polygon run, else 1 (polygon_prepare). --!
       integer(ik) :: patch_threads = 1_ik
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
@@ -84,8 +83,6 @@ contains
       ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
       ctx%soil_emiss     = cfg%soil%ground_emissivity
       ctx%col_site%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
-      !----- The initial soil temperature from [init]; the initial water is each site's theta_start. -!
-      ctx%soil_temp_init = cfg%init%soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
       ctx%col_config%soil_carbon = cfg%soil_carbon   ! [soil_carbon] -> heterotrophic respiration
