@@ -302,8 +302,7 @@ contains
    ! column_derivs -- the WHOLE-column RHS. Diagnoses the soil-top temperature from the state (so    !
    ! the ground skin couples to the current soil-top energy), runs the surface block, then assembles !
    ! the soil-heat, soil-water, and per-cohort plant-water-MASS tendencies from the frozen forcing +   !
-   ! the surface couplings. Commits nothing. It is the tendency an RK45 (or RK4 oracle) stage        !
-   ! evaluates.                                                                                      !
+   ! the surface couplings. Commits nothing. It is the tendency an RK45 stage evaluates.             !
    !                                                                                                 !
    ! WATER is the soil-plant water network's (docs/science/numerical_scheme.md §5b,                  !
    ! docs/science/soil_plant_water.md §4): soil water, sapflow and root uptake move at the network's !

@@ -2,8 +2,8 @@
 !==========================================================================================!
 ! meds_column_state_ops -- the algebra and bookkeeping helpers on the fast loop's column state     !
 ! (column_state_t / column_tend_t / stage_bflux_t / column_bflux_t), owned by the types they act   !
-! on rather than by one integrator. Both schemes (meds_fast_ark, meds_fast_rk45) and the test-only  !
-! oracle import from here, so RK45 does not depend on the ARK module.                               !
+! on rather than by one integrator. Both schemes (meds_fast_ark, meds_fast_rk45) import from here,  !
+! so RK45 does not depend on the ARK module.                                                         !
 !                                                                                          !
 !   * the state's fields, listed once -- state_to_array / array_to_state / tend_to_array, and      !
 !                           state_entry_rules (how each field is treated)                          !

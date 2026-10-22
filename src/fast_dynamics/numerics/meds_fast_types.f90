@@ -339,7 +339,7 @@ module meds_fast_types
       ! the g_atm_heat/g_atm_vapour/g_atm_co2 above are therefore stale for any state other than   !
       ! the one they were solved at. Three consistent uses, none of them a user choice:            !
       !   * default .false. -- "use g_atm_heat/g_atm_vapour/g_atm_co2 exactly as given". A         !
-      !     hand-built record (a unit test, the RK4 oracle) supplies its own conductances and      !
+      !     hand-built record (a unit test) supplies its own conductances and                      !
       !     never populates the mo_* inputs, so this MUST be the default: re-solving from zeroed   !
       !     roughness and wind does not converge (test_column_derivs would hang).                  !
       !   * build_column_frozen sets .true. -- the inputs are populated, so re-solve per stage.    !

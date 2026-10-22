@@ -277,7 +277,7 @@ contains
       frozen%cas%mo_theta_atm = aenv%theta_atm ; frozen%cas%mo_shv_atm   = aenv%shv_atm
       frozen%cas%mo_rho       = rho
       !----- ...and declare the inputs live, which is what licenses a per-stage re-solve. A bundle       !
-      !      that has NOT been through here (a unit-test fixture, such as the RK4 oracle's) leaves       !
+      !      that has NOT been through here (a unit-test fixture) leaves                                 !
       !      this false, and its supplied g_atm_heat/g_atm_vapour/g_atm_co2 are used verbatim. ----------!
       frozen%cas%mo_live      = .true.
       frozen%cas%enthalpy_atm = forc%enthalpy_atm ; frozen%cas%shv_atm = forc%shv_atm ; frozen%cas%co2_atm = forc%co2_atm

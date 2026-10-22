@@ -4,8 +4,8 @@
 ! accuracy baseline (docs/science/numerical_scheme.md §3 `rk45`). Peer of meds_fast_ark:   !
 ! dispatched by meds_fast_step%column_fast_step when cfg%time_integrator == INTEG_RK45.    !
 ! Unlike the ARK's ESDIRK stages (implicit CAS + soil heat, operator-split water), RK45 is !
-! FULLY EXPLICIT over the pure RHS meds_fast_time_derivs%column_derivs that the test-only  !
-! RK4 oracle also uses: CAS, soil energy, soil water and plant water mass all ride the     !
+! FULLY EXPLICIT over the pure RHS meds_fast_time_derivs%column_derivs: CAS, soil energy, !
+! soil water and plant water mass all ride the                                             !
 ! Cash-Karp stages (the water at the network's constant rates), so the error norm scores   !
 ! all of them.                                                                             !
 !                                                                                          !

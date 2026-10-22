@@ -56,8 +56,7 @@ src/                                    35.5 k lines · 90 modules · 21 CMake l
 │   ├── soil/      the ground: soil water, soil energy, the ground skin,
 │   │              the snow store                                            1 573
 │   ├── numerics/  the integrator machinery: the state vector, the frozen
-│   │              work record, ARK and RK45, error control, the pre-pass,
-│   │              and a test-only RK4 oracle                                5 567
+│   │              work record, ARK and RK45, error control, the pre-pass    5 490
 │   └── driver/    walks one slow step in dt_fast sub-steps over the patches 1 714
 │
 ├── slow_dynamics/       daily to annual                                      4 826
