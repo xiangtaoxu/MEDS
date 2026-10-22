@@ -14,7 +14,7 @@ module meds_fast_be_stage
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_fast_time_derivs, only : surface_derivs, cas_conductances
-   use meds_cas_biophysics, only : cas_column_step_implicit, cas_column_t, cas_source_t
+   use meds_cas_biophysics, only : cas_column_step_implicit, cas_source_t
    use meds_column_state_ops, only : state_init, assemble_soil_energy_forcing
    use meds_fast_types, only : column_state_t, column_frozen_t, surface_state_t, cas_boundary_t,                  &
                                surface_tend_t, stage_bflux_t, error_control_t
@@ -66,8 +66,8 @@ contains
       wmass1 = y%theta(1) * rho_h2o
       call internal_energy_to_temp(y%soil_energy(1), wmass1, site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
 
-      cas_mass_capacity = frozen%cas%cas_mass_capacity
-      cas_molar_capacity = frozen%cas%cas_molar_capacity
+      cas_mass_capacity = frozen%cas%box%air_mass_capacity
+      cas_molar_capacity = frozen%cas%box%air_molar_capacity
       cas_stage = frozen%cas              ! plain scalars: a cheap copy, overridden with this stage's conductances below
 
       !----- Re-solve the surface layer at this stage's canopy-air state, so the stage pays for the       !
@@ -75,9 +75,9 @@ contains
       !      the Newton and the ledger all read these values. cas_stage carries them with mo_live cleared,  !
       !      so surface_derivs does not re-solve on each Newton residual evaluation. ---------------------!
       call cas_conductances(frozen%cas, y%cas_enthalpy, y%cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
-      cas_stage%g_atm_heat = g_atm_heat
-      cas_stage%g_atm_vapour = g_atm_vapour
-      cas_stage%g_atm_co2 = g_atm_co2
+      cas_stage%box%atm_conductance_enthalpy = g_atm_heat
+      cas_stage%box%atm_conductance_vapor = g_atm_vapour
+      cas_stage%box%atm_conductance_co2 = g_atm_co2
       cas_stage%mo_live = .false.
 
       !----- The coupled 2x2 Newton for the leaves and the canopy air; its final surf_tend drives the box !
@@ -86,8 +86,7 @@ contains
                                 surf_tend, nfeval, ok)
       !----- One box commit for all three twins, in flux form, so the budgets close for any surf_tend: !
       !      CO2 rides the same box as enthalpy and humidity. -----------------------------------------!
-      call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, cas_mass_capacity, cas_molar_capacity, &
-                          g_atm_heat, g_atm_vapour, g_atm_co2, dt, enth1, shv1, co21)
+      call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, dt, enth1, shv1, co21)
       y_out%cas_enthalpy = enth1
       y_out%cas_shv      = shv1
       y_out%cas_co2      = co21
@@ -132,11 +131,11 @@ contains
       !      ark2_column_step and adaptive_ark_march b-weight and accumulate telescope to closure. -------!
       if (present(bf)) then
          t_cas1 = cas_enthalpy_to_temp(enth1, shv1)         ! committed CAS temperature, for the reported H
-            bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enthalpy_atm
+            bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%box%atm_enthalpy
             bf%cas_enth_out = g_atm_heat*enth1
-            bf%cas_vap_in   = surf_tend%src_vap  + g_atm_vapour*frozen%cas%shv_atm
+            bf%cas_vap_in   = surf_tend%src_vap  + g_atm_vapour*frozen%cas%box%atm_specific_humidity
             bf%cas_vap_out  = g_atm_vapour*shv1
-            bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%co2_atm
+            bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%box%atm_co2
             bf%cas_co2_out  = g_atm_co2*y_out%cas_co2
             !----- The bottom face the soil solve committed (zero on the adiabatic base, the conduction  !
             !      to deep_temp under the Dirichlet anchor) crosses both the soil's and the column's book. !
@@ -153,14 +152,14 @@ contains
             bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad - eflux%bottom_heat
             !----- The condensate is not a boundary loss: the caller deposits it in soil layer 1 with the  !
             !      enthalpy surface_derivs debited from the CAS (whole_cond, whole_cond_enth). -----------!
-            bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%enthalpy_atm) + e_drain
+            bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%box%atm_enthalpy) + e_drain
             bf%whole_wat_in = 0.0_wp
-            bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%shv_atm)
+            bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%box%atm_specific_humidity)
             bf%whole_cond   = surf_tend%cond                     ! deposited into soil layer 1, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! exactly what surface_derivs debited from the CAS
             !----- The reported H, against theta_atm (T at zref), the ledger's basis. ----------------------!
             bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)
-            bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%shv_atm)
+            bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%box%atm_specific_humidity)
       end if
    end subroutine column_be_stage
 
@@ -204,8 +203,8 @@ contains
       call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
          t_ground, n, surf_tend)
       nfeval = nfeval + 1_ik
-      R_H = cas_mass_capacity*(Hk - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enthalpy_atm - Hk)
-      R_q = cas_mass_capacity*(qk - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qk)
+      R_H = cas_mass_capacity*(Hk - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%box%atm_enthalpy - Hk)
+      R_q = cas_mass_capacity*(qk - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%box%atm_specific_humidity  - qk)
 
       do it = 1_ik, NEWT_MAX
          if ( abs(R_H)*dt/cas_mass_capacity <= ATOL_H + RTOL_N*abs(Hk) .and.                                  &
@@ -239,8 +238,8 @@ contains
             call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,         &
                t_ground, n, surf_tend)
             nfeval = nfeval + 1_ik
-            RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enthalpy_atm - Ht)
-            Rqt = cas_mass_capacity*(qt - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qt)
+            RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%box%atm_enthalpy - Ht)
+            Rqt = cas_mass_capacity*(qt - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%box%atm_specific_humidity  - qt)
             if (sufficient_decrease(RHt*RHt + Rqt*Rqt, rn0, lam)) exit
             lam = 0.5_wp*lam
          end do
@@ -259,27 +258,16 @@ contains
    ! meds_cas_biophysics%cas_column_step_implicit (docs/science/canopy_air_space_biophysics.md         !
    ! eq. (2)): one implementation of the box, not a copy of its formulas here.                         !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cas_box_commit(h0, q0, c0, surf_tend, cas, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
-                                  g_atm_co2, dt, h1, q1, c1)
-      real(wp),               intent(in)  :: h0, q0, c0, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
-           g_atm_co2, dt
+   pure subroutine cas_box_commit(h0, q0, c0, surf_tend, cas, dt, h1, q1, c1)
+      real(wp),               intent(in)  :: h0, q0, c0, dt
       type(surface_tend_t),   intent(in)  :: surf_tend
-      type(cas_boundary_t),   intent(in)  :: cas
+      type(cas_boundary_t),   intent(in)  :: cas        !< the stage's boundary: its box carries the stage's conductances
       real(wp),               intent(out) :: h1, q1, c1
-      type(cas_column_t) :: box
       type(cas_source_t) :: src
-      box%air_mass_capacity        = cas_mass_capacity
-      box%air_molar_capacity     = cas_molar_capacity
-      box%atm_conductance_enthalpy = g_atm_heat
-      box%atm_conductance_vapor  = g_atm_vapour
-      box%atm_conductance_co2 = g_atm_co2
-      box%atm_enthalpy             = cas%enthalpy_atm
-      box%atm_specific_humidity = cas%shv_atm
-      box%atm_co2 = cas%co2_atm
       src%surface_enthalpy_source  = surf_tend%src_enth
       src%surface_vapor_source = surf_tend%src_vap
       src%biotic_co2_source        = cas%nee_biotic
-      call cas_column_step_implicit(h0, q0, c0, src, box, dt, h1, q1, c1)
+      call cas_column_step_implicit(h0, q0, c0, src, cas%box, dt, h1, q1, c1)
    end subroutine cas_box_commit
 
    !----- 2x2 numerical Jacobian of (R_H, R_q) w.r.t. (H, q) by forward-differencing surface_derivs. --!

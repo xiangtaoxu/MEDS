@@ -318,8 +318,8 @@ contains
 
       !----- The wood's absorbed radiation is already inside coh_rnet and acc%whole_enth_in. -------!
 
-      cas_mass_capacity = frozen%cas%cas_mass_capacity
-      cas_molar_capacity = frozen%cas%cas_molar_capacity
+      cas_mass_capacity = frozen%cas%box%air_mass_capacity
+      cas_molar_capacity = frozen%cas%box%air_molar_capacity
       enth0 = y%cas_enthalpy
       shv0 = y%cas_shv
       co20 = y%cas_co2

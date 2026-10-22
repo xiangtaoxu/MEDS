@@ -16,9 +16,8 @@ module meds_spac_solver
    use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, tissue_rwc_to_unknown,  &
                                     tissue_psi_to_rwc, root_water_uptake_profile, xylem_sapflow
    use meds_plant_hydraulics, only : supply_limited_transpiration
-   use meds_soil_water,      only : soil_water_flux, ground_evaporation_rate, bottom_flux
+   use meds_soil_water,      only : soil_water_flux, ground_evaporation_rate, bottom_flux, ground_evap_env_t
    use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
-   use meds_soil_types,      only : chydro_forcing_t
    use meds_soil_params,     only : soil_profile_t, soil_params_t
    use meds_pft_params,      only : hydraulics_table_t
    use meds_numerics,        only : sufficient_decrease, fraction_to_boundary
@@ -219,7 +218,7 @@ contains
       type(spac_solver_t),        intent(inout) :: spac
       type(soil_profile_t),       intent(in)    :: params
       type(soil_params_t),        intent(in)    :: opts
-      type(chydro_forcing_t),     intent(in)    :: forcing
+      type(ground_evap_env_t),     intent(in)    :: forcing
       type(hydraulics_table_t),   intent(in)    :: hyd
       real(wp),                   intent(in)    :: dt
 
@@ -283,7 +282,7 @@ contains
       type(spac_solver_t),        intent(inout) :: spac
       type(soil_profile_t),       intent(in)    :: params
       type(soil_params_t),        intent(in)    :: opts
-      type(chydro_forcing_t),     intent(in)    :: forcing
+      type(ground_evap_env_t),     intent(in)    :: forcing
       type(hydraulics_table_t),   intent(in)    :: hyd
       real(wp),                   intent(in)    :: h
       type(spac_eval_t) :: ev
@@ -341,7 +340,7 @@ contains
       type(spac_solver_t),        intent(inout) :: spac
       type(soil_profile_t),       intent(in)    :: params
       type(soil_params_t),        intent(in)    :: opts
-      type(chydro_forcing_t),     intent(in)    :: forcing
+      type(ground_evap_env_t),     intent(in)    :: forcing
       type(hydraulics_table_t),   intent(in)    :: hyd
       real(wp),                   intent(in)    :: h, scale_soil(:), scale_coh(:,:)
       real(wp),                   intent(inout) :: tau_soil(:), tau_coh(:,:)   !< start of sub-step in, solution out
@@ -474,7 +473,7 @@ contains
       type(spac_solver_t),        intent(inout) :: spac
       type(soil_profile_t),       intent(in)    :: params
       type(soil_params_t),        intent(in)    :: opts
-      type(chydro_forcing_t),     intent(in)    :: forcing
+      type(ground_evap_env_t),     intent(in)    :: forcing
       type(hydraulics_table_t),   intent(in)    :: hyd
       real(wp),                   intent(in)    :: tau_soil(:), tau_coh(:,:)
       type(spac_eval_t),          intent(inout) :: ev

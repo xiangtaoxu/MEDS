@@ -41,13 +41,13 @@ program test_spac_solver
    use meds_soil_params, only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN
    use meds_soil_derive,        only : build_profile_hydraulics
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_types,    only : chydro_forcing_t
+   use meds_soil_water,    only : ground_evap_env_t
    implicit none
 
    type(hydraulics_table_t)   :: hyd
    type(soil_profile_t)       :: soil
    type(soil_params_t)        :: sopts
-   type(chydro_forcing_t)     :: forc
+   type(ground_evap_env_t)     :: forc
    !----- The water network's tolerances: [fast].rtol and water_atol at their defaults. ---------!
    real(wp), parameter :: WATER_RTOL = 1.0e-3_wp, WATER_ATOL = 1.0e-4_wp
 
@@ -303,7 +303,7 @@ contains
    subroutine test_soil_only()
       type(spac_solver_t)    :: spac
       type(soil_params_t)    :: sealed
-      type(chydro_forcing_t) :: still
+      type(ground_evap_env_t) :: still
       real(wp) :: theta(soil%n_active), head(soil%n_active), w0
       integer(ik) :: step, nsl
       nsl = soil%n_active

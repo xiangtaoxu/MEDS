@@ -11,7 +11,6 @@
 module meds_soil_water
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav, grav_head, r_wv, tiny_num, p_std, safe_exp
-   use meds_soil_types, only : chydro_forcing_t
    use meds_soil_params,      only : soil_profile_t, soil_params_t, SOIL_BC_AQUIFER
    use meds_soil_hydr_lib,    only : soil_head_to_theta
    use meds_numerics,         only : smooth_max0
@@ -20,6 +19,7 @@ module meds_soil_water
    private
 
    public :: soil_water_flux, ground_evaporation_rate, bottom_flux
+   public :: ground_evap_env_t
 
    !----- Widths of the two rounded corners in ground_evaporation_rate: [kg/kg] where the surface's  !
    !      humidity meets the air's (evaporation stops; there is no dew), and [m3/m3] where the top   !
@@ -28,6 +28,19 @@ module meds_soil_water
    real(wp), parameter :: DSL_THETA_WIDTH     = 1.0e-3_wp
    !----- CLM5 eq 5.78: the 'air dry' matric head [m], where the soil counts as dry (CLM5's 1e7 mm). !
    real(wp), parameter :: PSI_AIR_DRY = -1.0e4_wp
+
+   !----- The boundary ground_evaporation_rate reads: the ground skin and the canopy air over it. ----!
+   type :: ground_evap_env_t
+      real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temperature
+      !----- A frozen surface evaporates over ice (docs/science/snow_biophysics.md eq. (1)). ---------!
+      real(wp) :: ground_fliq = 1.0_wp                    !< [-] top-layer liquid fraction
+      real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
+      real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
+      real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the bare-soil tile
+                                                          !<       (1/ggnet), not inflated for snow
+      real(wp) :: snow_free_frac = 1.0_wp                 !< [-] snow-free area fraction (1-snowfac) that evaporates,
+                                                          !<     an area-weighted tile flux (snow_biophysics.md)
+   end type ground_evap_env_t
 
 contains
 
@@ -96,7 +109,7 @@ contains
       real(wp),               intent(in)  :: theta1      !< [m3/m3] top-layer water content
       real(wp),               intent(in)  :: psi1        !< [m]     top-layer matric head
       type(soil_profile_t),   intent(in)  :: profile
-      type(chydro_forcing_t), intent(in)  :: forcing
+      type(ground_evap_env_t), intent(in) :: forcing
       type(soil_params_t),    intent(in)  :: soil
       real(wp),               intent(out) :: e_soil      !< [kg/m2/s]
       real(wp),               intent(out) :: de_dtheta   !< [kg/m2/s per m3/m3]

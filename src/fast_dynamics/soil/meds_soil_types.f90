@@ -1,8 +1,9 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_soil_types -- the argument records (data only) of the ground-column kernels: the    !
-! boundary ground evaporation reads, the soil thermal column's forcing and outputs, and    !
-! the snow store's (docs/science/soil_biophysics.md, docs/science/snow_biophysics.md).     !
+! soil thermal column's forcing and outputs, and the snow store's                          !
+! (docs/science/soil_biophysics.md, docs/science/snow_biophysics.md). Ground evaporation's !
+! boundary, ground_evap_env_t, is beside its one kernel in meds_soil_water.               !
 ! The prognostic stores are in meds_patch_state_vars; the soil's parameters and options   !
 ! in meds_soil_params, the snow's parameters in meds_biophysics_params.                    !
 !==========================================================================================!
@@ -12,27 +13,8 @@ module meds_soil_types
    implicit none
    private
 
-   public :: chydro_forcing_t
    public :: energy_forcing_t, energy_flux_t
    public :: snow_env_t, snow_flux_t, snow_melt_t
-
-   !=======================================================================================!
-   !  Soil-column water: the boundary ground evaporation reads. The soil's profile and     !
-   !  parameters are soil_profile_t and soil_params_t (meds_soil_params).                  !
-   !=======================================================================================!
-
-   !----- The surface boundary ground_evaporation_rate reads (read-only). ---------------------------!
-   type :: chydro_forcing_t
-      real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temperature
-      !----- A frozen surface evaporates over ice (docs/science/snow_biophysics.md eq. (1)). ---------!
-      real(wp) :: ground_fliq = 1.0_wp                    !< [-] top-layer liquid fraction
-      real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
-      real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
-      real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the bare-soil tile
-                                                          !<       (1/ggnet), not inflated for snow
-      real(wp) :: snow_free_frac = 1.0_wp                 !< [-] snow-free area fraction (1-snowfac) that evaporates,
-                                                          !<     an area-weighted tile flux (snow_biophysics.md)
-   end type chydro_forcing_t
 
    !----- Soil-column thermal boundary conditions (read-only). ------------------------------!
    type :: energy_forcing_t

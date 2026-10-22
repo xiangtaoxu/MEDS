@@ -17,7 +17,8 @@ module meds_fast_frozen
    use meds_plant_hydr_lib,  only : conductance_retained_fraction, xylem_max_conductance,                         &
                                     rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
-   use meds_soil_types, only : chydro_forcing_t, snow_melt_t, snow_env_t, snow_flux_t
+   use meds_soil_types, only : snow_melt_t, snow_env_t, snow_flux_t
+   use meds_soil_water, only : ground_evap_env_t
    use meds_config, only : meds_config_t
    use meds_site_state_vars, only : site_surface_t
    use meds_fast_types, only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,          &
@@ -58,7 +59,7 @@ contains
       type(column_state_t),       intent(out)   :: y
 
       type(snow_stage_t)     :: snow_st   !< the shared pre-column snow stage's outcome
-      type(chydro_forcing_t) :: hforc
+      type(ground_evap_env_t) :: hforc
       type(surface_state_t)  :: y_stage
       type(surface_tend_t) :: sf0
       real(wp) :: tcas, qcas, press, rho, t_ground, nee_biotic, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
@@ -216,11 +217,11 @@ contains
       end do
 
       !----- The rest of the canopy-air boundary: the pre-pass's capacities and conductances, the air above, NEE. -!
-      frozen%cas%cas_mass_capacity = cas_mass_capacity
-      frozen%cas%cas_molar_capacity = cas_molar_capacity
-      frozen%cas%g_atm_heat  = g_atm_heat
-      frozen%cas%g_atm_vapour  = g_atm_vapour
-      frozen%cas%g_atm_co2 = g_atm_co2
+      frozen%cas%box%air_mass_capacity = cas_mass_capacity
+      frozen%cas%box%air_molar_capacity = cas_molar_capacity
+      frozen%cas%box%atm_conductance_enthalpy  = g_atm_heat
+      frozen%cas%box%atm_conductance_vapor  = g_atm_vapour
+      frozen%cas%box%atm_conductance_co2 = g_atm_co2
       !----- What a per-stage surface-layer re-solve needs besides the live CAS state. Displacement and !
       !      roughness are the pre-pass's own, so a re-solve at the state^n CAS reproduces it exactly. -!
       frozen%cas%aero_cfg     = cfg%aero
@@ -234,9 +235,9 @@ contains
       !----- Live inputs license the per-stage re-solve; a bundle not built here (a test fixture) leaves  !
       !      mo_live false, and its g_atm_heat/g_atm_vapour/g_atm_co2 are used as given. ----------------!
       frozen%cas%mo_live      = .true.
-      frozen%cas%enthalpy_atm = forcing%enthalpy_atm
-      frozen%cas%shv_atm = forcing%shv_atm
-      frozen%cas%co2_atm = forcing%co2_atm
+      frozen%cas%box%atm_enthalpy = forcing%enthalpy_atm
+      frozen%cas%box%atm_specific_humidity = forcing%shv_atm
+      frozen%cas%box%atm_co2 = forcing%co2_atm
       frozen%cas%nee_biotic = nee_biotic
       frozen%ground%abs_sw_ground = forcing%abs_sw_ground
       frozen%ground%abs_lw_ground = forcing%abs_lw_ground
@@ -455,7 +456,7 @@ contains
       type(site_surface_t),       intent(in)    :: site
       type(fast_static_state_t),  intent(in)    :: static
       type(fast_dynamic_state_t), intent(in)    :: dynamic
-      type(chydro_forcing_t),     intent(in)    :: hforc
+      type(ground_evap_env_t),     intent(in)    :: hforc
       real(wp),                   intent(in)    :: precip_ground   !< [kg/m2/s] water reaching the pond
       real(wp),                   intent(in)    :: t_pond_inflow   !< [K]       the temperature that values it
       integer(ik),                intent(in)    :: n, nsl

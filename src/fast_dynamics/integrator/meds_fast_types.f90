@@ -22,6 +22,7 @@ module meds_fast_types
    use meds_spac_solver, only : spac_solver_t
    use meds_fast_params, only : CTRL_I
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
+   use meds_cas_biophysics, only : cas_column_t
    use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
@@ -284,16 +285,13 @@ module meds_fast_types
    ! film, ground, snow). The CAS <-> atmosphere conductances are re-solved per stage.          !
    !=====================================================================================!
 
-   !----- CAS <-> atmosphere boundary: capacities, bulk conductances, the surface-layer inputs a  !
-   !      per-stage re-solve needs, and the reference-level state. Plain scalars, so a stage can  !
-   !      copy it and override the conductances. ------------------------------------------------!
+   !----- CAS <-> atmosphere boundary: the canopy-air box (its capacities, its conductances to the  !
+   !      atmosphere and the reference-level state, the box kernel's own record), the surface-layer  !
+   !      inputs a per-stage re-solve needs, and the biotic CO2 source. Plain scalars, so a stage    !
+   !      can copy it and override the conductances. ----------------------------------------------!
    type :: cas_boundary_t
-      real(wp) :: cas_mass_capacity          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
-      real(wp) :: cas_molar_capacity          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
-      real(wp) :: g_atm_heat           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
-      real(wp) :: g_atm_vapour           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
-      real(wp) :: g_atm_co2           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
-      !----- g_atm_* above are the state^n values, which seed the march and the diagnostics; a stage  !
+      type(cas_column_t) :: box
+      !----- The box's conductances are the state^n values, which seed the march and the diagnostics; a stage !
       !      re-solves them at its own canopy-air state (docs/science/numerical_scheme.md §2, item 3; !
       !      docs/science/canopy_aerodynamics.md §2). mo_live says the mo_* inputs below are set: it  !
       !      is false for a hand-built record, which supplies its own conductances (a re-solve from    !
@@ -307,11 +305,8 @@ module meds_fast_types
       real(wp) :: mo_rough      = 0.0_wp      !< [m]    roughness length     (canopy geometry, frozen)
       real(wp) :: mo_theta_atm  = 0.0_wp      !< [K]    potential temperature referenced to zref (= the air temperature there)
       real(wp) :: mo_shv_atm    = 0.0_wp      !< [kg/kg] specific humidity at zref (the AERO reference,
-                                              !<        which need not equal shv_atm below)
+                                              !<        which need not equal the box's)
       real(wp) :: mo_rho        = 0.0_wp      !< [kg/m3] air density
-      real(wp) :: enthalpy_atm      = 0.0_wp      !< [J/kg]    reference-level specific enthalpy
-      real(wp) :: shv_atm       = 0.0_wp      !< [kg/kg]   reference-level specific humidity
-      real(wp) :: co2_atm       = 400.0_wp    !< [umol/mol]free-atmosphere CO2
       real(wp) :: nee_biotic    = 0.0_wp      !< [umol/m2/s] frozen biotic CO2 source (Ra+Rh-GPP)
       real(wp) :: rho           = 0.0_wp      !< [kg/m3]   canopy-air density
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure

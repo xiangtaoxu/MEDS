@@ -76,8 +76,8 @@ contains
       !      this matches column_derivs; carrying them on surface_tend_t instead would perturb ifx's     !
       !      inlining and FMA choices in surface_derivs (~1e-12 in every result). ----------------------!
       call cas_conductances(frozen%cas, y_stage%cas_enthalpy, y_stage%cas_shv, gah_i, gaw_i, gac_i)
-      atm_enth_i  = gah_i * (y_stage%cas_enthalpy - frozen%cas%enthalpy_atm)
-      atm_vap_i   = gaw_i * (y_stage%cas_shv      - frozen%cas%shv_atm)
+      atm_enth_i  = gah_i * (y_stage%cas_enthalpy - frozen%cas%box%atm_enthalpy)
+      atm_vap_i   = gaw_i * (y_stage%cas_shv      - frozen%cas%box%atm_specific_humidity)
       atm_heat_i  = gah_i * cp_air * (cas_enthalpy_to_temp(y_stage%cas_enthalpy, y_stage%cas_shv)          &
                                        - frozen%cas%mo_theta_atm)
       cond_i      = surf_tend%cond
@@ -513,7 +513,7 @@ contains
 
       !----- Whole-column water and energy ledgers only: every store rides the same right-hand side,  !
       !      so these are the per-store ledgers here. --------------------------------------------------!
-      cas_mass_capacity = frozen%cas%cas_mass_capacity
+      cas_mass_capacity = frozen%cas%box%air_mass_capacity
       enth0 = y%cas_enthalpy
       shv0 = y%cas_shv
       enth1 = y_out%cas_enthalpy

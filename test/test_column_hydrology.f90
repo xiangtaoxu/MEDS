@@ -24,13 +24,12 @@ program test_column_hydrology
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav_head, n_soil_layer_max
-   use meds_soil_types, only : chydro_forcing_t
    use meds_soil_params,      only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_soil_derive,        only : build_profile_hydraulics
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
                                     soil_theta_to_head
-   use meds_soil_water,       only : ground_evaporation_rate, bottom_flux
+   use meds_soil_water,       only : ground_evaporation_rate, bottom_flux, ground_evap_env_t
    use meds_spac_solver,    only : spac_solver_t, spac_allocate, spac_set_state,     &
                                      spac_advance, POND
    use meds_pft_params,       only : hydraulics_table_t
@@ -86,7 +85,7 @@ contains
    end function column_water
 
    function humid_air() result(f)
-      type(chydro_forcing_t) :: f
+      type(ground_evap_env_t) :: f
       f%t_ground = 290.0_wp ; f%q_air = 0.05_wp ; f%rho_air = 1.2_wp ; f%r_aero = 100.0_wp   ! no evaporation
    end function humid_air
 
@@ -267,7 +266,7 @@ contains
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
       type(spac_solver_t)    :: spac
-      type(chydro_forcing_t) :: f
+      type(ground_evap_env_t) :: f
       real(wp) :: theta(10), rain, runoff
       integer(ik) :: step
       print '(a)', 'test_dried_surface_rewets:'
@@ -295,7 +294,7 @@ contains
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
       type(spac_solver_t)    :: spac
-      type(chydro_forcing_t) :: f
+      type(ground_evap_env_t) :: f
       real(wp) :: theta(10), dt, e_in, t_infil
       print '(a)', 'test_pond_subfreezing_inflow:'
       call loam_params(params) ; theta = 0.25_wp
@@ -329,7 +328,7 @@ contains
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
       type(spac_solver_t)    :: spac
-      type(chydro_forcing_t) :: f
+      type(ground_evap_env_t) :: f
       real(wp) :: theta(10), drain_dry, drain_wet, w0, drained, theta_bot0, head_n, delta
       integer(ik) :: step, n
       print '(a)', 'test_aquifer_head_bc:'
@@ -377,7 +376,7 @@ contains
    subroutine test_snow_free_evap()
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
-      type(chydro_forcing_t) :: f
+      type(ground_evap_env_t) :: f
       real(wp) :: e_full, e_half, e_none, de1, de2, head
       print '(a)', 'test_snow_free_evap:'
       call loam_params(params)
@@ -404,7 +403,7 @@ contains
    subroutine test_evap_moisture_response()
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
-      type(chydro_forcing_t) :: f
+      type(ground_evap_env_t) :: f
       real(wp) :: theta, e_prev, e_now, e_sat, e_below, theta_init
       integer  :: i
       logical  :: monotone
@@ -430,7 +429,7 @@ contains
    real(wp) function loam_evap(th, params, f, opts) result(e)
       real(wp),               intent(in) :: th
       type(soil_profile_t),   intent(in) :: params
-      type(chydro_forcing_t), intent(in) :: f
+      type(ground_evap_env_t), intent(in) :: f
       type(soil_params_t),    intent(in) :: opts
       real(wp) :: de1, de2
       call ground_evaporation_rate(th, soil_theta_to_head(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp,     &

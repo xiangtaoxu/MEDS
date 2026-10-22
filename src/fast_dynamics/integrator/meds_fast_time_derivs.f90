@@ -71,9 +71,9 @@ contains
       if (cas%mo_live) then
          call refresh_cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       else
-         g_atm_heat = cas%g_atm_heat
-         g_atm_vapour = cas%g_atm_vapour
-         g_atm_co2 = cas%g_atm_co2
+         g_atm_heat = cas%box%atm_conductance_enthalpy
+         g_atm_vapour = cas%box%atm_conductance_vapor
+         g_atm_co2 = cas%box%atm_conductance_co2
       end if
    end subroutine cas_conductances
 
@@ -183,7 +183,7 @@ contains
 
       !----- Ground surface = snowfac-weighted snow + (1 - snowfac) bare soil. The snow terms arrive    !
       !      snowfac-weighted (advance_snow_stage); soil_evap already carries its snow-free area factor   !
-      !      (chydro_forcing_t%snow_free_frac), so le_soil is added whole. With no snow this is exactly  !
+      !      (ground_evap_env_t%snow_free_frac), so le_soil is added whole. With no snow this is exactly  !
       !      bare ground, with no branch. --------------------------------------------------------------!
       call ground_surface_fluxes(t_ground, tcas, ground%ggnet, cas%rho, ground%soil_evap, h_bare, le_soil)
       f%h_ground  = snow%h_snow  + (1.0_wp - snow%snowfac) * h_bare
@@ -199,7 +199,7 @@ contains
       !----- Smooth condensation sink (dew, fog): supersaturated canopy air relaxes to qsat over TAU_COND. !
       !      The condensate leaves as liquid at tcas, taking only its liquid enthalpy; the latent heat    !
       !      stays in the air, as in real condensation. ----------------------------------------------!
-      f%cond     = (cas%cas_mass_capacity / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
+      f%cond     = (cas%box%air_mass_capacity / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
       f%src_vap  = f%src_vap  - f%cond
       f%cond_enth = f%cond * internal_energy_liquid(tcas)
       f%src_enth = f%src_enth - f%cond_enth
@@ -209,18 +209,14 @@ contains
       cas_src%surface_enthalpy_source = f%src_enth
       cas_src%surface_vapor_source    = f%src_vap
       cas_src%biotic_co2_source       = cas%nee_biotic
-      cas_col%air_mass_capacity        = cas%cas_mass_capacity
-      cas_col%air_molar_capacity       = cas%cas_molar_capacity
       !----- The CAS <-> atmosphere conductances follow the live canopy-air state: RK45 re-solves them   !
       !      here. ARK arrives with mo_live cleared on its stage copy, having solved once for the stage,  !
       !      so its Newton's residual evaluations reuse that value. -----------------------------------!
+      cas_col = cas%box
       call cas_conductances(cas, y%cas_enthalpy, y%cas_shv, gah_l, gaw_l, gac_l)
       cas_col%atm_conductance_enthalpy = gah_l
       cas_col%atm_conductance_vapor    = gaw_l
       cas_col%atm_conductance_co2      = gac_l
-      cas_col%atm_enthalpy             = cas%enthalpy_atm
-      cas_col%atm_specific_humidity    = cas%shv_atm
-      cas_col%atm_co2                  = cas%co2_atm
       call cas_column_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_src, cas_col,        &
                                  f%d_cas_enthalpy, f%d_cas_shv, f%d_cas_co2)
    end subroutine surface_derivs

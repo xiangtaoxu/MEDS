@@ -18,7 +18,7 @@ split between them is by **timescale**, and within each half by domain. See
 [`../README.md`](../README.md) for the tree-wide rules.
 
 Each domain owns its argument records: **`meds_canopy_types`** (radiative transfer and
-aerodynamics), **`meds_soil_types`** (hydrology, thermal, snow), **`meds_plant_types`** (leaf,
+aerodynamics), **`meds_soil_types`** (thermal, snow; ground evaporation's boundary is beside its kernel in `meds_soil_water`), **`meds_plant_types`** (leaf,
 hydraulics, tissue energy). The `SOIL_*` / `ENERGY_*` selector codes live one layer down in
 `config/params/meds_soil_params`, and the prognostic per-store column state — the canopy-air state, the
 two soil columns, the snow store — lives in `state/meds_patch_state_vars`, with the rest of what a
