@@ -91,9 +91,9 @@ contains
    !----- 5. Master kernel on a 2-cohort patch. ----------------------------------------------!
    subroutine test_master()
       type(aero_params_t) :: cfg
-      type(aero_env_t)  :: env
-      type(aero_geom_t) :: geom
-      type(aero_out_t)  :: out
+      type(aero_env_t)    :: env
+      type(aero_geom_t)   :: geom
+      type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik
       real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N)
       real(wp) :: ggbare_open
@@ -131,9 +131,9 @@ contains
    !----- 6. The open-canopy blend of the ground conductance (eq. (6)). ----------------------!
    subroutine test_open_canopy()
       type(aero_params_t) :: cfg
-      type(aero_env_t)  :: env
-      type(aero_geom_t) :: geom
-      type(aero_out_t)  :: out
+      type(aero_env_t)    :: env
+      type(aero_geom_t)   :: geom
+      type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik, NW = 11_ik
       real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N), gg(NW)
       integer(ik) :: k
@@ -176,9 +176,9 @@ contains
    !      half the leaf area each must give every cohort the wind the unsplit stand gives it. ------!
    subroutine test_tied_layer()
       type(aero_params_t) :: cfg
-      type(aero_env_t)  :: env
-      type(aero_geom_t) :: geom
-      type(aero_out_t)  :: one, split
+      type(aero_env_t)    :: env
+      type(aero_geom_t)   :: geom
+      type(aero_out_t)    :: one, split
       real(wp), parameter :: H2(2) = [8.0_wp, 18.0_wp], LAI2(2) = [1.5_wp, 2.0_wp]
       real(wp), parameter :: TL2(2) = [299.0_wp, 300.0_wp], TW2(2) = [298.5_wp, 299.0_wp]
       real(wp), parameter :: LW2(2) = [0.04_wp, 0.04_wp], BD2(2) = [0.02_wp, 0.02_wp]

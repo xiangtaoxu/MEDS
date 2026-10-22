@@ -96,8 +96,8 @@ contains
    !----- BCI's clay (example 04), on a grid whose top layer is 2.6 cm. ----------------------!
    subroutine make_soil(s, nsl, depth, growth)
       type(soil_profile_t), intent(out) :: s
-      integer(ik),         intent(in)  :: nsl
-      real(wp),            intent(in)  :: depth, growth
+      integer(ik),          intent(in)  :: nsl
+      real(wp),             intent(in)  :: depth, growth
       real(wp) :: bottoms(n_soil_layer_max)
       call geometric_layer_bottoms(depth, nsl, growth, bottoms)
       call build_profile_hydraulics(nsl, SOIL_RETENTION_VG, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,        &
@@ -301,7 +301,7 @@ contains
    !----- No cohorts, a sealed bottom, no rain and no evaporation: the column relaxes to hydrostatic !
    !      equilibrium, the total head (matric head plus elevation) the same in every layer. ---------!
    subroutine test_soil_only()
-      type(spac_solver_t)  :: spac
+      type(spac_solver_t)    :: spac
       type(soil_params_t)    :: sealed
       type(chydro_forcing_t) :: still
       real(wp) :: theta(soil%n_active), head(soil%n_active), w0
@@ -497,9 +497,9 @@ contains
    !      zero and the network a head above air entry. The fixture's soil is swapped for the test  !
    !      and put back after it. ------------------------------------------------------------!
    subroutine test_campbell()
-      type(spac_solver_t) :: spac
+      type(spac_solver_t)  :: spac
       type(soil_profile_t) :: vg_soil
-      real(wp), parameter :: THETA_SAT = 0.44_wp, THETA_RES = 0.0_wp, PSI_SAT = -0.26_wp, B = 5.65_wp
+      real(wp), parameter  :: THETA_SAT = 0.44_wp, THETA_RES = 0.0_wp, PSI_SAT = -0.26_wp, B = 5.65_wp
       real(wp) :: bottoms(n_soil_layer_max), theta(soil%n_active), psi_curve(soil%n_active)
       real(wp) :: w0, w1, dt, hour, flows, worst, worst_psi, uptake
       integer(ik) :: step, nfail, nsl

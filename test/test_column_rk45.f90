@@ -669,7 +669,7 @@ contains
 
 
    subroutine test_campbell_predawn_seed()
-      real(wp), parameter :: THETA_SAT = 0.43_wp, THETA_RES = 0.0_wp, PSI_SAT = -0.26_wp, B = 5.65_wp
+      real(wp), parameter  :: THETA_SAT = 0.43_wp, THETA_RES = 0.0_wp, PSI_SAT = -0.26_wp, B = 5.65_wp
       type(soil_profile_t) :: vg_soil
       real(wp) :: cdiag(N_CO_FAST_ROWS, N), seed
       vg_soil = col_site%soil_profile

@@ -84,8 +84,8 @@ contains
    ! build the profile here.                                                               !
    !---------------------------------------------------------------------------------------!
    pure subroutine build_soil_profile(soil, profile)
-      type(soil_params_t),        intent(in)  :: soil
-      type(soil_profile_t),       intent(out) :: profile
+      type(soil_params_t),  intent(in)  :: soil
+      type(soil_profile_t), intent(out) :: profile
       type(soil_texture_layers_t) :: tex
       real(wp)    :: bottoms(n_soil_layer_max)
       integer(ik) :: n_layer
@@ -101,10 +101,10 @@ contains
    ! field capacity for a profile with a texture per layer (the soil maps).                !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_start_theta(soil, profile, init_soil_theta, theta)
-      type(soil_params_t),        intent(in)  :: soil
-      type(soil_profile_t),       intent(in)  :: profile
-      real(wp),                   intent(in)  :: init_soil_theta   !< [m3/m3] [init].soil_theta
-      real(wp),                   intent(out) :: theta(n_soil_layer_max)
+      type(soil_params_t),  intent(in)  :: soil
+      type(soil_profile_t), intent(in)  :: profile
+      real(wp),             intent(in)  :: init_soil_theta   !< [m3/m3] [init].soil_theta
+      real(wp),             intent(out) :: theta(n_soil_layer_max)
       if (soil%n_layer_values > 0_ik) then
          theta = profile%theta_fc
       else

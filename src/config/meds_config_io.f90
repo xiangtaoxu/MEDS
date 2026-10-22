@@ -383,8 +383,8 @@ contains
    end subroutine load_snow_params
 
    subroutine load_aero_params(tm, a)                      ! [aerodynamics] -> canopy-aero constants
-      type(toml_table_t), intent(in)    :: tm            !  (the Nusselt coefficients have no key;
-      type(aero_params_t),   intent(inout) :: a             !   they keep their aero_params_t values)
+      type(toml_table_t),  intent(in)    :: tm            !  (the Nusselt coefficients have no key;
+      type(aero_params_t), intent(inout) :: a             !   they keep their aero_params_t values)
       a%z0m_ratio        = toml_real(tm, 'aerodynamics.z0m_ratio',        a%z0m_ratio)
       a%d_ratio          = toml_real(tm, 'aerodynamics.d_ratio',          a%d_ratio)
       a%snow_rough       = toml_real(tm, 'aerodynamics.snow_rough',       a%snow_rough)
@@ -412,9 +412,9 @@ contains
    !----- [soil_carbon]: the switch, the decomposition selectors and rates, and the cold start.        !
    !      Each absent key keeps the type's default, so the type, not the reader, decides it. ----------!
    subroutine load_soil_carbon_params(tm, s, m)
-      type(toml_table_t),  intent(in)    :: tm
+      type(toml_table_t),         intent(in)    :: tm
       type(soil_carbon_params_t), intent(inout) :: s
-      type(keymiss_t),     intent(inout) :: m
+      type(keymiss_t),            intent(inout) :: m
       s%soil_carbon_on     = toml_logical(tm, 'soil_carbon.soil_carbon_on',     s%soil_carbon_on)
       s%spinup_steady      = toml_logical(tm, 'soil_carbon.spinup_steady',      s%spinup_steady)
       s%spinup_xi          = toml_real   (tm, 'soil_carbon.spinup_xi',          s%spinup_xi)

@@ -45,8 +45,8 @@ program test_surface_maps
    real(wp), allocatable :: v(:), v3(:,:)
    integer(ik) :: st, r, c, l, k, n_dropped
    logical :: ok
-   type(maps_params_t) :: opts
-   type(map_inputs_t) :: inp
+   type(maps_params_t)    :: opts
+   type(map_inputs_t)     :: inp
    type(meds_config_t)    :: cfg, cfg2
    type(soil_texture_t)   :: t5, t6, tex
    character(len=:), allocatable :: msg

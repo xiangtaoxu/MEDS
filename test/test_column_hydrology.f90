@@ -68,10 +68,10 @@ contains
    !----- The soil-only network for a column at theta with a pond of w_pond, and air that keeps    !
    !      the ground from evaporating unless the caller says otherwise. ---------------------------!
    subroutine soil_network(spac, params, opts, theta, w_pond, e_pond)
-      type(spac_solver_t), intent(inout) :: spac
-      type(soil_profile_t),  intent(in)    :: params
-      type(soil_params_t),   intent(in)    :: opts
-      real(wp),              intent(in)    :: theta(:), w_pond, e_pond
+      type(spac_solver_t),  intent(inout) :: spac
+      type(soil_profile_t), intent(in)    :: params
+      type(soil_params_t),  intent(in)    :: opts
+      real(wp),             intent(in)    :: theta(:), w_pond, e_pond
       real(wp) :: dum(0)
       call spac_allocate(spac, params%n_active, 0_ik)
       !----- [fast].rtol and water_atol at their defaults. -----------------------------------!
@@ -138,9 +138,9 @@ contains
 
    !=======================================================================================!
    subroutine test_bedrock_conserve()
-      type(soil_profile_t)  :: params
-      type(soil_params_t)   :: opts
-      type(spac_solver_t) :: spac
+      type(soil_profile_t) :: params
+      type(soil_params_t)  :: opts
+      type(spac_solver_t)  :: spac
       real(wp) :: w_before, theta(10)
       integer(ik) :: step
       print '(a)', 'test_bedrock_conserve:'
@@ -157,9 +157,9 @@ contains
 
    !=======================================================================================!
    subroutine test_free_drain()
-      type(soil_profile_t)  :: params
-      type(soil_params_t)   :: opts
-      type(spac_solver_t) :: spac
+      type(soil_profile_t) :: params
+      type(soil_params_t)  :: opts
+      type(spac_solver_t)  :: spac
       real(wp) :: w0, w1, drained, theta(10)
       integer(ik) :: step
       print '(a)', 'test_free_drain:'
@@ -178,9 +178,9 @@ contains
 
    !=======================================================================================!
    subroutine test_leaky_drain()
-      type(soil_profile_t)  :: params
-      type(soil_params_t)   :: opts
-      type(spac_solver_t) :: spac
+      type(soil_profile_t) :: params
+      type(soil_params_t)  :: opts
+      type(spac_solver_t)  :: spac
       real(wp), parameter :: F_LEAK = 0.05_wp          ! the ED soil maps' factor
       real(wp), parameter :: K_N = 1.234e-7_wp, PSI_N = -0.37_wp   ! [m/s], [m] a deepest layer's state
       real(wp) :: q, dq_dpsi, dq_dk, w0, w1, drained, drained_free, theta(10)
@@ -230,8 +230,8 @@ contains
    !      clay's conductivity, so the excess ponds and, past the pond's capacity, runs off       !
    !      (Hortonian). A bone-dry clay would instead take it up by suction (Green-Ampt). --------!
    subroutine test_downpour()
-      type(soil_profile_t)   :: params
-      type(soil_params_t)    :: opts
+      type(soil_profile_t) :: params
+      type(soil_params_t)  :: opts
       type(spac_solver_t)  :: spac
       real(wp) :: theta(10), w0, rain, infil, runoff, drained, bottoms(n_soil_layer_max)
       integer(ik) :: step
@@ -264,9 +264,9 @@ contains
    !      mean of the saturated pond's and the top layer's, and the dry layer's suction drives it;  !
    !      the top layer's conductivity alone would seal a dried surface against rain. -----------!
    subroutine test_dried_surface_rewets()
-      type(soil_profile_t)  :: params
-      type(soil_params_t)   :: opts
-      type(spac_solver_t) :: spac
+      type(soil_profile_t)   :: params
+      type(soil_params_t)    :: opts
+      type(spac_solver_t)    :: spac
       type(chydro_forcing_t) :: f
       real(wp) :: theta(10), rain, runoff
       integer(ik) :: step
@@ -292,9 +292,9 @@ contains
    !      and the water that infiltrated carried its own enthalpy -- an effective temperature below  !
    !      the melt plateau, not u_liq at the plateau, which would create energy all winter. -------!
    subroutine test_pond_subfreezing_inflow()
-      type(soil_profile_t)  :: params
-      type(soil_params_t)   :: opts
-      type(spac_solver_t) :: spac
+      type(soil_profile_t)   :: params
+      type(soil_params_t)    :: opts
+      type(spac_solver_t)    :: spac
       type(chydro_forcing_t) :: f
       real(wp) :: theta(10), dt, e_in, t_infil
       print '(a)', 'test_pond_subfreezing_inflow:'
@@ -326,9 +326,9 @@ contains
    !      closes with the flux running upward, and the column relaxes to hydrostatic equilibrium    !
    !      with the base (the bottom node's head -> minus half its thickness). -------------------!
    subroutine test_aquifer_head_bc()
-      type(soil_profile_t)  :: params
-      type(soil_params_t)   :: opts
-      type(spac_solver_t) :: spac
+      type(soil_profile_t)   :: params
+      type(soil_params_t)    :: opts
+      type(spac_solver_t)    :: spac
       type(chydro_forcing_t) :: f
       real(wp) :: theta(10), drain_dry, drain_wet, w0, drained, theta_bot0, head_n, delta
       integer(ik) :: step, n

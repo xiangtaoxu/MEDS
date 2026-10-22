@@ -148,11 +148,11 @@ contains
    !---------------------------------------------------------------------------------------!
    pure subroutine root_zone_environment(soil, root_frac, soil_temp, theta, soil_temp_root, theta_mean)
       type(soil_profile_t), intent(in)  :: soil
-      real(wp),            intent(in)  :: root_frac(:)      !< [-]     the patch's fine roots by layer
-      real(wp),            intent(in)  :: soil_temp(:)      !< [K]     per-layer soil temperature
-      real(wp),            intent(in)  :: theta(:)          !< [m3/m3] per-layer soil moisture
-      real(wp),            intent(out) :: soil_temp_root    !< [K]     root-fraction-weighted mean
-      real(wp),            intent(out) :: theta_mean        !< [m3/m3] depth-weighted column mean
+      real(wp),             intent(in)  :: root_frac(:)      !< [-]     the patch's fine roots by layer
+      real(wp),             intent(in)  :: soil_temp(:)      !< [K]     per-layer soil temperature
+      real(wp),             intent(in)  :: theta(:)          !< [m3/m3] per-layer soil moisture
+      real(wp),             intent(out) :: soil_temp_root    !< [K]     root-fraction-weighted mean
+      real(wp),             intent(out) :: theta_mean        !< [m3/m3] depth-weighted column mean
       integer(ik) :: k, nsl
       nsl = soil%n_active
       soil_temp_root = weighted_mean(soil_temp(1:nsl), root_frac, nsl)

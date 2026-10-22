@@ -72,7 +72,7 @@ contains
    !      sink that sums to one. --------------------------------------------------------------------!
    pure function exp_root_profile(soil, nsl) result(frac)
       type(soil_profile_t), intent(in) :: soil
-      integer(ik),         intent(in) :: nsl
+      integer(ik),          intent(in) :: nsl
       real(wp) :: frac(nsl)
       integer(ik) :: k
       do k = 1_ik, nsl

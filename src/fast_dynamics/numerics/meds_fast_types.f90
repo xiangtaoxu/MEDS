@@ -114,8 +114,8 @@ module meds_fast_types
       !----- The films' capacities per PFT [kg/m2 leaf], [kg/m2 wood]: a cohort holds              !
       !      leaf_max*LAI + wood_max*WAI. Built by apply_canopy_film_config. ----------------------!
       real(wp), allocatable       :: leaf_surf_water_max(:), wood_surf_water_max(:)
-      type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
-      type(soil_carbon_params_t) :: soil_carbon             !< [soil_carbon]: the switch and the CENTURY parameters (Rh)
+      type(snow_params_t)         :: snow            !< snow parameters (density, albedo, thresholds, conductivity)
+      type(soil_carbon_params_t)  :: soil_carbon     !< [soil_carbon]: the switch and the CENTURY parameters (Rh)
       !----- The ARK's Newton iteration cap is NEWT_MAX in meds_fast_be_stage, not a config field. ---!
    end type column_config_t
 
@@ -259,7 +259,7 @@ module meds_fast_types
       !      unset roughness and wind would not converge), true from build_column_frozen, and false   !
       !      again in ARK's stage copy once refreshed, so the Newton's repeated evaluations reuse it.  !
       logical :: mo_live = .false.            !< the mo_* inputs are populated => re-solve per evaluation
-      type(aero_params_t) :: aero_cfg            !< MO constants (copy; POD)
+      type(aero_params_t) :: aero_cfg         !< MO constants (copy; POD)
       real(wp) :: mo_u_ref      = 0.0_wp      !< [m/s]  wind at the reference height
       real(wp) :: mo_zref       = 0.0_wp      !< [m]    reference height
       real(wp) :: mo_displace   = 0.0_wp      !< [m]    displacement height  (canopy geometry, frozen)

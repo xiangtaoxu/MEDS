@@ -62,10 +62,10 @@ contains
    ! the column so the annual wave reflects least (eq. (13)).                              !
    !---------------------------------------------------------------------------------------!
    pure function deep_conductance(soil, profile, kappa_bot, n) result(g_deep)
-      type(soil_params_t), intent(in) :: soil
+      type(soil_params_t),  intent(in) :: soil
       type(soil_profile_t), intent(in) :: profile
-      real(wp),            intent(in) :: kappa_bot        !< [W/m/K] bottom-layer conductivity
-      integer(ik),         intent(in) :: n
+      real(wp),             intent(in) :: kappa_bot       !< [W/m/K] bottom-layer conductivity
+      integer(ik),          intent(in) :: n
       real(wp) :: g_deep, l_deep
       if (soil%thermal_bottom_bc == ENERGY_BC_DIRICHLET) then
          l_deep = soil%deep_depth - abs(profile%z_node(n))

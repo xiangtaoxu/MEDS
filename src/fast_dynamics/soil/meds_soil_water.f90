@@ -56,14 +56,14 @@ contains
    ! Delta = dz(n)/2, with K_bot upstream: K(theta_n) downward, K_sat upward.              !
    !---------------------------------------------------------------------------------------!
    pure subroutine bottom_flux(profile, soil, n, psi_n, k_n, qbot, dq_dpsi, dq_dk)
-      type(soil_profile_t), intent(in) :: profile
-      type(soil_params_t), intent(in)  :: soil
-      integer(ik),         intent(in)  :: n
-      real(wp),            intent(in)  :: psi_n     !< [m]   matric head of the deepest layer
-      real(wp),            intent(in)  :: k_n       !< [m/s] K(theta_n) of the deepest layer
-      real(wp),            intent(out) :: qbot      !< [m/s] down-positive
-      real(wp), optional,  intent(out) :: dq_dpsi   !< [1/s] d(qbot)/d(psi_n), for the implicit solve
-      real(wp), optional,  intent(out) :: dq_dk     !< [-]   d(qbot)/d(k_n), for the water network
+      type(soil_profile_t), intent(in)  :: profile
+      type(soil_params_t),  intent(in)  :: soil
+      integer(ik),          intent(in)  :: n
+      real(wp),             intent(in)  :: psi_n    !< [m]   matric head of the deepest layer
+      real(wp),             intent(in)  :: k_n      !< [m/s] K(theta_n) of the deepest layer
+      real(wp),             intent(out) :: qbot     !< [m/s] down-positive
+      real(wp), optional,   intent(out) :: dq_dpsi  !< [1/s] d(qbot)/d(psi_n), for the implicit solve
+      real(wp), optional,   intent(out) :: dq_dk    !< [-]   d(qbot)/d(k_n), for the water network
       real(wp) :: delta, grad, k_bot
       qbot = 0.0_wp
       if (present(dq_dpsi)) dq_dpsi = 0.0_wp

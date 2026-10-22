@@ -20,7 +20,7 @@ program test_biophysics_params_config
    implicit none
 
    character(len=*), parameter :: TOMLFILE = 'test_biophysics_params_tmp.toml'
-   type(toml_table_t) :: tm
+   type(toml_table_t)   :: tm
    type(soil_params_t)  :: s
    type(meds_config_t)  :: c
    type(snow_params_t)  :: sn
@@ -122,9 +122,9 @@ program test_biophysics_params_config
    !----- The drainage boundary's two named ends (docs/science/soil_biophysics.md §Boundary         !
    !      conditions): free_drain is drainage at f = 1, the default, and bedrock at f = 0. ------------!
    block
-      type(toml_table_t) :: tb
+      type(toml_table_t)  :: tb
       type(soil_params_t) :: s_free, s_rock, s_default
-      logical            :: okb
+      logical             :: okb
       character(len=*), parameter :: NAMES(2) = [character(len=10) :: 'free_drain', 'bedrock']
       integer(ik) :: i
       do i = 1_ik, 2_ik

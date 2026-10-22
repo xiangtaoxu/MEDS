@@ -68,9 +68,9 @@ contains
    !    independently of the closure definition.                                                     !
    !=======================================================================================!
    subroutine test_mass_closure()
-      type(soil_carbon_t) :: pools
+      type(soil_carbon_t)        :: pools
       type(soil_carbon_params_t) :: opts
-      type(soilc_audit_t) :: audit
+      type(soilc_audit_t)        :: audit
       real(wp) :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh, x(N_SOIL_POOL), sx
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), x1(N_SOIL_POOL)
       integer(ik) :: i, j
@@ -135,7 +135,7 @@ contains
    ! 2. Rh respired complement + column-sum identity.                                              !
    !=======================================================================================!
    subroutine test_rh_complement()
-      type(soil_carbon_t) :: pools
+      type(soil_carbon_t)        :: pools
       type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL), rh_fun, rh_hand, colsum, worst
@@ -172,7 +172,7 @@ contains
    ! 3. Scalar placement -- A*(xi*K*X) conserves to Rh; xi*(A*K*X) (receiver-scalar) does NOT.      !
    !=======================================================================================!
    subroutine test_scalar_placement()
-      type(soil_carbon_t) :: pools
+      type(soil_carbon_t)        :: pools
       type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL)
@@ -205,7 +205,7 @@ contains
    ! 4. Scheme topology -- hand-checked A/er for scheme 0 (default) and scheme 5 (CENTURY).         !
    !=======================================================================================!
    subroutine test_scheme_topology()
-      type(soil_carbon_t) :: pools
+      type(soil_carbon_t)        :: pools
       type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), offsum
       real(wp) :: er_micr, ex_mp, ex_sp
@@ -264,9 +264,9 @@ contains
    subroutine spinup_one_scheme(scheme, tag)
       integer(ik),      intent(in) :: scheme
       character(len=*), intent(in) :: tag
-      type(soil_carbon_t) :: pools, pss, p
+      type(soil_carbon_t)        :: pools, pss, p
       type(soil_carbon_params_t) :: opts
-      type(soilc_audit_t) :: audit
+      type(soilc_audit_t)        :: audit
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL), x1(N_SOIL_POOL)
       real(wp) :: rh, worst, relerr
@@ -336,10 +336,10 @@ contains
    ! 6. Residence/capacity: X_c = X_ss at equilibrium, X_p = 0; perturbed pool relaxes toward X_c.  !
    !=======================================================================================!
    subroutine test_residence_capacity()
-      type(soil_carbon_t) :: pss, pert, p
+      type(soil_carbon_t)        :: pss, pert, p
       type(soil_carbon_params_t) :: opts
-      type(soilc_diag_t)  :: diag
-      type(soilc_audit_t) :: audit
+      type(soilc_diag_t)         :: diag
+      type(soilc_audit_t)        :: audit
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL)
       real(wp) :: x_before, x_after, rh
@@ -372,10 +372,10 @@ contains
    ! 7. Litter mapping + lignin passive tracer.                                                    !
    !=======================================================================================!
    subroutine test_litter_and_lignin()
-      type(soil_carbon_t) :: pools, p
+      type(soil_carbon_t)        :: pools, p
       type(soil_carbon_params_t) :: opts
-      type(litter_input_t):: lit
-      type(soilc_audit_t) :: audit
+      type(litter_input_t)       :: lit
+      type(soilc_audit_t)        :: audit
       real(wp) :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh
       real(wp) :: f_lig_before, f_lig_after, c_before, l_before, d_s
       ! (a) driver-side per-cohort split demo (two PFTs) summed into a pool-destined litter_input_t:
@@ -542,7 +542,7 @@ contains
    ! 8. Temperature/moisture response + N-off inertness.                                           !
    !=======================================================================================!
    subroutine test_temperature_moisture()
-      type(soil_carbon_t) :: pools
+      type(soil_carbon_t)        :: pools
       type(soil_carbon_params_t) :: opts
       real(wp) :: xi_a(N_SOIL_POOL), xi_b(N_SOIL_POOL), xi_lo(N_SOIL_POOL), xi_hi(N_SOIL_POOL)
       real(wp) :: xi_opt(N_SOIL_POOL), xi_dry(N_SOIL_POOL)
@@ -578,7 +578,7 @@ contains
    !    path does NOT (Jensen; docs/science/soil_carbon.md §6).                                     !
    !=======================================================================================!
    subroutine test_fast_slow_seam()
-      type(soil_carbon_t) :: pools
+      type(soil_carbon_t)        :: pools
       type(soil_carbon_params_t) :: dopts
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: theta, theta_dry, theta_sat, xpool

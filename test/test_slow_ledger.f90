@@ -47,13 +47,13 @@ program test_slow_ledger
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
    integer(ik) :: n_soil_layer
 
-   real(wp), parameter :: RHO = 1.2_wp        !< the density the canopy-air store is valued at
-   type(meds_config_t) :: cfg
-   type(polygon_t)     :: poly
+   real(wp), parameter  :: RHO = 1.2_wp        !< the density the canopy-air store is valued at
+   type(meds_config_t)  :: cfg
+   type(polygon_t)      :: poly
    type(soil_profile_t) :: soil
-   type(slow_store_t)  :: s0, s1
-   type(slow_ledger_t) :: led
-   real(wp)            :: de, dw, dc, expect, hand
+   type(slow_store_t)   :: s0, s1
+   type(slow_ledger_t)  :: led
+   real(wp)             :: de, dw, dc, expect, hand
 
    call banner('slow ledger: store coverage and declaration arithmetic')
 
