@@ -493,7 +493,7 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
   ED2's rule for soil layers.
 - **Canopy air** (`meds_fast_be_stage`). Neither model clamps the canopy-air humidity at saturation:
   transient supersaturation is relaxed by a condensation sink, not cut off.
-- **Carbon bookkeeping** (`meds_fast_dynamics`). Gross GPP and the maintenance losses are summed apart
+- **Carbon bookkeeping** (`meds_fast_state`). Gross GPP and the maintenance losses are summed apart
   over the day and netted by the daily allocator, as ED2 does.
 
 ---

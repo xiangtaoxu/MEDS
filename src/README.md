@@ -1,6 +1,6 @@
 # `src/` — the MEDS source tree
 
-**37.2 k lines, 105 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
+**37.2 k lines, 108 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
 that decide where a new file goes, and the library graph the build enforces. It is the page to
 read before adding code, and the one to hand someone who asks how MEDS is organized.
 
@@ -13,29 +13,29 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 **domain** second, over a **state layer** that both halves share.
 
 ```
-src/                                    37.2 k lines · 106 modules · 21 CMake libraries
+src/                                    37.2 k lines · 108 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_share
 ├── share/         uses nothing outside itself; every layer may use it: kinds,
 │   │              constants, numerics (clamps, means, the conservation test),
 │   │              linear algebra (Thomas sweep, dense LU, arrowhead solve,
 │   │              matrix exponential), calendar time and the sun's
-│   │              position, budget checks                                   1 249
+│   │              position, budget checks                                   1 250
 │   └── functions/ stateless constitutive laws, one library per domain:
 │                  allometry, plant hydraulics, soil hydraulics,
 │                  thermodynamics (moist air and its lapse, with the
 │                  temperature response of enzyme rates), canopy optics,
-│                  the radiation above the canopy                            2 129
+│                  the radiation above the canopy                            2 113
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        meds_config_t (one field per key) and the routines that
 │   │              derive what the parameters imply (the PFT table's arrays;
 │   │              a site's soil profile, meds_soil_derive), the TOML reader,
-│   │              the loader, and the checks of the keys and their values   3 214
+│   │              the loader, and the checks of the keys and their values   3 484
 │   └── params/    the run's parameters, one leaf per TOML block: the types
 │                  and codes a kernel imports without meds_config (the PFT
 │                  table, the soil, forcing, output, the fast loop, snow and
-│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   832
+│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   940
 │
 │  ── STATE, one file per level of the hierarchy, each in sections ────────────
 ├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
@@ -45,33 +45,33 @@ src/                                    37.2 k lines · 106 modules · 21 CMake 
 │                  meds_site_state_vars: the site block;
 │                  meds_polygon_state_vars: polygon_t; meds_diag_vars: the
 │                  diagnostic accumulators; meds_state_defaults: the values
-│                  a field holds before it has a real one                    2 756
+│                  a field holds before it has a real one                    2 754
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
-├── fast_dynamics/       sub-daily, one dt_fast per step                      9 311
+├── fast_dynamics/       sub-daily, one dt_fast per step                      8 966
 │   ├── canopy/    the medium: two-stream radiation, aerodynamics, the
-│   │              canopy-air box                                            1 028
+│   │              canopy-air box                                              941
 │   ├── plant/     the organisms: leaf gas exchange, hydraulics, maintenance
-│   │              respiration, tissue energy                                1 063
+│   │              respiration, tissue energy                                  998
 │   ├── soil/      the ground: soil water, soil energy, the ground skin,
 │   │              the snow store                                              749
 │   ├── integrator/ the integrator machinery: the state vector, the frozen
-│   │              work record, ARK and RK45, error control, the pre-pass    5 034
-│   └── driver/    the fast loop's setup from the configuration, and the
-│                  walk of one slow step in dt_fast sub-steps over the
-│                  patches                                                   1 437
+│   │              work record, ARK and RK45, error control, the pre-pass    5 077
+│   └── driver/    the walk of one slow step in dt_fast sub-steps over the
+│                  patches: the gather and scatter, the forcing, and what
+│                  the output reads                                          1 201
 │
-├── slow_dynamics/       daily to annual                                      4 826
-│   ├── plant/     phenology, carbon allocation, trait plasticity               601
-│   ├── soil/      the CENTURY soil-carbon matrix, the litter partition         826
+├── slow_dynamics/       daily to annual                                      5 075
+│   ├── plant/     phenology, carbon allocation, trait plasticity               695
+│   ├── soil/      the CENTURY soil-carbon matrix, the litter partition         746
 │   ├── demography/ the vital-rate LAWS, and the operators that apply them:
 │   │              state update, cohort and patch fuse-fission, recruitment,
-│   │              treefall disturbance                                      1 382
+│   │              treefall disturbance                                      1 429
 │   └── driver/    the slow coordinator, the vegetation and biogeochemistry
-│                  drivers, and the slow conservation ledger                 2 017
+│                  drivers, and the slow conservation ledger                 2 205
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── io/            every data file a run reads or writes                     10 013
+├── io/            every data file a run reads or writes                     10 012
 │   ├── (root)     the netCDF C bindings, and the helpers both writers share    615
 │   ├── init/      the initial state, by [init].init_mode: bare ground, a
 │   │              cohort census, or a restart file, which the checkpoints
@@ -81,18 +81,18 @@ src/                                    37.2 k lines · 106 modules · 21 CMake 
 │   │              forcing file, or the ED_ERA5land archive) and its sample at
 │   │              a site and at a patch's canopy-air top (meds_met), the grid
 │   │              its cells are on (meds_met_grid) and the CO2 series
-│   │              (meds_met_co2)                                             2 905
+│   │              (meds_met_co2)                                             2 904
 │   ├── maps/      static per-cell maps on the forcing grid: the one place
 │   │              a map is read (meds_maps)                                    350
 │   └── output/    the diagnostic wall: derive → capture → reduce →
 │                  integrate → serialize                                      4 450
 ├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
-│                  demography, and the full coupled run                        938
+│                  demography, and the full coupled run                      1 278
 └── main/          meds_stepper (one coupled slow step, and the boundary
                    restructuring), meds_polygon (one polygon's run
                    machinery and step), meds_region (a run of one polygon
                    or many: open / step / finalize), meds_main
-                   (the PROGRAM)                                             1 403
+                   (the PROGRAM)                                             1 357
 ```
 
 **`share/` is one library, and it admits only what depends on nothing outside it.** Every module

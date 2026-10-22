@@ -4,7 +4,7 @@
 ! solve, docs/science/leaf_gas_exchange.md §1-§5, eqs. (1)-(10): FvCB C3 / Collatz C4      !
 ! demand, the Leuning / Medlyn / Katul stomatal models, the two water-stress controls, and !
 ! solve_leaf_gas_exchange (bracketed bisection on Ci). leaf_gas_exchange_batch runs it     !
-! over n leaves; the config wrapper leaf_gas_exchange lives in meds_fast_config.           !
+! over n leaves.                                                                          !
 !==========================================================================================!
 module meds_leaf_gas_exchange
    use meds_kinds,         only : wp, ik

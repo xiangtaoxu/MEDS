@@ -31,7 +31,8 @@ program test_column_derivs
    use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_fast_types,       only : surface_state_t, surface_tend_t, column_state_t, column_frozen_t,            &
-                                     column_tend_t, column_config_t, column_site_t
+                                     column_tend_t
+   use meds_site_state_vars,  only : site_surface_t
    use meds_fast_be_stage,    only : column_be_stage, advance_plant_water
    use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
    use meds_column_state_ops, only : state_init
@@ -41,10 +42,10 @@ program test_column_derivs
    use meds_fast_params,      only : CTRL_PI
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
-   !----- The column's parameters for every make_column fixture (the frozen record holds only what  !
-   !      freezes each step; the parameters travel separately, as in the model). --------------------!
-   type(column_config_t) :: col_config
-   type(column_site_t)   :: col_site
+   !----- The site every make_column fixture runs on (the frozen record holds only what freezes     !
+   !      each step; the site's soil travels separately, as in the model). ------------------------!
+   type(site_surface_t)  :: site
+   type(error_control_t) :: ec_default   !< the defaults: no budget stop
    type(fast_workspace_t) :: ws           !< the fast step's storage, reused by every test as in the model
 
    call test_leaf_closure()
@@ -336,7 +337,7 @@ contains
       do k = 1_ik, nsl
          frozen%roots%root_heat(k) = frozen%roots%uptake * frozen%roots%root_share(k) * internal_energy_liquid(295.0_wp)
       end do
-      call column_derivs(y, frozen, col_site, n, nsl, f)
+      call column_derivs(y, frozen, site, n, nsl, f)
 
       all_finite = ieee_ok(f%d_cas_enthalpy) .and. ieee_ok(f%d_cas_shv) .and. ieee_ok(f%d_cas_co2)
       do k = 1_ik, nsl ; all_finite = all_finite .and. ieee_ok(f%dedt(k)) .and. ieee_ok(f%dtheta_dt(k)) ; end do
@@ -386,7 +387,7 @@ contains
                                     + frozen%hydrology%drainage * internal_energy_liquid(frozen%hydrology%t_bot)
       eforc_chk%w_flux_top  = -frozen%hydrology%infiltration / rho_h2o
       eforc_chk%t_water_top = frozen%hydrology%t_infil
-      call soil_energy_time_deriv(se_chk, eforc_chk, col_site%soil_profile, col_site%soil, dedt_chk)
+      call soil_energy_time_deriv(se_chk, eforc_chk, site%soil_profile, site%soil, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
    end subroutine test_column_assembler
@@ -541,9 +542,9 @@ contains
       !----- The controller under test is the PRODUCTION one, so the test fails for the reasons a
       !      real run would hit.
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_ark_march(y, frozen, col_site, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
+      call adaptive_ark_march(y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
       ec = default_error_control(1.0e-6_wp)
-      call adaptive_ark_march(y, frozen, col_site, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
+      call adaptive_ark_march(y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
       !----- fine fixed reference: ARK2 at dt = 2 s, 900 steps. -------------------------------------!
       call march_ark2(y, frozen, n, nsl, 2.0_wp, 900_ik, yr)
       tc1 = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
@@ -562,7 +563,7 @@ contains
       type(column_state_t),  intent(in) :: y
       type(column_frozen_t), intent(in) :: frozen
       real(wp) :: t, fl
-      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, col_site%soil_profile%dry_heat_capacity(1), t, fl)
+      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, site%soil_profile%dry_heat_capacity(1), t, fl)
    end function soil_top_temp
 
    !----- march the ARK2 fixed-step from y for nstep steps of dt (embedded error discarded). --------!
@@ -576,7 +577,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call ark2_column_step(y, frozen, col_site, n, nsl, dt, ytmp, yerr, ws%stages)
+         call ark2_column_step(y, frozen, site, ec_default, n, nsl, dt, ytmp, yerr, ws%stages)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -601,7 +602,7 @@ contains
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
       type(surface_tend_t) :: surf_tend
-      call column_be_stage(y, frozen, col_site, n, nsl, dt, y_out, surf_tend)
+      call column_be_stage(y, frozen, site, ec_default, n, nsl, dt, y_out, surf_tend)
       call advance_plant_water(y, frozen, n, dt, surf_tend%transp_c(1:n), y_out)
    end subroutine be_euler_step
 
@@ -635,7 +636,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call rk45_column_step(y, frozen, col_site, n, nsl, dt, ytmp, yerr, w_out, e_in, e_out)
+         call rk45_column_step(y, frozen, site, n, nsl, dt, ytmp, yerr, w_out, e_in, e_out)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -681,7 +682,7 @@ contains
       !----- (b) plant water mass stays physical (finite, positive) at production dt=900. ------------!
       call copy_state(y, y1, n) ; physical = .true.
       do step = 1_ik, 24_ik
-         call ark2_column_step(y1, frozen, col_site, n, nsl, 900.0_wp, ytmp, yerr, ws%stages)
+         call ark2_column_step(y1, frozen, site, ec_default, n, nsl, 900.0_wp, ytmp, yerr, ws%stages)
          call copy_state(ytmp, y1, n)
          physical = physical .and. all(y1%leaf_water_mass(1:n) == y1%leaf_water_mass(1:n)) .and.   &
                     all(y1%wood_water_mass(1:n) == y1%wood_water_mass(1:n)) .and.                  &
@@ -691,13 +692,13 @@ contains
                       minval(y1%leaf_water_mass(1:n)))
 
       !----- (c) embedded error estimate is bounded (not detonating). ---------------------------------!
-      call ark2_column_step(y, frozen, col_site, n, nsl, 900.0_wp, ynew, yerr, ws%stages)
+      call ark2_column_step(y, frozen, site, ec_default, n, nsl, 900.0_wp, ynew, yerr, ws%stages)
       call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
       call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
 
       !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_ark_march(y, frozen, col_site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
+      call adaptive_ark_march(y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
       call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
@@ -706,7 +707,7 @@ contains
       !      physical -- proves the meds_fast_control PI path is wired + functional. On a multi-substep !
       !      march it takes a different (typically smoother) step sequence than the I-controller.       !
       ec%controller = CTRL_PI
-      call adaptive_ark_march(y, frozen, col_site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
+      call adaptive_ark_march(y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
       call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
@@ -823,15 +824,15 @@ contains
       call state_init(y, n, nsl, y_sat) ; call state_init(y, n, nsl, y_hi)
       call state_init(y, n, nsl, y_res) ; call state_init(y, n, nsl, y_lo)
       do k = 1_ik, nsl
-         y_sat%theta(k) = col_site%soil_profile%theta_sat(k)
-         y_hi%theta(k)  = col_site%soil_profile%theta_sat(k) + EPS_OOD
-         y_res%theta(k) = col_site%soil_profile%theta_res(k)
-         y_lo%theta(k)  = max(col_site%soil_profile%theta_res(k) - EPS_OOD, 0.0_wp)
+         y_sat%theta(k) = site%soil_profile%theta_sat(k)
+         y_hi%theta(k)  = site%soil_profile%theta_sat(k) + EPS_OOD
+         y_res%theta(k) = site%soil_profile%theta_res(k)
+         y_lo%theta(k)  = max(site%soil_profile%theta_res(k) - EPS_OOD, 0.0_wp)
       end do
-      call column_derivs(y_sat, frozen, col_site, n, nsl, f_sat)
-      call column_derivs(y_hi,  frozen, col_site, n, nsl, f_hi)
-      call column_derivs(y_res, frozen, col_site, n, nsl, f_res)
-      call column_derivs(y_lo,  frozen, col_site, n, nsl, f_lo)
+      call column_derivs(y_sat, frozen, site, n, nsl, f_sat)
+      call column_derivs(y_hi,  frozen, site, n, nsl, f_hi)
+      call column_derivs(y_res, frozen, site, n, nsl, f_res)
+      call column_derivs(y_lo,  frozen, site, n, nsl, f_lo)
 
       !----- (a) nothing goes non-finite anywhere, on either side. ---------------------------------!
       finite_all = .true.
@@ -876,14 +877,14 @@ contains
       !      asserting the sensitivity -- otherwise this check would pass for the wrong reason. ------!
       call state_init(y, n, nsl, y_sat) ; call state_init(y, n, nsl, y_hi)
       do k = 1_ik, nsl
-         y_sat%theta(k) = col_site%soil_profile%theta_sat(k)
-         y_hi%theta(k)  = col_site%soil_profile%theta_sat(k) + EPS_OOD
-         y_sat%soil_energy(k) = temp_to_internal_energy(col_site%soil_profile%dry_heat_capacity(k),                        &
+         y_sat%theta(k) = site%soil_profile%theta_sat(k)
+         y_hi%theta(k)  = site%soil_profile%theta_sat(k) + EPS_OOD
+         y_sat%soil_energy(k) = temp_to_internal_energy(site%soil_profile%dry_heat_capacity(k),                        &
                                              y_sat%theta(k)*rho_h2o, 290.0_wp, 1.0_wp)
          y_hi%soil_energy(k)  = y_sat%soil_energy(k)      ! SAME internal energy, more water
       end do
-      call column_derivs(y_sat, frozen, col_site, n, nsl, f_sat)
-      call column_derivs(y_hi,  frozen, col_site, n, nsl, f_hi)
+      call column_derivs(y_sat, frozen, site, n, nsl, f_sat)
+      call column_derivs(y_hi,  frozen, site, n, nsl, f_hi)
       denergy = 0.0_wp
       do k = 1_ik, nsl
          denergy = max(denergy, abs(f_hi%dedt(k) - f_sat%dedt(k)))
@@ -912,9 +913,9 @@ contains
       integer(ik) :: i, k
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
       call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
-      call build_profile_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
-      col_site%soil = soil_params_t()
+           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
+      call build_profile_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
+      site%soil = soil_params_t()
       hp%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
       hp%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       hp%wood_psi50 = -2.0_wp
@@ -923,7 +924,7 @@ contains
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
-      frozen%roots%root_share(1:nsl) = exp_root_profile(col_site%soil_profile, nsl)   ! per-layer sink placement
+      frozen%roots%root_share(1:nsl) = exp_root_profile(site%soil_profile, nsl)   ! per-layer sink placement
       frozen%plant%nplant = 0.3_wp
       !----- FROZEN sapflow/uptake (docs/science/numerical_scheme.md §2): a representative,             !
       !      state-independent pair for these RHS and reference-march tests -- not taken from the water  !
@@ -983,7 +984,7 @@ contains
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water = 0.0_wp ; y%wood_surf_water = 0.0_wp   ! canopy water: no-op unless populated
       do k = 1_ik, nsl
-         y%soil_energy(k) = temp_to_internal_energy(col_site%soil_profile%dry_heat_capacity(k), 0.30_wp*rho_h2o,     &
+         y%soil_energy(k) = temp_to_internal_energy(site%soil_profile%dry_heat_capacity(k), 0.30_wp*rho_h2o,     &
                             296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
          y%theta(k) = 0.30_wp
       end do
@@ -1015,7 +1016,7 @@ contains
       type(column_state_t),   intent(in) :: y
       type(column_frozen_t),  intent(in) :: frozen
       real(wp) :: tg, fl
-      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, col_site%soil_profile%dry_heat_capacity(1), tg, fl)
+      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, site%soil_profile%dry_heat_capacity(1), tg, fl)
    end function tground_of
 
    logical function ieee_ok(x)

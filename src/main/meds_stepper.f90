@@ -11,12 +11,12 @@
 ! ended there.                                                                                  !
 !==========================================================================================!
 module meds_stepper
-   use meds_kinds,                only : wp
+   use meds_kinds,                only : wp, ik
+   use meds_constants,            only : rho_air_ref
    use meds_config,               only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics, settle_tissue_water
    use meds_biogeochem_types,     only : soilc_seam_t
-   use meds_fast_config,          only : fast_context_t
    use meds_fast_dynamics,        only : fast_dynamics
    use meds_time,                 only : meds_time_t
    use meds_met_types,        only : met_source_t, met_cursor_t
@@ -31,16 +31,15 @@ module meds_stepper
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance one step. When fast biophysics is on and a fast context is supplied, the        !
-   ! sub-daily fast loop runs over the per-patch reservoirs BEFORE the slow loop, so         !
-   ! vegetation dynamics allocates the GPP the fast loop accumulated over the step.          !
+   ! Advance one step. When fast biophysics is on, the sub-daily fast loop runs over the       !
+   ! per-patch reservoirs BEFORE the slow loop, so vegetation dynamics allocates the GPP the  !
+   ! fast loop accumulated over the step.                                                    !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_one_step(poly, cfg, fast_ctx, met_src, met_cur, step_start, out_bufs,         &
+   subroutine advance_one_step(poly, cfg, met_src, met_cur, step_start, out_bufs,                   &
                                run_energy_budget, run_water_budget, run_face_budget, slow_ledger, &
-                               seam, latitude_deg)
+                               seam, latitude_deg, patch_threads)
       type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
-      type(fast_context_t), intent(in),    optional :: fast_ctx
       type(met_source_t),   intent(in),    optional :: met_src     !< the run's forcing source (when forcing_on)
       type(met_cursor_t),   intent(inout), optional :: met_cur     !< this polygon's forcing cursor
       type(meds_time_t),    intent(in),    optional :: step_start  !< calendar time at the start of this slow step
@@ -58,41 +57,29 @@ contains
       !      a correction. ----------------------------------------------------------------------------!
       type(soilc_seam_t), intent(inout), optional :: seam
       real(wp),           intent(in),    optional :: latitude_deg  !< the polygon's (default [site])
+      integer(ik),        intent(in),    optional :: patch_threads !< the fast loop's patch threads (default 1)
 
-      !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics is !
-      !      ON a fast context MUST be supplied: skipping the loop would leave gpp_accum = 0, and   !
-      !      growth would run on zero GPP. Fail loud instead of silently wrong. Every optional is   !
-      !      handed straight on: the fast loop takes the forcing only when forcing_on and the       !
-      !      source, cursor and step_start are all present, and otherwise runs on the reference     !
-      !      climate, met_forcing_t's defaults.                                                     !
+      !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. Every optional is handed  !
+      !      straight on: the fast loop takes the forcing only when forcing_on and the source, cursor  !
+      !      and step_start are all present, and otherwise runs on the reference climate,           !
+      !      met_forcing_t's defaults.                                                               !
       if (cfg%fast_biophysics_on) then
-         if (.not. present(fast_ctx))                                                              &
-            error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
          !----- The fast loop reads each cohort's tissue water against the capacity its biomass     !
          !      allows: first shed what the slow step or the boundary left above it, booked by the  !
          !      slow ledger (docs/science/order_of_processes.md §2). ------------------------------!
          call settle_tissue_water(poly, cfg, slow_ledger)
-         call fast_dynamics(poly, fast_ctx, cfg, met_src=met_src, met_cur=met_cur,                  &
+         call fast_dynamics(poly, cfg, met_src=met_src, met_cur=met_cur,                            &
                             step_start=step_start, out_bufs=out_bufs,                             &
                             run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
-                            run_face_budget=run_face_budget)
+                            run_face_budget=run_face_budget, patch_threads=patch_threads)
       end if
 
       !----- Slow loop: vegetation dynamics (rate assembly + demographic application), gated on the  !
       !      master slow_on freeze, which holds cohort/patch state static while the fast loop still  !
       !      runs (docs/science/order_of_processes.md §2). Leaf phenology is the FIRST step INSIDE   !
-      !      vegetation_dynamics and advances whenever step_start is supplied. `rho_air` values the  !
-      !      canopy-air store. It lives on the fast context, one value for the run, so the ledger    !
-      !      never needs state of its own to carry it; without a fast context there is no canopy    !
-      !      air worth valuing and the term stays at zero. ------------------------------------------!
-      if (cfg%slow_on) then
-         if (present(fast_ctx)) then
-            call advance_slow_dynamics(poly, cfg, step_start, seam, slow_ledger, fast_ctx%rho_air,     &
-                                       latitude_deg)
-         else
-            call advance_slow_dynamics(poly, cfg, step_start, seam, slow_ledger, latitude_deg=latitude_deg)
-         end if
-      end if
+      !      vegetation_dynamics and advances whenever step_start is supplied. The slow ledger      !
+      !      values the canopy-air store at the reference air density, one value for the run. -----!
+      if (cfg%slow_on) call advance_slow_dynamics(poly, cfg, step_start, seam, slow_ledger, rho_air_ref, latitude_deg)
    end subroutine advance_one_step
 
    !---------------------------------------------------------------------------------------!

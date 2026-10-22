@@ -319,7 +319,7 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 | `[soil_carbon]` bundle + selectors | `meds_biogeochem_params`: `soil_carbon_params_t`, `DECOMP_SCHEME_*`, `DECOMP_STEP_*` |
 | daily driver, seam guard, ledger | `meds_biogeochem_dynamics`: `advance_biogeochem_dynamics` |
 | litter accumulation | `meds_vegetation_dynamics`; kills in `meds_demography_{cohort,patch}_fusefiss` |
-| sub-daily $`R_h`$ + $`\xi`$ accumulation | `meds_fast_prepass`: `patch_heterotrophic_respiration`; `meds_fast_dynamics` |
+| sub-daily $`R_h`$ + $`\xi`$ accumulation | `meds_fast_prepass`: `patch_heterotrophic_respiration`; `meds_fast_state`: `accumulate_fast_to_slow` |
 | output; tests | `soilc_*_site`, `mean_soilc_total_pa`, `mean_rh_py` (`GRP_CARBON`); `test/test_soil_biogeochem.f90`, `test/test_biogeochem_dynamics.f90`, `test/test_column_co2.f90` |
 
 ## References

@@ -64,6 +64,7 @@ module meds_constants
    !----- Reference conditions. -----------------------------------------------------------!
    real(wp), parameter :: p_std       = 101325.0_wp           !< [Pa] standard atmospheric pressure
    real(wp), parameter :: t_ref_photo = 298.15_wp             !< [K] 25 degC, the reference of the photosynthesis rates
+   real(wp), parameter :: rho_air_ref = 1.2_wp                !< [kg/m3] air density the slow step values the canopy air at
 
    !----- Conversions: time, on the mean Gregorian year (365.2425 days). ------------------!
    real(wp), parameter :: day_sec = 86400.0_wp                !< [s/day]

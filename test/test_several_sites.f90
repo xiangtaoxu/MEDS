@@ -18,7 +18,6 @@ program test_several_sites
    use meds_config,               only : meds_config_t
    use meds_polygon_state_vars,   only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
-   use meds_fast_config,          only : fast_context_t, build_fast_context
    use meds_init,                 only : init_fast_state
    use meds_stepper,              only : advance_one_step, advance_boundary
    use meds_output_reduce,    only : total_agb, total_nplant, total_area
@@ -34,7 +33,6 @@ program test_several_sites
    !      agree to RTOL, an optimized ifx build of the two-stream to ~1e-9 over the 60 days. --------!
    real(wp),    parameter :: RTOL_SITE = 1.0e-7_wp
    type(meds_config_t)  :: cfg, cfg_shallow
-   type(fast_context_t) :: ctx, ctx4
    type(polygon_t)      :: one, two, two_mt, one_shallow, mixed, back
    type(meds_time_t)    :: now, t_read
    logical              :: found
@@ -43,9 +41,6 @@ program test_several_sites
    call banner('several sites per polygon')
    cfg = build_test_config()
    cfg%fast_biophysics_on = .true.
-   call build_fast_context(cfg, ctx)
-   ctx4 = ctx
-   ctx4%patch_threads = 4_ik
    cfg_shallow = cfg
    cfg_shallow%soil%depth = 0.6_wp
 
@@ -53,9 +48,9 @@ program test_several_sites
    call stand(one, cfg, [cfg], [1.0_wp])
    call stand(two, cfg, [cfg, cfg], [0.3_wp, 0.7_wp])
    call stand(two_mt, cfg, [cfg, cfg], [0.3_wp, 0.7_wp])
-   call run(one, ctx)
-   call run(two, ctx)
-   call run(two_mt, ctx4)
+   call run(one, 1_ik)
+   call run(two, 1_ik)
+   call run(two_mt, 4_ik)
    call check(one%patch%n > 2_ik, 'the year boundary added a disturbance gap to the one site')
    do is = 1_ik, 2_ik
       call check(two%site%patch_count(is) == one%patch%n,                                            &
@@ -90,8 +85,8 @@ program test_several_sites
    !=== 2. Two soils: each site evolves on its own. =========================================!
    call stand(one_shallow, cfg_shallow, [cfg_shallow], [1.0_wp])
    call stand(mixed, cfg, [cfg, cfg_shallow], [0.5_wp, 0.5_wp])
-   call run(one_shallow, ctx)
-   call run(mixed, ctx)
+   call run(one_shallow, 1_ik)
+   call run(mixed, 1_ik)
    call check(mixed%site%surface(1)%soil_profile%n_active /= mixed%site%surface(2)%soil_profile%n_active,           &
               'the two sites have different soil columns')
    call check(abs(site_water(mixed, 1_ik) - site_water(mixed, 2_ik)) > 1.0_wp,                      &
@@ -144,12 +139,12 @@ contains
    end subroutine stand
 
    !----- N_DAY daily steps, a month's restructuring every 15 days and a year's every 30. -----!
-   subroutine run(poly, fctx)
-      type(polygon_t),      intent(inout) :: poly
-      type(fast_context_t), intent(in)    :: fctx
+   subroutine run(poly, patch_threads)
+      type(polygon_t), intent(inout) :: poly
+      integer(ik),     intent(in)    :: patch_threads
       integer(ik) :: day
       do day = 1_ik, N_DAY
-         call advance_one_step(poly, cfg, fctx)
+         call advance_one_step(poly, cfg, patch_threads=patch_threads)
          if (mod(day, 15_ik) == 0_ik) call advance_boundary(poly, cfg, .true., mod(day, 30_ik) == 0_ik)
       end do
    end subroutine run

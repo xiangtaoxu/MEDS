@@ -17,7 +17,8 @@ module meds_fast_be_stage
    use meds_cas_biophysics, only : cas_column_step_implicit, cas_column_t, cas_source_t
    use meds_column_state_ops, only : state_init, assemble_soil_energy_forcing
    use meds_fast_types, only : column_state_t, column_frozen_t, surface_state_t, cas_boundary_t,                  &
-                               surface_tend_t, stage_bflux_t, column_site_t
+                               surface_tend_t, stage_bflux_t, error_control_t
+   use meds_site_state_vars, only : site_surface_t
    use meds_soil_energy, only : soil_energy_step_implicit
    use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp
    use meds_numerics,     only : sufficient_decrease
@@ -34,10 +35,11 @@ contains
    ! coupled 2x2 Newton, and soil heat (implicit, Thomas). Soil water moves at the water network's      !
    ! steady rate; plant water is passed through and advanced once (advance_plant_water).               !
    !---------------------------------------------------------------------------------------!
-   subroutine column_be_stage(y, frozen, col_site, n, nsl, dt, y_out, surf_tend, bf)
+   subroutine column_be_stage(y, frozen, site, ec, n, nsl, dt, y_out, surf_tend, bf)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
-      type(column_site_t),   intent(in)  :: col_site
+      type(site_surface_t),  intent(in)  :: site
+      type(error_control_t), intent(in)  :: ec     !< its budget stop ([fast].debug_error)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       !----- The stage's state and its own surface tendencies, the ones its CAS source and bf used; the   !
@@ -62,7 +64,7 @@ contains
 
       !----- diagnose the soil-top temperature so the ground skin sees the current state. --------!
       wmass1 = y%theta(1) * rho_h2o
-      call internal_energy_to_temp(y%soil_energy(1), wmass1, col_site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
 
       cas_mass_capacity = frozen%cas%cas_mass_capacity
       cas_molar_capacity = frozen%cas%cas_molar_capacity
@@ -104,10 +106,10 @@ contains
       call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, y%theta,          &
                                         water_heat, frozen%hydrology%w_flux_frozen,                                &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
-      call soil_energy_step_implicit(se, eforc, col_site%soil_profile, col_site%soil, dt, eflux)
+      call soil_energy_step_implicit(se, eforc, site%soil_profile, site%soil, dt, eflux)
       !----- [fast].debug_error stops the run when the soil heat's own budget misses by more than  !
       !      soil_energy_budget_atol [K] of the column's heat capacity. -----------------------------!
-      if (col_site%debug_error .and. abs(eflux%energy_resid) > col_site%soil_energy_budget_atol * eflux%heat_capacity) &
+      if (ec%debug_error .and. abs(eflux%energy_resid) > ec%soil_energy_budget_atol * eflux%heat_capacity)    &
          error stop 'soil heat step: energy budget did not close'
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 

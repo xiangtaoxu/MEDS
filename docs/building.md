@@ -51,7 +51,7 @@ each bitten at least once, and each was invisible to ifx:
   optimizer miscompiles the temporary descriptor — silently wrong values at `-O2`, a segfault at
   `-O0` — while `ifx -stand f18 -check all` emits only a remark. Bind to a named array first. The
   same optimizer returned 0 for a flux the fast driver formed from fields it read back after the
-  call that filled them, which is why `column_fast_step` returns the sensible flux `h_flux` itself.
+  call that filled them, which is why `fast_step` returns the sensible flux `h_flux` itself.
 - **nvfortran rejects a `BLOCK` construct** anywhere inside a parallel region.
 - **ifx builds `private` and `firstprivate` copies of a derived type through a compiler-generated
   static mold** that every thread writes. Nor does ifx default-initialise a derived type declared

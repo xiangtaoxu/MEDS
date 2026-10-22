@@ -58,7 +58,7 @@ branch term to a per-plant area). The result is per plant
 $`[\mathrm{\mu mol\,CO_2\,plant^{-1}\,s^{-1}}]`$; the caller multiplies by `nplant` for the patch total.
 Four details are load-bearing:
 
-- **Temperature driver.** $`T_w`$ is the cohort's own **wood temperature** (`patch_biophys_t%wood_temp`),
+- **Temperature driver.** $`T_w`$ is the cohort's own **wood temperature** (`fast_dynamic_state_t%wood_temp`),
   the prognostic store solved by the vegetation energy balance — not canopy air, not leaf temperature. Its
   larger heat capacity damps the diurnal cycle (`docs/science/vegetation_energy_dynamics.md`).
 - **Aboveground fraction.** The cylinder-plus-branch area is the *aboveground* surface; dividing by
@@ -215,7 +215,7 @@ See `docs/ROADMAP.md` §7 for the open items.
 | shared temperature response (eq. (5)) | `meds_therm_lib`: `arrhenius_scale`, `peaked_arrhenius_scale`, `temp_response` |
 | leaf dark respiration $R_d$ | `meds_leaf_gas_exchange` (inside the Ci solve; see `leaf_gas_exchange.md`) |
 | per-sub-step call site + patch totals | `meds_fast_prepass`: `canopy_maintenance_respiration`, `column_prepass` (eq. (7)) |
-| sub-daily → daily integration | `meds_fast_dynamics` → `leaf_resp_accum` / `stem_resp_accum` / `root_resp_accum` on the cohort SoA |
+| sub-daily → daily integration | `meds_fast_state`: `accumulate_fast_to_slow` → `leaf_resp_accum` / `stem_resp_accum` / `root_resp_accum` on the cohort SoA |
 | daily maintenance sum handed to the allocator | `meds_vegetation_dynamics`: `cohort_carbon_demand` (`resp_maint`) |
 | growth respiration (eq. (6)) | `meds_plant_carbon_allocation`: `growth_respiration`, charged inside `fill_carbon_demand` / `plant_carbon_allocation` |
 | growth respiration → canopy air | `meds_vegetation_dynamics`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_prepass` |

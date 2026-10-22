@@ -44,7 +44,7 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  THE AUTOMATIC-ARRAY STACK CEILING (opt-in flag below).
 #
 #  The fast loop carries ~740 B of automatic (stack) arrays per COHORT, live simultaneously across
-#  four nested frames (column_fast_step -> build_column_frozen -> column_prepass ->
+#  four nested frames (fast_step -> build_column_frozen -> column_prepass ->
 #  aero_bottom_to_top). On an 8 MB stack that is a hard SIGSEGV ceiling near 10-12k cohorts, and in
 #  a threaded run the ceiling follows each thread's stack, OMP_STACKSIZE, instead.
 #
@@ -828,7 +828,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_derivs)
    add_test(NAME column_derivs COMMAND test_column_derivs)
 
-   #----- INTEG_ARK wiring test: the coupled ARK (ESDIRK2) path through column_fast_step. ----#
+   #----- INTEG_ARK wiring test: the coupled ARK (ESDIRK2) path through fast_step. ----------#
    add_executable(test_column_ark test/test_column_ark.f90)
    target_link_libraries(test_column_ark PRIVATE meds_model meds_testsupport)
    meds_fortran_flags(test_column_ark)

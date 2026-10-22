@@ -102,7 +102,7 @@ machine precision — the invariant that makes the coupled surface model trustwo
 
 ---
 
-## Prognostic state (per patch, `patch_biophys_t` / `meds_patch_state_vars`)
+## Prognostic state (per patch, `fast_dynamic_state_t` / `meds_patch_state_vars`)
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
@@ -110,17 +110,23 @@ machine precision — the invariant that makes the coupled surface model trustwo
 | Soil water | `soil_water_column_t` | `theta(:)`, `w_surface`, `w_surface_energy` [J m⁻²] | `psi_soil` |
 | Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 | Snow / surface water | `snow_column_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
-| Leaf / wood tissue | `patch_biophys_t` | `leaf_energy`, `wood_energy` [J m⁻²; on the cohort block, J plant⁻¹] (exact exponential relaxation) | `leaf_temp`, `wood_temp` |
-| Plant water | `patch_biophys_t` | `leaf_water_mass`, `wood_water_mass` [kg plant⁻¹] | leaf and wood ψ |
-| Canopy surface water | `patch_biophys_t` | `leaf_surf_water`, `wood_surf_water` [kg m⁻²; on the cohort block, kg plant⁻¹] | — |
+| Leaf / wood tissue | `fast_dynamic_state_t` | `leaf_energy`, `wood_energy` [J m⁻²; on the cohort block, J plant⁻¹] (exact exponential relaxation) | `leaf_temp`, `wood_temp` |
+| Plant water | `fast_dynamic_state_t` | `leaf_water_mass`, `wood_water_mass` [kg plant⁻¹] | leaf and wood ψ |
+| Canopy surface water | `fast_dynamic_state_t` | `leaf_surf_water`, `wood_surf_water` [kg m⁻²; on the cohort block, kg plant⁻¹] | — |
 
-`patch_biophys_t` (`meds_fast_types`) is the fast loop's working copy of one patch: the fast driver
-(`meds_fast_dynamics`) gathers it from the persisted patch and cohort state and writes it back after
-the step. Each integrator packs it into a flat `column_state_t`, which it can combine and measure as
-one vector. The copy also carries three inputs from the slow tier, seeded once a day and only read
-by the fast sub-steps: the soil-carbon pools that heterotrophic respiration draws on
+`fast_dynamic_state_t` (`meds_fast_types`) is the fast loop's working copy of one patch: the fast
+driver (`meds_fast_state`: `gather_patch`) gathers it from the persisted patch and cohort state and
+writes it back after the slow step's sub-steps (`scatter_patch`). Each integrator packs it into a
+flat `column_state_t`, which it can combine and measure as one vector. What the sub-steps only read
+is gathered beside it, once a day, into `fast_static_state_t`: each cohort's structure and traits,
+the canopy geometry and its canopy-air top, the site's acclimated leaf table, and three inputs from
+the slow tier: the soil-carbon pools that heterotrophic respiration draws on
 ([soil_carbon](soil_carbon.md) §7), the water and enthalpy shed by leaf and root turnover, and the
 slow tier's CO₂ owing from growth respiration ([plant_respiration](plant_respiration.md) §6).
+`fast_step(dt_fast, cfg, site, static, forcing, dynamic, out, work)` reads the run's configuration,
+the patch's site (its soil column) and the step's forcing, advances `dynamic`, and fills `out`: the
+aerodynamics, each cohort's carbon fluxes and leaf potential, H and LE, and the step report
+(`step_report_t`: the ledgers, the exports and the work counters).
 
 ### Mixing two patches
 
@@ -173,7 +179,7 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; per patch and sub-step, `meds_fast_prepass`: `patch_heterotrophic_respiration` |
 | snow energy / base conductance | `meds_ground_biophysics`: `snow_energy_step`, `snow_base_conductance` |
 | snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
-| dispatch + RK45→ARK rescue | `meds_fast_step`: `column_fast_step` |
+| dispatch + RK45→ARK rescue | `meds_fast_step`: `fast_step` |
 | ESDIRK2 step (config `ark`) | `meds_fast_ark`: `column_fast_step_ark`, `ark2_column_step`, `adaptive_ark_march` |
 | one ESDIRK2 stage | `meds_fast_be_stage`: `column_be_stage`, `newton_surface_solve` |
 | Cash–Karp step (config `rk45`) | `meds_fast_rk45`: `column_fast_step_rk45`, `adaptive_rk45_march`, `rk45_column_step` |

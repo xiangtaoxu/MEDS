@@ -12,18 +12,19 @@ module meds_fast_rk45
    use meds_constants,        only : tiny_num, rho_h2o, cp_air, n_soil_layer_max
    use meds_therm_lib,           only : cas_enthalpy_to_temp, internal_energy_liquid
    use meds_fast_time_derivs, only : column_derivs, cas_conductances
+   use meds_config,           only : meds_config_t
+   use meds_site_state_vars,  only : site_surface_t
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t,             &
-                                     surface_tend_t, column_config_t, column_cohort_t, column_forcing_t,          &
-                                     column_budget_t, patch_biophys_t, fast_workspace_t, column_site_t
+                                     surface_tend_t, fast_static_state_t, fast_forcing_t, fast_output_t,          &
+                                     step_report_t, fast_dynamic_state_t, fast_workspace_t, WORK_INTEG_STEPS,     &
+                                     WORK_INTEG_REJECT, WORK_CLAMP_STAGE
    use meds_fast_frozen,      only : build_column_frozen
    use meds_column_state_ops, only : state_init, state_accum, state_sub, zero_like, clamp_cas,                    &
                                      soil_water_store, soil_energy_store, plant_water_store, canopy_film_store,   &
                                      deposit_condensate, clamp_canopy_film, unpack_column_state,                  &
                                      diagnose_soil_temps, transp_per_leaf_area, commit_tissue_energy
    use meds_diag_vars,        only : CO_TRANSP
-   use meds_fast_control,     only : state_wrms_grouped,                                         &
-                                     step_control_factor
-   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
+   use meds_fast_control,     only : state_wrms_grouped, step_control_factor, build_error_control
    use meds_budget_check,     only : budget_check, last_check_closed, BUDGET_ENERGY_RATE_FLOOR,      &
                                      BUDGET_WATER_RATE_FLOOR
    implicit none
@@ -91,18 +92,18 @@ contains
    ! finite derivative, which the embedded error then rejects. Soil energy needs no clamp: any     !
    ! finite energy has a temperature, and a stage reads it only through terms linear in it.       !
    !---------------------------------------------------------------------------------------!
-   pure subroutine rk45_column_step(y, frozen, col_site, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
+   pure subroutine rk45_column_step(y, frozen, site, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
                                     clamp_stage_n, cond_out,                                         &
                                     tissue_leaf_int, tissue_wood_int, transp_int, cond_enth_out,       &
                                     atm_heat_out, atm_vap_out, face_resid_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
-      type(column_site_t),   intent(in)  :: col_site
+      type(site_surface_t),  intent(in)  :: site
       integer(ik),            intent(in)  :: n, nsl
       real(wp),               intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out, y_err
       real(wp),               intent(out) :: w_out, e_in, e_out
-      !----- Stage-clamp count (column_budget_t%clamp_stage_n), expected on an oversized trial. ------!
+      !----- Stage-clamp count (step_report_t%clamp_stage_n), expected on an oversized trial. ------!
       integer(ik), optional,  intent(inout) :: clamp_stage_n
       real(wp),    optional,  intent(out)   :: cond_out   !< [kg/m2] condensate to deposit into soil layer 1
       real(wp),    optional,  intent(out)   :: cond_enth_out !< [J/m2] its liquid enthalpy, b-weighted at the stage CAS temps
@@ -123,7 +124,7 @@ contains
       real(wp) :: bw_face(n_soil_layer_max), f_in, f_out, uptk, face_resid
       integer(ik) :: kf
 
-      call column_derivs(y, frozen, col_site, n, nsl, k1, sf_out=surf_tend)
+      call column_derivs(y, frozen, site, n, nsl, k1, sf_out=surf_tend)
       call stage_bnd(y, frozen, surf_tend, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1), atm_heat(1))
       tleaf_s(1:n,1) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,1) = surf_tend%wood_temp(1:n)
@@ -132,7 +133,7 @@ contains
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A21, k1, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, col_site, n, nsl, k2, sf_out=surf_tend)
+      call column_derivs(y_stage, frozen, site, n, nsl, k2, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2), atm_heat(2))
       tleaf_s(1:n,2) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,2) = surf_tend%wood_temp(1:n)
@@ -142,7 +143,7 @@ contains
       call state_accum(y_stage, dt*A31, k1, n, nsl)
       call state_accum(y_stage, dt*A32, k2, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, col_site, n, nsl, k3, sf_out=surf_tend)
+      call column_derivs(y_stage, frozen, site, n, nsl, k3, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3), atm_heat(3))
       tleaf_s(1:n,3) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,3) = surf_tend%wood_temp(1:n)
@@ -153,7 +154,7 @@ contains
       call state_accum(y_stage, dt*A42, k2, n, nsl)
       call state_accum(y_stage, dt*A43, k3, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, col_site, n, nsl, k4, sf_out=surf_tend)
+      call column_derivs(y_stage, frozen, site, n, nsl, k4, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4), atm_heat(4))
       tleaf_s(1:n,4) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,4) = surf_tend%wood_temp(1:n)
@@ -165,7 +166,7 @@ contains
       call state_accum(y_stage, dt*A53, k3, n, nsl)
       call state_accum(y_stage, dt*A54, k4, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, col_site, n, nsl, k5, sf_out=surf_tend)
+      call column_derivs(y_stage, frozen, site, n, nsl, k5, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5), atm_heat(5))
       tleaf_s(1:n,5) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,5) = surf_tend%wood_temp(1:n)
@@ -178,7 +179,7 @@ contains
       call state_accum(y_stage, dt*A64, k4, n, nsl)
       call state_accum(y_stage, dt*A65, k5, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, col_site, n, nsl, k6, sf_out=surf_tend)
+      call column_derivs(y_stage, frozen, site, n, nsl, k6, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6), atm_heat(6))
       tleaf_s(1:n,6) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,6) = surf_tend%wood_temp(1:n)
@@ -204,7 +205,7 @@ contains
             f_out = bw_face(kf)      * rho_h2o * dt
             uptk  = frozen%roots%uptake * frozen%roots%root_share(kf) * dt
             face_resid = face_resid                                                                &
-               + abs((y_out%theta(kf) - y%theta(kf)) * col_site%soil_profile%dz(kf) * rho_h2o           &
+               + abs((y_out%theta(kf) - y%theta(kf)) * site%soil_profile%dz(kf) * rho_h2o           &
                      - (f_in - f_out - uptk))
          end do
          face_resid_out = face_resid
@@ -269,14 +270,14 @@ contains
    ! (docs/science/numerical_scheme.md eqs. (3)-(4), p = 4). Every integrated state but the films !
    ! is scored; soil and plant water's embedded difference is round-off, their rates constant.   !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_rk45_march(y0, frozen, col_site, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
+   subroutine adaptive_rk45_march(y0, frozen, site, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
                                   w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
                                   clamp_stage_n, cond_acc,                                            &
                                   cond_enth_acc, atm_heat_acc, atm_vap_acc, face_resid_acc,           &
                                   ood_max, tissue_leaf_acc, tissue_wood_acc, transp_acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
-      type(column_site_t),   intent(in)  :: col_site
+      type(site_surface_t),  intent(in)  :: site
       integer(ik),            intent(in)  :: n, nsl
       real(wp),               intent(in)  :: t_end, dt_init
       type(error_control_t), intent(in)  :: ec
@@ -329,11 +330,11 @@ contains
          !----- Record how far the step's starting theta lies outside its domain (never clamped). ----!
          if (present(ood_max)) then
             do kood = 1_ik, nsl
-               ood_max = max(ood_max, y%theta(kood) - col_site%soil_profile%theta_sat(kood),                         &
-                             col_site%soil_profile%theta_res(kood) - y%theta(kood))
+               ood_max = max(ood_max, y%theta(kood) - site%soil_profile%theta_sat(kood),                         &
+                             site%soil_profile%theta_res(kood) - y%theta(kood))
             end do
          end if
-         call rk45_column_step(y, frozen, col_site, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
+         call rk45_column_step(y, frozen, site, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
                                clamp_stage_n=clamp_stage_n, cond_out=cond_i,                      &
                                tissue_leaf_int=tl_int_i, tissue_wood_int=tw_int_i, transp_int=tr_int_i, &
                                cond_enth_out=cond_enth_i, atm_heat_out=atm_heat_i, atm_vap_out=atm_vap_i, &
@@ -396,27 +397,18 @@ contains
    !  column_fast_step_rk45 -- the INTEG_RK45 fast step: build the frozen record as ARK does,     !
    !  march one dt_fast, commit, and close the whole-column water and energy ledgers.            !
    !=======================================================================================!
-   subroutine column_fast_step_rk45(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
-                                    ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
-                                    stiff_bail, cdiag)
-      real(wp),                intent(in)    :: dt_fast
-      type(column_config_t),   intent(in)    :: col_config
-      type(column_site_t),     intent(in)    :: col_site
-      type(aero_env_t),        intent(inout) :: aenv
-      type(aero_geom_t),       intent(in)    :: ageom
-      type(column_cohort_t),   intent(in)    :: col_cohort
-      type(column_forcing_t),  intent(in)    :: forc
-      type(patch_biophys_t),   intent(inout) :: biophys
-      type(aero_out_t),        intent(inout) :: aero
-      type(column_budget_t),   intent(inout) :: budget
-      type(fast_workspace_t),  intent(inout) :: ws       !< this thread's reusable step storage
-      real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
-      logical,     optional,   intent(out)   :: converged
-      integer(ik), optional,   intent(out)   :: iters
-      !----- True when the march hit RK45_WORK_CAP without resolving the step: biophys is left at     !
+   subroutine column_fast_step_rk45(dt_fast, cfg, site, static, forcing, dynamic, out, work, stiff_bail)
+      real(wp),                   intent(in)    :: dt_fast
+      type(meds_config_t),        intent(in)    :: cfg
+      type(site_surface_t),       intent(in)    :: site
+      type(fast_static_state_t),  intent(in)    :: static
+      type(fast_forcing_t),       intent(in)    :: forcing
+      type(fast_dynamic_state_t), intent(inout) :: dynamic
+      type(fast_output_t),        intent(inout) :: out
+      type(fast_workspace_t),     intent(inout) :: work       !< this thread's reusable step storage
+      !----- True when the march hit RK45_WORK_CAP without resolving the step: dynamic is left at     !
       !      state^n, and the caller redoes this dt_fast on ARK. --------------------------------------!
-      logical,     optional,   intent(out)   :: stiff_bail
-      real(wp),    optional,   intent(inout) :: cdiag(:,:)   !< (N_CO_FAST_ROWS, ncoh) per-cohort diagnostic capture
+      logical,                    intent(out)   :: stiff_bail
 
       type(column_frozen_t)  :: frozen
       type(column_state_t)   :: y, y_out
@@ -430,57 +422,54 @@ contains
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, intercept_total
       real(wp)    :: tissue_store0, tissue_store1
-      real(wp)    :: tl_int_acc(col_cohort%n), tw_int_acc(col_cohort%n), tr_int_acc(col_cohort%n)
+      real(wp)    :: tl_int_acc(static%n), tw_int_acc(static%n), tr_int_acc(static%n)
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, nsteps, nrej
 
-      n = col_cohort%n
-      nsl = col_site%soil_profile%n_active
+      n = static%n
+      nsl = site%soil_profile%n_active
       !----- The stage-clamp count accumulates down the call chain, so this step's tally starts here. !
-      budget%clamp_stage_n = 0_ik
-      budget%theta_ood_max = 0.0_wp
+      out%report%work(WORK_CLAMP_STAGE) = 0_ik
+      out%report%theta_ood_max = 0.0_wp
       !----- State^n pond, taken before the commit below overwrites it. -----------------------------!
-      w_surface0 = biophys%soil_water%w_surface
-      e_pond0    = biophys%soil_water%w_surface_energy
-      if (present(stiff_bail)) stiff_bail = .false.
+      w_surface0 = dynamic%soil_water%w_surface
+      e_pond0    = dynamic%soil_water%w_surface_energy
+      stiff_bail = .false.
 
       cond_dep = 0.0_wp
       cond_dep_enth = 0.0_wp
       face_acc = 0.0_wp
-      budget%atm_heat_export = 0.0_wp
-      budget%atm_vap_export = 0.0_wp
-      call build_column_frozen(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
-                               n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
+      out%report%exports%atm_heat_export = 0.0_wp
+      out%report%exports%atm_vap_export = 0.0_wp
+      call build_column_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
 
       dt0 = dt_fast
-      if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)
-      ec = col_config%integrator%error_control
+      if (dynamic%adapt_dt_last > tiny_num) dt0 = min(dynamic%adapt_dt_last, dt_fast)
+      ec = build_error_control(cfg)
       ec%p_order = RK45_P_ORDER
       tl_int_acc(1:n) = 0.0_wp
       tw_int_acc(1:n) = 0.0_wp
       tr_int_acc(1:n) = 0.0_wp
-      call adaptive_rk45_march(y, frozen, col_site, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
+      call adaptive_rk45_march(y, frozen, site, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
                               w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
-                              clamp_stage_n=budget%clamp_stage_n,                                  &
+                              clamp_stage_n=out%report%work(WORK_CLAMP_STAGE),                                  &
                               cond_acc=cond_dep, cond_enth_acc=cond_dep_enth,                     &
-                              atm_heat_acc=budget%atm_heat_export, atm_vap_acc=budget%atm_vap_export, &
-                              ood_max=budget%theta_ood_max, face_resid_acc=face_acc,                 &
+                              atm_heat_acc=out%report%exports%atm_heat_export, atm_vap_acc=out%report%exports%atm_vap_export, &
+                              ood_max=out%report%theta_ood_max, face_resid_acc=face_acc,                 &
                               tissue_leaf_acc=tl_int_acc, tissue_wood_acc=tw_int_acc, transp_acc=tr_int_acc)
-      biophys%adapt_dt_last = dt_warm_next
-      budget%integ_nsteps = nsteps
-      budget%integ_nrej = nrej
+      dynamic%adapt_dt_last = dt_warm_next
+      out%report%work(WORK_INTEG_STEPS) = nsteps
+      out%report%work(WORK_INTEG_REJECT) = nrej
       !----- Per-layer face closure: the committed theta against the faces and uptake it was given. --!
-      budget%soil_face_mass%resid   = face_acc
-      budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, abs(face_acc))
-      budget%soil_face_mass%abs_sum = budget%soil_face_mass%abs_sum + abs(face_acc)
-      budget%soil_face_mass%n_check = budget%soil_face_mass%n_check + 1_ik
+      out%report%ledgers%soil_face_mass%resid   = face_acc
+      out%report%ledgers%soil_face_mass%worst   = max(out%report%ledgers%soil_face_mass%worst, abs(face_acc))
+      out%report%ledgers%soil_face_mass%abs_sum = out%report%ledgers%soil_face_mass%abs_sum + abs(face_acc)
+      out%report%ledgers%soil_face_mass%n_check = out%report%ledgers%soil_face_mass%n_check + 1_ik
 
       !----- The march gave up (stiff regime): return before committing anything, since y_out is a    !
       !      partial-time state, so the caller redoes this dt_fast on ARK from state^n. ---------------!
       if (nsteps + nrej >= RK45_WORK_CAP) then
-         if (present(stiff_bail)) stiff_bail = .true.
-         if (present(converged))  converged  = .false.
-         if (present(iters))      iters      = nsteps
+         stiff_bail = .true.
          return
       end if
 
@@ -489,38 +478,38 @@ contains
       !      negative outflow. ----------------------------------------------------------------------!
       surf_overflow = 0.0_wp
       surf_deficit = 0.0_wp
-      if (col_config%canopy_water_on) then
-         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai,                                  &
-                                col_config%leaf_surf_water_max(col_cohort%pft(1:n)),                    &
-                                col_config%wood_surf_water_max(col_cohort%pft(1:n)), n, surf_overflow, surf_deficit)
+      if (cfg%canopy_water_on) then
+         call clamp_canopy_film(y_out, static%lai, static%wai,                                  &
+                                cfg%pft%leaf_surf_water_max(static%pft(1:n)),                    &
+                                cfg%pft%wood_surf_water_max(static%pft(1:n)), n, surf_overflow, surf_deficit)
       end if
 
-      !----- Unpack into biophys. -----------------------------------------------------------------!
-      call unpack_column_state(y_out, n, nsl, biophys)
+      !----- Unpack into dynamic. -----------------------------------------------------------------!
+      call unpack_column_state(y_out, n, nsl, dynamic)
       !----- Deposit the condensate into soil layer 1, as on ARK (docs/science/numerical_scheme.md §7, !
       !      item 4), at the b-weighted stage enthalpy the canopy air was debited. --------------------!
       if (cond_dep > 0.0_wp) then
-         call deposit_condensate(y_out, col_site%soil_profile%dz(1), cond_dep, cond_dep_enth)
-         biophys%soil_energy%soil_energy(1) = y_out%soil_energy(1)
-         biophys%soil_water%theta(1) = y_out%theta(1)
+         call deposit_condensate(y_out, site%soil_profile%dz(1), cond_dep, cond_dep_enth)
+         dynamic%soil_energy%soil_energy(1) = y_out%soil_energy(1)
+         dynamic%soil_water%theta(1) = y_out%theta(1)
       end if
-      call diagnose_soil_temps(y_out, col_site%soil_profile%dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
-            biophys%soil_energy%soil_fliq)
+      call diagnose_soil_temps(y_out, site%soil_profile%dry_heat_capacity, nsl, dynamic%soil_energy%soil_temp, &
+            dynamic%soil_energy%soil_fliq)
       !----- The pond, its runoff and their enthalpy are the water network's, as theta is            !
       !      (docs/science/soil_plant_water.md). ---------------------------------------------------!
       w_pond_rk    = frozen%hydrology%w_surface1
       e_pond_rk    = frozen%hydrology%w_surface_energy1
       runoff_rk    = frozen%hydrology%runoff_surf * dt_fast
       over_enth_rk = frozen%hydrology%runoff_enth * dt_fast
-      biophys%soil_water%w_surface      = w_pond_rk
-      biophys%soil_water%w_surface_energy = e_pond_rk
+      dynamic%soil_water%w_surface      = w_pond_rk
+      dynamic%soil_water%w_surface_energy = e_pond_rk
 
       !----- Commit the tissues' energy from their time-average temperature, as on ARK. -------------!
-      call commit_tissue_energy(frozen%tissue, col_cohort%nplant, dt_fast, tl_int_acc(1:n) / dt_fast,         &
-                                tw_int_acc(1:n) / dt_fast, n, biophys, tissue_store0, tissue_store1)
+      call commit_tissue_energy(frozen%tissue, static%nplant, dt_fast, tl_int_acc(1:n) / dt_fast,         &
+                                tw_int_acc(1:n) / dt_fast, n, dynamic, tissue_store0, tissue_store1)
       !----- The transpiration each cohort's leaves lost over the step, as on the ARK path. ---------!
-      if (present(cdiag)) cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(tr_int_acc(1:n), dt_fast,          &
-                                                                       col_cohort%nplant(1:n), col_cohort%leaf_area(1:n))
+      if (out%capture) out%cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(tr_int_acc(1:n), dt_fast,         &
+                                                                         static%nplant(1:n), static%leaf_area(1:n))
 
       !----- Whole-column water and energy ledgers only: every store rides the same right-hand side,  !
       !      so these are the per-store ledgers here. --------------------------------------------------!
@@ -529,12 +518,12 @@ contains
       shv0 = y%cas_shv
       enth1 = y_out%cas_enthalpy
       shv1 = y_out%cas_shv
-      e_soil0 = soil_energy_store(y%soil_energy,     col_site%soil_profile%dz, nsl)
-      e_soil1 = soil_energy_store(y_out%soil_energy, col_site%soil_profile%dz, nsl)
-      w_soil0 = soil_water_store(y%theta,     col_site%soil_profile%dz, nsl)
-      w_soil1 = soil_water_store(y_out%theta, col_site%soil_profile%dz, nsl)
-      w_plant0 = plant_water_store(col_cohort%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
-      w_plant1 = plant_water_store(col_cohort%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
+      e_soil0 = soil_energy_store(y%soil_energy,     site%soil_profile%dz, nsl)
+      e_soil1 = soil_energy_store(y_out%soil_energy, site%soil_profile%dz, nsl)
+      w_soil0 = soil_water_store(y%theta,     site%soil_profile%dz, nsl)
+      w_soil1 = soil_water_store(y_out%theta, site%soil_profile%dz, nsl)
+      w_plant0 = plant_water_store(static%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
+      w_plant1 = plant_water_store(static%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
       !----- The films, valued as on ARK. -------------------------------------------------------------!
       surf_water0 = canopy_film_store(y%leaf_surf_water,     y%wood_surf_water,     n)
       surf_water1 = canopy_film_store(y_out%leaf_surf_water, y_out%wood_surf_water, n)
@@ -546,7 +535,7 @@ contains
       !      intercepted rain at the film's valuation, the rainfall enthalpy the pack took, and what   !
       !      the pond's inflow brings, shed water included (ground_inflow_enth). The _acc terms and    !
       !      surf_overflow/surf_deficit are amounts; the rates take dt_fast. -------------------------!
-      w_in  = (forc%rainfall + forc%snowfall + biophys%shed_water_rate) * dt_fast
+      w_in  = (forcing%rainfall + forcing%snowfall + static%shed_water_rate) * dt_fast
       !----- Out: the stages' vapour and drainage, the film overflow net of deficit, the pond's runoff. !
       w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
       e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(frozen%hydrology%t_film_valuation)        &
@@ -556,16 +545,16 @@ contains
       e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(frozen%hydrology%t_film_valuation)     &
               + over_enth_rk
 
-      !----- These checks never stop the run: column_fast_step may still discard the step for the    !
+      !----- These checks never stop the run: fast_step may still discard the step for the           !
       !      ARK rescue, and calls rk45_ledgers_stop only for a step it keeps. -----------------------!
-      call budget_check(budget%whole_water,                                                            &
+      call budget_check(out%report%ledgers%whole_water,                                                            &
                         w_soil0 + cas_mass_capacity*shv0 + w_surface0 + w_plant0 + surf_water0                     &
                         + frozen%snow%swe0,                                                          &
                         w_soil1 + cas_mass_capacity*shv1 + w_pond_rk + w_plant1 + surf_water1                        &
                         + frozen%snow%swe1,                                                          &
                         w_in, w_out, dt_fast, BUDGET_WATER_RATE_FLOOR, 'whole_water (rk45)', .false.)
       !----- The snow store and its accumulated rainfall enthalpy join the ledger; 0 without snow. ----!
-      call budget_check(budget%whole_energy,                                                           &
+      call budget_check(out%report%ledgers%whole_energy,                                                           &
                         !----- Meltwater passes pack -> pond, both stores, so it telescopes. ----------!
                         e_soil0                           + cas_mass_capacity*enth0 + surf_enth0                    &
                         + frozen%snow%enth0 + e_pond0 + tissue_store0,                              &
@@ -574,27 +563,23 @@ contains
                         e_in, e_out, dt_fast, BUDGET_ENERGY_RATE_FLOOR, 'whole_energy (rk45)', .false.)
       !----- No canopy-air CO2 ledger here: rk45_column_step does not accumulate the stages' CO2     !
       !      exchange with the atmosphere. ----------------------------------------------------------!
-
-      if (present(converged)) converged = (nrej == 0_ik)
-      if (present(iters))     iters     = nsteps
    end subroutine column_fast_step_rk45
 
-   !----- Under [fast].debug_error, stop the run if a step column_fast_step keeps breached a        !
+   !----- Under [fast].debug_error, stop the run if a step fast_step keeps breached a               !
    !      whole-column ledger; a step handed to the ARK rescue is discarded and must not stop it. -!
-   subroutine rk45_ledgers_stop(budget, dt_fast, col_config, col_site)
-      type(column_budget_t), intent(in) :: budget
-      real(wp),              intent(in) :: dt_fast
-      type(column_config_t), intent(in) :: col_config
-      type(column_site_t),   intent(in) :: col_site
-      if (.not. col_site%debug_error) return
-      if (.not. last_check_closed(budget%whole_water, dt_fast, BUDGET_WATER_RATE_FLOOR)) then
+   subroutine rk45_ledgers_stop(report, dt_fast, debug_error)
+      type(step_report_t), intent(in) :: report
+      real(wp),            intent(in) :: dt_fast
+      logical,             intent(in) :: debug_error   !< [fast].debug_error
+      if (.not. debug_error) return
+      if (.not. last_check_closed(report%ledgers%whole_water, dt_fast, BUDGET_WATER_RATE_FLOOR)) then
          write(*, '(a,es13.5)') 'meds_fast_rk45: whole_water (rk45) did not close, resid = ',               &
-                                budget%whole_water%resid
+                                report%ledgers%whole_water%resid
          error stop 'meds_fast_rk45: a kept RK45 step breached its whole-column water ledger'
       end if
-      if (.not. last_check_closed(budget%whole_energy, dt_fast, BUDGET_ENERGY_RATE_FLOOR)) then
+      if (.not. last_check_closed(report%ledgers%whole_energy, dt_fast, BUDGET_ENERGY_RATE_FLOOR)) then
          write(*, '(a,es13.5)') 'meds_fast_rk45: whole_energy (rk45) did not close, resid = ',              &
-                                budget%whole_energy%resid
+                                report%ledgers%whole_energy%resid
          error stop 'meds_fast_rk45: a kept RK45 step breached its whole-column energy ledger'
       end if
    end subroutine rk45_ledgers_stop
@@ -602,14 +587,14 @@ contains
    !----- Did the explicit march commit a railed state? Its 5th- and 4th-order solutions can rail  !
    !      together, so the controller sees err ~ 0 and accepts an impossible temperature; this is  !
    !      the dispatcher's second rescue trigger. -------------------------------------------------!
-   pure function rk45_state_railed(biophys, nsl) result(railed)
-      type(patch_biophys_t), intent(in) :: biophys
+   pure function rk45_state_railed(dynamic, nsl) result(railed)
+      type(fast_dynamic_state_t), intent(in) :: dynamic
       integer(ik),           intent(in) :: nsl
       logical :: railed
       real(wp), parameter :: T_LO = 185.0_wp, T_HI = 345.0_wp
-      railed =      biophys%cas%can_temp <= T_LO .or. biophys%cas%can_temp >= T_HI                          &
-               .or. any(biophys%soil_energy%soil_temp(1:nsl) <= T_LO)                                        &
-               .or. any(biophys%soil_energy%soil_temp(1:nsl) >= T_HI)
+      railed =      dynamic%cas%can_temp <= T_LO .or. dynamic%cas%can_temp >= T_HI                          &
+               .or. any(dynamic%soil_energy%soil_temp(1:nsl) <= T_LO)                                        &
+               .or. any(dynamic%soil_energy%soil_temp(1:nsl) >= T_HI)
    end function rk45_state_railed
 
 end module meds_fast_rk45

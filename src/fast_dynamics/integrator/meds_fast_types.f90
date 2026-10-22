@@ -1,42 +1,46 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_types -- the shared types of the fast loop: the working bundles the dispatch   !
-! hands to either integrator (the run and site parts of the configuration, column_config_t !
-! and column_site_t; column_cohort_t, column_forcing_t, column_budget_t, patch_biophys_t)  !
-! and the column state, frozen record, tendency and boundary-flux types the integrators    !
-! advance (column_state_t, column_frozen_t, column_tend_t, stage_bflux_t, column_bflux_t). !
-! A leaf module, so meds_fast_ark, meds_fast_rk45 and the shared right-hand side import it !
-! rather than each other (docs/science/numerical_scheme.md §2-§3,                          !
+! meds_fast_types -- the shared types of the fast loop. What fast_step takes besides the  !
+! configuration and the site: the static state (the patch's cohorts and what else is fixed !
+! for the slow step), the dynamic state it advances, the forcing, the output (the step     !
+! report, the aerodynamics, the per-cohort fluxes) and the workspace; and the column       !
+! state, frozen record, tendency and boundary-flux types the integrators advance           !
+! (column_state_t, column_frozen_t, column_tend_t, stage_bflux_t, column_bflux_t). A leaf  !
+! module, so meds_fast_ark, meds_fast_rk45 and the shared right-hand side import it rather !
+! than each other (docs/science/numerical_scheme.md §2-§3,                                 !
 ! docs/science/column_biophysics.md).                                                      !
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max
-   use meds_pft_params, only : hydraulics_table_t, leaf_photo_table_t
-   use meds_soil_params, only : soil_profile_t, soil_params_t
+   use meds_pft_params, only : leaf_photo_table_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
-   use meds_biophysics_params, only : aero_params_t, snow_params_t
-   use meds_biogeochem_params, only : soil_carbon_params_t, N_SOIL_POOL
+   use meds_biophysics_params, only : aero_params_t
+   use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
-   use meds_fast_params, only : INTEG_ARK, CTRL_I
+   use meds_fast_params, only : CTRL_I
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
+   use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
    private
 
-   public :: column_config_t, column_site_t, column_cohort_t, column_forcing_t, column_budget_t
+   public :: fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t, fast_workspace_t
+   public :: step_report_t, step_ledgers_t, step_exports_t
+   public :: WORK_INTEG_STEPS, WORK_INTEG_REJECT, WORK_WATER_NSUB, WORK_WATER_NEWTON, WORK_WATER_REJECT,         &
+             WORK_WATER_NFAIL, WORK_RK45_RESCUE, WORK_CLAMP_STAGE, N_WORK
    public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
-   public :: tol_set_t, error_control_t, integrator_opts_t
-   public :: ensure_column_cohort_capacity
+   public :: tol_set_t, error_control_t
+   public :: ensure_static_capacity, ensure_dynamic_capacity, ensure_forcing_capacity, ensure_output_capacity
    public :: surface_state_t, surface_tend_t
-   public :: patch_biophys_t, ensure_patch_biophys_capacity
    public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
-   public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t, fast_workspace_t
+   public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
-   public :: alloc_column_cohort, alloc_patch_biophys   ! used only by the tests
+   public :: alloc_static_state, alloc_dynamic_state   ! used only by the tests
 
    !----- The tolerance groups, one per kind of state, each scaling its entries in the error norm    !
    !      (docs/science/numerical_scheme.md eq. (3)). GRP_THETA also sets the soil-plant water       !
@@ -81,60 +85,24 @@ module meds_fast_types
       !----- p of docs/science/numerical_scheme.md eq. (4), the embedded estimate's order: 1 ARK, 4 RK45. !
       integer(ik)      :: p_order    = 1_ik
       type(tol_set_t)  :: tols
+      !----- [fast].debug_error's budget stops: a breached ledger stops the run, and so does a soil     !
+      !      heat step whose budget misses by more than soil_energy_budget_atol [K] of the column's   !
+      !      heat capacity (atol_scale applied). ------------------------------------------------------!
+      logical          :: debug_error = .false.
+      real(wp)         :: soil_energy_budget_atol = 1.0e-2_wp
    end type error_control_t
 
-   !----- The integrator's configuration, built once per run (meds_fast_config%build_integrator_opts) !
-   !      and carried on column_config_t. ---------------------------------------------------------!
-   type :: integrator_opts_t
-      integer(ik) :: scheme           = INTEG_ARK  !< INTEG_ARK | INTEG_RK45
-      logical     :: adaptive         = .true.     !< ARK: adaptive sub-stepping (else fixed_substeps)
-      integer(ik) :: fixed_substeps   = 1_ik       !< ARK, adaptive = .false.: equal sub-steps per dt_fast
-      type(error_control_t) :: error_control       !< tolerances + controller
-   end type integrator_opts_t
-
-   !----- The run part of the column's configuration, built once per run (build_fast_context) and  !
-   !      shared by every site: what the run's configuration and the PFT table set. ---------------!
-   type :: column_config_t
-      type(aero_params_t)         :: aero            !< aerodynamics constants
-      !----- Stem and fine-root maintenance respiration's peaked temperature response: leaf Rd's,     !
-      !      [leaf_physiology] ea_rd, hd_rd, ds_rd (docs/science/plant_respiration.md §4). ----------!
-      real(wp)                    :: ea_rd, hd_rd, ds_rd
-      !----- Per-PFT plant hydraulics, the PFT table's (derive_pft_tables). There is no PFT-uniform copy,
-      !      so a caller cannot run every PFT on the first PFT's hydraulics by mistake.
-      type(hydraulics_table_t)    :: hydraulics_table   !< per-PFT PV curves, vulnerability, conductance
-      type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
-      !----- Canopy-surface water, the interception film and its evaporation and dew                 !
-      !      (docs/science/soil_biophysics.md §Canopy interception); opt-in. RK45 integrates the     !
-      !      films in its stages, ARK advances them once per step. Off, the wetted fraction stays 0  !
-      !      and every film term vanishes. ----------------------------------------------------------!
-      logical                     :: canopy_water_on  = .false.
-      real(wp)                    :: intercept_alpha  = 1.0_wp    !< [-] Beer interception efficiency ([fast])
-      real(wp)                    :: intercept_k      = 0.5_wp    !< [1/PAI] Beer interception extinction ([fast])
-      !----- The films' capacities per PFT [kg/m2 leaf], [kg/m2 wood]: a cohort holds              !
-      !      leaf_max*LAI + wood_max*WAI. Built by apply_canopy_film_config. ----------------------!
-      real(wp), allocatable       :: leaf_surf_water_max(:), wood_surf_water_max(:)
-      type(snow_params_t)         :: snow            !< snow parameters (density, albedo, thresholds, conductivity)
-      type(soil_carbon_params_t)  :: soil_carbon     !< [soil_carbon]: the switch and the CENTURY parameters (Rh)
-      !----- The ARK's Newton iteration cap is NEWT_MAX in meds_fast_be_stage, not a config field. ---!
-   end type column_config_t
-
-   !----- The site part: what differs from site to site, made for each site every slow step       !
-   !      (site_column_configs): its soil profile, the water and heat solvers' options with its    !
-   !      bottom boundary, and its leaf table, acclimated to its own air. ------------------------!
-   type :: column_site_t
-      type(soil_profile_t)        :: soil_profile    !< layers, hydraulic and thermal texture (n_active layers)
-      type(soil_params_t)         :: soil            !< its [soil]: surface and bottom boundaries
-      !----- [fast]'s budget stop: debug_error and the soil heat's closure threshold [K], scaled  !
-      !      by atol_scale, which the soil heat step checks. -----------------------------------!
-      logical                     :: debug_error = .false.
-      real(wp)                    :: soil_energy_budget_atol = 1.0e-2_wp
-      type(leaf_photo_table_t)    :: leaf_photo      !< per-PFT leaf-photosynthesis parameters
-   end type column_site_t
-
-   !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
-   type :: column_cohort_t
+   !----- The step's state of the patch's cohorts and everything else a fast step reads that is fixed  !
+   !      for the slow step, gathered once per patch (gather_patch): each cohort's structure and slow-  !
+   !      varying traits, the canopy geometry and the canopy-air top, the slow loop's daily inputs,    !
+   !      and the site's leaf table. ---------------------------------------------------------------!
+   type :: fast_static_state_t
       integer(ik)              :: n = 0_ik
       integer(ik), allocatable :: pft(:)                       !< PFT index (into the PFT table)
+      !----- The cohorts from the ground up: order(k) is the k-th lowest (ascending_order of height). The   !
+      !      cohorts are gathered tallest first; the radiation and the aerodynamics take them bottom to   !
+      !      top, so the order is formed once, with the heights, and both read it. ---------------------!
+      integer(ik), allocatable :: order(:)
       real(wp),    allocatable :: lai(:), wai(:), height(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
@@ -155,18 +123,63 @@ module meds_fast_types
       !      stomatal control (docs/science/leaf_gas_exchange.md §4.2). column_prepass always passes !
       !      it, since leaf_gas_exchange_batch reads an absent `psi` as no stress. -----------------!
       real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; UNSET_NEGATIVE => seed from soil
-   end type column_cohort_t
+      !----- The canopy geometry, and the canopy-air top the forcing is moved to with the patch's   !
+      !      roughness and displacement (docs/science/forcing.md §8). ------------------------------!
+      type(aero_geom_t)        :: geom
+      real(wp)                 :: z_top    = 30.0_wp   !< [m] the canopy-air top, the forcing's reference height
+      real(wp)                 :: rough    = 0.0_wp    !< [m] roughness length
+      real(wp)                 :: displace = 0.0_wp    !< [m] zero-plane displacement height
+      !----- The patch's soil-carbon pools (docs/science/soil_carbon.md §7), held over the day's fast    !
+      !      sub-steps: the fast Rh respires against them, and the daily soil_carbon_step alone writes  !
+      !      the real pools. 0 when off. --------------------------------------------------------------!
+      type(soil_carbon_t)      :: soil_carbon
+      !----- The day's leaf/root-turnover shed water, added to the ground's water input every sub-step. !
+      real(wp)                 :: shed_water_rate = 0.0_wp  !< [kg/m2 ground/s]
+      real(wp)                 :: shed_water_enth = 0.0_wp  !< [W/m2 ground] its enthalpy, from the tissues it left
+      !----- The slow tier's CO2 owing (growth respiration and its corrections,                    !
+      !      docs/science/plant_respiration.md §6). ----------------------------------------------!
+      real(wp)                 :: slow_co2_rate   = 0.0_wp  !< [umol/m2 ground/s]
+      type(leaf_photo_table_t) :: leaf_photo   !< the site's leaf table, acclimated to its growth temperature
+   end type fast_static_state_t
 
-   !----- Prescribed per-step forcing the higher layers (RT, met) supply. ---------------------!
-   type :: column_forcing_t
+   !----- The patch's stores and its cohorts' tissue state, the working copy a fast step advances:  !
+   !      gathered from the persisted patch and cohort state and written back after (gather_patch,   !
+   !      scatter_patch). -------------------------------------------------------------------------!
+   type :: fast_dynamic_state_t
+      type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
+      type(soil_energy_column_t) :: soil_energy       !< soil thermal column (internal energy; temp diagnosed)
+      type(soil_water_column_t)  :: soil_water        !< soil water column (theta; psi_soil diagnosed)
+      type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
+      real(wp), allocatable      :: leaf_energy(:)    !< [J/m2 ground] per-cohort leaf internal energy
+      real(wp), allocatable      :: wood_energy(:)    !< [J/m2 ground] per-cohort wood internal energy
+      real(wp), allocatable      :: leaf_temp(:)      !< [K] derived from leaf_energy
+      real(wp), allocatable      :: wood_temp(:)      !< [K] derived from wood_energy
+      !----- Internal water mass, the prognostic hydraulic state; psi is diagnosed from it         !
+      !      (tissue_water_to_psi) and never persisted (docs/science/soil_plant_water.md §2). ------!
+      real(wp), allocatable      :: leaf_water_mass(:) !< [kg/plant] internal leaf water
+      real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
+      !----- The interception films, per m2 of ground here; the cohort holds them per plant. ------!
+      real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
+      real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
+      !----- Warm start for the adaptive march (docs/science/numerical_scheme.md §3, `ark`): the step  !
+      !      that seeds the next dt_fast's first sub-step; 0 = no history, start from dt_fast. --------!
+      real(wp)                   :: adapt_dt_last = 0.0_wp   !< [s] last accepted sub-step not cut by the step's end
+   end type fast_dynamic_state_t
+
+   !----- The drivers of one fast step: the air at the patch's canopy-air top and the radiation the  !
+   !      two-stream gives each cohort and the ground (patch_forcing). ------------------------------!
+   type :: fast_forcing_t
       real(wp)              :: enthalpy_atm  = 0.0_wp   !< [J/kg]     reference-level specific enthalpy
       real(wp)              :: shv_atm       = 0.0_wp   !< [kg/kg]    reference-level specific humidity
       real(wp)              :: co2_atm       = 400.0_wp !< [umol/mol] free-atmosphere CO2
+      real(wp)              :: air_temp      = 288.0_wp !< [K]        reference-level air temperature
+      real(wp)              :: wind          = 2.0_wp   !< [m/s]      wind at the reference level
+      real(wp)              :: press         = 101325.0_wp  !< [Pa]   air pressure
+      real(wp)              :: rho_air       = 1.2_wp   !< [kg/m3]    air density
       real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
       real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
-      real(wp)              :: rainfall        = 0.0_wp   !< [kg/m2/s] reference-level rainfall (intercepted downstream)
-      real(wp)              :: snowfall         = 0.0_wp   !< [kg/m2/s] frozen rainfall (snowfall; drives snow accumulation)
-      real(wp)              :: air_temp          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow rainfall enthalpy)
+      real(wp)              :: rainfall      = 0.0_wp   !< [kg/m2/s] reference-level rainfall (intercepted downstream)
+      real(wp)              :: snowfall      = 0.0_wp   !< [kg/m2/s] snowfall (drives snow accumulation)
       real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
       !----- Top-of-canopy radiative fluxes per band, kept from the two-stream solve for comparison with a
       !      radiometer or a satellite product (docs/science/canopy_radiation_transfer.md §Surface radiative
@@ -180,12 +193,30 @@ module meds_fast_types
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] absorbed SW / net LW per cohort (wood energy)
       real(wp), allocatable :: par_top(:)               !< [W/m2] PAR (VIS) reaching the cohort's top: the
                                                         !< phenology PAR cue's driver (canopy light gradient)
-   end type column_forcing_t
+   end type fast_forcing_t
 
-   !----- The per-patch conservation budgets. The per-kernel budgets close by construction;         !
+   !----- The work counters of one fast step, the cost axis of a numerics comparison: indices of      !
+   !      step_report_t%work, set by the step and accumulated site-wide by the fast driver. ---------!
+   integer(ik), parameter :: WORK_INTEG_STEPS  = 1_ik   !< accepted integrator sub-steps
+   integer(ik), parameter :: WORK_INTEG_REJECT = 2_ik   !< rejected integrator steps
+   integer(ik), parameter :: WORK_WATER_NSUB   = 3_ik   !< the water network's accepted sub-steps
+   integer(ik), parameter :: WORK_WATER_NEWTON = 4_ik   !< its Newton iterations
+   integer(ik), parameter :: WORK_WATER_REJECT = 5_ik   !< its rejected sub-steps (too large an error, or Newton failed)
+   integer(ik), parameter :: WORK_WATER_NFAIL  = 6_ik   !< its sub-steps taken at the shortest length although unconverged
+   !----- dt_fast steps whose RK45 step bailed or committed a railed state and were redone on ARK  !
+   !      (docs/science/numerical_scheme.md §3, `rk45`); a persistently high count flags a stiff   !
+   !      regime. ---------------------------------------------------------------------------------!
+   integer(ik), parameter :: WORK_RK45_RESCUE  = 7_ik
+   !----- Stage-clamp activations: how often clamp_cas bounded a throwaway stage input's canopy air !
+   !      so the right-hand side stays evaluable. A rising count means the trial step is too big;   !
+   !      neither scheme clamps the committed state. ----------------------------------------------!
+   integer(ik), parameter :: WORK_CLAMP_STAGE  = 8_ik
+   integer(ik), parameter :: N_WORK            = 8_ik
+
+   !----- The per-patch conservation ledgers. The per-kernel ledgers close by construction;         !
    !      whole_energy and whole_water set every store against the column's true boundary fluxes,  !
    !      which is what catches a leak across a seam (docs/science/numerical_scheme.md §5b). -------!
-   type :: column_budget_t
+   type :: step_ledgers_t
       type(budget_t) :: cas_energy, cas_water, cas_co2, soil_energy, soil_water
       type(budget_t) :: whole_energy, whole_water
       !----- Per-layer face mass closure, summed over layers: |the water a layer's theta moved - the   !
@@ -193,7 +224,11 @@ module meds_fast_types
       !      ledgers cannot (docs/science/numerical_scheme.md §5b). A pre-formed residual, so only     !
       !      resid/worst/abs_sum/n_check/n_fail are set; n_fail counts unconverged water solves. ------!
       type(budget_t) :: soil_face_mass
-      real(wp)       :: gpp_last = 0.0_wp, nee_last = 0.0_wp   !< [umol/m2/s] last-step diagnostics
+   end type step_ledgers_t
+
+   !----- What the step exported, and the slow tier's inputs it produced. ----------------------------!
+   type :: step_exports_t
+      real(wp)       :: gpp_last = 0.0_wp, nee_last = 0.0_wp   !< [umol/m2/s] this step's patch GPP and NEE
       !----- Net CAS -> atmosphere export over the step, b-weighted like the ledgers: the reported H, LE. !
       real(wp)       :: atm_heat_export = 0.0_wp   !< [J/m2]  sensible heat over this dt_fast
       real(wp)       :: atm_vap_export  = 0.0_wp   !< [kg/m2] over this dt_fast
@@ -206,27 +241,34 @@ module meds_fast_types
       !      integrals, decomp_xi. -------------------------------------------------------------------!
       real(wp)       :: xi_step(N_SOIL_POOL) = 0.0_wp   !< [-] this sub-step's per-pool env scalar
       real(wp)       :: rh_matrix_step       = 0.0_wp   !< [kgC/m2/day] this sub-step's matrix Rh
-      !----- Work counters, the cost axis of a numerics comparison: set per sub-step by the stepper,  !
-      !      accumulated site-wide by the fast driver. -----------------------------------------------!
-      integer(ik)    :: integ_nsteps   = 0_ik   !< accepted integrator sub-steps this dt_fast
-      integer(ik)    :: integ_nrej   = 0_ik   !< rejected integrator steps this dt_fast
-      !----- The soil-plant water solver's work this dt_fast (docs/science/soil_plant_water.md §6). ---!
-      integer(ik)    :: water_nsub   = 0_ik   !< accepted sub-steps
-      integer(ik)    :: water_newton = 0_ik   !< Newton iterations
-      integer(ik)    :: water_reject = 0_ik   !< rejected sub-steps (too large an error, or Newton failed)
-      integer(ik)    :: water_nfail  = 0_ik   !< sub-steps taken at the shortest length although unconverged
-      !----- dt_fast steps whose RK45 step bailed or committed a railed state and were redone on ARK  !
-      !      (docs/science/numerical_scheme.md §3, `rk45`); a persistently high count flags a stiff   !
-      !      regime. ---------------------------------------------------------------------------------!
-      integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->ARK this sub-step (0 on ARK)
-      !----- Stage-clamp activations: how often clamp_cas bounded a throwaway stage input's canopy air !
-      !      so the right-hand side stays evaluable. A rising count means the trial step is too big;   !
-      !      neither scheme clamps the committed state. ----------------------------------------------!
-      integer(ik)    :: clamp_stage_n  = 0_ik   !< stage-input clamp activations (layers/stores clamped)
+   end type step_exports_t
+
+   !----- The step's report: its ledgers, its exports and its work. -------------------------------!
+   type :: step_report_t
+      type(step_ledgers_t) :: ledgers
+      type(step_exports_t) :: exports
+      integer(ik)          :: work(N_WORK) = 0_ik   !< WORK_*
       !----- How far theta lay outside its constitutive domain at an RK45 stage-1 input, which no     !
       !      clamp sees; telemetry, not a correction (docs/science/numerical_scheme.md §5b). 0 on ARK. !
-      real(wp)       :: theta_ood_max  = 0.0_wp !< [m3/m3] max excursion outside [theta_res, theta_sat]
-   end type column_budget_t
+      real(wp)             :: theta_ood_max = 0.0_wp   !< [m3/m3] max excursion outside [theta_res, theta_sat]
+   end type step_report_t
+
+   !----- What one fast step reports: the report, the aerodynamics, each cohort's carbon fluxes and  !
+   !      leaf potential, the canopy air's exchange with the atmosphere, and the per-cohort          !
+   !      diagnostic capture (docs/science/diagnostics.md §1, stage [2]) when the run asks for it.    !
+   type :: fast_output_t
+      type(step_report_t)   :: report
+      type(aero_out_t)      :: aero
+      real(wp), allocatable :: gpp_coh(:)         !< [umol CO2/plant/s] gross GPP (fast->slow)
+      real(wp), allocatable :: leaf_resp_coh(:)   !< [umol CO2/plant/s] leaf dark respiration
+      real(wp), allocatable :: stem_resp_coh(:)   !< [umol CO2/plant/s] stem maintenance respiration
+      real(wp), allocatable :: root_resp_coh(:)   !< [umol CO2/plant/s] fine-root maintenance respiration
+      real(wp), allocatable :: psi_leaf_coh(:)    !< [MPa] the leaf potential at state^n (daily-max accumulator)
+      real(wp)              :: le_flux = 0.0_wp   !< [W/m2] CAS -> atmosphere latent heat (ET), the step's mean
+      real(wp)              :: h_flux  = 0.0_wp   !< [W/m2] CAS -> atmosphere sensible heat, the step's mean
+      logical               :: capture = .false.  !< fill cdiag; off, nothing extra is computed
+      real(wp), allocatable :: cdiag(:,:)         !< (N_CO_FAST_ROWS, cohort) per-cohort diagnostics
+   end type fast_output_t
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!
    type :: surface_state_t
@@ -464,15 +506,17 @@ module meds_fast_types
       type(plant_water_t)          :: plant        !< the network's sapflow and uptake per plant
    end type column_frozen_t
 
-   !----- Storage one thread's fast step reuses from step to step: the soil-plant water solver and   !
-   !      the ARK march's states and stages, filled in place and reallocated only when the cohort     !
-   !      count changes. The stages are their own record so the march passes them beside its states. !
+   !----- Storage one thread's fast step reuses from step to step: the aerodynamic environment, the  !
+   !      soil-plant water solver and the ARK march's states and stages, filled in place and          !
+   !      reallocated only when the cohort count changes. The stages are their own record so the     !
+   !      march passes them beside its states. ------------------------------------------------------!
    type :: ark_stages_t
       type(column_state_t) :: y2, base3, y3            !< the ARS(2,2,2) stages
       type(surface_tend_t) :: sf2, sf3                 !< the stages' surface tendencies
    end type ark_stages_t
 
    type :: fast_workspace_t
+      type(aero_env_t)      :: aenv                          !< the aerodynamic environment (set_aero_env)
       type(spac_solver_t)   :: spac                          !< the soil-plant water solver
       type(column_state_t)  :: y_march, y_new, y_err, y_lo   !< the ARK march's state and trial step
       type(ark_stages_t)    :: stages                        !< the ARK step's stages
@@ -544,136 +588,139 @@ module meds_fast_types
       real(wp), allocatable :: transp_coh(:)
    end type column_bflux_t
 
-   !----- A patch's fast-loop state, the working copy the integrators advance: gathered from the   !
-   !      persisted patch and cohort state by meds_fast_dynamics and written back after. ----------!
-   type :: patch_biophys_t
-      type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
-      type(soil_energy_column_t) :: soil_energy            !< soil thermal column (internal energy; temp diagnosed)
-      type(soil_water_column_t)  :: soil_water            !< soil water column (theta; psi_soil diagnosed)
-      type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
-      !----- Read-only snapshot of the patch's soil-carbon pools (docs/science/soil_carbon.md §7),    !
-      !      seeded once per slow step and held over the day's fast sub-steps: the fast Rh respires   !
-      !      against it, and the daily soil_carbon_step alone writes the real pools. 0 when off. ----!
-      type(soil_carbon_t)        :: soil_carbon
-      !----- The day's leaf/root-turnover shed water, a read-only snapshot like soil_carbon, added to  !
-      !      the ground's water input every sub-step. ---------------------------------------------!
-      real(wp)                   :: shed_water_rate = 0.0_wp  !< [kg/m2 ground/s]
-      real(wp)                   :: shed_water_enth = 0.0_wp  !< [W/m2 ground] its enthalpy, from the tissues it left
-      !----- The slow tier's CO2 owing (growth respiration and its corrections,                    !
-      !      docs/science/plant_respiration.md §6), seeded and held the same way. -----------------!
-      real(wp)                   :: slow_co2_rate   = 0.0_wp  !< [umol/m2 ground/s]
-      real(wp), allocatable      :: leaf_energy(:)    !< [J/m2 ground] per-cohort leaf internal energy
-      real(wp), allocatable      :: wood_energy(:)    !< [J/m2 ground] per-cohort wood internal energy
-      real(wp), allocatable      :: leaf_temp(:)      !< [K] derived from leaf_energy
-      real(wp), allocatable      :: wood_temp(:)      !< [K] derived from wood_energy
-      !----- Internal water mass, the prognostic hydraulic state; psi is diagnosed from it         !
-      !      (tissue_water_to_psi) and never persisted (docs/science/soil_plant_water.md §2). ------!
-      real(wp), allocatable      :: leaf_water_mass(:) !< [kg/plant] internal leaf water
-      real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
-      !----- The interception films, per m2 of ground here; the cohort holds them per plant. ------!
-      real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
-      real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
-      !----- Warm start for the adaptive march (docs/science/numerical_scheme.md §3, `ark`): the step  !
-      !      that seeds the next dt_fast's first sub-step; 0 = no history, start from dt_fast. --------!
-      real(wp)                   :: adapt_dt_last = 0.0_wp   !< [s] last accepted sub-step not cut by the step's end
-   end type patch_biophys_t
-
 contains
 
-   !----- Allocate a column_cohort_t (the per-patch cohort SoA the fast loop consumes). ------!
-   subroutine alloc_column_cohort(col_cohort, n)
-      type(column_cohort_t), intent(out) :: col_cohort
-      integer(ik),           intent(in)  :: n
-      col_cohort%n = n
-      allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n),                                     &
-               col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
-               col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
-               col_cohort%stem_resp_sapwood25(n), col_cohort%sap_volume(n),                                         &
-               col_cohort%leaf_emissivity(n), col_cohort%wood_emissivity(n),                                         &
-               col_cohort%leaf_area(n), col_cohort%nplant(n),                                                          &
-               col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
-               col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
-      col_cohort%pft = 1_ik
-      col_cohort%lai = 0.0_wp
-      col_cohort%wai = 0.0_wp
-      col_cohort%height = 0.0_wp
-      col_cohort%leaf_width = 0.04_wp
-      col_cohort%branch_diam = 0.02_wp
-      col_cohort%aboveground_frac = 0.7_wp
-      col_cohort%is_woody = .true.
-      col_cohort%stem_resp_factor25 = 0.0_wp
-      col_cohort%root_resp_factor25 = 0.0_wp
-      col_cohort%stem_resp_sapwood25 = 0.0_wp
-      col_cohort%sap_volume = 0.0_wp
-      col_cohort%leaf_emissivity = 1.0_wp
-      col_cohort%wood_emissivity = 1.0_wp
-      col_cohort%leaf_area = 0.0_wp
-      col_cohort%nplant = 0.0_wp
-      col_cohort%dbh = 0.0_wp
-      col_cohort%broot = 0.0_wp
-      col_cohort%bleaf = 0.0_wp
-      col_cohort%bsap = 0.0_wp
-      col_cohort%sap_area = 0.0_wp
-      col_cohort%bwood = 0.0_wp
-      col_cohort%vcmax25 = 0.0_wp
-      col_cohort%rd25 = 0.0_wp
+   !----- Allocate a fast_static_state_t's cohort arrays and set their defaults. --------------------!
+   subroutine alloc_static_state(static, n)
+      type(fast_static_state_t), intent(out) :: static
+      integer(ik),               intent(in)  :: n
+      integer(ik) :: i
+      static%n = n
+      allocate(static%pft(n), static%order(n), static%lai(n), static%wai(n), static%height(n),                    &
+               static%leaf_width(n), static%branch_diam(n), static%aboveground_frac(n),                   &
+               static%is_woody(n), static%stem_resp_factor25(n), static%root_resp_factor25(n),            &
+               static%stem_resp_sapwood25(n), static%sap_volume(n),                                         &
+               static%leaf_emissivity(n), static%wood_emissivity(n),                                         &
+               static%leaf_area(n), static%nplant(n),                                                          &
+               static%dbh(n), static%broot(n), static%bleaf(n), static%bsap(n), static%sap_area(n),           &
+               static%bwood(n), static%vcmax25(n), static%rd25(n), static%dmax_psi_leaf(n))
+      static%pft = 1_ik
+      static%order = [(n - i + 1_ik, i = 1_ik, n)]   ! tallest first, as the gather leaves them
+      static%lai = 0.0_wp
+      static%wai = 0.0_wp
+      static%height = 0.0_wp
+      static%leaf_width = 0.04_wp
+      static%branch_diam = 0.02_wp
+      static%aboveground_frac = 0.7_wp
+      static%is_woody = .true.
+      static%stem_resp_factor25 = 0.0_wp
+      static%root_resp_factor25 = 0.0_wp
+      static%stem_resp_sapwood25 = 0.0_wp
+      static%sap_volume = 0.0_wp
+      static%leaf_emissivity = 1.0_wp
+      static%wood_emissivity = 1.0_wp
+      static%leaf_area = 0.0_wp
+      static%nplant = 0.0_wp
+      static%dbh = 0.0_wp
+      static%broot = 0.0_wp
+      static%bleaf = 0.0_wp
+      static%bsap = 0.0_wp
+      static%sap_area = 0.0_wp
+      static%bwood = 0.0_wp
+      static%vcmax25 = 0.0_wp
+      static%rd25 = 0.0_wp
       !----- Unset, not 0: a 0 would read as fully turgid and disable the stomatal stress limb for a  !
       !      caller that forgets to fill it; the sentinel makes column_prepass seed from the soil. ----!
-      col_cohort%dmax_psi_leaf = UNSET_NEGATIVE
-   end subroutine alloc_column_cohort
+      static%dmax_psi_leaf = UNSET_NEGATIVE
+   end subroutine alloc_static_state
 
    !----- Grow-only capacity: reallocate only when the arrays hold fewer than n cohorts, else just   !
-   !      set the active count. Every reader loops to col_cohort%n and the gather overwrites 1..n,   !
-   !      so the caller sizes it once per fast_dynamics call, to the site's largest patch. ---------!
-   subroutine ensure_column_cohort_capacity(col_cohort, n)
-      type(column_cohort_t), intent(inout) :: col_cohort
-      integer(ik),            intent(in)    :: n
-      if (.not. allocated(col_cohort%pft)) then
-         call alloc_column_cohort(col_cohort, n)
-      else if (size(col_cohort%pft) < n) then
-         call alloc_column_cohort(col_cohort, n)
+   !      set the active count. Every reader loops to static%n and the gather overwrites 1..n, so   !
+   !      the caller sizes it once per fast_dynamics call, to the largest patch. ------------------!
+   subroutine ensure_static_capacity(static, n)
+      type(fast_static_state_t), intent(inout) :: static
+      integer(ik),               intent(in)    :: n
+      if (.not. allocated(static%pft)) then
+         call alloc_static_state(static, n)
+      else if (size(static%pft) < n) then
+         call alloc_static_state(static, n)
       else
-         col_cohort%n = n
+         static%n = n
       end if
-   end subroutine ensure_column_cohort_capacity
+   end subroutine ensure_static_capacity
 
-   !----- Allocate a patch_biophys_t and seed it from an initial canopy-air state. --------------!
-   subroutine alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
-      type(patch_biophys_t), intent(out) :: biophys
-      integer(ik),           intent(in)  :: n_coh
-      real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
-      allocate(biophys%leaf_energy(n_coh), biophys%wood_energy(n_coh))
-      allocate(biophys%leaf_temp(n_coh), biophys%wood_temp(n_coh))
-      allocate(biophys%leaf_water_mass(n_coh), biophys%wood_water_mass(n_coh))
-      allocate(biophys%leaf_surf_water(n_coh), biophys%wood_surf_water(n_coh))
-      biophys%leaf_energy      = 0.0_wp    ! scratch seed: the gather sets it, a column fixture with tissue_temp_to_energy
-      biophys%wood_energy      = 0.0_wp
-      biophys%leaf_temp        = leaf_temp0
-      biophys%wood_temp        = leaf_temp0
-      biophys%leaf_water_mass  = 0.0_wp    ! scratch seeds: the next gather overwrites them
-      biophys%wood_water_mass  = 0.0_wp
-      biophys%leaf_surf_water  = 0.0_wp
-      biophys%wood_surf_water  = 0.0_wp
-      biophys%cas%can_temp     = can_temp0
-      biophys%cas%can_shv      = can_shv0
-      biophys%cas%can_co2      = can_co2
-      biophys%cas%can_enthalpy = cas_temp_to_enthalpy(can_temp0, can_shv0)
-   end subroutine alloc_patch_biophys
+   !----- Allocate a fast_dynamic_state_t and seed it from an initial canopy-air state. ------------!
+   subroutine alloc_dynamic_state(dynamic, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      type(fast_dynamic_state_t), intent(out) :: dynamic
+      integer(ik),                intent(in)  :: n_coh
+      real(wp),                   intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
+      allocate(dynamic%leaf_energy(n_coh), dynamic%wood_energy(n_coh))
+      allocate(dynamic%leaf_temp(n_coh), dynamic%wood_temp(n_coh))
+      allocate(dynamic%leaf_water_mass(n_coh), dynamic%wood_water_mass(n_coh))
+      allocate(dynamic%leaf_surf_water(n_coh), dynamic%wood_surf_water(n_coh))
+      dynamic%leaf_energy      = 0.0_wp    ! scratch seed: the gather sets it, a column fixture with tissue_temp_to_energy
+      dynamic%wood_energy      = 0.0_wp
+      dynamic%leaf_temp        = leaf_temp0
+      dynamic%wood_temp        = leaf_temp0
+      dynamic%leaf_water_mass  = 0.0_wp    ! scratch seeds: the next gather overwrites them
+      dynamic%wood_water_mass  = 0.0_wp
+      dynamic%leaf_surf_water  = 0.0_wp
+      dynamic%wood_surf_water  = 0.0_wp
+      dynamic%cas%can_temp     = can_temp0
+      dynamic%cas%can_shv      = can_shv0
+      dynamic%cas%can_co2      = can_co2
+      dynamic%cas%can_enthalpy = cas_temp_to_enthalpy(can_temp0, can_shv0)
+   end subroutine alloc_dynamic_state
 
-   !----- Grow-only capacity for patch_biophys_t's per-cohort arrays, as ensure_column_cohort_capacity. !
-   !      Nothing is seeded: every caller overwrites the patch stores and cohorts 1..n with the patch's  !
-   !      persisted state right after. -----------------------------------------------------------------!
-   subroutine ensure_patch_biophys_capacity(biophys, n_coh)
-      type(patch_biophys_t), intent(inout) :: biophys
-      integer(ik),            intent(in)    :: n_coh
-      if (allocated(biophys%leaf_temp)) then
-         if (size(biophys%leaf_temp) >= n_coh) return
-         deallocate(biophys%leaf_energy, biophys%wood_energy, biophys%leaf_temp, biophys%wood_temp,             &
-                    biophys%leaf_water_mass, biophys%wood_water_mass, biophys%leaf_surf_water, biophys%wood_surf_water)
+   !----- Grow-only capacity for the per-cohort arrays, as ensure_static_capacity. Nothing is seeded: !
+   !      every caller overwrites the patch stores and cohorts 1..n with the patch's persisted state  !
+   !      right after. -----------------------------------------------------------------------------!
+   subroutine ensure_dynamic_capacity(dynamic, n_coh)
+      type(fast_dynamic_state_t), intent(inout) :: dynamic
+      integer(ik),                intent(in)    :: n_coh
+      if (allocated(dynamic%leaf_temp)) then
+         if (size(dynamic%leaf_temp) >= n_coh) return
+         deallocate(dynamic%leaf_energy, dynamic%wood_energy, dynamic%leaf_temp, dynamic%wood_temp,             &
+                    dynamic%leaf_water_mass, dynamic%wood_water_mass, dynamic%leaf_surf_water, dynamic%wood_surf_water)
       end if
-      allocate(biophys%leaf_energy(n_coh), biophys%wood_energy(n_coh), biophys%leaf_temp(n_coh),               &
-               biophys%wood_temp(n_coh), biophys%leaf_water_mass(n_coh), biophys%wood_water_mass(n_coh),        &
-               biophys%leaf_surf_water(n_coh), biophys%wood_surf_water(n_coh), source=0.0_wp)
-   end subroutine ensure_patch_biophys_capacity
+      allocate(dynamic%leaf_energy(n_coh), dynamic%wood_energy(n_coh), dynamic%leaf_temp(n_coh),               &
+               dynamic%wood_temp(n_coh), dynamic%leaf_water_mass(n_coh), dynamic%wood_water_mass(n_coh),        &
+               dynamic%leaf_surf_water(n_coh), dynamic%wood_surf_water(n_coh), source=0.0_wp)
+   end subroutine ensure_dynamic_capacity
+
+   !----- Grow-only capacity of the per-cohort forcing; its writers loop to n, so a larger capacity  !
+   !      is exact. --------------------------------------------------------------------------------!
+   subroutine ensure_forcing_capacity(forcing, n)
+      type(fast_forcing_t), intent(inout) :: forcing
+      integer(ik),          intent(in)    :: n
+      if (allocated(forcing%abs_sw)) then
+         if (size(forcing%abs_sw) >= n) return
+         deallocate(forcing%abs_sw, forcing%abs_lw, forcing%abs_par, forcing%abs_sw_wood, forcing%abs_lw_wood,  &
+                    forcing%par_top)
+      end if
+      allocate(forcing%abs_sw(n), forcing%abs_lw(n), forcing%abs_par(n), forcing%abs_sw_wood(n),               &
+               forcing%abs_lw_wood(n), forcing%par_top(n))
+   end subroutine ensure_forcing_capacity
+
+   !----- Grow-only capacity of the per-cohort outputs, the aerodynamics' and, with `capture`, the    !
+   !      diagnostic rows; every writer loops to n. -------------------------------------------------!
+   subroutine ensure_output_capacity(out, n, capture)
+      type(fast_output_t), intent(inout) :: out
+      integer(ik),         intent(in)    :: n
+      logical,             intent(in)    :: capture
+      call ensure_aero_out_capacity(out%aero, n)
+      if (allocated(out%gpp_coh)) then
+         if (size(out%gpp_coh) < n) deallocate(out%gpp_coh, out%leaf_resp_coh, out%stem_resp_coh, out%root_resp_coh, &
+                                               out%psi_leaf_coh)
+      end if
+      if (.not. allocated(out%gpp_coh)) allocate(out%gpp_coh(n), out%leaf_resp_coh(n), out%stem_resp_coh(n),       &
+                                                 out%root_resp_coh(n), out%psi_leaf_coh(n), source=0.0_wp)
+      out%capture = capture
+      if (.not. capture) return
+      if (allocated(out%cdiag)) then
+         if (size(out%cdiag, 2) < n) deallocate(out%cdiag)
+      end if
+      if (.not. allocated(out%cdiag)) allocate(out%cdiag(N_CO_FAST_ROWS, n), source=0.0_wp)
+   end subroutine ensure_output_capacity
 
 end module meds_fast_types

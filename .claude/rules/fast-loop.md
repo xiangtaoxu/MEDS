@@ -50,8 +50,8 @@ A new water flow belongs in the network (its law in `meds_plant_hydr_lib` or `me
   from `meds_patch_state_vars` (through an only-list) and link only `state` and `config`. That is what
   keeps them device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A
   routine that needs `polygon_t` is driver code.
-- **Build a column cohort view through `meds_column_view`.** `copy_column_cohort` for production,
-  `column_cohort_init` for tests and probes — the latter builds the block through the canonical
+- **Build a fast step's static state through `meds_fast_state`.** `gather_patch` for production,
+  `static_state_fixture` for tests and probes — the latter builds the block through the canonical
   birth path, so a fixture tree is on-allometry by construction. A hand-assembled one can describe a
   tree that cannot exist, and the column test then passes on it.
 - **Declare a fast-loop field's fusion kind once**, in `fuse_cohort_fast_state`: intensive fields

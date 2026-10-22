@@ -26,7 +26,7 @@ program test_tissue_energy
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,          only : hold_cohort_tissue_temps, cohort_tissue_temps
    use meds_demography_cohort_fusefiss, only : split_cohorts
-   use meds_fast_types,                 only : tissue_coefficients_t, patch_biophys_t, alloc_patch_biophys
+   use meds_fast_types,                 only : tissue_coefficients_t, fast_dynamic_state_t, alloc_dynamic_state
    use meds_column_state_ops,           only : commit_tissue_energy
    use meds_test_support,               only : build_test_config
    implicit none
@@ -122,7 +122,7 @@ contains
       real(wp), parameter :: DWL = 0.05_wp, DWW = 0.4_wp           ! [kg] the water each gains
       real(wp), parameter :: TL0 = 300.0_wp, TW0 = 296.0_wp, TL_AVG = 301.5_wp, TW_AVG = 296.8_wp
       type(tissue_coefficients_t) :: tissue
-      type(patch_biophys_t)       :: biophys
+      type(fast_dynamic_state_t)  :: dynamic
       real(wp) :: store0, store1, heat, enth, tl_expect, tw_expect, gap
       allocate(tissue%leaf_hcap_per_dt(1), tissue%wood_hcap_per_dt(1), tissue%t_leaf0(1), tissue%t_wood0(1))
       allocate(tissue%leaf_dry_hcap(1), tissue%wood_dry_hcap(1), tissue%leaf_water_enth(1), tissue%wood_water_enth(1))
@@ -134,12 +134,12 @@ contains
       tissue%t_wood0          = TW0
       tissue%leaf_water_enth  = DWL / DT * internal_energy_liquid(TL0)
       tissue%wood_water_enth  = DWW / DT * internal_energy_liquid(TW0)
-      call alloc_patch_biophys(biophys, 1_ik, 295.0_wp, 0.008_wp, 400.0_wp, TL0)
-      biophys%leaf_energy     = tissue_temp_to_energy(DL, WL0, TL0)
-      biophys%wood_energy     = tissue_temp_to_energy(DW, WW0, TW0)
-      biophys%leaf_water_mass = WL0 + DWL                          ! the network's end-of-step water
-      biophys%wood_water_mass = WW0 + DWW
-      call commit_tissue_energy(tissue, [1.0_wp], DT, [TL_AVG], [TW_AVG], 1_ik, biophys, &
+      call alloc_dynamic_state(dynamic, 1_ik, 295.0_wp, 0.008_wp, 400.0_wp, TL0)
+      dynamic%leaf_energy     = tissue_temp_to_energy(DL, WL0, TL0)
+      dynamic%wood_energy     = tissue_temp_to_energy(DW, WW0, TW0)
+      dynamic%leaf_water_mass = WL0 + DWL                          ! the network's end-of-step water
+      dynamic%wood_water_mass = WW0 + DWW
+      call commit_tissue_energy(tissue, [1.0_wp], DT, [TL_AVG], [TW_AVG], 1_ik, dynamic, &
                                 store0, store1)
       heat = (DL + WL0 * cp_liq) * (TL_AVG - TL0) + (DW + WW0 * cp_liq) * (TW_AVG - TW0)
       tl_expect = ((DL + WL0 * cp_liq) * TL_AVG + DWL * cp_liq * TL0) / (DL + (WL0 + DWL) * cp_liq)
@@ -148,17 +148,17 @@ contains
       call check_true(tag//': the tissues gain the heat they relaxed through and their water''s enthalpy', &
                       abs((store1 - store0) - (heat + enth)) <= 1.0e-12_wp * abs(heat + enth))
       call check_true(tag//': the gained water arrived at the tissues'' start-of-step temperatures',        &
-                      abs(biophys%leaf_temp(1) - tl_expect) < 1.0e-9_wp .and.                            &
-                      abs(biophys%wood_temp(1) - tw_expect) < 1.0e-9_wp)
+                      abs(dynamic%leaf_temp(1) - tl_expect) < 1.0e-9_wp .and.                            &
+                      abs(dynamic%wood_temp(1) - tw_expect) < 1.0e-9_wp)
       call check_true(tag//': the committed temperatures give back the energies, so the next step '//      &
                       'starts where this one ended',                                                      &
-                      abs(tissue_temp_to_energy(DL, WL0 + DWL, biophys%leaf_temp(1)) - biophys%leaf_energy(1))    &
-                      <= 1.0e-12_wp * abs(biophys%leaf_energy(1)) .and.                                   &
-                      abs(tissue_temp_to_energy(DW, WW0 + DWW, biophys%wood_temp(1)) - biophys%wood_energy(1))    &
-                      <= 1.0e-12_wp * abs(biophys%wood_energy(1)))
+                      abs(tissue_temp_to_energy(DL, WL0 + DWL, dynamic%leaf_temp(1)) - dynamic%leaf_energy(1))    &
+                      <= 1.0e-12_wp * abs(dynamic%leaf_energy(1)) .and.                                   &
+                      abs(tissue_temp_to_energy(DW, WW0 + DWW, dynamic%wood_temp(1)) - dynamic%wood_energy(1))    &
+                      <= 1.0e-12_wp * abs(dynamic%wood_energy(1)))
       !----- What heat capacity x temperature, valued with the water at its liquid enthalpy, would  !
       !      re-value between the two steps: dW*c_liq*(T1 - T0 + T_sc). --------------------------!
-      gap = DWW * cp_liq * (biophys%wood_temp(1) - TW0 + tsupercool_liq)
+      gap = DWW * cp_liq * (dynamic%wood_temp(1) - TW0 + tsupercool_liq)
       print '(a,a,es10.3,a)', '   (', tag, gap, ' J the cap*T bookkeeping would re-value the wood by between steps)'
    end subroutine commit_case
 

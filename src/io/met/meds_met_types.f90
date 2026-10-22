@@ -43,9 +43,8 @@ module meds_met_types
    !==========================================================================================!
    !  met_forcing_t -- the instantaneous atmospheric state the fast loop reads: a polygon's       !
    !  sample, or a site's or a patch's after the vertical moves (docs/science/forcing.md §8).     !
-   !  Plain scalars, so it copies cheaply. The defaults are a reference climate: a run without    !
-   !  forcing keeps those the fast loop's reference_met does not set (the four streams sum to     !
-   !  400 W/m2, fast_context_t%rad_sw_top's default).                                             !
+   !  Plain scalars, so it copies cheaply. The defaults are a reference climate, the air a run   !
+   !  without forcing reads at every sub-step (the four streams sum to 400 W/m2).                 !
    !==========================================================================================!
    type :: met_forcing_t
       real(wp) :: tair_k       = 288.0_wp     !< [K]        air temperature at reference height

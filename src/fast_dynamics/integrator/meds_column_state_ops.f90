@@ -16,7 +16,7 @@ module meds_column_state_ops
                                      tissue_energy_to_temp
    use meds_fast_types,       only : column_state_t, column_tend_t, stage_bflux_t, column_bflux_t, GRP_ENTH,      &
                                      GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W,                 &
-                                     patch_biophys_t, tissue_coefficients_t
+                                     fast_dynamic_state_t, tissue_coefficients_t
    use meds_soil_types, only : energy_forcing_t
    implicit none
    private
@@ -317,7 +317,7 @@ contains
 
    !----- Clamp the extrapolated CAS enthalpy and humidity into a wide physical range, so an overshoot  !
    !      of the ARS base (b = 1 + sqrt(2)) cannot reach a temperature where qsat overflows; in range it !
-   !      is an identity. nfire counts the calls that moved the state (column_budget_t's clamp_*). ---!
+   !      is an identity. nfire counts the calls that moved the state (WORK_CLAMP_STAGE). ---------!
    pure subroutine clamp_cas(s, nfire)
       type(column_state_t), intent(inout) :: s
       integer(ik), optional, intent(inout) :: nfire
@@ -462,23 +462,23 @@ contains
    end subroutine deposit_condensate
 
    !---------------------------------------------------------------------------------------!
-   ! Unpack the committed column state into the patch biophysics record: CAS twins (and their      !
+   ! Unpack the committed column state into the dynamic state: CAS twins (and their                !
    ! temperature), soil energy and moisture, plant internal water, canopy films; not the pond.    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine unpack_column_state(y_out, n, nsl, biophys)
-      type(column_state_t),  intent(in)    :: y_out
-      integer(ik),           intent(in)    :: n, nsl
-      type(patch_biophys_t), intent(inout) :: biophys
-      biophys%cas%can_enthalpy = y_out%cas_enthalpy
-      biophys%cas%can_shv = y_out%cas_shv
-      biophys%cas%can_co2 = y_out%cas_co2
-      biophys%cas%can_temp = cas_enthalpy_to_temp(y_out%cas_enthalpy, y_out%cas_shv)
-      biophys%soil_energy%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
-      biophys%soil_water%theta(1:nsl)       = y_out%theta(1:nsl)
-      biophys%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
-      biophys%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
-      biophys%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
-      biophys%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
+   pure subroutine unpack_column_state(y_out, n, nsl, dynamic)
+      type(column_state_t),       intent(in)    :: y_out
+      integer(ik),                intent(in)    :: n, nsl
+      type(fast_dynamic_state_t), intent(inout) :: dynamic
+      dynamic%cas%can_enthalpy = y_out%cas_enthalpy
+      dynamic%cas%can_shv = y_out%cas_shv
+      dynamic%cas%can_co2 = y_out%cas_co2
+      dynamic%cas%can_temp = cas_enthalpy_to_temp(y_out%cas_enthalpy, y_out%cas_shv)
+      dynamic%soil_energy%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
+      dynamic%soil_water%theta(1:nsl)       = y_out%theta(1:nsl)
+      dynamic%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
+      dynamic%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
+      dynamic%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
+      dynamic%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
       !----- The pond (w_surface, w_surface_energy) is left out on purpose: each scheme commits it from  !
       !      the water network, so writing it here would commit it twice (test_state_combinators). ---!
    end subroutine unpack_column_state
@@ -504,13 +504,13 @@ contains
    ! leaf with no heat capacity takes its wood's temperature.                                        !
    !------------------------------------------------------------------------------------------------!
    pure subroutine commit_tissue_energy(tissue, nplant, dt, t_leaf_avg, t_wood_avg, n,                          &
-                                        biophys, store0, store1)
+                                        dynamic, store0, store1)
       type(tissue_coefficients_t), intent(in)    :: tissue
       real(wp),                    intent(in)    :: nplant(:)                     !< [plant/m2]
       real(wp),                    intent(in)    :: dt                            !< [s] dt_fast
       real(wp),                    intent(in)    :: t_leaf_avg(:), t_wood_avg(:)  !< [K]
       integer(ik),                 intent(in)    :: n
-      type(patch_biophys_t),       intent(inout) :: biophys
+      type(fast_dynamic_state_t),  intent(inout) :: dynamic
       real(wp),                    intent(out)   :: store0, store1                !< [J/m2] the tissue store
       real(wp)    :: heat_leaf, heat_wood, enth_leaf, enth_wood, w_leaf, w_wood
       integer(ik) :: i
@@ -521,17 +521,17 @@ contains
          heat_wood = tissue%wood_hcap_per_dt(i) * dt * (t_wood_avg(i) - tissue%t_wood0(i))
          enth_leaf = tissue%leaf_water_enth(i) * dt
          enth_wood = tissue%wood_water_enth(i) * dt
-         store0 = store0 + biophys%leaf_energy(i) + biophys%wood_energy(i)
-         biophys%leaf_energy(i) = biophys%leaf_energy(i) + heat_leaf + enth_leaf
-         biophys%wood_energy(i) = biophys%wood_energy(i) + heat_wood + enth_wood
-         store1 = store1 + biophys%leaf_energy(i) + biophys%wood_energy(i)
-         w_leaf = max(biophys%leaf_water_mass(i), 0.0_wp) * nplant(i)
-         w_wood = max(biophys%wood_water_mass(i), 0.0_wp) * nplant(i)
+         store0 = store0 + dynamic%leaf_energy(i) + dynamic%wood_energy(i)
+         dynamic%leaf_energy(i) = dynamic%leaf_energy(i) + heat_leaf + enth_leaf
+         dynamic%wood_energy(i) = dynamic%wood_energy(i) + heat_wood + enth_wood
+         store1 = store1 + dynamic%leaf_energy(i) + dynamic%wood_energy(i)
+         w_leaf = max(dynamic%leaf_water_mass(i), 0.0_wp) * nplant(i)
+         w_wood = max(dynamic%wood_water_mass(i), 0.0_wp) * nplant(i)
          if (tissue%wood_dry_hcap(i) + w_wood * cp_liq > 0.0_wp)                                        &
-            biophys%wood_temp(i) = tissue_energy_to_temp(biophys%wood_energy(i), w_wood, tissue%wood_dry_hcap(i))
-         biophys%leaf_temp(i) = biophys%wood_temp(i)
+            dynamic%wood_temp(i) = tissue_energy_to_temp(dynamic%wood_energy(i), w_wood, tissue%wood_dry_hcap(i))
+         dynamic%leaf_temp(i) = dynamic%wood_temp(i)
          if (tissue%leaf_dry_hcap(i) + w_leaf * cp_liq > 0.0_wp)                                        &
-            biophys%leaf_temp(i) = tissue_energy_to_temp(biophys%leaf_energy(i), w_leaf, tissue%leaf_dry_hcap(i))
+            dynamic%leaf_temp(i) = tissue_energy_to_temp(dynamic%leaf_energy(i), w_leaf, tissue%leaf_dry_hcap(i))
       end do
    end subroutine commit_tissue_energy
 

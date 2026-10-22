@@ -19,7 +19,11 @@ program test_pft_optics_config
    use meds_soil_derive,    only : build_soil_profile
    use meds_config_io,      only : write_pft_params_csv
    use meds_pft_params,     only : hydraulics_table_t, RAD_VIS, RAD_LW
-   use meds_fast_config,    only : fast_context_t, build_fast_context
+   use meds_constants,      only : stefan_boltzmann
+   use meds_met_types,      only : met_forcing_t
+   use meds_fast_types,     only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,       &
+                                   ensure_static_capacity, ensure_forcing_capacity
+   use meds_fast_forcing,   only : patch_forcing
    use meds_plant_hydr_lib, only : conductance_retained_fraction, tissue_psi_tlp,  &
                                    tissue_psi_to_water
    use meds_polygon_state_vars, only : polygon_t
@@ -31,7 +35,6 @@ program test_pft_optics_config
    implicit none
 
    type(meds_config_t)  :: cfg
-   type(fast_context_t) :: ctx
    real(wp) :: om1, om2
 
    call banner('[pft] canopy optics: per PFT, and reaching the two-stream')
@@ -71,12 +74,26 @@ program test_pft_optics_config
    call check_close(cfg%pft%optics%omega_leaf(RAD_LW,2), 1.0_wp - 0.80_wp, 1.0e-12_wp,                        &
                     'leaf LW omega must be 1 - emissivity (a leaf is opaque in the thermal band)')
 
-   !=== 4b. The ground optics come from [soil], not a constant in the fast context. =============!
+   !=== 4b. The ground optics come from [soil]: a bare patch reflects each shortwave band by its   !
+   !        albedo and returns the sky's longwave by 1 - emissivity, plus its own emission. =======!
    cfg%soil%ground_albedo_vis = 0.11_wp ; cfg%soil%ground_albedo_nir = 0.22_wp ; cfg%soil%ground_emissivity = 0.93_wp
-   call build_fast_context(cfg, ctx)
-   call check_close(ctx%soil_albedo(1), 0.11_wp, 0.0_wp, 'soil.ground_albedo_vis did not reach the radiation solver')
-   call check_close(ctx%soil_albedo(2), 0.22_wp, 0.0_wp, 'soil.ground_albedo_nir did not reach the radiation solver')
-   call check_close(ctx%soil_emiss,     0.93_wp, 0.0_wp, 'soil.ground_emissivity did not reach the radiation solver')
+   block
+      type(fast_static_state_t)  :: bare
+      type(fast_dynamic_state_t) :: dyn
+      type(fast_forcing_t)       :: forcing
+      type(met_forcing_t)        :: met
+      real(wp)                   :: lw_up
+      call ensure_static_capacity(bare, 0_ik)
+      call ensure_forcing_capacity(forcing, 0_ik)
+      dyn%soil_energy%soil_temp(1) = 290.0_wp
+      call patch_forcing(cfg, bare, dyn, met, .false., forcing)
+      call check_close(forcing%sw_up_vis, 0.11_wp * forcing%sw_in_vis, 1.0e-12_wp,                            &
+                       'soil.ground_albedo_vis did not reach the radiation solver')
+      call check_close(forcing%sw_up_nir, 0.22_wp * forcing%sw_in_nir, 1.0e-12_wp,                            &
+                       'soil.ground_albedo_nir did not reach the radiation solver')
+      lw_up = (1.0_wp - 0.93_wp) * met%lwdown + 0.93_wp * stefan_boltzmann * 290.0_wp**4
+      call check_close(forcing%lw_up, lw_up, 1.0e-9_wp, 'soil.ground_emissivity did not reach the radiation solver')
+   end block
    cfg%soil%ground_albedo_vis = 0.15_wp ; cfg%soil%ground_albedo_nir = 0.30_wp ; cfg%soil%ground_emissivity = 0.95_wp
 
    !=== 5. Clumping and the leaf-angle distribution are per PFT too. ========================!
