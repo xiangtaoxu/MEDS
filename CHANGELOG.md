@@ -58,7 +58,9 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
 drops its RK4 test oracle, so RK45 is its one explicit integrator and the tests' explicit reference; it
 drops the code and fields nothing read and three evaluations whose results nothing used, writes one
 statement per line and keeps its longer explanations on the science pages, with no change to any result
-(#478).
+(#478). The fast loop's setup is one module, nothing below it reads `meds_config_t`, its configuration has
+a run part and a site part, three constants no key set become one source each, and its starting stores
+are set in `io/init` (#479).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -454,8 +456,43 @@ statement per line and keeps its longer explanations on the science pages, with 
   canopy-air enthalpy and humidity. Nineteen routines and constants used only in their own module are
   private, among them `adaptive_rk45_march`, `solve_band`, `water_enthalpy_faces` and the pre-pass's six
   stages. No netCDF variable name, TOML key or C API changes.
+- **The fast loop's setup and starting state** (#479), for code built against MEDS's modules:
+  - `fast_context_t`, `build_fast_context`, `site_column_configs`, `apply_hydraulics_config` and
+    `apply_canopy_film_config` come from `meds_fast_config`; `apply_hydraulics_config` takes `cfg`;
+  - `column_fast_step`, `column_fast_step_ark`, `column_fast_step_rk45`, `build_column_frozen`,
+    `column_prepass` and `run_spac_solver` take no `cfg` and take the site part, `column_site_t`, beside
+    `column_config_t`; `column_be_stage`, `ark2_column_step`, `adaptive_ark_march`, `rk45_column_step`,
+    `adaptive_rk45_march` and `column_derivs` take `column_site_t` in its place;
+  - `column_config_t`'s `soil`, `soil_thermal`, `soil_water_opts`, `energy` and `leaf_photo` are
+    `column_site_t`'s; it gains `soil_carbon` and `ea_rd`, `hd_rd`, `ds_rd`, and loses `veg_thermal`,
+    `wood`, `root` and `hydraulics_opts`;
+  - `stem_maintenance_respiration` and `root_zone_temp_scale` take `ea, hd, ds`; `crown_gravity_head`
+    and `leaf_node_psi` take no options record;
+  - `init_fast_reservoirs(poly, ctx)` is `init_fast_state(poly, cfg)` in `meds_init`, called by
+    `init_polygon`; `polygon_prepare` takes no `keep_fast_state`.
+
+  No netCDF variable name, TOML key or C API changes.
 
 ### Changed
+
+- **The fast loop's setup is one module** (#479). `meds_fast_config` builds the run's `fast_context_t`
+  and each site's configuration; nothing below it reads `meds_config_t`. What the numerics read from it
+  arrives in the fast loop's own records: the leaf and wood emissivities, PFT parameters, gathered per
+  cohort into the column view; the leaf water content at which the stomata close, computed once per PFT
+  into the hydraulics table rather than per cohort per sub-step; and `[soil_carbon]`.
+- **The column configuration has a run part and a site part** (#479). `column_config_t` keeps what the
+  run's configuration and the PFT table set; `column_site_t` holds a site's soil column, its thermal
+  texture, the water and heat solvers' options with its bottom boundary, and its acclimated leaf table.
+  Each slow step builds only these per site, where it deep-copied the whole configuration, PFT
+  vulnerability tables included.
+- **Three constants no key set become one source each** (#479): stem and fine-root maintenance
+  respiration take leaf Rd's `[leaf_physiology]` `ea_rd`, `hd_rd` and `ds_rd`, so a change to the leaf's
+  response reaches all three tissues; the leaves' sidedness (2 for heat, 1 for the film and for
+  transpiration) is three named constants; and the crown gravity head is always on. Shipped results do
+  not change.
+- **The fast loop's starting stores are set in `io/init`** (#479). `init_fast_state`, the last step of
+  a bare-ground or census start, seeds the soil, the canopy air (288 K, 0.008 kg/kg, 400 ppm, named
+  constants), the cohorts' tissues and the initial snowpack; `polygon_prepare` no longer does.
 
 - **RK45 is the fast loop's one explicit integrator** (#478). The RK4 oracle, a fixed-step RK4 march of
   the column's state that only the tests ran, is gone; the backward-Euler and arrowhead tests compare
@@ -962,6 +999,9 @@ statement per line and keeps its longer explanations on the science pages, with 
 
 ### Fixed
 
+- **A restart re-seeded the snowpack** (#479). With `[snow].init_swe > 0`, a restart overwrote the pack
+  its state file had restored with the initial one. The initial pack is now seeded only on a bare-ground
+  or census start.
 - **A restart at night under synthesized longwave drifted** (#476). The forcing reader holds the last
   daytime clearness index through the night for the longwave synthesis, and the state file did not
   carry it, so a run restarted at night took a clear sky until sunrise and its fluxes, then its stand,
