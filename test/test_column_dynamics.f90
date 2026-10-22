@@ -19,7 +19,7 @@ program test_column_dynamics
                                         tissue_c_wood_dry
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
-   use meds_fast_params,         only : INTEG_ARK, INTEG_RK45
+   use meds_fast_params,         only : INTEG_ESDIRK2, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, tissue_temp_to_energy,  &
                                            internal_energy_liquid, tissue_dry_heat_capacity
@@ -235,7 +235,7 @@ program test_column_dynamics
    iso_dark = .true.
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ARK  ; schnm = 'ISO ARK  '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'ISO ARK  '
       else
          cfg%time_integrator = INTEG_RK45 ; schnm = 'ISO RK45 '
       end if
@@ -246,7 +246,7 @@ program test_column_dynamics
             gah_first * grav * static%z_top, ' W/m2)'
    end do
    iso_dark = .false.
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
 
    !=====================================================================================!
    !  RUN 6 -- opt-in CANOPY-SURFACE WATER: reruns the SAME diurnal-cycle-plus-morning-rain-  !
@@ -371,7 +371,7 @@ program test_column_dynamics
    !      half that cannot break. -----------------------------------------------------------------!
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ARK  ; schnm = 'SNOW ARK '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'SNOW ARK '
       else
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SNOW RK45'
       end if
@@ -401,7 +401,7 @@ program test_column_dynamics
       print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
             ' kg/m2  worst water resid=', out%report%ledgers%whole_water%worst
    end do
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
 
    !=====================================================================================!
    !  RUN 8b -- SHED WATER UNDER A PACK. The daily leaf/root-turnover shed water is routed into   !
@@ -412,7 +412,7 @@ program test_column_dynamics
    !  pass the tolerance, so closure is asked at round-off, on both schemes. =====================!
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ARK  ; schnm = 'SHED ARK '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'SHED ARK '
       else
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SHED RK45'
       end if
@@ -426,7 +426,7 @@ program test_column_dynamics
             ' J/m2  swe=', snow_swe_end, ' kg/m2)'
    end do
    snow_seed = 0.0_wp ; shed_seed = 0.0_wp
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
 
    !=====================================================================================!
    !  RUN 9 -- SNOWFALL IS CONSERVED, ON EVERY INTEGRATOR.                                      !
@@ -455,8 +455,8 @@ program test_column_dynamics
    snowf_total = 2.0e-5_wp * real(NSTEP, wp) * DT_FAST     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
-      case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ref'
-      case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
+      case (1_ik) ; cfg%time_integrator = INTEG_ESDIRK2 ; schnm = 'SNOWF ref'
+      case (2_ik) ; cfg%time_integrator = INTEG_ESDIRK2   ; schnm = 'SNOWF ark'
       case default; cfg%time_integrator = INTEG_RK45   ; schnm = 'SNOWF r45'
       end select
       !----- snowfall ON: cold air + frozen rainfall. -------------------------------------------!
@@ -485,7 +485,7 @@ program test_column_dynamics
       print '(3a,f8.4,a,f8.4,a)', '   (RUN 9 ', trim(schnm), ' column water gain=', &
             cw_gain, ' kg/m2  expected=', snowf_total, ' kg/m2)'
    end do
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
    snow_seed = 0.0_wp
 
    !=====================================================================================!

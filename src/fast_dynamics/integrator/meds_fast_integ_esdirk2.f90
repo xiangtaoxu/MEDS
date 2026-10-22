@@ -1,16 +1,16 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_integ_esdirk2 -- the default fast-loop scheme, an L-stable two-stage ESDIRK2   !
-! with the ARS(2,2,2) tableau (config name "ark"; its explicit part is empty, so it is not !
-! an IMEX scheme): esdirk2_step is one step with its embedded error and its b-weighted     !
+! with the ARS(2,2,2) tableau (config name "esdirk2"; its explicit part is empty, so it is !
+! not an IMEX scheme): esdirk2_step is one step with its embedded error and its b-weighted !
 ! boundary-flux amounts. The stepper marches it (docs/science/numerical_scheme.md §3       !
-! `ark`, eqs. (1)-(2), §5b).                                                               !
+! `esdirk2`, eqs. (1)-(2), §5b).                                                           !
 !==========================================================================================!
 module meds_fast_integ_esdirk2
    use meds_kinds, only : wp, ik
    use meds_site_state_vars, only : site_surface_t
    use meds_fast_integ_types, only : march_state_t, frozen_t, stage_bflux_t, boundary_flux_t, error_control_t,   &
-                               ark_stages_t, state_init, state_extrap, state_err_diff, bflux_bweight, clamp_cas
+                               esdirk2_stages_t, state_init, state_extrap, state_err_diff, bflux_bweight, clamp_cas
    use meds_fast_integ_backward_euler, only : column_be_stage, advance_plant_water, advance_surf_water_full
    implicit none
    private
@@ -33,7 +33,7 @@ contains
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(march_state_t),  intent(inout) :: y_out, y_err   !< filled in place
-      type(ark_stages_t),    intent(inout) :: stages    !< this thread's stage storage, filled in place
+      type(esdirk2_stages_t),    intent(inout) :: stages    !< this thread's stage storage, filled in place
       type(boundary_flux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
       !----- Stage-clamp count (the report's WORK_CLAMP_STAGE): only the stage-3 base is clamped. ---!
       integer(ik), optional, intent(inout) :: clamp_n

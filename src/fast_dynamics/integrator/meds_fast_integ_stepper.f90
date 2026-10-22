@@ -14,7 +14,7 @@ module meds_fast_integ_stepper
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, tiny_num
    use meds_config,           only : meds_config_t
-   use meds_fast_params,      only : INTEG_ARK, INTEG_RK45
+   use meds_fast_params,      only : INTEG_ESDIRK2, INTEG_RK45
    use meds_site_state_vars,  only : site_surface_t
    use meds_fast_integ_types,       only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,     &
                                      fast_workspace_t, step_exports_t, march_state_t, frozen_t,           &
@@ -41,11 +41,11 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Advance one dt_fast with the configured scheme ([fast].time_integrator):                 !
-   !   "ark" (default) -- the 2-solve ESDIRK2, gamma = 1 - 1/sqrt(2); not IMEX, since the     !
-   !                      biotic CO2 source is implicit and the explicit tableau is empty     !
-   !                      (docs/science/numerical_scheme.md eq. (1)).                         !
-   !   "rk45"          -- the adaptive explicit Cash-Karp march, a full alternative a run can  !
-   !                      choose and the explicit reference the tests compare ESDIRK2 against. !
+   !   "esdirk2" (default) -- the 2-solve ESDIRK2, gamma = 1 - 1/sqrt(2); not IMEX, since the !
+   !                          biotic CO2 source is implicit and the explicit tableau is empty  !
+   !                          (docs/science/numerical_scheme.md eq. (1)).                      !
+   !   "rk45"              -- the adaptive explicit Cash-Karp march, a full alternative a run  !
+   !                          can choose and the explicit reference the tests compare against. !
    !---------------------------------------------------------------------------------------!
    subroutine fast_step(dt_fast, cfg, site, static, forcing, dynamic, out, work)
       real(wp),                   intent(in)    :: dt_fast
@@ -90,7 +90,7 @@ contains
                       ec%tols, work%water, out%report%work)
       call record_water_flows(dt_fast, cfg, site, static, dynamic, work%water, out, frozen)
 
-      !----- Warm start (docs/science/numerical_scheme.md §3 `ark`): from the step this patch settled  !
+      !----- Warm start (docs/science/numerical_scheme.md §3 `esdirk2`): from the step this patch settled  !
       !      on last dt_fast; a first call starts from dt_fast. A fixed-sub-step march keeps it. -----!
       dt0 = dt_fast
       if (dynamic%adapt_dt_last > tiny_num) dt0 = min(dynamic%adapt_dt_last, dt_fast)
@@ -124,7 +124,7 @@ contains
          out%report%work(WORK_CLAMP_STAGE) = 0_ik
          out%report%theta_ood_max = 0.0_wp
          if (cfg%ark_adaptive) then
-            call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, dt_fast, ec, dt0, y_out, work, nsteps, nrej,    &
+            call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, dt_fast, ec, dt0, y_out, work, nsteps, nrej,    &
                                 acc=acc, dt_warm_out=dt_warm, clamp_n=out%report%work(WORK_CLAMP_STAGE))
          else
             nsteps = max(1_ik, cfg%ark_fixed_substep)
@@ -143,7 +143,7 @@ contains
    end subroutine fast_step
 
    !---------------------------------------------------------------------------------------!
-   ! adaptive_march -- march the column to t_end with one scheme (INTEG_ARK, ESDIRK2; or        !
+   ! adaptive_march -- march the column to t_end with one scheme (INTEG_ESDIRK2, ESDIRK2; or        !
    ! INTEG_RK45, Cash-Karp), accepting a step when the grouped norm of its embedded error is   !
    ! within tolerance (docs/science/numerical_scheme.md eq. (3)) and sizing the next by         !
    ! step_control_factor (eq. (4), p from ec). ESDIRK2's error is measured against its          !
@@ -165,7 +165,7 @@ contains
       type(fast_workspace_t), intent(inout) :: work  !< this thread's march and stage storage
       integer(ik),           intent(out) :: nsteps, nrej
       type(boundary_flux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
-      !----- Warm start (docs/science/numerical_scheme.md §3 `ark`): the last accepted step that the     !
+      !----- Warm start (docs/science/numerical_scheme.md §3 `esdirk2`): the last accepted step that the     !
       !      interval's end did not cut short, to seed the next call. -------------------------------!
       real(wp),    optional, intent(out) :: dt_warm_out
       !----- Stage-clamp count over the march, rejected trials included: a clamp still says the        !
@@ -244,7 +244,7 @@ contains
                nsteps = nsteps + 1_ik
                err_prev = err                                        ! remember for the PI controller
                !----- The warm-start seed is the step just accepted, before the growth factor: a grown   !
-               !      proposal over-estimates (docs/science/numerical_scheme.md §3 `ark`). ---------------!
+               !      proposal over-estimates (docs/science/numerical_scheme.md §3 `esdirk2`). ---------------!
                if (.not. clamped) dt_warm = dt
                dt = dt * fac
             else

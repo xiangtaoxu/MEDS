@@ -23,7 +23,7 @@ module meds_config
    use meds_pft_derive,         only : derive_leaf_params, derive_pft_tables
    use meds_soil_hydr_lib,      only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,          only : soil_texture_to_thermal
-   use meds_fast_params,        only : INTEG_ARK, CTRL_I
+   use meds_fast_params,        only : INTEG_ESDIRK2, CTRL_I
    use meds_soil_params,        only : soil_params_t, soil_profile_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER, &
                                        ANNUAL_DAMPING_DEPTH
    use meds_soil_derive,        only : soil_layers, build_soil_profile, map_layer_texture
@@ -76,7 +76,7 @@ module meds_config
       !----- [fast]. --------------------------------------------------------------------------!
       logical     :: fast_biophysics_on                   !< the sub-daily loop
       real(wp)    :: dt_fast                              !< [s] sub-daily step
-      integer(ik) :: time_integrator     = INTEG_ARK      !< INTEG_ARK | INTEG_RK45
+      integer(ik) :: time_integrator     = INTEG_ESDIRK2  !< INTEG_ESDIRK2 | INTEG_RK45
       logical     :: ark_adaptive        = .true.         !< adaptive sub-steps; .false.: ark_fixed_substep
       integer(ik) :: ark_fixed_substep   = 4_ik           !< sub-steps per dt_fast when not adaptive
       real(wp)    :: rtol                = 1.0e-3_wp      !< [-] relative tolerance of every group

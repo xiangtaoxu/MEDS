@@ -260,6 +260,6 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | canopy-top / in-canopy wind | `reduced_wind` + closed-crown extinction (inline) |
 | leaf/wood Nusselt boundary layer | `boundary_gbh_mos` |
 | atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
-| per-stage re-solve of eq. (5) | `meds_fast_time_derivs`: `refresh_cas_conductances` |
+| per-stage re-solve of eq. (5) | `meds_fast_integ_derivs`: `refresh_cas_conductances` |
 | types (cfg / env / geom / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_types`: `aero_env_t`, `aero_geom_t`, `aero_out_t` |
-| bottom→top cohort reversal | `meds_fast_prepass`: `aero_bottom_to_top` |
+| bottom→top cohort reversal | `meds_fast_integ_frozen`: `aero_bottom_to_top` |

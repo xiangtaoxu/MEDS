@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_integ_backward_euler -- the fast loop's backward-Euler solves, two systems     !
-! side by side. One ESDIRK2 stage (docs/science/numerical_scheme.md §3 `ark`, eq. (1))     !
+! side by side. One ESDIRK2 stage (docs/science/numerical_scheme.md §3 `esdirk2`, eq. (1))     !
 ! solves the canopy air against the leaf, wood and ground temperatures by a small Newton   !
 ! on a forward-difference Jacobian: column_be_stage is the stage, newton_surface_solve and !
 ! jac_surface its inner solve, cas_box_commit the box commit; advance_plant_water and      !

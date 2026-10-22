@@ -39,7 +39,7 @@ program test_column_derivs
    use meds_fast_integ_rk45,        only : rk45_step
    use meds_fast_integ_control,     only : default_error_control
    use meds_fast_integ_types,       only : error_control_t, fast_workspace_t, state_init
-   use meds_fast_params,      only : CTRL_PI, INTEG_ARK
+   use meds_fast_params,      only : CTRL_PI, INTEG_ESDIRK2
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
    !----- The site every make_column fixture runs on (the frozen record holds only what freezes     !
@@ -546,9 +546,9 @@ contains
       !----- The controller under test is the PRODUCTION one, so the test fails for the reasons a
       !      real run would hit.
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
+      call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
       ec = default_error_control(1.0e-6_wp)
-      call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
+      call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
       !----- fine fixed reference: ARK2 at dt = 2 s, 900 steps. -------------------------------------!
       call march_ark2(y, frozen, n, nsl, 2.0_wp, 900_ik, yr)
       tc1 = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
@@ -701,7 +701,7 @@ contains
 
       !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
+      call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
       call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
@@ -710,7 +710,7 @@ contains
       !      physical -- proves the meds_fast_integ_control PI path is wired + functional. On a multi-substep !
       !      march it takes a different (typically smoother) step sequence than the I-controller.       !
       ec%controller = CTRL_PI
-      call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
+      call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
       call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)

@@ -9,12 +9,12 @@ module meds_fast_params
    implicit none
    private
 
-   public :: INTEG_ARK, INTEG_RK45
+   public :: INTEG_ESDIRK2, INTEG_RK45
    public :: CTRL_I, CTRL_PI
 
    !----- [fast].time_integrator (docs/science/numerical_scheme.md §3). -------------------!
-   integer(ik), parameter :: INTEG_ARK  = 2_ik   !< ESDIRK2 coupled implicit column (default)
-   integer(ik), parameter :: INTEG_RK45 = 3_ik   !< adaptive Cash-Karp RK45, the explicit alternative
+   integer(ik), parameter :: INTEG_ESDIRK2 = 2_ik   !< "esdirk2": the coupled implicit column (default)
+   integer(ik), parameter :: INTEG_RK45    = 3_ik   !< "rk45": adaptive Cash-Karp, the explicit alternative
 
    !----- [fast].step_controller. ---------------------------------------------------------!
    integer(ik), parameter :: CTRL_I  = 1_ik   !< integral (default)

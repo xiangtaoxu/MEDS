@@ -214,10 +214,10 @@ See `docs/ROADMAP.md` §7 for the open items.
 | fine-root maintenance respiration (eq. (4)) | `meds_plant_respiration`: `fine_root_maintenance_respiration`, with the layer-summed temperature scale `root_zone_temp_scale` |
 | shared temperature response (eq. (5)) | `meds_therm_lib`: `arrhenius_scale`, `peaked_arrhenius_scale`, `temp_response` |
 | leaf dark respiration $R_d$ | `meds_leaf_gas_exchange` (inside the Ci solve; see `leaf_gas_exchange.md`) |
-| per-sub-step call site + patch totals | `meds_fast_prepass`: `canopy_maintenance_respiration`, `column_prepass` (eq. (7)) |
+| per-sub-step call site + patch totals | `meds_fast_integ_frozen`: `canopy_maintenance_respiration`, `build_frozen` (eq. (7)) |
 | sub-daily → daily integration | `meds_fast_state`: `accumulate_fast_to_slow` → `leaf_resp_accum` / `stem_resp_accum` / `root_resp_accum` on the cohort SoA |
 | daily maintenance sum handed to the allocator | `meds_vegetation_dynamics`: `cohort_carbon_demand` (`resp_maint`) |
 | growth respiration (eq. (6)) | `meds_plant_carbon_allocation`: `growth_respiration`, charged inside `fill_carbon_demand` / `plant_carbon_allocation` |
-| growth respiration → canopy air | `meds_vegetation_dynamics`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_prepass` |
+| growth respiration → canopy air | `meds_vegetation_dynamics`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_integ_frozen` |
 | per-PFT traits + TOML loading | `meds_pft_params` (`pft_table_t`), `meds_config_io` (`[pft]` block, every key required) |
 | tests | `test/test_plant_respiration.f90` (grass gate, 25 °C identity, T-response, WAI branch term, `aboveground_frac` inverse scaling, root pool scaling, per-PFT trait differentiation, the sapwood term); growth respiration in `test/test_plant_carbon_allocation.f90` |

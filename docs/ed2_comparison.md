@@ -168,7 +168,7 @@ Before any integrator runs, both models make the same semi-discretisation choice
 stomatal conductance, dark respiration, canopy radiative transfer, plant hydraulic fluxes and
 aerodynamic conductances are computed **once per fast step** and held fixed while the column is
 advanced. ED2 calls `plant_hydro_driver` and `canopy_photosynthesis` immediately before entering its
-integrator, and the RK stages only read the results; MEDS's `column_prepass` does the same thing for
+integrator, and the RK stages only read the results; MEDS's `build_frozen` does the same thing for
 the same reason. Freezing the ~20 s hydraulic mode is what makes any affordable step size possible.
 
 MEDS states the consequence explicitly, and ED2 users should carry it too: **refining the time step
@@ -187,16 +187,16 @@ page — *conservation is not stability*, and it applies to any model with this 
 
 | | MEDS v0.3.0 | ED2 (ED-2.2) |
 |---|---|---|
-| **Default** | `ark` — a 2-stage, second-order, **L-stable ESDIRK2** implicit scheme with an embedded error estimate and adaptive sub-stepping inside each `dt_fast` | `INTEGRATION_SCHEME = 1` — **fourth-order Runge–Kutta**, adaptive, `RK4_TOLERANCE = 0.01` |
+| **Default** | `esdirk2` — a 2-stage, second-order, **L-stable ESDIRK2** implicit scheme with an embedded error estimate and adaptive sub-stepping inside each `dt_fast` | `INTEGRATION_SCHEME = 1` — **fourth-order Runge–Kutta**, adaptive, `RK4_TOLERANCE = 0.01` |
 | **Alternative** | `rk45` — adaptive explicit **Cash–Karp 5(4)** over the whole column state, a run's explicit alternative and the closest analogue of ED2's RK4 | `0` Euler (`NSUB_EULER`), `2` Heun, `3` hybrid (BDF2 implicit canopy + explicit rest) |
 | **Soil water** | Advanced once per step by the soil-plant water network, on both schemes; the stages move it at the network's time-mean rates | Inside the RK4 state |
-| **Leaf ↔ canopy-air coupling** | Solved implicitly within every ARK stage by a direct 2×2 Newton | Explicit within the RK stages (except `INTEGRATION_SCHEME = 3`) |
-| **Fallback** | When the explicit RK45 march cannot resolve a step (cold night, closed canopy), the driver discards it and redoes that `dt_fast` on `ark`. A counter reports how often | — |
+| **Leaf ↔ canopy-air coupling** | Solved implicitly within every ESDIRK2 stage by a direct 2×2 Newton | Explicit within the RK stages (except `INTEGRATION_SCHEME = 3`) |
+| **Fallback** | When the explicit RK45 march cannot resolve a step (cold night, closed canopy), the driver discards it and redoes that `dt_fast` on `esdirk2`. A counter reports how often | — |
 | **Fast step** | `dt_fast`, required in TOML; shipped configs use **900 s** | `DTLSM`, default **600 s** |
 
-The naming caveat, since it propagates: despite the config string `ark`, the scheme is **not IMEX** —
-the biotic CO₂ source is folded implicit, the explicit tableau is empty, and it reduces to a clean
-2-solve ESDIRK2.
+The naming caveat, since it propagates: the ARS(2,2,2) tableau is usually presented as an IMEX pair,
+but the scheme is **not IMEX** — the biotic CO₂ source is folded implicit, the explicit tableau is
+empty, and it reduces to a clean 2-solve ESDIRK2, the config string's name for it.
 
 ### 3.3 What the step size costs, measured
 
@@ -266,7 +266,7 @@ Carried verbatim from the MEDS docs, because they are the things that would bite
    not yet scored on the network (see [`ROADMAP.md`](ROADMAP.md)).
 2. The stability threshold has been mapped on one synthetic forcing at one wind speed; the feedback
    involved is wind-dependent and light-to-moderate wind is the dangerous band.
-3. The ARK error norm carries structurally-zero terms (soil moisture and plant water are split out of
+3. The ESDIRK2 error norm carries structurally-zero terms (soil moisture and plant water are split out of
    its tableau), so it runs slightly looser than its stated tolerance.
 4. The whole evidence base in the numerics page is one site, one month per cell, one forcing year, no
    confidence intervals. Differences under ~2× should not be read as real.
@@ -482,7 +482,7 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
   per-kgC baseline times the layer-summed temperature scale times the fine-root carbon. ED2 references
   both at 15 °C and MEDS at 25 °C, so a value taken from ED2 or Chambers is converted once, when the PFT
   parameters are set.
-- **Tissue and soil energy** (`meds_fast_time_derivs`, `meds_fast_frozen`, `meds_soil_energy`). The leaf
+- **Tissue and soil energy** (`meds_fast_integ_derivs`, `meds_fast_integ_frozen`, `meds_soil_energy`). The leaf
   pays the full vapour enthalpy of what it transpires and the soil the liquid internal energy of what
   the roots draw, each once, as ED2's `rk4_derivs` charges `tq2enthalpy(T_leaf)` and `uint_water`. The
   advected-enthalpy names are ED2's: `qwflux_wl` is the sap flow's enthalpy into the leaf,
@@ -491,7 +491,7 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
   `qw_flux_g`.
 - **Soil water** (`meds_soil_water`). The face conductivity is the thickness-weighted geometric mean,
   ED2's rule for soil layers.
-- **Canopy air** (`meds_fast_be_stage`). Neither model clamps the canopy-air humidity at saturation:
+- **Canopy air** (`meds_fast_integ_backward_euler`). Neither model clamps the canopy-air humidity at saturation:
   transient supersaturation is relaxed by a condensation sink, not cut off.
 - **Carbon bookkeeping** (`meds_fast_state`). Gross GPP and the maintenance losses are summed apart
   over the day and netted by the daily allocator, as ED2 does.

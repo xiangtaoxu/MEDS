@@ -120,8 +120,8 @@ consumers live outside it.
 
 - **Consumers.** `compute_carbon_allocation` uses `cohort%sla` for the leaf-area-conserving target; the background
   leaf turnover uses `cohort%leaf_turnover_rate`; and the fast loop's `leaf_gas_exchange_batch` (called from
-  `meds_fast_prepass.canopy_leaf_gas_exchange`) takes per-cohort `vcmax25`/`rd25` (threaded through the
-  fast-loop column buffer in `meds_fast_types`), with `leaf_params_at_capacity` scaling
+  `meds_fast_integ_frozen.canopy_leaf_gas_exchange`) takes per-cohort `vcmax25`/`rd25` (threaded through the
+  fast-loop column buffer in `meds_fast_integ_types`), with `leaf_params_at_capacity` scaling
   $`J_{\mathrm{max25}}`$ and TPU with the plastic $`V_{\mathrm{cmax25}}`$. The canopy C API
   (`meds_canopy_leaf`) applies the same two overrides through `leaf_params_at_capacity`.
 

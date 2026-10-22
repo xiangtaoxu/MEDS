@@ -17,7 +17,7 @@ program test_column_rk45
    use meds_constants,           only : rho_h2o, grav_head, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
-   use meds_fast_params,         only : INTEG_ARK, INTEG_RK45
+   use meds_fast_params,         only : INTEG_ESDIRK2, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,  &
                                            sat_specific_humidity, tissue_temp_to_energy,                         &
@@ -86,7 +86,7 @@ program test_column_rk45
    !=== A. GPP parity on step 1 (identical initial state; RK45 pre-pass == ARK pre-pass). ======!
    call set_noon_forcing()
    call reset_state()
-   cfg%time_integrator = INTEG_ARK
+   cfg%time_integrator = INTEG_ESDIRK2
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
    gpp_split = out%gpp_coh(1:N)
    call reset_state()

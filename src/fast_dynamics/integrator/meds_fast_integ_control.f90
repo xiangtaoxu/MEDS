@@ -81,7 +81,7 @@ contains
    ! docs/science/numerical_scheme.md eq. (3). One norm over the whole column state with no    !
    ! per-scheme opt-outs, so no scheme can leave a state it integrates unmeasured. On ARK,     !
    ! theta and plant water ride outside the tableau, so their terms are exact zeros that       !
-   ! loosen the norm slightly (§3 `ark`, §7 item 3). Soil moisture is error-controlled on every !
+   ! loosen the norm slightly (§3 `esdirk2`, §7 item 3). Soil moisture is error-controlled on every !
    ! path anyway: the water network's own sub-step control uses the same GRP_THETA tolerances. !
    !---------------------------------------------------------------------------------------!
    pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols) result(err)

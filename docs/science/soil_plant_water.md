@@ -206,7 +206,7 @@ H_{store} = (U-s)\,u(T_W) + (s-E)\,u(T_L) \qquad(5)
 ```
 
 ($`q_{wl}`$ and $`q_{w}`$ are `qwflux_wl` and `q_wood_net`, and $`H_{store}`$ the per-cohort
-`leaf_water_enth` and `wood_water_enth`, in `build_column_frozen`; the upwind temperatures are
+`leaf_water_enth` and `wood_water_enth`, in `record_water_flows`; the upwind temperatures are
 frozen at the start of the step, which keeps the energy ledger exact; a stage's own temperatures
 cannot be used, since the energy stages compute them from these terms.) Water that arrives at a
 tissue's own temperature changes its energy and not its temperature. Counting the arriving water's
@@ -251,13 +251,18 @@ Each is a mean per fast step over the record's period.
 
 | Concept | Routine |
 |---|---|
-| the solver: assembly, Newton, sub-steps, commit | `meds_spac_solver` (`integrator/`): `spac_allocate`, `spac_set_state`, `spac_advance` |
+| the records: drive, evaluation, state, flows, workspace | `meds_fast_integ_types`: `water_drive_t`, `water_tend_t`, `water_state_t`, `water_flows_t`, `water_work_t`, `ensure_water_capacity` |
+| the state from the model's, and the flows, inflows and Jacobian at one state | `meds_fast_integ_derivs`: `set_water_state`, `water_derivs` |
+| the step: sub-steps, Newton, the Newton matrix, commit | `meds_fast_integ_backward_euler`: `water_step` (and its sub-step routines) |
+| each store's error scale | `meds_fast_integ_control`: `water_scales` |
+| the cohorts' paths (xylem, rhizosphere, crown head), once per slow step | `meds_fast_state`: `derive_cohort_terms` |
+| the soil layers' curves and face weights, once per site | `meds_soil_derive`: `build_profile_hydraulics_layers` |
 | the linear solve (block arrowhead, Schur complement) | `meds_linear_algebra`: `arrowhead_allocate`, `arrowhead_factor`, `arrowhead_solve` |
 | the stores' water relations in their unknowns | `meds_soil_hydr_lib`: `soil_water_relations`, `pond_water_relations` and their inverses, `VG_PORE_CONNECTIVITY`; `meds_plant_hydr_lib`: `tissue_water_relations` and its inverses |
 | plant flows | `meds_plant_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`; the leaves' supply limit `supply_limited_transpiration` (`meds_plant_hydraulics`); the flows' rounded corner `smooth_max0` (`meds_numerics`) |
 | soil flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
-| one patch's step | `meds_fast_frozen`: `run_spac_solver` (called from `build_column_frozen`) |
-| plant water over the step | `meds_fast_be_stage`: `advance_plant_water` (ARK; constant rates, RK45 integrates the same rates in its stages) |
+| one patch's step | `meds_fast_integ_frozen`: `ground_inflow` (the drive), then `fast_step` calls `water_step` and `record_water_flows` |
+| plant water over the step | `meds_fast_integ_backward_euler`: `advance_plant_water` (ESDIRK2; constant rates, RK45 integrates the same rates in its stages) |
 
 ## References
 

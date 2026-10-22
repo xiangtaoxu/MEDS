@@ -43,7 +43,7 @@ module meds_fast_integ_types
    public :: surface_state_t, surface_tend_t
    public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
-   public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t
+   public :: soil_hydrology_t, root_zone_t, plant_water_t, esdirk2_stages_t
    public :: march_state_t, frozen_t, march_tend_t
    public :: stage_bflux_t, boundary_flux_t
    public :: POND, WOOD, LEAF, COHORT_STORES
@@ -197,7 +197,7 @@ module meds_fast_integ_types
       !----- The interception films, per m2 of ground here; the cohort holds them per plant. ------!
       real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
       real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
-      !----- Warm start for the adaptive march (docs/science/numerical_scheme.md §3, `ark`): the step  !
+      !----- Warm start for the adaptive march (docs/science/numerical_scheme.md §3, `esdirk2`): the step !
       !      that seeds the next dt_fast's first sub-step; 0 = no history, start from dt_fast. --------!
       real(wp)                   :: adapt_dt_last = 0.0_wp   !< [s] last accepted sub-step not cut by the step's end
    end type fast_dynamic_state_t
@@ -610,16 +610,16 @@ module meds_fast_integ_types
    !      soil-plant water network and the ARK march's states and stages, filled in place and          !
    !      reallocated only when the cohort count changes. The stages are their own record so the     !
    !      march passes them beside its states. ------------------------------------------------------!
-   type :: ark_stages_t
+   type :: esdirk2_stages_t
       type(march_state_t) :: y2, base3, y3            !< the ARS(2,2,2) stages
       type(surface_tend_t) :: sf2, sf3                 !< the stages' surface tendencies
-   end type ark_stages_t
+   end type esdirk2_stages_t
 
    type :: fast_workspace_t
       type(aero_env_t)      :: aenv                          !< the aerodynamic environment (set_aero_env)
       type(water_work_t)    :: water                         !< the soil-plant water network
       type(march_state_t)  :: y_march, y_new, y_err, y_lo   !< the ARK march's state and trial step
-      type(ark_stages_t)    :: stages                        !< the ARK step's stages
+      type(esdirk2_stages_t)    :: stages                        !< the ARK step's stages
    end type fast_workspace_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!

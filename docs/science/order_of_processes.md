@@ -122,7 +122,7 @@ It then freezes, for the day, its soil-carbon pools and the tissue water the slo
      root respiration, the canopy-air capacities, the aerodynamics and the plant-hydraulics solve.
    - These are frozen for the sub-step, except the canopy-air-to-atmosphere conductances, which are
      re-solved at every stage.
-   - Then one integrator (`ark` or `rk45`, [numerical_scheme](numerical_scheme.md)) advances the
+   - Then one integrator (`esdirk2` or `rk45`, [numerical_scheme](numerical_scheme.md)) advances the
      canopy air, leaf and wood energy and water, the soil column and the snow together.
 5. **Accumulate.**
    - The patch's evapotranspiration, the phenology cues, the integrator's work counters, and the
@@ -300,7 +300,7 @@ file's instant, so none carries `mean_`.
 | fast loop + slow dynamics | `advance_one_step` | `meds_stepper` |
 | the fast loop | `fast_dynamics` | `meds_fast_dynamics` |
 | vertical corrections: the terrain lapse at ingest, the move to each patch's canopy-air top | `read_record`; `met_to_cas_top` | `meds_met` |
-| one sub-step of one patch | `fast_step` | `meds_fast_step` |
+| one sub-step of one patch | `fast_step` | `meds_fast_integ_stepper` |
 | the slow dynamics | `advance_slow_dynamics` | `meds_slow_dynamics` |
 | the cohorts' day | `vegetation_dynamics` | `meds_vegetation_dynamics` |
 | soil carbon | `advance_biogeochem_dynamics` | `meds_biogeochem_dynamics` |

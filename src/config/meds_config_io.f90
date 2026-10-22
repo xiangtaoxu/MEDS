@@ -13,7 +13,7 @@ module meds_config_io
    use meds_config,     only : meds_config_t, derive_parameters, alloc_pft_table, INIT_CENSUS,        &
                                INIT_RESTART
    use meds_pft_derive, only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
-   use meds_fast_params,   only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
+   use meds_fast_params,   only : INTEG_ESDIRK2, INTEG_RK45, CTRL_I, CTRL_PI
    use meds_soil_params,   only : soil_params_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,           &
                                   SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_region_params, only : RUN_MODE_SITE, RUN_MODE_REGION
@@ -284,10 +284,10 @@ contains
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
       cfg%intercept_alpha     = toml_real(tm, 'fast.intercept_alpha', cfg%intercept_alpha)
       cfg%intercept_k         = toml_real(tm, 'fast.intercept_k',     cfg%intercept_k)
-      !----- The fast-loop time integrator: ARK (ESDIRK2) when absent                                    !
+      !----- The fast-loop time integrator: ESDIRK2 when absent                                         !
       !      (docs/science/numerical_scheme.md §3). -----------------------------------------------------!
-      call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'ark', 'rk45'],              &
-                      [INTEG_ARK, INTEG_RK45], cfg%time_integrator, m)
+      call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'esdirk2', 'rk45'],          &
+                      [INTEG_ESDIRK2, INTEG_RK45], cfg%time_integrator, m)
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
       cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
       !----- Optional error-control settings. -------------------------------------------------!

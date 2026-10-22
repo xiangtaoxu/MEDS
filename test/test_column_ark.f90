@@ -1,10 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_column_ark -- the INTEG_ARK wiring of the coupled ESDIRK2 integrator (config name `ark`)        !
+! test_column_ark -- the INTEG_ESDIRK2 wiring of the coupled ESDIRK2 integrator (config name `esdirk2`)    !
 ! into fast_step (docs/science/numerical_scheme.md §3).                                                !
 !   A. GPP PARITY: build_frozen runs the SAME frozen pre-pass under both schemes, so gpp_coh    !
 !      from the ARK path is bit-identical to RK45's on step 1 (identical initial state).               !
-!   B. PHYSICAL: a 24-step dry-window march under INTEG_ARK keeps the CAS / soil / leaf / psi state    !
+!   B. PHYSICAL: a 24-step dry-window march under INTEG_ESDIRK2 keeps the CAS / soil / leaf / psi state    !
 !      finite, bounded, and sub-saturated (the integrator + unpack are correct end to end).            !
 !   C-E. the fixed-substep path, the leaf<->CAS Newton switch, psi_leaf convergence in dt_fast, and    !
 !      the seven conservation budgets over a 24 h dry march.                                           !
@@ -16,7 +16,7 @@ program test_column_ark
    use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
-   use meds_fast_params,         only : INTEG_ARK, INTEG_RK45
+   use meds_fast_params,         only : INTEG_ESDIRK2, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,   &
                                            sat_specific_humidity, internal_energy_liquid, tissue_temp_to_energy,  &
@@ -95,7 +95,7 @@ program test_column_ark
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
    gpp_rk45 = out%gpp_coh(1:N)
    call reset_state()
-   cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
    gpp_ark = out%gpp_coh(1:N)
    call check_true('ARK pre-pass gpp bit-identical to RK45 (one shared build_frozen)',                         &
@@ -121,9 +121,9 @@ program test_column_ark
       call reset_state()
    end block
 
-   !=== B. A dry-window march under INTEG_ARK stays physical + bounded + sub-saturated. ========!
+   !=== B. A dry-window march under INTEG_ESDIRK2 stays physical + bounded + sub-saturated. ========!
    call reset_state()
-   cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
    physical = .true. ; worst_super = -1.0_wp
    do is = 1_ik, 6_ik * STEPS_PER_HOUR
       call set_diurnal_forcing(is)
@@ -143,15 +143,15 @@ program test_column_ark
             static%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
-   call check_true('INTEG_ARK dry-window march stays physical + bounded (00:00-06:00)', physical, dynamic%cas%can_temp)
-   call check_true('INTEG_ARK CAS stays sub-saturated', worst_super <= 1.0e-4_wp, worst_super)
+   call check_true('INTEG_ESDIRK2 dry-window march stays physical + bounded (00:00-06:00)', physical, dynamic%cas%can_temp)
+   call check_true('INTEG_ESDIRK2 CAS stays sub-saturated', worst_super <= 1.0e-4_wp, worst_super)
 
    !=== C. Fixed-substep (GPU-lockstep) path also runs + stays physical. =======================!
    call reset_state()
-   cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .false. ; cfg%ark_fixed_substep = 4_ik
+   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .false. ; cfg%ark_fixed_substep = 4_ik
    call set_noon_forcing()
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
-   call check_true('INTEG_ARK fixed-substep path physical',                                                           &
+   call check_true('INTEG_ESDIRK2 fixed-substep path physical',                                                           &
            dynamic%cas%can_temp > 270.0_wp .and. dynamic%cas%can_temp < 325.0_wp, dynamic%cas%can_temp)
 
    !=== D2. psi_leaf must be CONVERGED IN DT_FAST. ==============================================!
@@ -180,7 +180,7 @@ program test_column_ark
    call test_ark_shed_water()
    call test_ark_saturated()
    call test_ark_aquifer()
-   call test_wood_prognostic(INTEG_ARK, 'ARK ')
+   call test_wood_prognostic(INTEG_ESDIRK2, 'ARK ')
    call test_refilling_wood_isothermal()
    call test_wood_capacity_follows_store()
 
@@ -288,7 +288,7 @@ contains
       integer(ik) :: istep
       real(wp)    :: theta_bot0
       call reset_state()
-      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
       site%soil%water_bottom_bc = SOIL_BC_AQUIFER
       dynamic%soil_water%theta(1:site%soil_profile%n_active) = 0.15_wp
       theta_bot0 = dynamic%soil_water%theta(site%soil_profile%n_active)
@@ -306,7 +306,7 @@ contains
       site%soil%water_bottom_bc = SOIL_BC_DRAIN ; site%soil%drain_factor = 1.0_wp
    end subroutine test_ark_aquifer
 
-   !----- march 24 h of INTEG_ARK over MOIST free-draining soil (rainfall==0) and                   !
+   !----- march 24 h of INTEG_ESDIRK2 over MOIST free-draining soil (rainfall==0) and                   !
    !       assert the 7 conservation budgets close. ------------------------------------------------!
    subroutine test_ark_budgets(adaptive)
       logical, intent(in) :: adaptive
@@ -314,7 +314,7 @@ contains
       character(len=6) :: tag
       tag = merge('adapt ', 'fixed ', adaptive)
       call reset_state()                               ! theta0=0.30 (moist), budget zeroed
-      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = adaptive
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = adaptive
       cfg%rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)               ! rainfall==0 always (dry); diurnal SW
@@ -333,7 +333,7 @@ contains
               out%report%ledgers%whole_energy%worst)
    end subroutine test_ark_budgets
 
-   !----- march 24 h of INTEG_ARK over free-draining soil WITH continuous rain                         !
+   !----- march 24 h of INTEG_ESDIRK2 over free-draining soil WITH continuous rain                         !
    !       (rainfall>0: boundary water-enthalpy advection + the pond). Assert the run completes, the   !
    !       soil wets, and the budgets close (ENERGY to machine precision, WATER at the ledger          !
    !       tolerance). --------------------------------------------------------------------------------!
@@ -341,7 +341,7 @@ contains
       integer(ik) :: istep
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
-      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
       cfg%rtol = 1.0e-4_wp
       call march_dry_day(theta_dry)                       ! the same day without the rain
       call reset_state()
@@ -366,14 +366,14 @@ contains
               out%report%ledgers%soil_energy%worst)
    end subroutine test_ark_budgets_wet
 
-   !----- march 24 h of INTEG_ARK with canopy_water_on and a morning rain pulse                         !
+   !----- march 24 h of INTEG_ESDIRK2 with canopy_water_on and a morning rain pulse                         !
    !      (04:45-06:00); assert some of it was intercepted and the budgets close (mirrors               !
    !      test_column_dynamics.f90's RUN 6). -----------------------------------------------------------!
    subroutine test_ark_canopy_water()
       integer(ik) :: istep
       real(wp)    :: surf_water_peak
       call reset_state()
-      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
       cfg%rtol = 1.0e-4_wp
       cfg%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
@@ -394,7 +394,7 @@ contains
       print '(a,es10.3,a)', '   (ARK canopy water peak film=', surf_water_peak, ' kg/m2)'
    end subroutine test_ark_canopy_water
 
-   !----- march 24 h of INTEG_ARK with a constant leaf/root-turnover shed-water rate                         !
+   !----- march 24 h of INTEG_ESDIRK2 with a constant leaf/root-turnover shed-water rate                         !
    !      (static%shed_water_rate -- a PATCH-level input, not atmospheric                                   !
    !      forcing, so it is frozen on dynamic for the whole day rather than living on forcing; distinct from    !
    !      rainfall, which stays 0 throughout): the soil must wet from THIS input alone, and both              !
@@ -406,7 +406,7 @@ contains
       integer(ik) :: istep
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
-      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
       cfg%rtol = 1.0e-4_wp
       call march_dry_day(theta_dry)                       ! the same day without the shed water
       call reset_state()
@@ -447,7 +447,7 @@ contains
       !      (ksat = 2.89e-6 m/s ~ 2.9e-3 kg/m2/s) rather than a sealed bottom. -----------------------!
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
-      cfg%time_integrator = INTEG_ARK
+      cfg%time_integrator = INTEG_ESDIRK2
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
@@ -516,7 +516,7 @@ contains
       real(wp)    :: t
       integer(ik) :: istep
       call reset_state()
-      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
       t = 0.0_wp ; istep = 0_ik
       do while (t < t_len - 1.0e-6_wp)
          istep = istep + 1_ik
