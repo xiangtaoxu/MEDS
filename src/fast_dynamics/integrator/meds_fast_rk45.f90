@@ -18,7 +18,8 @@ module meds_fast_rk45
                                      surface_tend_t, fast_static_state_t, fast_forcing_t, fast_output_t,          &
                                      step_report_t, fast_dynamic_state_t, fast_workspace_t, WORK_INTEG_STEPS,     &
                                      WORK_INTEG_REJECT, WORK_CLAMP_STAGE
-   use meds_fast_frozen,      only : build_column_frozen
+   use meds_fast_frozen,      only : build_column_frozen, record_water_flows
+   use meds_fast_be_stage,    only : water_step
    use meds_column_state_ops, only : state_init, state_accum, state_sub, zero_like, clamp_cas,                    &
                                      soil_water_store, soil_energy_store, plant_water_store, canopy_film_store,   &
                                      deposit_condensate, clamp_canopy_film, unpack_column_state,                  &
@@ -441,12 +442,15 @@ contains
       face_acc = 0.0_wp
       out%report%exports%atm_heat_export = 0.0_wp
       out%report%exports%atm_vap_export = 0.0_wp
+      ec = build_error_control(cfg)
+      ec%p_order = RK45_P_ORDER
       call build_column_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
+      call water_step(dt_fast, static, site%soil_profile, site%soil, cfg%pft%hydraulics, frozen%water_drive,     &
+                      ec%tols, work%water, out%report%work)
+      call record_water_flows(dt_fast, cfg, site, static, dynamic, work%water, out, frozen)
 
       dt0 = dt_fast
       if (dynamic%adapt_dt_last > tiny_num) dt0 = min(dynamic%adapt_dt_last, dt_fast)
-      ec = build_error_control(cfg)
-      ec%p_order = RK45_P_ORDER
       tl_int_acc(1:n) = 0.0_wp
       tw_int_acc(1:n) = 0.0_wp
       tr_int_acc(1:n) = 0.0_wp

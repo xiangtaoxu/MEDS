@@ -36,7 +36,7 @@ program test_column_dynamics
    use meds_site_state_vars,     only : site_surface_t
    use meds_fast_control,        only : build_tol_set, build_error_control
    use meds_fast_step,           only : fast_step
-   use meds_fast_prepass,        only : aero_bottom_to_top, cohort_leaf_par
+   use meds_fast_frozen,         only : aero_bottom_to_top, cohort_leaf_par
    use meds_numerics,            only : ascending_order
    use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water

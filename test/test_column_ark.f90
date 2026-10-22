@@ -30,7 +30,9 @@ program test_column_ark
                                         ensure_output_capacity, step_report_t
    use meds_site_state_vars,     only : site_surface_t
    use meds_fast_step,           only : fast_step
-   use meds_fast_frozen,        only : build_column_frozen
+   use meds_fast_frozen,        only : build_column_frozen, record_water_flows
+   use meds_fast_be_stage,      only : water_step
+   use meds_fast_control,       only : build_tol_set
    use meds_fast_types,         only : column_frozen_t, column_state_t, fast_workspace_t
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water
    use meds_test_support, only : build_test_config, check_close, check_true, test_report
@@ -111,7 +113,7 @@ program test_column_ark
       cfg%pft%leaf_emissivity = 0.93_wp ; cfg%pft%wood_emissivity = 0.87_wp
       call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp], site%soil_profile)   ! the view gathers them
       call reset_state()
-      call build_column_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws, fz, ys)
+      call frozen_record(fz, ys)
       call check_close(fz%tissue%leaf_emiss(1), 0.93_wp, 0.0_wp, 'energy balance uses the PFT leaf emissivity')
       call check_close(fz%tissue%wood_emiss(1), 0.87_wp, 0.0_wp, 'energy balance uses the PFT wood emissivity')
       cfg%pft%leaf_emissivity = eps_leaf0 ; cfg%pft%wood_emissivity = eps_wood0
@@ -186,6 +188,17 @@ program test_column_ark
 
 contains
 
+   !----- The frozen record a step marches against, as the schemes build it: the frozen build, the  !
+   !      water network's step, and what it moved recorded into the record. ----------------------!
+   subroutine frozen_record(fz, ys)
+      type(column_frozen_t), intent(out) :: fz
+      type(column_state_t),  intent(out) :: ys
+      call build_column_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws, fz, ys)
+      call water_step(DT_FAST, static, site%soil_profile, site%soil, cfg%pft%hydraulics, fz%water_drive,         &
+                      build_tol_set(cfg), ws%water, out%report%work)
+      call record_water_flows(DT_FAST, cfg, site, static, dynamic, ws%water, out, fz)
+   end subroutine frozen_record
+
    !----- Prognostic WOOD: veg_energy_balance relaxes the wood's heat store (store_hcap_per_dt > 0)     !
    !      exactly (docs/science/vegetation_energy_dynamics.md eqs. (3)-(4)), on ARK and RK45.           !
    !      Two assertions:                                                                               !
@@ -230,7 +243,7 @@ contains
       forcing%abs_sw = 0.0_wp ; forcing%abs_par = 0.0_wp ; forcing%abs_sw_ground = 0.0_wp   ! night
       forcing%enthalpy_atm = cas_temp_to_enthalpy(T0, 0.008_wp)
       dynamic%wood_water_mass(1:N) = 0.8_wp * dynamic%wood_water_mass(1:N)        ! dried wood
-      call build_column_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws, fz, ys)
+      call frozen_record(fz, ys)
       refill = sum((fz%plant%uptake_frozen(1:N) - fz%plant%sapflow_frozen(1:N)) * static%nplant(1:N))
       call check_true('dried wood over moist soil refills', refill > 0.0_wp, refill)
       call check_true('the refill brings the wood no heat (soil, wood and leaf at one temperature)',            &
@@ -255,13 +268,13 @@ contains
       call set_noon_forcing()
       w_store = dynamic%wood_water_mass(1)
       cap_dry = static%bwood(1) * static%nplant(1) * 2.0_wp * tissue_c_wood_dry
-      call build_column_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws, fz, ys)
+      call frozen_record(fz, ys)
       cap_full = fz%tissue%wood_hcap_per_dt(1) * DT_FAST
       call check_close(cap_full, cap_dry + static%nplant(1) * w_store * cp_liq, 1.0e-12_wp * cap_full,     &
                        'wood heat capacity = dry wood + the wood store''s water')
       call check_true('the fine roots hold part of the store', static%broot(1) > 0.0_wp, static%broot(1))
       dynamic%wood_water_mass(1) = 0.8_wp * w_store
-      call build_column_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws, fz, ys)
+      call frozen_record(fz, ys)
       cap_drained = fz%tissue%wood_hcap_per_dt(1) * DT_FAST
       call check_close(cap_full - cap_drained, 0.2_wp * static%nplant(1) * w_store * cp_liq,                &
                        1.0e-9_wp * cap_full, 'a store drained by a fifth holds a fifth less water heat')

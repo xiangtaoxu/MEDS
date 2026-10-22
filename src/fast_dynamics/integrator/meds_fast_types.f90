@@ -132,8 +132,8 @@ module meds_fast_types
       real(wp),    allocatable :: bwood(:)                                    !< [kgC/plant] total wood (thermal store)
       real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
       !----- Yesterday's daily-maximum leaf water potential, the predawn potential behind the slow  !
-      !      stomatal control (docs/science/leaf_gas_exchange.md §4.2). column_prepass always passes !
-      !      it, since leaf_gas_exchange_batch reads an absent `psi` as no stress. -----------------!
+      !      stomatal control (docs/science/leaf_gas_exchange.md §4.2). The frozen build always     !
+      !      passes it, since leaf_gas_exchange_batch reads an absent `psi` as no stress. ----------!
       real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; UNSET_NEGATIVE => seed from soil
       !----- What the cohorts' structure fixes for the slow step, derived once at the gather      !
       !      (meds_fast_state::derive_cohort_terms): each cohort's fine roots by soil layer and the !
@@ -262,7 +262,7 @@ module meds_fast_types
       !      spill (surface runoff) and the bottom flux (drainage; negative when an aquifer feeds it). !
       real(wp)       :: runoff_surf_export = 0.0_wp   !< [kg/m2] over this dt_fast
       real(wp)       :: drainage_export    = 0.0_wp   !< [kg/m2] over this dt_fast
-      !----- Soil-carbon Rh diagnostics (docs/science/soil_carbon.md §7), set by column_prepass when    !
+      !----- Soil-carbon Rh diagnostics (docs/science/soil_carbon.md §7), set by the frozen build when  !
       !      soil carbon is on (else 0). The fast driver accumulates them into the patch's day          !
       !      integrals, decomp_xi. -------------------------------------------------------------------!
       real(wp)       :: xi_step(N_SOIL_POOL) = 0.0_wp   !< [-] this sub-step's per-pool env scalar
@@ -719,7 +719,7 @@ contains
       static%vcmax25 = 0.0_wp
       static%rd25 = 0.0_wp
       !----- Unset, not 0: a 0 would read as fully turgid and disable the stomatal stress limb for a  !
-      !      caller that forgets to fill it; the sentinel makes column_prepass seed from the soil. ----!
+      !      caller that forgets to fill it; the sentinel makes the frozen build seed from the soil. --!
       static%dmax_psi_leaf = UNSET_NEGATIVE
       static%root_frac = 0.0_wp
       static%k_xylem = 0.0_wp

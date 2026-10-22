@@ -22,8 +22,8 @@ module meds_fast_ark
                                      plant_water_store, canopy_film_store, deposit_condensate,                    &
                                      clamp_canopy_film, unpack_column_state, diagnose_soil_temps,                 &
                                      transp_per_leaf_area, commit_tissue_energy
-   use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
-   use meds_fast_frozen, only : build_column_frozen
+   use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full, water_step
+   use meds_fast_frozen, only : build_column_frozen, record_water_flows
    use meds_diag_vars,       only : CO_TRANSP
    use meds_therm_lib, only : internal_energy_liquid
    use meds_budget_check, only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR, BUDGET_CO2_RATE_FLOOR
@@ -183,7 +183,7 @@ contains
    end subroutine adaptive_ark_march
    !=======================================================================================!
    !  column_fast_step_ark -- the INTEG_ARK fast step (docs/science/numerical_scheme.md §3 `ark`):  !
-   !  build the frozen record (which runs the water network), advance one dt_fast, commit the        !
+   !  build the frozen record and step the water network into it, advance one dt_fast, commit the   !
    !  network's water and the tissue energy, deposit the condensate, and close the seven ledgers.   !
    !=======================================================================================!
    subroutine column_fast_step_ark(dt_fast, cfg, site, static, forcing, dynamic, out, work)
@@ -231,6 +231,9 @@ contains
       w_surface0 = dynamic%soil_water%w_surface
 
       call build_column_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
+      call water_step(dt_fast, static, site%soil_profile, site%soil, cfg%pft%hydraulics, frozen%water_drive,     &
+                      ec%tols, work%water, out%report%work)
+      call record_water_flows(dt_fast, cfg, site, static, dynamic, work%water, out, frozen)
 
       !----- State^n pond enthalpy, taken before the pond commit below overwrites it                  !
       !      (build_column_frozen writes nothing to dynamic%soil_water). -----------------------------!
@@ -260,7 +263,7 @@ contains
          y_out = ycur
          nsteps = nsub
       end if
-      !----- Work counters; the water network's own work is counted in build_column_frozen. ---------!
+      !----- Work counters; the water network's own work is counted in water_step. -----------------!
       out%report%work(WORK_INTEG_STEPS) = nsteps
       out%report%work(WORK_INTEG_REJECT) = nrej
 
