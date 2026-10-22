@@ -19,7 +19,8 @@ module meds_fast_types
    use meds_biophysics_params, only : aero_params_t
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
-   use meds_spac_solver, only : spac_solver_t
+   use meds_linear_algebra, only : arrowhead_system_t
+   use meds_soil_water, only : ground_evap_env_t
    use meds_fast_params, only : CTRL_I
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
    use meds_cas_biophysics, only : cas_column_t
@@ -41,6 +42,8 @@ module meds_fast_types
    public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
+   public :: POND, WOOD, LEAF, COHORT_STORES
+   public :: water_drive_t, water_tend_t, water_state_t, water_flows_t, water_work_t, ensure_water_capacity
    public :: alloc_static_state, alloc_dynamic_state   ! used only by the tests
 
    !----- The tolerance groups, one per kind of state, each scaling its entries in the error norm    !
@@ -67,6 +70,14 @@ module meds_fast_types
    !----- Default PI gains for a first-order embedded pair (Gustafsson 1988; Soderlind), eq. (4). --!
    real(wp), parameter :: PI_ALPHA_DEF = 0.35_wp
    real(wp), parameter :: PI_BETA_DEF  = 0.20_wp
+
+   !----- The soil-plant water network's nodes (docs/science/soil_plant_water.md §1): the pond is   !
+   !      soil node POND and soil layer k is node 1 + k; each cohort has two stores, its wood and its  !
+   !      leaves. --------------------------------------------------------------------------------!
+   integer(ik), parameter :: POND = 1_ik
+   integer(ik), parameter :: WOOD = 1_ik
+   integer(ik), parameter :: LEAF = 2_ik
+   integer(ik), parameter :: COHORT_STORES = 2_ik
 
    !----- Per-group (rtol, atol). The WRMS normalizes state group g by atol(g) + rtol(g)*|y|. ---------!
    type :: tol_set_t
@@ -135,6 +146,8 @@ module meds_fast_types
       real(wp),    allocatable :: g_rhizo(:,:)            !< (n_soil_layer_max, n) rhizosphere conductance per
                                                           !<   unit soil conductivity [kg/s/MPa per m2, per m/s]
       real(wp),    allocatable :: crown_head(:)           !< [MPa] hydrostatic head from the wood to the leaves
+      real(wp),    allocatable :: bwood_water(:)          !< [kgC/plant] sapwood and fine roots, the carbon of the
+                                                          !<   network's wood store
       real(wp),    allocatable :: leaf_dry_hcap(:), wood_dry_hcap(:)   !< [J/K per m2 ground]
       !----- The canopy geometry, and the canopy-air top the forcing is moved to with the patch's   !
       !      roughness and displacement (docs/science/forcing.md §8). ------------------------------!
@@ -430,7 +443,7 @@ module meds_fast_types
       real(wp), allocatable :: wood_surf_water(:) !< [kg/m2 ground] canopy interception film on wood
    end type column_state_t
 
-   !----- Soil water over this dt_fast, from the soil-plant water solver (meds_spac_solver, run in    !
+   !----- Soil water over this dt_fast, from the soil-plant water network's step (water_step, run in !
    !      build_column_frozen): its boundary flows, end-of-step stores, the temperatures that value   !
    !      the water crossing each boundary, and its interior faces. Every scheme commits its theta and !
    !      advects soil enthalpy on these same faces (docs/science/numerical_scheme.md §5b). ----------!
@@ -501,6 +514,72 @@ module meds_fast_types
       real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater
    end type snow_stage_t
 
+   !----- What drives the soil-plant water network over the step, held fixed across it: the water   !
+   !      reaching the pond and the temperature that values it, the temperature of the water each     !
+   !      layer gives up, each cohort's transpiration demand and the ground evaporation's boundary    !
+   !      (docs/science/soil_plant_water.md §4-§5). -----------------------------------------------!
+   type :: water_drive_t
+      real(wp) :: rain   = 0.0_wp                          !< [kg/m2/s] water reaching the pond
+      real(wp) :: t_rain = 298.15_wp                       !< [K] the temperature that values it
+      real(wp) :: t_soil(n_soil_layer_max) = 298.15_wp     !< [K] temperature of the water a layer gives up
+      real(wp), allocatable :: e_demand(:)                 !< (ncoh) [kg/m2/s] the stomata's transpiration demand
+      type(ground_evap_env_t) :: ground                    !< the ground evaporation's boundary
+   end type water_drive_t
+
+   !----- The water network at one state (water_derivs): each store's potential [MPa] and water     !
+   !      [kg/m2] with their slopes in its unknown, each soil node's conductivity [m/s], the net      !
+   !      inflow into each store [kg/m2/s], and the flow along each path [kg/m2/s]. ----------------!
+   type :: water_tend_t
+      real(wp), allocatable :: psi_soil(:), dpsi_soil(:), water_soil(:), dwater_soil(:)   !< (nsoil)
+      real(wp), allocatable :: k_soil(:), dk_soil(:), inflow_soil(:)                       !< (nsoil)
+      real(wp), allocatable :: psi_coh(:,:), dpsi_coh(:,:), water_coh(:,:), dwater_coh(:,:) !< (2, ncoh)
+      real(wp), allocatable :: inflow_coh(:,:)                                             !< (2, ncoh)
+      real(wp), allocatable :: face_flux(:)        !< (nsl) down through the face below layer k
+      real(wp), allocatable :: uptake(:,:)         !< (nsl, ncoh) from each layer into each cohort
+      real(wp), allocatable :: sapflow(:), transp(:)   !< (ncoh)
+      real(wp) :: pond_flux = 0.0_wp               !< pond -> top layer
+      real(wp) :: drain = 0.0_wp, evap = 0.0_wp    !< out of the bottom; out of the top layer to the air
+   end type water_tend_t
+
+   !----- The water network's state: each store's unknown and the water it holds [kg/m2], the pond's !
+   !      enthalpy, and each store's potential at the end of the step. -----------------------------!
+   type :: water_state_t
+      real(wp), allocatable :: tau_soil(:), tau_coh(:,:)       !< (nsoil), (2, ncoh)
+      real(wp), allocatable :: water_soil(:), water_coh(:,:)   !< (nsoil), (2, ncoh)
+      real(wp), allocatable :: psi_soil(:), psi_coh(:,:)       !< (nsoil), (2, ncoh) [MPa]
+      real(wp) :: e_pond = 0.0_wp                              !< [J/m2] the pond's enthalpy
+   end type water_state_t
+
+   !----- What each of the network's paths moved over the step [kg/m2, J/m2]. ---------------------!
+   type :: water_flows_t
+      real(wp), allocatable :: face(:)          !< (nsl) down through the face below layer k
+      real(wp), allocatable :: uptake(:,:)      !< (nsl, ncoh) from each layer into each cohort
+      real(wp), allocatable :: sapflow(:), transp(:)   !< (ncoh)
+      real(wp) :: infil = 0.0_wp, infil_enth = 0.0_wp  !< pond -> top layer, and its enthalpy
+      real(wp) :: exfil = 0.0_wp, exfil_enth = 0.0_wp  !< top layer -> pond
+      real(wp) :: drain = 0.0_wp, evap = 0.0_wp        !< out of the bottom; out of the top layer to the air
+      real(wp) :: spill = 0.0_wp, spill_enth = 0.0_wp  !< pond runoff over its capacity
+      real(wp) :: rain_enth = 0.0_wp                   !< enthalpy the rain brought
+   end type water_flows_t
+
+   !----- One thread's water network, kept from step to step so its arrays are allocated again only  !
+   !      when the shape changes: its size, its state and flows, and the Newton scratch. ev(i_start)  !
+   !      is the network at a sub-step's start; Newton evaluates its iterates into the other. sys     !
+   !      holds the flows' Jacobian of the latest evaluation (its factorisation is kept apart). A     !
+   !      sub-step starts where the last accepted one ended, so while start_ready holds, its start's  !
+   !      evaluation and Jacobian are already there. ------------------------------------------------!
+   type :: water_work_t
+      integer(ik)              :: nsl   = 0_ik      !< soil layers
+      integer(ik)              :: ncoh  = 0_ik      !< cohorts
+      integer(ik)              :: nsoil = 0_ik      !< soil nodes: the pond and the nsl layers
+      type(water_state_t)      :: state
+      type(water_flows_t)      :: flows
+      type(arrowhead_system_t) :: sys
+      type(water_tend_t)       :: ev(2)
+      integer(ik)              :: i_start = 1_ik
+      logical                  :: start_ready = .false.
+   end type water_work_t
+
    !----- The container: everything held constant over one dt_fast, by physical content. -----------!
    type :: column_frozen_t
       type(cas_boundary_t)         :: cas          !< CAS <-> atmosphere boundary
@@ -511,10 +590,11 @@ module meds_fast_types
       type(soil_hydrology_t)       :: hydrology    !< the water network's soil flows over the step
       type(root_zone_t)            :: roots        !< the network's root uptake and its placement by layer
       type(plant_water_t)          :: plant        !< the network's sapflow and uptake per plant
+      type(water_drive_t)          :: water_drive  !< what drives the water network over the step
    end type column_frozen_t
 
    !----- Storage one thread's fast step reuses from step to step: the aerodynamic environment, the  !
-   !      soil-plant water solver and the ARK march's states and stages, filled in place and          !
+   !      soil-plant water network and the ARK march's states and stages, filled in place and          !
    !      reallocated only when the cohort count changes. The stages are their own record so the     !
    !      march passes them beside its states. ------------------------------------------------------!
    type :: ark_stages_t
@@ -524,7 +604,7 @@ module meds_fast_types
 
    type :: fast_workspace_t
       type(aero_env_t)      :: aenv                          !< the aerodynamic environment (set_aero_env)
-      type(spac_solver_t)   :: spac                          !< the soil-plant water solver
+      type(water_work_t)    :: water                         !< the soil-plant water network
       type(column_state_t)  :: y_march, y_new, y_err, y_lo   !< the ARK march's state and trial step
       type(ark_stages_t)    :: stages                        !< the ARK step's stages
    end type fast_workspace_t
@@ -612,7 +692,7 @@ contains
                static%dbh(n), static%broot(n), static%bleaf(n), static%bsap(n), static%sap_area(n),           &
                static%bwood(n), static%vcmax25(n), static%rd25(n), static%dmax_psi_leaf(n))
       allocate(static%root_frac(n_soil_layer_max, n), static%k_xylem(n), static%g_rhizo(n_soil_layer_max, n),      &
-               static%crown_head(n), static%leaf_dry_hcap(n), static%wood_dry_hcap(n))
+               static%crown_head(n), static%bwood_water(n), static%leaf_dry_hcap(n), static%wood_dry_hcap(n))
       static%pft = 1_ik
       static%order = [(n - i + 1_ik, i = 1_ik, n)]   ! tallest first, as the gather leaves them
       static%lai = 0.0_wp
@@ -645,6 +725,7 @@ contains
       static%k_xylem = 0.0_wp
       static%g_rhizo = 0.0_wp
       static%crown_head = 0.0_wp
+      static%bwood_water = 0.0_wp
       static%leaf_dry_hcap = 0.0_wp
       static%wood_dry_hcap = 0.0_wp
    end subroutine alloc_static_state
@@ -690,6 +771,44 @@ contains
    !----- Grow-only capacity for the per-cohort arrays, as ensure_static_capacity. Nothing is seeded: !
    !      every caller overwrites the patch stores and cohorts 1..n with the patch's persisted state  !
    !      right after. -----------------------------------------------------------------------------!
+   !----- Size the water network for nsl soil layers and ncoh cohorts, keeping the storage when the !
+   !      shape is unchanged. -------------------------------------------------------------------!
+   subroutine ensure_water_capacity(water, nsl, ncoh)
+      type(water_work_t), intent(inout) :: water
+      integer(ik),        intent(in)    :: nsl, ncoh
+      integer(ik) :: ns
+      if (allocated(water%state%tau_soil) .and. water%nsl == nsl .and. water%ncoh == ncoh) return
+      water%nsl   = nsl
+      water%ncoh  = ncoh
+      water%nsoil = 1_ik + nsl
+      ns = water%nsoil
+      associate (st => water%state, fl => water%flows)
+         if (allocated(st%tau_soil)) deallocate(st%tau_soil, st%tau_coh, st%water_soil, st%water_coh,          &
+                                                st%psi_soil, st%psi_coh)
+         allocate(st%tau_soil(ns), st%tau_coh(COHORT_STORES, ncoh), st%water_soil(ns),                      &
+                  st%water_coh(COHORT_STORES, ncoh), st%psi_soil(ns), st%psi_coh(COHORT_STORES, ncoh))
+         if (allocated(fl%face)) deallocate(fl%face, fl%uptake, fl%sapflow, fl%transp)
+         allocate(fl%face(nsl), fl%uptake(nsl, ncoh), fl%sapflow(ncoh), fl%transp(ncoh))
+      end associate
+      call tend_allocate(water%ev(1))
+      call tend_allocate(water%ev(2))
+   contains
+      subroutine tend_allocate(ev)
+         type(water_tend_t), intent(inout) :: ev
+         if (allocated(ev%psi_soil)) deallocate(ev%psi_soil, ev%dpsi_soil, ev%water_soil, ev%dwater_soil,       &
+                                                ev%k_soil, ev%dk_soil, ev%inflow_soil, ev%psi_coh, ev%dpsi_coh, &
+                                                ev%water_coh, ev%dwater_coh, ev%inflow_coh, ev%face_flux,       &
+                                                ev%uptake, ev%sapflow, ev%transp)
+         allocate(ev%psi_soil(ns), ev%dpsi_soil(ns), ev%water_soil(ns), ev%dwater_soil(ns), ev%k_soil(ns),     &
+                  ev%dk_soil(ns), ev%inflow_soil(ns))
+         allocate(ev%psi_coh(COHORT_STORES, ncoh), ev%dpsi_coh(COHORT_STORES, ncoh),                           &
+                  ev%water_coh(COHORT_STORES, ncoh), ev%dwater_coh(COHORT_STORES, ncoh),                       &
+                  ev%inflow_coh(COHORT_STORES, ncoh))
+         allocate(ev%face_flux(nsl), ev%uptake(nsl, ncoh), ev%sapflow(ncoh), ev%transp(ncoh))
+         ev%face_flux = 0.0_wp
+      end subroutine tend_allocate
+   end subroutine ensure_water_capacity
+
    subroutine ensure_dynamic_capacity(dynamic, n_coh)
       type(fast_dynamic_state_t), intent(inout) :: dynamic
       integer(ik),                intent(in)    :: n_coh

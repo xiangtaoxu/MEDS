@@ -217,7 +217,7 @@ contains
          vpd_arr(i)      = max(sat_vapor_pressure(dynamic%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
          psi_leaf_arr(i) = leaf_node_psi(dynamic%leaf_water_mass(i), static%bleaf(i),                 &
-               dynamic%wood_water_mass(i), static%bsap(i) + static%broot(i), static%height(i),   &
+               dynamic%wood_water_mass(i), static%bwood_water(i), static%height(i),              &
                hyd_table%pft(static%pft(i)))
       end do
       dmax_psi_seed = top_soil_psi(soil, dynamic%soil_water%theta(1))

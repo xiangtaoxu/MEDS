@@ -270,10 +270,11 @@ contains
    ! cohort's fine roots by layer, within its own rooting depth, and the patch's profile,    !
    ! the cohorts' weighted by their fine-root carbon (a patch with no roots puts its weight  !
    ! in the top layer: it has no root respiration to weight); the water network's paths --   !
-   ! the intact xylem from the sapwood, the head to the crown, and each layer's rhizosphere  !
-   ! from the roots' length there, half the distance between the roots of every cohort in it !
-   ! (docs/science/plant_hydraulics.md eq. (14)); and the dry heat capacity of the leaves    !
-   ! and of all the wood (docs/science/vegetation_energy_dynamics.md eq. (8)).               !
+   ! the intact xylem from the sapwood, the head to the crown, each layer's rhizosphere from !
+   ! the roots' length there, half the distance between the roots of every cohort in it     !
+   ! (docs/science/plant_hydraulics.md eq. (14)), and the carbon of the wood store (sapwood  !
+   ! and fine roots); and the dry heat capacity of the leaves and of all the wood            !
+   ! (docs/science/vegetation_energy_dynamics.md eq. (8)).                                   !
    !---------------------------------------------------------------------------------------!
    subroutine derive_cohort_terms(static, hyd, profile)
       type(fast_static_state_t), intent(inout) :: static
@@ -297,6 +298,7 @@ contains
                                                                             static%height(i), hp%vessel_curl)
             static%crown_head(i) = crown_gravity_head(static%height(i))
          end associate
+         static%bwood_water(i)   = static%bsap(i) + static%broot(i)
          static%leaf_dry_hcap(i) = tissue_dry_heat_capacity(static%nplant(i), static%bleaf(i), tissue_c_leaf)
          static%wood_dry_hcap(i) = tissue_dry_heat_capacity(static%nplant(i), static%bwood(i), tissue_c_wood_dry)
       end do

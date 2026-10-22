@@ -6,21 +6,26 @@
 ! error is scaled by its group's (rtol, atol) (the seven groups of meds_fast_types; the    !
 ! films and the pond carry none). The run's error control is built from [fast]             !
 ! (build_error_control), with its budget stops; default_error_control serves the tests     !
-! (docs/science/numerical_scheme.md eqs. (3)-(4)).                                          !
+! (docs/science/numerical_scheme.md eqs. (3)-(4)). water_scales sets the scale of each of   !
+! the soil-plant water network's stores, against which its sub-step tolerances are read    !
+! (docs/science/soil_plant_water.md §3).                                                    !
 !==========================================================================================!
 module meds_fast_control
    use meds_kinds,       only : wp, ik
-   use meds_constants,   only : tiny_num
+   use meds_constants,   only : tiny_num, rho_h2o
    use meds_numerics,    only : adaptive_step_update, clamp
    use meds_config,      only : meds_config_t
    use meds_fast_params, only : CTRL_PI
    use meds_column_state_ops, only : state_to_array, state_entry_rules
-   use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, GRP_THETA
+   use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, GRP_THETA, fast_static_state_t, POND
+   use meds_soil_params, only : soil_profile_t
+   use meds_pft_params,  only : hydraulics_table_t
    implicit none
    private
 
    public :: state_wrms_grouped, step_control_factor
    public :: build_error_control, build_tol_set
+   public :: water_scales
    public :: default_error_control   ! used only by the tests
 
 contains
@@ -120,5 +125,29 @@ contains
          fac = clamp(ec%safety * e**(-ec%pi_alpha) * ep**(ec%pi_beta), ec%fmin, ec%fmax)
       end if
    end function step_control_factor
+
+   !----- Each water store's scale [kg/m2], against which its tolerances are set: a soil layer's or  !
+   !      the pond's is a metre of water per metre of the (top) layer, so its tolerances read as     !
+   !      water content; a cohort's is the water its wood and leaf cells hold at full turgor, shared  !
+   !      by both stores so a leafless cohort's empty leaf is weighed against its plant. ---------!
+   pure subroutine water_scales(static, profile, hyd, scale_soil, scale_coh)
+      type(fast_static_state_t), intent(in)  :: static
+      type(soil_profile_t),      intent(in)  :: profile
+      type(hydraulics_table_t),  intent(in)  :: hyd
+      real(wp),                  intent(out) :: scale_soil(:), scale_coh(:,:)
+      integer(ik) :: k, i
+      real(wp)    :: s
+      scale_soil(POND) = rho_h2o * profile%dz(1)
+      do k = 1_ik, profile%n_active
+         scale_soil(1_ik + k) = rho_h2o * profile%dz(k)
+      end do
+      do i = 1_ik, static%n
+         associate (lc => hyd%pft(static%pft(i))%leaf_curve, wc => hyd%pft(static%pft(i))%wood_curve)
+            s = static%nplant(i) * ((1.0_wp - lc%apoplast_frac) * lc%water_sat * static%bleaf(i)                &
+                                  + (1.0_wp - wc%apoplast_frac) * wc%water_sat * static%bwood_water(i))
+         end associate
+         scale_coh(:, i) = max(s, tiny_num)
+      end do
+   end subroutine water_scales
 
 end module meds_fast_control

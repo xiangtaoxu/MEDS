@@ -55,7 +55,7 @@ contains
       !      was handed. Before the dispatch, so both schemes fill it (RK45's success path returns). -!
       do jcoh = 1_ik, static%n
          out%psi_leaf_coh(jcoh) = leaf_node_psi(dynamic%leaf_water_mass(jcoh), static%bleaf(jcoh),              &
-               dynamic%wood_water_mass(jcoh), static%bsap(jcoh) + static%broot(jcoh),                              &
+               dynamic%wood_water_mass(jcoh), static%bwood_water(jcoh),                                            &
                static%height(jcoh), cfg%pft%hydraulics%pft(static%pft(jcoh)))
       end do
 

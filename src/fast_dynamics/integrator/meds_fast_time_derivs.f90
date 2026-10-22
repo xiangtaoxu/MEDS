@@ -6,11 +6,13 @@
 !   * surface_derivs   -- leaf and wood energy balance, ground skin, the three canopy-air twins;     !
 !   * column_derivs    -- surface_derivs plus the soil-heat column and the soil and plant water,     !
 !     which move at the soil-plant water network's frozen rates (§2);                                !
-!   * cas_conductances -- the CAS <-> atmosphere conductances at a live canopy-air state.           !
+!   * cas_conductances -- the CAS <-> atmosphere conductances at a live canopy-air state;          !
+!   * water_derivs     -- the soil-plant water network's flows, inflows and Jacobian at one state,  !
+!     and set_water_state its state from the model's (docs/science/soil_plant_water.md §1-§2).      !
 !==========================================================================================!
 module meds_fast_time_derivs
    use meds_kinds, only : wp, ik
-   use meds_constants, only : tiny_num, rho_h2o
+   use meds_constants, only : tiny_num, rho_h2o, grav_head
    use meds_therm_lib, only : cas_molar_density, cas_enthalpy_to_temp, sat_specific_humidity,             &
                               sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,  &
                               internal_energy_liquid
@@ -24,12 +26,23 @@ module meds_fast_time_derivs
    use meds_column_state_ops, only : assemble_soil_energy_forcing
    use meds_fast_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
                                tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t,                  &
-                               column_state_t, column_frozen_t, column_tend_t
+                               column_state_t, column_frozen_t, column_tend_t, fast_static_state_t,               &
+                               water_drive_t, water_tend_t, water_work_t, ensure_water_capacity, POND, WOOD, LEAF
    use meds_site_state_vars, only : site_surface_t
+   use meds_soil_hydr_lib, only : soil_water_relations, soil_theta_to_unknown, pond_water_relations,              &
+                                  pond_water_to_head
+   use meds_plant_hydr_lib, only : tissue_water_relations, tissue_water_to_rwc, tissue_rwc_to_unknown,            &
+                                   tissue_psi_to_rwc, root_water_uptake_profile, xylem_sapflow
+   use meds_plant_hydraulics, only : supply_limited_transpiration
+   use meds_soil_water, only : soil_water_flux, ground_evaporation_rate, bottom_flux
+   use meds_linear_algebra, only : arrowhead_system_t
+   use meds_soil_params, only : soil_profile_t, soil_params_t
+   use meds_pft_params, only : hydraulics_table_t
    implicit none
    private
 
    public :: surface_derivs, column_derivs, cas_conductances
+   public :: set_water_state, water_derivs
 
    !----- [s] e-folding time of the smooth condensation sink, dq/dt = -(q - qsat)/TAU_COND: short       !
    !      against dt_fast, so supersaturated canopy air condenses within the step, and smooth (no clamp), !
@@ -318,5 +331,233 @@ contains
       f%d_wood_surf_water(1:n) = frozen%film%intercept_wood(1:n) - surf_tend%film_evap_wood(1:n)
       if (present(sf_out)) sf_out = surf_tend
    end subroutine column_derivs
+
+   !=======================================================================================!
+   !  The soil-plant water network (docs/science/soil_plant_water.md §1-§2): the pond, the   !
+   !  soil layers, and each cohort's wood and leaves. The stores' curves and the paths'      !
+   !  flows are the process libraries'; these join them.                                    !
+   !=======================================================================================!
+
+   !---------------------------------------------------------------------------------------!
+   ! set_water_state -- the network's state from the model's: each soil layer's water       !
+   ! content, the pond's water and enthalpy, and each cohort's leaf and wood water [kg per   !
+   ! plant]; each store's unknown is read from its water. A leafless cohort's leaves hold    !
+   ! none, so their unknown starts at the wood's potential less the head to the crown, where !
+   ! an empty leaf comes to rest.                                                           !
+   !---------------------------------------------------------------------------------------!
+   subroutine set_water_state(static, profile, hyd, theta, w_pond, e_pond, leaf_water, wood_water, water)
+      type(fast_static_state_t), intent(in)    :: static
+      type(soil_profile_t),      intent(in)    :: profile
+      type(hydraulics_table_t),  intent(in)    :: hyd
+      real(wp),                  intent(in)    :: theta(:)                       !< (nsl) [m3/m3]
+      real(wp),                  intent(in)    :: w_pond, e_pond                 !< [kg/m2], [J/m2]
+      real(wp),                  intent(in)    :: leaf_water(:), wood_water(:)   !< (ncoh) [kg/plant]
+      type(water_work_t),        intent(inout) :: water
+      integer(ik) :: k, i
+      real(wp)    :: psi, dpsi, w, dw, kk, dk, head1
+      call ensure_water_capacity(water, profile%n_active, static%n)
+      associate (st => water%state)
+         do k = 1_ik, profile%n_active
+            st%tau_soil(1_ik + k)   = soil_theta_to_unknown(profile%layer_curve(k), theta(k))
+            st%water_soil(1_ik + k) = rho_h2o * profile%dz(k) * theta(k)
+         end do
+         !----- The pond starts at its water's head, but no higher than the head at which it neither   !
+         !      gives nor takes water from the top layer: over dry soil a trace pond empties within the  !
+         !      step, and its own head would start Newton at a flow thousands of times what it holds. --!
+         st%water_soil(POND) = w_pond
+         st%e_pond = e_pond
+         call soil_water_relations(profile%layer_curve(1), st%tau_soil(2), psi, dpsi, w, dw, kk, dk)
+         head1 = psi / grav_head
+         st%tau_soil(POND) = min(pond_water_to_head(w_pond), head1 + profile%z_node(1))
+         do i = 1_ik, static%n
+            associate (hp => hyd%pft(static%pft(i)))
+               st%tau_coh(WOOD, i)   = tissue_rwc_to_unknown(                                                  &
+                                          tissue_water_to_rwc(hp%wood_curve, static%bwood_water(i), wood_water(i)))
+               st%water_coh(WOOD, i) = wood_water(i) * static%nplant(i)
+               if (hp%leaf_curve%water_sat * static%bleaf(i) > tiny_num) then
+                  st%tau_coh(LEAF, i)   = tissue_rwc_to_unknown(                                               &
+                                             tissue_water_to_rwc(hp%leaf_curve, static%bleaf(i), leaf_water(i)))
+                  st%water_coh(LEAF, i) = leaf_water(i) * static%nplant(i)
+               else
+                  call tissue_water_relations(hp%wood_curve, static%bwood_water(i), static%nplant(i),            &
+                                              st%tau_coh(WOOD, i), psi, dpsi, w, dw)
+                  st%tau_coh(LEAF, i)   = tissue_rwc_to_unknown(tissue_psi_to_rwc(psi - static%crown_head(i),   &
+                                             hp%leaf_curve%pi0, hp%leaf_curve%elastic_mod))
+                  st%water_coh(LEAF, i) = 0.0_wp
+               end if
+            end associate
+         end do
+      end associate
+   end subroutine set_water_state
+
+   !---------------------------------------------------------------------------------------!
+   ! water_derivs -- the network at one state: each store's potential and water from its     !
+   ! curve; the flow along every path (pond to top layer, between layers, evaporation,       !
+   ! drainage, each cohort's uptake, sapflow and transpiration); the net inflow into each    !
+   ! store; and, when asked, the flows' Jacobian in the stores' unknowns (sys).              !
+   !---------------------------------------------------------------------------------------!
+   subroutine water_derivs(static, profile, soil, hyd, drive, tau_soil, tau_coh, ev, sys, with_jacobian)
+      type(fast_static_state_t), intent(in)    :: static
+      type(soil_profile_t),      intent(in)    :: profile
+      type(soil_params_t),       intent(in)    :: soil
+      type(hydraulics_table_t),  intent(in)    :: hyd
+      type(water_drive_t),       intent(in)    :: drive
+      real(wp),                  intent(in)    :: tau_soil(:), tau_coh(:,:)
+      type(water_tend_t),        intent(inout) :: ev
+      type(arrowhead_system_t),  intent(inout) :: sys   !< the flows' Jacobian, written when with_jacobian
+      logical,                   intent(in)    :: with_jacobian
+      integer(ik) :: k, i, ca, cb, c, nsl, nsoil
+      real(wp) :: q, dq_pa, dq_pb, dq_ka, dq_kb, dqa, dqb, u, s, ds_w, ds_l
+      real(wp) :: e, de_dtheta, de_dpsi, de, qbot, dqbot_dpsi, dqbot_dk, theta1, head
+      real(wp) :: psi_w, dpsi_w, u_sum, dqb_sum, du_dpsi(profile%n_active), du_dk(profile%n_active)
+
+      nsl   = profile%n_active
+      nsoil = 1_ik + nsl
+
+      ev%inflow_soil = 0.0_wp
+      ev%inflow_coh = 0.0_wp
+      !----- The Jacobian's entries are written afresh: the soil block's band, which the flows add  !
+      !      into, is cleared; every other entry an evaluation touches is set outright below, and the  !
+      !      rest stay zero from arrowhead_allocate. ---------------------------------------------------!
+      if (with_jacobian) then
+         do c = 1_ik, nsoil
+            sys%a(c, c) = 0.0_wp
+            if (c < nsoil) then
+               sys%a(c, c + 1_ik) = 0.0_wp
+               sys%a(c + 1_ik, c) = 0.0_wp
+            end if
+         end do
+      end if
+
+      !----- Storage. ------------------------------------------------------------------!
+      call pond_water_relations(tau_soil(POND), ev%psi_soil(1), ev%dpsi_soil(1), ev%water_soil(1),             &
+                                ev%dwater_soil(1))
+      ev%k_soil(1) = profile%ksat(1)
+      ev%dk_soil(1) = 0.0_wp      ! the pond conducts as saturated soil
+      do k = 1_ik, nsl
+         c = 1_ik + k
+         call soil_water_relations(profile%layer_curve(k), tau_soil(c), ev%psi_soil(c), ev%dpsi_soil(c),          &
+                                   ev%water_soil(c), ev%dwater_soil(c), ev%k_soil(c), ev%dk_soil(c))
+      end do
+      do i = 1_ik, static%n
+         associate (hp => hyd%pft(static%pft(i)))
+            call tissue_water_relations(hp%wood_curve, static%bwood_water(i), static%nplant(i), tau_coh(WOOD, i), &
+                                        ev%psi_coh(WOOD, i), ev%dpsi_coh(WOOD, i), ev%water_coh(WOOD, i),        &
+                                        ev%dwater_coh(WOOD, i))
+            call tissue_water_relations(hp%leaf_curve, static%bleaf(i), static%nplant(i), tau_coh(LEAF, i),       &
+                                        ev%psi_coh(LEAF, i), ev%dpsi_coh(LEAF, i), ev%water_coh(LEAF, i),        &
+                                        ev%dwater_coh(LEAF, i))
+         end associate
+      end do
+
+      !----- The pond and the top layer: Darcy, the pond a saturated layer as thick as the top one. !
+      ca = POND
+      cb = 2_ik
+      call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), 0.5_wp, ev%psi_soil(ca), ev%psi_soil(cb),                &
+                           -profile%z_node(1), -profile%z_node(1), q, dq_pa, dq_pb, dq_ka, dq_kb)
+      ev%pond_flux = q
+      call add_soil_flow(ca, cb, q, dq_pa * ev%dpsi_soil(ca), dq_pb * ev%dpsi_soil(cb) + dq_kb * ev%dk_soil(cb))
+
+      !----- Between soil layers. --------------------------------------------------------!
+      do k = 1_ik, nsl - 1_ik
+         ca = 1_ik + k
+         cb = 2_ik + k
+         call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), profile%face_weight(k), ev%psi_soil(ca),              &
+                              ev%psi_soil(cb), profile%dz_node(k), profile%dz_node(k), q, dq_pa, dq_pb, dq_ka, dq_kb)
+         ev%face_flux(k) = q
+         dqa = dq_pa * ev%dpsi_soil(ca) + dq_ka * ev%dk_soil(ca)
+         dqb = dq_pb * ev%dpsi_soil(cb) + dq_kb * ev%dk_soil(cb)
+         call add_soil_flow(ca, cb, q, dqa, dqb)
+      end do
+
+      !----- Rain into the pond; evaporation from the top layer; drainage from the bottom one. ----!
+      ev%inflow_soil(POND) = ev%inflow_soil(POND) + drive%rain
+      c = 2_ik
+      theta1 = ev%water_soil(c) / (rho_h2o * profile%dz(1))
+      call ground_evaporation_rate(theta1, ev%psi_soil(c) / grav_head, profile, drive%ground, soil, e, de_dtheta,  &
+                                   de_dpsi)
+      ev%evap = e
+      ev%inflow_soil(c) = ev%inflow_soil(c) - e
+      if (with_jacobian) sys%a(c, c) = sys%a(c, c)                                                              &
+                         + de_dtheta * ev%dwater_soil(c) / (rho_h2o * profile%dz(1))                               &
+                         + de_dpsi * ev%dpsi_soil(c) / grav_head
+      c = 1_ik + nsl
+      head = ev%psi_soil(c) / grav_head
+      call bottom_flux(profile, soil, nsl, head, ev%k_soil(c), qbot, dqbot_dpsi, dqbot_dk)
+      ev%drain = rho_h2o * qbot
+      ev%inflow_soil(c) = ev%inflow_soil(c) - ev%drain
+      if (with_jacobian) sys%a(c, c) = sys%a(c, c)                                                              &
+                         + rho_h2o * (dqbot_dpsi * ev%dpsi_soil(c) / grav_head + dqbot_dk * ev%dk_soil(c))
+
+      !----- Each cohort: uptake from its layers, sapflow to its leaves, and transpiration. The      !
+      !      cohort's uptake comes from its whole root profile at once; its own sums are kept in       !
+      !      scalars over its layers and written once. ------------------------------------------!
+      do i = 1_ik, static%n
+         psi_w = ev%psi_coh(WOOD, i)
+         dpsi_w = ev%dpsi_coh(WOOD, i)
+         call root_water_uptake_profile(nsl, static%g_rhizo(1:nsl, i), ev%k_soil(2:nsoil), ev%psi_soil(2:nsoil), &
+                                        profile%z_node(1:nsl), psi_w, ev%uptake(1:nsl, i), du_dpsi, du_dk)
+         u_sum = 0.0_wp
+         dqb_sum = 0.0_wp
+         do k = 1_ik, nsl
+            c = 1_ik + k
+            if (static%g_rhizo(k, i) <= 0.0_wp) then
+               if (with_jacobian) then
+                  sys%b(c, i) = 0.0_wp
+                  sys%c(c, i) = 0.0_wp
+               end if
+               cycle
+            end if
+            u = ev%uptake(k, i)
+            ev%inflow_soil(c) = ev%inflow_soil(c) - u
+            u_sum = u_sum + u
+            if (with_jacobian) then
+               dqa = du_dpsi(k) * ev%dpsi_soil(c) + du_dk(k) * ev%dk_soil(c)
+               dqb = -du_dpsi(k) * dpsi_w
+               sys%a(c, c) = sys%a(c, c) + dqa
+               sys%b(c, i) = dqb
+               sys%c(c, i) = -dqa
+               dqb_sum = dqb_sum - dqb
+            end if
+         end do
+         ev%inflow_coh(WOOD, i) = ev%inflow_coh(WOOD, i) + u_sum
+         associate (hp => hyd%pft(static%pft(i)))
+            call xylem_sapflow(static%k_xylem(i), ev%psi_coh(WOOD, i), ev%psi_coh(LEAF, i), static%crown_head(i),  &
+                               hp%wood_psi50, hp%wood_kexp, hp%vuln_table, s, ds_w, ds_l)
+         end associate
+         ev%sapflow(i) = s
+         ev%inflow_coh(WOOD, i) = ev%inflow_coh(WOOD, i) - s
+         ev%inflow_coh(LEAF, i) = ev%inflow_coh(LEAF, i) + s
+         call supply_limited_transpiration(drive%e_demand(i), tau_coh(LEAF, i), hyd%pft(static%pft(i))%rwc_close,   &
+                                           e, de)
+         ev%transp(i) = e
+         ev%inflow_coh(LEAF, i) = ev%inflow_coh(LEAF, i) - e
+         if (with_jacobian) then
+            dqa = ds_w * ev%dpsi_coh(WOOD, i)
+            dqb = ds_l * ev%dpsi_coh(LEAF, i)
+            sys%d(WOOD, WOOD, i) = dqb_sum + dqa
+            sys%d(WOOD, LEAF, i) = dqb
+            sys%d(LEAF, WOOD, i) = -dqa
+            sys%d(LEAF, LEAF, i) = -dqb + de
+         end if
+      end do
+
+   contains
+
+      !----- A flow q from soil node a to soil node b, with dq/dtau_a and dq/dtau_b: the inflows   !
+      !      and, when wanted, the Jacobian of the residual (W - W0)/h - inflow. ----------------!
+      subroutine add_soil_flow(a, b, q, dqa, dqb)
+         integer(ik), intent(in) :: a, b
+         real(wp),    intent(in) :: q, dqa, dqb
+         ev%inflow_soil(a) = ev%inflow_soil(a) - q
+         ev%inflow_soil(b) = ev%inflow_soil(b) + q
+         if (.not. with_jacobian) return
+         sys%a(a, a) = sys%a(a, a) + dqa
+         sys%a(a, b) = sys%a(a, b) + dqb
+         sys%a(b, a) = sys%a(b, a) - dqa
+         sys%a(b, b) = sys%a(b, b) - dqb
+      end subroutine add_soil_flow
+
+   end subroutine water_derivs
 
 end module meds_fast_time_derivs

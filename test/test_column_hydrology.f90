@@ -30,12 +30,24 @@ program test_column_hydrology
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
                                     soil_theta_to_head
    use meds_soil_water,       only : ground_evaporation_rate, bottom_flux, ground_evap_env_t
-   use meds_spac_solver,    only : spac_solver_t, spac_allocate, spac_set_state,     &
-                                     spac_advance, POND
+   use meds_fast_types,       only : fast_static_state_t, water_drive_t, water_work_t, tol_set_t,           &
+                                     ensure_static_capacity, POND, GRP_THETA, N_WORK
+   use meds_fast_time_derivs, only : set_water_state
+   use meds_fast_be_stage,    only : water_step
    use meds_pft_params,       only : hydraulics_table_t
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp
    use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
+
+   !----- A soil column as the water network sees it: no cohorts, what drives it, the network, its !
+   !      tolerances and the work it last reported. ----------------------------------------------!
+   type :: column_t
+      type(fast_static_state_t) :: static
+      type(water_drive_t)       :: drive
+      type(water_work_t)        :: water
+      type(tol_set_t)           :: tols
+      integer(ik)               :: work(N_WORK) = 0_ik
+   end type column_t
 
    type(hydraulics_table_t)   :: no_plants
 
@@ -64,24 +76,35 @@ contains
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
    end subroutine loam_params
 
-   !----- The soil-only network for a column at theta with a pond of w_pond, and air that keeps    !
-   !      the ground from evaporating unless the caller says otherwise. ---------------------------!
-   subroutine soil_network(spac, params, opts, theta, w_pond, e_pond)
-      type(spac_solver_t),  intent(inout) :: spac
-      type(soil_profile_t), intent(in)    :: params
-      type(soil_params_t),  intent(in)    :: opts
-      real(wp),             intent(in)    :: theta(:), w_pond, e_pond
+   !----- The soil-only network for a column at theta with a pond of w_pond. ------------------!
+   subroutine soil_network(col, params, opts, theta, w_pond, e_pond)
+      type(column_t),       intent(out) :: col
+      type(soil_profile_t), intent(in)  :: params
+      type(soil_params_t),  intent(in)  :: opts
+      real(wp),             intent(in)  :: theta(:), w_pond, e_pond
       real(wp) :: dum(0)
-      call spac_allocate(spac, params%n_active, 0_ik)
+      call ensure_static_capacity(col%static, 0_ik)
+      allocate(col%drive%e_demand(0))
+      col%drive%t_soil = 290.0_wp ; col%drive%t_rain = 290.0_wp
       !----- [fast].rtol and water_atol at their defaults. -----------------------------------!
-      spac%rtol = 1.0e-3_wp ; spac%atol = 1.0e-4_wp ; spac%w_pond_max = opts%w_pond_max
-      spac%t_soil = 290.0_wp ; spac%t_rain = 290.0_wp
-      call spac_set_state(spac, params, no_plants, theta, w_pond, e_pond, dum, dum)
+      col%tols%rtol(GRP_THETA) = 1.0e-3_wp ; col%tols%atol(GRP_THETA) = 1.0e-4_wp
+      call set_water_state(col%static, params, no_plants, theta, w_pond, e_pond, dum, dum, col%water)
    end subroutine soil_network
 
-   real(wp) function column_water(spac)
-      type(spac_solver_t), intent(in) :: spac
-      column_water = sum(spac%water_soil)
+   !----- One fast step of the column's network under the air f. ------------------------------!
+   subroutine advance(col, params, opts, f, dt)
+      type(column_t),          intent(inout) :: col
+      type(soil_profile_t),    intent(in)    :: params
+      type(soil_params_t),     intent(in)    :: opts
+      type(ground_evap_env_t), intent(in)    :: f
+      real(wp),                intent(in)    :: dt
+      col%drive%ground = f
+      call water_step(dt, col%static, params, opts, no_plants, col%drive, col%tols, col%water, col%work)
+   end subroutine advance
+
+   real(wp) function column_water(col)
+      type(column_t), intent(in) :: col
+      column_water = sum(col%water%state%water_soil)
    end function column_water
 
    function humid_air() result(f)
@@ -139,38 +162,38 @@ contains
    subroutine test_bedrock_conserve()
       type(soil_profile_t) :: params
       type(soil_params_t)  :: opts
-      type(spac_solver_t)  :: spac
+      type(column_t)       :: col
       real(wp) :: w_before, theta(10)
       integer(ik) :: step
       print '(a)', 'test_bedrock_conserve:'
       call loam_params(params) ; theta = 0.30_wp ; theta(1:3) = 0.40_wp
       opts%water_bottom_bc = SOIL_BC_DRAIN ; opts%drain_factor = 0.0_wp       ! sealed bedrock
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
-      w_before = column_water(spac)
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
+      w_before = column_water(col)
       do step = 1_ik, 10_ik
-         call spac_advance(spac, params, opts, humid_air(), no_plants, 600.0_wp)
+         call advance(col, params, opts, humid_air(), 600.0_wp)
       end do
-      call check('sealed column conserves water', column_water(spac), w_before, 1.0e-10_wp * w_before)
-      call check_true('bedrock drainage = 0', abs(spac%drain) < 1.0e-30_wp, spac%drain)
+      call check('sealed column conserves water', column_water(col), w_before, 1.0e-10_wp * w_before)
+      call check_true('bedrock drainage = 0', abs(col%water%flows%drain) < 1.0e-30_wp, col%water%flows%drain)
    end subroutine test_bedrock_conserve
 
    !=======================================================================================!
    subroutine test_free_drain()
       type(soil_profile_t) :: params
       type(soil_params_t)  :: opts
-      type(spac_solver_t)  :: spac
+      type(column_t)       :: col
       real(wp) :: w0, w1, drained, theta(10)
       integer(ik) :: step
       print '(a)', 'test_free_drain:'
       call loam_params(params) ; theta = 0.40_wp
       opts%water_bottom_bc = SOIL_BC_DRAIN ; opts%drain_factor = 1.0_wp       ! free drainage
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
-      drained = 0.0_wp ; w0 = column_water(spac)
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
+      drained = 0.0_wp ; w0 = column_water(col)
       do step = 1_ik, 20_ik
-         call spac_advance(spac, params, opts, humid_air(), no_plants, 600.0_wp)
-         drained = drained + spac%drain
+         call advance(col, params, opts, humid_air(), 600.0_wp)
+         drained = drained + col%water%flows%drain
       end do
-      w1 = column_water(spac)
+      w1 = column_water(col)
       call check_true('a wet column drains', drained > 0.0_wp, drained)
       call check('its water closes against the drainage', w0 - w1, drained, 1.0e-10_wp * w0)
    end subroutine test_free_drain
@@ -179,7 +202,7 @@ contains
    subroutine test_leaky_drain()
       type(soil_profile_t) :: params
       type(soil_params_t)  :: opts
-      type(spac_solver_t)  :: spac
+      type(column_t)       :: col
       real(wp), parameter :: F_LEAK = 0.05_wp          ! the ED soil maps' factor
       real(wp), parameter :: K_N = 1.234e-7_wp, PSI_N = -0.37_wp   ! [m/s], [m] a deepest layer's state
       real(wp) :: q, dq_dpsi, dq_dk, w0, w1, drained, drained_free, theta(10)
@@ -204,20 +227,20 @@ contains
       drained_free = 0.0_wp
       opts%drain_factor = 1.0_wp
       call loam_params(params) ; theta = 0.40_wp
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
       do step = 1_ik, 20_ik
-         call spac_advance(spac, params, opts, humid_air(), no_plants, 600.0_wp)
-         drained_free = drained_free + spac%drain
+         call advance(col, params, opts, humid_air(), 600.0_wp)
+         drained_free = drained_free + col%water%flows%drain
       end do
       drained = 0.0_wp
       opts%drain_factor = F_LEAK
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
-      w0 = column_water(spac)
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
+      w0 = column_water(col)
       do step = 1_ik, 20_ik
-         call spac_advance(spac, params, opts, humid_air(), no_plants, 600.0_wp)
-         drained = drained + spac%drain
+         call advance(col, params, opts, humid_air(), 600.0_wp)
+         drained = drained + col%water%flows%drain
       end do
-      w1 = column_water(spac)
+      w1 = column_water(col)
       call check_true('a leaky column drains, by about f of what a free one does',                    &
                       drained > F_LEAK * drained_free .and. drained < 2.0_wp * F_LEAK * drained_free,  &
                       drained / drained_free)
@@ -231,7 +254,7 @@ contains
    subroutine test_downpour()
       type(soil_profile_t) :: params
       type(soil_params_t)  :: opts
-      type(spac_solver_t)  :: spac
+      type(column_t)       :: col
       real(wp) :: theta(10), w0, rain, infil, runoff, drained, bottoms(n_soil_layer_max)
       integer(ik) :: step
       print '(a)', 'test_downpour:'
@@ -239,21 +262,21 @@ contains
       call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, bottoms, 0.38_wp, 0.068_wp,          &
            5.6e-7_wp, 0.8_wp, 1.09_wp, -3.37_wp, params)
       theta = 0.36_wp
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
-      w0 = column_water(spac) ; rain = 0.0_wp ; infil = 0.0_wp ; runoff = 0.0_wp ; drained = 0.0_wp
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
+      w0 = column_water(col) ; rain = 0.0_wp ; infil = 0.0_wp ; runoff = 0.0_wp ; drained = 0.0_wp
       do step = 1_ik, 4_ik
-         spac%rain = 1.0e-2_wp                                     ! 36 mm/hr
-         call spac_advance(spac, params, opts, humid_air(), no_plants, 900.0_wp)
-         rain    = rain + spac%rain * 900.0_wp
-         infil   = infil + spac%infil - spac%exfil
-         runoff  = runoff + spac%spill
-         drained = drained + spac%drain
+         col%drive%rain = 1.0e-2_wp                                     ! 36 mm/hr
+         call advance(col, params, opts, humid_air(), 900.0_wp)
+         rain    = rain + col%drive%rain * 900.0_wp
+         infil   = infil + col%water%flows%infil - col%water%flows%exfil
+         runoff  = runoff + col%water%flows%spill
+         drained = drained + col%water%flows%drain
       end do
       call check_true('infiltration < rain (conductivity-limited)', infil < rain, infil / rain)
       call check_true('the pond filled to its capacity',                                            &
-                      spac%water_soil(POND) >= opts%w_pond_max - 1.0e-9_wp, spac%water_soil(POND))
+                      col%water%state%water_soil(POND) >= opts%w_pond_max - 1.0e-9_wp, col%water%state%water_soil(POND))
       call check_true('and the rest ran off', runoff > 0.0_wp, runoff)
-      call check('water closes: rain = change in store + runoff + drainage', column_water(spac) - w0,        &
+      call check('water closes: rain = change in store + runoff + drainage', column_water(col) - w0,        &
                  rain - runoff - drained, 1.0e-10_wp * rain)
    end subroutine test_downpour
 
@@ -265,23 +288,23 @@ contains
    subroutine test_dried_surface_rewets()
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
-      type(spac_solver_t)    :: spac
+      type(column_t)         :: col
       type(ground_evap_env_t) :: f
       real(wp) :: theta(10), rain, runoff
       integer(ik) :: step
       print '(a)', 'test_dried_surface_rewets:'
       call loam_params(params)
       theta = 0.25_wp ; theta(1) = 0.08_wp
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
       f = humid_air() ; f%t_ground = 298.0_wp ; f%q_air = 0.02_wp
       rain = 0.0_wp ; runoff = 0.0_wp
       do step = 1_ik, 48_ik
-         spac%rain = 2.0_wp / 3600.0_wp                            ! 2 mm/h
-         call spac_advance(spac, params, opts, f, no_plants, 900.0_wp)
-         rain = rain + spac%rain * 900.0_wp ; runoff = runoff + spac%spill
+         col%drive%rain = 2.0_wp / 3600.0_wp                            ! 2 mm/h
+         call advance(col, params, opts, f, 900.0_wp)
+         rain = rain + col%drive%rain * 900.0_wp ; runoff = runoff + col%water%flows%spill
       end do
-      call check_true('the dried top layer re-wets within 12 h of rain',                              &
-                      spac%water_soil(2) / (rho_h2o * params%dz(1)) > 0.20_wp, spac%water_soil(2) / (rho_h2o * params%dz(1)))
+      theta(1) = col%water%state%water_soil(2) / (rho_h2o * params%dz(1))
+      call check_true('the dried top layer re-wets within 12 h of rain', theta(1) > 0.20_wp, theta(1))
       call check_true('and under 5 % of the rain runs off', runoff < 0.05_wp * rain, runoff / rain)
    end subroutine test_dried_surface_rewets
 
@@ -293,23 +316,25 @@ contains
    subroutine test_pond_subfreezing_inflow()
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
-      type(spac_solver_t)    :: spac
+      type(column_t)         :: col
       type(ground_evap_env_t) :: f
       real(wp) :: theta(10), dt, e_in, t_infil
       print '(a)', 'test_pond_subfreezing_inflow:'
       call loam_params(params) ; theta = 0.25_wp
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
-      spac%rain = 5.0e-6_wp ; spac%t_rain = 270.0_wp                ! 18 mm/day at 3.16 K below the triple point
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
+      col%drive%rain = 5.0e-6_wp ; col%drive%t_rain = 270.0_wp                ! 18 mm/day at 3.16 K below the triple point
       f = humid_air() ; f%t_ground = 271.0_wp ; f%q_air = 0.003_wp
       dt = 150.0_wp
-      call spac_advance(spac, params, opts, f, no_plants, dt)
-      e_in = spac%rain * dt * internal_energy_liquid(270.0_wp)
-      call check_true('sub-freezing inflow: all of it infiltrated (pond empty after the step)',          &
-                      spac%water_soil(POND) <= 1.0e-9_wp .and. spac%infil > 0.0_wp, spac%water_soil(POND))
-      call check('sub-freezing inflow: enthalpy to soil + left in pond + runoff == enthalpy received',    &
-                 spac%infil_enth - spac%exfil_enth + spac%e_pond + spac%spill_enth, e_in, 1.0e-9_wp * abs(e_in))
-      call check('sub-freezing inflow: the rain brought exactly that enthalpy', spac%rain_enth, e_in, 0.0_wp)
-      t_infil = temp_of_liquid(spac%infil_enth / spac%infil)
+      call advance(col, params, opts, f, dt)
+      e_in = col%drive%rain * dt * internal_energy_liquid(270.0_wp)
+      associate (fl => col%water%flows, st => col%water%state)
+         call check_true('sub-freezing inflow: all of it infiltrated (pond empty after the step)',       &
+                         st%water_soil(POND) <= 1.0e-9_wp .and. fl%infil > 0.0_wp, st%water_soil(POND))
+         call check('sub-freezing inflow: enthalpy to soil + left in pond + runoff == enthalpy received', &
+                    fl%infil_enth - fl%exfil_enth + st%e_pond + fl%spill_enth, e_in, 1.0e-9_wp * abs(e_in))
+      end associate
+      call check('sub-freezing inflow: the rain brought exactly that enthalpy', col%water%flows%rain_enth, e_in, 0.0_wp)
+      t_infil = temp_of_liquid(col%water%flows%infil_enth / col%water%flows%infil)
       call check_true('sub-freezing inflow: infiltrating water carries its own (sub-plateau) enthalpy',    &
                       t_infil < 273.0_wp, t_infil)
    end subroutine test_pond_subfreezing_inflow
@@ -327,7 +352,7 @@ contains
    subroutine test_aquifer_head_bc()
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
-      type(spac_solver_t)    :: spac
+      type(column_t)         :: col
       type(ground_evap_env_t) :: f
       real(wp) :: theta(10), drain_dry, drain_wet, w0, drained, theta_bot0, head_n, delta
       integer(ik) :: step, n
@@ -337,35 +362,35 @@ contains
       opts%water_bottom_bc = SOIL_BC_AQUIFER
       f = humid_air() ; f%r_aero = 1.0e6_wp                       ! suppress soil evaporation
       theta = 0.12_wp
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
-      call spac_advance(spac, params, opts, f, no_plants, 600.0_wp)
-      drain_dry = spac%drain
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
+      call advance(col, params, opts, f, 600.0_wp)
+      drain_dry = col%water%flows%drain
       call check_true('AQUIFER: dry column draws water UP from the saturated base (drainage < 0)',        &
                       drain_dry < 0.0_wp, drain_dry)
       theta = 0.40_wp
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
-      call spac_advance(spac, params, opts, f, no_plants, 600.0_wp)
-      drain_wet = spac%drain
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
+      call advance(col, params, opts, f, 600.0_wp)
+      drain_wet = col%water%flows%drain
       call check_true('AQUIFER: wet column still drains DOWNWARD (drainage > 0)', drain_wet > 0.0_wp, drain_wet)
       theta = 0.15_wp
-      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
-      w0 = column_water(spac) ; drained = 0.0_wp ; theta_bot0 = 0.15_wp
+      call soil_network(col, params, opts, theta, 0.0_wp, 0.0_wp)
+      w0 = column_water(col) ; drained = 0.0_wp ; theta_bot0 = 0.15_wp
       do step = 1_ik, 40_ik
-         call spac_advance(spac, params, opts, f, no_plants, 600.0_wp)
-         drained = drained + spac%drain
+         call advance(col, params, opts, f, 600.0_wp)
+         drained = drained + col%water%flows%drain
       end do
-      call check('AQUIFER: water closes while drawing upward', column_water(spac) - w0, -drained, 1.0e-10_wp * w0)
-      call check_true('AQUIFER: the dry column WETS from below',                                           &
-                      spac%water_soil(1+n) / (rho_h2o * params%dz(n)) > theta_bot0, spac%water_soil(1+n) / (rho_h2o * params%dz(n)))
+      call check('AQUIFER: water closes while drawing upward', column_water(col) - w0, -drained, 1.0e-10_wp * w0)
+      theta(n) = col%water%state%water_soil(1+n) / (rho_h2o * params%dz(n))
+      call check_true('AQUIFER: the dry column WETS from below', theta(n) > theta_bot0, theta(n))
       do step = 1_ik, 1200_ik
-         call spac_advance(spac, params, opts, f, no_plants, 3600.0_wp)
+         call advance(col, params, opts, f, 3600.0_wp)
       end do
-      head_n = spac%psi_soil(1+n) / grav_head
+      head_n = col%water%state%psi_soil(1+n) / grav_head
       delta  = 0.5_wp * params%dz(n)
       call check_true('AQUIFER: bottom layer reaches hydrostatic equilibrium (head_n -> -Delta)',           &
                       abs(head_n + delta) < 0.2_wp, head_n + delta)
-      call check_true('AQUIFER: and the residual bottom flux has died', abs(spac%drain / 3600.0_wp) < 1.0e-5_wp, &
-                      spac%drain / 3600.0_wp)
+      call check_true('AQUIFER: and the residual bottom flux has died', abs(col%water%flows%drain / 3600.0_wp) < 1.0e-5_wp, &
+                      col%water%flows%drain / 3600.0_wp)
    end subroutine test_aquifer_head_bc
 
    !=======================================================================================!
