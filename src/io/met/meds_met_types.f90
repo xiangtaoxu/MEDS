@@ -64,7 +64,7 @@ module meds_met_types
       real(wp) :: nir_beam     = 150.0_wp     !< [W/m2]     direct-beam NIR
       real(wp) :: nir_diffuse  = 30.0_wp      !< [W/m2]     diffuse NIR   (Sigma = 400 W/m2)
       real(wp) :: co2          = 420.0_wp     !< [umol/mol] free-atmosphere CO2 ([forcing].co2_source)
-      real(wp) :: cosz         = 0.0_wp       !< [-]        cos(solar zenith); derived each sub-step
+      real(wp) :: cosz         = 0.5_wp       !< [-]        cos(solar zenith); derived each sub-step
       real(wp) :: rho_air      = 1.2_wp       !< [kg/m3]    derived from tair_k, psurf_pa and qair
    contains
       procedure :: swdown         => met_swdown          !< total downward SW = sum of the four streams

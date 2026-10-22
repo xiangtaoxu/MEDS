@@ -63,8 +63,8 @@ contains
       !      ON a fast context MUST be supplied: skipping the loop would leave gpp_accum = 0, and   !
       !      growth would run on zero GPP. Fail loud instead of silently wrong. Every optional is   !
       !      handed straight on: the fast loop takes the forcing only when forcing_on and the       !
-      !      source, cursor and step_start are all present, and otherwise runs on the context's     !
-      !      constant reference climate.                                                            !
+      !      source, cursor and step_start are all present, and otherwise runs on the reference     !
+      !      climate, met_forcing_t's defaults.                                                     !
       if (cfg%fast_biophysics_on) then
          if (.not. present(fast_ctx))                                                              &
             error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
@@ -82,9 +82,9 @@ contains
       !      master slow_on freeze, which holds cohort/patch state static while the fast loop still  !
       !      runs (docs/science/order_of_processes.md §2). Leaf phenology is the FIRST step INSIDE   !
       !      vegetation_dynamics and advances whenever step_start is supplied. `rho_air` values the  !
-      !      canopy-air store. It lives on the fast context (site-uniform, from the forcing), so the !
-      !      ledger never needs state of its own to carry it; without a fast context there is no     !
-      !      canopy air worth valuing and the term stays at zero. -----------------------------------!
+      !      canopy-air store. It lives on the fast context, one value for the run, so the ledger    !
+      !      never needs state of its own to carry it; without a fast context there is no canopy    !
+      !      air worth valuing and the term stays at zero. ------------------------------------------!
       if (cfg%slow_on) then
          if (present(fast_ctx)) then
             call advance_slow_dynamics(poly, cfg, step_start, seam, slow_ledger, fast_ctx%rho_air,     &

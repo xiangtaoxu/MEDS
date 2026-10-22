@@ -88,7 +88,7 @@ contains
    !=======================================================================================!
    subroutine fast_dynamics(poly, ctx, cfg, met_src, met_cur, step_start, worst_energy, worst_water, &
                             n_budget_fail, out_bufs, run_energy_budget, run_water_budget,             &
-                            run_face_budget)
+                            run_face_budget, met_fixed)
       type(polygon_t),      intent(inout) :: poly
       type(fast_context_t), intent(in)    :: ctx
       type(meds_config_t),  intent(in)    :: cfg
@@ -103,6 +103,9 @@ contains
       type(budget_t), optional, intent(inout) :: run_energy_budget, run_water_budget
       !----- The per-layer face-closure ledger, folded the same way: it sees a vertical misplacement. -!
       type(budget_t), optional, intent(inout) :: run_face_budget
+      !----- The air above the canopy at every sub-step of a run without a forcing source; absent, the   !
+      !      reference climate, met_forcing_t's defaults. --------------------------------------------!
+      type(met_forcing_t), optional, intent(in) :: met_fixed
 
       !----- The sub-step met samples and their times, made once per slow step outside the patch loop: !
       !      they are the same for every patch, and the file reader stays out of the parallel region. -!
@@ -118,8 +121,7 @@ contains
       type(budget_t), allocatable :: red_budget_face(:)                        !< (patch); area-merged
       type(budget_t) :: site_energy_budget, site_water_budget, site_face_budget
       integer(ik), allocatable :: red_nfail(:)                     !< (patch) budget-failure counts
-      real(wp)    :: f_ground, sw_ground
-      type(met_forcing_t) :: met_ref                  !< the context's reference climate (no forcing)
+      type(met_forcing_t) :: met_ref                  !< the air every sub-step reads without forcing
       integer(ik) :: ip, isub, npatch, ncoh_max, nsub, nl, n_thread, is, ks
       logical     :: do_forcing, do_fast, do_cdiag, do_pdiag
       !----- Per-thread scratch for the per-(cohort, sub-step) diagnostics, folded into poly%cohort%diag. !
@@ -154,11 +156,12 @@ contains
       real(wp)    :: t_leaf_e, t_wood_e            !< [K] the tissue temperatures a cohort's energy gives
 
       !----- Live forcing drives the sub-steps when it is on and a source, cursor and step time are   !
-      !      given; otherwise every sub-step reads the context's reference climate (met_ref). -------!
+      !      given; otherwise every sub-step reads one record: met_fixed, or met_forcing_t's defaults,  !
+      !      the reference climate (docs/science/forcing.md §2). -----------------------------------!
       do_forcing = cfg%forcing%forcing_on .and. present(met_src) .and. present(met_cur)          &
                    .and. present(step_start)
-      f_ground = ctx%rad_sw_ground / max(ctx%rad_sw_top, tiny_num)   ! ground/canopy-top SW transmittance
-      met_ref  = reference_met(ctx)
+      met_ref = met_forcing_t()
+      if (present(met_fixed)) met_ref = met_fixed
       npatch   = poly%patch%n
       nsub     = cfg%n_fast_per_slow
       n_thread = max(1_ik, ctx%patch_threads)
@@ -299,8 +302,7 @@ contains
          met_pool(ith) = met_ref                            ! overwritten per sub-step when forcing is on
          met_top_pool(ith) = met_ref
          call ensure_column_cohort_capacity(coh_pool(ith), ncoh_max)
-         call ensure_patch_biophys_capacity(bio_pool(ith), ncoh_max, ctx%air_temp, ctx%shv_atm,     &
-                                            ctx%co2_atm, ctx%air_temp)
+         call ensure_patch_biophys_capacity(bio_pool(ith), ncoh_max)
          call ensure_aero_out_capacity(aero_pool(ith), ncoh_max)
          call alloc_forcing(forc_pool(ith), ncoh_max)
       end do
@@ -309,7 +311,7 @@ contains
       !$omp    private(ip, ith, isub, j, i, i0, ncoh,                                              &
       !$omp            sum_lai, sum_wai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days,   &
       !$omp            prow, kb,                                                                    &
-      !$omp            sw_ground, z_top, rough_p, displace_p, t_leaf_e, t_wood_e)
+      !$omp            z_top, rough_p, displace_p, t_leaf_e, t_wood_e)
       do ip = 1_ik, npatch
          !----- This thread's slot in the pool; without OpenMP the `!$` line is a comment: slot 1. --!
          ith = 1_ik
@@ -397,28 +399,24 @@ contains
          !----- The sub-steps, each on its own forcing sample (the reference climate without forcing). !
          budget = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
-            !----- With forcing, the ground shortwave set here is replaced by the two-stream's in      !
-            !      apply_rt_forcing; without, it is the reference value. --------------------------!
             if (do_forcing) then
                met = met_site(isub, poly%patch%owner_site(ip))
                met_top = met_to_cas_top(met, cfg%forcing, z_top, displace_p, rough_p)
-               sw_ground = f_ground * met%swdown()
             else
-               met_top = met                   ! the reference climate IS the air at the canopy-air top
-               sw_ground = ctx%rad_sw_ground
+               met_top = met                   ! the fixed record IS the air at the canopy-air top
             end if
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
             red_site(RED_PHENO_TAIR, isub, ip) = met%tair_k
-            call fill_forcing(forc, col_cohort, met_top, sw_ground, sum_lai)
+            call fill_forcing(forc, met_top)
             red_site(RED_RAINF,    isub, ip) = patch_polygon_area(poly, ip) * forc%rainfall
             red_site(RED_SNOWFALL, isub, ip) = patch_polygon_area(poly, ip) * forc%snowfall
-            !----- With forcing, the two-stream canopy radiation replaces the LAI-share split          !
-            !      (docs/science/canopy_radiation_transfer.md §4). ------------------------------------!
-            if (do_forcing) call apply_rt_forcing(forc, ncoh, col_cohort%pft, col_cohort%lai, col_cohort%wai,  &
-                                 col_cohort%height, biophys%leaf_temp, biophys%wood_temp,                      &
-                                 biophys%soil_energy%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
-                                 ctx%col_config%aero%snow_rough, ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, &
-                                 cfg%leaf_absorptance)
+            !----- The two-stream canopy radiation: each cohort's and the ground's absorbed shortwave and  !
+            !      net longwave (docs/science/canopy_radiation_transfer.md §4). ---------------------------!
+            call apply_rt_forcing(forc, ncoh, col_cohort%pft, col_cohort%lai, col_cohort%wai,                &
+                                  col_cohort%height, biophys%leaf_temp, biophys%wood_temp,                      &
+                                  biophys%soil_energy%soil_temp(1), biophys%snow, ctx%col_config%snow,          &
+                                  ctx%col_config%aero%snow_rough, ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, &
+                                  cfg%leaf_absorptance)
             call fill_aenv(aenv, biophys, met_top, z_top)
             !----- The per-cohort outputs go as 1:ncoh slices of the pool, as column_fast_step takes them  !
             !      assumed-shape. The diagnostic capture is passed only when the run reports it. ---------!
@@ -694,56 +692,19 @@ contains
                                                  forc%par_top(ncoh))
    end subroutine alloc_forcing
 
-   !----- Fill the patch's column forcing from the sub-step's forcing record and ground shortwave. --!
-   subroutine fill_forcing(forc, col_cohort, met, sw_ground, sum_lai)
+   !----- The patch's column forcing from the air of the sub-step's record: its enthalpy, humidity and  !
+   !      CO2, and the precipitation; apply_rt_forcing then fills the radiation. ---------------------!
+   subroutine fill_forcing(forc, met)
       type(column_forcing_t), intent(inout) :: forc
-      type(column_cohort_t),  intent(in)    :: col_cohort
       type(met_forcing_t),    intent(in)    :: met
-      real(wp),               intent(in)    :: sw_ground, sum_lai
-      integer(ik) :: j
       forc%enthalpy_atm  = cas_temp_to_enthalpy(met%tair_k, met%qair)
       forc%shv_atm       = met%qair
       forc%co2_atm       = met%co2
-      forc%abs_sw_ground = sw_ground
-      forc%abs_lw_ground = 0.0_wp
       !----- The rain/snow split at the record's temperature: with forcing, the patch's canopy-air top,  !
       !      where the precipitation's enthalpy is valued too (docs/science/forcing.md §7). --------------!
       call precip_phase(met%precip, met%tair_k, forc%rainfall, forc%snowfall)
       forc%air_temp          = met%tair_k                ! rainfall enthalpy reference (snow/rain-on-snow)
-      forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
-      !----- Split the canopy-top shortwave across the cohorts by LAI share; with forcing on,     !
-      !      apply_rt_forcing replaces it with the two-stream solve. --------------------------!
-      do j = 1_ik, col_cohort%n
-         if (sum_lai > tiny_num) then
-            forc%abs_sw(j) = met%swdown() * col_cohort%lai(j) / sum_lai
-         else
-            forc%abs_sw(j) = 0.0_wp
-         end if
-         forc%abs_par(j) = forc%abs_sw(j)            ! LAI path: no PAR/NIR split, PAR is the whole SW
-         forc%par_top(j) = met%par_beam + met%par_diffuse   ! no light gradient in the LAI path
-         forc%abs_lw(j)  = 0.0_wp
-         forc%abs_sw_wood(j) = 0.0_wp                ! no-forcing path: no wood absorption
-         forc%abs_lw_wood(j) = 0.0_wp
-      end do
    end subroutine fill_forcing
-
-   !----- The context's reference climate as a forcing record. Without forcing only the total       !
-   !      shortwave is read (fill_forcing's LAI split), so it all sits in one stream. ---------------!
-   pure function reference_met(ctx) result(met)
-      type(fast_context_t), intent(in) :: ctx
-      type(met_forcing_t) :: met
-      met%tair_k   = ctx%air_temp
-      met%qair = ctx%shv_atm
-      met%psurf_pa = ctx%press
-      met%rho_air  = ctx%rho_air
-      met%co2  = ctx%co2_atm
-      met%wind     = ctx%u_ref
-      met%precip   = ctx%precip
-      met%par_beam = ctx%rad_sw_top
-      met%par_diffuse = 0.0_wp
-      met%nir_beam = 0.0_wp
-      met%nir_diffuse = 0.0_wp
-   end function reference_met
 
    !----- Run the patch's two-stream canopy radiation and replace the LAI split in `forc` with each   !
    !      cohort's absorbed SW, incident-equivalent PAR and net LW, the ground's SW and LW, and the  !

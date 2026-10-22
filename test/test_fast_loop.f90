@@ -22,7 +22,8 @@ program test_fast_loop
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_config,         only : fast_context_t, build_fast_context, apply_hydraulics_config,              &
-                                        apply_canopy_film_config, build_leaf_photo_table, build_integrator_opts
+                                        apply_canopy_film_config, build_leaf_photo_table,                         &
+                                        build_integrator_opts, build_rad_optics
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
    use meds_stepper,             only : advance_one_step
@@ -70,7 +71,7 @@ program test_fast_loop
    ctx%col_config%hd_rd = cfg%hd_rd
    ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
-   ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
+   call build_rad_optics(cfg, ctx%rad_opt)               ! the two-stream's per-PFT optics
    cfg%init%soil_temp = 288.0_wp
 
    !----- Two patches: patch 1 vegetated, patch 2 BARE (zero cohorts). ---------------------!

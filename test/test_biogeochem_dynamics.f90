@@ -26,7 +26,7 @@ program test_biogeochem_dynamics
    use meds_constants,     only : n_soil_layer_max
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_fast_config,         only : fast_context_t, apply_hydraulics_config, apply_canopy_film_config,        &
-                                        build_leaf_photo_table, build_integrator_opts
+                                        build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
    use meds_slow_dynamics,       only : advance_slow_dynamics
@@ -64,7 +64,7 @@ program test_biogeochem_dynamics
    ctx%col_config%hd_rd = cfg%hd_rd
    ctx%col_config%ds_rd = cfg%ds_rd
    ctx%col_config%integrator = build_integrator_opts(cfg)
-   ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
+   call build_rad_optics(cfg, ctx%rad_opt)               ! the two-stream's per-PFT optics
    cfg%init%soil_temp = 295.0_wp
 
    call init_bare_ground(poly, cfg, 1_ik)

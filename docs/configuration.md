@@ -373,8 +373,8 @@ a mean.
 ## The forcing file
 
 `[forcing].forcing_on` turns the meteorological driver on; `[site]` says where the site is.
-Without it the fast loop runs against a constant reference climate, which is useful for tests and
-useless for science.
+Without it the fast loop runs against a constant reference climate, `met_forcing_t`'s defaults
+([forcing](science/forcing.md) §2), which is useful for tests and useless for science.
 
 `[forcing].format` picks the source:
 

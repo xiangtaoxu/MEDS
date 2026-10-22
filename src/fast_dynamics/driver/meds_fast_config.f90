@@ -33,7 +33,7 @@ module meds_fast_config
    public :: leaf_photo_params_for_pft, leaf_gas_exchange, build_tol_set   ! used only by the tests
 
    !----- What the fast loop needs beyond the polygon and cfg (build_fast_context): the column      !
-   !      configuration, and the constant reference climate a run without a forcing source uses. ---!
+   !      configuration, the canopy optics and the ground surface. ------------------------------!
    type :: fast_context_t
       !----- The column configuration: the run part every site shares, and the site part [soil] and  !
       !      the PFT table set, from which each site's own is made (site_column_configs). ------------!
@@ -41,15 +41,8 @@ module meds_fast_config
       type(column_site_t)   :: col_site
       !----- Each site's leaf table, acclimated to its growth temperature; until then col_site's. ---!
       type(leaf_photo_table_t), allocatable :: site_leaf_photo(:)
-      real(wp) :: u_ref   = 2.0_wp                  !< [m/s] reference wind (at the canopy-air top)
-      real(wp) :: press   = 101325.0_wp             !< [Pa]
-      real(wp) :: rho_air = 1.2_wp                  !< [kg/m3]
-      real(wp) :: air_temp = 288.0_wp               !< [K]        reference-level air temperature
-      real(wp) :: shv_atm  = 0.008_wp               !< [kg/kg]    reference-level specific humidity
-      real(wp) :: co2_atm  = 400.0_wp               !< [umol/mol] free-atmosphere CO2
-      real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
-      real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
-      real(wp) :: precip          = 0.0_wp            !< [kg/m2/s] total precipitation (split like any record)
+      !----- [kg/m3] The air density the slow step values the canopy air at when its depth changes. --!
+      real(wp) :: rho_air = 1.2_wp
       !----- Patch-loop threads: [run].n_threads in a one-polygon run, else 1 (polygon_prepare). --!
       integer(ik) :: patch_threads = 1_ik
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch

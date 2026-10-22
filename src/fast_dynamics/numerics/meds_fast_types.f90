@@ -658,17 +658,19 @@ contains
    end subroutine alloc_patch_biophys
 
    !----- Grow-only capacity for patch_biophys_t's per-cohort arrays, as ensure_column_cohort_capacity. !
-   !      The patch stores (cas, soil, snow, soil carbon) need no seed: every caller overwrites them   !
-   !      with the patch's persisted state right after. -----------------------------------------------!
-   subroutine ensure_patch_biophys_capacity(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+   !      Nothing is seeded: every caller overwrites the patch stores and cohorts 1..n with the patch's  !
+   !      persisted state right after. -----------------------------------------------------------------!
+   subroutine ensure_patch_biophys_capacity(biophys, n_coh)
       type(patch_biophys_t), intent(inout) :: biophys
       integer(ik),            intent(in)    :: n_coh
-      real(wp),               intent(in)    :: can_temp0, can_shv0, can_co2, leaf_temp0
-      if (.not. allocated(biophys%leaf_temp)) then
-         call alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
-      else if (size(biophys%leaf_temp) < n_coh) then
-         call alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      if (allocated(biophys%leaf_temp)) then
+         if (size(biophys%leaf_temp) >= n_coh) return
+         deallocate(biophys%leaf_energy, biophys%wood_energy, biophys%leaf_temp, biophys%wood_temp,             &
+                    biophys%leaf_water_mass, biophys%wood_water_mass, biophys%leaf_surf_water, biophys%wood_surf_water)
       end if
+      allocate(biophys%leaf_energy(n_coh), biophys%wood_energy(n_coh), biophys%leaf_temp(n_coh),               &
+               biophys%wood_temp(n_coh), biophys%leaf_water_mass(n_coh), biophys%wood_water_mass(n_coh),        &
+               biophys%leaf_surf_water(n_coh), biophys%wood_surf_water(n_coh), source=0.0_wp)
    end subroutine ensure_patch_biophys_capacity
 
 end module meds_fast_types
