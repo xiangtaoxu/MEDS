@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! test_column_rk45 -- the INTEG_RK45 wiring of the ED2-faithful adaptive Cash-Karp integrator    !
 ! into fast_step (docs/science/numerical_scheme.md §3, `rk45`).                                  !
-!   A. GPP PARITY: build_column_frozen (shared with ARK) runs the SAME frozen pre-pass under     !
+!   A. GPP PARITY: build_frozen (shared with ARK) runs the SAME frozen pre-pass under     !
 !      both schemes, so gpp_coh from the RK45 path is bit-identical to ARK's on step 1.          !
 !   B. PHYSICAL: a 24-step dry-window march under INTEG_RK45 keeps the CAS / soil / leaf / plant    !
 !      water-mass state finite, bounded, and sub-saturated.                                        !
@@ -27,13 +27,13 @@ program test_column_rk45
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,         only : soil_profile_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_diag_vars,       only : N_CO_FAST_ROWS, CO_PSI_PREDAWN
-   use meds_fast_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
+   use meds_fast_integ_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
                                         fast_output_t, alloc_dynamic_state, ensure_forcing_capacity,  &
                                         ensure_output_capacity, step_report_t, WORK_INTEG_REJECT,  &
                                         WORK_INTEG_STEPS, WORK_RK45_RESCUE
    use meds_site_state_vars,     only : site_surface_t
-   use meds_fast_step,           only : fast_step
-   use meds_fast_types,         only : fast_workspace_t
+   use meds_fast_integ_stepper,           only : fast_step
+   use meds_fast_integ_types,         only : fast_workspace_t
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water
    use meds_test_support, only : build_test_config, check_true, test_report
    implicit none
@@ -93,7 +93,7 @@ program test_column_rk45
    cfg%time_integrator = INTEG_RK45
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
    gpp_rk45 = out%gpp_coh(1:N)
-   call check_true('RK45 pre-pass gpp bit-identical to the ARK pre-pass (build_column_frozen)',                       &
+   call check_true('RK45 pre-pass gpp bit-identical to the ARK pre-pass (build_frozen)',                       &
            abs(gpp_rk45(1) - gpp_split(1)) < 1.0e-12_wp, abs(gpp_rk45(1) - gpp_split(1)))
    call check_true('RK45 midday gpp > 0', gpp_rk45(1) > 0.0_wp, gpp_rk45(1))
 
@@ -158,7 +158,7 @@ program test_column_rk45
    !       (docs/science/vegetation_energy_dynamics.md eqs. (1), (8)), and (2) the canopy air or the soil    !
    !       leaving its physical domain within a single explicit stage for a near-bare patch, which the       !
    !       RK45 stage clamp on the canopy air and the frozen ground evaporation keep evaluable               !
-   !       (meds_fast_rk45.f90). A mature canopy, whose coupling and heat capacity are large and whose       !
+   !       (meds_fast_integ_rk45.f90). A mature canopy, whose coupling and heat capacity are large and whose       !
    !       surface<->soil coupling is far from stiff, trips neither -- this test is the ONLY one in the      !
    !       suite with a cohort that small.                                                                   !
    call test_rk45_tiny_cohort()

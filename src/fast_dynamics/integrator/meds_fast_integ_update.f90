@@ -1,29 +1,29 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_update -- the end of a fast step, the same for both schemes.                    !
-! update_dynamic_state commits the march's end state, the water network's soil water and    !
-! pond, the tissues' energy, the condensate and the snow pack: the one place a step writes  !
-! the dynamic state. close_ledgers closes the seven conservation ledgers on the march's      !
-! boundary-flux amounts (docs/science/numerical_scheme.md §5b).                              !
+! meds_fast_integ_update -- the end of a fast step, the same for both schemes.             !
+! update_dynamic_state commits the march's end state, the water network's soil water and   !
+! pond, the tissues' energy, the condensate and the snow pack: the one place a step writes !
+! the dynamic state. close_ledgers closes the seven conservation ledgers on the march's    !
+! boundary-flux amounts (docs/science/numerical_scheme.md §5b). Also the commit's parts    !
+! and the store totals the ledgers read.                                                   !
 !==========================================================================================!
-module meds_fast_update
+module meds_fast_integ_update
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o
+   use meds_constants,        only : rho_h2o, tiny_num, mmh2o, cp_liq
    use meds_config,           only : meds_config_t
    use meds_site_state_vars,  only : site_surface_t
-   use meds_fast_types,       only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,     &
-                                     step_report_t, column_state_t, column_frozen_t, column_bflux_t
-   use meds_column_state_ops, only : clamp_canopy_film, unpack_column_state, diagnose_soil_temps,                 &
-                                     commit_tissue_energy, transp_per_leaf_area, deposit_condensate,              &
-                                     soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
+   use meds_fast_integ_types,       only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,     &
+                                     step_report_t, march_state_t, frozen_t, boundary_flux_t,              &
+                                     tissue_coefficients_t, diagnose_soil_temps
    use meds_diag_vars,        only : CO_TRANSP
-   use meds_therm_lib,        only : internal_energy_liquid
+   use meds_therm_lib,        only : internal_energy_liquid, cas_enthalpy_to_temp, tissue_energy_to_temp
    use meds_budget_check,     only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR,           &
                                      BUDGET_CO2_RATE_FLOOR
    implicit none
    private
 
    public :: commit_amounts_t, update_dynamic_state, close_ledgers
+   public :: commit_tissue_energy, unpack_column_state, transp_per_leaf_area   ! used only by the tests
 
    !----- What the update moved besides the march, which the ledgers book: the films' overflow at   !
    !      their capacity and deficit below zero, the condensate deposited in the top soil layer with  !
@@ -53,10 +53,10 @@ contains
       type(meds_config_t),        intent(in)    :: cfg
       type(site_surface_t),       intent(in)    :: site
       type(fast_static_state_t),  intent(in)    :: static
-      type(column_frozen_t),      intent(in)    :: frozen
-      type(column_bflux_t),       intent(in)    :: acc       !< the march's boundary-flux amounts
+      type(frozen_t),      intent(in)    :: frozen
+      type(boundary_flux_t),       intent(in)    :: acc       !< the march's boundary-flux amounts
       real(wp),                   intent(in)    :: dt_warm   !< [s] the step the next march starts from
-      type(column_state_t),       intent(inout) :: y_out     !< the march's end state, committed as stored
+      type(march_state_t),       intent(inout) :: y_out     !< the march's end state, committed as stored
       type(fast_dynamic_state_t), intent(inout) :: dynamic
       type(fast_output_t),        intent(inout) :: out
       type(commit_amounts_t),     intent(out)   :: moved
@@ -89,7 +89,7 @@ contains
                                                           static%leaf_area(1:n))
       if (acc%whole_cond > 0.0_wp) then
          moved%cond_mass = acc%whole_cond
-         moved%cond_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (column_bflux_t)
+         moved%cond_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (boundary_flux_t)
          call deposit_condensate(y_out, site%soil_profile%dz(1), moved%cond_mass, moved%cond_enth)
          dynamic%soil_water%theta(1)        = y_out%theta(1)
          dynamic%soil_energy%soil_energy(1) = y_out%soil_energy(1)
@@ -112,9 +112,9 @@ contains
       type(site_surface_t),      intent(in)    :: site
       type(fast_forcing_t),      intent(in)    :: forcing
       type(fast_static_state_t), intent(in)    :: static
-      type(column_frozen_t),     intent(in)    :: frozen
-      type(column_state_t),      intent(in)    :: y, y_out
-      type(column_bflux_t),      intent(in)    :: acc
+      type(frozen_t),     intent(in)    :: frozen
+      type(march_state_t),      intent(in)    :: y, y_out
+      type(boundary_flux_t),      intent(in)    :: acc
       type(commit_amounts_t),    intent(in)    :: moved
       logical,                   intent(in)    :: halt
       type(step_report_t),       intent(inout) :: report
@@ -200,4 +200,158 @@ contains
                         dt_fast, BUDGET_ENERGY_RATE_FLOOR, 'whole_energy', halt)
    end subroutine close_ledgers
 
-end module meds_fast_update
+   !=======================================================================================!
+   !  The commit's parts and the store totals the ledgers read.                              !
+   !=======================================================================================!
+
+   !----- A cohort's transpiration over a step [kg/m2 ground] as the rate per leaf area the            !
+   !      diagnostics report [mol H2O/m2 leaf/s]; zero for a leafless cohort. -------------------------!
+   elemental pure function transp_per_leaf_area(amount, dt, nplant, leaf_area) result(rate)
+      real(wp), intent(in) :: amount      !< [kg/m2 ground] over dt
+      real(wp), intent(in) :: dt          !< [s]
+      real(wp), intent(in) :: nplant      !< [plant/m2]
+      real(wp), intent(in) :: leaf_area   !< [m2 leaf/plant]
+      real(wp) :: rate
+      rate = 0.0_wp
+      if (nplant * leaf_area > tiny_num) rate = amount / dt / (nplant * leaf_area) / mmh2o
+   end function transp_per_leaf_area
+
+   !---------------------------------------------------------------------------------------!
+   ! Whole-column store totals for the conservation ledgers [per m2 ground]. Plain ascending loops, !
+   ! shared by both schemes, so a ledger built from these is the same arithmetic on both.           !
+   !---------------------------------------------------------------------------------------!
+   pure function soil_water_store(theta, dz, nsl) result(w)     ! [kg/m2]
+      real(wp),    intent(in) :: theta(:), dz(:)
+      integer(ik), intent(in) :: nsl
+      real(wp) :: w
+      integer(ik) :: k
+      w = 0.0_wp
+      do k = 1_ik, nsl
+         w = w + theta(k) * dz(k) * rho_h2o
+      end do
+   end function soil_water_store
+
+   pure function soil_energy_store(soil_energy, dz, nsl) result(e)   ! [J/m2] from [J/m3]
+      real(wp),    intent(in) :: soil_energy(:), dz(:)
+      integer(ik), intent(in) :: nsl
+      real(wp) :: e
+      integer(ik) :: k
+      e = 0.0_wp
+      do k = 1_ik, nsl
+         e = e + soil_energy(k) * dz(k)
+      end do
+   end function soil_energy_store
+
+   pure function plant_water_store(nplant, leaf_mass, wood_mass, n) result(w)   ! [kg/m2] from [kg/plant]
+      real(wp),    intent(in) :: nplant(:), leaf_mass(:), wood_mass(:)
+      integer(ik), intent(in) :: n
+      real(wp) :: w
+      w = sum(nplant(1:n) * (leaf_mass(1:n) + wood_mass(1:n)))
+   end function plant_water_store
+
+   pure function canopy_film_store(leaf_surf, wood_surf, n) result(w)   ! [kg/m2 ground], already ground-referenced
+      real(wp),    intent(in) :: leaf_surf(:), wood_surf(:)
+      integer(ik), intent(in) :: n
+      real(wp) :: w
+      w = sum(leaf_surf(1:n) + wood_surf(1:n))
+   end function canopy_film_store
+
+   !---------------------------------------------------------------------------------------!
+   ! Canopy-film capacity clamp on the committed state: cap each cohort's leaf/wood film at        !
+   ! leaf_max*LAI / wood_max*WAI and floor it at 0; the clipped excess (overflow) and the floored    !
+   ! shortfall (deficit) are returned so the caller books them in the whole-column ledger.          !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine clamp_canopy_film(y_out, lai, wai, leaf_max, wood_max, n, surf_overflow, surf_deficit)
+      type(march_state_t), intent(inout) :: y_out
+      real(wp),             intent(in)    :: lai(:), wai(:)
+      real(wp),             intent(in)    :: leaf_max(:), wood_max(:)   !< [kg/m2 leaf], [kg/m2 wood] per cohort
+      integer(ik),          intent(in)    :: n
+      real(wp),             intent(inout) :: surf_overflow, surf_deficit   !< [kg/m2] accumulated
+      real(wp)    :: leaf_cap_i, wood_cap_i
+      integer(ik) :: i
+      do i = 1_ik, n
+         leaf_cap_i = leaf_max(i) * lai(i)
+         wood_cap_i = wood_max(i) * wai(i)
+         surf_overflow = surf_overflow + max(0.0_wp, y_out%leaf_surf_water(i) - leaf_cap_i)          &
+                                        + max(0.0_wp, y_out%wood_surf_water(i) - wood_cap_i)
+         surf_deficit  = surf_deficit  + max(0.0_wp, -y_out%leaf_surf_water(i))                      &
+                                        + max(0.0_wp, -y_out%wood_surf_water(i))
+         y_out%leaf_surf_water(i) = min(max(y_out%leaf_surf_water(i), 0.0_wp), leaf_cap_i)
+         y_out%wood_surf_water(i) = min(max(y_out%wood_surf_water(i), 0.0_wp), wood_cap_i)
+      end do
+   end subroutine clamp_canopy_film
+
+   !---------------------------------------------------------------------------------------!
+   ! Deposit condensed canopy-air vapour into soil layer 1 as paired mass [kg/m2] + liquid         !
+   ! enthalpy [J/m2] (an internal CAS -> soil transfer; the ledger needs no boundary term).         !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine deposit_condensate(y_out, dz1, mass, enth)
+      type(march_state_t), intent(inout) :: y_out
+      real(wp),             intent(in)    :: dz1, mass, enth
+      y_out%theta(1)       = y_out%theta(1) + mass / (rho_h2o * dz1)
+      y_out%soil_energy(1) = y_out%soil_energy(1) + enth / dz1
+   end subroutine deposit_condensate
+
+   !---------------------------------------------------------------------------------------!
+   ! Unpack the committed column state into the dynamic state: CAS twins (and their                !
+   ! temperature), soil energy and moisture, plant internal water, canopy films; not the pond.    !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine unpack_column_state(y_out, n, nsl, dynamic)
+      type(march_state_t),       intent(in)    :: y_out
+      integer(ik),                intent(in)    :: n, nsl
+      type(fast_dynamic_state_t), intent(inout) :: dynamic
+      dynamic%cas%can_enthalpy = y_out%cas_enthalpy
+      dynamic%cas%can_shv = y_out%cas_shv
+      dynamic%cas%can_co2 = y_out%cas_co2
+      dynamic%cas%can_temp = cas_enthalpy_to_temp(y_out%cas_enthalpy, y_out%cas_shv)
+      dynamic%soil_energy%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
+      dynamic%soil_water%theta(1:nsl)       = y_out%theta(1:nsl)
+      dynamic%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
+      dynamic%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
+      dynamic%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
+      dynamic%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
+      !----- The pond (w_surface, w_surface_energy) is left out on purpose: each scheme commits it from  !
+      !      the water network, so writing it here would commit it twice (test_state_combinators). ---!
+   end subroutine unpack_column_state
+
+   !------------------------------------------------------------------------------------------------!
+   ! commit_tissue_energy -- each tissue's end-of-step energy and temperature, and the tissue store !
+   ! the whole-column ledger counts (docs/science/vegetation_energy_dynamics.md eqs. (9)-(10)). The  !
+   ! energy gains the heat cap*(t_avg - t0), t_avg being the march's time-average of where the      !
+   ! tissue relaxed to, and the enthalpy its water gained (docs/science/soil_plant_water.md eq. (5)); !
+   ! the temperature is read back with the end-of-step water. A masked-off process adds nothing; a  !
+   ! leaf with no heat capacity takes its wood's temperature.                                        !
+   !------------------------------------------------------------------------------------------------!
+   pure subroutine commit_tissue_energy(tissue, nplant, dt, t_leaf_avg, t_wood_avg, n,                          &
+                                        dynamic, store0, store1)
+      type(tissue_coefficients_t), intent(in)    :: tissue
+      real(wp),                    intent(in)    :: nplant(:)                     !< [plant/m2]
+      real(wp),                    intent(in)    :: dt                            !< [s] dt_fast
+      real(wp),                    intent(in)    :: t_leaf_avg(:), t_wood_avg(:)  !< [K]
+      integer(ik),                 intent(in)    :: n
+      type(fast_dynamic_state_t),  intent(inout) :: dynamic
+      real(wp),                    intent(out)   :: store0, store1                !< [J/m2] the tissue store
+      real(wp)    :: heat_leaf, heat_wood, enth_leaf, enth_wood, w_leaf, w_wood
+      integer(ik) :: i
+      store0 = 0.0_wp
+      store1 = 0.0_wp
+      do i = 1_ik, n
+         heat_leaf = tissue%leaf_hcap_per_dt(i) * dt * (t_leaf_avg(i) - tissue%t_leaf0(i))
+         heat_wood = tissue%wood_hcap_per_dt(i) * dt * (t_wood_avg(i) - tissue%t_wood0(i))
+         enth_leaf = tissue%leaf_water_enth(i) * dt
+         enth_wood = tissue%wood_water_enth(i) * dt
+         store0 = store0 + dynamic%leaf_energy(i) + dynamic%wood_energy(i)
+         dynamic%leaf_energy(i) = dynamic%leaf_energy(i) + heat_leaf + enth_leaf
+         dynamic%wood_energy(i) = dynamic%wood_energy(i) + heat_wood + enth_wood
+         store1 = store1 + dynamic%leaf_energy(i) + dynamic%wood_energy(i)
+         w_leaf = max(dynamic%leaf_water_mass(i), 0.0_wp) * nplant(i)
+         w_wood = max(dynamic%wood_water_mass(i), 0.0_wp) * nplant(i)
+         if (tissue%wood_dry_hcap(i) + w_wood * cp_liq > 0.0_wp)                                        &
+            dynamic%wood_temp(i) = tissue_energy_to_temp(dynamic%wood_energy(i), w_wood, tissue%wood_dry_hcap(i))
+         dynamic%leaf_temp(i) = dynamic%wood_temp(i)
+         if (tissue%leaf_dry_hcap(i) + w_leaf * cp_liq > 0.0_wp)                                        &
+            dynamic%leaf_temp(i) = tissue_energy_to_temp(dynamic%leaf_energy(i), w_leaf, tissue%leaf_dry_hcap(i))
+      end do
+   end subroutine commit_tissue_energy
+
+end module meds_fast_integ_update

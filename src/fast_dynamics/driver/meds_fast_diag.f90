@@ -27,7 +27,7 @@ module meds_fast_diag
                                        SI_RHO_AIR, N_SI_ROWS
    use meds_met_types,          only : met_forcing_t
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_fast_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t
+   use meds_fast_integ_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t
    implicit none
    private
 

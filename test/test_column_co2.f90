@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! test_column_co2 -- unit tests for the column CO2 balance (the well-mixed                 !
 ! canopy-air-space CO2 box, docs/science/canopy_air_space_biophysics.md eq. (1)). The box  !
-! is advanced by the production kernel meds_cas_biophysics::cas_column_step_implicit; the  !
+! is advanced by the production kernel meds_cas_biophysics::cas_box_step_implicit; the  !
 ! local co2_step helper feeds it the raw scalar inputs and assembles the budget            !
 ! diagnostics (nee/nep/loss2atm/storage/resid) from its result. Test plan:                 !
 !   1. RESID ~ 0 : the closed CO2 budget residual vanishes for a spread of inputs.                 !
@@ -19,11 +19,11 @@ program test_column_co2
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, kgcday_2_umols
-   use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
+   use meds_cas_biophysics,   only : cas_box_t, cas_source_t, cas_box_step_implicit
    implicit none
 
    !----- Local CO2 budget diagnostics, derived in co2_step from the production                  !
-   !      cas_column_step_implicit result (see below).                                              !
+   !      cas_box_step_implicit result (see below).                                              !
    type :: co2_budget_t
       real(wp) :: nee = 0.0_wp, nep = 0.0_wp, loss2atm = 0.0_wp, storage = 0.0_wp, resid = 0.0_wp
    end type co2_budget_t
@@ -50,7 +50,7 @@ contains
       ccapcan = rho_air * (1.0_wp - can_shv) / mmdry * can_depth
    end function ccapcan_of
 
-   !----- Advance the CO2 twin via the PRODUCTION kernel cas_column_step_implicit, then assemble  !
+   !----- Advance the CO2 twin via the PRODUCTION kernel cas_box_step_implicit, then assemble  !
    !      the budget diagnostics from its result.                                                   !
    !      The enthalpy/vapour twins are held inert (nonzero air_mass_capacity avoids a 0/0).        !
    subroutine co2_step(can_co2, can_depth, can_shv, gpp, plant_resp, hetero,                    &
@@ -59,7 +59,7 @@ contains
       real(wp), intent(in)    :: can_depth, can_shv, gpp, plant_resp, hetero
       real(wp), intent(in)    :: ustar, temp2, co2_atm, rho_air, dt
       type(co2_budget_t), intent(out) :: budget
-      type(cas_column_t) :: column
+      type(cas_box_t) :: column
       type(cas_source_t) :: source
       real(wp) :: can_dmol, ccapcan, gatm_co2, f_bio, enth_dummy, shv_dummy, co2_new
       can_dmol = rho_air * (1.0_wp - can_shv) / mmdry        ! dry-air molar density [mol/m3]
@@ -71,7 +71,7 @@ contains
       column%atm_conductance_co2 = gatm_co2
       column%atm_co2             = co2_atm
       source%biotic_co2_source   = f_bio
-      call cas_column_step_implicit(0.0_wp, 0.0_wp, can_co2, source, column, dt,                 &
+      call cas_box_step_implicit(0.0_wp, 0.0_wp, can_co2, source, column, dt,                 &
                                     enth_dummy, shv_dummy, co2_new)
       budget%resid    = ccapcan * (co2_new - can_co2) - dt * (f_bio + gatm_co2 * (co2_atm - co2_new))
       budget%nee      = f_bio

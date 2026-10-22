@@ -20,7 +20,7 @@ program test_surface_energy
                                         cas_enthalpy_to_temp
    use meds_plant_biophysics, only : veg_energy_balance
    use meds_ground_biophysics, only : ground_surface_fluxes
-   use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
+   use meds_cas_biophysics,   only : cas_box_t, cas_source_t, cas_box_step_implicit
    implicit none
 
    call test_wood_stiffness_spread()
@@ -223,11 +223,11 @@ contains
    end subroutine test_ground_balance
 
    subroutine test_cas()
-      !----- Runs the production cas_column_step_implicit (enthalpy twin;                           !
+      !----- Runs the production cas_box_step_implicit (enthalpy twin;                           !
       !      docs/science/canopy_air_space_biophysics.md eq. (2)). Vapour + CO2 twins held inert (0 !
       !      sources / 0 vapour conductance; a nonzero molar capacity avoids a 0/0 in the unused    !
       !      CO2 branch). The closed-budget residual is assembled here from the production result.   !
-      type(cas_column_t) :: column
+      type(cas_box_t) :: column
       type(cas_source_t) :: source
       real(wp) :: enth, shv, temp, resid, enthalpy_atm, worst, enth_new, shv_new, co2_new
       real(wp), parameter :: CAS_MASS_CAPACITY = 1.2_wp * 20.0_wp     ! rho_air * can_depth  [kg/m2]
@@ -251,7 +251,7 @@ contains
       source%biotic_co2_source        = 0.0_wp
       worst = 0.0_wp
       do step = 1_ik, 30_ik
-         call cas_column_step_implicit(enth, shv, 0.0_wp, source, column, 60.0_wp, enth_new, shv_new, co2_new)
+         call cas_box_step_implicit(enth, shv, 0.0_wp, source, column, 60.0_wp, enth_new, shv_new, co2_new)
          resid = column%air_mass_capacity * (enth_new - enth)                                   &
                  - 60.0_wp * (source%surface_enthalpy_source                                    &
                               + column%atm_conductance_enthalpy * (column%atm_enthalpy - enth_new))

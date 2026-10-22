@@ -1,20 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_frozen -- the frozen record one fast step marches against: what is computed     !
-! once at the start of the dt_fast, from that moment's state and forcing, and held fixed    !
-! across the march (docs/science/numerical_scheme.md §2, Category 0). build_column_frozen   !
-! runs it as named steps:                                                                    !
-!   * the processes' rates at the start state: canopy aerodynamics, the root zone, leaf gas  !
-!     exchange, stem and fine-root maintenance respiration, heterotrophic respiration, the   !
-!     biotic CO2 source, and the canopy-air capacities and atmosphere conductances;          !
-!   * the snow stage, canopy interception, the tissue coefficients, the rest of the          !
-!     canopy-air and ground boundary, the transpiration demand and the ground inflow;        !
-!   * the soil-plant water network's start state, and the march's.                           !
-! The water network is stepped next (water_step), and record_water_flows turns what it      !
-! moved into the record's rates (docs/science/soil_plant_water.md §4-§5). Both schemes       !
-! (ARK, RK45) march against the same record, so they see the same GPP.                       !
+! meds_fast_integ_frozen -- the frozen record one fast step marches against: what is       !
+! computed once at the start of the dt_fast, from that moment's state and forcing, and     !
+! held fixed across the march (docs/science/numerical_scheme.md §2, Category 0).           !
+! build_frozen runs it as named steps:                                                     !
+!   * the processes' rates at the start state: canopy aerodynamics, the root zone, leaf    !
+!     gas exchange, stem and fine-root maintenance respiration, heterotrophic respiration, !
+!     the biotic CO2 source, and the canopy-air capacities and atmosphere conductances;    !
+!   * the snow stage, canopy interception, the tissue coefficients, the rest of the        !
+!     canopy-air and ground boundary, the transpiration demand and the ground inflow;      !
+!   * the soil-plant water network's start state, and the march's.                         !
+! The water network is stepped next (water_step), and record_water_flows turns what it     !
+! moved into the record's rates (docs/science/soil_plant_water.md §4-§5). Both schemes     !
+! march against the same record, so they see the same GPP.                                 !
 !==========================================================================================!
-module meds_fast_frozen
+module meds_fast_integ_frozen
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, cp_liq, t_3ple, r_gas,      &
                                      kgcday_2_umols
@@ -32,12 +32,12 @@ module meds_fast_frozen
    use meds_site_state_vars,  only : site_surface_t
    use meds_canopy_types,     only : aero_env_t, aero_geom_t, aero_out_t, set_aero_env_atm
    use meds_pft_params,       only : leaf_photo_table_t, hydraulics_table_t
-   use meds_fast_types,       only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,     &
-                                     fast_workspace_t, column_state_t, column_frozen_t, surface_state_t,          &
+   use meds_fast_integ_types,       only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,     &
+                                     fast_workspace_t, march_state_t, frozen_t, surface_state_t,          &
                                      surface_tend_t, snow_stage_t, cas_boundary_t, tissue_coefficients_t,         &
                                      canopy_film_capacity_t, ground_boundary_t, plant_water_t, step_exports_t,   &
                                      water_work_t, POND, WOOD, WORK_WATER_NFAIL
-   use meds_fast_time_derivs, only : surface_derivs, set_water_state
+   use meds_fast_integ_derivs, only : surface_derivs, set_water_state
    use meds_state_defaults,   only : is_unset_negative
    use meds_biophysics_params, only : aero_params_t, snow_params_t
    use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_column_t
@@ -56,19 +56,19 @@ module meds_fast_frozen
    implicit none
    private
 
-   public :: build_column_frozen, record_water_flows
+   public :: build_frozen, record_water_flows
    public :: cohort_leaf_par, aero_bottom_to_top   ! used only by the tests
 
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! build_column_frozen -- the frozen record both schemes march against, as named steps, and !
+   ! build_frozen -- the frozen record both schemes march against, as named steps, and !
    ! the water network's and the march's start states. It only reads the dynamic state: the  !
    ! snow stage advances a copy of the pack, which the update commits. out receives the       !
    ! aerodynamics, the per-cohort rates, the step's GPP, NEE and decomposition scalars, and,  !
    ! with out%capture, the per-cohort diagnostics (docs/science/diagnostics.md §1, stage [2]).!
    !---------------------------------------------------------------------------------------!
-   subroutine build_column_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
+   subroutine build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
       real(wp),                   intent(in)    :: dt_fast
       type(meds_config_t),        intent(in)    :: cfg
       type(site_surface_t),       intent(in)    :: site
@@ -77,8 +77,8 @@ contains
       type(fast_dynamic_state_t), intent(in)    :: dynamic
       type(fast_output_t),        intent(inout) :: out
       type(fast_workspace_t),     intent(inout) :: work     !< its aerodynamic environment and water network
-      type(column_frozen_t),      intent(out)   :: frozen
-      type(column_state_t),       intent(out)   :: y
+      type(frozen_t),      intent(out)   :: frozen
+      type(march_state_t),       intent(out)   :: y
       !----- The canopy air's temperature and humidity at the start state, the air's pressure and     !
       !      density, and the ground's temperature, which the later steps read. ---------------------!
       real(wp)    :: tcas, qcas, press, rho, t_ground
@@ -144,14 +144,14 @@ contains
                            dynamic%soil_water%w_surface, dynamic%soil_water%w_surface_energy,                    &
                            dynamic%leaf_water_mass(1:n), dynamic%wood_water_mass(1:n), work%water)
       call pack_march_start(dynamic, n, nsl, y)
-   end subroutine build_column_frozen
+   end subroutine build_frozen
 
    !----- Size the frozen record's per-cohort and per-layer arrays. The plant water's heat terms     !
    !      start at zero: the start-of-step surface solves read them (as q_extra, whose default is 0)  !
    !      before the water network's flows give them their values. -------------------------------!
    subroutine allocate_frozen(n, nsl, frozen)
       integer(ik),           intent(in)    :: n, nsl
-      type(column_frozen_t), intent(inout) :: frozen
+      type(frozen_t), intent(inout) :: frozen
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n),          &
                frozen%tissue%abs_lw(n), frozen%tissue%lai(n))
       allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n),          &
@@ -731,7 +731,7 @@ contains
       integer(ik),                intent(in)    :: n
       type(fast_dynamic_state_t), intent(in)    :: dynamic
       real(wp),                   intent(in)    :: t_ground
-      type(column_frozen_t),      intent(inout) :: frozen
+      type(frozen_t),      intent(inout) :: frozen
       type(surface_state_t) :: y_stage
       type(surface_tend_t)  :: sf0
       real(wp)    :: avail_leaf, avail_wood, t_up_wl
@@ -774,7 +774,7 @@ contains
       real(wp),                   intent(in)    :: throughfall   !< [kg/m2/s]
       real(wp),                   intent(in)    :: tcas, qcas, rho, t_ground
       integer(ik),                intent(in)    :: nsl
-      type(column_frozen_t),      intent(inout) :: frozen
+      type(frozen_t),      intent(inout) :: frozen
       !----- The water reaching the ground besides the shed water [kg/m2/s], its temperature [K], and   !
       !      the enthalpy all of it brings [W/m2]. ---------------------------------------------------!
       real(wp) :: water_base, t_water_base, inflow_enth, precip_ground, t_pond_inflow
@@ -828,7 +828,7 @@ contains
    subroutine pack_march_start(dynamic, n, nsl, y)
       type(fast_dynamic_state_t), intent(in)  :: dynamic
       integer(ik),                intent(in)  :: n, nsl
-      type(column_state_t),       intent(out) :: y
+      type(march_state_t),       intent(out) :: y
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n), y%leaf_surf_water(n), y%wood_surf_water(n))
       y%cas_enthalpy = dynamic%cas%can_enthalpy
       y%cas_shv = dynamic%cas%can_shv
@@ -858,7 +858,7 @@ contains
       type(fast_dynamic_state_t), intent(in)    :: dynamic
       type(water_work_t),         intent(in)    :: water
       type(fast_output_t),        intent(inout) :: out
-      type(column_frozen_t),      intent(inout) :: frozen
+      type(frozen_t),      intent(inout) :: frozen
       real(wp)    :: share_tot, face_resid, f_in, f_out, u_liq_soil_k(site%soil_profile%n_active)
       real(wp)    :: t_up_wl, u_liq_up, u_liq_leaf, u_liq_wood, sapflow_gnd, uptake_gnd, transp_gnd
       integer(ik) :: i, k, n, nsl
@@ -970,4 +970,4 @@ contains
       end associate
    end subroutine record_water_flows
 
-end module meds_fast_frozen
+end module meds_fast_integ_frozen

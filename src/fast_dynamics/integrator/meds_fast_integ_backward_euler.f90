@@ -1,28 +1,28 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_be_stage -- the fast loop's backward-Euler solves. One ESDIRK stage               !
-! (docs/science/numerical_scheme.md §3 `ark`, eq. (1)) is a backward-Euler solve of the     !
-! canopy air against the leaf, wood and ground temperatures, by a small Newton on a         !
-! forward-difference Jacobian: column_be_stage is the stage, newton_surface_solve and       !
-! jac_surface its inner solve, cas_box_commit the box commit; advance_plant_water and       !
-! advance_surf_water_full move plant and film water once per step. The soil-plant water     !
-! network's step is implicit Euler too: water_step, its Newton sub-step and commit          !
-! (docs/science/soil_plant_water.md §3). meds_fast_ark keeps the tableau and the march.     !
+! meds_fast_integ_backward_euler -- the fast loop's backward-Euler solves, two systems     !
+! side by side. One ESDIRK2 stage (docs/science/numerical_scheme.md §3 `ark`, eq. (1))     !
+! solves the canopy air against the leaf, wood and ground temperatures by a small Newton   !
+! on a forward-difference Jacobian: column_be_stage is the stage, newton_surface_solve and !
+! jac_surface its inner solve, cas_box_commit the box commit; advance_plant_water and      !
+! advance_surf_water_full move plant and film water once per step. The soil-plant water    !
+! network's step is implicit Euler on adaptive sub-steps (docs/science/soil_plant_water.md !
+! §3): water_step, its Newton sub-step, the Newton matrix and the sub-step's commit. The   !
+! two Newton solves share only the line search and the step bound of meds_numerics.        !
 !==========================================================================================!
-module meds_fast_be_stage
+module meds_fast_integ_backward_euler
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_patch_state_vars,   only : soil_energy_column_t
-   use meds_fast_time_derivs, only : surface_derivs, cas_conductances, water_derivs
-   use meds_fast_control, only : water_scales
-   use meds_cas_biophysics, only : cas_column_step_implicit, cas_source_t
-   use meds_column_state_ops, only : state_init, assemble_soil_energy_forcing
-   use meds_fast_types, only : column_state_t, column_frozen_t, surface_state_t, cas_boundary_t,                  &
+   use meds_fast_integ_derivs, only : surface_derivs, cas_conductances, water_derivs, assemble_soil_energy_forcing
+   use meds_fast_integ_control, only : water_scales
+   use meds_cas_biophysics, only : cas_box_step_implicit, cas_source_t
+   use meds_fast_integ_types, only : march_state_t, frozen_t, surface_state_t, cas_boundary_t,                  &
                                surface_tend_t, stage_bflux_t, error_control_t, tol_set_t, fast_static_state_t,    &
                                water_drive_t, water_tend_t, water_state_t, water_flows_t, water_work_t,           &
                                GRP_THETA, POND, WOOD, LEAF, COHORT_STORES, WORK_WATER_NSUB, WORK_WATER_NEWTON,    &
-                               WORK_WATER_REJECT, WORK_WATER_NFAIL
+                               WORK_WATER_REJECT, WORK_WATER_NFAIL, state_init
    use meds_site_state_vars, only : site_surface_t
    use meds_soil_energy, only : soil_energy_step_implicit
    use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp,             &
@@ -68,8 +68,8 @@ contains
    ! steady rate; plant water is passed through and advanced once (advance_plant_water).               !
    !---------------------------------------------------------------------------------------!
    subroutine column_be_stage(y, frozen, site, ec, n, nsl, dt, y_out, surf_tend, bf)
-      type(column_state_t),  intent(in)  :: y
-      type(column_frozen_t), intent(in)  :: frozen
+      type(march_state_t),  intent(in)  :: y
+      type(frozen_t), intent(in)  :: frozen
       type(site_surface_t),  intent(in)  :: site
       type(error_control_t), intent(in)  :: ec     !< its budget stop ([fast].debug_error)
       integer(ik),           intent(in)  :: n, nsl
@@ -77,7 +77,7 @@ contains
       !----- The stage's state and its own surface tendencies, the ones its CAS source and bf used; the   !
       !      caller b-weights transp_c into the plant water, so the leaves' water debit and the canopy     !
       !      air's vapour credit agree (docs/science/numerical_scheme.md §5a). Both filled in place. -----!
-      type(column_state_t),  intent(inout) :: y_out
+      type(march_state_t),  intent(inout) :: y_out
       type(surface_tend_t),  intent(inout) :: surf_tend
       type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux rates for the ARK ledger
 
@@ -160,7 +160,7 @@ contains
       y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
 
       !----- This stage's boundary-flux rates for the ledger, all at the committed state, so the amounts   !
-      !      ark2_column_step and adaptive_march b-weight and accumulate telescope to closure. -----------!
+      !      esdirk2_step and adaptive_march b-weight and accumulate telescope to closure. -----------!
       if (present(bf)) then
          t_cas1 = cas_enthalpy_to_temp(enth1, shv1)         ! committed CAS temperature, for the reported H
             bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%box%atm_enthalpy
@@ -205,9 +205,9 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine newton_surface_solve(y, cas, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, &
                                    surf_tend, nfeval, ok)
-      type(column_state_t),   intent(in)    :: y
+      type(march_state_t),   intent(in)    :: y
       type(cas_boundary_t),   intent(in)    :: cas      !< the stage's CAS boundary (its own conductances)
-      type(column_frozen_t),  intent(in)    :: frozen   !< tissue / film / ground / snow for surface_derivs
+      type(frozen_t),  intent(in)    :: frozen   !< tissue / film / ground / snow for surface_derivs
       real(wp),               intent(in)    :: t_ground
       integer(ik),            intent(in)    :: n
       real(wp),               intent(in)    :: dt, cas_mass_capacity, g_atm_heat, g_atm_vapour
@@ -287,7 +287,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! The backward-Euler canopy-air box commit, through the shared box kernel                           !
-   ! meds_cas_biophysics%cas_column_step_implicit (docs/science/canopy_air_space_biophysics.md         !
+   ! meds_cas_biophysics%cas_box_step_implicit (docs/science/canopy_air_space_biophysics.md         !
    ! eq. (2)): one implementation of the box, not a copy of its formulas here.                         !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_box_commit(h0, q0, c0, surf_tend, cas, dt, h1, q1, c1)
@@ -299,7 +299,7 @@ contains
       src%surface_enthalpy_source  = surf_tend%src_enth
       src%surface_vapor_source = surf_tend%src_vap
       src%biotic_co2_source        = cas%nee_biotic
-      call cas_column_step_implicit(h0, q0, c0, src, cas%box, dt, h1, q1, c1)
+      call cas_box_step_implicit(h0, q0, c0, src, cas%box, dt, h1, q1, c1)
    end subroutine cas_box_commit
 
    !----- 2x2 numerical Jacobian of (R_H, R_q) w.r.t. (H, q) by forward-differencing surface_derivs. --!
@@ -308,7 +308,7 @@ contains
                           nfeval)
       real(wp),               intent(in)    :: Hk, qk, co2, cas_mass_capacity, g_atm_heat, g_atm_vapour, dt
       type(cas_boundary_t),   intent(in)    :: cas
-      type(column_frozen_t),  intent(in)    :: frozen
+      type(frozen_t),  intent(in)    :: frozen
       real(wp),               intent(in)    :: t_ground
       type(surface_tend_t),   intent(in)    :: surf_tend         ! base eval at (Hk,qk)
       integer(ik),            intent(in)    :: n
@@ -348,12 +348,12 @@ contains
    ! ends where the network did. Nothing is floored: the network keeps every store inside its curve. !
    !---------------------------------------------------------------------------------------!
    pure subroutine advance_plant_water(y, frozen, n, dt, transp_c_bw, y_out)
-      type(column_state_t),  intent(in)    :: y
-      type(column_frozen_t), intent(in)    :: frozen
+      type(march_state_t),  intent(in)    :: y
+      type(frozen_t), intent(in)    :: frozen
       integer(ik),           intent(in)    :: n
       real(wp),              intent(in)    :: dt
       real(wp),              intent(in)    :: transp_c_bw(n)  !< [kg/m2 ground/s] per cohort, b-weighted over the step
-      type(column_state_t),  intent(inout) :: y_out
+      type(march_state_t),  intent(inout) :: y_out
       integer(ik) :: i
       do i = 1_ik, n
          y_out%leaf_water_mass(i) = y%leaf_water_mass(i)                                                  &
@@ -369,12 +369,12 @@ contains
    ! was credited). Unclamped: update_dynamic_state clamps it and books the overflow and deficit.     !
    !---------------------------------------------------------------------------------------!
    pure subroutine advance_surf_water_full(y, frozen, n, dt, film_evap_leaf_bw, film_evap_wood_bw, y_out)
-      type(column_state_t),  intent(in)    :: y
-      type(column_frozen_t), intent(in)    :: frozen
+      type(march_state_t),  intent(in)    :: y
+      type(frozen_t), intent(in)    :: frozen
       integer(ik),            intent(in)    :: n
       real(wp),               intent(in)    :: dt
       real(wp),               intent(in)    :: film_evap_leaf_bw(n), film_evap_wood_bw(n)
-      type(column_state_t),  intent(inout) :: y_out
+      type(march_state_t),  intent(inout) :: y_out
       integer(ik) :: i
       !----- Not floored: the caller's deficit bookkeeping must see a negative film to credit the       !
       !      shortfall to the whole-column outflow; a floor here would create that water. ------------!
@@ -809,4 +809,4 @@ contains
       end if
    end function water_jacobian_error
 
-end module meds_fast_be_stage
+end module meds_fast_integ_backward_euler

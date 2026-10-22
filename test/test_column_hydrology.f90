@@ -30,10 +30,10 @@ program test_column_hydrology
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
                                     soil_theta_to_head
    use meds_soil_water,       only : ground_evaporation_rate, bottom_flux, ground_evap_env_t
-   use meds_fast_types,       only : fast_static_state_t, water_drive_t, water_work_t, tol_set_t,           &
+   use meds_fast_integ_types,       only : fast_static_state_t, water_drive_t, water_work_t, tol_set_t,           &
                                      ensure_static_capacity, POND, GRP_THETA, N_WORK
-   use meds_fast_time_derivs, only : set_water_state
-   use meds_fast_be_stage,    only : water_step
+   use meds_fast_integ_derivs, only : set_water_state
+   use meds_fast_integ_backward_euler,    only : water_step
    use meds_pft_params,       only : hydraulics_table_t
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp
    use meds_plant_biophysics, only : intercept_canopy_layer

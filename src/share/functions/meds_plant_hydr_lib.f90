@@ -8,7 +8,7 @@
 !                                                                                          !
 ! The read-offs (tissue_psi_to_rwc, tissue_water_to_psi, ...) carry floors that keep a     !
 ! diagnostic finite. The solver's relations (tissue_water_relations and the flows) have    !
-! none and come with their derivatives in the solver's unknowns, so meds_spac_solver       !
+! none and come with their derivatives in the solver's unknowns, so the water network     !
 ! builds its Jacobian from the numbers it moves water with (soil_plant_water.md §2). The   !
 ! soil's side is meds_soil_hydr_lib.                                                       !
 !==========================================================================================!

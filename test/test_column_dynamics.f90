@@ -29,16 +29,16 @@ program test_column_dynamics
    use meds_soil_params,         only : SOIL_BC_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_fast_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
+   use meds_fast_integ_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
                                         fast_output_t, fast_workspace_t, alloc_static_state,          &
                                         alloc_dynamic_state, ensure_forcing_capacity,                 &
                                         ensure_output_capacity, step_report_t, error_control_t
    use meds_site_state_vars,     only : site_surface_t
-   use meds_fast_control,        only : build_tol_set, build_error_control
-   use meds_fast_step,           only : fast_step
-   use meds_fast_frozen,         only : aero_bottom_to_top, cohort_leaf_par
+   use meds_fast_integ_control,        only : build_tol_set, build_error_control
+   use meds_fast_integ_stepper,           only : fast_step
+   use meds_fast_integ_frozen,         only : aero_bottom_to_top, cohort_leaf_par
    use meds_numerics,            only : ascending_order
-   use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
+   use meds_fast_integ_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water
    use meds_test_support, only : build_test_config, check_true, test_report
    implicit none

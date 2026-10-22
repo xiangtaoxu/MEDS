@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! test_column_ark -- the INTEG_ARK wiring of the coupled ESDIRK2 integrator (config name `ark`)        !
 ! into fast_step (docs/science/numerical_scheme.md §3).                                                !
-!   A. GPP PARITY: build_column_frozen runs the SAME frozen pre-pass under both schemes, so gpp_coh    !
+!   A. GPP PARITY: build_frozen runs the SAME frozen pre-pass under both schemes, so gpp_coh    !
 !      from the ARK path is bit-identical to RK45's on step 1 (identical initial state).               !
 !   B. PHYSICAL: a 24-step dry-window march under INTEG_ARK keeps the CAS / soil / leaf / psi state    !
 !      finite, bounded, and sub-saturated (the integrator + unpack are correct end to end).            !
@@ -25,15 +25,15 @@ program test_column_ark
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_params,         only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_fast_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
+   use meds_fast_integ_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
                                         fast_output_t, alloc_dynamic_state, ensure_forcing_capacity,  &
                                         ensure_output_capacity, step_report_t
    use meds_site_state_vars,     only : site_surface_t
-   use meds_fast_step,           only : fast_step
-   use meds_fast_frozen,        only : build_column_frozen, record_water_flows
-   use meds_fast_be_stage,      only : water_step
-   use meds_fast_control,       only : build_tol_set
-   use meds_fast_types,         only : column_frozen_t, column_state_t, fast_workspace_t
+   use meds_fast_integ_stepper,           only : fast_step
+   use meds_fast_integ_frozen,        only : build_frozen, record_water_flows
+   use meds_fast_integ_backward_euler,      only : water_step
+   use meds_fast_integ_control,       only : build_tol_set
+   use meds_fast_integ_types,         only : frozen_t, march_state_t, fast_workspace_t
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water
    use meds_test_support, only : build_test_config, check_close, check_true, test_report
    implicit none
@@ -98,7 +98,7 @@ program test_column_ark
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
    gpp_ark = out%gpp_coh(1:N)
-   call check_true('ARK pre-pass gpp bit-identical to RK45 (one shared build_column_frozen)',                         &
+   call check_true('ARK pre-pass gpp bit-identical to RK45 (one shared build_frozen)',                         &
            abs(gpp_ark(1) - gpp_rk45(1)) < 1.0e-12_wp, abs(gpp_ark(1) - gpp_rk45(1)))
    call check_true('ARK midday gpp > 0', gpp_ark(1) > 0.0_wp, gpp_ark(1))
 
@@ -106,8 +106,8 @@ program test_column_ark
    !    leaf_emissivity and wood_emissivity, gathered into the view, the values the radiation       !
    !    solver emits with. Distinct values for leaf and wood catch a leaf-for-wood swap. -----------!
    block
-      type(column_frozen_t) :: fz
-      type(column_state_t)  :: ys
+      type(frozen_t) :: fz
+      type(march_state_t)  :: ys
       real(wp) :: eps_leaf0, eps_wood0
       eps_leaf0 = cfg%pft%leaf_emissivity(static%pft(1)) ; eps_wood0 = cfg%pft%wood_emissivity(static%pft(1))
       cfg%pft%leaf_emissivity = 0.93_wp ; cfg%pft%wood_emissivity = 0.87_wp
@@ -191,9 +191,9 @@ contains
    !----- The frozen record a step marches against, as the schemes build it: the frozen build, the  !
    !      water network's step, and what it moved recorded into the record. ----------------------!
    subroutine frozen_record(fz, ys)
-      type(column_frozen_t), intent(out) :: fz
-      type(column_state_t),  intent(out) :: ys
-      call build_column_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws, fz, ys)
+      type(frozen_t), intent(out) :: fz
+      type(march_state_t),  intent(out) :: ys
+      call build_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws, fz, ys)
       call water_step(DT_FAST, static, site%soil_profile, site%soil, cfg%pft%hydraulics, fz%water_drive,         &
                       build_tol_set(cfg), ws%water, out%report%work)
       call record_water_flows(DT_FAST, cfg, site, static, dynamic, ws%water, out, fz)
@@ -235,8 +235,8 @@ contains
    !      at a storm front (BCI, 2017-04-17). The water stores take that enthalpy instead, and what       !
    !      the soil gives up must equal what the tissues and their water stores gain. --------------------!
    subroutine test_refilling_wood_isothermal()
-      type(column_frozen_t) :: fz
-      type(column_state_t)  :: ys
+      type(frozen_t) :: fz
+      type(march_state_t)  :: ys
       real(wp) :: refill, gained, given
       call reset_state()
       call set_noon_forcing()
@@ -261,8 +261,8 @@ contains
    !      wood store, its fine roots' share included (docs/science/vegetation_energy_dynamics.md       !
    !      eq. (8)), so a store drained by a fifth holds a fifth less of that water's heat. ------------!
    subroutine test_wood_capacity_follows_store()
-      type(column_frozen_t) :: fz
-      type(column_state_t)  :: ys
+      type(frozen_t) :: fz
+      type(march_state_t)  :: ys
       real(wp) :: w_store, cap_dry, cap_full, cap_drained
       call reset_state()
       call set_noon_forcing()
@@ -401,7 +401,7 @@ contains
    !      whole_water AND whole_energy must still close -- energy closing needs NO separate wiring of        !
    !      its own: the shed water's enthalpy rides the SAME infiltration-enthalpy treatment (e_infil)        !
    !      every other infiltrating input gets, once mixed into the pond's inflow                             !
-   !      by build_column_frozen. ---------------------------------------------------------------------------!
+   !      by build_frozen. ---------------------------------------------------------------------------!
    subroutine test_ark_shed_water()
       integer(ik) :: istep
       real(wp)    :: theta_dry, theta_col1

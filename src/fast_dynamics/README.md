@@ -9,7 +9,7 @@ calculators: device-eligible, netCDF-free (forcing arrives as passed-in value ty
 | `canopy/` | the **medium** — radiative transfer, aerodynamics, the canopy air space |
 | `plant/` | the **organisms** — leaf gas exchange, hydraulics, maintenance respiration, tissue energy |
 | `soil/` | the **ground** — soil water's flows (between layers, evaporation, drainage), soil energy, the ground skin, the snow store |
-| `integrator/` | the integrator machinery: the state vector, the frozen work record, ARK and RK45, the soil-plant water solver, the pre-pass, error control |
+| `integrator/` | the integrator, by stage: the records and the march state (`meds_fast_integ_types`), error control (`_control`), the right-hand sides (`_derivs`), the backward-Euler solves (`_backward_euler`), the two schemes (`_esdirk2`, `_rk45`), the frozen record (`_frozen`), the update and ledgers (`_update`) and the step itself (`_stepper`) |
 | `driver/` | the loop that walks one slow step in `dt_fast` sub-steps over the patch axis (`meds_fast_dynamics`): the gather and scatter of each patch's state and the sums the slow step reads (`meds_fast_state`), the forcing (`meds_fast_forcing`) and what the output reads (`meds_fast_diag`) |
 
 `integrator/` and `driver/` may see `polygon_t`; **the kernel folders may not**, and that is what
@@ -44,7 +44,7 @@ so every symbol has exactly one legal spelling.
   the explicit path and an implicit step — both implicit in the exchange with the atmosphere. The
   driver assembles the summed surface and biotic sources and the capacities, conductances and
   atmospheric boundary conditions.
-- **Soil and plant water** — solved by **`meds_spac_solver`** (in `integrator/`): the pond, every
+- **Soil and plant water** — solved in `integrator/` (`water_step`): the pond, every
   soil layer and every cohort's wood and leaf water are stores in one network, joined by flow
   paths (soil faces, infiltration, root uptake, xylem, transpiration). Each `dt_fast` it is solved
   implicitly, with Newton iterations on each store's own unknown and adaptive sub-steps. The
@@ -92,16 +92,17 @@ constitutive relations by physical quantity rather than by caller:
 
 ## Coupling
 
-The stateless kernels are woven per sub-step by **`meds_fast_ark`** (an L-stable ESDIRK2, the
-default) or **`meds_fast_rk45`** (adaptive Cash-Karp, the explicit alternative), dispatched by
-`meds_fast_step`, which also owns the RK45-to-ARK stiff rescue. Every store closes a
-machine-precision budget residual.
+The stateless kernels are woven per sub-step by **`meds_fast_integ_stepper`**: the frozen record, the
+water network's step, one adaptive march of **`meds_fast_integ_esdirk2`** (an L-stable ESDIRK2, the
+default) or **`meds_fast_integ_rk45`** (adaptive Cash-Karp, the explicit alternative, redone on
+ESDIRK2 when it cannot resolve a step), and the update. Every store closes a machine-precision
+budget residual.
 
 The integration story is in [`docs/science/column_biophysics.md`](../../docs/science/column_biophysics.md),
 with per-store pages for the canopy air space, soil, vegetation energy and snow, and the time
 integration itself in [`numerical_scheme.md`](../../docs/science/numerical_scheme.md).
 
 **Tests.** Individual kernels: `test_canopy_radiation`, `test_aerodynamics`, `test_water_processes`,
-`test_spac_solver`, `test_column_hydrology`, `test_column_energy`, `test_surface_energy`, `test_snow`, `test_column_co2`. The coupled loop:
+`test_water_network`, `test_column_hydrology`, `test_column_energy`, `test_surface_energy`, `test_snow`, `test_column_co2`. The coupled loop:
 `test_column_dynamics`, `test_column_derivs`, `test_column_ark`, `test_column_rk45`,
 `test_fast_loop`.

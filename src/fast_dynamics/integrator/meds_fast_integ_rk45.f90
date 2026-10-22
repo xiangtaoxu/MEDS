@@ -1,26 +1,26 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_rk45 -- the explicit fast-loop scheme a run can choose ("rk45"): one Cash-Karp  !
-! 5(4) step over the whole column state (canopy air, soil energy and water, plant water,    !
-! films) through the shared right-hand side column_derivs, from the same frozen record as   !
-! ESDIRK2, with its embedded error and b-weighted boundary-flux amounts; and the railed      !
-! check. It is also the explicit reference the tests compare ESDIRK2 against. The stepper    !
-! (meds_fast_step) marches it, and marches the step again with ESDIRK2 when it cannot       !
-! resolve it (docs/science/numerical_scheme.md §3 `rk45`, §5b).                              !
+! meds_fast_integ_rk45 -- the explicit fast-loop scheme a run can choose ("rk45"):         !
+! rk45_step is one Cash-Karp 5(4) step over the whole march state (canopy air, soil energy !
+! and water, plant water, films) through the shared right-hand side march_derivs, from the !
+! same frozen record as ESDIRK2, with its embedded error and b-weighted boundary-flux      !
+! amounts; rk45_state_railed checks the march's end. It is also the explicit reference the !
+! tests compare ESDIRK2 against. The stepper marches it, and marches the step again with   !
+! ESDIRK2 when it cannot resolve it (docs/science/numerical_scheme.md §3 `rk45`, §5b).     !
 !==========================================================================================!
-module meds_fast_rk45
+module meds_fast_integ_rk45
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cp_air
    use meds_therm_lib,        only : cas_enthalpy_to_temp, internal_energy_liquid
-   use meds_fast_time_derivs, only : column_derivs, cas_conductances
+   use meds_fast_integ_derivs, only : march_derivs, cas_conductances
    use meds_site_state_vars,  only : site_surface_t
-   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, surface_tend_t, stage_bflux_t, &
-                                     column_bflux_t
-   use meds_column_state_ops, only : state_init, state_accum, state_sub, clamp_cas, diagnose_soil_temps
+   use meds_fast_integ_types,       only : march_state_t, frozen_t, march_tend_t, surface_tend_t, stage_bflux_t, &
+                                     boundary_flux_t, state_init, state_accum, state_sub, clamp_cas,               &
+                                     diagnose_soil_temps
    implicit none
    private
 
-   public :: rk45_column_step, rk45_state_railed
+   public :: rk45_step, rk45_state_railed
    public :: RK45_P_ORDER, RK45_WORK_CAP
 
    !----- Cash-Karp 5(4) tableau (Cash & Karp 1990, ACM TOMS 16:201; Numerical Recipes' rkck). The    !
@@ -51,17 +51,17 @@ contains
    !---------------------------------------------------------------------------------------!
    ! explicit_stage_bflux -- one explicit stage's boundary-flux rates, the counterpart of     !
    ! column_be_stage's: the state is the stage input y_stage, and k and surf_tend are          !
-   ! column_derivs' tendency and surface diagnostic there, condensation included at the       !
+   ! march_derivs' tendency and surface diagnostic there, condensation included at the       !
    ! stage's own canopy-air temperature. The canopy air is charged at the conductances the    !
    ! tendency used, re-solved at the stage's state (docs/science/numerical_scheme.md §5b);     !
-   ! cas_conductances is pure, so this matches column_derivs, and carrying them on            !
+   ! cas_conductances is pure, so this matches march_derivs, and carrying them on            !
    ! surface_tend_t instead would perturb ifx's inlining and FMA choices in surface_derivs.   !
    ! The soil's and the column's bottom face is k%g_bottom, positive up.                      !
    !---------------------------------------------------------------------------------------!
    pure subroutine explicit_stage_bflux(y_stage, frozen, k, surf_tend, bf)
-      type(column_state_t),  intent(in)  :: y_stage
-      type(column_frozen_t), intent(in)  :: frozen
-      type(column_tend_t),   intent(in)  :: k
+      type(march_state_t),  intent(in)  :: y_stage
+      type(frozen_t), intent(in)  :: frozen
+      type(march_tend_t),   intent(in)  :: k
       type(surface_tend_t),  intent(in)  :: surf_tend
       type(stage_bflux_t),   intent(out) :: bf
       real(wp) :: gah, gaw, gac, e_infil, e_drain
@@ -93,7 +93,7 @@ contains
    end subroutine explicit_stage_bflux
 
    !---------------------------------------------------------------------------------------!
-   ! rk45_column_step -- one Cash-Karp 5(4) step over column_derivs, committing the 5th-order  !
+   ! rk45_step -- one Cash-Karp 5(4) step over march_derivs, committing the 5th-order  !
    ! solution; y_err is the 5th - 4th difference, and bf the step's boundary-flux amounts,     !
    ! b-weighted like the commit, with the tissue-temperature time integrals and each cohort's  !
    ! transpiration. Each stage input's canopy air is clamped (clamp_cas) so that an oversized  !
@@ -103,26 +103,26 @@ contains
    ! the controller out of moves, and a clamp there would move mass or energy with no ledger   !
    ! entry; a railed commit is caught by rk45_state_railed.                                    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine rk45_column_step(y, frozen, site, n, nsl, dt, y_out, y_err, bf, clamp_stage_n)
-      type(column_state_t),  intent(in)  :: y
-      type(column_frozen_t), intent(in)  :: frozen
+   pure subroutine rk45_step(y, frozen, site, n, nsl, dt, y_out, y_err, bf, clamp_stage_n)
+      type(march_state_t),  intent(in)  :: y
+      type(frozen_t), intent(in)  :: frozen
       type(site_surface_t),  intent(in)  :: site
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
-      type(column_state_t),  intent(out) :: y_out, y_err
-      type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux amounts over dt (ledger)
+      type(march_state_t),  intent(out) :: y_out, y_err
+      type(boundary_flux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux amounts over dt (ledger)
       !----- Stage-clamp count (the report's WORK_CLAMP_STAGE), expected on an oversized trial. ------!
       integer(ik), optional, intent(inout) :: clamp_stage_n
 
-      type(column_tend_t)  :: k1, k2, k3, k4, k5, k6
-      type(column_state_t) :: y_stage, y_4th
+      type(march_tend_t)  :: k1, k2, k3, k4, k5, k6
+      type(march_state_t) :: y_stage, y_4th
       type(surface_tend_t) :: surf_tend
       type(stage_bflux_t)  :: s(6)
       !----- Per-stage tissue temperatures and transpiration, for the time integrals the tissues'   !
       !      energy and the diagnostics are set from. -------------------------------------------!
       real(wp) :: tleaf_s(n,6), twood_s(n,6), transp_s(n,6)
 
-      call column_derivs(y, frozen, site, n, nsl, k1, sf_out=surf_tend)
+      call march_derivs(y, frozen, site, n, nsl, k1, sf_out=surf_tend)
       call explicit_stage_bflux(y, frozen, k1, surf_tend, s(1))
       tleaf_s(1:n,1) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,1) = surf_tend%wood_temp(1:n)
@@ -131,7 +131,7 @@ contains
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A21, k1, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, site, n, nsl, k2, sf_out=surf_tend)
+      call march_derivs(y_stage, frozen, site, n, nsl, k2, sf_out=surf_tend)
       call explicit_stage_bflux(y_stage, frozen, k2, surf_tend, s(2))
       tleaf_s(1:n,2) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,2) = surf_tend%wood_temp(1:n)
@@ -141,7 +141,7 @@ contains
       call state_accum(y_stage, dt*A31, k1, n, nsl)
       call state_accum(y_stage, dt*A32, k2, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, site, n, nsl, k3, sf_out=surf_tend)
+      call march_derivs(y_stage, frozen, site, n, nsl, k3, sf_out=surf_tend)
       call explicit_stage_bflux(y_stage, frozen, k3, surf_tend, s(3))
       tleaf_s(1:n,3) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,3) = surf_tend%wood_temp(1:n)
@@ -152,7 +152,7 @@ contains
       call state_accum(y_stage, dt*A42, k2, n, nsl)
       call state_accum(y_stage, dt*A43, k3, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, site, n, nsl, k4, sf_out=surf_tend)
+      call march_derivs(y_stage, frozen, site, n, nsl, k4, sf_out=surf_tend)
       call explicit_stage_bflux(y_stage, frozen, k4, surf_tend, s(4))
       tleaf_s(1:n,4) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,4) = surf_tend%wood_temp(1:n)
@@ -164,7 +164,7 @@ contains
       call state_accum(y_stage, dt*A53, k3, n, nsl)
       call state_accum(y_stage, dt*A54, k4, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, site, n, nsl, k5, sf_out=surf_tend)
+      call march_derivs(y_stage, frozen, site, n, nsl, k5, sf_out=surf_tend)
       call explicit_stage_bflux(y_stage, frozen, k5, surf_tend, s(5))
       tleaf_s(1:n,5) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,5) = surf_tend%wood_temp(1:n)
@@ -177,7 +177,7 @@ contains
       call state_accum(y_stage, dt*A64, k4, n, nsl)
       call state_accum(y_stage, dt*A65, k5, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, site, n, nsl, k6, sf_out=surf_tend)
+      call march_derivs(y_stage, frozen, site, n, nsl, k6, sf_out=surf_tend)
       call explicit_stage_bflux(y_stage, frozen, k6, surf_tend, s(6))
       tleaf_s(1:n,6) = surf_tend%leaf_temp(1:n)
       twood_s(1:n,6) = surf_tend%wood_temp(1:n)
@@ -209,14 +209,14 @@ contains
          bf%transp_coh(1:n)      = dt * (B1*transp_s(1:n,1) + B3*transp_s(1:n,3)                     &
                                          + B4*transp_s(1:n,4) + B6*transp_s(1:n,6))
       end if
-   end subroutine rk45_column_step
+   end subroutine rk45_step
 
    !----- The step's boundary-flux amounts over dt: the stage rates b-weighted like the commit        !
    !      (b2 = b5 = 0), summed over the four stages in order. -------------------------------------!
    pure subroutine bflux_cash_karp(s, dt, acc)
       type(stage_bflux_t),  intent(in)    :: s(6)
       real(wp),             intent(in)    :: dt
-      type(column_bflux_t), intent(inout) :: acc
+      type(boundary_flux_t), intent(inout) :: acc
       acc%cas_enth_in    = (B1*s(1)%cas_enth_in    + B3*s(3)%cas_enth_in    + B4*s(4)%cas_enth_in              &
                             + B6*s(6)%cas_enth_in) * dt
       acc%cas_enth_out   = (B1*s(1)%cas_enth_out   + B3*s(3)%cas_enth_out   + B4*s(4)%cas_enth_out             &
@@ -260,7 +260,7 @@ contains
    !      stepper then marches the step again with ESDIRK2. The canopy air's and each soil layer's !
    !      temperature at the march's end. --------------------------------------------------------!
    pure function rk45_state_railed(y_out, site, nsl) result(railed)
-      type(column_state_t), intent(in) :: y_out
+      type(march_state_t), intent(in) :: y_out
       type(site_surface_t), intent(in) :: site
       integer(ik),          intent(in) :: nsl
       logical :: railed
@@ -271,4 +271,4 @@ contains
       railed = t_cas <= T_LO .or. t_cas >= T_HI .or. any(t_soil <= T_LO) .or. any(t_soil >= T_HI)
    end function rk45_state_railed
 
-end module meds_fast_rk45
+end module meds_fast_integ_rk45

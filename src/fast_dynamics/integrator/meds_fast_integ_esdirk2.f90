@@ -1,41 +1,40 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_ark -- the default fast-loop scheme, an L-stable two-stage ESDIRK2 with the     !
-! ARS(2,2,2) tableau (config name "ark"; its explicit part is empty, so it is not an IMEX   !
-! scheme): ark2_column_step is one step with its embedded error and its b-weighted          !
-! boundary-flux amounts. The stepper (meds_fast_step) marches it (docs/science/             !
-! numerical_scheme.md §3 `ark`, eqs. (1)-(2), §5b).                                          !
+! meds_fast_integ_esdirk2 -- the default fast-loop scheme, an L-stable two-stage ESDIRK2   !
+! with the ARS(2,2,2) tableau (config name "ark"; its explicit part is empty, so it is not !
+! an IMEX scheme): esdirk2_step is one step with its embedded error and its b-weighted     !
+! boundary-flux amounts. The stepper marches it (docs/science/numerical_scheme.md §3       !
+! `ark`, eqs. (1)-(2), §5b).                                                               !
 !==========================================================================================!
-module meds_fast_ark
+module meds_fast_integ_esdirk2
    use meds_kinds, only : wp, ik
    use meds_site_state_vars, only : site_surface_t
-   use meds_fast_types, only : column_state_t, column_frozen_t, stage_bflux_t, column_bflux_t, error_control_t,   &
-                               ark_stages_t
-   use meds_column_state_ops, only : state_init, state_extrap, state_err_diff, bflux_bweight, clamp_cas
-   use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
+   use meds_fast_integ_types, only : march_state_t, frozen_t, stage_bflux_t, boundary_flux_t, error_control_t,   &
+                               ark_stages_t, state_init, state_extrap, state_err_diff, bflux_bweight, clamp_cas
+   use meds_fast_integ_backward_euler, only : column_be_stage, advance_plant_water, advance_surf_water_full
    implicit none
    private
 
-   public :: ark2_column_step
+   public :: esdirk2_step
 
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! ark2_column_step -- one ESDIRK2 step, docs/science/numerical_scheme.md eqs. (1)-(2): the  !
+   ! esdirk2_step -- one ESDIRK2 step, docs/science/numerical_scheme.md eqs. (1)-(2): the  !
    ! ARS(2,2,2) tableau (Ascher, Ruuth & Spiteri 1997), two backward-Euler stages over gamma*dt !
    ! (column_be_stage), stiffly accurate, so Y3 is the step. Soil water moves at the network's  !
    ! rate in the stages; plant water and the films are advanced once over dt on the stages'    !
    ! b-weighted fluxes, so neither adds to the embedded error y_err. --------------------------!
-   subroutine ark2_column_step(y, frozen, site, ec, n, nsl, dt, y_out, y_err, stages, bf, clamp_n)
-      type(column_state_t),  intent(in)  :: y
-      type(column_frozen_t), intent(in)  :: frozen
+   subroutine esdirk2_step(y, frozen, site, ec, n, nsl, dt, y_out, y_err, stages, bf, clamp_n)
+      type(march_state_t),  intent(in)  :: y
+      type(frozen_t), intent(in)  :: frozen
       type(site_surface_t),  intent(in)  :: site
       type(error_control_t), intent(in)  :: ec     !< its budget stop (column_be_stage)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
-      type(column_state_t),  intent(inout) :: y_out, y_err   !< filled in place
+      type(march_state_t),  intent(inout) :: y_out, y_err   !< filled in place
       type(ark_stages_t),    intent(inout) :: stages    !< this thread's stage storage, filled in place
-      type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
+      type(boundary_flux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
       !----- Stage-clamp count (the report's WORK_CLAMP_STAGE): only the stage-3 base is clamped. ---!
       integer(ik), optional, intent(inout) :: clamp_n
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
@@ -76,6 +75,6 @@ contains
             bf%transp_coh(1:n) = dt * transp_bw(1:n)
          end if
       end associate
-   end subroutine ark2_column_step
+   end subroutine esdirk2_step
 
-end module meds_fast_ark
+end module meds_fast_integ_esdirk2

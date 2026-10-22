@@ -7,8 +7,8 @@
 !                                                                                          !
 ! The read-offs (soil_head_to_theta, soil_theta_to_head) take a state and return a         !
 ! potential or a water content, with floors that keep a diagnostic finite. The water       !
-! relations (soil_water_relations, pond_water_relations) give the soil-plant water solver  !
-! (meds_spac_solver) a store's potential, water and conductivity with their derivatives in !
+! relations (soil_water_relations, pond_water_relations) give the soil-plant water network !
+! (water_derivs) a store's potential, water and conductivity with their derivatives in     !
 ! the variable it solves for, with no floors (docs/science/soil_plant_water.md §2). Flow   !
 ! between soil layers is in meds_soil_water; the plant's side is meds_plant_hydr_lib.      !
 !==========================================================================================!

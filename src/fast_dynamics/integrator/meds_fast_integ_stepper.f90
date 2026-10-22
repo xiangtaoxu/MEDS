@@ -1,33 +1,32 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_step -- one dt_fast of one patch. fast_step takes the run's configuration, the !
-! patch's site, its static state (what is fixed for the slow step), the forcing, the       !
-! dynamic state it advances, the output it fills and this thread's workspace, and runs the !
-! step in order: the frozen record, the water network's step between its two parts, the   !
-! march, and the update that commits it (docs/science/numerical_scheme.md §2-§3). The     !
-! march is adaptive_march, one controller for both schemes: ESDIRK2 (meds_fast_ark, the    !
-! default) or RK45 (meds_fast_rk45, the explicit Cash-Karp integrator and the tests'       !
-! explicit reference). A step RK45 cannot resolve is marched again with ESDIRK2 on the same!
-! frozen record. Also each cohort's psi_leaf, and H and LE (atm_fluxes). There is no       !
-! operator-split scheme.                                                                   !
+! meds_fast_integ_stepper -- one dt_fast of one patch. fast_step takes the run's           !
+! configuration, the patch's site, its static state (what is fixed for the slow step), the !
+! forcing, the dynamic state it advances, the output it fills and this thread's workspace, !
+! and runs the step in order: the frozen record, the water network's step between its two  !
+! parts, the march, and the update that commits it (docs/science/numerical_scheme.md       !
+! §2-§3). adaptive_march is one controller for both schemes, ESDIRK2 (the default) or RK45 !
+! (the explicit Cash-Karp integrator and the tests' explicit reference); a step RK45       !
+! cannot resolve is marched again with ESDIRK2 on the same frozen record. Also each        !
+! cohort's psi_leaf, and H and LE (atm_fluxes). There is no operator-split scheme.         !
 !==========================================================================================!
-module meds_fast_step
+module meds_fast_integ_stepper
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, tiny_num
    use meds_config,           only : meds_config_t
    use meds_fast_params,      only : INTEG_ARK, INTEG_RK45
    use meds_site_state_vars,  only : site_surface_t
-   use meds_fast_types,       only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,     &
-                                     fast_workspace_t, step_exports_t, column_state_t, column_frozen_t,           &
-                                     column_bflux_t, error_control_t, WORK_INTEG_STEPS, WORK_INTEG_REJECT,        &
-                                     WORK_RK45_RESCUE, WORK_CLAMP_STAGE
-   use meds_fast_control,     only : build_error_control, state_wrms_grouped, step_control_factor
-   use meds_column_state_ops, only : state_init, state_sub, zero_like, bflux_zero, bflux_add
-   use meds_fast_frozen,      only : build_column_frozen, record_water_flows
-   use meds_fast_be_stage,    only : water_step
-   use meds_fast_ark,         only : ark2_column_step
-   use meds_fast_rk45,        only : rk45_column_step, rk45_state_railed, RK45_P_ORDER, RK45_WORK_CAP
-   use meds_fast_update,      only : commit_amounts_t, update_dynamic_state, close_ledgers
+   use meds_fast_integ_types,       only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,     &
+                                     fast_workspace_t, step_exports_t, march_state_t, frozen_t,           &
+                                     boundary_flux_t, error_control_t, WORK_INTEG_STEPS, WORK_INTEG_REJECT,        &
+                                     WORK_RK45_RESCUE, WORK_CLAMP_STAGE, state_init, state_sub, zero_like,         &
+                                     bflux_zero, bflux_add
+   use meds_fast_integ_control,     only : build_error_control, state_wrms_grouped, step_control_factor
+   use meds_fast_integ_frozen,      only : build_frozen, record_water_flows
+   use meds_fast_integ_backward_euler,    only : water_step
+   use meds_fast_integ_esdirk2,         only : esdirk2_step
+   use meds_fast_integ_rk45,        only : rk45_step, rk45_state_railed, RK45_P_ORDER, RK45_WORK_CAP
+   use meds_fast_integ_update,      only : commit_amounts_t, update_dynamic_state, close_ledgers
    use meds_plant_hydraulics, only : leaf_node_psi
    implicit none
    private
@@ -57,9 +56,9 @@ contains
       type(fast_dynamic_state_t), intent(inout) :: dynamic
       type(fast_output_t),        intent(inout) :: out       !< sized by the caller (ensure_output_capacity)
       type(fast_workspace_t),     intent(inout) :: work      !< this thread's step storage, reused step to step
-      type(column_frozen_t)  :: frozen
-      type(column_state_t)   :: y, y_out
-      type(column_bflux_t)   :: acc
+      type(frozen_t)  :: frozen
+      type(march_state_t)   :: y, y_out
+      type(boundary_flux_t)   :: acc
       type(commit_amounts_t) :: moved
       type(error_control_t)  :: ec, ec_rk45
       real(wp)    :: dt0, dt_warm
@@ -86,7 +85,7 @@ contains
       !----- The frozen record, with the soil-plant water network stepped between its two parts: its  !
       !      time-mean flows are constants of the march (operator splitting; docs/science/            !
       !      numerical_scheme.md §2). ---------------------------------------------------------------!
-      call build_column_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
+      call build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
       call water_step(dt_fast, static, site%soil_profile, site%soil, cfg%pft%hydraulics, frozen%water_drive,     &
                       ec%tols, work%water, out%report%work)
       call record_water_flows(dt_fast, cfg, site, static, dynamic, work%water, out, frozen)
@@ -156,16 +155,16 @@ contains
    subroutine adaptive_march(scheme, y0, frozen, site, n, nsl, t_end, ec, dt_init, y_out, work, nsteps, nrej,       &
                              acc, dt_warm_out, clamp_n, ood_max)
       integer(ik),           intent(in)  :: scheme
-      type(column_state_t),  intent(in)  :: y0
-      type(column_frozen_t), intent(in)  :: frozen
+      type(march_state_t),  intent(in)  :: y0
+      type(frozen_t), intent(in)  :: frozen
       type(site_surface_t),  intent(in)  :: site
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: t_end, dt_init
-      type(error_control_t), intent(in)  :: ec       !< tolerances and controller (meds_fast_control)
-      type(column_state_t),  intent(inout) :: y_out  !< filled in place
+      type(error_control_t), intent(in)  :: ec       !< tolerances and controller (meds_fast_integ_control)
+      type(march_state_t),  intent(inout) :: y_out  !< filled in place
       type(fast_workspace_t), intent(inout) :: work  !< this thread's march and stage storage
       integer(ik),           intent(out) :: nsteps, nrej
-      type(column_bflux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
+      type(boundary_flux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
       !----- Warm start (docs/science/numerical_scheme.md §3 `ark`): the last accepted step that the     !
       !      interval's end did not cut short, to seed the next call. -------------------------------!
       real(wp),    optional, intent(out) :: dt_warm_out
@@ -176,7 +175,7 @@ contains
       !      place an explicit right-hand side was evaluated (theta_ood_max). Accumulated. ----------!
       real(wp),    optional, intent(inout) :: ood_max
 
-      type(column_bflux_t) :: bfsub
+      type(boundary_flux_t) :: bfsub
       real(wp)             :: t, dt, err, err_prev, fac, dt_floor
       real(wp)             :: dt_try, dt_warm
       integer(ik)          :: trial_cap, k
@@ -214,11 +213,11 @@ contains
             !      (docs/science/numerical_scheme.md §7, item 3). -----------------------------------!
             select case (scheme)
             case (INTEG_RK45)
-               call rk45_column_step(y, frozen, site, n, nsl, dt, y_new, y_err, bf=bfsub, clamp_stage_n=clamp_n)
+               call rk45_step(y, frozen, site, n, nsl, dt, y_new, y_err, bf=bfsub, clamp_stage_n=clamp_n)
                y_lo = zero_like(y_err, n, nsl)
                err = state_wrms_grouped(y_err, y_lo, y_new, n, nsl, ec%tols)
             case default
-               call ark2_column_step(y, frozen, site, ec, n, nsl, dt, y_new, y_err, work%stages, bf=bfsub,      &
+               call esdirk2_step(y, frozen, site, ec, n, nsl, dt, y_new, y_err, work%stages, bf=bfsub,      &
                                      clamp_n=clamp_n)
                call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
                err = state_wrms_grouped(y_new, y_lo, y, n, nsl, ec%tols)
@@ -262,23 +261,23 @@ contains
    !----- ESDIRK2 in nsub equal steps without error control, the fixed-sub-step path            !
    !      ([fast].ark_adaptive = false): acc sums their boundary-flux amounts. -------------------!
    subroutine fixed_march(y0, frozen, site, n, nsl, t_end, nsub, ec, work, y_out, acc, clamp_n)
-      type(column_state_t),   intent(in)    :: y0
-      type(column_frozen_t),  intent(in)    :: frozen
+      type(march_state_t),   intent(in)    :: y0
+      type(frozen_t),  intent(in)    :: frozen
       type(site_surface_t),   intent(in)    :: site
       integer(ik),            intent(in)    :: n, nsl, nsub
       real(wp),               intent(in)    :: t_end
       type(error_control_t),  intent(in)    :: ec
       type(fast_workspace_t), intent(inout) :: work
-      type(column_state_t),   intent(inout) :: y_out
-      type(column_bflux_t),   intent(out)   :: acc
+      type(march_state_t),   intent(inout) :: y_out
+      type(boundary_flux_t),   intent(out)   :: acc
       integer(ik),            intent(inout) :: clamp_n
-      type(column_state_t) :: ycur, ytmp, yerr
-      type(column_bflux_t) :: bfsub
+      type(march_state_t) :: ycur, ytmp, yerr
+      type(boundary_flux_t) :: bfsub
       integer(ik)          :: isub
       ycur = y0
       call bflux_zero(acc, n)
       do isub = 1_ik, nsub
-         call ark2_column_step(ycur, frozen, site, ec, n, nsl, t_end/real(nsub, wp), ytmp, yerr, work%stages,     &
+         call esdirk2_step(ycur, frozen, site, ec, n, nsl, t_end/real(nsub, wp), ytmp, yerr, work%stages,     &
                                bf=bfsub, clamp_n=clamp_n)
          call bflux_add(acc, bfsub)
          ycur = ytmp
@@ -301,4 +300,4 @@ contains
       h_flux  = exports%atm_heat_export / dt_fast
    end subroutine atm_fluxes
 
-end module meds_fast_step
+end module meds_fast_integ_stepper

@@ -1,23 +1,23 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_control -- the fast loop's error control, shared by both schemes so a target   !
-! accuracy means the same on each: the grouped error norm state_wrms_grouped and the step  !
-! factor step_control_factor (I or PI controller). The column mixes units, so each state's !
-! error is scaled by its group's (rtol, atol) (the seven groups of meds_fast_types; the    !
-! films and the pond carry none). The run's error control is built from [fast]             !
-! (build_error_control), with its budget stops; default_error_control serves the tests     !
-! (docs/science/numerical_scheme.md eqs. (3)-(4)). water_scales sets the scale of each of   !
-! the soil-plant water network's stores, against which its sub-step tolerances are read    !
-! (docs/science/soil_plant_water.md §3).                                                    !
+! meds_fast_integ_control -- the fast loop's error control, shared by both schemes so a    !
+! target accuracy means the same on each: the grouped error norm state_wrms_grouped and    !
+! the step factor step_control_factor (I or PI controller). The march state mixes units,   !
+! so each entry's error is scaled by its group's (rtol, atol) (the seven groups of         !
+! meds_fast_integ_types; the films and the pond carry none). The run's error control is    !
+! built from [fast] (build_error_control), with its budget stops; default_error_control    !
+! serves the tests (docs/science/numerical_scheme.md eqs. (3)-(4)). water_scales sets the  !
+! scale of each of the soil-plant water network's stores, against which its sub-step       !
+! tolerances are read (docs/science/soil_plant_water.md §3).                               !
 !==========================================================================================!
-module meds_fast_control
+module meds_fast_integ_control
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : tiny_num, rho_h2o
    use meds_numerics,    only : adaptive_step_update, clamp
    use meds_config,      only : meds_config_t
    use meds_fast_params, only : CTRL_PI
-   use meds_column_state_ops, only : state_to_array, state_entry_rules
-   use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, GRP_THETA, fast_static_state_t, POND
+   use meds_fast_integ_types,  only : march_state_t, tol_set_t, error_control_t, GRP_THETA, fast_static_state_t, POND, &
+                                state_to_array, state_entry_rules
    use meds_soil_params, only : soil_profile_t
    use meds_pft_params,  only : hydraulics_table_t
    implicit none
@@ -68,7 +68,7 @@ contains
    end function default_error_control
 
    !----- The default tolerance set: one `rtol` for every group and the per-field default atols    !
-   !      (tol_set_t's initial values, meds_fast_types). ------------------------------------------!
+   !      (tol_set_t's initial values, meds_fast_integ_types). ------------------------------------------!
    pure function default_tol_set(rtol) result(tols)
       real(wp), intent(in) :: rtol
       type(tol_set_t)      :: tols
@@ -85,7 +85,7 @@ contains
    ! path anyway: the water network's own sub-step control uses the same GRP_THETA tolerances. !
    !---------------------------------------------------------------------------------------!
    pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols) result(err)
-      type(column_state_t), intent(in) :: a, b, y_ref
+      type(march_state_t), intent(in) :: a, b, y_ref
       integer(ik),          intent(in) :: n, nsl
       type(tol_set_t),      intent(in) :: tols
       real(wp)    :: err, s
@@ -150,4 +150,4 @@ contains
       end do
    end subroutine water_scales
 
-end module meds_fast_control
+end module meds_fast_integ_control

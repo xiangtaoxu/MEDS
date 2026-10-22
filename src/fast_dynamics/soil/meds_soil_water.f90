@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_soil_water -- how water moves through and out of the soil column, each flux with    !
-! its derivatives for meds_spac_solver (docs/science/soil_biophysics.md eqs. (1)-(4)):     !
+! its derivatives for the water network (docs/science/soil_biophysics.md eqs. (1)-(4)):    !
 !   * soil_water_flux         -- Darcy flow between two layers, or the pond and the top    !
 !                                layer, eqs. (3)-(4);                                      !
 !   * ground_evaporation_rate -- evaporation from the top layer;                           !

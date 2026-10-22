@@ -30,12 +30,12 @@ program test_water_network
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : grav_head, rho_h2o, pi, tiny_num, n_soil_layer_max
    use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
-   use meds_fast_types,  only : fast_static_state_t, water_drive_t, water_work_t, tol_set_t,                    &
+   use meds_fast_integ_types,  only : fast_static_state_t, water_drive_t, water_work_t, tol_set_t,                    &
                                 ensure_static_capacity, POND, WOOD, LEAF, GRP_THETA, N_WORK, WORK_WATER_NSUB,   &
                                 WORK_WATER_REJECT, WORK_WATER_NFAIL
    use meds_fast_state,  only : derive_cohort_terms
-   use meds_fast_time_derivs, only : set_water_state
-   use meds_fast_be_stage, only : water_step, water_jacobian_error
+   use meds_fast_integ_derivs, only : set_water_state
+   use meds_fast_integ_backward_euler, only : water_step, water_jacobian_error
    use meds_plant_hydr_lib, only : build_hydro_table, water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head
    use meds_pft_params,    only : hydraulics_table_t

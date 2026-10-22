@@ -271,7 +271,7 @@ contains
    !=======================================================================================!
    !  THE STORE. Every conserved quantity the site holds, area-weighted to one m2 of site.     !
    !                                                                                          !
-   !  The water and energy store lists mirror meds_fast_ark's whole_water / whole_energy check  !
+   !  The water and energy store lists mirror meds_fast_integ_esdirk2's whole_water / whole_energy check  !
    !  term for term, so the two tiers cannot disagree about what exists; carbon is added here,   !
    !  since the fast whole-column ledger does not track it. One entry is a store only this   !
    !  tier can see, and omitting it would report a real carry-forward as a leak:                !

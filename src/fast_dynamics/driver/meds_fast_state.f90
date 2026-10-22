@@ -27,7 +27,7 @@ module meds_fast_state
    use meds_polygon_state_vars,  only : polygon_t
    use meds_state_defaults,      only : DMAX_PSI_LEAF_ACCUM_RESET
    use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
-   use meds_fast_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,  &
+   use meds_fast_integ_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,  &
                                         ensure_static_capacity
    implicit none
    private

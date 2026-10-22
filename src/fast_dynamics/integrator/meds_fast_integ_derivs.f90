@@ -1,16 +1,21 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_time_derivs -- the side-effect-free whole-column tendency f(y) = dy/dt the fast-loop     !
-! integrators share (docs/science/numerical_scheme.md §3): no flux hidden in a backward-Euler        !
-! denominator and no store mutated, so any tableau can combine its evaluations.                      !
-!   * surface_derivs   -- leaf and wood energy balance, ground skin, the three canopy-air twins;     !
-!   * column_derivs    -- surface_derivs plus the soil-heat column and the soil and plant water,     !
-!     which move at the soil-plant water network's frozen rates (§2);                                !
-!   * cas_conductances -- the CAS <-> atmosphere conductances at a live canopy-air state;          !
-!   * water_derivs     -- the soil-plant water network's flows, inflows and Jacobian at one state,  !
-!     and set_water_state its state from the model's (docs/science/soil_plant_water.md §1-§2).      !
+! meds_fast_integ_derivs -- the right-hand sides the fast loop's schemes evaluate, free of !
+! side effects: no flux hidden in a backward-Euler denominator and no store mutated, so    !
+! any tableau can combine the evaluations (docs/science/numerical_scheme.md §3).           !
+!   * surface_derivs -- leaf and wood energy balance, ground skin, the three canopy-air    !
+!     twins;                                                                               !
+!   * march_derivs -- surface_derivs plus the soil-heat column and the soil and plant      !
+!     water, which move at the water network's frozen rates (§2);                          !
+!   * cas_conductances -- the canopy-air <-> atmosphere conductances at a live canopy-air  !
+!     state;                                                                               !
+!   * assemble_soil_energy_forcing -- the soil-heat column's forcing, for the march and    !
+!     the backward-Euler stage alike;                                                      !
+!   * water_derivs -- the soil-plant water network's flows, inflows and Jacobian at one    !
+!     state, and set_water_state its state from the model's                                !
+!     (docs/science/soil_plant_water.md §1-§2).                                            !
 !==========================================================================================!
-module meds_fast_time_derivs
+module meds_fast_integ_derivs
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o, grav_head
    use meds_therm_lib, only : cas_molar_density, cas_enthalpy_to_temp, sat_specific_humidity,             &
@@ -19,14 +24,13 @@ module meds_fast_time_derivs
    use meds_soil_types, only : energy_forcing_t
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_soil_energy, only : soil_energy_time_deriv
-   use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_time_deriv
+   use meds_cas_biophysics, only : cas_box_t, cas_source_t, cas_box_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
    use meds_plant_biophysics, only : veg_energy_balance, lw_emission_slope
-   use meds_column_state_ops, only : assemble_soil_energy_forcing
-   use meds_fast_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
+   use meds_fast_integ_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
                                tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t,                  &
-                               column_state_t, column_frozen_t, column_tend_t, fast_static_state_t,               &
+                               march_state_t, frozen_t, march_tend_t, fast_static_state_t,               &
                                water_drive_t, water_tend_t, water_work_t, ensure_water_capacity, POND, WOOD, LEAF
    use meds_site_state_vars, only : site_surface_t
    use meds_soil_hydr_lib, only : soil_water_relations, soil_theta_to_unknown, pond_water_relations,              &
@@ -41,8 +45,9 @@ module meds_fast_time_derivs
    implicit none
    private
 
-   public :: surface_derivs, column_derivs, cas_conductances
+   public :: surface_derivs, march_derivs, cas_conductances
    public :: set_water_state, water_derivs
+   public :: assemble_soil_energy_forcing
 
    !----- [s] e-folding time of the smooth condensation sink, dq/dt = -(q - qsat)/TAU_COND: short       !
    !      against dt_fast, so supersaturated canopy air condenses within the step, and smooth (no clamp), !
@@ -75,7 +80,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! cas_conductances -- the one place that decides whether to re-solve the surface layer: a fresh    !
    ! solve when the bundle carries live MO inputs, else the bundle's own values. One rule keeps a      !
-   ! tendency and the boundary flux charged against it in agreement (stage_bnd, meds_fast_rk45).       !
+   ! tendency and the boundary flux charged against it in agreement (explicit_stage_bflux, RK45).   !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       type(cas_boundary_t),   intent(in)  :: cas
@@ -120,7 +125,7 @@ contains
       real(wp)    :: le_slope_wet, le_ref_wet, le_slope_wet_w, le_ref_wet_w
       real(wp)    :: gah_l, gaw_l, gac_l      !< the conductances this evaluation uses
       type(cas_source_t) :: cas_src
-      type(cas_column_t) :: cas_col
+      type(cas_box_t) :: cas_col
       integer(ik) :: i
 
       call ensure_surface_tend(f, n)
@@ -230,7 +235,7 @@ contains
       cas_col%atm_conductance_enthalpy = gah_l
       cas_col%atm_conductance_vapor    = gaw_l
       cas_col%atm_conductance_co2      = gac_l
-      call cas_column_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_src, cas_col,        &
+      call cas_box_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_src, cas_col,        &
                                  f%d_cas_enthalpy, f%d_cas_shv, f%d_cas_co2)
    end subroutine surface_derivs
 
@@ -252,19 +257,19 @@ contains
    end subroutine ensure_surface_tend
 
    !---------------------------------------------------------------------------------------!
-   ! column_derivs -- the whole-column RHS an RK45 stage evaluates; commits nothing. Diagnoses the    !
+   ! march_derivs -- the whole-column RHS an RK45 stage evaluates; commits nothing. Diagnoses the    !
    ! soil-top temperature from the state, runs the surface block, and assembles the soil-heat, soil-  !
    ! water and plant-water-mass tendencies. Water moves at the soil-plant water network's time-mean   !
    ! rates and the leaves transpire what the network gave them, so every stage sees the same water    !
    ! (docs/science/soil_plant_water.md §4, docs/science/numerical_scheme.md §5b).                     !
    !---------------------------------------------------------------------------------------!
-   pure subroutine column_derivs(y, frozen, site, n, nsl, f, sf_out)
-      type(column_state_t),  intent(in)  :: y
-      type(column_frozen_t), intent(in)  :: frozen
+   pure subroutine march_derivs(y, frozen, site, n, nsl, f, sf_out)
+      type(march_state_t),  intent(in)  :: y
+      type(frozen_t), intent(in)  :: frozen
       type(site_surface_t),  intent(in)  :: site
       integer(ik),           intent(in)  :: n      !< number of cohorts
       integer(ik),           intent(in)  :: nsl    !< number of active soil layers
-      type(column_tend_t),   intent(out) :: f
+      type(march_tend_t),   intent(out) :: f
       !----- This stage's own surface tendencies, for RK45's whole-column boundary-flux ledger (as   !
       !      column_be_stage's surf_tend serves ARK's). ----------------------------------------------!
       type(surface_tend_t),  intent(out), optional :: sf_out
@@ -327,7 +332,7 @@ contains
       f%d_leaf_surf_water(1:n) = frozen%film%intercept_leaf(1:n) - surf_tend%film_evap_leaf(1:n)
       f%d_wood_surf_water(1:n) = frozen%film%intercept_wood(1:n) - surf_tend%film_evap_wood(1:n)
       if (present(sf_out)) sf_out = surf_tend
-   end subroutine column_derivs
+   end subroutine march_derivs
 
    !=======================================================================================!
    !  The soil-plant water network (docs/science/soil_plant_water.md §1-§2): the pond, the   !
@@ -557,4 +562,37 @@ contains
 
    end subroutine water_derivs
 
-end module meds_fast_time_derivs
+
+   !---------------------------------------------------------------------------------------!
+   ! assemble_soil_energy_forcing -- the soil-heat column's forcing from the ground heat flux and the  !
+   ! water network's flows, for the ARK stage and march_derivs alike                                  !
+   ! (docs/science/numerical_scheme.md §5b, docs/science/soil_plant_water.md §5). face_flux is down-   !
+   ! positive (the kernel wants up, hence the flip); water_heat_out is the enthalpy leaving each layer !
+   ! other than across a face, plus the drainage's in the bottom layer, whose face is therefore 0; the !
+   ! top face carries infiltration at t_infil with the interior faces' upwind rule. No runoff term:    !
+   ! runoff leaves the pond.                                                                           !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, theta, water_heat_out,                  &
+                                                face_flux, infiltration, t_infil, e_drain)
+      type(energy_forcing_t), intent(out) :: eforc
+      integer(ik),            intent(in)  :: nsl
+      real(wp),               intent(in)  :: g_top          !< [W/m2]  net ground heat flux into the soil top
+      real(wp),               intent(in)  :: theta(:)       !< [m3/m3] soil moisture (thermal properties)
+      real(wp),               intent(in)  :: water_heat_out(:) !< [W/m2] enthalpy leaving each layer with water
+      real(wp),               intent(in)  :: face_flux(:)   !< [m/s]   DOWN-positive water flux at layer faces
+      real(wp),               intent(in)  :: infiltration   !< [kg/m2/s] top-face infiltration (pond -> soil)
+      real(wp),               intent(in)  :: t_infil        !< [K]     temperature of the infiltrating water
+      real(wp),               intent(in)  :: e_drain        !< [W/m2]  enthalpy leaving with bottom drainage
+      integer(ik) :: k
+      eforc%g_top = g_top
+      do k = 1_ik, nsl
+         eforc%soil_water(k)     = theta(k)
+         eforc%root_heat_sink(k) = water_heat_out(k)
+         eforc%w_flux(k)         = -face_flux(k)
+      end do
+      eforc%w_flux_top  = -infiltration / rho_h2o
+      eforc%t_water_top = t_infil
+      eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
+   end subroutine assemble_soil_energy_forcing
+
+end module meds_fast_integ_derivs

@@ -44,7 +44,7 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  THE AUTOMATIC-ARRAY STACK CEILING (opt-in flag below).
 #
 #  The fast loop carries ~740 B of automatic (stack) arrays per COHORT, live simultaneously across
-#  four nested frames (fast_step -> build_column_frozen -> column_prepass ->
+#  four nested frames (fast_step -> build_frozen -> canopy_leaf_gas_exchange /
 #  aero_bottom_to_top). On an 8 MB stack that is a hard SIGSEGV ceiling near 10-12k cohorts, and in
 #  a threaded run the ceiling follows each thread's stack, OMP_STACKSIZE, instead.
 #
@@ -301,14 +301,13 @@ target_link_libraries(meds_maps PUBLIC meds_met meds_config meds_netcdf_c)
 meds_fortran_flags(meds_maps)
 
 
-#----- The FAST loop: the integrator machinery (integrator/ -- the state vector, the frozen work  #
-#      records, the ARK and RK45 marches, the step controller and the pre-pass) and the         #
+#----- The FAST loop: the integrator machinery (integrator/ -- the records, the frozen build, the #
+#      water network's step, the ESDIRK2 and RK45 steps, the march and the update) and the        #
 #      driver that walks a slow step in dt_fast sub-steps over the patch axis (driver/).          #
 #                                                                                                  #
-#      meds_fast_prepass sits in integrator/, not driver/, because the step calls it: both schemes   #
-#      build their frozen record through build_column_frozen, which runs column_prepass once per   #
-#      dt_fast, so filing it under driver/ would make a cycle. It links meds_slow_kernels for the  #
-#      one fast->slow seam                                                                          #
+#      The frozen build's process rates sit in integrator/, not driver/, because the step calls   #
+#      them once per dt_fast, so filing them under driver/ would make a cycle. It links            #
+#      meds_slow_kernels for the one fast->slow seam                                               #
 #      (docs/science/soil_carbon.md §7): the sub-daily heterotrophic respiration must respire       #
 #      the SAME CENTURY matrix the daily step debits.                                               #
 file(GLOB FAST_SOURCES CONFIGURE_DEPENDS
@@ -822,11 +821,11 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_dynamics)
    add_test(NAME column_dynamics COMMAND test_column_dynamics)
 
-   #----- Pure fast-loop RHS; links meds_model for meds_fast_time_derivs.                    #
+   #----- Pure fast-loop RHS; links meds_model for meds_fast_integ_derivs.                    #
    add_executable(test_column_derivs test/test_column_derivs.f90)
    target_link_libraries(test_column_derivs PRIVATE meds_model meds_testassert)
    meds_fortran_flags(test_column_derivs)
-   add_test(NAME column_derivs COMMAND test_column_derivs)
+   add_test(NAME march_derivs COMMAND test_column_derivs)
 
    #----- INTEG_ARK wiring test: the coupled ARK (ESDIRK2) path through fast_step. ----------#
    add_executable(test_column_ark test/test_column_ark.f90)

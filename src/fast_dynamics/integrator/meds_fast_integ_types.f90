@@ -1,21 +1,25 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_types -- the shared types of the fast loop. What fast_step takes besides the  !
-! configuration and the site: the static state (the patch's cohorts and what else is fixed !
-! for the slow step), the dynamic state it advances, the forcing, the output (the step     !
-! report, the aerodynamics, the per-cohort fluxes) and the workspace; and the column       !
-! state, frozen record, tendency and boundary-flux types the integrators advance           !
-! (column_state_t, column_frozen_t, column_tend_t, stage_bflux_t, column_bflux_t). A leaf  !
-! module, so meds_fast_ark, meds_fast_rk45 and the shared right-hand side import it rather !
-! than each other (docs/science/numerical_scheme.md §2-§3,                                 !
-! docs/science/column_biophysics.md).                                                      !
+! meds_fast_integ_types -- the fast loop's records, and the march state's arithmetic. What !
+! fast_step takes besides the configuration and the site: the static state (the patch's    !
+! cohorts and what they fix for the slow step), the dynamic state it advances, the         !
+! forcing, the output (the step report, the aerodynamics, the per-cohort fluxes) and the   !
+! workspace. What the integrator works with inside: the error control's tolerances, the    !
+! frozen record (frozen_t), the march state and its tendency (march_state_t,               !
+! march_tend_t), the boundary-flux rates and amounts (stage_bflux_t, boundary_flux_t), and !
+! the soil-plant water network's records (water_drive_t, water_tend_t, water_state_t,      !
+! water_flows_t, water_work_t). The march state's fields are listed once, in               !
+! state_to_array, array_to_state, tend_to_array and state_entry_rules; the combinators     !
+! work on the flat array and never name a field. A new state field goes in those four, the !
+! type, pack_march_start, unpack_column_state and test_state_combinators. The module sits  !
+! below every other integrator module (docs/science/numerical_scheme.md §2-§3).            !
 !==========================================================================================!
-module meds_fast_types
+module meds_fast_integ_types
    use meds_kinds, only : wp, ik
-   use meds_constants, only : t_3ple, n_soil_layer_max
+   use meds_constants, only : t_3ple, n_soil_layer_max, rho_h2o
    use meds_pft_params, only : leaf_photo_table_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
-   use meds_therm_lib, only : cas_temp_to_enthalpy
+   use meds_therm_lib, only : cas_temp_to_enthalpy, cas_enthalpy_to_temp, internal_energy_to_temp
    use meds_biophysics_params, only : aero_params_t
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
@@ -23,7 +27,7 @@ module meds_fast_types
    use meds_soil_water, only : ground_evap_env_t
    use meds_fast_params, only : CTRL_I
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
-   use meds_cas_biophysics, only : cas_column_t
+   use meds_cas_biophysics, only : cas_box_t
    use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
@@ -40,11 +44,17 @@ module meds_fast_types
    public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
    public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t
-   public :: column_state_t, column_frozen_t, column_tend_t
-   public :: stage_bflux_t, column_bflux_t
+   public :: march_state_t, frozen_t, march_tend_t
+   public :: stage_bflux_t, boundary_flux_t
    public :: POND, WOOD, LEAF, COHORT_STORES
    public :: water_drive_t, water_tend_t, water_state_t, water_flows_t, water_work_t, ensure_water_capacity
    public :: alloc_static_state, alloc_dynamic_state   ! used only by the tests
+   !----- The march state's arithmetic. -----------------------------------------------------!
+   public :: state_to_array, state_entry_rules
+   public :: state_init, state_accum, state_extrap, state_sub, state_err_diff, zero_like
+   public :: bflux_zero, bflux_add, bflux_bweight
+   public :: clamp_cas, diagnose_soil_temps
+   public :: state_size, array_to_state, state_axpy   ! used only by the tests
 
    !----- The tolerance groups, one per kind of state, each scaling its entries in the error norm    !
    !      (docs/science/numerical_scheme.md eq. (3)). GRP_THETA also sets the soil-plant water       !
@@ -305,7 +315,7 @@ module meds_fast_types
 
    !=====================================================================================!
    ! The frozen record, by physical content (docs/science/numerical_scheme.md §2): what the     !
-   ! pre-pass (build_column_frozen) evaluates once at state^n and every stage of either         !
+   ! pre-pass (build_frozen) evaluates once at state^n and every stage of either         !
    ! integrator reads. A kernel takes only the pieces it reads (surface_derivs: cas, tissue,    !
    ! film, ground, snow). The CAS <-> atmosphere conductances are re-solved per stage.          !
    !=====================================================================================!
@@ -315,12 +325,12 @@ module meds_fast_types
    !      inputs a per-stage re-solve needs, and the biotic CO2 source. Plain scalars, so a stage    !
    !      can copy it and override the conductances. ----------------------------------------------!
    type :: cas_boundary_t
-      type(cas_column_t) :: box
+      type(cas_box_t) :: box
       !----- The box's conductances are the state^n values, which seed the march and the diagnostics; a stage !
       !      re-solves them at its own canopy-air state (docs/science/numerical_scheme.md §2, item 3; !
       !      docs/science/canopy_aerodynamics.md §2). mo_live says the mo_* inputs below are set: it  !
       !      is false for a hand-built record, which supplies its own conductances (a re-solve from    !
-      !      unset roughness and wind would not converge), true from build_column_frozen, and false   !
+      !      unset roughness and wind would not converge), true from build_frozen, and false   !
       !      again in ARK's stage copy once refreshed, so the Newton's repeated evaluations reuse it.  !
       logical :: mo_live = .false.            !< the mo_* inputs are populated => re-solve per evaluation
       type(aero_params_t) :: aero_cfg         !< MO constants (copy; POD)
@@ -425,7 +435,7 @@ module meds_fast_types
    !----- The prognostic column state the integrators advance: a flat copy of the patch's stores   !
    !      that the schemes combine and measure as one vector. Plant water is carried as mass; psi  !
    !      is diagnosed from it once per dt_fast for the pre-pass (docs/science/soil_plant_water.md). !
-   type :: column_state_t
+   type :: march_state_t
       real(wp) :: cas_enthalpy = 0.0_wp                    !< [J/kg]
       real(wp) :: cas_shv      = 0.0_wp                    !< [kg/kg]
       real(wp) :: cas_co2      = 0.0_wp                    !< [umol/mol]
@@ -441,10 +451,10 @@ module meds_fast_types
       !      no stomatal resistance. Per m2 of ground, unlike the per-plant fields above. ----------!
       real(wp), allocatable :: leaf_surf_water(:) !< [kg/m2 ground] canopy interception film on leaf
       real(wp), allocatable :: wood_surf_water(:) !< [kg/m2 ground] canopy interception film on wood
-   end type column_state_t
+   end type march_state_t
 
    !----- Soil water over this dt_fast, from the soil-plant water network's step (water_step, run in !
-   !      build_column_frozen): its boundary flows, end-of-step stores, the temperatures that value   !
+   !      build_frozen): its boundary flows, end-of-step stores, the temperatures that value   !
    !      the water crossing each boundary, and its interior faces. Every scheme commits its theta and !
    !      advects soil enthalpy on these same faces (docs/science/numerical_scheme.md §5b). ----------!
    type :: soil_hydrology_t
@@ -491,7 +501,7 @@ module meds_fast_types
       real(wp), allocatable :: sapflow_frozen(:), uptake_frozen(:)   !< [kg/plant/s] (ncoh)
    end type plant_water_t
 
-   !----- The frozen outcome of the step's snow advance (meds_fast_frozen%advance_snow_stage). With  !
+   !----- The frozen outcome of the step's snow advance (meds_fast_integ_frozen%advance_snow_stage). With  !
    !      no pack every field is 0 or .false., which reduces the consumers exactly to the snow-free   !
    !      form, so neither scheme needs a snow branch. ----------------------------------------------!
    type :: snow_stage_t
@@ -584,7 +594,7 @@ module meds_fast_types
    end type water_work_t
 
    !----- The container: everything held constant over one dt_fast, by physical content. -----------!
-   type :: column_frozen_t
+   type :: frozen_t
       type(cas_boundary_t)         :: cas          !< CAS <-> atmosphere boundary
       type(tissue_coefficients_t)  :: tissue       !< per-cohort leaf/wood energy coefficients + heat store
       type(canopy_film_capacity_t) :: film         !< canopy interception film
@@ -594,26 +604,26 @@ module meds_fast_types
       type(root_zone_t)            :: roots        !< the network's root uptake and its placement by layer
       type(plant_water_t)          :: plant        !< the network's sapflow and uptake per plant
       type(water_drive_t)          :: water_drive  !< what drives the water network over the step
-   end type column_frozen_t
+   end type frozen_t
 
    !----- Storage one thread's fast step reuses from step to step: the aerodynamic environment, the  !
    !      soil-plant water network and the ARK march's states and stages, filled in place and          !
    !      reallocated only when the cohort count changes. The stages are their own record so the     !
    !      march passes them beside its states. ------------------------------------------------------!
    type :: ark_stages_t
-      type(column_state_t) :: y2, base3, y3            !< the ARS(2,2,2) stages
+      type(march_state_t) :: y2, base3, y3            !< the ARS(2,2,2) stages
       type(surface_tend_t) :: sf2, sf3                 !< the stages' surface tendencies
    end type ark_stages_t
 
    type :: fast_workspace_t
       type(aero_env_t)      :: aenv                          !< the aerodynamic environment (set_aero_env)
       type(water_work_t)    :: water                         !< the soil-plant water network
-      type(column_state_t)  :: y_march, y_new, y_err, y_lo   !< the ARK march's state and trial step
+      type(march_state_t)  :: y_march, y_new, y_err, y_lo   !< the ARK march's state and trial step
       type(ark_stages_t)    :: stages                        !< the ARK step's stages
    end type fast_workspace_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!
-   type :: column_tend_t
+   type :: march_tend_t
       real(wp) :: d_cas_enthalpy = 0.0_wp
       real(wp) :: d_cas_shv      = 0.0_wp
       real(wp) :: d_cas_co2      = 0.0_wp
@@ -627,10 +637,10 @@ module meds_fast_types
       real(wp) :: g_top = 0.0_wp, drainage_rate = 0.0_wp, uptake_rate = 0.0_wp
       real(wp) :: g_bottom = 0.0_wp   !< [W/m2] heat across the soil column's bottom face, positive UP
       real(wp), allocatable :: leaf_temp(:)
-   end type column_tend_t
+   end type march_tend_t
 
    !----- ARK conservation ledger: per-stage boundary-flux rates (from column_be_stage), and their    !
-   !      b-weighted amounts summed over the accepted sub-steps (column_bflux_t). Since Y3 - y =      !
+   !      b-weighted amounts summed over the accepted sub-steps (boundary_flux_t). Since Y3 - y =      !
    !      (1-gamma)*h*K2 + gamma*h*K3 (docs/science/numerical_scheme.md eq. (1)), the amounts         !
    !      telescope against the committed store change to machine precision. ----------------------!
    type :: stage_bflux_t                                    !< per-stage RATES
@@ -644,12 +654,12 @@ module meds_fast_types
       real(wp) :: whole_cond    = 0.0_wp                         !< [kg/m2/s] condensate
       real(wp) :: whole_cond_enth = 0.0_wp                       !< [W/m2] its liquid enthalpy at the stage CAS temperature
       !----- Net CAS -> atmosphere export at the ledger's own stage states and conductances: the      !
-      !      reported H and LE (meds_fast_step%atm_fluxes; docs/science/numerical_scheme.md §5b). -----!
+      !      reported H and LE (meds_fast_integ_stepper%atm_fluxes; docs/science/numerical_scheme.md §5b). -----!
       real(wp) :: atm_heat_out = 0.0_wp                          !< [W/m2]    g_atm_heat*cp_air*(T_cas - theta_atm)
       real(wp) :: atm_vap_out  = 0.0_wp                          !< [kg/m2/s] g_atm_vapour*(q_cas - q_atm)
    end type stage_bflux_t
 
-   type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
+   type :: boundary_flux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
       real(wp) :: cas_enth_in = 0.0_wp, cas_enth_out = 0.0_wp
       real(wp) :: cas_vap_in  = 0.0_wp, cas_vap_out  = 0.0_wp
       real(wp) :: cas_co2_in  = 0.0_wp, cas_co2_out  = 0.0_wp
@@ -672,7 +682,7 @@ module meds_fast_types
       !----- Each cohort's transpiration over the step [kg/m2 ground], b-weighted the same way: the  !
       !      water its leaves were debited and the canopy air credited, which the diagnostics report. !
       real(wp), allocatable :: transp_coh(:)
-   end type column_bflux_t
+   end type boundary_flux_t
 
 contains
 
@@ -856,4 +866,358 @@ contains
       if (.not. allocated(out%cdiag)) allocate(out%cdiag(N_CO_FAST_ROWS, n), source=0.0_wp)
    end subroutine ensure_output_capacity
 
-end module meds_fast_types
+
+   !=======================================================================================!
+   ! The state's fields, listed once. The integrator's bookkeeping works on one flat array per     !
+   ! state; the three routines below are the only ones that name march_state_t's fields, and     !
+   ! state_entry_rules the only one that says how each is treated. Fortran cannot check that a     !
+   ! field is listed, so test_state_combinators runs every field through every combinator.         !
+   ! Layout: CAS enthalpy, humidity, CO2 | soil energy (1:nsl) | soil water (1:nsl) |             !
+   !   per cohort: leaf, wood water | per cohort: leaf, wood film | pond: water, enthalpy         !
+   !=======================================================================================!
+   pure integer(ik) function state_size(n, nsl) result(m)
+      integer(ik), intent(in) :: n, nsl
+      m = 5_ik + 2_ik*nsl + 4_ik*n
+   end function state_size
+
+   pure subroutine state_to_array(y, n, nsl, v)
+      type(march_state_t), intent(in)  :: y
+      integer(ik),          intent(in)  :: n, nsl
+      real(wp),             intent(out) :: v(:)
+      integer(ik) :: i, o
+      v(1) = y%cas_enthalpy
+      v(2) = y%cas_shv
+      v(3) = y%cas_co2
+      v(4:3+nsl)       = y%soil_energy(1:nsl)
+      v(4+nsl:3+2*nsl) = y%theta(1:nsl)
+      o = 3_ik + 2_ik*nsl
+      do i = 1_ik, n
+         v(o+2*i-1) = y%leaf_water_mass(i)
+         v(o+2*i) = y%wood_water_mass(i)
+      end do
+      o = o + 2_ik*n
+      do i = 1_ik, n
+         v(o+2*i-1) = y%leaf_surf_water(i)
+         v(o+2*i) = y%wood_surf_water(i)
+      end do
+      o = o + 2_ik*n
+      v(o+1) = y%w_surface
+      v(o+2) = y%w_surface_energy
+   end subroutine state_to_array
+
+   !----- The inverse. The per-cohort arrays are allocated only when they are missing or of another !
+   !      length, so a state reused from call to call is filled in place. Soil layers past nsl are 0. !
+   pure subroutine array_to_state(v, n, nsl, y)
+      real(wp),             intent(in)    :: v(:)
+      integer(ik),          intent(in)    :: n, nsl
+      type(march_state_t), intent(inout) :: y
+      integer(ik) :: i, o
+      call ensure_cohort_arrays(y, n)
+      y%cas_enthalpy = v(1)
+      y%cas_shv = v(2)
+      y%cas_co2 = v(3)
+      y%soil_energy = 0.0_wp
+      y%theta = 0.0_wp
+      y%soil_energy(1:nsl) = v(4:3+nsl)
+      y%theta(1:nsl)       = v(4+nsl:3+2*nsl)
+      o = 3_ik + 2_ik*nsl
+      do i = 1_ik, n
+         y%leaf_water_mass(i) = v(o+2*i-1)
+         y%wood_water_mass(i) = v(o+2*i)
+      end do
+      o = o + 2_ik*n
+      do i = 1_ik, n
+         y%leaf_surf_water(i) = v(o+2*i-1)
+         y%wood_surf_water(i) = v(o+2*i)
+      end do
+      o = o + 2_ik*n
+      y%w_surface = v(o+1)
+      y%w_surface_energy = v(o+2)
+   end subroutine array_to_state
+
+   !----- A tendency in the same layout. The pond has none (it is committed from the water network),  !
+   !      so its entries are 0 and y + a*k leaves it as it was. ---------------------------------!
+   pure subroutine tend_to_array(k, n, nsl, v)
+      type(march_tend_t), intent(in)  :: k
+      integer(ik),         intent(in)  :: n, nsl
+      real(wp),            intent(out) :: v(:)
+      integer(ik) :: i, o
+      v(1) = k%d_cas_enthalpy
+      v(2) = k%d_cas_shv
+      v(3) = k%d_cas_co2
+      v(4:3+nsl)       = k%dedt(1:nsl)
+      v(4+nsl:3+2*nsl) = k%dtheta_dt(1:nsl)
+      o = 3_ik + 2_ik*nsl
+      do i = 1_ik, n
+         v(o+2*i-1) = k%d_leaf_water_mass(i)
+         v(o+2*i) = k%d_wood_water_mass(i)
+      end do
+      o = o + 2_ik*n
+      do i = 1_ik, n
+         v(o+2*i-1) = k%d_leaf_surf_water(i)
+         v(o+2*i) = k%d_wood_surf_water(i)
+      end do
+      o = o + 2_ik*n
+      v(o+1) = 0.0_wp
+      v(o+2) = 0.0_wp
+   end subroutine tend_to_array
+
+   !----- How entry j of the flat array is treated: norm_group, its group in the step-size error norm !
+   !      (0: not counted), and in_embedded_error. The films and the pond are outside the norm; the    !
+   !      plant water, films and pond ride operator-split maps outside the stages, so their embedded    !
+   !      difference is set to 0 rather than left as the extrapolation's rounding noise. ------------!
+   pure subroutine state_entry_rules(j, n, nsl, norm_group, in_embedded_error)
+      integer(ik), intent(in)  :: j, n, nsl
+      integer(ik), intent(out) :: norm_group
+      logical,     intent(out) :: in_embedded_error
+      integer(ik) :: o
+      o = 3_ik + 2_ik*nsl
+      if (j == 1_ik) then
+         norm_group = GRP_ENTH
+         in_embedded_error = .true.
+      else if (j == 2_ik) then
+         norm_group = GRP_SHV
+         in_embedded_error = .true.
+      else if (j == 3_ik) then
+         norm_group = GRP_CO2
+         in_embedded_error = .true.
+      else if (j <= 3_ik + nsl) then
+         norm_group = GRP_SE
+         in_embedded_error = .true.
+      else if (j <= o) then
+         norm_group = GRP_THETA
+         in_embedded_error = .true.
+      else if (j <= o + 2_ik*n) then
+         norm_group = merge(GRP_LEAF_W, GRP_WOOD_W, mod(j - o, 2_ik) == 1_ik)
+         in_embedded_error = .false.
+      else
+         norm_group = 0_ik
+         in_embedded_error = .false.         ! films and pond
+      end if
+   end subroutine state_entry_rules
+
+   !----- Allocate a state's per-cohort arrays for n cohorts, unless they already are. ------------!
+   pure subroutine ensure_cohort_arrays(y, n)
+      type(march_state_t), intent(inout) :: y
+      integer(ik),          intent(in)    :: n
+      if (allocated(y%leaf_water_mass) .and. allocated(y%wood_water_mass) .and.                   &
+          allocated(y%leaf_surf_water) .and. allocated(y%wood_surf_water)) then
+         if (size(y%leaf_water_mass) == n .and. size(y%wood_water_mass) == n .and.               &
+             size(y%leaf_surf_water) == n .and. size(y%wood_surf_water) == n) return
+      end if
+      if (allocated(y%leaf_water_mass)) deallocate(y%leaf_water_mass)
+      if (allocated(y%wood_water_mass)) deallocate(y%wood_water_mass)
+      if (allocated(y%leaf_surf_water)) deallocate(y%leaf_surf_water)
+      if (allocated(y%wood_surf_water)) deallocate(y%wood_surf_water)
+      allocate(y%leaf_water_mass(n), y%wood_water_mass(n), y%leaf_surf_water(n), y%wood_surf_water(n))
+   end subroutine ensure_cohort_arrays
+
+   !=======================================================================================!
+   ! The combinators, on the flat array. Each fills its output in place.                       !
+   !=======================================================================================!
+   !----- copy: y_stage = y. ---------------------------------------------------------------------!
+   pure subroutine state_init(y, n, nsl, y_stage)
+      type(march_state_t), intent(in)    :: y
+      integer(ik),          intent(in)    :: n, nsl
+      type(march_state_t), intent(inout) :: y_stage
+      real(wp) :: v(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(y, n, nsl, v)
+      call array_to_state(v, n, nsl, y_stage)
+   end subroutine state_init
+
+   !----- y_stage = y + a*k; a stage of several k's is state_init and repeated state_accum. ------!
+   pure subroutine state_axpy(y, a, k, n, nsl, y_stage)
+      type(march_state_t), intent(in)    :: y
+      real(wp),             intent(in)    :: a
+      type(march_tend_t),  intent(in)    :: k
+      integer(ik),          intent(in)    :: n, nsl
+      type(march_state_t), intent(inout) :: y_stage
+      real(wp) :: vy(5_ik + 2_ik*nsl + 4_ik*n), vk(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(y, n, nsl, vy)
+      call tend_to_array(k, n, nsl, vk)
+      vy = vy + a * vk
+      call array_to_state(vy, n, nsl, y_stage)
+   end subroutine state_axpy
+
+   !----- y_stage = y_stage + a*k, in place. ------------------------------------------------------!
+   pure subroutine state_accum(y_stage, a, k, n, nsl)
+      type(march_state_t), intent(inout) :: y_stage
+      real(wp),             intent(in)    :: a
+      type(march_tend_t),  intent(in)    :: k
+      integer(ik),          intent(in)    :: n, nsl
+      real(wp) :: vy(5_ik + 2_ik*nsl + 4_ik*n), vk(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(y_stage, n, nsl, vy)
+      call tend_to_array(k, n, nsl, vk)
+      vy = vy + a * vk
+      call array_to_state(vy, n, nsl, y_stage)
+   end subroutine state_accum
+
+   !----- Ledger helpers: b-weight two stage rates into amounts over dt (weights (1-gamma, gamma)      !
+   !      times dt); zero an accumulator; add one sub-step's amounts. --------------------------------!
+   pure subroutine bflux_bweight(acc, s2, s3, dt, gam)
+      type(boundary_flux_t), intent(out) :: acc
+      type(stage_bflux_t),  intent(in)  :: s2, s3
+      real(wp),             intent(in)  :: dt, gam
+      real(wp) :: b2, b3
+      b2 = (1.0_wp - gam) * dt
+      b3 = gam * dt
+      acc%cas_enth_in   = b2*s2%cas_enth_in   + b3*s3%cas_enth_in
+      acc%cas_enth_out  = b2*s2%cas_enth_out  + b3*s3%cas_enth_out
+      acc%cas_vap_in    = b2*s2%cas_vap_in    + b3*s3%cas_vap_in
+      acc%cas_vap_out   = b2*s2%cas_vap_out   + b3*s3%cas_vap_out
+      acc%cas_co2_in    = b2*s2%cas_co2_in    + b3*s3%cas_co2_in
+      acc%cas_co2_out   = b2*s2%cas_co2_out   + b3*s3%cas_co2_out
+      acc%soil_enth_in  = b2*s2%soil_enth_in  + b3*s3%soil_enth_in
+      acc%soil_enth_out = b2*s2%soil_enth_out + b3*s3%soil_enth_out
+      acc%soil_wat_in   = b2*s2%soil_wat_in   + b3*s3%soil_wat_in
+      acc%soil_wat_out  = b2*s2%soil_wat_out  + b3*s3%soil_wat_out
+      acc%whole_enth_in = b2*s2%whole_enth_in + b3*s3%whole_enth_in
+      acc%whole_enth_out= b2*s2%whole_enth_out+ b3*s3%whole_enth_out
+      acc%whole_wat_in  = b2*s2%whole_wat_in  + b3*s3%whole_wat_in
+      acc%whole_wat_out = b2*s2%whole_wat_out + b3*s3%whole_wat_out
+      acc%whole_cond    = b2*s2%whole_cond    + b3*s3%whole_cond
+      acc%whole_cond_enth = b2*s2%whole_cond_enth + b3*s3%whole_cond_enth
+      acc%atm_heat_out  = b2*s2%atm_heat_out  + b3*s3%atm_heat_out
+      acc%atm_vap_out   = b2*s2%atm_vap_out   + b3*s3%atm_vap_out
+   end subroutine bflux_bweight
+
+   pure subroutine bflux_zero(acc, n)
+      type(boundary_flux_t), intent(out) :: acc
+      integer(ik), optional, intent(in) :: n   !< allocate + zero the per-cohort tissue integrals
+      !----- intent(out) zeroes the scalars; no empty structure constructor (docs/building.md traps). -!
+      if (present(n)) then
+         allocate(acc%tissue_leaf_int(n), acc%tissue_wood_int(n), acc%transp_coh(n))
+         acc%tissue_leaf_int = 0.0_wp
+         acc%tissue_wood_int = 0.0_wp
+         acc%transp_coh = 0.0_wp
+      end if
+   end subroutine bflux_zero
+
+   pure subroutine bflux_add(acc, s)
+      type(boundary_flux_t), intent(inout) :: acc
+      type(boundary_flux_t), intent(in)    :: s
+      acc%cas_enth_in   = acc%cas_enth_in   + s%cas_enth_in
+      acc%cas_enth_out  = acc%cas_enth_out  + s%cas_enth_out
+      acc%cas_vap_in    = acc%cas_vap_in    + s%cas_vap_in
+      acc%cas_vap_out   = acc%cas_vap_out   + s%cas_vap_out
+      acc%cas_co2_in    = acc%cas_co2_in    + s%cas_co2_in
+      acc%cas_co2_out   = acc%cas_co2_out   + s%cas_co2_out
+      acc%soil_enth_in  = acc%soil_enth_in  + s%soil_enth_in
+      acc%soil_enth_out = acc%soil_enth_out + s%soil_enth_out
+      acc%soil_wat_in   = acc%soil_wat_in   + s%soil_wat_in
+      acc%soil_wat_out  = acc%soil_wat_out  + s%soil_wat_out
+      acc%whole_enth_in = acc%whole_enth_in + s%whole_enth_in
+      acc%whole_enth_out= acc%whole_enth_out+ s%whole_enth_out
+      acc%whole_wat_in  = acc%whole_wat_in  + s%whole_wat_in
+      acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
+      acc%whole_cond    = acc%whole_cond    + s%whole_cond
+      acc%whole_cond_enth = acc%whole_cond_enth + s%whole_cond_enth
+      acc%atm_heat_out  = acc%atm_heat_out  + s%atm_heat_out
+      acc%atm_vap_out   = acc%atm_vap_out   + s%atm_vap_out
+      !----- Only accepted sub-steps reach here, so the tissue integrals cover the same sub-steps as  !
+      !      every other amount. -------------------------------------------------------------------!
+      if (allocated(acc%tissue_leaf_int) .and. allocated(s%tissue_leaf_int)) then
+         acc%tissue_leaf_int = acc%tissue_leaf_int + s%tissue_leaf_int
+         acc%tissue_wood_int = acc%tissue_wood_int + s%tissue_wood_int
+      end if
+      if (allocated(acc%transp_coh) .and. allocated(s%transp_coh)) acc%transp_coh = acc%transp_coh + s%transp_coh
+   end subroutine bflux_add
+
+   !----- out = (1-b)*y + b*Y2, the ARS stage-3 extrapolation base (b = (1-gamma)/gamma,            !
+   !      docs/science/numerical_scheme.md eq. (1)). The plant water, the films and the pond are    !
+   !      frozen through the stages, so for them this is y again (up to rounding). -----------------!
+   pure subroutine state_extrap(y, b, Y2, n, nsl, out)
+      type(march_state_t), intent(in)    :: y, Y2
+      real(wp),             intent(in)    :: b
+      integer(ik),          intent(in)    :: n, nsl
+      type(march_state_t), intent(inout) :: out
+      real(wp) :: vy(5_ik + 2_ik*nsl + 4_ik*n), v2(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(y, n, nsl, vy)
+      call state_to_array(Y2, n, nsl, v2)
+      vy = (1.0_wp - b)*vy + b*v2
+      call array_to_state(vy, n, nsl, out)
+   end subroutine state_extrap
+
+   !----- Clamp the extrapolated CAS enthalpy and humidity into a wide physical range, so an overshoot  !
+   !      of the ARS base (b = 1 + sqrt(2)) cannot reach a temperature where qsat overflows; in range it !
+   !      is an identity. nfire counts the calls that moved the state (WORK_CLAMP_STAGE). ---------!
+   pure subroutine clamp_cas(s, nfire)
+      type(march_state_t), intent(inout) :: s
+      integer(ik), optional, intent(inout) :: nfire
+      real(wp) :: t, shv_c, enth_in
+      real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp, SHV_LO = 1.0e-8_wp, SHV_HI = 0.06_wp
+      enth_in = s%cas_enthalpy
+      shv_c = min(max(s%cas_shv, SHV_LO), SHV_HI)
+      t     = cas_enthalpy_to_temp(s%cas_enthalpy, shv_c)
+      t     = min(max(t, T_LO), T_HI)
+      s%cas_shv      = shv_c
+      s%cas_enthalpy = cas_temp_to_enthalpy(t, shv_c)
+      !----- An in-range state round-trips, so compare with the input: that also catches a          !
+      !      humidity-only clamp, which moves the enthalpy. ------------------------------------------!
+      if (present(nfire)) then
+         if (s%cas_enthalpy /= enth_in) nfire = nfire + 1_ik
+      end if
+   end subroutine clamp_cas
+
+   !----- The embedded error estimate of the ARS(2,2,2) step, err = (Y3 - base3) - (Y2 - y)          !
+   !      (docs/science/numerical_scheme.md eq. (2)), for the entries state_entry_rules counts, and  !
+   !      0 for the rest. ---------------------------------------------------------------------------!
+   pure subroutine state_err_diff(Y3, base3, Y2, y, n, nsl, err)
+      type(march_state_t), intent(in)    :: Y3, base3, Y2, y
+      integer(ik),          intent(in)    :: n, nsl
+      type(march_state_t), intent(inout) :: err
+      real(wp)    :: v3(5_ik + 2_ik*nsl + 4_ik*n), vb(5_ik + 2_ik*nsl + 4_ik*n)
+      real(wp)    :: v2(5_ik + 2_ik*nsl + 4_ik*n), vy(5_ik + 2_ik*nsl + 4_ik*n)
+      integer(ik) :: j, grp
+      logical     :: counted
+      call state_to_array(Y3, n, nsl, v3)
+      call state_to_array(base3, n, nsl, vb)
+      call state_to_array(Y2, n, nsl, v2)
+      call state_to_array(y, n, nsl, vy)
+      do j = 1_ik, size(v3, kind=ik)
+         call state_entry_rules(j, n, nsl, grp, counted)
+         if (counted) then
+            v3(j) = (v3(j) - vb(j)) - (v2(j) - vy(j))
+         else
+            v3(j) = 0.0_wp
+         end if
+      end do
+      call array_to_state(v3, n, nsl, err)
+   end subroutine state_err_diff
+
+   !----- out = a - b, the state difference that forms the low-order embedded solution. --------!
+   pure subroutine state_sub(a, b, n, nsl, out)
+      type(march_state_t), intent(in)    :: a, b
+      integer(ik),          intent(in)    :: n, nsl
+      type(march_state_t), intent(inout) :: out
+      real(wp) :: va(5_ik + 2_ik*nsl + 4_ik*n), vb(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(a, n, nsl, va)
+      call state_to_array(b, n, nsl, vb)
+      va = va - vb
+      call array_to_state(va, n, nsl, out)
+   end subroutine state_sub
+
+   !----- A state for n cohorts with every field zero, so the step-size norm can read an error that  !
+   !      is already a difference (state_wrms_grouped takes two states). ---------------------------!
+   pure function zero_like(ref, n, nsl) result(z)
+      type(march_state_t), intent(in) :: ref
+      integer(ik),          intent(in) :: n, nsl
+      type(march_state_t) :: z
+      real(wp) :: v(5_ik + 2_ik*nsl + 4_ik*n)
+      v = 0.0_wp
+      call array_to_state(v, n, nsl, z)
+   end function zero_like
+
+   !----- Re-diagnose every layer's temperature and liquid fraction from the committed energy + water. -!
+   pure subroutine diagnose_soil_temps(y_out, dry_hcap, nsl, soil_temp, soil_fliq)
+      type(march_state_t), intent(in)    :: y_out
+      real(wp),             intent(in)    :: dry_hcap(:)
+      integer(ik),          intent(in)    :: nsl
+      real(wp),             intent(inout) :: soil_temp(:), soil_fliq(:)
+      integer(ik) :: k
+      do k = 1_ik, nsl
+         call internal_energy_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o, dry_hcap(k), soil_temp(k), soil_fliq(k))
+      end do
+   end subroutine diagnose_soil_temps
+
+end module meds_fast_integ_types

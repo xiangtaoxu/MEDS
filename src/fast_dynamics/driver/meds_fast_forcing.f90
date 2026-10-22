@@ -19,7 +19,7 @@ module meds_fast_forcing
    use meds_canopy_types,       only : rad_forcing_t, rad_flux_t, alloc_rad_forcing, ground_optics_state_t
    use meds_canopy_radiation,   only : canopy_radiation, ground_optics
    use meds_ground_biophysics,  only : snow_cover_fraction
-   use meds_fast_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t
+   use meds_fast_integ_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t
    implicit none
    private
 

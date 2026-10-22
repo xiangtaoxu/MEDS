@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_plant_hydraulics -- unit tests for the stateless plant-hydraulics library: the curves and  !
-! laws the soil-plant water network is built from (its solve is test_spac_solver).               !
+! laws the soil-plant water network is built from (its solve is test_water_network).             !
 !                                                                                          !
 !   1. PV CURVE       : turgor-loss point matches Bartlett eqn 1; psi<->RWC round-trips;        !
 !                       capacitance C matches a finite-difference dW/dpsi.                        !
@@ -185,7 +185,7 @@ contains
 
    !=======================================================================================!
    ! ED2's root-fraction profile, and how a drying layer stops feeding the roots: its Gardner        !
-   ! conductance falls with its own K(theta) (test_spac_solver: no backflow, the solver's          !
+   ! conductance falls with its own K(theta) (test_water_network: no backflow, the solver's        !
    ! uptake by layer).                                                                              !
    !=======================================================================================!
    subroutine test_root_profile()

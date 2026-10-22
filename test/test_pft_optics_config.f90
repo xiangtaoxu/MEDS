@@ -21,7 +21,7 @@ program test_pft_optics_config
    use meds_pft_params,     only : hydraulics_table_t, RAD_VIS, RAD_LW
    use meds_constants,      only : stefan_boltzmann
    use meds_met_types,      only : met_forcing_t
-   use meds_fast_types,     only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,       &
+   use meds_fast_integ_types,     only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,       &
                                    ensure_static_capacity, ensure_forcing_capacity
    use meds_fast_forcing,   only : patch_forcing
    use meds_plant_hydr_lib, only : conductance_retained_fraction, tissue_psi_tlp,  &
