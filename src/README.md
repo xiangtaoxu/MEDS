@@ -13,7 +13,7 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 **domain** second, over a **state layer** that both halves share.
 
 ```
-src/                                    37.2 k lines · 105 modules · 21 CMake libraries
+src/                                    37.2 k lines · 106 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_share
 ├── share/         uses nothing outside itself; every layer may use it: kinds,
@@ -29,13 +29,13 @@ src/                                    37.2 k lines · 105 modules · 21 CMake 
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        meds_config_t (one field per key) and the routines that
-│   │              derive what the parameters imply (the soil column, the
-│   │              PFT table's arrays), the TOML reader, the loader, and
-│   │              the checks of the keys and their values                   3 203
+│   │              derive what the parameters imply (the PFT table's arrays;
+│   │              a site's soil profile, meds_soil_derive), the TOML reader,
+│   │              the loader, and the checks of the keys and their values   3 214
 │   └── params/    the run's parameters, one leaf per TOML block: the types
 │                  and codes a kernel imports without meds_config (the PFT
 │                  table, the soil, forcing, output, the fast loop, snow and
-│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   855
+│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   832
 │
 │  ── STATE, one file per level of the hierarchy, each in sections ────────────
 ├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
@@ -45,21 +45,21 @@ src/                                    37.2 k lines · 105 modules · 21 CMake 
 │                  meds_site_state_vars: the site block;
 │                  meds_polygon_state_vars: polygon_t; meds_diag_vars: the
 │                  diagnostic accumulators; meds_state_defaults: the values
-│                  a field holds before it has a real one                    2 758
+│                  a field holds before it has a real one                    2 756
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
-├── fast_dynamics/       sub-daily, one dt_fast per step                      9 309
+├── fast_dynamics/       sub-daily, one dt_fast per step                      9 311
 │   ├── canopy/    the medium: two-stream radiation, aerodynamics, the
 │   │              canopy-air box                                            1 028
 │   ├── plant/     the organisms: leaf gas exchange, hydraulics, maintenance
 │   │              respiration, tissue energy                                1 063
 │   ├── soil/      the ground: soil water, soil energy, the ground skin,
-│   │              the snow store                                              752
+│   │              the snow store                                              749
 │   ├── numerics/  the integrator machinery: the state vector, the frozen
-│   │              work record, ARK and RK45, error control, the pre-pass    5 026
+│   │              work record, ARK and RK45, error control, the pre-pass    5 034
 │   └── driver/    the fast loop's setup from the configuration, and the
 │                  walk of one slow step in dt_fast sub-steps over the
-│                  patches                                                   1 440
+│                  patches                                                   1 437
 │
 ├── slow_dynamics/       daily to annual                                      4 826
 │   ├── plant/     phenology, carbon allocation, trait plasticity               601
@@ -71,12 +71,12 @@ src/                                    37.2 k lines · 105 modules · 21 CMake 
 │                  drivers, and the slow conservation ledger                 2 017
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── io/            every data file a run reads or writes                     10 012
+├── io/            every data file a run reads or writes                     10 013
 │   ├── (root)     the netCDF C bindings, and the helpers both writers share    615
 │   ├── init/      the initial state, by [init].init_mode: bare ground, a
 │   │              cohort census, or a restart file, which the checkpoints
 │   │              write; init_polygon starts a polygon from one and seeds
-│   │              the fast loop's stores (init_fast_state)                   1 692
+│   │              the fast loop's stores (init_fast_state)                   1 693
 │   ├── met/       the atmosphere above the canopy: the met reader (a MEDS
 │   │              forcing file, or the ED_ERA5land archive) and its sample at
 │   │              a site and at a patch's canopy-air top (meds_met), the grid
@@ -126,9 +126,9 @@ machine precision.
 belongs in the `state/` file of the level that holds it: a patch's stores in
 `meds_patch_state_vars`, a cohort's fields in `meds_cohort_state_vars`. **Parameters are not state**: they are derived once and never
 integrated, so they live with the configuration they are derived from: their types in
-`config/params/` (`soil_params_t` in `meds_soil_params`, `pft_table_t` in `meds_pft_params`),
-and the routines that derive them in `config/meds_config` (the soil column's layer grid and
-bundles, the PFT table's leaf capacities). A kernel's own argument types are not parameters in this
+`config/params/` (`soil_params_t` and `soil_profile_t` in `meds_soil_params`, `pft_table_t` in
+`meds_pft_params`), and the routines that derive them in `config/` (a site's soil profile in
+`meds_soil_derive`, the PFT table's leaf capacities in `meds_config`). A kernel's own argument types are not parameters in this
 sense: `*_args_t` (`leaf_photo_args_t`, `pheno_args_t`, …) carry the values a kernel reads, a driver
 fills them from the parameters, and they live with the kernel.
 
