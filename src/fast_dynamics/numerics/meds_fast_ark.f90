@@ -15,7 +15,7 @@ module meds_fast_ark
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
                                column_budget_t, column_state_t, column_frozen_t, stage_bflux_t, column_bflux_t,   &
-                               error_control_t, mask_is_full, ark_stages_t, fast_workspace_t
+                               error_control_t, mask_is_full, ark_stages_t, fast_workspace_t, column_site_t
    use meds_column_state_ops, only : state_init, state_extrap, state_err_diff, state_sub, bflux_zero,             &
                                      bflux_add, bflux_bweight, clamp_cas, soil_water_store, soil_energy_store,    &
                                      plant_water_store, canopy_film_store, deposit_condensate,                    &
@@ -44,10 +44,10 @@ contains
    ! (column_be_stage), stiffly accurate, so Y3 is the step. Soil water moves at the network's  !
    ! rate in the stages; plant water and the films are advanced once over dt on the stages'    !
    ! b-weighted fluxes, so neither adds to the embedded error y_err. --------------------------!
-   subroutine ark2_column_step(y, frozen, col_config, n, nsl, dt, y_out, y_err, stages, niter, bf, clamp_n)
+   subroutine ark2_column_step(y, frozen, col_site, n, nsl, dt, y_out, y_err, stages, niter, bf, clamp_n)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
-      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
+      type(column_site_t),   intent(in)  :: col_site
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(inout) :: y_out, y_err   !< filled in place
@@ -67,14 +67,14 @@ contains
          if (present(niter)) np = max(1_ik, niter)
 
          !----- Stage 2: a gamma*dt backward-Euler stage from y_n. --------------------------------------!
-         call column_be_stage(y, frozen, col_config, n, nsl, GAMMA*dt, Y2, sf2, niter=np, bf=bf2)
+         call column_be_stage(y, frozen, col_site, n, nsl, GAMMA*dt, Y2, sf2, niter=np, bf=bf2)
          !----- Stage 3 from the extrapolated base. Extrapolating by BETA can carry the canopy-air      !
          !      enthalpy to a temperature where qsat overflows, so the base's canopy air is clamped to a  !
          !      physical range: an identity in range, and an oversized step is rejected anyway. Soil     !
          !      water needs no clamp: it moves at a steady rate, so the base stays between its ends. ----!
          call state_extrap(y, BETA, Y2, n, nsl, base3)
          call clamp_cas(base3, nfire=clamp_n)
-         call column_be_stage(base3, frozen, col_config, n, nsl, GAMMA*dt, Y3, sf3, niter=np, bf=bf3)
+         call column_be_stage(base3, frozen, col_site, n, nsl, GAMMA*dt, Y3, sf3, niter=np, bf=bf3)
          call state_init(Y3, n, nsl, y_out)
          !----- Plant water over the full dt at the network's rates, debited the same b-weighted         !
          !      transpiration the canopy air's vapour balance was credited. -----------------------------!
@@ -105,11 +105,11 @@ contains
    ! embedded error is within tolerance (docs/science/numerical_scheme.md eq. (3)) and sizing  !
    ! the next by step_control_factor (eq. (4), p = 1). Returns the step and reject counts.     !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_ark_march(y0, frozen, col_config, n, nsl, t_end, ec, dt_init, y_out, ws, nsteps, nrej, niter, acc, &
+   subroutine adaptive_ark_march(y0, frozen, col_site, n, nsl, t_end, ec, dt_init, y_out, ws, nsteps, nrej, niter, acc, &
                                  dt_warm_out, clamp_n)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
-      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
+      type(column_site_t),   intent(in)  :: col_site
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: t_end, dt_init
       type(error_control_t), intent(in)  :: ec       !< tolerances + controller + strictness (meds_fast_control)
@@ -151,7 +151,7 @@ contains
             dt_try = dt
             dt = min(dt, t_end - t)
             clamped = dt < dt_try - tiny_num
-            call ark2_column_step(y, frozen, col_config, n, nsl, dt, y_new, y_err, ws%stages, niter=np, bf=bfsub,          &
+            call ark2_column_step(y, frozen, col_site, n, nsl, dt, y_new, y_err, ws%stages, niter=np, bf=bfsub,          &
                                   clamp_n=clamp_n)
             call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
             !----- Grouped norm over the whole column state, eq. (3). ARK's theta and plant-water terms are  !
@@ -200,10 +200,11 @@ contains
    !  build the frozen record (which runs the water network), advance one dt_fast, commit the        !
    !  network's water and the tissue energy, deposit the condensate, and close the seven ledgers.   !
    !=======================================================================================!
-   subroutine column_fast_step_ark(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
+   subroutine column_fast_step_ark(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
                                    ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(column_config_t),   intent(in)    :: col_config
+      type(column_site_t),     intent(in)    :: col_site
       type(aero_env_t),        intent(inout) :: aenv
       type(aero_geom_t),       intent(in)    :: ageom
       type(column_cohort_t),   intent(in)    :: col_cohort
@@ -238,7 +239,7 @@ contains
       logical     :: halt_budgets     !< hard-stop on a non-closing budget (debug_error, full column only)
 
       n = col_cohort%n
-      nsl = col_config%soil%n_active
+      nsl = col_site%soil%n_active
       !----- The stage-clamp count accumulates down the call chain, so this step's tally starts here. !
       !      ARK has no explicit stage, so theta_ood_max stays 0. ------------------------------------!
       budget%clamp_stage_n = 0_ik
@@ -246,12 +247,12 @@ contains
 
       !----- A reduced column (process_mask_t) cannot conserve, so it suppresses the hard stops; the   !
       !      n_fail counts still run. ----------------------------------------------------------------!
-      halt_budgets = col_config%energy%debug_error .and. mask_is_full(col_config%mask)
+      halt_budgets = col_site%energy%debug_error .and. mask_is_full(col_config%mask)
 
       !----- State^n pond mass, for the whole-water ledger. ------------------------------------------!
       w_surface0 = biophys%soil_water%w_surface
 
-      call build_column_frozen(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
+      call build_column_frozen(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
                                n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       !----- State^n pond enthalpy, taken before the pond commit below overwrites it                  !
@@ -267,7 +268,7 @@ contains
          if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
          !----- The run's error control: tolerances, controller and strictness, eqs. (3)-(4). ----------!
          ec = col_config%integrator%error_control
-         call adaptive_ark_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, ws, nsteps, nrej,         &
+         call adaptive_ark_march(y, frozen, col_site, n, nsl, dt_fast, ec, dt0, y_out, ws, nsteps, nrej,         &
                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
                                  dt_warm_out=dt_warm_next,                                          &
                                  clamp_n=budget%clamp_stage_n)
@@ -278,7 +279,7 @@ contains
          ycur = y
          call bflux_zero(acc, n)
          do isub = 1_ik, nsub
-            call ark2_column_step(ycur, frozen, col_config, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr, ws%stages, &
+            call ark2_column_step(ycur, frozen, col_site, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr, ws%stages, &
                                   niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
                                   clamp_n=budget%clamp_stage_n)
             call bflux_add(acc, bfsub)
@@ -322,7 +323,7 @@ contains
          biophys%soil_water%w_surface      = y_out%w_surface
          biophys%soil_water%w_surface_energy = y_out%w_surface_energy
       end if
-      call diagnose_soil_temps(y_out, col_config%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
+      call diagnose_soil_temps(y_out, col_site%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
             biophys%soil_energy%soil_fliq)
       !----- The tissue heat store is solved in the stages, jointly with the canopy air               !
       !      (docs/science/vegetation_energy_dynamics.md §One formulation). Each tissue's energy is     !
@@ -348,7 +349,7 @@ contains
       if (acc%whole_cond > 0.0_wp) then
          cond_dep_mass = acc%whole_cond
          cond_dep_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (see column_bflux_t)
-         call deposit_condensate(y_out, col_config%soil%dz(1), cond_dep_mass, cond_dep_enth)
+         call deposit_condensate(y_out, col_site%soil%dz(1), cond_dep_mass, cond_dep_enth)
          biophys%soil_water%theta(1)       = y_out%theta(1)
          biophys%soil_energy%soil_energy(1) = y_out%soil_energy(1)
       end if
@@ -364,10 +365,10 @@ contains
       shv1 = y_out%cas_shv
       co21 = y_out%cas_co2
       e_pond1 = frozen%hydrology%w_surface_energy1
-      e_soil0 = soil_energy_store(y%soil_energy,     col_config%soil%dz, nsl)
-      e_soil1 = soil_energy_store(y_out%soil_energy, col_config%soil%dz, nsl)
-      w_soil0 = soil_water_store(y%theta,     col_config%soil%dz, nsl)
-      w_soil1 = soil_water_store(y_out%theta, col_config%soil%dz, nsl)
+      e_soil0 = soil_energy_store(y%soil_energy,     col_site%soil%dz, nsl)
+      e_soil1 = soil_energy_store(y_out%soil_energy, col_site%soil%dz, nsl)
+      w_soil0 = soil_water_store(y%theta,     col_site%soil%dz, nsl)
+      w_soil1 = soil_water_store(y_out%theta, col_site%soil%dz, nsl)
       !----- Plant water is a store: it absorbs the step's mismatch between transpiration and uptake  !
       !      (docs/science/plant_hydraulics.md eqs. (1)-(2)). ----------------------------------------!
       w_plant0 = plant_water_store(col_cohort%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)

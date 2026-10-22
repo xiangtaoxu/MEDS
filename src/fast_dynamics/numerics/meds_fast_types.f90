@@ -1,12 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_types -- the shared types of the fast loop: the working bundles the dispatch   !
-! hands to either integrator (column_config_t, column_cohort_t, column_forcing_t,          !
-! column_budget_t, patch_biophys_t) and the column state, frozen record, tendency and      !
-! boundary-flux types the integrators advance (column_state_t, column_frozen_t,             !
-! column_tend_t, stage_bflux_t, column_bflux_t). A leaf module, so meds_fast_ark,           !
-! meds_fast_rk45 and the shared right-hand side import it rather than each other           !
-! (docs/science/numerical_scheme.md §2-§3, docs/science/column_biophysics.md).              !
+! hands to either integrator (the run and site parts of the configuration, column_config_t !
+! and column_site_t; column_cohort_t, column_forcing_t, column_budget_t, patch_biophys_t)  !
+! and the column state, frozen record, tendency and boundary-flux types the integrators    !
+! advance (column_state_t, column_frozen_t, column_tend_t, stage_bflux_t, column_bflux_t). !
+! A leaf module, so meds_fast_ark, meds_fast_rk45 and the shared right-hand side import it !
+! rather than each other (docs/science/numerical_scheme.md §2-§3,                          !
+! docs/science/column_biophysics.md).                                                      !
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
@@ -26,7 +27,7 @@ module meds_fast_types
    implicit none
    private
 
-   public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
+   public :: column_config_t, column_site_t, column_cohort_t, column_forcing_t, column_budget_t
    public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
    public :: tol_set_t, error_control_t, integrator_opts_t
    public :: mask_is_full
@@ -98,22 +99,18 @@ module meds_fast_types
       type(error_control_t) :: error_control       !< tolerances + controller + strictness
    end type integrator_opts_t
 
-   !----- The column's configuration, built once per run and constant across dt_fast steps. ------!
+   !----- The run part of the column's configuration, built once per run (build_fast_context) and  !
+   !      shared by every site: what the run's configuration and the PFT table set. ---------------!
    type :: column_config_t
       type(process_mask_t)        :: mask            !< process-complexity mask (all on = full column)
       type(aero_cfg_t)            :: aero            !< aerodynamics constants
       type(veg_thermal_args_t)    :: veg_thermal    !< leaf/wood thermal params
-      type(soil_params_t)         :: soil           !< soil geometry + texture (n_active layers)
-      type(soil_thermal_params_t) :: soil_thermal   !< soil thermal texture
-      type(energy_opts_t)         :: energy         !< soil-thermal solver options
-      type(soil_opts_t)           :: soil_water_opts !< soil water and water-network options
       type(wood_args_t)           :: wood           !< stem-respiration parameters
       type(root_args_t)           :: root           !< fine-root-respiration parameters
       !----- Per-PFT plant hydraulics, built by apply_hydraulics_config. There is no PFT-uniform copy,
       !      so a caller cannot run every PFT on the first PFT's hydraulics by mistake.
       type(hydro_args_table_t)    :: hydraulics_table   !< per-PFT PV curves, vulnerability, conductance
       type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
-      type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       !----- Canopy-surface water, the interception film and its evaporation and dew                 !
       !      (docs/science/soil_biophysics.md §Canopy interception); opt-in. RK45 integrates the     !
@@ -127,6 +124,17 @@ module meds_fast_types
       type(decomp_opts_t) :: soil_carbon             !< [soil_carbon]: the switch and the CENTURY parameters (Rh)
       !----- The ARK's Newton iteration cap is NEWT_MAX in meds_fast_be_stage, not a config field. ---!
    end type column_config_t
+
+   !----- The site part: what differs from site to site, made for each site every slow step       !
+   !      (site_column_configs): its soil column, the water and heat solvers' options with its     !
+   !      bottom boundary, and its leaf table, acclimated to its own air. ------------------------!
+   type :: column_site_t
+      type(soil_params_t)         :: soil            !< soil geometry + texture (n_active layers)
+      type(soil_thermal_params_t) :: soil_thermal    !< soil thermal texture
+      type(soil_opts_t)           :: soil_water_opts !< soil water and water-network options, the bottom boundary
+      type(energy_opts_t)         :: energy          !< soil-thermal solver options, the deep temperature
+      type(leaf_photo_table_t)    :: leaf_photo      !< per-PFT leaf-photosynthesis parameters
+   end type column_site_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
    type :: column_cohort_t

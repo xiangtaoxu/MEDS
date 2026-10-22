@@ -20,7 +20,7 @@ module meds_fast_prepass
    use meds_plant_types, only : veg_thermal_args_t, leaf_photo_table_t, hydro_args_table_t, hydro_opts_t,         &
                                 wood_args_t, root_args_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
-                               column_budget_t
+                               column_budget_t, column_site_t
    use meds_soil_params,      only : soil_params_t
    use meds_state_defaults, only : is_unset_negative
    use meds_biophysics_params, only : aero_cfg_t
@@ -49,11 +49,12 @@ contains
    ! the canopy air (docs/science/plant_respiration.md eq. (7)). biophys is read-only: a caller     !
    ! that persists the CAS temperature writes biophys%cas%can_temp = tcas itself.                   !
    !---------------------------------------------------------------------------------------!
-   subroutine column_prepass(col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac, &
+   subroutine column_prepass(col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac, &
                              tcas, qcas, press, rho, t_ground, h_coeff_leaf, g_transp_leaf,                     &
                              cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                              gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       type(column_config_t),   intent(in)    :: col_config
+      type(column_site_t),     intent(in)    :: col_site
       type(aero_env_t),        intent(inout) :: aenv
       type(aero_geom_t),       intent(in)    :: ageom
       type(column_cohort_t),   intent(in)    :: col_cohort
@@ -79,23 +80,23 @@ contains
                                        biophys%wood_temp, aero, tcas, qcas, press, rho, t_ground)
 
       !----- 2. root-zone environment (root + heterotrophic respiration drivers). ------------------!
-      call root_zone_environment(col_config%soil, root_frac, biophys%soil_energy%soil_temp, biophys%soil_water%theta, &
+      call root_zone_environment(col_site%soil, root_frac, biophys%soil_energy%soil_temp, biophys%soil_water%theta, &
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
-      call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydraulics_table,                   &
+      call canopy_leaf_gas_exchange(col_site%leaf_photo, col_config%hydraulics_table,                     &
                                     col_config%hydraulics_opts, col_config%veg_thermal,                &
-                                    col_config%soil, col_cohort, forc, aero, biophys,                   &
+                                    col_site%soil, col_cohort, forc, aero, biophys,                     &
                                     qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,                  &
                                     gpp_coh, leaf_resp_coh, cdiag)
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
-      call canopy_maintenance_respiration(col_config%wood, col_config%root, col_config%soil, root_frac, col_cohort, &
+      call canopy_maintenance_respiration(col_config%wood, col_config%root, col_site%soil, root_frac, col_cohort,   &
                                           biophys%wood_temp, biophys%soil_energy%soil_temp, ra_stem, ra_root, &
                                           stem_resp_coh, root_resp_coh)
 
       !----- 5. heterotrophic respiration. -------------------------------------------------------!
-      call patch_heterotrophic_respiration(col_config, biophys%soil_carbon, t_ground,              &
+      call patch_heterotrophic_respiration(col_config, col_site, biophys%soil_carbon, t_ground,    &
                                            soil_temp_root, theta_mean, rh, budget)
 
       !----- NEE (docs/science/plant_respiration.md eq. (7)). slow_co2_rate is the autotrophic part this !
@@ -336,9 +337,10 @@ contains
    ! pool debit by construction; xi goes to budget%xi_step for the caller to accumulate. Zero with     !
    ! soil carbon off.                                                                                  !
    !---------------------------------------------------------------------------------------!
-   subroutine patch_heterotrophic_respiration(col_config, soil_carbon, t_ground, soil_temp_root,  &
+   subroutine patch_heterotrophic_respiration(col_config, col_site, soil_carbon, t_ground, soil_temp_root,  &
                                               theta_mean, rh, budget)
       type(column_config_t), intent(in)    :: col_config
+      type(column_site_t),   intent(in)    :: col_site
       type(soil_carbon_t),   intent(in)    :: soil_carbon
       real(wp),              intent(in)    :: t_ground, soil_temp_root, theta_mean
       real(wp),              intent(out)   :: rh              !< [umol/m2/s]
@@ -346,8 +348,8 @@ contains
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
       if (col_config%soil_carbon%soil_carbon_on) then
-         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_config%soil%theta_res(1),      &
-                                  col_config%soil%theta_sat(1), soil_carbon, col_config%soil_carbon, xi)
+         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_site%soil%theta_res(1),        &
+                                  col_site%soil%theta_sat(1), soil_carbon, col_config%soil_carbon, xi)
          call assemble_transfer_matrix(soil_carbon, col_config%soil_carbon, a_mat, k_diag, er)
          !----- The matrix returns kgC/m2/day, the pools' currency, which budget%rh_matrix_step keeps for  !
          !      the seam check; the canopy air gets umol/m2/s (docs/science/soil_carbon.md §7). ----------!

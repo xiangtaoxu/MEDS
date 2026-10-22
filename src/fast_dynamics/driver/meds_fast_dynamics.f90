@@ -48,7 +48,7 @@ module meds_fast_dynamics
                                  set_aero_env_canopy, ground_optics_state_t
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t,                  &
                                column_config_t, column_cohort_t, column_forcing_t, column_budget_t,               &
-                               ensure_column_cohort_capacity
+                               ensure_column_cohort_capacity, column_site_t
    use meds_biophysics_params, only : snow_params_t
    use meds_canopy_radiation, only : canopy_radiation, ground_optics
    use meds_ground_biophysics, only : snow_cover_fraction
@@ -165,8 +165,9 @@ contains
       logical     :: do_forcing, do_fast, do_cdiag, do_pdiag
       !----- Per-thread scratch for the per-(cohort, sub-step) diagnostics, folded into poly%cohort%diag. !
       real(wp),    allocatable :: cdiag_pool(:,:,:)                !< (N_CO_FAST_ROWS, cohort, thread)
-      !----- Each site's column configuration (site_column_configs), read-only in the patch loop. --!
-      type(column_config_t), allocatable :: site_col(:)
+      !----- Each site's part of the column configuration (site_column_configs), read-only in the   !
+      !      patch loop. ----------------------------------------------------------------------------!
+      type(column_site_t), allocatable :: site_col(:)
       !=========================================================================================!
       !  The per-thread scratch pool: one copy of each per-patch working buffer per thread,     !
       !  indexed by thread number and aliased with `associate` in the loop. A pool, not OpenMP  !
@@ -464,14 +465,14 @@ contains
             !      assumed-shape. The diagnostic capture is passed only when the run reports it. ---------!
             if (do_cdiag) then
                cdiag_buf(:, 1:ncoh) = 0.0_wp
-               call column_fast_step(cfg%dt_fast, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
+               call column_fast_step(cfg%dt_fast, ctx%col_config, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
                                      forc, biophys, aero, budget,                                                     &
                                      fast_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux, cdiag=cdiag_buf(:, 1:ncoh))
             else
-               call column_fast_step(cfg%dt_fast, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
+               call column_fast_step(cfg%dt_fast, ctx%col_config, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
                                      forc, biophys, aero, budget,                                                     &
                                      fast_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &

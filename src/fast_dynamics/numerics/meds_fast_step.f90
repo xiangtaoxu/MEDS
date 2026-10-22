@@ -13,7 +13,7 @@ module meds_fast_step
    use meds_fast_params,      only : INTEG_RK45
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
-                               column_budget_t, fast_workspace_t
+                               column_budget_t, fast_workspace_t, column_site_t
    use meds_fast_ark,         only : column_fast_step_ark
    use meds_fast_rk45,        only : column_fast_step_rk45, rk45_state_railed, rk45_ledgers_stop
    use meds_plant_hydraulics, only : leaf_node_psi
@@ -32,11 +32,12 @@ contains
    !   "rk45"          -- the adaptive explicit Cash-Karp march, a full alternative a run can  !
    !                      choose and the explicit reference the tests compare ARK against.    !
    !---------------------------------------------------------------------------------------!
-   subroutine column_fast_step(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
+   subroutine column_fast_step(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
                                gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
                                le_flux, h_flux, psi_leaf_coh, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(column_config_t),   intent(in)    :: col_config
+      type(column_site_t),     intent(in)    :: col_site
       type(aero_env_t),        intent(inout) :: aenv         !< can_* fields refreshed from CAS state
       type(aero_geom_t),       intent(in)    :: ageom
       type(column_cohort_t),   intent(in)    :: col_cohort
@@ -86,11 +87,11 @@ contains
             logical               :: rk45_stiff
             bio_save = biophys
             budg_save = budget
-            call column_fast_step_rk45(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+            call column_fast_step_rk45(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                        ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh,        &
                                        converged, iters, stiff_bail=rk45_stiff, cdiag=cdiag)
-            if (.not. rk45_stiff .and. .not. rk45_state_railed(biophys, col_config%soil%n_active)) then
-               call rk45_ledgers_stop(budget, dt_fast, col_config)   ! kept, so a breach may now stop the run
+            if (.not. rk45_stiff .and. .not. rk45_state_railed(biophys, col_site%soil%n_active)) then
+               call rk45_ledgers_stop(budget, dt_fast, col_config, col_site)   ! kept, so a breach may now stop the run
                call atm_fluxes(budget, dt_fast, le_flux, h_flux)
                return
             end if
@@ -106,7 +107,7 @@ contains
       end if
 
       !----- ARK (ESDIRK2): the default, and the RK45 rescue target. ----------------------------!
-      call column_fast_step_ark(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws,  &
+      call column_fast_step_ark(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws,  &
                                 gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged,   &
                                 iters, cdiag)
       call atm_fluxes(budget, dt_fast, le_flux, h_flux)

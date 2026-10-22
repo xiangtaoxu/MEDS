@@ -434,7 +434,7 @@ contains
       real(wp)    :: t_day, w
       integer(ik) :: is
       if (.not. allocated(run%fast_ctx%site_leaf_photo))                                             &
-         allocate(run%fast_ctx%site_leaf_photo(poly%site%n), source=run%fast_ctx%col_config%leaf_photo)
+         allocate(run%fast_ctx%site_leaf_photo(poly%site%n), source=run%fast_ctx%col_site%leaf_photo)
       do is = 1_ik, poly%site%n
          if (poly%site%pheno_tair_n(is) < 1_ik) cycle      ! no fast sub-steps ran: nothing to average
          t_day = poly%site%pheno_tair_sum(is) / real(poly%site%pheno_tair_n(is), wp)

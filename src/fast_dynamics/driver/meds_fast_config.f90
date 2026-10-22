@@ -17,7 +17,7 @@ module meds_fast_config
    use meds_plant_hydr_lib, only : build_hydro_table, tissue_psi_to_rwc
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio
-   use meds_fast_types,  only : column_config_t, tol_set_t, error_control_t, integrator_opts_t, GRP_THETA
+   use meds_fast_types,  only : column_config_t, column_site_t, tol_set_t, error_control_t, integrator_opts_t, GRP_THETA
    use meds_canopy_types,     only : rad_pft_optics_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_canopy_radiation, only : derive_rad_optics
    use meds_optics_lib,       only : moments_to_beta_params
@@ -35,9 +35,11 @@ module meds_fast_config
    !----- What the fast loop needs beyond the polygon and cfg (build_fast_context): the column      !
    !      configuration, and the constant reference climate a run without a forcing source uses. ---!
    type :: fast_context_t
-      !----- The polygon's column configuration; each site runs on a copy with its own soil. ------!
-      type(column_config_t) :: col_config                 !< soil/thermal/hydro/aero/resp column config
-      !----- Each site's leaf table, acclimated to its growth temperature; until then col_config's. -!
+      !----- The column configuration: the run part every site shares, and the site part [soil] and  !
+      !      the PFT table set, from which each site's own is made (site_column_configs). ------------!
+      type(column_config_t) :: col_config
+      type(column_site_t)   :: col_site
+      !----- Each site's leaf table, acclimated to its growth temperature; until then col_site's. ---!
       type(leaf_photo_table_t), allocatable :: site_leaf_photo(:)
       real(wp) :: u_ref   = 2.0_wp                  !< [m/s] reference wind (at the canopy-air top)
       real(wp) :: press   = 101325.0_wp             !< [Pa]
@@ -69,19 +71,19 @@ contains
       type(meds_config_t),  intent(in)  :: cfg
       type(fast_context_t), intent(out) :: ctx
       !----- The soil column from [soil]: one texture for the column or one per layer (soil maps). -!
-      call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
+      call soil_column_params(cfg%soil_column, ctx%col_site%soil, ctx%col_site%soil_thermal)
       !----- Per-PFT plant hydraulics from each PFT's [hydraulics] record. ------------------------!
       call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
       call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-      call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
+      call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)    ! per-PFT leaf parameters, once per run
       !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
       ctx%col_config%canopy_water_on    = cfg%canopy_water_on
       !----- The [soil], [snow], [aerodynamics] and [fast] options, copied as they are. -----------!
-      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil], [fast] -> soil water and the water network
+      ctx%col_site%soil_water_opts  = cfg%soil        ! [soil], [fast] -> soil water and the water network
       ctx%soil_albedo(1) = cfg%soil%ground_albedo_vis   ! [soil] ground optics -> the canopy radiation solver
       ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
       ctx%soil_emiss     = cfg%soil%ground_emissivity
-      ctx%col_config%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
+      ctx%col_site%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
       !----- The initial soil temperature from [init]; the initial water is each site's theta_start. -!
       ctx%soil_temp_init = cfg%init%soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
@@ -92,10 +94,10 @@ contains
       !      GRP_THETA pair (docs/science/soil_plant_water.md §3). --------------------------------!
       ctx%col_config%integrator = build_integrator_opts(cfg)
       associate (tols => ctx%col_config%integrator%error_control%tols)
-         ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
-         ctx%col_config%soil_water_opts%water_atol   = tols%atol(GRP_THETA)
+         ctx%col_site%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
+         ctx%col_site%soil_water_opts%water_atol   = tols%atol(GRP_THETA)
          !----- A budget-closure threshold, not a tolerance group: atol_scale scales it directly. -!
-         ctx%col_config%energy%soil_energy_budget_atol  = cfg%energy%soil_energy_budget_atol * cfg%atol_scale
+         ctx%col_site%energy%soil_energy_budget_atol  = cfg%energy%soil_energy_budget_atol * cfg%atol_scale
       end associate
 
       ctx%col_config%mask   = cfg%mask        ! [fast].mask    -> the stores that evolve (all on: the column)
@@ -104,15 +106,15 @@ contains
       call build_rad_optics(cfg, ctx%rad_opt)
    end subroutine build_fast_context
 
-   !----- Each site's column configuration: the polygon's, with the site's soil column, bottom and    !
-   !      acclimated leaf table. Made every slow step, so each copy has the current table. ---------!
+   !----- Each site's part of the column configuration: the run's, with the site's soil column,       !
+   !      bottom and acclimated leaf table. Made every slow step, so each has the current table. -----!
    subroutine site_column_configs(ctx, poly, site_col)
       type(fast_context_t),  intent(in)  :: ctx
       type(polygon_t),       intent(in)  :: poly
-      type(column_config_t), intent(out) :: site_col(:)
+      type(column_site_t),   intent(out) :: site_col(:)
       integer(ik) :: is
       do is = 1_ik, poly%site%n
-         site_col(is) = ctx%col_config
+         site_col(is) = ctx%col_site
          associate (col => site_col(is), surf => poly%site%surface(is))
             col%soil                         = surf%soil
             col%soil_thermal                 = surf%soil_thermal
