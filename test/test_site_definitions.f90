@@ -64,7 +64,7 @@ program test_site_definitions
       call check(poly%site%n == 2_ik, 'the polygon has the two sites')
       call check_close(poly%site%area(1), 0.25_wp, 1.0e-15_wp, 'the first site is a quarter of it')
       call check_close(poly%site%area(2), 0.75_wp, 1.0e-15_wp, 'the second the rest')
-      call check(poly%site%surface(1)%soil%n_active < poly%site%surface(2)%soil%n_active,          &
+      call check(poly%site%surface(1)%soil_profile%n_active < poly%site%surface(2)%soil_profile%n_active,          &
                  'the shallow site has fewer soil layers')
       call check_close(poly%site%surface(1)%elevation_m, 400.0_wp, 0.0_wp, 'the first site''s elevation')
       call check_close(poly%site%surface(2)%elevation_m, poly%elevation_m, 0.0_wp,                &
@@ -93,7 +93,7 @@ program test_site_definitions
    if (ok) then
       call check(reg%poly(1)%site%n == 2_ik .and. reg%poly(1)%site%area(1) == 0.25_wp,            &
                  'the restart reads the two sites and their shares')
-      call check(reg%poly(1)%site%surface(1)%soil%n_active < reg%poly(1)%site%surface(2)%soil%n_active, &
+      call check(reg%poly(1)%site%surface(1)%soil_profile%n_active < reg%poly(1)%site%surface(2)%soil_profile%n_active, &
                  'each site keeps its soil column')
    end if
    call region_free(reg)

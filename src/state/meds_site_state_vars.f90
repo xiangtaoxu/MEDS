@@ -17,7 +17,7 @@ module meds_site_state_vars
    use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_diag_vars,          only : site_diag_block
    use meds_config,             only : meds_config_t, soil_column_params, soil_column_start_theta
-   use meds_soil_params,        only : soil_column_config_t, soil_params_t, soil_thermal_params_t
+   use meds_soil_params,        only : soil_column_config_t, soil_profile_t
    implicit none
    private
 
@@ -28,10 +28,9 @@ module meds_site_state_vars
    !      site is made (make_site_surface). ---------------------------------------------------!
    type :: site_surface_t
       !----- The soil column, from [soil] or a cell's soil maps: its layers and texture, and the   !
-      !      parameters derived from them. ----------------------------------------------------!
+      !      soil profile derived from them. --------------------------------------------------!
       type(soil_column_config_t)  :: soil_column
-      type(soil_params_t)         :: soil
-      type(soil_thermal_params_t) :: soil_thermal
+      type(soil_profile_t)        :: soil_profile
       real(wp)    :: theta_start(n_soil_layer_max) = 0.0_wp   !< [m3/m3] each layer's starting water
       !----- The column's bottom: the water boundary (SOIL_BC_*) with drainage's factor f of        !
       !      q = f K, and the temperature at the deep depth below the column. -------------------!
@@ -142,8 +141,8 @@ contains
       type(site_surface_t), intent(inout) :: surf
       type(meds_config_t),  intent(in)    :: cfg
       surf%soil_column = cfg%soil_column
-      call soil_column_params(cfg%soil_column, surf%soil, surf%soil_thermal)
-      call soil_column_start_theta(cfg%soil_column, surf%soil, cfg%init%soil_theta, surf%theta_start)
+      call soil_column_params(cfg%soil_column, surf%soil_profile)
+      call soil_column_start_theta(cfg%soil_column, surf%soil_profile, cfg%init%soil_theta, surf%theta_start)
       surf%water_bottom_bc = cfg%soil%water_bottom_bc
       surf%drain_factor    = cfg%soil%drain_factor
       surf%deep_temp       = cfg%energy%deep_temp

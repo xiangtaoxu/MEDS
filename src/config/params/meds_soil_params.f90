@@ -2,11 +2,10 @@
 !==========================================================================================!
 ! meds_soil_params -- the [soil] block, the ground a run is set on: its column              !
 ! (soil_column_config_t), its water and its heat (soil_opts_t, energy_opts_t, with their   !
-! solver settings from [fast]), and the two bundles the soil kernels read, soil_params_t   !
-! (the layers, the hydraulic texture and the field capacity) and soil_thermal_params_t     !
-! (the thermal texture). meds_config builds the bundles once per column                    !
-! (soil_column_params). A config leaf (src/share only): the soil kernels import it         !
-! without meds_config.                                                                     !
+! solver settings from [fast]), and the profile the soil kernels read, soil_profile_t (the !
+! layers, their hydraulic and thermal texture and the field capacity). meds_config builds  !
+! the profile once per column (soil_column_params). A config leaf (src/share only): the    !
+! soil kernels import it without meds_config.                                              !
 !==========================================================================================!
 module meds_soil_params
    use meds_kinds,            only : wp, ik
@@ -16,7 +15,7 @@ module meds_soil_params
    private
 
    public :: soil_column_config_t, soil_opts_t, energy_opts_t
-   public :: soil_texture_layers_t, soil_params_t, soil_thermal_params_t
+   public :: soil_texture_layers_t, soil_profile_t
    public :: SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    public :: ANNUAL_DAMPING_DEPTH
 
@@ -106,10 +105,12 @@ module meds_soil_params
       real(wp) :: k_solid(n_soil_layer_max), k_dry(n_soil_layer_max), dry_cvol(n_soil_layer_max)
    end type soil_texture_layers_t
 
-   !----- Per-column geometry and texture, assembled once per site: elevations z <= 0      !
-   !      below ground, dz and dz_node > 0. Fixed size (n_soil_layer_max), so the          !
-   !      hydrology kernel stays allocatable-free and GPU-eligible. -----------------------!
-   type :: soil_params_t
+   !----- A site's soil profile, derived once from its [soil] (or its cell's soil maps): the  !
+   !      layers' geometry, elevations z <= 0 below ground, dz and dz_node > 0, and each     !
+   !      layer's hydraulic and thermal texture, the soil water and heat solvers' input.     !
+   !      Fixed size (n_soil_layer_max), so the soil kernels stay allocatable-free and       !
+   !      GPU-eligible. -------------------------------------------------------------------!
+   type :: soil_profile_t
       integer(ik) :: n_active  = n_soil_layer_max            !< active layer count (<= n_soil_layer_max)
       integer(ik) :: retention = SOIL_RETENTION_VG           !< curve family
       real(wp) :: soil_layer_z(n_soil_layer_max+1) = 0.0_wp  !< [m] interface elevations (<= 0)
@@ -123,14 +124,10 @@ module meds_soil_params
       real(wp) :: curve_par_a(n_soil_layer_max) = 0.0_wp     !< [1/m] VG alpha, or [m] Campbell psi_sat
       real(wp) :: curve_par_n(n_soil_layer_max) = 0.0_wp     !< [-] VG n, or Campbell b
       real(wp) :: theta_fc(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] field capacity (DERIVED)
-   end type soil_params_t
-
-   !----- Per-column soil thermal texture (geometry and porosity are in soil_params_t). ---!
-   type :: soil_thermal_params_t
-      integer(ik) :: nzg_active = n_soil_layer_max
-      real(wp) :: soil_solid_conductivity(n_soil_layer_max) = 0.0_wp   !< [W/m/K] kappa_solid
-      real(wp) :: soil_dry_conductivity(n_soil_layer_max)   = 0.0_wp   !< [W/m/K] kappa_dry
-      real(wp) :: soil_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp   !< [J/m3/K] dry-matrix vol. heat cap
-   end type soil_thermal_params_t
+      !----- Thermal texture. ---------------------------------------------------------------!
+      real(wp) :: solid_conductivity(n_soil_layer_max) = 0.0_wp   !< [W/m/K] kappa_solid
+      real(wp) :: dry_conductivity(n_soil_layer_max)   = 0.0_wp   !< [W/m/K] kappa_dry
+      real(wp) :: dry_heat_capacity(n_soil_layer_max)  = 0.0_wp   !< [J/m3/K] dry-matrix vol. heat cap
+   end type soil_profile_t
 
 end module meds_soil_params

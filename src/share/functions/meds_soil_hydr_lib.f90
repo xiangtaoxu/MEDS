@@ -50,7 +50,7 @@ module meds_soil_hydr_lib
    !----- Density of the mineral grains and of the fragments (Saxton & Rawls 2006). -------!
    real(wp), parameter :: PARTICLE_DENSITY = 2.65_wp                 !< [g/cm3]
 
-   !----- Retention-curve selector codes (soil_params_t%retention). -----------------------!
+   !----- Retention-curve selector codes (soil_profile_t%retention). -----------------------!
    integer(ik), parameter :: SOIL_RETENTION_VG       = 1_ik  !< van Genuchten-Mualem (default)
    integer(ik), parameter :: SOIL_RETENTION_CAMPBELL = 2_ik  !< Campbell / Clapp-Hornberger (option)
 

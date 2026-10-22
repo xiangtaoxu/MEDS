@@ -222,7 +222,7 @@ contains
       logical     :: halt_budgets     !< hard-stop on a non-closing budget ([fast].debug_error)
 
       n = col_cohort%n
-      nsl = col_site%soil%n_active
+      nsl = col_site%soil_profile%n_active
       !----- The stage-clamp count accumulates down the call chain, so this step's tally starts here. !
       !      ARK has no explicit stage, so theta_ood_max stays 0. ------------------------------------!
       budget%clamp_stage_n = 0_ik
@@ -293,7 +293,7 @@ contains
       call unpack_column_state(y_out, n, nsl, biophys)
       biophys%soil_water%w_surface      = y_out%w_surface
       biophys%soil_water%w_surface_energy = y_out%w_surface_energy
-      call diagnose_soil_temps(y_out, col_site%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
+      call diagnose_soil_temps(y_out, col_site%soil_profile%dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
             biophys%soil_energy%soil_fliq)
       !----- The tissue heat store is solved in the stages, jointly with the canopy air               !
       !      (docs/science/vegetation_energy_dynamics.md §One formulation). Each tissue's energy is     !
@@ -317,7 +317,7 @@ contains
       if (acc%whole_cond > 0.0_wp) then
          cond_dep_mass = acc%whole_cond
          cond_dep_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (see column_bflux_t)
-         call deposit_condensate(y_out, col_site%soil%dz(1), cond_dep_mass, cond_dep_enth)
+         call deposit_condensate(y_out, col_site%soil_profile%dz(1), cond_dep_mass, cond_dep_enth)
          biophys%soil_water%theta(1)       = y_out%theta(1)
          biophys%soil_energy%soil_energy(1) = y_out%soil_energy(1)
       end if
@@ -333,10 +333,10 @@ contains
       shv1 = y_out%cas_shv
       co21 = y_out%cas_co2
       e_pond1 = frozen%hydrology%w_surface_energy1
-      e_soil0 = soil_energy_store(y%soil_energy,     col_site%soil%dz, nsl)
-      e_soil1 = soil_energy_store(y_out%soil_energy, col_site%soil%dz, nsl)
-      w_soil0 = soil_water_store(y%theta,     col_site%soil%dz, nsl)
-      w_soil1 = soil_water_store(y_out%theta, col_site%soil%dz, nsl)
+      e_soil0 = soil_energy_store(y%soil_energy,     col_site%soil_profile%dz, nsl)
+      e_soil1 = soil_energy_store(y_out%soil_energy, col_site%soil_profile%dz, nsl)
+      w_soil0 = soil_water_store(y%theta,     col_site%soil_profile%dz, nsl)
+      w_soil1 = soil_water_store(y_out%theta, col_site%soil_profile%dz, nsl)
       !----- Plant water is a store: it absorbs the step's mismatch between transpiration and uptake  !
       !      (docs/science/plant_hydraulics.md eqs. (1)-(2)). ----------------------------------------!
       w_plant0 = plant_water_store(col_cohort%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)

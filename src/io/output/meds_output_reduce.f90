@@ -297,7 +297,7 @@ contains
       out(1:n_out)   = 0.0_wp
       valid(1:n_out) = .false.
       do is = 1_ik, poly%site%n
-         nl   = poly%site%surface(is)%soil%n_active
+         nl   = poly%site%surface(is)%soil_profile%n_active
          base = (is - 1_ik) * n_soil_layer_max
          s(1:nl) = 0.0_wp
          wsum = 0.0_wp
@@ -326,7 +326,7 @@ contains
       valid(1:max(n_out,1_ik)) = .false.
       do ip = 1_ik, poly%patch%n
          base = (ip - 1_ik) * n_soil_layer_max
-         do k = 1_ik, poly%site%surface(poly%patch%owner_site(ip))%soil%n_active
+         do k = 1_ik, poly%site%surface(poly%patch%owner_site(ip))%soil_profile%n_active
             out(base + k)   = col(k, ip)
             valid(base + k) = .true.
          end do

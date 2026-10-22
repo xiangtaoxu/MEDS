@@ -73,8 +73,8 @@ program test_slow_diag_units
 
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_thermal)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil_profile)
+   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
    call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
@@ -189,8 +189,7 @@ contains
    !      at 0.30 in every layer. ------------------------------------------------------------!
    subroutine use_test_column(p)
       type(polygon_t), intent(inout) :: p
-      p%site%surface(1)%soil         = ctx%col_site%soil
-      p%site%surface(1)%soil_thermal = ctx%col_site%soil_thermal
+      p%site%surface(1)%soil_profile = ctx%col_site%soil_profile
       p%site%surface(1)%theta_start  = 0.30_wp
    end subroutine use_test_column
 

@@ -63,7 +63,7 @@ contains
       type(meds_config_t),  intent(in)  :: cfg
       type(fast_context_t), intent(out) :: ctx
       !----- The soil column from [soil]: one texture for the column or one per layer (soil maps). -!
-      call soil_column_params(cfg%soil_column, ctx%col_site%soil, ctx%col_site%soil_thermal)
+      call soil_column_params(cfg%soil_column, ctx%col_site%soil_profile)
       !----- Per-PFT plant hydraulics from each PFT's [hydraulics] record. ------------------------!
       call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
       call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
@@ -108,8 +108,7 @@ contains
       do is = 1_ik, poly%site%n
          site_col(is) = ctx%col_site
          associate (col => site_col(is), surf => poly%site%surface(is))
-            col%soil                         = surf%soil
-            col%soil_thermal                 = surf%soil_thermal
+            col%soil_profile                 = surf%soil_profile
             col%soil_water_opts%water_bottom_bc    = surf%water_bottom_bc
             col%soil_water_opts%drain_factor = surf%drain_factor
             col%energy%deep_temp             = surf%deep_temp

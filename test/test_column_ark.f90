@@ -84,8 +84,8 @@ program test_column_ark
                     'aboveground_frac did not reach the column view from the PFT table')
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_thermal)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
+   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
    call apply_hydraulics_config(cfg, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, col_site%leaf_photo)
@@ -303,8 +303,8 @@ contains
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_site%soil_water_opts%water_bottom_bc = SOIL_BC_AQUIFER
-      biophys%soil_water%theta(1:col_site%soil%n_active) = 0.15_wp
-      theta_bot0 = biophys%soil_water%theta(col_site%soil%n_active)
+      biophys%soil_water%theta(1:col_site%soil_profile%n_active) = 0.15_wp
+      theta_bot0 = biophys%soil_water%theta(col_site%soil_profile%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
@@ -315,8 +315,8 @@ contains
       call check_true('AQUIFER/ARK: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                         &
               real(budget%whole_energy%n_fail, wp))
       call check_true('AQUIFER/ARK: dry column wets from below',                                                      &
-              biophys%soil_water%theta(col_site%soil%n_active) > theta_bot0,                                              &
-              biophys%soil_water%theta(col_site%soil%n_active) - theta_bot0)
+              biophys%soil_water%theta(col_site%soil_profile%n_active) > theta_bot0,                                              &
+              biophys%soil_water%theta(col_site%soil_profile%n_active) - theta_bot0)
       col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_ark_aquifer
 
@@ -591,7 +591,7 @@ contains
       budget = column_budget_t()
       biophys%soil_water%theta(1:NSL) = theta_seed
       do kk = 1_ik, NSL
-         biophys%soil_energy%soil_energy(kk) = temp_to_internal_energy(col_site%soil_thermal%soil_dry_heat_capacity(kk), &
+         biophys%soil_energy%soil_energy(kk) = temp_to_internal_energy(col_site%soil_profile%dry_heat_capacity(kk), &
                                       theta_seed * rho_h2o, T0, 1.0_wp)
          biophys%soil_energy%soil_temp(kk)   = T0
       end do

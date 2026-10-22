@@ -62,7 +62,7 @@ contains
 
       !----- diagnose the soil-top temperature so the ground skin sees the current state. --------!
       wmass1 = y%theta(1) * rho_h2o
-      call internal_energy_to_temp(y%soil_energy(1), wmass1, col_site%soil_thermal%soil_dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, col_site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
 
       cas_mass_capacity = frozen%cas%cas_mass_capacity
       cas_molar_capacity = frozen%cas%cas_molar_capacity
@@ -104,7 +104,7 @@ contains
       call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, y%theta,          &
                                         water_heat, frozen%hydrology%w_flux_frozen,                                &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
-      call soil_energy_step_implicit(se, eforc, col_site%soil_thermal, col_site%soil, col_site%energy, dt, eflux)
+      call soil_energy_step_implicit(se, eforc, col_site%soil_profile, col_site%energy, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
       !----- Soil water is the network's, its end-of-step theta committed once in column_fast_step_ark     !

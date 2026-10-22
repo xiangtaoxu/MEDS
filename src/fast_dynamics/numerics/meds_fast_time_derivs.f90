@@ -271,7 +271,7 @@ contains
 
       !----- The soil-top temperature from the current state, for the ground skin. -----------------!
       wmass1   = y%theta(1) * rho_h2o
-      call internal_energy_to_temp(y%soil_energy(1), wmass1, col_site%soil_thermal%soil_dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, col_site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       y_stage%cas_enthalpy = y%cas_enthalpy
@@ -304,7 +304,7 @@ contains
       !----- The faces the energy equation was given, read from eforc, for the stepper to check      !
       !      against the theta it commits. ---------------------------------------------------------!
       f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store downward
-      call soil_energy_time_deriv(soil_energy, eforc, col_site%soil_thermal, col_site%soil, col_site%energy, &
+      call soil_energy_time_deriv(soil_energy, eforc, col_site%soil_profile, col_site%energy, &
                                   f%dedt, bottom_face=f%g_bottom)
 
       !----- 4. Plant water mass per plant: the network's sapflow and uptake in, and out the          !

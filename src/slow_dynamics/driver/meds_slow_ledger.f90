@@ -313,7 +313,7 @@ contains
          !      over the layer thicknesses of the patch's site (identical to soil_water_store /    !
          !      soil_energy_store). ---------------------------------------------------------------!
          w_soil = 0.0_wp ; e_soil = 0.0_wp
-         associate (soil => poly%site%surface(poly%patch%owner_site(ip))%soil)
+         associate (soil => poly%site%surface(poly%patch%owner_site(ip))%soil_profile)
             do k = 1_ik, soil%n_active
                w_soil = w_soil + poly%patch%soil_water(ip)%theta(k)       * soil%dz(k) * rho_h2o
                e_soil = e_soil + poly%patch%soil_energy(ip)%soil_energy(k) * soil%dz(k)

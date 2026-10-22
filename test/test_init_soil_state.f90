@@ -40,7 +40,7 @@ program test_init_soil_state
    call check_close(poly%site%surface(1)%theta_start(1), 0.25_wp, 1.0e-14_wp, 'soil_theta did not reach the site')
    call finalize_init(poly)
    call init_fast_state(poly, cfg)
-   nsl = ctx%col_site%soil%n_active
+   nsl = ctx%col_site%soil_profile%n_active
    do ip = 1_ik, poly%patch%n
       call check(all(abs(poly%patch%soil_energy(ip)%soil_temp(1:nsl) - 298.65_wp) < 1.0e-12_wp),         &
                  'a soil layer did not start at [init].soil_temp')
@@ -63,21 +63,21 @@ program test_init_soil_state
       end do
    end associate
    call build_fast_context(cfg, ctx)
-   associate (soil => ctx%col_site%soil)
+   associate (soil => ctx%col_site%soil_profile)
       call check(soil%n_active == n .and. all(soil%theta_sat(1:n) == cfg%soil_column%layer_theta_sat(1:n))  &
                  .and. all(soil%curve_par_n(1:n) == cfg%soil_column%layer_curve_par_n(1:n)),                       &
                  'a layer did not take its own curve')
-      call check(all(ctx%col_site%soil_thermal%soil_dry_heat_capacity(1:n) ==                               &
+      call check(all(ctx%col_site%soil_profile%dry_heat_capacity(1:n) ==                               &
                      cfg%soil_column%layer_dry_heat_capacity(1:n)), 'a layer did not take its own heat capacity')
    end associate
    call init_bare_ground(poly, cfg, 3_ik)
    associate (surf => poly%site%surface(1))
-      call check(all(surf%theta_start(1:n) == surf%soil%theta_fc(1:n)) .and.                                 &
-                 surf%soil%theta_fc(1) /= surf%soil%theta_fc(n), 'a layer did not start at its own field capacity')
+      call check(all(surf%theta_start(1:n) == surf%soil_profile%theta_fc(1:n)) .and.                                 &
+                 surf%soil_profile%theta_fc(1) /= surf%soil_profile%theta_fc(n), 'a layer did not start at its own field capacity')
    end associate
    call finalize_init(poly)
    call init_fast_state(poly, cfg)
-   call check(all(poly%patch%soil_water(2)%theta(1:n) == ctx%col_site%soil%theta_fc(1:n)),                      &
+   call check(all(poly%patch%soil_water(2)%theta(1:n) == ctx%col_site%soil_profile%theta_fc(1:n)),                      &
               'a patch''s soil did not start at field capacity')
 
    !=== 4. Bare ground is empty by default; nbg_init_density seeds each patch with each PFT. ======!

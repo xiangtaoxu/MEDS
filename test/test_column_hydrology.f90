@@ -25,7 +25,7 @@ program test_column_hydrology
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav_head, n_soil_layer_max
    use meds_soil_types, only : chydro_forcing_t
-   use meds_soil_params,      only : soil_params_t, soil_opts_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
+   use meds_soil_params,      only : soil_profile_t, soil_opts_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_config,             only : build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
@@ -58,7 +58,7 @@ contains
 
    !----- A 10-layer loam column (2 m). --------------------------------------------------------!
    subroutine loam_params(params)
-      type(soil_params_t), intent(out) :: params
+      type(soil_profile_t), intent(out) :: params
       real(wp) :: bottoms(n_soil_layer_max)
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, bottoms)
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, bottoms, 0.43_wp, 0.078_wp,                 &
@@ -69,7 +69,7 @@ contains
    !      the ground from evaporating unless the caller says otherwise. ---------------------------!
    subroutine soil_network(spac, params, opts, theta, w_pond, e_pond)
       type(spac_solver_t), intent(inout) :: spac
-      type(soil_params_t),   intent(in)    :: params
+      type(soil_profile_t),  intent(in)    :: params
       type(soil_opts_t),     intent(in)    :: opts
       real(wp),              intent(in)    :: theta(:), w_pond, e_pond
       real(wp) :: dum(0)
@@ -137,7 +137,7 @@ contains
 
    !=======================================================================================!
    subroutine test_bedrock_conserve()
-      type(soil_params_t)   :: params
+      type(soil_profile_t)  :: params
       type(soil_opts_t)     :: opts
       type(spac_solver_t) :: spac
       real(wp) :: w_before, theta(10)
@@ -156,7 +156,7 @@ contains
 
    !=======================================================================================!
    subroutine test_free_drain()
-      type(soil_params_t)   :: params
+      type(soil_profile_t)  :: params
       type(soil_opts_t)     :: opts
       type(spac_solver_t) :: spac
       real(wp) :: w0, w1, drained, theta(10)
@@ -177,7 +177,7 @@ contains
 
    !=======================================================================================!
    subroutine test_leaky_drain()
-      type(soil_params_t)   :: params
+      type(soil_profile_t)  :: params
       type(soil_opts_t)     :: opts
       type(spac_solver_t) :: spac
       real(wp), parameter :: F_LEAK = 0.05_wp          ! the ED soil maps' factor
@@ -229,7 +229,7 @@ contains
    !      clay's conductivity, so the excess ponds and, past the pond's capacity, runs off       !
    !      (Hortonian). A bone-dry clay would instead take it up by suction (Green-Ampt). --------!
    subroutine test_downpour()
-      type(soil_params_t)    :: params
+      type(soil_profile_t)   :: params
       type(soil_opts_t)      :: opts
       type(spac_solver_t)  :: spac
       real(wp) :: theta(10), w0, rain, infil, runoff, drained, bottoms(n_soil_layer_max)
@@ -263,7 +263,7 @@ contains
    !      mean of the saturated pond's and the top layer's, and the dry layer's suction drives it;  !
    !      the top layer's conductivity alone would seal a dried surface against rain. -----------!
    subroutine test_dried_surface_rewets()
-      type(soil_params_t)   :: params
+      type(soil_profile_t)  :: params
       type(soil_opts_t)     :: opts
       type(spac_solver_t) :: spac
       type(chydro_forcing_t) :: f
@@ -291,7 +291,7 @@ contains
    !      and the water that infiltrated carried its own enthalpy -- an effective temperature below  !
    !      the melt plateau, not u_liq at the plateau, which would create energy all winter. -------!
    subroutine test_pond_subfreezing_inflow()
-      type(soil_params_t)   :: params
+      type(soil_profile_t)  :: params
       type(soil_opts_t)     :: opts
       type(spac_solver_t) :: spac
       type(chydro_forcing_t) :: f
@@ -325,7 +325,7 @@ contains
    !      closes with the flux running upward, and the column relaxes to hydrostatic equilibrium    !
    !      with the base (the bottom node's head -> minus half its thickness). -------------------!
    subroutine test_aquifer_head_bc()
-      type(soil_params_t)   :: params
+      type(soil_profile_t)  :: params
       type(soil_opts_t)     :: opts
       type(spac_solver_t) :: spac
       type(chydro_forcing_t) :: f
@@ -374,7 +374,7 @@ contains
    !      layer present (theta_1 = 0.30 is below dsl_theta_init * theta_sat = 0.344), where dividing   !
    !      r_aero by (1 - snowfac) instead would not be linear. --------------------------------------!
    subroutine test_snow_free_evap()
-      type(soil_params_t)    :: params
+      type(soil_profile_t)   :: params
       type(soil_opts_t)      :: opts
       type(chydro_forcing_t) :: f
       real(wp) :: e_full, e_half, e_none, de1, de2, head
@@ -401,7 +401,7 @@ contains
    !      layer's air-filled porosity instead, the tortuosity would fall faster than the layer thins  !
    !      and a wetter soil would evaporate less. ----------------------------------------------!
    subroutine test_evap_moisture_response()
-      type(soil_params_t)    :: params
+      type(soil_profile_t)   :: params
       type(soil_opts_t)      :: opts
       type(chydro_forcing_t) :: f
       real(wp) :: theta, e_prev, e_now, e_sat, e_below, theta_init
@@ -428,7 +428,7 @@ contains
    !----- Ground evaporation of the loam's top layer at water content th. ----------------------!
    real(wp) function loam_evap(th, params, f, opts) result(e)
       real(wp),               intent(in) :: th
-      type(soil_params_t),    intent(in) :: params
+      type(soil_profile_t),   intent(in) :: params
       type(chydro_forcing_t), intent(in) :: f
       type(soil_opts_t),      intent(in) :: opts
       real(wp) :: de1, de2

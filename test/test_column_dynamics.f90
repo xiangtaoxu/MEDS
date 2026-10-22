@@ -116,8 +116,8 @@ program test_column_dynamics
    !----- Static column config: soil column + respiration parameters. ---------------------!
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_thermal)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
+   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
@@ -518,7 +518,7 @@ program test_column_dynamics
    snow_seed = 0.0_wp ; rain_pulse = 0.0_wp ; theta_seed = THETA0
    snowfall_on = .true. ; snowf_rate = 5.0e-6_wp          ! 7.5e-4 kg/m2 per 150 s step < min_new_snow_mass (1e-3)
    call integrate_day()
-   e_col_snow = sum(biophys%soil_energy%soil_energy(1:NSL) * col_site%soil%dz(1:NSL)) + biophys%soil_water%w_surface_energy
+   e_col_snow = sum(biophys%soil_energy%soil_energy(1:NSL) * col_site%soil_profile%dz(1:NSL)) + biophys%soil_water%w_surface_energy
    call check_true('RUN 9b: sub-threshold snowfall never started a pack', biophys%snow%nlayer == 0_ik,                &
            real(biophys%snow%nlayer, wp))
    call check_true('RUN 9b snow: whole-column energy closes to round-off', budget%whole_energy%worst < 1.0e-3_wp,     &
@@ -526,7 +526,7 @@ program test_column_dynamics
    snow_mass_total = snowf_rate * real(NSTEP, wp) * DT_FAST
    snowfall_on = .false. ; cold_air = .true. ; rain_rate = snowf_rate
    call integrate_day()
-   e_col_rain = sum(biophys%soil_energy%soil_energy(1:NSL) * col_site%soil%dz(1:NSL)) + biophys%soil_water%w_surface_energy
+   e_col_rain = sum(biophys%soil_energy%soil_energy(1:NSL) * col_site%soil_profile%dz(1:NSL)) + biophys%soil_water%w_surface_energy
    cold_air = .false. ; rain_rate = 0.0_wp ; snowf_rate = 2.0e-5_wp
    fusion_expect = latent_heat_fusion * snow_mass_total
    !----- ~0.56 L_f on this fixture: the colder, wetter surface loses less to the air over the day and    !
@@ -582,7 +582,7 @@ contains
       snow_physical = .true.
       biophys%soil_water%theta(1:NSL) = theta_seed
       do k = 1_ik, NSL
-         biophys%soil_energy%soil_energy(k) = temp_to_internal_energy(col_site%soil_thermal%soil_dry_heat_capacity(k),    &
+         biophys%soil_energy%soil_energy(k) = temp_to_internal_energy(col_site%soil_profile%dry_heat_capacity(k),    &
                                      theta_seed * rho_h2o, T0, 1.0_wp)
          biophys%soil_energy%soil_temp(k)   = T0
       end do
@@ -669,7 +669,7 @@ contains
       !      must land in if it lands anywhere at all. -----------------------------------------------!
       col_water_end = biophys%soil_water%w_surface + biophys%snow%swe(1)
       do k = 1_ik, NSL
-         col_water_end = col_water_end + biophys%soil_water%theta(k) * col_site%soil%dz(k) * rho_h2o
+         col_water_end = col_water_end + biophys%soil_water%theta(k) * col_site%soil_profile%dz(k) * rho_h2o
       end do
    end subroutine integrate_day
 

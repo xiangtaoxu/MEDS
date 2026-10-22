@@ -106,8 +106,8 @@ contains
       !----- Each cohort's fine roots by layer, within its own rooting depth, and the patch's profile:   !
       !      the cohorts' weighted by their fine-root carbon. A patch with no roots puts its weight in the !
       !      top layer (it has no root respiration to weight). -----------------------------------------!
-      z_top(1:nsl) = -col_site%soil%soil_layer_z(1:nsl)
-      z_bot(1:nsl) = -col_site%soil%soil_layer_z(2:nsl+1)
+      z_top(1:nsl) = -col_site%soil_profile%soil_layer_z(1:nsl)
+      z_bot(1:nsl) = -col_site%soil_profile%soil_layer_z(2:nsl+1)
       root_frac_patch(1:nsl) = 0.0_wp
       do i = 1_ik, n
          call cohort_root_profile(col_cohort%height(i), col_config%hydraulics_table%pft(col_cohort%pft(i)),       &
@@ -132,7 +132,7 @@ contains
       !      whose CAS state, air properties and ground conductance it reads; before the water network, !
       !      so this step's meltwater reaches the pond this step. A no-op without a pack. -------------!
       call advance_snow_stage(biophys%snow, col_config%snow, col_config%aero%snow_rough,                   &
-                              max(-col_site%soil%z_node(1), tiny_num),                                      &
+                              max(-col_site%soil_profile%z_node(1), tiny_num),                                      &
                               forc%abs_sw_ground, forc%abs_lw_ground, forc%snowfall, forc%rainfall, forc%air_temp,  &
                               aero%ggnet, biophys%soil_energy%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
                               snow_st)
@@ -348,7 +348,7 @@ contains
       frozen%hydrology%w_flux_frozen(1:nsl-1) = spac%face(1:nsl-1) / (rho_h2o * dt_fast)
       allocate(frozen%hydrology%theta1(nsl))
       do k = 1_ik, nsl
-         frozen%hydrology%theta1(k) = spac%water_soil(1_ik + k) / (rho_h2o * col_site%soil%dz(k))
+         frozen%hydrology%theta1(k) = spac%water_soil(1_ik + k) / (rho_h2o * col_site%soil_profile%dz(k))
       end do
       frozen%hydrology%theta_rate(1:nsl) = (frozen%hydrology%theta1(1:nsl) - biophys%soil_water%theta(1:nsl)) / dt_fast
 
@@ -364,7 +364,7 @@ contains
          if (k == nsl)   f_out = spac%drain
          if (k == 1_ik)  f_in  = spac%infil - spac%exfil - spac%evap
          face_resid = face_resid + abs((frozen%hydrology%theta1(k) - biophys%soil_water%theta(k))              &
-                                       * col_site%soil%dz(k) * rho_h2o - (f_in - f_out - sum(spac%uptake(k, 1:n))))
+                                       * col_site%soil_profile%dz(k) * rho_h2o - (f_in - f_out - sum(spac%uptake(k, 1:n))))
       end do
       budget%soil_face_mass%resid   = face_resid
       budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, face_resid)
@@ -482,7 +482,7 @@ contains
       !      cohort's rhizosphere conductance in it (docs/science/plant_hydraulics.md eq. (14)). ---------!
       do k = 1_ik, nsl
          half_spacing(k) = 1.0_wp / sqrt(pi * max(sum(col_cohort%nplant(1:n) * root_len(k, 1:n))                &
-                                                  / col_site%soil%dz(k), tiny_num))
+                                                  / col_site%soil_profile%dz(k), tiny_num))
          do i = 1_ik, n
             spac%g_rhizo(k, i) = rhizosphere_conductance(col_cohort%nplant(i), root_len(k, i), half_spacing(k),   &
                                                          col_config%hydraulics_table%pft(col_cohort%pft(i))%fine_root_radius)
@@ -494,10 +494,10 @@ contains
       spac%w_pond_max = col_site%soil_water_opts%w_pond_max
       spac%rtol       = col_site%soil_water_opts%rtol
       spac%atol       = col_site%soil_water_opts%water_atol
-      call spac_set_state(spac, col_site%soil, col_config%hydraulics_table, biophys%soil_water%theta(1:nsl),        &
+      call spac_set_state(spac, col_site%soil_profile, col_config%hydraulics_table, biophys%soil_water%theta(1:nsl),        &
                           biophys%soil_water%w_surface, biophys%soil_water%w_surface_energy,                              &
                           biophys%leaf_water_mass(1:n), biophys%wood_water_mass(1:n))
-      call spac_advance(spac, col_site%soil, col_site%soil_water_opts, hforc, col_config%hydraulics_table,        &
+      call spac_advance(spac, col_site%soil_profile, col_site%soil_water_opts, hforc, col_config%hydraulics_table,        &
                         dt_fast)
    end subroutine run_spac_solver
 

@@ -27,7 +27,7 @@ program test_slow_ledger
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
    use meds_state_defaults,     only : UNSET_POSITIVE
-   use meds_soil_params,        only : soil_params_t
+   use meds_soil_params,        only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
@@ -49,7 +49,7 @@ program test_slow_ledger
    real(wp), parameter :: RHO = 1.2_wp        !< the density the canopy-air store is valued at
    type(meds_config_t) :: cfg
    type(polygon_t)     :: poly
-   type(soil_params_t) :: soil
+   type(soil_profile_t) :: soil
    type(slow_store_t)  :: s0, s1
    type(slow_ledger_t) :: led
    real(wp)            :: de, dw, dc, expect, hand
@@ -204,7 +204,7 @@ contains
       type(water_curve_t) :: leaf_curve, wood_curve
       real(wp) :: shed0, excess, n_new, tol, theta_start(n_soil_layer_max)
       integer(ik) :: p, ph(3)
-      type(soil_params_t) :: sp
+      type(soil_profile_t) :: sp
 
       c = build_test_config()
       tol = 1.0e-12_wp
@@ -767,7 +767,7 @@ contains
       call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
                                 t_birth, psi_birth)
       call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
-      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil, poly%patch%soil_water(1)%theta(1)), &
+      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil_profile, poly%patch%soil_water(1)%theta(1)), &
                        1.0e-12_wp,                                                                        &
                        'birth: a seeded patch gives its top soil layer''s potential')
       call init_cohort(poly%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, t_birth, psi_birth)
@@ -783,7 +783,7 @@ contains
       call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
                                 t_birth, psi_birth)
       call check_close(t_birth, cfg%init%soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
-      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil, poly%site%surface(1)%theta_start(1)), &
+      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil_profile, poly%site%surface(1)%theta_start(1)), &
                        1.0e-12_wp,                                                                        &
                        'birth: unseeded, the starting soil water''s potential')
       poly%patch%cas(1)%can_temp = t_save

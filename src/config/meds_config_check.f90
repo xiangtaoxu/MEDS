@@ -20,7 +20,7 @@ module meds_config_check
    use meds_therm_lib,          only : TEMP_RESPONSE_PEAKED
    use meds_soil_hydr_lib,      only : SOIL_RETENTION_VG
    use meds_pft_params,         only : PATH_C3, PATH_C4
-   use meds_soil_params,        only : soil_texture_layers_t, soil_params_t, ENERGY_BC_DIRICHLET
+   use meds_soil_params,        only : soil_texture_layers_t, soil_profile_t, ENERGY_BC_DIRICHLET
    use meds_forcing_params,     only : LW_SYNTHESIZE, MET_BACKEND_ERA5LAND, WIND_EXPOSURE_OPEN_TERRAIN,           &
                                        WIND_EXPOSURE_LOCAL, ARCHIVE_DT_SEC, CO2_SOURCE_CONST, CO2_SOURCE_FILE,    &
                                        METAVG_END, MAX_RECYCLE_YEARS
@@ -312,7 +312,7 @@ contains
    subroutine check_soil(cfg)
       type(meds_config_t), intent(in) :: cfg
       type(soil_texture_layers_t) :: tex
-      type(soil_params_t)         :: sp
+      type(soil_profile_t)        :: sp
       real(wp)    :: bottoms(n_soil_layer_max)
       integer(ik) :: n
       if (cfg%soil%ground_albedo_vis < 0.0_wp .or. cfg%soil%ground_albedo_vis >= 1.0_wp .or.          &

@@ -443,7 +443,7 @@ contains
          return
       end if
       do ip = 1_ik, np
-         associate (soil => poly%site%surface(poly%patch%owner_site(ip))%soil)
+         associate (soil => poly%site%surface(poly%patch%owner_site(ip))%soil_profile)
             nl = soil%n_active
             select case (src)
             case (FLD_L_SOIL_TEMP)

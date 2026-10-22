@@ -91,7 +91,7 @@ program test_region
    do p = 1_ik, NP
       associate (s => reg%poly(p)%site%surface(1))
          call check_true('each polygon''s site takes its soil column, bottom boundary and deep '//         &
-                         'temperature from its own cell', s%soil%n_active == N_LAYER(p)                     &
+                         'temperature from its own cell', s%soil_profile%n_active == N_LAYER(p)                 &
                          .and. s%water_bottom_bc == BOTTOM(p) .and. s%soil_column%n_layer_values == N_LAYER(p) &
                          .and. abs(s%deep_temp - deep_temp_at(ROW(p), COL(p))) < 1.0e-9_wp)
       end associate

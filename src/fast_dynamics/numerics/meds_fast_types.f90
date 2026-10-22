@@ -13,7 +13,7 @@ module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max
    use meds_plant_types, only : hydro_args_table_t, leaf_photo_table_t
-   use meds_soil_params, only : soil_params_t, soil_thermal_params_t, soil_opts_t, energy_opts_t
+   use meds_soil_params, only : soil_profile_t, soil_opts_t, energy_opts_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_params, only : aero_cfg_t, snow_params_t
@@ -118,11 +118,10 @@ module meds_fast_types
    end type column_config_t
 
    !----- The site part: what differs from site to site, made for each site every slow step       !
-   !      (site_column_configs): its soil column, the water and heat solvers' options with its     !
+   !      (site_column_configs): its soil profile, the water and heat solvers' options with its    !
    !      bottom boundary, and its leaf table, acclimated to its own air. ------------------------!
    type :: column_site_t
-      type(soil_params_t)         :: soil            !< soil geometry + texture (n_active layers)
-      type(soil_thermal_params_t) :: soil_thermal    !< soil thermal texture
+      type(soil_profile_t)        :: soil_profile    !< layers, hydraulic and thermal texture (n_active layers)
       type(soil_opts_t)           :: soil_water_opts !< soil water and water-network options, the bottom boundary
       type(energy_opts_t)         :: energy          !< soil-thermal solver options, the deep temperature
       type(leaf_photo_table_t)    :: leaf_photo      !< per-PFT leaf-photosynthesis parameters

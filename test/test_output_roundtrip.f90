@@ -47,7 +47,7 @@ program test_output_roundtrip
    use meds_netcdf_c
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,        only : n_soil_layer_max, kgc_2_umol, day_sec
-   use meds_soil_params,      only : soil_params_t
+   use meds_soil_params,      only : soil_profile_t
    use meds_soil_hydr_lib,    only : SOIL_RETENTION_VG
    use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close, test_pft_table
@@ -62,7 +62,7 @@ program test_output_roundtrip
    type(meds_time_t)      :: prev, now
    integer(ik)            :: iday
    real(wp)               :: dt
-   type(soil_params_t)    :: soilp
+   type(soil_profile_t)   :: soilp
    integer(ik), parameter :: N_ACTIVE = 6_ik
 
    call banner('output_roundtrip')
@@ -104,7 +104,7 @@ program test_output_roundtrip
                                2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
    !----- The site's soil column gives the extraction its layers and curve; the polygon's row of  !
    !      the file set gives the files their layer depths, as attach_output does in a run. -------!
-   poly%site%surface(1)%soil = soilp
+   poly%site%surface(1)%soil_profile = soilp
    bufs(1)%diag%soil_ready = .true.
    files%site_n_soil(1, 1)       = soilp%n_active
    files%site_soil_z(:, 1, 1)    = soilp%z_node

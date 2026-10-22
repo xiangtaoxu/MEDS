@@ -530,10 +530,10 @@ contains
       real(wp),                  intent(out) :: temp, psi
       if (.not. is_unset_positive(cas%can_temp)) then
          temp = cas%can_temp
-         psi  = top_soil_psi(surf%soil, soil_water%theta(1))
+         psi  = top_soil_psi(surf%soil_profile, soil_water%theta(1))
       else
          temp = cfg%init%soil_temp
-         psi  = top_soil_psi(surf%soil, surf%theta_start(1))
+         psi  = top_soil_psi(surf%soil_profile, surf%theta_start(1))
       end if
    end subroutine patch_physical_state
 
