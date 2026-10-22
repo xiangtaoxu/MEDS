@@ -19,26 +19,15 @@
 module meds_fast_be_stage
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
-   use meds_fast_params,  only : INTEG_ARK, CTRL_L2_STRICT
-   use meds_fast_control, only : step_control_factor
-   use meds_soil_types, only : energy_forcing_t, energy_flux_t, snow_melt_t
+   use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_fast_time_derivs, only : surface_derivs, cas_conductances
    use meds_cas_biophysics, only : cas_column_step_implicit, cas_column_t, cas_source_t
-   use meds_column_state_ops, only : state_init, state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas, &
-                                     soil_water_store, soil_energy_store, plant_water_store,                    &
-                                     canopy_film_store, deposit_condensate, clamp_canopy_film, unpack_column_state, &
-                                     diagnose_soil_temps, assemble_soil_energy_forcing, apply_process_mask
-   use meds_fast_types, only : column_config_t, column_budget_t, alloc_column_cohort, column_state_t, &
-                               column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, stage_bflux_t, &
-                               column_bflux_t, error_control_t, column_tend_t, &
-                               mask_is_full
+   use meds_column_state_ops, only : state_init, assemble_soil_energy_forcing
+   use meds_fast_types, only : column_config_t, column_state_t, column_frozen_t, surface_state_t,                 &
+                               cas_boundary_t, surface_tend_t, stage_bflux_t
    use meds_soil_energy, only : soil_energy_step_implicit
-   use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_step_implicit
-   use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
-   use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp,  &
-                              internal_energy_ice, liquid_energy_to_temp
-   use meds_budget_check, only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR, BUDGET_CO2_RATE_FLOOR
+   use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp
    use meds_numerics,     only : sufficient_decrease
    implicit none
    private
@@ -79,7 +68,7 @@ contains
       real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp)    :: enth1, shv1, e_infil, e_drain, t_cas1, water_heat(nsl)
       real(wp)    :: co21, enth_unused, shv_unused
-      integer(ik) :: k, np, nfeval
+      integer(ik) :: np, nfeval
       logical     :: ok
 
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
@@ -143,7 +132,7 @@ contains
       water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
       e_infil = frozen%hydrology%infiltration * internal_energy_liquid(frozen%hydrology%t_infil)
       e_drain = frozen%hydrology%drainage     * internal_energy_liquid(frozen%hydrology%t_bot)
-      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%hydrology%geothermal, y%theta,          &
+      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, y%theta,          &
                                         water_heat, frozen%hydrology%w_flux_frozen,                                &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
       call soil_energy_step_implicit(se, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, dt, eflux)

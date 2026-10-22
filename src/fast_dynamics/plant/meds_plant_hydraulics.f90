@@ -20,8 +20,9 @@ module meds_plant_hydraulics
    private
 
    public :: leaf_node_psi, crown_gravity_head
-   public :: cohort_root_depth, cohort_root_profile
+   public :: cohort_root_profile
    public :: supply_limited_transpiration
+   public :: cohort_root_depth   ! used only by the tests
 
    !----- [-] Width, in relative water content, over which smooth_max0 rounds the leaves'  !
    !      supply limit (docs/science/soil_plant_water.md eq. (3)). ------------------------!

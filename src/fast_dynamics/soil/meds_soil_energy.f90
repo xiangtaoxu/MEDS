@@ -30,9 +30,7 @@ module meds_soil_energy
 
    public :: soil_energy_step_implicit, soil_energy_time_deriv
    !----- The water-enthalpy face rule, exposed as ONE seam (see the routine). ----------------!
-   public :: water_enthalpy_faces
    !----- The bottom thermal boundary, exposed as ONE seam (see the routine). -----------------!
-   public :: bottom_heat_face, deep_conductance
 
 contains
 
@@ -74,12 +72,9 @@ contains
             qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(temp(k+1))
          end if
       end do
-      !----- BOTTOM face: drainage out, or aquifer/water-table water in. ----------------------!
-      if (forcing%w_flux_bot <= 0.0_wp) then
-         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(temp(n))
-      else
-         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(forcing%t_water_bot)
-      end if
+      !----- BOTTOM face: no advective term; drainage enthalpy leaves through the bottom layer's   !
+      !      root_heat_sink (assemble_soil_energy_forcing). ---------------------------------------!
+      qwf(n) = 0.0_wp
    end subroutine water_enthalpy_faces
 
    !---------------------------------------------------------------------------------------!
@@ -200,14 +195,11 @@ contains
       end do
 
       !----- Diagnostics + closed energy budget. -------------------------------------------!
-      flux%ground_heat  = forcing%g_top
       flux%bottom_heat  = -hf(n)
       !----- The column budget carries the boundary WATER enthalpy too; the interior faces        !
       !      telescope out of the sum exactly, as they must. -------------------------------------!
       flux%energy_resid = (e1 - e0) - dt * (forcing%g_top - flux%bottom_heat                   &
                           - sum(forcing%root_heat_sink(1:n)) + (qwf(n) - qwf(0)))
-      flux%nsub      = 1_ik
-      flux%converged = .true.
       if (opts%debug_error .and. abs(flux%energy_resid) > opts%soil_energy_budget_atol * sum(c_eff(1:n)*soil%dz(1:n))) then
          error stop 'soil_energy_step_implicit: energy budget did not close'
       end if

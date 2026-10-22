@@ -20,7 +20,7 @@
 !==========================================================================================!
 module meds_fast_time_derivs
    use meds_kinds, only : wp, ik
-   use meds_constants, only : tiny_num, rho_h2o, n_soil_layer_max
+   use meds_constants, only : tiny_num, rho_h2o
    use meds_therm_lib, only : cas_molar_density, cas_enthalpy_to_temp, sat_specific_humidity,             &
                               sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,  &
                               internal_energy_liquid
@@ -32,17 +32,15 @@ module meds_fast_time_derivs
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
    use meds_plant_biophysics, only : veg_energy_balance, lw_emission_slope
    use meds_column_state_ops, only : assemble_soil_energy_forcing
-   use meds_fast_types, only : column_config_t, snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t, &
-                               tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t, column_state_t, &
-                               column_frozen_t, column_tend_t, &
-                               stage_bflux_t, column_bflux_t
+   use meds_fast_types, only : column_config_t, snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,    &
+                               tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t,                  &
+                               column_state_t, column_frozen_t, column_tend_t
    implicit none
    private
 
    public :: surface_derivs, column_derivs, cas_conductances
    !----- public so any other user of the condensation timescale reads this one rather than     !
    !      keeping a copy that could drift out of step with it. ---------------------------------!
-   public :: TAU_COND
 
    !----- CAS supersaturation relaxation timescale [s] for the smooth condensation sink: q relaxes to    !
    !      qsat with this e-folding time (dq/dt|_cond = -(q-qsat)/TAU_COND). Short vs dt_fast=1800s so a    !
@@ -121,7 +119,7 @@ contains
       !      on one record allocates them once. ------------------------------------------------------!
       type(surface_tend_t),   intent(inout) :: f
 
-      real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
+      real(wp)    :: tcas, qcas, qsat_c, dqdt
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
       real(wp)    :: lw_slope_w, dtw, tw, transp_w, dh_w, drnet_w    !< WOOD balance (own store)
       real(wp)    :: coh_h, coh_qw, coh_transp, coh_rnet, coh_film_evap
@@ -361,7 +359,7 @@ contains
       water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
       water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
       e_drain = f%drainage_rate * internal_energy_liquid(frozen%hydrology%t_bot)
-      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%hydrology%geothermal, y%theta,          &
+      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, y%theta,          &
                                         water_heat, frozen%hydrology%w_flux_frozen,                                &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
       !----- Record the faces the ENERGY equation was just given, so the stepper can check them     !

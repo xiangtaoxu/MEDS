@@ -54,8 +54,8 @@ module meds_spac_solver
    private
 
    public :: spac_solver_t, spac_allocate, spac_set_state, spac_advance
-   public :: spac_jacobian_error
    public :: POND, WOOD, LEAF
+   public :: spac_jacobian_error   ! used only by the tests
 
    integer(ik), parameter :: POND = 1_ik            !< the pond is soil node 1; soil layer k is node 1 + k
    integer(ik), parameter :: WOOD = 1_ik            !< a cohort's wood, its first store

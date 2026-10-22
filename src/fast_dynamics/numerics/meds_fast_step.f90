@@ -12,11 +12,10 @@ module meds_fast_step
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap
    use meds_config,           only : meds_config_t
-   use meds_fast_params,      only : INTEG_ARK, INTEG_RK45
+   use meds_fast_params,      only : INTEG_RK45
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_fast_types, only : patch_biophys_t
-   use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,          &
-                                     column_budget_t, fast_workspace_t
+   use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
+                               column_budget_t, fast_workspace_t
    use meds_fast_ark,         only : column_fast_step_ark
    use meds_fast_rk45,        only : column_fast_step_rk45, rk45_state_railed, rk45_ledgers_stop
    use meds_plant_hydraulics, only : leaf_node_psi

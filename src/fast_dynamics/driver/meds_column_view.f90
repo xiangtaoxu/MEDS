@@ -28,13 +28,14 @@
 module meds_column_view
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cm2_to_m2, c2b_wood, t_3ple
-   use meds_cohort_state_vars, only : cohort_block, alloc_cohort_block, init_cohort, set_cohort_size
+   use meds_cohort_state_vars, only : cohort_block, alloc_cohort_block, init_cohort
    use meds_pft_params,       only : pft_table_t
    use meds_fast_types,       only : column_cohort_t, ensure_column_cohort_capacity
    implicit none
    private
 
-   public :: copy_column_cohort, column_cohort_init
+   public :: copy_column_cohort
+   public :: column_cohort_init   ! used only by the tests
 
 contains
 

@@ -27,9 +27,8 @@ module meds_canopy_radiation
    implicit none
    private
 
-   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t   ! re-export for callers
-   public :: derive_rad_optics, blend_cohort_optics, ground_optics
-   public :: solve_band, canopy_radiation
+   public :: derive_rad_optics, ground_optics
+   public :: canopy_radiation
 
 contains
 

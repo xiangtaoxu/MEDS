@@ -376,7 +376,7 @@ contains
       !      temperature and the drainage enthalpy at the bottom. Every term is nonzero in this         !
       !      fixture: a check that omits a term is only green while that term is zero. -----------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      eforc_chk%g_top = surf_tend%g_top ; eforc_chk%geothermal = frozen%hydrology%geothermal
+      eforc_chk%g_top = surf_tend%g_top
       do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
          eforc_chk%root_heat_sink(k) = frozen%roots%root_heat(k)
@@ -387,7 +387,6 @@ contains
                                     + frozen%hydrology%drainage * internal_energy_liquid(frozen%hydrology%t_bot)
       eforc_chk%w_flux_top  = -frozen%hydrology%infiltration / rho_h2o
       eforc_chk%t_water_top = frozen%hydrology%t_infil
-      eforc_chk%w_flux_bot  = 0.0_wp
       call soil_energy_time_deriv(se_chk, eforc_chk, col_config%soil_thermal, col_config%soil, col_config%energy, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
@@ -956,7 +955,7 @@ contains
       hp%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       hp%wood_psi50 = -2.0_wp
       hp%wood_kexp = 2.0_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
-      frozen%hydrology%geothermal = 0.0_wp ; frozen%hydrology%q_top = 1.0e-6_wp
+      frozen%hydrology%q_top = 1.0e-6_wp
       col_config%energy = energy_opts_t()
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))

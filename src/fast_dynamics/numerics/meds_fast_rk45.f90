@@ -22,34 +22,32 @@
 !==========================================================================================!
 module meds_fast_rk45
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air, n_soil_layer_max
-   use meds_therm_lib,           only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp
-   use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
-   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t, &
-                                     surface_state_t, surface_tend_t,          &
-                                     column_config_t, column_cohort_t, column_forcing_t,         &
-                                     column_budget_t, mask_is_full
+   use meds_constants,        only : tiny_num, rho_h2o, cp_air, n_soil_layer_max
+   use meds_therm_lib,           only : cas_enthalpy_to_temp, internal_energy_liquid
+   use meds_fast_time_derivs, only : column_derivs, cas_conductances
+   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t,             &
+                                     surface_tend_t, column_config_t, column_cohort_t, column_forcing_t,          &
+                                     column_budget_t, mask_is_full, patch_biophys_t, fast_workspace_t
    use meds_fast_frozen,      only : build_column_frozen
-   use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_sub, zero_like, apply_process_mask,     &
-                                     clamp_cas, soil_water_store,                                   &
-                                     soil_energy_store, plant_water_store, canopy_film_store,       &
-                                     deposit_condensate, clamp_canopy_film, unpack_column_state,     &
-                                     diagnose_soil_temps, transp_per_leaf_area, commit_tissue_energy
+   use meds_column_state_ops, only : state_init, state_accum, state_sub, zero_like, apply_process_mask,           &
+                                     clamp_cas, soil_water_store, soil_energy_store, plant_water_store,           &
+                                     canopy_film_store, deposit_condensate, clamp_canopy_film,                    &
+                                     unpack_column_state, diagnose_soil_temps, transp_per_leaf_area,              &
+                                     commit_tissue_energy
    use meds_diag_vars,        only : CO_TRANSP
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
    use meds_config,           only : meds_config_t
    use meds_fast_params,      only : CTRL_L2_STRICT
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_fast_types, only : patch_biophys_t, fast_workspace_t
-   use meds_soil_params,      only : SOIL_BC_AQUIFER
    use meds_budget_check,     only : budget_check, last_check_closed, BUDGET_ENERGY_RATE_FLOOR,      &
                                      BUDGET_WATER_RATE_FLOOR
    implicit none
    private
 
-   public :: rk45_column_step, adaptive_rk45_march, column_fast_step_rk45
+   public :: column_fast_step_rk45
    public :: rk45_state_railed, rk45_ledgers_stop
+   public :: rk45_column_step   ! used only by the tests
 
    !----- Cash-Karp embedded 5(4) tableau (Cash & Karp 1990, ACM TOMS 16:201; the SAME                 !
    !      coefficients as Numerical Recipes' rkck). The stage times c_i are not needed: the            !
@@ -79,7 +77,7 @@ module meds_fast_rk45
    !      signal: it caps the wasted explicit work at ~20x normal instead of ~150x, the difference       !
    !      between a 30-yr run finishing and a single cold month taking longer than the rest of the       !
    !      run combined. ---------------------------------------------------------------------------------!
-   integer(ik), parameter, public :: RK45_WORK_CAP = 64_ik
+   integer(ik), parameter :: RK45_WORK_CAP = 64_ik
 
 contains
 
@@ -493,21 +491,19 @@ contains
 
       type(column_frozen_t)  :: frozen
       type(column_state_t)   :: y, y_out
-      type(surface_state_t)  :: y_stage
-      type(surface_tend_t)   :: surf_tend
       real(wp)    :: dt0, cas_mass_capacity, enth0, shv0, enth1, shv1
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
-      real(wp)    :: tg, fl, dt_warm_next, cond_dep, cond_dep_enth, face_acc
+      real(wp)    :: dt_warm_next, cond_dep, cond_dep_enth, face_acc
       real(wp)    :: w_pond_rk, runoff_rk
       real(wp)    :: e_pond0, e_pond_rk, over_enth_rk   ! [J/m2] pond enthalpy (start, end); runoff enthalpy
       !----- Canopy-SURFACE water ledger scratch. -----------------------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
-      real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
+      real(wp)    :: surf_overflow, surf_deficit, intercept_total
       real(wp)    :: tissue_store0, tissue_store1
       real(wp)    :: tl_int_acc(col_cohort%n), tw_int_acc(col_cohort%n), tr_int_acc(col_cohort%n)
       type(error_control_t) :: ec
-      integer(ik) :: n, nsl, k, i, nsteps, nrej
+      integer(ik) :: n, nsl, nsteps, nrej
 
       n = col_cohort%n ; nsl = col_config%soil%n_active
       !----- The stage-clamp counter accumulates down the call chain, so this sub-step's tally starts  !

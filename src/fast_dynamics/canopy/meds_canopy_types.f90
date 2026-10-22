@@ -22,8 +22,9 @@ module meds_canopy_types
    public :: RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
    public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t
    public :: alloc_rad_pft_optics, alloc_rad_forcing, alloc_rad_flux
-   public :: aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, ensure_aero_out_capacity
+   public :: aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
    public :: set_aero_env_atm, set_aero_env_canopy
+   public :: alloc_aero_out   ! used only by the tests
 
    !----- Default three-band layout (indices into the band dimension). --------------------!
    integer(ik), parameter :: RAD_VIS = 1_ik   !< visible / PAR (beam + diffuse, no emission)
@@ -121,11 +122,11 @@ module meds_canopy_types
    !----- Outputs: per-patch scalars + per-cohort arrays (caller-owned; written in place). ---!
    type :: aero_out_t
       integer(ik) :: n_coh = 0_ik
-      real(wp) :: ustar = 0.0_wp, tstar = 0.0_wp, qstar = 0.0_wp, cstar = 0.0_wp   !< [m/s],[K],[kg/kg],[umol/mol]
+      real(wp) :: ustar = 0.0_wp, tstar = 0.0_wp   !< [m/s],[K]
       real(wp) :: temp1 = 0.0_wp, temp2 = 0.0_wp    !< scalar profile factors (g_atm_heat=rho*ustar*temp1, g_atm_vapour=..temp2)
       real(wp) :: zeta = 0.0_wp, rib = 0.0_wp, obu = 0.0_wp   !< stability diagnostics
       real(wp) :: ggbare = 0.0_wp, ggveg = 0.0_wp, ggnet = 0.0_wp   !< [m/s] ground conductances (r_aero = 1/ggnet)
-      real(wp) :: rough = 0.0_wp, displace = 0.0_wp, can_depth = 0.0_wp   !< [m]
+      real(wp) :: rough = 0.0_wp, displace = 0.0_wp   !< [m]
       real(wp) :: uh = 0.0_wp                        !< [m/s] canopy-top wind (diagnostic)
       real(wp), allocatable :: wind(:)               !< [m/s] per-cohort in-canopy wind
       real(wp), allocatable :: leaf_gbh(:), leaf_gbw(:)   !< [m/s] leaf boundary-layer heat/vapour conductance

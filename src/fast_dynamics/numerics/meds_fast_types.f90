@@ -22,13 +22,12 @@
 module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max
-   use meds_plant_types, only : hydro_args_table_t
-   use meds_plant_types, only : veg_thermal_args_t
+   use meds_plant_types, only : hydro_args_table_t, veg_thermal_args_t, wood_args_t, root_args_t, hydro_opts_t,   &
+                                leaf_photo_table_t
    use meds_soil_params, only : soil_params_t, soil_thermal_params_t, soil_opts_t, energy_opts_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_params, only : aero_cfg_t, snow_params_t
-   use meds_plant_types, only : wood_args_t, root_args_t, hydro_args_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
@@ -43,14 +42,15 @@ module meds_fast_types
    public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
    public :: tol_set_t, error_control_t, integrator_opts_t
    public :: mask_is_full
-   public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config, apply_canopy_film_config
+   public :: ensure_column_cohort_capacity, apply_hydraulics_config, apply_canopy_film_config
    public :: surface_state_t, surface_tend_t
-   public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
+   public :: patch_biophys_t, ensure_patch_biophys_capacity
    public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
    public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t, fast_workspace_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
+   public :: alloc_column_cohort, alloc_patch_biophys   ! used only by the tests
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
 
@@ -511,16 +511,13 @@ module meds_fast_types
    !      VERTICAL misplacement still sums correctly against the boundary                              !
    !      (docs/science/numerical_scheme.md §5b).                                                      !
    type :: soil_hydrology_t
-      real(wp) :: geothermal    = 0.0_wp          !< [W/m2]    bottom heat flux BC
       real(wp) :: q_top         = 0.0_wp          !< [m/s]     net top-face water flux (infiltration - exfiltration - evaporation)
       real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] pond -> top layer
       real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
-      real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground (the pond's inflow)
       real(wp) :: ground_inflow_enth = 0.0_wp     !< [W/m2]    the enthalpy it brings across the column's boundary
       real(wp) :: t_infil       = 0.0_wp          !< [K]       temperature of the infiltrating (pond) water
       real(wp) :: w_surface_energy1 = 0.0_wp        !< [J/m2]    end-of-step pond ENTHALPY
-      real(wp) :: t_pond_inflow      = 0.0_wp          !< [K]       temperature of the water entering the pond
       real(wp) :: runoff_enth   = 0.0_wp          !< [W/m2]    enthalpy leaving with surface runoff
       real(wp) :: t_film_valuation     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
       !----- Water a supersaturated top layer pushed up into the pond, and the enthalpy it took, valued at !
@@ -584,7 +581,7 @@ module meds_fast_types
       !      amount. -------------------------------------------------------------------------------!
       real(wp) :: melt_enth  = 0.0_wp    !< [J/m2] melt enthalpy leaving the pack with the meltwater
       !----- Temperature that VALUES the meltwater, i.e. the T with u_liq(T)*melt_mass == melt_enth.     !
-      !      The caller hands this to the hydrology kernel as chydro_forcing_t%t_pond_inflow so the pond      !
+      !      The caller hands this to the water network as the pond inflow's temperature so the pond          !
       !      receives exactly melt_enth when it receives melt_rate*dt of mass -- one number, both        !
       !      sides. Falls back to t_3ple when there is no melt mass to value. ------------------------!
       real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater

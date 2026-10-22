@@ -23,16 +23,15 @@ module meds_fast_prepass
                                      CO_CA, CO_PRESSURE
    use meds_plant_hydraulics, only : leaf_node_psi
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_plant_types, only : veg_thermal_args_t
-   use meds_fast_types, only : patch_biophys_t
+   use meds_plant_types, only : veg_thermal_args_t, leaf_photo_table_t, hydro_args_table_t, hydro_opts_t,         &
+                                wood_args_t, root_args_t
+   use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
+                               column_budget_t
    use meds_soil_params,      only : soil_params_t
    use meds_state_defaults, only : is_unset_negative
    use meds_biophysics_params, only : aero_cfg_t
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
-   use meds_plant_types, only : leaf_photo_table_t, hydro_args_t, hydro_args_table_t, hydro_opts_t,     &
-                                wood_args_t, root_args_t
    use meds_biogeochem_types, only : N_SOIL_POOL
-   use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
@@ -46,9 +45,7 @@ module meds_fast_prepass
    private
 
    public :: column_prepass
-   public :: refresh_canopy_aerodynamics, canopy_leaf_gas_exchange, canopy_maintenance_respiration, cohort_leaf_par
-   public :: root_zone_environment, patch_heterotrophic_respiration, cas_capacities_and_conductances
-   public :: aero_bottom_to_top
+   public :: cohort_leaf_par, aero_bottom_to_top   ! used only by the tests
 
 contains
 

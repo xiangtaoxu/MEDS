@@ -26,22 +26,22 @@ module meds_column_state_ops
    use meds_constants,        only : rho_h2o, tiny_num, mmh2o, cp_liq
    use meds_therm_lib,        only : internal_energy_to_temp, cas_enthalpy_to_temp, cas_temp_to_enthalpy,  &
                                      tissue_energy_to_temp
-   use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t,                  &
-                                     column_frozen_t, stage_bflux_t, column_bflux_t, GRP_ENTH,        &
-                                     GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W
+   use meds_fast_types,       only : column_state_t, column_tend_t, stage_bflux_t, column_bflux_t, GRP_ENTH,      &
+                                     GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W,                 &
+                                     patch_biophys_t, tissue_coefficients_t
    use meds_fast_params,      only : process_mask_t
    use meds_soil_types, only : energy_forcing_t
-   use meds_fast_types, only : patch_biophys_t, tissue_coefficients_t
    implicit none
    private
 
-   public :: state_size, state_to_array, array_to_state, tend_to_array, state_entry_rules
-   public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
+   public :: state_to_array, state_entry_rules
+   public :: state_init, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight, transp_per_leaf_area
    public :: assemble_soil_energy_forcing, apply_process_mask, commit_tissue_energy
    public :: clamp_cas
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
    public :: clamp_canopy_film, deposit_condensate, unpack_column_state, diagnose_soil_temps
+   public :: state_size, array_to_state, state_axpy   ! used only by the tests
 
 contains
 
@@ -572,12 +572,11 @@ contains
    !     enthalpy is charged through the bottom layer's sink instead (the ledger's convention). There  !
    !     is deliberately NO runoff term: runoff leaves the POND, not soil layer 1.                     !
    !---------------------------------------------------------------------------------------!
-   pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, geothermal, theta, water_heat_out,      &
+   pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, theta, water_heat_out,                  &
                                                 face_flux, infiltration, t_infil, e_drain)
       type(energy_forcing_t), intent(out) :: eforc
       integer(ik),            intent(in)  :: nsl
       real(wp),               intent(in)  :: g_top          !< [W/m2]  net ground heat flux into the soil top
-      real(wp),               intent(in)  :: geothermal     !< [W/m2]  bottom boundary flux
       real(wp),               intent(in)  :: theta(:)       !< [m3/m3] soil moisture (thermal properties)
       real(wp),               intent(in)  :: water_heat_out(:) !< [W/m2] enthalpy leaving each layer with water
       real(wp),               intent(in)  :: face_flux(:)   !< [m/s]   DOWN-positive water flux at layer faces
@@ -585,7 +584,7 @@ contains
       real(wp),               intent(in)  :: t_infil        !< [K]     temperature of the infiltrating water
       real(wp),               intent(in)  :: e_drain        !< [W/m2]  enthalpy leaving with bottom drainage
       integer(ik) :: k
-      eforc%g_top = g_top ; eforc%geothermal = geothermal
+      eforc%g_top = g_top
       do k = 1_ik, nsl
          eforc%soil_water(k)     = theta(k)
          eforc%root_heat_sink(k) = water_heat_out(k)
@@ -593,7 +592,6 @@ contains
       end do
       eforc%w_flux_top  = -infiltration / rho_h2o
       eforc%t_water_top = t_infil
-      eforc%w_flux_bot  = 0.0_wp
       eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
    end subroutine assemble_soil_energy_forcing
 

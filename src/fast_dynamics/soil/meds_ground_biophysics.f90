@@ -31,7 +31,8 @@ module meds_ground_biophysics
 
    public :: ground_surface_fluxes
    public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater
-   public :: snow_surface_fluxes, snow_base_conductance, snow_energy_step
+   public :: snow_energy_step
+   public :: snow_surface_fluxes   ! used only by the tests
 
 contains
 

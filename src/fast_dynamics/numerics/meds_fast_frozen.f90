@@ -16,8 +16,8 @@
 !==========================================================================================!
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
-   use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple,        &
-                              tissue_c_leaf, tissue_c_wood_dry
+   use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, cp_liq, t_3ple, tissue_c_leaf,       &
+                              tissue_c_wood_dry
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
    use meds_plant_hydr_lib,  only : tissue_psi_to_rwc, conductance_retained_fraction, xylem_max_conductance,  &
@@ -25,24 +25,18 @@ module meds_fast_frozen
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
    use meds_config, only : meds_config_t, pft_wstress_psi_close
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_soil_types, only : chydro_forcing_t, snow_melt_t
-   use meds_fast_types, only : patch_biophys_t
+   use meds_soil_types, only : chydro_forcing_t, snow_melt_t, snow_env_t, snow_flux_t
+   use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
+                               column_budget_t, column_state_t, column_frozen_t, surface_state_t,                 &
+                               surface_tend_t, snow_stage_t
    use meds_fast_time_derivs, only : surface_derivs
-   use meds_column_state_ops, only : soil_water_store, soil_energy_store, plant_water_store,                    &
-                                     canopy_film_store, deposit_condensate, clamp_canopy_film, unpack_column_state, &
-                                     diagnose_soil_temps, assemble_soil_energy_forcing, apply_process_mask
    use meds_fast_prepass, only : column_prepass
-   use meds_fast_types, only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t, column_state_t, &
-                               column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, stage_bflux_t, &
-                               column_bflux_t, error_control_t, column_tend_t, mask_is_full
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
-   use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
+   use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction,                 &
+                                      snow_energy_step
    use meds_therm_lib, only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy, tissue_dry_heat_capacity
-   use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_params, only : snow_params_t
    use meds_patch_state_vars,   only : snow_column_t
-   use meds_ground_biophysics, only : snow_energy_step
-   use meds_fast_types, only : snow_stage_t
    implicit none
    private
 
@@ -91,7 +85,7 @@ contains
       real(wp) :: avail_leaf, avail_wood
       !----- The water reaching the ground besides the shed water [kg/m2/s], its temperature [K], and   !
       !      the enthalpy all of it brings [W/m2]. ---------------------------------------------------!
-      real(wp) :: water_base, t_water_base, inflow_enth
+      real(wp) :: water_base, t_water_base, inflow_enth, precip_ground, t_pond_inflow
 
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n),                  &
          frozen%tissue%abs_lw(n), frozen%tissue%lai(n))
@@ -287,7 +281,6 @@ contains
 
       !----- params + hydraulics BCs. -----------------------------------------------------------!
       frozen%cas%cas_condensation = col_config%integrator%cas_condensation      ! the per-stage condensation sink
-      frozen%hydrology%geothermal = 0.0_wp
 
       !----- The START-OF-STEP surface solve, at the state^n canopy air: it gives the water network      !
       !      each cohort's transpiration demand (docs/science/soil_plant_water.md §4). ------------------!
@@ -335,7 +328,7 @@ contains
       else
          water_base = throughfall_total
       end if
-      hforc%precip_ground      = water_base + biophys%shed_water_rate
+      precip_ground            = water_base + biophys%shed_water_rate
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- Phase of the evaporating surface, for the ice saturation branch                             !
@@ -355,8 +348,8 @@ contains
                                                 / (forc%rainfall + forc%snowfall))
       end if
       inflow_enth = water_base * internal_energy_liquid(t_water_base) + biophys%shed_water_enth
-      hforc%t_pond_inflow = t_water_base
-      if (biophys%shed_water_rate > 0.0_wp) hforc%t_pond_inflow = liquid_energy_to_temp(inflow_enth / hforc%precip_ground)
+      t_pond_inflow = t_water_base
+      if (biophys%shed_water_rate > 0.0_wp) t_pond_inflow = liquid_energy_to_temp(inflow_enth / precip_ground)
       !----- ...and the enthalpy it brings across the column's boundary: all of it on bare ground; under a  !
       !      pack the meltwater's is the pack's, inside the column, so only the shed water's. -----------!
       frozen%hydrology%ground_inflow_enth = inflow_enth
@@ -369,8 +362,8 @@ contains
       !      each cohort's transpiration demand from the start-of-step surface solve above.               !
       !      Everything the march needs about water is read from it below; the stages hold it             !
       !      fixed, as they hold ground evaporation. -----------------------------------------------------!
-      call run_spac_solver(dt_fast, cfg, col_config, col_cohort, biophys, hforc, root_frac(1:nsl, 1:n),        &
-                           sf0%transp_c(1:n), n, nsl, spac)
+      call run_spac_solver(dt_fast, cfg, col_config, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
+                           root_frac(1:nsl, 1:n), sf0%transp_c(1:n), n, nsl, spac)
 
       !----- Work and convergence (docs/science/soil_plant_water.md §6): the network's accepted         !
       !      sub-steps, its Newton iterations, its rejected sub-steps, and the sub-steps it had to      !
@@ -391,12 +384,10 @@ contains
       budget%runoff_surf_export       = spac%spill
       budget%drainage_export          = spac%drain
       frozen%hydrology%runoff_enth    = spac%spill_enth / dt_fast
-      frozen%hydrology%precip_ground  = hforc%precip_ground
-      frozen%hydrology%t_pond_inflow  = hforc%t_pond_inflow
       !----- The infiltrating water left the POND, so the soil top face is valued at the                !
       !      temperature that carries exactly the enthalpy the pond gave up                             !
       !      (docs/science/numerical_scheme.md §5b, "The pond holds heat"). ----------------------------!
-      frozen%hydrology%t_infil = hforc%t_pond_inflow
+      frozen%hydrology%t_infil = t_pond_inflow
       if (spac%infil > tiny_num) frozen%hydrology%t_infil = liquid_energy_to_temp(spac%infil_enth / spac%infil)
       !----- The canopy film's valuation temperature. It is a reference: the film store, its               !
       !      interception input and its evaporation (surface_derivs) all use this one value, so the        !
@@ -526,14 +517,16 @@ contains
    ! network takes less where a leaf runs short of water (docs/science/soil_plant_water.md             !
    ! eq. (3)).                                                                                         !
    !---------------------------------------------------------------------------------------!
-   subroutine run_spac_solver(dt_fast, cfg, col_config, col_cohort, biophys, hforc, root_frac, e_demand, &
-                              n, nsl, spac)
+   subroutine run_spac_solver(dt_fast, cfg, col_config, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
+                              root_frac, e_demand, n, nsl, spac)
       real(wp),               intent(in)    :: dt_fast
       type(meds_config_t),    intent(in)    :: cfg
       type(column_config_t),  intent(in)    :: col_config
       type(column_cohort_t),  intent(in)    :: col_cohort
       type(patch_biophys_t),  intent(in)    :: biophys
       type(chydro_forcing_t), intent(in)    :: hforc
+      real(wp),               intent(in)    :: precip_ground   !< [kg/m2/s] water reaching the pond
+      real(wp),               intent(in)    :: t_pond_inflow   !< [K]       the temperature that values it
       integer(ik),            intent(in)    :: n, nsl
       real(wp),               intent(in)    :: root_frac(nsl, n)   !< [-] each cohort's fine roots by layer
       real(wp),               intent(in)    :: e_demand(n)         !< [kg/m2 ground/s]
@@ -567,8 +560,8 @@ contains
                                                          col_config%hydraulics_table%pft(col_cohort%pft(i))%fine_root_radius)
          end do
       end do
-      spac%rain       = hforc%precip_ground
-      spac%t_rain     = hforc%t_pond_inflow
+      spac%rain       = precip_ground
+      spac%t_rain     = t_pond_inflow
       spac%t_soil(1:nsl) = biophys%soil_energy%soil_temp(1:nsl)
       spac%w_pond_max = col_config%soil_water_opts%w_pond_max
       spac%rtol       = col_config%soil_water_opts%rtol
@@ -590,7 +583,7 @@ contains
    !                                                                                                 !
    ! The meltwater's enthalpy leaves the pack's snow_energy (snow_drain_meltwater) and is            !
    ! reported as melt_enth together with t_melt, the temperature that values it; the caller          !
-   ! passes t_melt to the water network as hforc%t_pond_inflow, and the ONE pond inflow carries      !
+   ! passes t_melt to the water network as the pond inflow's temperature, and the ONE pond inflow   !
    ! both halves. Pack and pond are both tracked stores, so the transfer telescopes out of the       !
    ! whole-column ledger rather than needing a boundary term.                                        !
    !---------------------------------------------------------------------------------------!

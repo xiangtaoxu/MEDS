@@ -11,10 +11,10 @@
 module meds_leaf_gas_exchange
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : p_std, tiny_num, gsw_2_gsc, gbw_2_gbc, mol_2_umol
-   use meds_leaf_params,   only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t, PATH_C3, PATH_C4,   &
-                                LIM_NONE, LIM_RUBISCO, &
-                                LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
+   use meds_leaf_params,   only : COLIM_QUADRATIC, SM_LEUNING, SM_KATUL
+   use meds_pft_params,    only : PATH_C4
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t,          &
+                                LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    use meds_therm_lib,     only : temp_response, arrhenius_scale
    use meds_numerics,      only : quadratic_smaller_root
    implicit none
@@ -32,7 +32,7 @@ module meds_leaf_gas_exchange
    public :: assimilation_demand_c3, assimilation_demand_c4, electron_transport_j
 
    !----- Stomatal conductance. ----------------------------------------------------------!
-   public :: stomata_gs_leuning, stomata_gs_medlyn, katul_lambda
+   public :: stomata_gs_leuning, stomata_gs_medlyn
 
    real(wp), parameter :: BETA_FLOOR   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
 

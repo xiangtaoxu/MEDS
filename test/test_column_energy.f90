@@ -137,7 +137,7 @@ contains
       call build_soil_therm_params(nl, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:nl) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
       forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
-      forcing%w_flux_top = 0.0_wp ; forcing%w_flux_bot = 0.0_wp
+      forcing%w_flux_top = 0.0_wp
       if (ddeep > 0.0_wp) then
          opts%thermal_bottom_bc = ENERGY_BC_DIRICHLET ; opts%deep_temp = tmean ; opts%deep_depth = ddeep
       end if

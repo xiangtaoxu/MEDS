@@ -110,10 +110,6 @@ contains
       call check_true('master ggnet > 0', out%ggnet > 0.0_wp, out%ggnet)
       call check_true('master ggnet <= ggbare (closed canopy)', out%ggnet <= out%ggbare + 1.0e-12_wp, &
                       out%ggbare - out%ggnet)
-      !----- CAS depth = tallest cohort + freeboard, floored. The canopy air space extends ABOVE  !
-      !      the crowns; it is not the canopy volume. -------------------------------------------!
-      call check('master can_depth = h_top + freeboard', out%can_depth,                          &
-                 max(cfg%min_canopy_depth, 18.0_wp + cfg%canopy_freeboard), 1.0e-12_wp)
       call check_true('wind decreases top->bottom', out%wind(2) > out%wind(1), out%wind(2) - out%wind(1))
       !----- Each closed crown takes the wind down by exp(-LAI/4) to its mid-depth and exp(-LAI/2)  !
       !      to its base (docs/science/canopy_aerodynamics.md eq. (8)). ---------------------------!

@@ -21,15 +21,14 @@ module meds_fast_control
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : tiny_num
    use meds_numerics,    only : adaptive_step_update, clamp
-   use meds_fast_params, only : CTRL_I, CTRL_PI
+   use meds_fast_params, only : CTRL_PI
    use meds_column_state_ops, only : state_to_array, state_entry_rules
-   use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, integrator_opts_t,     &
-                                GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, &
-                                N_TOL_GROUP
+   use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t
    implicit none
    private
 
-   public :: default_tol_set, default_error_control, state_wrms_grouped, step_control_factor
+   public :: state_wrms_grouped, step_control_factor
+   public :: default_error_control   ! used only by the tests
 
 
 contains

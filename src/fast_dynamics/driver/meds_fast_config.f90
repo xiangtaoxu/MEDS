@@ -17,24 +17,21 @@ module meds_fast_config
    use meds_kinds,       only : wp, ik
    use meds_config,      only : meds_config_t, pft_stomata_psi_onset, pft_wstress_psi_open,           &
                                 pft_wstress_psi_close
-   use meds_fast_params, only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio
-   use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t,                     &
-                                GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W,        &
-                                GRP_THETA, N_TOL_GROUP
-   use meds_fast_control, only : default_tol_set, default_error_control
+   use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t, GRP_THETA
    use meds_canopy_types,     only : rad_pft_optics_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_canopy_radiation, only : derive_rad_optics
    use meds_optics_lib,       only : moments_to_beta_params
    implicit none
    private
 
-   public :: leaf_photo_params_for_pft, build_leaf_photo_table, leaf_gas_exchange
+   public :: build_leaf_photo_table
    public :: acclimate_leaf_photo_table
    public :: build_rad_optics
-   public :: build_tol_set, build_error_control, build_integrator_opts
+   public :: build_integrator_opts
+   public :: leaf_photo_params_for_pft, leaf_gas_exchange, build_tol_set   ! used only by the tests
 
 contains
 

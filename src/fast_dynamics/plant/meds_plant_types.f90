@@ -14,14 +14,12 @@
 !==========================================================================================!
 module meds_plant_types
    use meds_kinds,          only : wp, ik
-   use meds_pft_params,     only : PATH_C3, PATH_C4
    use meds_plant_hydr_lib, only : hydro_table_t, plant_hydraulics_t
    implicit none
    private
 
    !----- LEAF -----------------------------------------------------------------------------!
    public :: leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t
-   public :: PATH_C3, PATH_C4                       ! re-export (pathway lives with the PFT traits)
    public :: LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    !----- HYDRAULICS -----------------------------------------------------------------------!
    public :: hydro_args_t, hydro_opts_t, hydro_args_table_t

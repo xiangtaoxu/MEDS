@@ -423,7 +423,7 @@ contains
    !      rainfall, which stays 0 throughout): the soil must wet from THIS input alone, and both              !
    !      whole_water AND whole_energy must still close -- energy closing needs NO separate wiring of        !
    !      its own: the shed water's enthalpy rides the SAME infiltration-enthalpy treatment (e_infil)        !
-   !      every other infiltrating input gets, once mixed into hforc%precip_ground                           !
+   !      every other infiltrating input gets, once mixed into the pond's inflow                             !
    !      by build_column_frozen. ---------------------------------------------------------------------------!
    subroutine test_ark_shed_water()
       integer(ik) :: istep

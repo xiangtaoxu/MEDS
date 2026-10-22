@@ -10,7 +10,7 @@
 !==========================================================================================!
 module meds_soil_types
    use meds_kinds,             only : wp, ik
-   use meds_constants,      only : n_soil_layer_max, n_snow_layer_max
+   use meds_constants,      only : n_soil_layer_max
    implicit none
    private
 
@@ -26,16 +26,11 @@ module meds_soil_types
 
    !----- The soil column's surface boundary for the water network's evaporation (read-only). -----!
    type :: chydro_forcing_t
-      real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] water reaching the ground (post interception)
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temperature
       !----- Liquid fraction of the top soil layer, so ground evaporation from a FROZEN surface       !
       !      saturates over ICE rather than over liquid (docs/science/snow_biophysics.md eq. (1)).    !
       !      Defaults to 1 (all liquid). -------------------------------------------------------------!
       real(wp) :: ground_fliq = 1.0_wp                    !< [-] top-layer liquid fraction
-      !----- The temperature that values precip_ground as it joins the pond. Defaulted to a PHYSICAL   !
-      !      temperature, not 0: internal_energy_liquid is referenced to tsupercool_liq (~57 K), so a 0 K !
-      !      default would value the pond's inflow at a large NEGATIVE enthalpy. ----------------------!
-      real(wp) :: t_pond_inflow = 298.15_wp               !< [K]
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
       real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the BARE-SOIL tile
@@ -64,29 +59,24 @@ module meds_soil_types
                                                             !<        eforc%w_flux = -face_flux). Populating it with
                                                             !<        the raw downward flux would reverse the advection.
       real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
-      !----- BOUNDARY water fluxes, same UPWARD-positive convention as w_flux above, with the          !
-      !      temperature of water arriving from OUTSIDE the column (docs/science/soil_biophysics.md    !
-      !      eq. (10)). These close the water-enthalpy advection at the boundary faces so ALL of it -- !
-      !      top, interior, bottom -- is applied by ONE upwind rule at ONE time level. Adding the      !
-      !      top/bottom terms to soil_energy directly before the step would evaluate the inflow on     !
+      !----- The TOP-face water flux, same UPWARD-positive convention as w_flux above, with the        !
+      !      temperature of water arriving from above the column (docs/science/soil_biophysics.md      !
+      !      eq. (10)). It closes the water-enthalpy advection at the top face so the top and interior !
+      !      faces are applied by ONE upwind rule at ONE time level (drainage leaves through the       !
+      !      bottom layer's root_heat_sink). Adding the top term to soil_energy before the step would  !
       !      state^n while the interior outflow uses the post-conduction T^{n+1}. With                 !
       !      internal_energy_liquid ~1.0 MJ/kg (the tsupercool_liq datum), each face term reaches      !
       !      ~1300 W/m2 for a few mm/h of percolation, so the physical signal is the small DIFFERENCE  !
       !      of two very large numbers -- and a 5 K time-level inconsistency in one of them is worth   !
       !      ~30 W/m2, i.e. the entire signal. --------------------------------------------------------!
       real(wp) :: w_flux_top = 0.0_wp                       !< [m/s] water across the TOP face (<0 = infiltration in)
-      real(wp) :: w_flux_bot = 0.0_wp                       !< [m/s] water across the BOTTOM face (<0 = drainage out)
       real(wp) :: t_water_top = 0.0_wp                      !< [K] temperature of water entering from above
-      real(wp) :: t_water_bot = 0.0_wp                      !< [K] temperature of water entering from below
    end type energy_forcing_t
 
    !----- Soil-column energy outputs + diagnostics. ----------------------------------------!
    type :: energy_flux_t
-      real(wp) :: ground_heat  = 0.0_wp                     !< [W/m2] conductive flux into layer 1
       real(wp) :: bottom_heat  = 0.0_wp                     !< [W/m2] advective+geothermal bottom loss
       real(wp) :: energy_resid = 0.0_wp                     !< [J/m2] closed-budget residual (~0)
-      integer(ik) :: nsub = 0_ik
-      logical  :: converged = .true.
    end type energy_flux_t
 
    !=======================================================================================!

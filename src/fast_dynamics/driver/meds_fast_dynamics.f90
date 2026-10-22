@@ -20,9 +20,8 @@
 !==========================================================================================!
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgc, grav, cp_air, latent_heat_vap, day_sec, p_std, &
-                                     par_w_2_umol,                                                            &
-                                     stefan_boltzmann
+   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgc, latent_heat_vap, day_sec, p_std,              &
+                                     par_w_2_umol, stefan_boltzmann, n_soil_layer_max
    use meds_numerics,         only : ascending_order
    use meds_config,           only : meds_config_t, soil_column_params, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
@@ -46,7 +45,6 @@ module meds_fast_dynamics
                                      PY_RHO_AIR, PY_RAINF, N_PY_ROWS, expand_cohort_diag, expand_patch_diag, &
                                      site_diag_block, SI_SW_IN, SI_PAR_BEAM, SI_NIR_BEAM, SI_LWDOWN, SI_TAIR,  &
                                      SI_QAIR, SI_PSURF, SI_RHO_AIR, N_SI_ROWS
-   use meds_constants,     only : n_soil_layer_max
    use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
    use meds_met_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_radiation_lib,    only : slope_beam_factor
@@ -56,22 +54,17 @@ module meds_fast_dynamics
                                       set_cohort_tissue_temps
    use meds_state_defaults,    only : DMAX_PSI_LEAF_ACCUM_RESET
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
-                                 rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
-                                 set_aero_env_atm, set_aero_env_canopy
-   use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity,                   &
+                                 rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_forcing,                  &
+                                 N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm,                  &
+                                 set_aero_env_canopy, ground_optics_state_t
+   use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t,                  &
+                               column_config_t, column_cohort_t, column_forcing_t, GRP_THETA, column_budget_t,    &
+                               ensure_column_cohort_capacity, apply_hydraulics_config, apply_canopy_film_config
    use meds_biophysics_params, only : snow_params_t
-   use meds_canopy_types, only : ground_optics_state_t
    use meds_canopy_radiation, only : canopy_radiation, ground_optics
    use meds_ground_biophysics, only : snow_cover_fraction
-   use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
-                                     GRP_THETA,                                                   &
-                                     column_budget_t,                                             &
-                                     ensure_column_cohort_capacity, apply_hydraulics_config,      &
-                                     apply_canopy_film_config
    use meds_fast_step,       only : column_fast_step
-   use meds_plant_hydr_lib,   only : tissue_psi_to_water, tissue_capped_water
    !$ use omp_lib,            only : omp_get_thread_num
    implicit none
    private

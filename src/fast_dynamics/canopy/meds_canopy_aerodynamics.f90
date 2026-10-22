@@ -42,11 +42,10 @@ module meds_canopy_aerodynamics
 
    public :: canopy_aerodynamics             !< master per-patch seam
    public :: canopy_roughness                !< roughness length + displacement height of a patch
-   public :: mo_surface_layer               !< CLM Monin-Obukhov solve (exposed for unit tests)
-   public :: reduced_wind                    !< log-profile wind at a height (exposed for tests)
-   public :: boundary_gbh_mos                !< Nusselt boundary-layer conductance (exposed for tests)
+   public :: mo_surface_layer                !< CLM Monin-Obukhov solve (the live CAS conductances re-solve it)
    public :: cas_atm_conductances            !< CAS<->atmosphere bulk conductances from ustar + profile factors
    public :: open_canopy_fraction            !< a patch's open fraction W from its leaf and wood area
+   public :: reduced_wind, boundary_gbh_mos  ! used only by the tests
 
 contains
 
@@ -118,12 +117,6 @@ contains
       zldis    = max(env%zref - displace, 2.0_wp * rough)
       out%rough = rough
       out%displace = displace
-      !----- CAS depth = tallest cohort + freeboard. The canopy air space is the well-mixed      !
-      !      layer the canopy exchanges with, which extends ABOVE the crowns -- not the canopy   !
-      !      volume. This is a diagnostic copy only; the authority is the per-patch              !
-      !      cas_state_t%can_depth, which the SLOW loop owns (canopy height only changes on a    !
-      !      slow step, and resizing the control volume has to be booked there). ----------------!
-      out%can_depth = max(cfg%min_canopy_depth, geom%veg_height + cfg%canopy_freeboard)
       out%n_coh = n
 
       !----- 2. CLM Monin-Obukhov surface layer (canopy z0h = z0m). ------------------------!
@@ -132,8 +125,6 @@ contains
                             out%zeta, out%rib, out%obu)
       out%temp2 = out%temp1                                        ! z0q = z0h => scalar factors equal
       out%tstar = out%temp1 * (env%theta_atm - env%can_theta)
-      out%qstar = out%temp2 * (env%shv_atm   - env%can_shv)
-      out%cstar = out%temp2 * (env%co2_atm   - env%can_co2)
 
       !----- 3. Ground <-> CAS conductances: the bare-ground similarity value and CLM4's dense-canopy !
       !      one, blended linearly by the patch's open fraction W, as CLM does (eq. (6)). W = 1 is bare  !

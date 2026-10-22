@@ -29,29 +29,24 @@
 module meds_fast_ark
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o
-   use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_config, only : meds_config_t
-   use meds_fast_params,  only : INTEG_ARK, CTRL_L2_STRICT
+   use meds_fast_params,  only : CTRL_L2_STRICT
    use meds_fast_control, only : state_wrms_grouped, step_control_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_soil_types, only : snow_melt_t
-   use meds_fast_types, only : patch_biophys_t
+   use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
+                               column_budget_t, column_state_t, column_frozen_t, surface_state_t,                 &
+                               surface_tend_t, stage_bflux_t, column_bflux_t, error_control_t, mask_is_full,      &
+                               ark_stages_t, fast_workspace_t
    use meds_fast_time_derivs, only : surface_derivs
-   use meds_column_state_ops, only : state_init, state_extrap, state_err_diff, state_sub, bflux_zero, bflux_add, &
-                                     bflux_bweight, clamp_cas, soil_water_store,                    &
-                                     soil_energy_store, plant_water_store, canopy_film_store, deposit_condensate, &
-                                     clamp_canopy_film, unpack_column_state, diagnose_soil_temps, &
-                                     assemble_soil_energy_forcing, apply_process_mask, transp_per_leaf_area, &
-                                     commit_tissue_energy
+   use meds_column_state_ops, only : state_init, state_extrap, state_err_diff, state_sub, bflux_zero,             &
+                                     bflux_add, bflux_bweight, clamp_cas, soil_water_store, soil_energy_store,    &
+                                     plant_water_store, canopy_film_store, deposit_condensate,                    &
+                                     clamp_canopy_film, unpack_column_state, diagnose_soil_temps,                 &
+                                     apply_process_mask, transp_per_leaf_area, commit_tissue_energy
    use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
    use meds_fast_frozen, only : build_column_frozen
    use meds_diag_vars,       only : CO_TRANSP
-   use meds_fast_types, only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t, alloc_column_cohort, &
-                               column_state_t, column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, &
-                               stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full, &
-                               ark_stages_t, fast_workspace_t
-   use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
-   use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, liquid_energy_to_temp
+   use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp
    use meds_budget_check, only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR, BUDGET_CO2_RATE_FLOOR
    implicit none
    private
@@ -63,7 +58,7 @@ module meds_fast_ark
    integer(ik), parameter :: NEWT_COUPLED = 2_ik
 
    public :: column_fast_step_ark
-   public :: ark2_column_step, adaptive_ark_march
+   public :: ark2_column_step, adaptive_ark_march   ! used only by the tests
 
 contains
 
@@ -299,7 +294,7 @@ contains
       real(wp)    :: w_surface0, dt_warm_next
       !----- Canopy-SURFACE water ledger scratch. -----------------------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
-      real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
+      real(wp)    :: surf_overflow, surf_deficit, intercept_total
       !----- Condensate actually DEPOSITED into soil layer 1 this step: mass [kg/m2] and the paired      !
       !      enthalpy [J/m2]. Held in locals rather than recomputed at the budget calls so the inflow    !
       !      term below is the IDENTICAL number the state update applied ("one flux, both sides"). ------!
@@ -307,7 +302,7 @@ contains
       real(wp)    :: tissue_store0, tissue_store1
       real(wp)    :: t_leaf_avg(col_cohort%n), t_wood_avg(col_cohort%n)
       type(error_control_t) :: ec
-      integer(ik) :: n, nsl, k, i, isub, nsub, nsteps, nrej
+      integer(ik) :: n, nsl, isub, nsub, nsteps, nrej
       logical     :: halt_budgets     !< hard-stop on a non-closing budget (debug_error, full column only)
 
       n = col_cohort%n ; nsl = col_config%soil%n_active
