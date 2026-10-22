@@ -115,6 +115,7 @@ module meds_plant_types
       !----- Kirchhoff lookup from wood_kexp (build_hydro_table), read only for wood_kexp outside {1,2}, !
       !      where no closed form exists (docs/science/plant_hydraulics.md §3). ----------------------!
       type(hydro_table_t) :: vuln_table
+      real(wp) :: rwc_close   !< [-] leaf relative water content at the PFT's stomatal closing potential
    end type hydro_args_t
 
    !----- Per-PFT hydraulic parameter table, built once per run; each entry carries its own       !

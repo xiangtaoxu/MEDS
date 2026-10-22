@@ -464,14 +464,14 @@ contains
             !      assumed-shape. The diagnostic capture is passed only when the run reports it. ---------!
             if (do_cdiag) then
                cdiag_buf(:, 1:ncoh) = 0.0_wp
-               call column_fast_step(cfg%dt_fast, cfg, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
+               call column_fast_step(cfg%dt_fast, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
                                      forc, biophys, aero, budget,                                                     &
                                      fast_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux, cdiag=cdiag_buf(:, 1:ncoh))
             else
-               call column_fast_step(cfg%dt_fast, cfg, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
+               call column_fast_step(cfg%dt_fast, site_col(poly%patch%owner_site(ip)), aenv, ageom, col_cohort, &
                                      forc, biophys, aero, budget,                                                     &
                                      fast_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &

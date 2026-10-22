@@ -18,6 +18,7 @@ module meds_fast_types
    use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_params, only : aero_cfg_t, snow_params_t
    use meds_biogeochem_types, only : N_SOIL_POOL
+   use meds_biogeochem_params, only : decomp_opts_t
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
    use meds_fast_params, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I, process_mask_t
@@ -123,13 +124,14 @@ module meds_fast_types
       !      leaf_max*LAI + wood_max*WAI. Built by apply_canopy_film_config. ----------------------!
       real(wp), allocatable       :: leaf_surf_water_max(:), wood_surf_water_max(:)
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
+      type(decomp_opts_t) :: soil_carbon             !< [soil_carbon]: the switch and the CENTURY parameters (Rh)
       !----- The ARK's Newton iteration cap is NEWT_MAX in meds_fast_be_stage, not a config field. ---!
    end type column_config_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
    type :: column_cohort_t
       integer(ik)              :: n = 0_ik
-      integer(ik), allocatable :: pft(:)                       !< PFT index (into cfg%pft)
+      integer(ik), allocatable :: pft(:)                       !< PFT index (into the PFT table)
       real(wp),    allocatable :: lai(:), wai(:), height(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
@@ -138,6 +140,7 @@ module meds_fast_types
       real(wp),    allocatable :: stem_resp_sapwood25(:)        !< [umol CO2/m3 sapwood/s @25C] gathered per-PFT
       real(wp),    allocatable :: sap_volume(:)                 !< [m3/plant] sapwood volume (stem respiration)
       real(wp),    allocatable :: root_resp_factor25(:)         !< [umol CO2/kgC root/s @25C] gathered per-PFT
+      real(wp),    allocatable :: leaf_emissivity(:), wood_emissivity(:)   !< [-] gathered per-PFT (tissue longwave)
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
       real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
       !----- Total wood carbon, not interchangeable with bsap: the sapwood sets the hydraulic      !
@@ -593,6 +596,7 @@ contains
                col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
                col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
                col_cohort%stem_resp_sapwood25(n), col_cohort%sap_volume(n),                                         &
+               col_cohort%leaf_emissivity(n), col_cohort%wood_emissivity(n),                                         &
                col_cohort%leaf_area(n), col_cohort%nplant(n),                                                          &
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
@@ -608,6 +612,8 @@ contains
       col_cohort%root_resp_factor25 = 0.0_wp
       col_cohort%stem_resp_sapwood25 = 0.0_wp
       col_cohort%sap_volume = 0.0_wp
+      col_cohort%leaf_emissivity = 1.0_wp
+      col_cohort%wood_emissivity = 1.0_wp
       col_cohort%leaf_area = 0.0_wp
       col_cohort%nplant = 0.0_wp
       col_cohort%dbh = 0.0_wp

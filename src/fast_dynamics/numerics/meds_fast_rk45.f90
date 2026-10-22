@@ -24,7 +24,6 @@ module meds_fast_rk45
    use meds_diag_vars,        only : CO_TRANSP
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
-   use meds_config,           only : meds_config_t
    use meds_fast_params,      only : CTRL_L2_STRICT
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_budget_check,     only : budget_check, last_check_closed, BUDGET_ENERGY_RATE_FLOOR,      &
@@ -401,11 +400,10 @@ contains
    !  column_fast_step_rk45 -- the INTEG_RK45 fast step: build the frozen record as ARK does,     !
    !  march one dt_fast, commit, and close the whole-column water and energy ledgers.            !
    !=======================================================================================!
-   subroutine column_fast_step_rk45(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
+   subroutine column_fast_step_rk45(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
                                     ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
                                     stiff_bail, cdiag)
       real(wp),                intent(in)    :: dt_fast
-      type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
       type(aero_env_t),        intent(inout) :: aenv
       type(aero_geom_t),       intent(in)    :: ageom
@@ -454,7 +452,7 @@ contains
       face_acc = 0.0_wp
       budget%atm_heat_export = 0.0_wp
       budget%atm_vap_export = 0.0_wp
-      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
+      call build_column_frozen(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
                                n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       dt0 = dt_fast

@@ -95,7 +95,7 @@ program test_pft_optics_config
       cfg%pft%hydro(2)%wood_psi50     = -0.8_wp   ! vs PFT 1's -2.0
       cfg%pft%hydro(2)%leaf_curve%pi0 = -2.5_wp   ! vs PFT 1's -1.5
       cfg%pft%hydro(2)%wood_kmax      =  2.0_wp
-      call apply_hydraulics_config(cfg%pft, tab)
+      call apply_hydraulics_config(cfg, tab)
       call check_close(tab%pft(1)%wood_psi50, cfg%pft%hydro(1)%wood_psi50, 0.0_wp,                &
                        'PFT 1 keeps its own psi50')
       call check_close(tab%pft(2)%wood_psi50, -0.8_wp,   0.0_wp, 'PFT 2 takes its own psi50')
@@ -134,7 +134,7 @@ program test_pft_optics_config
       integer(ik) :: i2
       type(soil_params_t) :: soil
       cfg%pft%hydro(2)%leaf_curve%water_sat = 3.0_wp   ! vs PFT 1's 2.0
-      call apply_hydraulics_config(cfg%pft, tab)
+      call apply_hydraulics_config(cfg, tab)
       call init_bare_ground(poly, cfg, 1_ik)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.5_wp, 20.0_wp)
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.5_wp, 20.0_wp)

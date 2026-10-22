@@ -118,9 +118,10 @@ program test_column_dynamics
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
-   call apply_hydraulics_config(cfg%pft, col_config%hydraulics_table)
+   call apply_hydraulics_config(cfg, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
+   col_config%soil_carbon = cfg%soil_carbon
    col_config%integrator = build_integrator_opts(cfg)
 
    call alloc_aero_out(aero, N)
@@ -621,7 +622,7 @@ contains
          !      forcing's air temperature, through the SAME routine fill_aenv uses. -----------------!
          call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)
 
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
                                h_flux=h_step)
          if (iso_dark) then
             h_first = h_step ; gah_first = aenv%rho_air * aero%ustar * aero%temp1

@@ -4,9 +4,8 @@
 ! the run's fast_context_t: the column configuration (the soil column, the per-PFT        !
 ! hydraulics, film and leaf-photosynthesis tables, the integrator options) and the canopy !
 ! optics table. site_column_configs gives each site its copy, with its own soil and its   !
-! leaf table, which acclimate_leaf_photo_table refreshes each slow step. column_fast_step  !
-! and the numerics below it also take cfg, for the PFT leaf and wood emissivities, the    !
-! stomatal closing potential and the [soil_carbon] settings.                              !
+! leaf table, which acclimate_leaf_photo_table refreshes each slow step. Nothing below     !
+! this module reads meds_config_t: the kernels and the numerics take these records.       !
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
@@ -15,7 +14,7 @@ module meds_fast_config
    use meds_pft_params,  only : pft_table_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t, hydro_args_table_t
-   use meds_plant_hydr_lib, only : build_hydro_table
+   use meds_plant_hydr_lib, only : build_hydro_table, tissue_psi_to_rwc
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_fast_types,  only : column_config_t, tol_set_t, error_control_t, integrator_opts_t, GRP_THETA
@@ -72,7 +71,7 @@ contains
       !----- The soil column from [soil]: one texture for the column or one per layer (soil maps). -!
       call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
       !----- Per-PFT plant hydraulics from each PFT's [hydraulics] record. ------------------------!
-      call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
+      call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
       call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
@@ -87,6 +86,7 @@ contains
       ctx%soil_temp_init = cfg%init%soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
+      ctx%col_config%soil_carbon = cfg%soil_carbon   ! [soil_carbon] -> heterotrophic respiration
 
       !----- One tolerance set for the whole fast loop (build_tol_set); the water network takes the   !
       !      GRP_THETA pair (docs/science/soil_plant_water.md §3). --------------------------------!
@@ -256,18 +256,21 @@ contains
       call derive_rad_optics(NB, np, rl, tl, rw, tw, cl, cw, bp, bq, hb, he, optics)
    end subroutine build_rad_optics
 
-   !----- The per-PFT hydraulics table: each PFT's [hydraulics] traits and the Kirchhoff lookup     !
-   !      built from its own wood_kexp (docs/science/plant_hydraulics.md eq. (8)), which makes a   !
-   !      non-integer vulnerability exponent affordable on the hot path. ------------------------!
-   subroutine apply_hydraulics_config(pft, table)
-      type(pft_table_t),          intent(in)  :: pft
+   !----- The per-PFT hydraulics table: each PFT's [hydraulics] traits, the Kirchhoff lookup built   !
+   !      from its own wood_kexp (docs/science/plant_hydraulics.md eq. (8)), which makes a          !
+   !      non-integer vulnerability exponent affordable on the hot path, and the leaf water content   !
+   !      at which its stomata close, the water network's supply limit (soil_plant_water.md eq. (3)). !
+   subroutine apply_hydraulics_config(cfg, table)
+      type(meds_config_t),        intent(in)  :: cfg
       type(hydro_args_table_t),   intent(out) :: table
       integer(ik) :: i
-      table%n_pft = pft%n
-      allocate(table%pft(max(pft%n, 1_ik)))
-      do i = 1_ik, pft%n
-         table%pft(i)%plant_hydraulics_t = pft%hydro(i)
+      table%n_pft = cfg%pft%n
+      allocate(table%pft(max(cfg%pft%n, 1_ik)))
+      do i = 1_ik, cfg%pft%n
+         table%pft(i)%plant_hydraulics_t = cfg%pft%hydro(i)
          call build_hydro_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
+         table%pft(i)%rwc_close = tissue_psi_to_rwc(pft_wstress_psi_close(cfg, i), table%pft(i)%leaf_curve%pi0,   &
+                                                    table%pft(i)%leaf_curve%elastic_mod)
       end do
    end subroutine apply_hydraulics_config
 

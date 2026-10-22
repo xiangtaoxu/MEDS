@@ -14,10 +14,9 @@ module meds_fast_frozen
                               tissue_c_wood_dry
    use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
-   use meds_plant_hydr_lib,  only : tissue_psi_to_rwc, conductance_retained_fraction, xylem_max_conductance,  &
+   use meds_plant_hydr_lib,  only : conductance_retained_fraction, xylem_max_conductance,                         &
                                     rhizosphere_conductance
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
-   use meds_config, only : meds_config_t, pft_wstress_psi_close
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_soil_types, only : chydro_forcing_t, snow_melt_t, snow_env_t, snow_flux_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
@@ -42,10 +41,9 @@ contains
    !      the shared column_prepass, the snow stage, canopy interception, the per-cohort tissue         !
    !      coefficients, the soil-plant water network's step and the plant water's advective enthalpy;   !
    !      also packs the prognostic state into y. -------------------------------------------------------!
-   subroutine build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, spac, &
+   subroutine build_column_frozen(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, spac, &
                                   n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       real(wp),                intent(in)    :: dt_fast
-      type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
       type(aero_env_t),        intent(inout) :: aenv
       type(aero_geom_t),       intent(in)    :: ageom
@@ -124,7 +122,7 @@ contains
       end if
 
       !----- The shared pre-pass: gas exchange, respiration, aerodynamics, CAS capacities. --------------!
-      call column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac_patch(1:nsl), &
+      call column_prepass(col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac_patch(1:nsl), &
                           tcas, qcas, press, rho, t_ground, frozen%tissue%h_coeff_leaf, frozen%tissue%g_transp_leaf,      &
                           cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                           gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
@@ -206,8 +204,8 @@ contains
                                               / dt_fast
          frozen%tissue%t_leaf0(i) = biophys%leaf_temp(i)
          frozen%tissue%t_wood0(i) = biophys%wood_temp(i)
-         frozen%tissue%leaf_emiss(i) = cfg%pft%leaf_emissivity(col_cohort%pft(i))
-         frozen%tissue%wood_emiss(i) = cfg%pft%wood_emissivity(col_cohort%pft(i))
+         frozen%tissue%leaf_emiss(i) = col_cohort%leaf_emissivity(i)
+         frozen%tissue%wood_emiss(i) = col_cohort%wood_emissivity(i)
          frozen%plant%nplant(i)   = col_cohort%nplant(i)
          !----- Film-evaporation conductances, from the pre-pass's boundary layers; none with the canopy  !
          !      water store off. ---------------------------------------------------------------------------!
@@ -314,7 +312,7 @@ contains
       !----- The soil-plant water network (docs/science/soil_plant_water.md): the pond, the soil layers and !
       !      every cohort's wood and leaves, solved together on the transpiration demand above. The march  !
       !      reads all its water from it and holds its flows fixed. ------------------------------------!
-      call run_spac_solver(dt_fast, cfg, col_config, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
+      call run_spac_solver(dt_fast, col_config, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
                            root_frac(1:nsl, 1:n), sf0%transp_c(1:n), n, nsl, spac)
 
       !----- The network's work counters (docs/science/soil_plant_water.md §6). -----------------------!
@@ -450,10 +448,9 @@ contains
    ! advances it. e_demand is each cohort's transpiration demand; the network takes less where a leaf  !
    ! runs short (eq. (3)).                                                                              !
    !---------------------------------------------------------------------------------------!
-   subroutine run_spac_solver(dt_fast, cfg, col_config, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
+   subroutine run_spac_solver(dt_fast, col_config, col_cohort, biophys, hforc, precip_ground, t_pond_inflow, &
                               root_frac, e_demand, n, nsl, spac)
       real(wp),               intent(in)    :: dt_fast
-      type(meds_config_t),    intent(in)    :: cfg
       type(column_config_t),  intent(in)    :: col_config
       type(column_cohort_t),  intent(in)    :: col_cohort
       type(patch_biophys_t),  intent(in)    :: biophys
@@ -477,8 +474,7 @@ contains
             spac%k_xylem(i)  = col_cohort%nplant(i) * xylem_max_conductance(hp%wood_kmax, col_cohort%sap_area(i), &
                                                                            col_cohort%height(i), hp%vessel_curl)
             spac%e_demand(i) = e_demand(i)
-            spac%r_close(i)  = tissue_psi_to_rwc(pft_wstress_psi_close(cfg, col_cohort%pft(i)), hp%leaf_curve%pi0,      &
-                                           hp%leaf_curve%elastic_mod)
+            spac%r_close(i)  = hp%rwc_close
             root_len(1:nsl, i) = col_cohort%broot(i) * root_frac(1:nsl, i) * hp%specific_root_length
          end associate
       end do

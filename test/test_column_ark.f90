@@ -85,9 +85,10 @@ program test_column_ark
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
-   call apply_hydraulics_config(cfg%pft, col_config%hydraulics_table)
+   call apply_hydraulics_config(cfg, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
+   col_config%soil_carbon = cfg%soil_carbon
    col_config%integrator = build_integrator_opts(cfg)
    call alloc_aero_out(aero, N)
    allocate(forc%abs_sw(N), forc%abs_lw(N), forc%abs_par(N), forc%abs_sw_wood(N), forc%abs_lw_wood(N))
@@ -100,32 +101,34 @@ program test_column_ark
    call reset_state()
    cfg%time_integrator = INTEG_RK45
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-   call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+   call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
    gpp_rk45 = gpp_coh
    call reset_state()
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-   call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+   call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
    gpp_ark = gpp_coh
    call check_true('ARK pre-pass gpp bit-identical to RK45 (one shared build_column_frozen)',                         &
            abs(gpp_ark(1) - gpp_rk45(1)) < 1.0e-12_wp, abs(gpp_ark(1) - gpp_rk45(1)))
    call check_true('ARK midday gpp > 0', gpp_ark(1) > 0.0_wp, gpp_ark(1))
 
    !=== Emissivity. The energy balance's emission slope 4*eps*sigma*T^3 takes each cohort's PFT     !
-   !    leaf_emissivity and wood_emissivity, the values the radiation solver emits with. Distinct   !
-   !    values for leaf and wood catch a leaf-for-wood swap. ---------------------------------------!
+   !    leaf_emissivity and wood_emissivity, gathered into the view, the values the radiation       !
+   !    solver emits with. Distinct values for leaf and wood catch a leaf-for-wood swap. -----------!
    block
       type(column_frozen_t) :: fz
       type(column_state_t)  :: ys
       real(wp) :: eps_leaf0, eps_wood0
       eps_leaf0 = cfg%pft%leaf_emissivity(col_cohort%pft(1)) ; eps_wood0 = cfg%pft%wood_emissivity(col_cohort%pft(1))
       cfg%pft%leaf_emissivity = 0.93_wp ; cfg%pft%wood_emissivity = 0.87_wp
+      call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])   ! the view gathers them
       call reset_state()
-      call build_column_frozen(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+      call build_column_frozen(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, N, NSL, fz, ys)
       call check_close(fz%tissue%leaf_emiss(1), 0.93_wp, 0.0_wp, 'energy balance uses the PFT leaf emissivity')
       call check_close(fz%tissue%wood_emiss(1), 0.87_wp, 0.0_wp, 'energy balance uses the PFT wood emissivity')
       cfg%pft%leaf_emissivity = eps_leaf0 ; cfg%pft%wood_emissivity = eps_wood0
+      call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
       call reset_state()
    end block
 
@@ -136,7 +139,7 @@ program test_column_ark
    physical = .true. ; worst_super = -1.0_wp
    do is = 1_ik, 6_ik * STEPS_PER_HOUR
       call set_diurnal_forcing(is)
-      call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+      call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       tcas = biophys%cas%can_temp
       qsat = sat_specific_humidity(tcas, aenv%press)
       worst_super = max(worst_super, biophys%cas%can_shv - qsat)
@@ -160,7 +163,7 @@ program test_column_ark
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .false. ; cfg%ark_fixed_substep = 4_ik
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call set_noon_forcing()
-   call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+   call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
    call check_true('INTEG_ARK fixed-substep path physical',                                                           &
            biophys%cas%can_temp > 270.0_wp .and. biophys%cas%can_temp < 325.0_wp, biophys%cas%can_temp)
 
@@ -171,12 +174,12 @@ program test_column_ark
    call set_noon_forcing()
    cfg%ark_coupled = .false.
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-   call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+   call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
    tcas_1 = biophys%cas%can_temp
    call reset_state() ; call set_noon_forcing()
    cfg%ark_coupled = .true.
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-   call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+   call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
    tcas_8 = biophys%cas%can_temp
    call check_true('ARK ark_coupled reaches ark2 (baseline vs Newton differ)', abs(tcas_1 - tcas_8) > 1.0e-4_wp,      &
            abs(tcas_1-tcas_8))
@@ -234,7 +237,7 @@ contains
       dmax_lag = 0.0_wp
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
          dmax_lag = max(dmax_lag, abs(biophys%wood_temp(1) - biophys%cas%can_temp))
       end do
       call check_true(trim(tag)//' PROG-WOOD: whole_energy closes', budget%whole_energy%n_fail == 0_ik,               &
@@ -261,7 +264,7 @@ contains
       forc%abs_sw = 0.0_wp ; forc%abs_par = 0.0_wp ; forc%abs_sw_ground = 0.0_wp   ! night
       forc%enthalpy_atm = cas_temp_to_enthalpy(T0, 0.008_wp)
       biophys%wood_water_mass(1:N) = 0.8_wp * biophys%wood_water_mass(1:N)        ! dried wood
-      call build_column_frozen(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+      call build_column_frozen(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, N, NSL, fz, ys)
       refill = sum((fz%plant%uptake_frozen(1:N) - fz%plant%sapflow_frozen(1:N)) * col_cohort%nplant(1:N))
       call check_true('dried wood over moist soil refills', refill > 0.0_wp, refill)
@@ -287,14 +290,14 @@ contains
       call set_noon_forcing()
       w_store = biophys%wood_water_mass(1)
       cap_dry = col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * tissue_c_wood_dry
-      call build_column_frozen(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+      call build_column_frozen(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, N, NSL, fz, ys)
       cap_full = fz%tissue%wood_hcap_per_dt(1) * DT_FAST
       call check_close(cap_full, cap_dry + col_cohort%nplant(1) * w_store * cp_liq, 1.0e-12_wp * cap_full,     &
                        'wood heat capacity = dry wood + the wood store''s water')
       call check_true('the fine roots hold part of the store', col_cohort%broot(1) > 0.0_wp, col_cohort%broot(1))
       biophys%wood_water_mass(1) = 0.8_wp * w_store
-      call build_column_frozen(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+      call build_column_frozen(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                ws%spac, N, NSL, fz, ys)
       cap_drained = fz%tissue%wood_hcap_per_dt(1) * DT_FAST
       call check_close(cap_full - cap_drained, 0.2_wp * col_cohort%nplant(1) * w_store * cp_liq,                &
@@ -316,7 +319,7 @@ contains
       theta_bot0 = biophys%soil_water%theta(col_config%soil%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       call check_true('AQUIFER/ARK: whole_water closes', budget%whole_water%n_fail == 0_ik,                           &
               real(budget%whole_water%n_fail, wp))
@@ -341,7 +344,7 @@ contains
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)               ! rainfall==0 always (dry); diurnal SW
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       call check_true('ARK '//trim(tag)//': all 7 budgets close (n_fail==0)',                                         &
               budget%cas_energy%n_fail == 0_ik .and. budget%cas_water%n_fail == 0_ik                                  &
@@ -372,7 +375,7 @@ contains
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_water%theta(1:NSL))
       call check_true('ARK wet: ran a full day of wet steps (no guard error stop)', &
@@ -405,7 +408,7 @@ contains
          call set_diurnal_forcing(istep)
          if (istep > (19_ik * STEPS_PER_HOUR) / 4_ik .and. istep <= 6_ik * STEPS_PER_HOUR) &
             forc%rainfall = 5.0e-5_wp                    ! a morning rain pulse, 04:45-06:00
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
          surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
       end do
       col_config%canopy_water_on = .false.   ! restore default for any test added after this
@@ -439,7 +442,7 @@ contains
       biophys%shed_water_enth = 8.0e-5_wp * internal_energy_liquid(T0)   ! shed by tissues at t0
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_water%theta(1:NSL))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
@@ -479,7 +482,7 @@ contains
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          forc%rainfall = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
          pond_peak  = max(pond_peak,  biophys%soil_water%w_surface)
          theta_peak = max(theta_peak, maxval(biophys%soil_water%theta(1:NSL)))
          ss_min = min(ss_min, biophys%soil_energy%soil_temp(1)) ; ss_max = max(ss_max, biophys%soil_energy%soil_temp(1))
@@ -550,7 +553,7 @@ contains
          !----- set_diurnal_forcing indexes by STEP, so drive it from absolute time instead: the two !
          !      cadences must see the SAME forcing or this measures the forcing, not the scheme. ----!
          call set_forcing_at(t0_sec + t + 0.5_wp * dt)
-         call column_fast_step(dt, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(dt, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
          t = t + dt
       end do
       psi_out = tissue_water_to_psi(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_curve, &
@@ -633,7 +636,7 @@ contains
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          forc%rainfall = 0.0_wp
-         call column_fast_step(DT_FAST, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+         call column_fast_step(DT_FAST, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_sum = sum(biophys%soil_water%theta(1:NSL))
    end subroutine march_dry_day

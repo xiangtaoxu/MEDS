@@ -55,9 +55,10 @@ program test_biogeochem_dynamics
    call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
    call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
-   call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
+   call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
+   ctx%col_config%soil_carbon = cfg%soil_carbon
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%soil_temp_init = 295.0_wp
@@ -128,6 +129,7 @@ program test_biogeochem_dynamics
       type(polygon_t) :: poly2
       real(wp)     :: totalA, totalB
       cfg%soil_carbon%soil_carbon_on = .false.
+      ctx%col_config%soil_carbon = cfg%soil_carbon
       call init_bare_ground(poly2, cfg, 1_ik)
       call use_test_column(poly2)
       call add_cohort(poly2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)

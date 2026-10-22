@@ -10,7 +10,7 @@
 module meds_fast_prepass
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, r_gas, kgcday_2_umols
-   use meds_config,           only : meds_config_t, top_soil_psi
+   use meds_config,           only : top_soil_psi
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM, CO_BETA_NONSTOM, &
                                      CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, &
                                      CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_GPP_RATE, CO_LEAF_PAR, CO_GB_MOL, CO_PSI_PREDAWN, &
@@ -49,11 +49,10 @@ contains
    ! the canopy air (docs/science/plant_respiration.md eq. (7)). biophys is read-only: a caller     !
    ! that persists the CAS temperature writes biophys%cas%can_temp = tcas itself.                   !
    !---------------------------------------------------------------------------------------!
-   subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac, &
+   subroutine column_prepass(col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac, &
                              tcas, qcas, press, rho, t_ground, h_coeff_leaf, g_transp_leaf,                     &
                              cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                              gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
-      type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
       type(aero_env_t),        intent(inout) :: aenv
       type(aero_geom_t),       intent(in)    :: ageom
@@ -96,7 +95,7 @@ contains
                                           stem_resp_coh, root_resp_coh)
 
       !----- 5. heterotrophic respiration. -------------------------------------------------------!
-      call patch_heterotrophic_respiration(cfg, col_config, biophys%soil_carbon, t_ground,              &
+      call patch_heterotrophic_respiration(col_config, biophys%soil_carbon, t_ground,              &
                                            soil_temp_root, theta_mean, rh, budget)
 
       !----- NEE (docs/science/plant_respiration.md eq. (7)). slow_co2_rate is the autotrophic part this !
@@ -337,9 +336,8 @@ contains
    ! pool debit by construction; xi goes to budget%xi_step for the caller to accumulate. Zero with     !
    ! soil carbon off.                                                                                  !
    !---------------------------------------------------------------------------------------!
-   subroutine patch_heterotrophic_respiration(cfg, col_config, soil_carbon, t_ground, soil_temp_root,  &
+   subroutine patch_heterotrophic_respiration(col_config, soil_carbon, t_ground, soil_temp_root,  &
                                               theta_mean, rh, budget)
-      type(meds_config_t),   intent(in)    :: cfg
       type(column_config_t), intent(in)    :: col_config
       type(soil_carbon_t),   intent(in)    :: soil_carbon
       real(wp),              intent(in)    :: t_ground, soil_temp_root, theta_mean
@@ -347,10 +345,10 @@ contains
       type(column_budget_t), intent(inout) :: budget
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
-      if (cfg%soil_carbon%soil_carbon_on) then
+      if (col_config%soil_carbon%soil_carbon_on) then
          call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_config%soil%theta_res(1),      &
-                                  col_config%soil%theta_sat(1), soil_carbon, cfg%soil_carbon, xi)
-         call assemble_transfer_matrix(soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)
+                                  col_config%soil%theta_sat(1), soil_carbon, col_config%soil_carbon, xi)
+         call assemble_transfer_matrix(soil_carbon, col_config%soil_carbon, a_mat, k_diag, er)
          !----- The matrix returns kgC/m2/day, the pools' currency, which budget%rh_matrix_step keeps for  !
          !      the seam check; the canopy air gets umol/m2/s (docs/science/soil_carbon.md §7). ----------!
          rh_kgc = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)

@@ -10,7 +10,6 @@
 module meds_fast_ark
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o
-   use meds_config, only : meds_config_t
    use meds_fast_params,  only : CTRL_L2_STRICT
    use meds_fast_control, only : state_wrms_grouped, step_control_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
@@ -201,10 +200,9 @@ contains
    !  build the frozen record (which runs the water network), advance one dt_fast, commit the        !
    !  network's water and the tissue energy, deposit the condensate, and close the seven ledgers.   !
    !=======================================================================================!
-   subroutine column_fast_step_ark(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
+   subroutine column_fast_step_ark(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
                                    ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, cdiag)
       real(wp),                intent(in)    :: dt_fast
-      type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
       type(aero_env_t),        intent(inout) :: aenv
       type(aero_geom_t),       intent(in)    :: ageom
@@ -253,7 +251,7 @@ contains
       !----- State^n pond mass, for the whole-water ledger. ------------------------------------------!
       w_surface0 = biophys%soil_water%w_surface
 
-      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
+      call build_column_frozen(dt_fast, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
                                n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       !----- State^n pond enthalpy, taken before the pond commit below overwrites it                  !
