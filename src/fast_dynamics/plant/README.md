@@ -11,7 +11,7 @@ state, demography, plant and config alike, so it lives in `src/share/functions/m
 
 Every process here is a stateless per-individual kernel driven by an environment record, and all of
 them are wired into the fast loop: the pre-pass calls gas exchange and the two maintenance-respiration
-kernels each sub-step, the soil-plant water solver (`meds_spac_solver`, in `numerics/`) moves the plant
+kernels each sub-step, the soil-plant water solver (`meds_spac_solver`, in `integrator/`) moves the plant
 water, and the integrator advances the tissue energy.
 
 ## Contents
@@ -22,7 +22,7 @@ Each kernel module exposes its own seams; there is no façade.
 |---|---|
 | `meds_plant_types` | All the sub-daily derived types — leaf, hydraulics, respiration, tissue sidedness — in one sectioned module. Phenology's types are in `meds_phenology_types` under `slow_dynamics/plant/`. |
 | `meds_leaf_gas_exchange` | **The leaf seam.** FvCB C3 and Collatz C4 demand, the electron-transport hyperbola, Leuning / Medlyn / Katul stomata, and the bracketed Cᵢ solver. `solve_leaf_gas_exchange` for one leaf, `leaf_gas_exchange_batch` over bare arrays. They take a PFT's photosynthesis parameters or the per-PFT table, never a config handle. |
-| `meds_plant_hydraulics` | A cohort's plant-water facts: the leaf node potential, the crown gravity head, the rooting depth and root profile, and the leaves' supply limit on transpiration. The tissue curves and flows are in `meds_plant_hydr_lib`; the soil-plant water network is solved by `meds_spac_solver` in `numerics/`. |
+| `meds_plant_hydraulics` | A cohort's plant-water facts: the leaf node potential, the crown gravity head, the rooting depth and root profile, and the leaves' supply limit on transpiration. The tissue curves and flows are in `meds_plant_hydr_lib`; the soil-plant water network is solved by `meds_spac_solver` in `integrator/`. |
 | `meds_plant_biophysics` | The leaf and wood tissue energy balance, and the canopy interception film they share. |
 | `meds_plant_respiration` | Non-leaf maintenance respiration: `stem_maintenance_respiration` and `fine_root_maintenance_respiration`. Growth respiration is charged in the daily allocator, on realized growth. |
 
@@ -30,8 +30,8 @@ The shared temperature response (`meds_therm_lib`, Arrhenius and peaked deactiva
 `src/share/functions/`, so leaf, stem and root reach one code path rather than three drifting
 copies.
 
-The config-flattening assemblers that turn `meds_config_t` into these kernels' option records are
-driver code and live in `fast_dynamics/driver/meds_fast_config`.
+The per-PFT tables these kernels read (the leaf parameters and the hydraulics) are derived from the
+configuration once, at load, onto the PFT table (`config/meds_pft_derive`).
 
 ## Python
 

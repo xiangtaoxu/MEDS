@@ -115,7 +115,7 @@ program test_soil_column_config
 
 contains
 
-   !----- Exactly the call build_fast_context makes, so the test cannot drift from it. -------!
+   !----- The steps build_soil_profile takes, so the test cannot drift from it. --------------!
    subroutine build_column(c, out)
       type(soil_params_t),  intent(in)  :: c
       type(soil_profile_t), intent(out) :: out

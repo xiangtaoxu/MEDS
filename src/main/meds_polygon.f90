@@ -19,16 +19,15 @@
 !==========================================================================================!
 module meds_polygon
    use meds_kinds,                  only : wp, ik
-   use meds_state_defaults,         only : is_unset_positive
    use meds_config,                 only : meds_config_t
    use meds_time,                   only : meds_time_t, time_to_string
    use meds_cohort_state_vars,      only : cohort_bad_field, cohort_field_finite, cohort_field_name
    use meds_patch_state_vars,       only : canopy_air_bad_field, canopy_air_field_name, soil_carbon_t
    use meds_polygon_state_vars,     only : polygon_t, reset_step_diagnostics
    use meds_stepper,                only : advance_one_step, advance_boundary
-   use meds_slow_dynamics,          only : refresh_canopy_depth
-   use meds_fast_config,            only : fast_context_t, build_fast_context, acclimate_leaf_photo_table
-   use meds_biogeochem_types,       only : litter_input_t, N_SOIL_POOL, soilc_seam_t
+   use meds_slow_dynamics,          only : refresh_canopy_depth, acclimate_site_leaf_tables
+   use meds_biogeochem_types,       only : litter_input_t, soilc_seam_t
+   use meds_biogeochem_params,      only : N_SOIL_POOL
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input, soil_carbon_bad_pool,             &
                                            soil_carbon_pool_name
@@ -62,7 +61,8 @@ module meds_polygon
    type :: polygon_run_t
       integer(ik)            :: cell = 1_ik       !< the cell in the forcing source's cell list
       character(len=40)      :: label = ''        !< how messages name it ('' for a site run)
-      type(fast_context_t)   :: fast_ctx          !< built only if fast_biophysics_on
+      !----- Threads for the polygon's patch loop: [run].n_threads in a site run, 1 in a region. ----!
+      integer(ik)            :: patch_threads = 1_ik
       type(met_cursor_t)     :: met_cur           !< set only if forcing_on
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
       !----- The per-layer face-closure residual over the run. Kept beside the two above              !
@@ -93,7 +93,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! polygon_prepare -- everything after the initial state is in place (init_polygon, which also   !
-   ! seeds the fast loop's stores): the fast context, the forcing cursor at the polygon's cell and   !
+   ! seeds the fast loop's stores): the patch threads, the forcing cursor at the polygon's cell and  !
    ! location, the canopy-air depth and the soil-carbon spin-up. `keep_soil_carbon` is set when a   !
    ! restart already restored the pools, which the spin-up would silently discard.                 !
    !---------------------------------------------------------------------------------------!
@@ -116,10 +116,9 @@ contains
       run%most_patches_when = '' ; run%most_cohorts_when = ''
       run%fast_step_total = 0_ik ; run%status = DRIVER_OK
       run%area_start = total_area(poly)
+      run%patch_threads = patch_threads
 
       if (cfg%fast_biophysics_on) then
-         call build_fast_context(cfg, run%fast_ctx)
-         run%fast_ctx%patch_threads = patch_threads
          if (cfg%forcing%forcing_on) then
             call met_cursor_init(met_src, run%met_cur, run%cell, poly%latitude_deg,                 &
                                  poly%longitude_deg, poly%elevation_m)
@@ -182,12 +181,11 @@ contains
       end if
 
       !----- THERMAL ACCLIMATION (docs/science/leaf_gas_exchange.md §2 Thermal acclimation, eq.     !
-      !      (4)). Advance the growth-temperature running mean from the daily mean the PREVIOUS     !
-      !      step's fast loop accumulated, then refresh the leaf table. Taking last step's mean is  !
-      !      not a lag to apologise for: the quantity being tracked IS the preceding weeks'         !
-      !      temperature, and one slow step is a thirtieth of the window. A no-op when the flag is  !
-      !      off. -----------------------------------------------------------------------------------!
-      if (cfg%thermal_acclimation) call advance_growth_temperature(cfg, step_days, poly, run)
+      !      (4)). Advance each site's growth-temperature running mean from the daily mean the       !
+      !      PREVIOUS step's fast loop accumulated, then acclimate its leaf table. Taking last step's !
+      !      mean is not a lag to apologise for: the quantity being tracked IS the preceding weeks'  !
+      !      temperature, and one slow step is a thirtieth of the window. -------------------------!
+      if (cfg%thermal_acclimation) call acclimate_site_leaf_tables(poly, cfg, step_days)
 
       !----- The fast loop stages sub-daily samples into the polygon's share of the run's files. --!
       call stepper(out_bufs)
@@ -313,13 +311,13 @@ contains
       !      stages its sub-steps when the output reads them (bufs%fast_on). ------------------------!
       subroutine stepper(fast_bufs)
          type(output_buffers_t), intent(inout) :: fast_bufs
-         call advance_one_step(poly, cfg, run%fast_ctx, met_src=met_src, met_cur=run%met_cur,             &
+         call advance_one_step(poly, cfg, met_src=met_src, met_cur=run%met_cur,                           &
                                step_start=prev, out_bufs=fast_bufs,                                 &
                                run_energy_budget=run%energy_budget,                                 &
                                run_water_budget=run%water_budget,                                   &
                                run_face_budget=run%face_budget,                                     &
                                slow_ledger=run%slow_ledger, seam=run%seam,                          &
-                               latitude_deg=poly%latitude_deg)
+                               latitude_deg=poly%latitude_deg, patch_threads=run%patch_threads)
       end subroutine stepper
 
       !----- FAST tier: replay the sub-step samples the fast loop staged in bufs%fast(:), closing   !
@@ -408,37 +406,6 @@ contains
       !      (docs/science/order_of_processes.md §4). ---------------------------------------------!
       call slow_ledger_report(run%slow_ledger)
    end subroutine polygon_report
-
-   !---------------------------------------------------------------------------------------!
-   ! Advance each site's growth-temperature running mean and push it into the site's leaf table    !
-   ! (docs/science/leaf_gas_exchange.md §2 Thermal acclimation). Exponential mean with weight      !
-   ! dt/window; UNSEEDED (negative) adopts the first day's mean outright, so the acclimated        !
-   ! optimum starts from the site's own climate rather than relaxing toward it from an arbitrary   !
-   ! origin over the first month.                                                                  !
-   !---------------------------------------------------------------------------------------!
-   subroutine advance_growth_temperature(cfg, step_days, poly, run)
-      type(meds_config_t),  intent(in)    :: cfg
-      integer(ik),          intent(in)    :: step_days
-      type(polygon_t),      intent(inout) :: poly
-      type(polygon_run_t),  intent(inout) :: run
-      real(wp)    :: t_day, w
-      integer(ik) :: is
-      if (.not. allocated(run%fast_ctx%site_leaf_photo))                                             &
-         allocate(run%fast_ctx%site_leaf_photo(poly%site%n), source=run%fast_ctx%col_site%leaf_photo)
-      do is = 1_ik, poly%site%n
-         if (poly%site%pheno_tair_n(is) < 1_ik) cycle      ! no fast sub-steps ran: nothing to average
-         t_day = poly%site%pheno_tair_sum(is) / real(poly%site%pheno_tair_n(is), wp)
-         associate (t_growth => poly%site%t_growth_avg(is))
-            if (is_unset_positive(t_growth)) then
-               t_growth = t_day
-            else
-               w = min(1.0_wp, real(step_days, wp) / max(cfg%acclim_window_days, real(step_days, wp)))
-               t_growth = t_growth + w * (t_day - t_growth)
-            end if
-            call acclimate_leaf_photo_table(cfg, t_growth, run%fast_ctx%site_leaf_photo(is))
-         end associate
-      end do
-   end subroutine advance_growth_temperature
 
    !----- SASU steady-state soil-carbon spin-up from the configured climatological xi + litter    !
    !      (docs/science/soil_carbon.md §8, eq. (7)). ---------------------------------------------!

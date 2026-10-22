@@ -122,8 +122,8 @@ consumers live outside it.
   leaf turnover uses `cohort%leaf_turnover_rate`; and the fast loop's `leaf_gas_exchange_batch` (called from
   `meds_fast_prepass.canopy_leaf_gas_exchange`) takes per-cohort `vcmax25`/`rd25` (threaded through the
   fast-loop column buffer in `meds_fast_types`), with `leaf_params_at_capacity` scaling
-  $`J_{\mathrm{max25}}`$ and TPU with the plastic $`V_{\mathrm{cmax25}}`$. The single-leaf wrapper
-  `meds_fast_config.leaf_gas_exchange` takes the same two overrides.
+  $`J_{\mathrm{max25}}`$ and TPU with the plastic $`V_{\mathrm{cmax25}}`$. The canopy C API
+  (`meds_canopy_leaf`) applies the same two overrides through `leaf_params_at_capacity`.
 
 - **Persistence (`meds_init_restart`).** The four trait states are written to and read from the state checkpoint,
   so a **state** restart recovers the acclimated traits exactly; `[init].reacclimate_traits` instead re-derives them from this

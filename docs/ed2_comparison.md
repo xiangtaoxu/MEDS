@@ -493,7 +493,7 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
   ED2's rule for soil layers.
 - **Canopy air** (`meds_fast_be_stage`). Neither model clamps the canopy-air humidity at saturation:
   transient supersaturation is relaxed by a condensation sink, not cut off.
-- **Carbon bookkeeping** (`meds_fast_dynamics`). Gross GPP and the maintenance losses are summed apart
+- **Carbon bookkeeping** (`meds_fast_state`). Gross GPP and the maintenance losses are summed apart
   over the day and netted by the daily allocator, as ED2 does.
 
 ---
@@ -547,7 +547,7 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 |---|---|---|
 | `meds_canopy_radiation` (`canopy_radiation`) | `radiate_driver.f90 :: sfcrad_ed` | Per-patch orchestration: per-cohort optics, band loop, leaf/wood split, absorbed radiation + albedo. State-free — arrays in, `rad_flux_t` out — rather than mutating `csite`. |
 | `solve_band` / `layer_rt` | `sw_two_stream` **and** `lw_two_stream` | **Unified.** ED2's two ~600-line routines collapse to one: SW is beam with no emission, LW is emission with no beam, and the diffuse operator is identical. Absolute W m⁻² throughout, dropping ED2's normalise-to-unit-incidence. O(N) adding method in place of the dense `lisys_solver8`. |
-| `meds_optics_lib` (`derive_rad_optics`) | `init_can_rad_params` + the scatter/backscatter block | ED2/CLM's `(1+χ)²` backscatter fit → **SCOPE/4SAIL**: Beta leaf-angle distribution → `bf`, exact Ross `G(μ)`, `β = ½(1 + bf(ρ−τ)/ω)`. Fixes the near-horizontal-leaf inaccuracy of the fit. |
+| `meds_pft_derive` (`derive_rad_optics`) | `init_can_rad_params` + the scatter/backscatter block | ED2/CLM's `(1+χ)²` backscatter fit → **SCOPE/4SAIL**: Beta leaf-angle distribution → `bf`, exact Ross `G(μ)`, `β = ½(1 + bf(ρ−τ)/ω)`. Fixes the near-horizontal-leaf inaccuracy of the fit. |
 | `ground_optics` | `sfcrad_ed` ground-albedo block | Per-band albedo + thermal emission, implemented B6-correct. |
 | `meds_canopy_types` | `canopy_radiation_coms.f90` | ED2's mutable module globals → explicit derived types passed as arguments. |
 
@@ -557,7 +557,7 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 
 | topic | MEDS | ED2 |
 |---|---|---|
-| Time integration | `src/fast_dynamics/numerics/meds_fast_{step,ark,rk45,time_derivs}.f90`; [`docs/science/numerical_scheme.md`](science/numerical_scheme.md) | `dynamics/rk4_*.f90`, `euler_driver.f90`, `heun_driver.f90`, `hybrid_driver.f90`, `bdf2_solver.f90` |
+| Time integration | `src/fast_dynamics/integrator/meds_fast_{step,ark,rk45,time_derivs}.f90`; [`docs/science/numerical_scheme.md`](science/numerical_scheme.md) | `dynamics/rk4_*.f90`, `euler_driver.f90`, `heun_driver.f90`, `hybrid_driver.f90`, `bdf2_solver.f90` |
 | Photosynthesis | `src/fast_dynamics/plant/meds_leaf_gas_exchange.f90`; [`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) | `farq_leuning.f90`, `farq_katul.f90`, `photosyn_driv.f90` |
 | Radiation | `src/fast_dynamics/canopy/meds_canopy_radiation.f90`; [`canopy_radiation_transfer.md`](science/canopy_radiation_transfer.md) | `twostream_rad.f90`, `radiate_driver.f90` |
 | Turbulence | `src/fast_dynamics/canopy/meds_canopy_aerodynamics.f90`; [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | `canopy_struct_dynamics.f90` |

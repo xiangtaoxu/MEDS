@@ -8,21 +8,107 @@
 ! phenology (pheno) are records. Every trait is the PFT file's: a trait that follows a     !
 ! fitted relation (the sapwood conductivity or the mortality hazards from wood density,    !
 ! the plasticity slopes from Vcmax) is computed outside the model, by scripts/pft_traits.  !
+!                                                                                          !
+! The table also holds three tables derived from the traits once at load                   !
+! (meds_pft_derive): each PFT's leaf-photosynthesis parameters, its hydraulics with its    !
+! Kirchhoff lookup, and the two-stream's optics. A per-PFT table is <process>_table_t and  !
+! its entries <process>_pft_t.                                                             !
 !==========================================================================================!
 module meds_pft_params
    use meds_kinds,          only : wp, ik
    use meds_allometry_lib,  only : allometry_t
-   use meds_plant_hydr_lib, only : plant_hydraulics_t
+   use meds_plant_hydr_lib, only : plant_hydraulics_t, hydro_table_t
    implicit none
    private
 
    public :: pft_table_t, phenology_traits_t
+   public :: leaf_photo_pft_t, leaf_photo_table_t, hydraulics_pft_t, hydraulics_table_t, rad_pft_optics_t
    public :: HYD_UNSET
    public :: PATH_C3, PATH_C4
+   public :: RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
 
    !----- Photosynthetic-pathway flags (per-PFT trait values). ----------------------------!
    integer(ik), parameter :: PATH_C3 = 1_ik   !< C3 (Farquhar-von Caemmerer-Berry)
    integer(ik), parameter :: PATH_C4 = 2_ik   !< C4 (Collatz et al. 1992)
+
+   !----- The optics table's radiation bands, indices into its band dimension. ------------!
+   integer(ik), parameter :: RAD_VIS = 1_ik   !< visible / PAR (beam + diffuse, no emission)
+   integer(ik), parameter :: RAD_NIR = 2_ik   !< near-infrared (beam + diffuse, no emission)
+   integer(ik), parameter :: RAD_LW  = 3_ik   !< thermal / longwave (diffuse + emission, no beam)
+   integer(ik), parameter :: N_RAD_BAND_DEFAULT = 3_ik
+
+   !----- A PFT's leaf-photosynthesis parameters (docs/science/leaf_gas_exchange.md), flat, so     !
+   !      the leaf kernel needs no configuration: its traits and [leaf_physiology]'s constants. ---!
+   type :: leaf_photo_pft_t
+      integer(ik) :: pathway        !< PATH_C3 | PATH_C4
+      !----- Per-PFT capacities at 25 degC and stomatal/water-stress traits. ---------------!
+      real(wp) :: vcmax25, jmax25, tpu25, rd25, kp25
+      real(wp) :: g0, g1, d0, quantum_yield
+      !----- theta_j is the electron-transport curvature; the theta_*_c3/c4 pairs are the co-limitation !
+      !      curvatures, one pair per pathway (docs/science/leaf_gas_exchange.md §2). -----------------!
+      real(wp) :: theta_j
+      real(wp) :: theta_cj_c3, theta_ip_c3
+      real(wp) :: theta_cj_c4, theta_ic_c4
+      !----- psi_open/psi_close [MPa]: the leaf potential at which beta_nonstomata is 1 and 0, per PFT   !
+      !      (pft_wstress_psi_open/_close: the turgor-loss point and twice it unless the PFT file sets them). !
+      real(wp) :: lambda25, psi_open, psi_close, lambda_psi_exp, sref_stomata
+      !----- Predawn potential [MPa] below which the stomatal stress begins, eq. (10); a run sets it per !
+      !      PFT (pft_stomata_psi_onset); the 0 here is for a record built by hand. --------------------!
+      real(wp) :: psi_onset = 0.0_wp
+      !----- Shared biochemistry constants at 25 degC + activation/deactivation terms. -----!
+      real(wp) :: kc25, ko25, gstar25
+      real(wp) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd
+      real(wp) :: hd_vcmax, hd_jmax, hd_rd, ds_vcmax, ds_jmax, ds_rd
+      real(wp) :: o2_mol_frac, absorptance, phi_psii
+      real(wp) :: medlyn_vpd_min = 0.05_wp   !< [kPa] the VPD the Medlyn model uses at least ([leaf_physiology])
+   end type leaf_photo_pft_t
+
+   !----- Every PFT's leaf parameters. A cohort's plastic capacities override the table's, Jmax25 and !
+   !      TPU25 scaling with Vcmax25 by the two ratios; the solver selectors ride along. --------------!
+   type :: leaf_photo_table_t
+      integer(ik) :: n_pft = 0_ik
+      type(leaf_photo_pft_t),    allocatable :: pft(:)              !< per-PFT parameters (table capacities)
+      real(wp),                  allocatable :: jmax_vcmax_ratio(:) !< [--] Jmax25 / Vcmax25 per PFT
+      real(wp),                  allocatable :: tpu_vcmax_ratio(:)  !< [--] TPU25 / Vcmax25 per PFT
+      integer(ik) :: stomatal_model     = 0_ik    !< SM_LEUNING | SM_MEDLYN | SM_KATUL
+      integer(ik) :: temp_response_form = 0_ik    !< TEMP_RESPONSE_ARRHENIUS | TEMP_RESPONSE_PEAKED
+      integer(ik) :: colimitation       = 0_ik    !< COLIM_MIN | COLIM_QUADRATIC
+      logical     :: use_boundary_layer = .true.  !< couple through the leaf boundary layer (gb)
+   end type leaf_photo_table_t
+
+   !----- A PFT's hydraulic traits ([hydraulics]) and the Kirchhoff lookup its wood_kexp sets. --!
+   type, extends(plant_hydraulics_t) :: hydraulics_pft_t
+      !----- Kirchhoff lookup from wood_kexp (build_hydro_table), read only for wood_kexp outside {1,2}, !
+      !      where no closed form exists (docs/science/plant_hydraulics.md §3). ----------------------!
+      type(hydro_table_t) :: vuln_table
+      real(wp) :: rwc_close   !< [-] leaf relative water content at the PFT's stomatal closing potential
+   end type hydraulics_pft_t
+
+   !----- Every PFT's hydraulics; each entry carries its own Kirchhoff lookup, so each PFT keeps   !
+   !      its vulnerability shape. --------------------------------------------------------------!
+   type :: hydraulics_table_t
+      integer(ik) :: n_pft = 0_ik
+      type(hydraulics_pft_t), allocatable :: pft(:)
+   end type hydraulics_table_t
+
+   !---------------------------------------------------------------------------------------!
+   ! Per-PFT optics (docs/science/canopy_radiation_transfer.md eqs. (4)-(6)), leaf and     !
+   ! wood apart, blended per cohort by clumped area; lidf is kept to evaluate G(mu).       !
+   !---------------------------------------------------------------------------------------!
+   type :: rad_pft_optics_t
+      integer(ik) :: n_pft  = 0_ik
+      integer(ik) :: n_band = 0_ik
+      real(wp), allocatable :: omega_leaf(:,:)     !< (band,pft) single-scatter albedo, leaves
+      real(wp), allocatable :: omega_wood(:,:)     !< (band,pft) single-scatter albedo, wood
+      real(wp), allocatable :: g_leaf(:,:)         !< (band,pft) bf*(rho-tau)/omega, leaves
+      real(wp), allocatable :: g_wood(:,:)         !< (band,pft) bf*(rho-tau)/omega, wood
+      real(wp), allocatable :: clumping_leaf(:)    !< (pft) leaf clumping factor (0,1]
+      real(wp), allocatable :: clumping_wood(:)    !< (pft) wood clumping factor (0,1]
+      real(wp), allocatable :: lidf(:,:)           !< (class,pft) leaf-angle distribution weights
+      real(wp), allocatable :: bf(:)               !< (pft) <cos^2(theta_leaf)>
+      logical,  allocatable :: has_beam(:)         !< (band) band has a collimated (solar) beam
+      logical,  allocatable :: has_emission(:)     !< (band) band has thermal emission (LW)
+   end type rad_pft_optics_t
 
    !----- A PFT's [phenology] block (docs/science/plant_phenology.md). The defaults equal  !
    !      pheno_args_t's (meds_phenology_types), into which the slow-loop driver copies    !
@@ -153,6 +239,10 @@ module meds_pft_params
       real(wp),    allocatable :: kplastic_rd(:)            !< [1/(m2/m2)] Rd light-response slope
       real(wp),    allocatable :: kplastic_leaf_turnover(:) !< [1/(m2/m2)] leaf-turnover light-response slope (<=0)
       type(phenology_traits_t), allocatable :: pheno(:) !< each PFT's phenology ([phenology])
+      !----- The tables the fast loop reads, derived from the traits above (derive_pft_tables). ---!
+      type(leaf_photo_table_t) :: leaf_photo   !< DERIVED each PFT's leaf-photosynthesis parameters
+      type(hydraulics_table_t) :: hydraulics   !< DERIVED each PFT's hydraulics and Kirchhoff lookup
+      type(rad_pft_optics_t)   :: optics       !< DERIVED the two-stream's per-PFT optics
    end type pft_table_t
 
    !----- Sentinel of an optional stomatal stress point the PFT file leaves out: large and !

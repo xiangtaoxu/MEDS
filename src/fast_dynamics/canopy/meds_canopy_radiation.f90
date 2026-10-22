@@ -2,65 +2,25 @@
 !==========================================================================================!
 ! meds_canopy_radiation -- the canopy two-stream radiative transfer                        !
 ! (docs/science/canopy_radiation_transfer.md), state-free on plain arrays, cohorts ordered !
-! bottom (1) to top (ncoh), fluxes in absolute W/m2. derive_rad_optics builds the per-PFT  !
-! optics table (eq. (4)); ground_optics closes the lower boundary (§4); canopy_radiation   !
-! blends each cohort's optics (eqs. (5)-(7)), solves each band by the adding method        !
-! (solve_band, layer_rt; eqs. (8)-(12)) and returns the per-cohort absorbed radiation      !
-! (eqs. (13)-(14)). The optical-property kernels are meds_optics_lib's.                    !
+! bottom (1) to top (ncoh), fluxes in absolute W/m2. ground_optics closes the lower        !
+! boundary (§4); canopy_radiation blends each cohort's optics (eqs. (5)-(7)), solves each  !
+! band by the adding method (solve_band, layer_rt; eqs. (8)-(12)) and returns the          !
+! per-cohort absorbed radiation (eqs. (13)-(14)). The per-PFT optics table (eq. (4)) is    !
+! built at load (meds_pft_derive); the optical-property kernels are meds_optics_lib's.     !
 !==========================================================================================!
 module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
    use meds_constants,    only : stefan_boltzmann, tiny_num, lnexp_max
-   use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_flux, alloc_rad_pft_optics, &
-                                 ground_optics_state_t
-   use meds_optics_lib,   only : N_LEAF_CLASS, beta_lidf, leaf_bf, gfun_direct, scatter_pair
+   use meds_pft_params,   only : rad_pft_optics_t
+   use meds_canopy_types, only : rad_forcing_t, rad_flux_t, alloc_rad_flux, ground_optics_state_t
+   use meds_optics_lib,   only : gfun_direct
    implicit none
    private
 
-   public :: derive_rad_optics, ground_optics
+   public :: ground_optics
    public :: canopy_radiation
 
 contains
-
-   !=======================================================================================!
-   !  Canopy optics: two-stream coefficients from leaf/wood spectra and the LIDF           !
-   !  (SCOPE / 4SAIL, Verhoef 1984).                                                       !
-   !=======================================================================================!
-
-   !---------------------------------------------------------------------------------------!
-   ! Fill the per-PFT optics table (docs/science/canopy_radiation_transfer.md eqs. (1),    !
-   ! (2) and (4)) from (band, pft) spectra: reflectance and transmittance for a shortwave  !
-   ! band, 1 - emissivity and 0 for the thermal band; beta_p, beta_q shape the Beta LIDF.  !
-   !---------------------------------------------------------------------------------------!
-   subroutine derive_rad_optics(n_band, n_pft, reflect_leaf, trans_leaf, reflect_wood,       &
-                                trans_wood, clumping_leaf, clumping_wood, beta_p, beta_q,     &
-                                has_beam, has_emission, optics)
-      integer(ik), intent(in) :: n_band, n_pft
-      real(wp),    intent(in) :: reflect_leaf(n_band, n_pft), trans_leaf(n_band, n_pft)
-      real(wp),    intent(in) :: reflect_wood(n_band, n_pft), trans_wood(n_band, n_pft)
-      real(wp),    intent(in) :: clumping_leaf(n_pft), clumping_wood(n_pft)
-      real(wp),    intent(in) :: beta_p(n_pft), beta_q(n_pft)
-      logical,     intent(in) :: has_beam(n_band), has_emission(n_band)
-      type(rad_pft_optics_t), intent(out) :: optics
-      integer(ik) :: b, p
-
-      call alloc_rad_pft_optics(optics, n_band, n_pft, N_LEAF_CLASS)
-      optics%clumping_leaf = clumping_leaf
-      optics%clumping_wood = clumping_wood
-      optics%has_beam      = has_beam
-      optics%has_emission  = has_emission
-
-      do p = 1_ik, n_pft
-         optics%lidf(:,p) = beta_lidf(beta_p(p), beta_q(p))
-         optics%bf(p)     = leaf_bf(optics%lidf(:,p))
-         do b = 1_ik, n_band
-            call scatter_pair(reflect_leaf(b,p), trans_leaf(b,p), optics%bf(p),               &
-                              optics%omega_leaf(b,p), optics%g_leaf(b,p))
-            call scatter_pair(reflect_wood(b,p), trans_wood(b,p), optics%bf(p),               &
-                              optics%omega_wood(b,p), optics%g_wood(b,p))
-         end do
-      end do
-   end subroutine derive_rad_optics
 
    !---------------------------------------------------------------------------------------!
    ! Blend leaf and wood optics for every cohort, for one band, and add the solar geometry !

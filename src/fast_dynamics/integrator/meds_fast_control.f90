@@ -4,24 +4,55 @@
 ! accuracy means the same on each: the grouped error norm state_wrms_grouped and the step  !
 ! factor step_control_factor (I or PI controller). The column mixes units, so each state's !
 ! error is scaled by its group's (rtol, atol) (the seven groups of meds_fast_types; the    !
-! films and the pond carry none). The run's error control is built from config            !
-! (meds_fast_config); default_error_control serves the tests                               !
+! films and the pond carry none). The run's error control is built from [fast]             !
+! (build_error_control), with its budget stops; default_error_control serves the tests     !
 ! (docs/science/numerical_scheme.md eqs. (3)-(4)).                                          !
 !==========================================================================================!
 module meds_fast_control
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : tiny_num
    use meds_numerics,    only : adaptive_step_update, clamp
+   use meds_config,      only : meds_config_t
    use meds_fast_params, only : CTRL_PI
    use meds_column_state_ops, only : state_to_array, state_entry_rules
-   use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t
+   use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, GRP_THETA
    implicit none
    private
 
    public :: state_wrms_grouped, step_control_factor
+   public :: build_error_control, build_tol_set
    public :: default_error_control   ! used only by the tests
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! The single tolerance set of the fast loop, the per-group tolerances of its error norm !
+   ! (docs/science/numerical_scheme.md eq. (3)): [fast].rtol for every group, each group's !
+   ! default atol, and [fast].water_atol for GRP_THETA, which the water network's own       !
+   ! sub-step control takes too (docs/science/soil_plant_water.md §3). ARK advances plant  !
+   ! water outside its stages, so GRP_LEAF_W and GRP_WOOD_W act only under RK45.          !
+   !---------------------------------------------------------------------------------------!
+   pure function build_tol_set(cfg) result(tols)
+      type(meds_config_t), intent(in) :: cfg
+      type(tol_set_t)                 :: tols
+      tols%rtol             = cfg%rtol
+      tols%atol(GRP_THETA)  = cfg%water_atol
+      !----- Every atol scales with atol_scale: rtol alone stops tightening once atol dominates the   !
+      !      WRMS denominator atol + rtol*|y| (docs/science/numerical_scheme.md §6). ----------------!
+      tols%atol = tols%atol * cfg%atol_scale
+   end function build_tol_set
+
+   !----- The run's error control from [fast]: the tolerance set, the step controller and the budget !
+   !      stops (the soil heat's threshold, a budget closure rather than a tolerance, scaled by       !
+   !      atol_scale directly). ------------------------------------------------------------------!
+   pure function build_error_control(cfg) result(ec)
+      type(meds_config_t), intent(in) :: cfg
+      type(error_control_t)           :: ec
+      ec%tols       = build_tol_set(cfg)
+      ec%controller = cfg%step_controller
+      ec%debug_error = cfg%debug_error
+      ec%soil_energy_budget_atol = cfg%soil_energy_budget_atol * cfg%atol_scale
+   end function build_error_control
 
    !----- The default error control: one rtol for every group, the default atols, the I controller, !
    !      level L1. -------------------------------------------------------------------------------!

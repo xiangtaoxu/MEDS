@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_rk45 -- the INTEG_RK45 wiring of the ED2-faithful adaptive Cash-Karp integrator    !
-! into column_fast_step (docs/science/numerical_scheme.md §3, `rk45`).                           !
+! into fast_step (docs/science/numerical_scheme.md §3, `rk45`).                                  !
 !   A. GPP PARITY: build_column_frozen (shared with ARK) runs the SAME frozen pre-pass under     !
 !      both schemes, so gpp_coh from the RK45 path is bit-identical to ARK's on step 1.          !
 !   B. PHYSICAL: a 24-step dry-window march under INTEG_RK45 keeps the CAS / soil / leaf / plant    !
@@ -22,19 +22,17 @@ program test_column_rk45
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,  &
                                            sat_specific_humidity, tissue_temp_to_energy,                         &
                                            tissue_dry_heat_capacity, internal_energy_liquid
-   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
-   use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys, column_site_t
-   use meds_column_view,       only : column_cohort_init
+   use meds_fast_state,          only : static_state_fixture
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head
-   use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,         only : soil_profile_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_diag_vars,       only : N_CO_FAST_ROWS, CO_PSI_PREDAWN
-   use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t,      &
-                                        alloc_column_cohort
-   use meds_fast_config,         only : apply_hydraulics_config, apply_canopy_film_config,                        &
-                                        build_leaf_photo_table, build_integrator_opts
-   use meds_fast_step,          only : column_fast_step
+   use meds_fast_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
+                                        fast_output_t, alloc_dynamic_state, ensure_forcing_capacity,  &
+                                        ensure_output_capacity, step_report_t, WORK_INTEG_REJECT,  &
+                                        WORK_INTEG_STEPS, WORK_RK45_RESCUE
+   use meds_site_state_vars,     only : site_surface_t
+   use meds_fast_step,           only : fast_step
    use meds_fast_types,         only : fast_workspace_t
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water
    use meds_test_support, only : build_test_config, check_true, test_report
@@ -51,18 +49,14 @@ program test_column_rk45
    real(wp) :: theta_seed = THETA0
    real(wp), parameter :: PSI_FIXTURE = -0.1_wp   !< [MPa] the fixture tissues' starting potential, a mild tension
    type(meds_config_t)    :: cfg
-   type(column_config_t)  :: col_config
-   type(column_site_t)    :: col_site
-   type(column_cohort_t)  :: col_cohort
-   type(aero_env_t)       :: aenv
-   type(aero_geom_t)      :: ageom
-   type(aero_out_t)       :: aero
-   type(patch_biophys_t)  :: biophys
-   type(column_forcing_t) :: forc
-   type(column_budget_t)  :: budget
-   type(fast_workspace_t) :: ws          !< the fast step's storage, reused step to step
+   type(site_surface_t)       :: site      !< the column's soil and its boundaries
+   type(fast_static_state_t)  :: static    !< the cohorts, the canopy geometry and its top
+   type(fast_dynamic_state_t) :: dynamic
+   type(fast_forcing_t)       :: forcing
+   type(fast_output_t)        :: out
+   type(fast_workspace_t)     :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
-   real(wp)    :: gpp_split(N), gpp_rk45(N), gpp_coh(N), tcas, qsat, worst_super
+   real(wp)    :: gpp_split(N), gpp_rk45(N), tcas, qsat, worst_super
    real(wp)    :: psi_leaf_diag, psi_leaf_probe(N)
    integer(ik) :: is, k
    logical     :: physical
@@ -71,28 +65,20 @@ program test_column_rk45
 
    !----- column setup (mirrors test_column_ark). ---------------------------------------------!
    cfg = build_test_config()
-   ageom%veg_height = 18.0_wp ; ageom%opencan_frac = 0.0_wp ; ageom%snowfac = 0.0_wp
-   aenv%u_ref = 2.0_wp ; aenv%zref = 30.0_wp ; aenv%press = 101325.0_wp ; aenv%rho_air = 1.2_wp
    !----- On-allometry fixture, a 20 cm tree at 224 stems/ha (LAI ~3): born through the canonical !
    !      path (init_cohort + set_cohort_size) and gathered by the production gather, so every    !
    !      field -- height, leaf area, the wood carbon the wood heat capacity is sized from -- is  !
    !      mutually consistent. -------------------------------------------------------------------!
-   call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+   static%geom%veg_height = 18.0_wp ; static%geom%opencan_frac = 0.0_wp ; static%geom%snowfac = 0.0_wp
+   static%z_top = 30.0_wp                    ! the forcing's reference height
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
-   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
-   call apply_hydraulics_config(cfg, col_config%hydraulics_table)
-   call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
-   call build_leaf_photo_table(cfg, col_site%leaf_photo)
-   col_config%soil_carbon = cfg%soil_carbon
-   col_config%ea_rd = cfg%ea_rd
-   col_config%hd_rd = cfg%hd_rd
-   col_config%ds_rd = cfg%ds_rd
-   col_config%integrator = build_integrator_opts(cfg)
-   call alloc_aero_out(aero, N)
-   allocate(forc%abs_sw(N), forc%abs_lw(N), forc%abs_par(N), forc%abs_sw_wood(N), forc%abs_lw_wood(N))
-   forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
+   call ensure_output_capacity(out, N, .false.)
+   call ensure_forcing_capacity(forcing, N)
+   forcing%abs_sw_wood = 0.0_wp ; forcing%abs_lw_wood = 0.0_wp
 
    print '(a)', '[test_column_rk45]'
 
@@ -100,14 +86,12 @@ program test_column_rk45
    call set_noon_forcing()
    call reset_state()
    cfg%time_integrator = INTEG_ARK
-   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-   call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
-   gpp_split = gpp_coh
+   call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+   gpp_split = out%gpp_coh(1:N)
    call reset_state()
    cfg%time_integrator = INTEG_RK45
-   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-   call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
-   gpp_rk45 = gpp_coh
+   call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+   gpp_rk45 = out%gpp_coh(1:N)
    call check_true('RK45 pre-pass gpp bit-identical to the ARK pre-pass (build_column_frozen)',                       &
            abs(gpp_rk45(1) - gpp_split(1)) < 1.0e-12_wp, abs(gpp_rk45(1) - gpp_split(1)))
    call check_true('RK45 midday gpp > 0', gpp_rk45(1) > 0.0_wp, gpp_rk45(1))
@@ -115,27 +99,25 @@ program test_column_rk45
    !=== B. A dry-window march under INTEG_RK45 stays physical + bounded + sub-saturated. ========!
    call reset_state()
    cfg%time_integrator = INTEG_RK45
-   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    physical = .true. ; worst_super = -1.0_wp
    do is = 1_ik, 6_ik * STEPS_PER_HOUR
       call set_diurnal_forcing(is)
-      call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                            gpp_coh=gpp_coh)
-      tcas = biophys%cas%can_temp
-      qsat = sat_specific_humidity(tcas, aenv%press)
-      worst_super = max(worst_super, biophys%cas%can_shv - qsat)
-      physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp .and. biophys%cas%can_shv > 0.0_wp
-      physical = physical .and. biophys%leaf_temp(1) > 250.0_wp .and. biophys%leaf_temp(1) < 340.0_wp
+      call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+      tcas = dynamic%cas%can_temp
+      qsat = sat_specific_humidity(tcas, forcing%press)
+      worst_super = max(worst_super, dynamic%cas%can_shv - qsat)
+      physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp .and. dynamic%cas%can_shv > 0.0_wp
+      physical = physical .and. dynamic%leaf_temp(1) > 250.0_wp .and. dynamic%leaf_temp(1) < 340.0_wp
       do k = 1_ik, NSL
-         physical = physical .and. biophys%soil_water%theta(k) > 0.0_wp .and. biophys%soil_water%theta(k) < 0.6_wp
-         physical = physical .and. biophys%soil_energy%soil_temp(k) > 260.0_wp .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
+         physical = physical .and. dynamic%soil_water%theta(k) > 0.0_wp .and. dynamic%soil_water%theta(k) < 0.6_wp
+         physical = physical .and. dynamic%soil_energy%soil_temp(k) > 260.0_wp .and. dynamic%soil_energy%soil_temp(k) < 340.0_wp
       end do
-      physical = physical .and. biophys%leaf_water_mass(1) > 0.0_wp .and. biophys%wood_water_mass(1) > 0.0_wp
-      psi_leaf_diag = tissue_water_to_psi(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_curve, &
-            col_cohort%bleaf(1))
+      physical = physical .and. dynamic%leaf_water_mass(1) > 0.0_wp .and. dynamic%wood_water_mass(1) > 0.0_wp
+      psi_leaf_diag = tissue_water_to_psi(dynamic%leaf_water_mass(1), cfg%pft%hydraulics%pft(1)%leaf_curve, &
+            static%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
-   call check_true('INTEG_RK45 dry-window march stays physical + bounded (00:00-06:00)', physical, biophys%cas%can_temp)
+   call check_true('INTEG_RK45 dry-window march stays physical + bounded (00:00-06:00)', physical, dynamic%cas%can_temp)
    call check_true('INTEG_RK45 CAS stays sub-saturated', worst_super <= 1.0e-4_wp, worst_super)
 
    !=== C. WHOLE-COLUMN CONSERVATION LEDGER: the water AND energy budgets close over a 24 h dry   !
@@ -222,30 +204,28 @@ contains
       real(wp)    :: dmax_lag
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       dmax_lag = 0.0_wp
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
-         dmax_lag = max(dmax_lag, abs(biophys%wood_temp(1) - biophys%cas%can_temp))
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+         dmax_lag = max(dmax_lag, abs(dynamic%wood_temp(1) - dynamic%cas%can_temp))
       end do
-      call check_true('RK45 PROG-WOOD: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                      &
-              real(budget%whole_energy%n_fail, wp))
-      call check_true('RK45 PROG-WOOD: whole_water closes', budget%whole_water%n_fail == 0_ik,                        &
-              real(budget%whole_water%n_fail, wp))
+      call check_true('RK45 PROG-WOOD: whole_energy closes', out%report%ledgers%whole_energy%n_fail == 0_ik,                      &
+              real(out%report%ledgers%whole_energy%n_fail, wp))
+      call check_true('RK45 PROG-WOOD: whole_water closes', out%report%ledgers%whole_water%n_fail == 0_ik,                        &
+              real(out%report%ledgers%whole_water%n_fail, wp))
       !----- RK45 is the path where a borrowed advective face would hide: a flux taken from one solve  !
       !      with state committed from the scheme's own stages. The per-layer residual is measured at  !
       !      RK45's own commit, on the b-weighted state (docs/science/numerical_scheme.md §5b). -------!
-      call check_true('RK45 PROG-WOOD: per-layer face closure holds', budget%soil_face_mass%worst < 1.0e-8_wp, &
-              budget%soil_face_mass%worst)
-      call check_true('RK45 PROG-WOOD: the face check actually ran', budget%soil_face_mass%n_check > 0_ik, &
-              real(budget%soil_face_mass%n_check, wp))
+      call check_true('RK45 PROG-WOOD: per-layer face closure holds', out%report%ledgers%soil_face_mass%worst < 1.0e-8_wp, &
+              out%report%ledgers%soil_face_mass%worst)
+      call check_true('RK45 PROG-WOOD: the face check actually ran', out%report%ledgers%soil_face_mass%n_check > 0_ik, &
+              real(out%report%ledgers%soil_face_mass%n_check, wp))
       call check_true('RK45 PROG-WOOD: wood temperature lags the CAS', dmax_lag > 1.0e-3_wp, dmax_lag)
       call check_true('RK45 PROG-WOOD: wood temperature physical',                                                    &
-              biophys%wood_temp(1) > 200.0_wp .and. biophys%wood_temp(1) < 350.0_wp, biophys%wood_temp(1))
-      print '(a,i0,a,i0)', '   RK45 PROG-WOOD last dt_fast: substeps = ', budget%integ_nsteps,        &
-            ' , rescues = ', budget%rk45_rescue
+              dynamic%wood_temp(1) > 200.0_wp .and. dynamic%wood_temp(1) < 350.0_wp, dynamic%wood_temp(1))
+      print '(a,i0,a,i0)', '   RK45 PROG-WOOD last dt_fast: substeps = ', out%report%work(WORK_INTEG_STEPS),        &
+            ' , rescues = ', out%report%work(WORK_RK45_RESCUE)
    end subroutine test_rk45_prognostic_wood
 
    !----- All three bottom BCs are pure boundary conditions with no prognostic state behind them:  !
@@ -257,43 +237,39 @@ contains
       !----- (a) sealed bedrock column on RK45. -----------------------------------------------!
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 0.0_wp
+      site%soil%water_bottom_bc = SOIL_BC_DRAIN ; site%soil%drain_factor = 0.0_wp
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      call check_true('BEDROCK/RK45: whole_water closes', budget%whole_water%n_fail == 0_ik,                          &
-              real(budget%whole_water%n_fail, wp))
-      call check_true('BEDROCK/RK45: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                        &
-              real(budget%whole_energy%n_fail, wp))
+      call check_true('BEDROCK/RK45: whole_water closes', out%report%ledgers%whole_water%n_fail == 0_ik,                          &
+              real(out%report%ledgers%whole_water%n_fail, wp))
+      call check_true('BEDROCK/RK45: whole_energy closes', out%report%ledgers%whole_energy%n_fail == 0_ik,                        &
+              real(out%report%ledgers%whole_energy%n_fail, wp))
 
       !----- (b) aquifer BC on RK45. A column started DRY must wet from below, and both ledgers     !
       !          must close with the bottom flux running UPWARD. -----------------------------------!
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_site%soil%water_bottom_bc = SOIL_BC_AQUIFER
-      biophys%soil_water%theta(1:col_site%soil_profile%n_active) = 0.15_wp
-      theta_bot0 = biophys%soil_water%theta(col_site%soil_profile%n_active)
+      site%soil%water_bottom_bc = SOIL_BC_AQUIFER
+      dynamic%soil_water%theta(1:site%soil_profile%n_active) = 0.15_wp
+      theta_bot0 = dynamic%soil_water%theta(site%soil_profile%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      call check_true('AQUIFER/RK45: whole_water closes', budget%whole_water%n_fail == 0_ik,                          &
-              real(budget%whole_water%n_fail, wp))
-      call check_true('AQUIFER/RK45: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                        &
-              real(budget%whole_energy%n_fail, wp))
+      call check_true('AQUIFER/RK45: whole_water closes', out%report%ledgers%whole_water%n_fail == 0_ik,                          &
+              real(out%report%ledgers%whole_water%n_fail, wp))
+      call check_true('AQUIFER/RK45: whole_energy closes', out%report%ledgers%whole_energy%n_fail == 0_ik,                        &
+              real(out%report%ledgers%whole_energy%n_fail, wp))
       call check_true('AQUIFER/RK45: dry column wets from below',                                                     &
-              biophys%soil_water%theta(col_site%soil_profile%n_active) > theta_bot0,                                              &
-              biophys%soil_water%theta(col_site%soil_profile%n_active) - theta_bot0)
+              dynamic%soil_water%theta(site%soil_profile%n_active) > theta_bot0,                                              &
+              dynamic%soil_water%theta(site%soil_profile%n_active) - theta_bot0)
       !----- K_bot/Delta with Delta = dz(n)/2 is a fast boundary term the implicit paths absorb and   !
       !      an explicit march may not, so report the substep cost rather than assume it. ------------!
-      print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
-            ' , rejects = ', budget%integ_nrej, ' , rescues = ', budget%rk45_rescue
-      col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 1.0_wp
+      print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', out%report%work(WORK_INTEG_STEPS),     &
+            ' , rejects = ', out%report%work(WORK_INTEG_REJECT), ' , rescues = ', out%report%work(WORK_RK45_RESCUE)
+      site%soil%water_bottom_bc = SOIL_BC_DRAIN ; site%soil%drain_factor = 1.0_wp
    end subroutine test_rk45_bedrock_and_aquifer
 
    !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert the                     !
@@ -302,26 +278,26 @@ contains
       integer(ik) :: istep
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      call check_true('RK45: whole_water closes (n_fail==0)', budget%whole_water%n_fail == 0_ik,                      &
-              real(budget%whole_water%n_fail, wp))
-      call check_true('RK45: whole_energy closes (n_fail==0)', budget%whole_energy%n_fail == 0_ik,                    &
-              real(budget%whole_energy%n_fail, wp))
-      call check_true('RK45: ledger fired every dispatched dt_fast', budget%whole_water%n_check == 24_ik * STEPS_PER_HOUR, &
-              real(budget%whole_water%n_check, wp))
-      call check_true('RK45: whole-energy closes < 1 J', budget%whole_energy%worst < 1.0_wp,                          &
-              budget%whole_energy%worst)
+      call check_true('RK45: whole_water closes (n_fail==0)', out%report%ledgers%whole_water%n_fail == 0_ik,                      &
+              real(out%report%ledgers%whole_water%n_fail, wp))
+      call check_true('RK45: whole_energy closes (n_fail==0)', out%report%ledgers%whole_energy%n_fail == 0_ik,                    &
+              real(out%report%ledgers%whole_energy%n_fail, wp))
+      call check_true('RK45: ledger fired every dispatched dt_fast',                                                  &
+              out%report%ledgers%whole_water%n_check == 24_ik * STEPS_PER_HOUR,                                     &
+              real(out%report%ledgers%whole_water%n_check, wp))
+      call check_true('RK45: whole-energy closes < 1 J', out%report%ledgers%whole_energy%worst < 1.0_wp,                          &
+              out%report%ledgers%whole_energy%worst)
       call check_true('RK45: adaptive substeps bounded (~3 expected, cap 64)',                                        &
-              budget%integ_nsteps >= 1_ik .and. budget%integ_nsteps <= 64_ik, real(budget%integ_nsteps, wp))
-      print '(a,i0,a,i0)', '   RK45 last dt_fast: substeps = ', budget%integ_nsteps,                 &
-            ' , rejects = ', budget%integ_nrej
-      print '(a,es10.3,a,es10.3,a)', '   (worst whole-column resid: energy= ', budget%whole_energy%worst, &
-            ' J/m2  water= ', budget%whole_water%worst, ' kg/m2)'
+              out%report%work(WORK_INTEG_STEPS) >= 1_ik .and. out%report%work(WORK_INTEG_STEPS) <= 64_ik,             &
+              real(out%report%work(WORK_INTEG_STEPS), wp))
+      print '(a,i0,a,i0)', '   RK45 last dt_fast: substeps = ', out%report%work(WORK_INTEG_STEPS),                 &
+            ' , rejects = ', out%report%work(WORK_INTEG_REJECT)
+      print '(a,es10.3,a,es10.3,a)', '   (worst whole-column resid: energy= ', out%report%ledgers%whole_energy%worst, &
+            ' J/m2  water= ', out%report%ledgers%whole_water%worst, ' kg/m2)'
    end subroutine test_rk45_budgets
 
    !----- march 24 h of INTEG_RK45 over free-draining soil WITH continuous rain                        !
@@ -332,29 +308,27 @@ contains
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       call march_dry_day(theta_dry)                       ! the same day without the rain
       call reset_state()
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
+         forcing%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      theta_col1 = sum(biophys%soil_water%theta(1:NSL))
+      theta_col1 = sum(dynamic%soil_water%theta(1:NSL))
       call check_true('RK45 wet: ran a full day of wet steps (no guard error stop)', &
-            budget%whole_water%n_check == 24_ik * STEPS_PER_HOUR, &
-              real(budget%whole_water%n_check, wp))
+            out%report%ledgers%whole_water%n_check == 24_ik * STEPS_PER_HOUR, &
+              real(out%report%ledgers%whole_water%n_check, wp))
       call check_true('RK45 wet: rain wetted the soil column (wetter than the day without rain)',   &
               theta_col1 > theta_dry, theta_col1 - theta_dry)
-      call check_true('RK45 wet: whole_energy closes (n_fail==0)', budget%whole_energy%n_fail == 0_ik,                &
-              real(budget%whole_energy%n_fail, wp))
-      call check_true('RK45 wet: whole_water closes (n_fail==0)', budget%whole_water%n_fail == 0_ik,                  &
-              real(budget%whole_water%n_fail, wp))
-      call check_true('RK45 wet: whole-energy closes < 1 J', budget%whole_energy%worst < 1.0_wp,                      &
-              budget%whole_energy%worst)
+      call check_true('RK45 wet: whole_energy closes (n_fail==0)', out%report%ledgers%whole_energy%n_fail == 0_ik,                &
+              real(out%report%ledgers%whole_energy%n_fail, wp))
+      call check_true('RK45 wet: whole_water closes (n_fail==0)', out%report%ledgers%whole_water%n_fail == 0_ik,                  &
+              real(out%report%ledgers%whole_water%n_fail, wp))
+      call check_true('RK45 wet: whole-energy closes < 1 J', out%report%ledgers%whole_energy%worst < 1.0_wp,                      &
+              out%report%ledgers%whole_energy%worst)
       print '(a,es10.3,a,es10.3,a)', '   (RK45 wet worst whole-column resid: energy= ',                &
-            budget%whole_energy%worst, ' J/m2  water= ', budget%whole_water%worst, ' kg/m2)'
+            out%report%ledgers%whole_energy%worst, ' J/m2  water= ', out%report%ledgers%whole_water%worst, ' kg/m2)'
    end subroutine test_rk45_budgets_wet
 
    !----- march 24 h of INTEG_RK45 with canopy_water_on and a morning rain pulse                         !
@@ -365,30 +339,28 @@ contains
       real(wp)    :: surf_water_peak
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%canopy_water_on = .true.
+      cfg%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          if (istep > (19_ik * STEPS_PER_HOUR) / 4_ik .and. istep <= 6_ik * STEPS_PER_HOUR) &
-            forc%rainfall = 5.0e-5_wp                    ! a morning rain pulse, 04:45-06:00
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
-         surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
+            forcing%rainfall = 5.0e-5_wp                    ! a morning rain pulse, 04:45-06:00
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+         surf_water_peak = max(surf_water_peak, dynamic%leaf_surf_water(1) + dynamic%wood_surf_water(1))
       end do
-      col_config%canopy_water_on = .false.   ! restore default for any test added after this
-      call check_true('RK45 canopy water: whole-column water still closes', budget%whole_water%n_fail == 0_ik,        &
-              real(budget%whole_water%n_fail, wp))
+      cfg%canopy_water_on = .false.   ! restore default for any test added after this
+      call check_true('RK45 canopy water: whole-column water still closes', out%report%ledgers%whole_water%n_fail == 0_ik,        &
+              real(out%report%ledgers%whole_water%n_fail, wp))
       call check_true('RK45 canopy water: the morning rain pulse was intercepted', surf_water_peak > 0.0_wp,            &
               surf_water_peak)
       call check_true('RK45 canopy water: whole-column energy stays BOUNDED (film sensible heat not counted)',        &
-              budget%whole_energy%worst < 5.0e6_wp, budget%whole_energy%worst)
+              out%report%ledgers%whole_energy%worst < 5.0e6_wp, out%report%ledgers%whole_energy%worst)
       print '(a,es10.3,a)', '   (RK45 canopy water peak film=', surf_water_peak, ' kg/m2)'
    end subroutine test_rk45_canopy_water
 
    !----- march 24 h of INTEG_RK45 with a constant leaf/root-turnover shed-water rate                        !
-   !      (biophys%shed_water_rate -- a PATCH-level input, not atmospheric                                   !
-   !      forcing, so it is frozen on biophys for the whole day rather than living on forc; distinct from    !
+   !      (static%shed_water_rate -- a PATCH-level input, not atmospheric                                   !
+   !      forcing, so it is frozen on dynamic for the whole day rather than living on forcing; distinct from    !
    !      rainfall, which stays 0 throughout), mirroring test_column_ark's test_ark_shed_water: the soil    !
    !      must wet from THIS input alone, and both whole_water AND whole_energy must still close at        !
    !      RK45's own tight tolerance -- energy closing needs no separate wiring (the shed water rides        !
@@ -398,27 +370,25 @@ contains
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       call march_dry_day(theta_dry)                       ! the same day without the shed water
       call reset_state()
-      biophys%shed_water_rate = 8.0e-5_wp                     ! frozen for the whole day (rainfall stays 0)
-      biophys%shed_water_enth = 8.0e-5_wp * internal_energy_liquid(T0)   ! shed by tissues at t0
+      static%shed_water_rate = 8.0e-5_wp                     ! frozen for the whole day (rainfall stays 0)
+      static%shed_water_enth = 8.0e-5_wp * internal_energy_liquid(T0)   ! shed by tissues at t0
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      theta_col1 = sum(biophys%soil_water%theta(1:NSL))
-      biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
-      biophys%shed_water_enth = 0.0_wp
+      theta_col1 = sum(dynamic%soil_water%theta(1:NSL))
+      static%shed_water_rate = 0.0_wp   ! restore default for any test added after this
+      static%shed_water_enth = 0.0_wp
       call check_true('RK45 shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
               theta_col1 > theta_dry, theta_col1 - theta_dry)
       call check_true('RK45 shed water: whole-column WATER still closes with shed_water_rate active',                 &
-              budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
+              out%report%ledgers%whole_water%n_fail == 0_ik, real(out%report%ledgers%whole_water%n_fail, wp))
       call check_true('RK45 shed water: whole-column ENERGY still closes (no separate energy wiring needed)',         &
-              budget%whole_energy%n_fail == 0_ik, real(budget%whole_energy%n_fail, wp))
-      call check_true('RK45 shed water: whole-energy closes < 1 J', budget%whole_energy%worst < 1.0_wp,               &
-              budget%whole_energy%worst)
+              out%report%ledgers%whole_energy%n_fail == 0_ik, real(out%report%ledgers%whole_energy%n_fail, wp))
+      call check_true('RK45 shed water: whole-energy closes < 1 J', out%report%ledgers%whole_energy%worst < 1.0_wp,               &
+              out%report%ledgers%whole_energy%worst)
    end subroutine test_rk45_shed_water
 
    !----- march 00:00-12:00 of INTEG_RK45 with the cohort shrunk to a                                   !
@@ -426,22 +396,21 @@ contains
    !      run's first recruitment event). Without the two guards above this reproduces BOTH failures    !
    !      directly: leaf/wood_temp overflowing (T**4 in the RT forcing) and, with that guard alone, a   !
    !      SEPARATE ground_evaporation_rate crash from theta/soil_energy escaping their domain.          !
-   !      Restores the shared col_cohort/biophys state on exit. ----------------------------------------!
+   !      Restores the shared static/dynamic state on exit. ----------------------------------------!
    subroutine test_rk45_tiny_cohort()
       integer(ik) :: istep, k
       real(wp) :: lai0, wai0, leaf_area0, bleaf0, bsap0, broot0, sap_area0, nplant0
       logical  :: physical
-      lai0 = col_cohort%lai(1) ; wai0 = col_cohort%wai(1) ; leaf_area0 = col_cohort%leaf_area(1)
-      bleaf0 = col_cohort%bleaf(1) ; bsap0 = col_cohort%bsap(1) ; broot0 = col_cohort%broot(1)
-      sap_area0 = col_cohort%sap_area(1) ; nplant0 = col_cohort%nplant(1)
+      lai0 = static%lai(1) ; wai0 = static%wai(1) ; leaf_area0 = static%leaf_area(1)
+      bleaf0 = static%bleaf(1) ; bsap0 = static%bsap(1) ; broot0 = static%broot(1)
+      sap_area0 = static%sap_area(1) ; nplant0 = static%nplant(1)
 
-      col_cohort%lai(1) = 0.00265_wp ; col_cohort%wai(1) = 0.000529_wp ; col_cohort%leaf_area(1) = 0.00265_wp
-      col_cohort%bleaf(1) = 0.0203507_wp ; col_cohort%bsap(1) = 0.00212943_wp ; col_cohort%broot(1) = 0.0203507_wp
-      col_cohort%sap_area(1) = 1.0e-4_wp ; col_cohort%nplant(1) = 0.01_wp
+      static%lai(1) = 0.00265_wp ; static%wai(1) = 0.000529_wp ; static%leaf_area(1) = 0.00265_wp
+      static%bleaf(1) = 0.0203507_wp ; static%bsap(1) = 0.00212943_wp ; static%broot(1) = 0.0203507_wp
+      static%sap_area(1) = 1.0e-4_wp ; static%nplant(1) = 0.01_wp
 
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       physical = .true.
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
@@ -453,29 +422,28 @@ contains
          !      floor that zeroes the whole balance would hide. -----------------------------------------!
          block
             real(wp) :: rad_frac
-            rad_frac      = 1.0_wp - exp(-0.5_wp * col_cohort%lai(1))
-            forc%abs_sw   = forc%abs_sw  * rad_frac
-            forc%abs_par  = forc%abs_sw
-            forc%abs_lw   = forc%abs_lw  * rad_frac
+            rad_frac      = 1.0_wp - exp(-0.5_wp * static%lai(1))
+            forcing%abs_sw   = forcing%abs_sw  * rad_frac
+            forcing%abs_par  = forcing%abs_sw
+            forcing%abs_lw   = forcing%abs_lw  * rad_frac
          end block
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
-         physical = physical .and. biophys%leaf_temp(1) > 250.0_wp .and. biophys%leaf_temp(1) < 340.0_wp
-         physical = physical .and. biophys%wood_temp(1) > 250.0_wp .and. biophys%wood_temp(1) < 340.0_wp
-         physical = physical .and. biophys%cas%can_temp > 250.0_wp .and. biophys%cas%can_temp < 340.0_wp
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+         physical = physical .and. dynamic%leaf_temp(1) > 250.0_wp .and. dynamic%leaf_temp(1) < 340.0_wp
+         physical = physical .and. dynamic%wood_temp(1) > 250.0_wp .and. dynamic%wood_temp(1) < 340.0_wp
+         physical = physical .and. dynamic%cas%can_temp > 250.0_wp .and. dynamic%cas%can_temp < 340.0_wp
          do k = 1_ik, NSL
-            physical = physical .and. biophys%soil_water%theta(k) >= 0.0_wp .and. biophys%soil_water%theta(k) <= 0.6_wp
-            physical = physical .and. biophys%soil_energy%soil_temp(k) > 250.0_wp .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
+            physical = physical .and. dynamic%soil_water%theta(k) >= 0.0_wp .and. dynamic%soil_water%theta(k) <= 0.6_wp
+            physical = physical .and. dynamic%soil_energy%soil_temp(k) > 250.0_wp .and. dynamic%soil_energy%soil_temp(k) < 340.0_wp
          end do
-         physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
+         physical = physical .and. out%gpp_coh(1) == out%gpp_coh(1)   ! not NaN
       end do
       call check_true('RK45 tiny (just-recruited) cohort stays physical + bounded (00:00-12:00)', physical,              &
-              biophys%leaf_temp(1))
-      call check_true('RK45 tiny cohort: gpp is not NaN', gpp_coh(1) == gpp_coh(1), gpp_coh(1))
+              dynamic%leaf_temp(1))
+      call check_true('RK45 tiny cohort: gpp is not NaN', out%gpp_coh(1) == out%gpp_coh(1), out%gpp_coh(1))
 
-      col_cohort%lai(1) = lai0 ; col_cohort%wai(1) = wai0 ; col_cohort%leaf_area(1) = leaf_area0
-      col_cohort%bleaf(1) = bleaf0 ; col_cohort%bsap(1) = bsap0 ; col_cohort%broot(1) = broot0
-      col_cohort%sap_area(1) = sap_area0 ; col_cohort%nplant(1) = nplant0
+      static%lai(1) = lai0 ; static%wai(1) = wai0 ; static%leaf_area(1) = leaf_area0
+      static%bleaf(1) = bleaf0 ; static%bsap(1) = bsap0 ; static%broot(1) = broot0
+      static%sap_area(1) = sap_area0 ; static%nplant(1) = nplant0
    end subroutine test_rk45_tiny_cohort
 
    !----- ROBUSTNESS STRESS: a very dense canopy (LAI=8) under a hard cold snap (dry -20 C air) at      !
@@ -485,36 +453,34 @@ contains
    !      GPP finite): a regression that lost surface stability here would rail. (A 30-yr Ithaca run    !
    !      collapses at LAI~1 in its winter 2050 without the rescue and completes healthy with it -- a   !
    !      decades-evolved point no short march reproduces, so the rescue count here is reported for     !
-   !      information, not asserted.) Restores col_cohort geometry on exit. ----------------------------!
+   !      information, not asserted.) Restores static geometry on exit. ----------------------------!
    subroutine test_rk45_dense_cold_canopy()
       integer(ik) :: istep, k, total_rescue
       real(wp) :: lai0, wai0, la0
       logical  :: physical
-      lai0 = col_cohort%lai(1) ; wai0 = col_cohort%wai(1) ; la0 = col_cohort%leaf_area(1)
+      lai0 = static%lai(1) ; wai0 = static%wai(1) ; la0 = static%leaf_area(1)
       ! very dense -> high coupling gain
-      col_cohort%lai(1) = 8.0_wp
-      col_cohort%wai(1) = 1.5_wp
-      col_cohort%leaf_area(1) = 26.0_wp
+      static%lai(1) = 8.0_wp
+      static%wai(1) = 1.5_wp
+      static%leaf_area(1) = 26.0_wp
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       physical = .true. ; total_rescue = 0_ik
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_coldsnap_forcing(istep)
-         call column_fast_step(2.0_wp*DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-               gpp_coh=gpp_coh)
-         total_rescue = total_rescue + budget%rk45_rescue ; budget%rk45_rescue = 0_ik
-         physical = physical .and. biophys%cas%can_temp > 250.0_wp .and. biophys%cas%can_temp < 340.0_wp
-         physical = physical .and. biophys%leaf_temp(1)  > 250.0_wp .and. biophys%leaf_temp(1)  < 340.0_wp
+         call fast_step(2.0_wp*DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+         total_rescue = total_rescue + out%report%work(WORK_RK45_RESCUE) ; out%report%work(WORK_RK45_RESCUE) = 0_ik
+         physical = physical .and. dynamic%cas%can_temp > 250.0_wp .and. dynamic%cas%can_temp < 340.0_wp
+         physical = physical .and. dynamic%leaf_temp(1)  > 250.0_wp .and. dynamic%leaf_temp(1)  < 340.0_wp
          do k = 1_ik, NSL
-            physical = physical .and. biophys%soil_energy%soil_temp(k) > 250.0_wp .and. biophys%soil_energy%soil_temp(k) < 340.0_wp
+            physical = physical .and. dynamic%soil_energy%soil_temp(k) > 250.0_wp .and. dynamic%soil_energy%soil_temp(k) < 340.0_wp
          end do
-         physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
+         physical = physical .and. out%gpp_coh(1) == out%gpp_coh(1)   ! not NaN
       end do
       call check_true('RK45 dense cold-snap canopy stays physical (surface stability)', physical,                     &
-              biophys%cas%can_temp)
+              dynamic%cas%can_temp)
       print '(a,i0,a)', '   (dense cold-snap: ', total_rescue, ' RK45->ARK rescues over 24 h)'
-      col_cohort%lai(1) = lai0 ; col_cohort%wai(1) = wai0 ; col_cohort%leaf_area(1) = la0
+      static%lai(1) = lai0 ; static%wai(1) = wai0 ; static%leaf_area(1) = la0
    end subroutine test_rk45_dense_cold_canopy
 
 
@@ -530,18 +496,16 @@ contains
       theta_seed = 0.085_wp                              ! just above theta_res = 0.078
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       theta_min = 1.0e9_wp
-      res_min   = minval(col_site%soil_profile%theta_res(1:NSL))
+      res_min   = minval(site%soil_profile%theta_res(1:NSL))
       do istep = 1_ik, 48_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         forc%rainfall = 0.0_wp
-         forc%shv_atm = 0.5_wp * forc%shv_atm            ! halve the atmospheric humidity: dry the air
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
-         theta_min = min(theta_min, minval(biophys%soil_water%theta(1:NSL)))
+         forcing%rainfall = 0.0_wp
+         forcing%shv_atm = 0.5_wp * forcing%shv_atm            ! halve the atmospheric humidity: dry the air
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+         theta_min = min(theta_min, minval(dynamic%soil_water%theta(1:NSL)))
       end do
-      e_worst = budget%whole_energy%worst ; w_worst = budget%whole_water%worst
+      e_worst = out%report%ledgers%whole_energy%worst ; w_worst = out%report%ledgers%whole_water%worst
       theta_seed = THETA0                                 ! restore for any test added after this
       call check_true('RK45 drydown: theta never commits below theta_res (Se >= 0 guaranteed)',                       &
               theta_min >= res_min - 1.0e-12_wp, theta_min)
@@ -570,39 +534,37 @@ contains
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       ood_peak = 0.0_wp
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         forc%rainfall = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
-         pond_peak  = max(pond_peak,  biophys%soil_water%w_surface)
-         theta_peak = max(theta_peak, maxval(biophys%soil_water%theta(1:NSL)))
-         ss_min = min(ss_min, biophys%soil_energy%soil_temp(1)) ; ss_max = max(ss_max, biophys%soil_energy%soil_temp(1))
-         ood_peak      = max(ood_peak,   budget%theta_ood_max)
+         forcing%rainfall = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+         pond_peak  = max(pond_peak,  dynamic%soil_water%w_surface)
+         theta_peak = max(theta_peak, maxval(dynamic%soil_water%theta(1:NSL)))
+         ss_min = min(ss_min, dynamic%soil_energy%soil_temp(1)) ; ss_max = max(ss_max, dynamic%soil_energy%soil_temp(1))
+         ood_peak      = max(ood_peak,   out%report%theta_ood_max)
       end do
       theta_seed = THETA0                                 ! restore for any test added after this
       call check_true('RK45 saturated: column reached theta_sat (saturation path is live)',                           &
               theta_peak >= 0.43_wp - 1.0e-12_wp, theta_peak)
       call check_true('RK45 saturated: ponding store overflowed (runoff path is live)',                               &
-              pond_peak >= col_site%soil%w_pond_max - 1.0e-9_wp, pond_peak)
+              pond_peak >= site%soil%w_pond_max - 1.0e-9_wp, pond_peak)
       !----- ENERGY is asserted as a BOUND, not exact closure. Nothing clamps the committed state, but   !
       !      whether a stage clamp bites is trajectory- and compiler-dependent. A clamp that rebuilt the !
       !      COMMITTED soil_energy at a clamped temperature with no ledger term would show here (1.5e5   !
       !      J/m2 on nvfortran, never on ifx). ----------------------------------------------------------!
       call check_true('RK45 saturated: whole-column ENERGY closes (no unbooked clamp on the commit)',                 &
-              budget%whole_energy%worst < 1.0e-3_wp, budget%whole_energy%worst)
+              out%report%ledgers%whole_energy%worst < 1.0e-3_wp, out%report%ledgers%whole_energy%worst)
       !----- WATER closes to MACHINE PRECISION: drainage, ponding and runoff come from the same water   !
       !      network solve whose theta RK45 commits, so every water flow and the state it moves agree   !
       !      (docs/science/numerical_scheme.md §5b). Assert closure, not a bound: there is no known     !
       !      gap to tolerate. --------------------------------------------------------------------------!
-      call check_true('RK45 saturated: whole-column WATER closes (n_fail==0)', budget%whole_water%n_fail == 0_ik,     &
-              real(budget%whole_water%n_fail, wp))
+      call check_true('RK45 saturated: whole-column WATER closes (n_fail==0)', out%report%ledgers%whole_water%n_fail == 0_ik,     &
+              real(out%report%ledgers%whole_water%n_fail, wp))
       call check_true('RK45 saturated: whole-column WATER closes to machine precision',                               &
-              budget%whole_water%worst < 1.0e-6_wp, budget%whole_water%worst)
+              out%report%ledgers%whole_water%worst < 1.0e-6_wp, out%report%ledgers%whole_water%worst)
       !----- SOIL-SURFACE TEMPERATURE is the assertion that sees soil heat advected on faces that are     !
       !      not the scheme's own (a vertical misplacement invisible to any whole-column ledger). Two     !
       !      such errors of matched magnitude and OPPOSITE sign can nearly cancel in this number, and     !
@@ -631,12 +593,12 @@ contains
       call set_noon_forcing()
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       psi_leaf_probe = 1.0_wp                            ! impossible: psi_leaf is <= 0 by construction
-      call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                            gpp_coh=gpp_coh, psi_leaf_coh=psi_leaf_probe)
-      call check_true('RK45 psi report: the RK45 path itself ran (no ARK rescue)', budget%rk45_rescue == 0_ik,        &
-              real(budget%rk45_rescue, wp))
+      call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+      psi_leaf_probe = out%psi_leaf_coh(1:size(psi_leaf_probe))
+      call check_true('RK45 psi report: the RK45 path itself ran (no ARK rescue)',                                   &
+              out%report%work(WORK_RK45_RESCUE) == 0_ik,                                                         &
+              real(out%report%work(WORK_RK45_RESCUE), wp))
       call check_true('RK45 psi report: psi_leaf_coh is filled on the RK45 success path',                             &
               psi_leaf_probe(1) <= 0.0_wp .and. psi_leaf_probe(1) > -50.0_wp, psi_leaf_probe(1))
    end subroutine test_rk45_reports_psi_leaf
@@ -647,22 +609,21 @@ contains
       theta_seed = 0.14_wp                               ! psi ~ -10 m: moderately dry
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         forc%rainfall = 0.0_wp
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
+         forcing%rainfall = 0.0_wp
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      w_worst = budget%whole_water%worst
-      psi_top = soil_theta_to_head(col_site%soil_profile%retention, biophys%soil_water%theta(1),                  &
-                                    col_site%soil_profile%theta_sat(1), col_site%soil_profile%theta_res(1),      &
-                                    col_site%soil_profile%curve_par_a(1), col_site%soil_profile%curve_par_n(1))
+      w_worst = out%report%ledgers%whole_water%worst
+      psi_top = soil_theta_to_head(site%soil_profile%retention, dynamic%soil_water%theta(1),                  &
+                                    site%soil_profile%theta_sat(1), site%soil_profile%theta_res(1),      &
+                                    site%soil_profile%curve_par_a(1), site%soil_profile%curve_par_n(1))
       theta_seed = THETA0
       call check_true('RK45 dry seam: the fixture really is moderately dry (-150 m < psi < -3 m)',                    &
               psi_top < -3.0_wp .and. psi_top > -150.0_wp, psi_top)
-      call check_true('RK45 dry seam: the RK45 path itself ran (no ARK rescue)', budget%rk45_rescue == 0_ik,          &
-              real(budget%rk45_rescue, wp))
+      call check_true('RK45 dry seam: the RK45 path itself ran (no ARK rescue)',                                     &
+              out%report%work(WORK_RK45_RESCUE) == 0_ik,                                                         &
+              real(out%report%work(WORK_RK45_RESCUE), wp))
       call check_true('RK45 dry seam: whole-column WATER closes to round-off (soil debit == wood credit)',            &
               w_worst < 1.0e-8_wp, w_worst)
    end subroutine test_rk45_dry_uptake_seam
@@ -672,21 +633,21 @@ contains
       real(wp), parameter  :: THETA_SAT = 0.43_wp, THETA_RES = 0.0_wp, PSI_SAT = -0.26_wp, B = 5.65_wp
       type(soil_profile_t) :: vg_soil
       real(wp) :: cdiag(N_CO_FAST_ROWS, N), seed
-      vg_soil = col_site%soil_profile
+      vg_soil = site%soil_profile
       call build_profile_hydraulics(NSL, SOIL_RETENTION_CAMPBELL, test_bottoms, THETA_SAT, THETA_RES,   &
-                                  2.89e-6_wp, PSI_SAT, B, -3.37_wp, col_site%soil_profile)
-      call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)   ! the fixture's thermal texture
+                                  2.89e-6_wp, PSI_SAT, B, -3.37_wp, site%soil_profile)
+      call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)   ! the fixture's thermal texture
       call set_noon_forcing()
       call reset_state()
       cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      cdiag = 0.0_wp
-      call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                            gpp_coh=gpp_coh, cdiag=cdiag)
-      col_site%soil_profile = vg_soil
+      call ensure_output_capacity(out, N, .true.)        ! the per-cohort capture, for the predawn seed
+      call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
+      cdiag = out%cdiag(:, 1:N)
+      call ensure_output_capacity(out, N, .false.)
+      site%soil_profile = vg_soil
       seed = grav_head * soil_theta_to_head(SOIL_RETENTION_CAMPBELL, theta_seed, THETA_SAT, THETA_RES, PSI_SAT, B)
       call check_true('Campbell seed: the cohort has no predawn potential of its own yet',                            &
-              col_cohort%dmax_psi_leaf(1) > 0.0_wp, col_cohort%dmax_psi_leaf(1))
+              static%dmax_psi_leaf(1) > 0.0_wp, static%dmax_psi_leaf(1))
       call check_true('Campbell seed: the top layer is unsaturated (a seed below zero)', seed < 0.0_wp, seed)
       call check_true('Campbell seed: the predawn seed is the Campbell curve''s top-layer potential',                 &
               abs(cdiag(CO_PSI_PREDAWN, 1) - seed) <= 1.0e-12_wp * abs(seed), cdiag(CO_PSI_PREDAWN, 1))
@@ -694,35 +655,35 @@ contains
 
    subroutine reset_state()
       integer(ik) :: kk
-      if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
-      call alloc_patch_biophys(biophys, N, T0, 0.008_wp, 400.0_wp, T0)
-      biophys%leaf_water_mass(1:N) = tissue_psi_to_water(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%leaf_curve, &
-            col_cohort%bleaf(1:N))
-      biophys%wood_water_mass(1:N) = tissue_psi_to_water(PSI_FIXTURE, col_config%hydraulics_table%pft(1)%wood_curve, &
-            col_cohort%bsap(1:N) + col_cohort%broot(1:N))
+      if (allocated(dynamic%leaf_temp)) deallocate(dynamic%leaf_temp)
+      call alloc_dynamic_state(dynamic, N, T0, 0.008_wp, 400.0_wp, T0)
+      dynamic%leaf_water_mass(1:N) = tissue_psi_to_water(PSI_FIXTURE, cfg%pft%hydraulics%pft(1)%leaf_curve, &
+            static%bleaf(1:N))
+      dynamic%wood_water_mass(1:N) = tissue_psi_to_water(PSI_FIXTURE, cfg%pft%hydraulics%pft(1)%wood_curve, &
+            static%bsap(1:N) + static%broot(1:N))
       !----- ...and the tissues' energy at t0, the state the column advances. ----------------------!
-      biophys%leaf_energy(1:N) = tissue_temp_to_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:N),                &
-                                    col_cohort%bleaf(1:N), tissue_c_leaf),                                    &
-                                    max(biophys%leaf_water_mass(1:N), 0.0_wp) * col_cohort%nplant(1:N), T0)
-      biophys%wood_energy(1:N) = tissue_temp_to_energy(tissue_dry_heat_capacity(col_cohort%nplant(1:N),                &
-                                    col_cohort%bwood(1:N), tissue_c_wood_dry),                                &
-                                    max(biophys%wood_water_mass(1:N), 0.0_wp) * col_cohort%nplant(1:N), T0)
-      budget = column_budget_t()
-      biophys%soil_water%theta(1:NSL) = theta_seed
+      dynamic%leaf_energy(1:N) = tissue_temp_to_energy(tissue_dry_heat_capacity(static%nplant(1:N),                &
+                                    static%bleaf(1:N), tissue_c_leaf),                                    &
+                                    max(dynamic%leaf_water_mass(1:N), 0.0_wp) * static%nplant(1:N), T0)
+      dynamic%wood_energy(1:N) = tissue_temp_to_energy(tissue_dry_heat_capacity(static%nplant(1:N),                &
+                                    static%bwood(1:N), tissue_c_wood_dry),                                &
+                                    max(dynamic%wood_water_mass(1:N), 0.0_wp) * static%nplant(1:N), T0)
+      out%report = step_report_t()
+      dynamic%soil_water%theta(1:NSL) = theta_seed
       do kk = 1_ik, NSL
-         biophys%soil_energy%soil_energy(kk) = temp_to_internal_energy(col_site%soil_profile%dry_heat_capacity(kk), &
+         dynamic%soil_energy%soil_energy(kk) = temp_to_internal_energy(site%soil_profile%dry_heat_capacity(kk), &
                                       theta_seed * rho_h2o, T0, 1.0_wp)
-         biophys%soil_energy%soil_temp(kk)   = T0
+         dynamic%soil_energy%soil_temp(kk)   = T0
       end do
    end subroutine reset_state
 
    subroutine set_noon_forcing()
-      forc%abs_sw = 450.0_wp ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
-      forc%abs_sw_ground = 70.0_wp ; forc%abs_lw_ground = 0.0_wp
-      forc%rainfall = 0.0_wp
-      forc%enthalpy_atm = cas_temp_to_enthalpy(295.0_wp, 0.008_wp)
-      forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
-      call set_aero_env_atm(aenv, 295.0_wp, forc%shv_atm, forc%co2_atm)   ! MO reference = this air, not 298.15 K
+      forcing%abs_sw = 450.0_wp ; forcing%abs_par = forcing%abs_sw ; forcing%abs_lw = 0.0_wp
+      forcing%abs_sw_ground = 70.0_wp ; forcing%abs_lw_ground = 0.0_wp
+      forcing%rainfall = 0.0_wp
+      forcing%enthalpy_atm = cas_temp_to_enthalpy(295.0_wp, 0.008_wp)
+      forcing%shv_atm = 0.008_wp ; forcing%co2_atm = 400.0_wp
+      forcing%air_temp = 295.0_wp   ! MO reference = this air, not 298.15 K
    end subroutine set_noon_forcing
 
    subroutine set_diurnal_forcing(istep)
@@ -731,12 +692,12 @@ contains
       t_sec = (real(istep, wp) - 0.5_wp) * DT_FAST
       cosz  = solar_cosz(sim_date, t_sec, LAT)
       t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
-      forc%abs_sw = 500.0_wp * cosz ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
-      forc%abs_sw_ground = 75.0_wp * cosz ; forc%abs_lw_ground = 0.0_wp
-      forc%rainfall = 0.0_wp
-      forc%enthalpy_atm = cas_temp_to_enthalpy(t_air, 0.008_wp)
-      forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
-      call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! MO reference = this air, not 298.15 K
+      forcing%abs_sw = 500.0_wp * cosz ; forcing%abs_par = forcing%abs_sw ; forcing%abs_lw = 0.0_wp
+      forcing%abs_sw_ground = 75.0_wp * cosz ; forcing%abs_lw_ground = 0.0_wp
+      forcing%rainfall = 0.0_wp
+      forcing%enthalpy_atm = cas_temp_to_enthalpy(t_air, 0.008_wp)
+      forcing%shv_atm = 0.008_wp ; forcing%co2_atm = 400.0_wp
+      forcing%air_temp = t_air   ! MO reference = this air, not 298.15 K
    end subroutine set_diurnal_forcing
 
    !----- HARD cold snap: very cold, very dry reference air (~248-256 K) with a weak winter sun over the !
@@ -748,12 +709,12 @@ contains
       t_sec = (real(istep, wp) - 0.5_wp) * DT_FAST
       cosz  = solar_cosz(sim_date, t_sec, LAT)
       t_air = 252.0_wp + 4.0_wp * (cosz - 0.3_wp)                 ! ~248-256 K (a −20 C cold snap)
-      forc%abs_sw = 120.0_wp * cosz ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
-      forc%abs_sw_ground = 20.0_wp * cosz ; forc%abs_lw_ground = 0.0_wp
-      forc%rainfall = 0.0_wp
-      forc%enthalpy_atm = cas_temp_to_enthalpy(t_air, 0.001_wp)   ! very dry cold air
-      forc%shv_atm = 0.001_wp ; forc%co2_atm = 400.0_wp
-      call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! MO reference = this air, not 298.15 K
+      forcing%abs_sw = 120.0_wp * cosz ; forcing%abs_par = forcing%abs_sw ; forcing%abs_lw = 0.0_wp
+      forcing%abs_sw_ground = 20.0_wp * cosz ; forcing%abs_lw_ground = 0.0_wp
+      forcing%rainfall = 0.0_wp
+      forcing%enthalpy_atm = cas_temp_to_enthalpy(t_air, 0.001_wp)   ! very dry cold air
+      forcing%shv_atm = 0.001_wp ; forcing%co2_atm = 400.0_wp
+      forcing%air_temp = t_air   ! MO reference = this air, not 298.15 K
    end subroutine set_coldsnap_forcing
 
 
@@ -763,14 +724,13 @@ contains
    subroutine march_dry_day(theta_sum)
       real(wp), intent(out) :: theta_sum
       integer(ik) :: istep
-      biophys%shed_water_rate = 0.0_wp
+      static%shed_water_rate = 0.0_wp
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
-         forc%rainfall = 0.0_wp
-         call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
-                               gpp_coh=gpp_coh)
+         forcing%rainfall = 0.0_wp
+         call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      theta_sum = sum(biophys%soil_water%theta(1:NSL))
+      theta_sum = sum(dynamic%soil_water%theta(1:NSL))
    end subroutine march_dry_day
 
 end program test_column_rk45

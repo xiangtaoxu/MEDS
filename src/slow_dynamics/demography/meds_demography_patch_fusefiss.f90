@@ -28,7 +28,7 @@ module meds_demography_patch_fusefiss
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_patch_state_vars,   only : expand_patch_block, reorder_patch_block, blend_cas, blend_soil_water,      &
                                        blend_soil_energy, blend_snow, snow_column_t, blend_soil_carbon,          &
-                                       blend_litter_input, blend_xi_accum
+                                       blend_litter_input, blend_decomp_xi
    use meds_litter_partition, only : necromass_to_litter
    implicit none
    private
@@ -234,7 +234,7 @@ contains
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
          !----- 9. Today's litter is a per-area rate like the rest: area-weight it, or the fused patch !
          !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
-         patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
+         patch%decomp_xi(recp)    = blend_decomp_xi(rawgt, patch%decomp_xi(recp), dawgt, patch%decomp_xi(donp))
          patch%litter_in(recp)   = blend_litter_input(rawgt, patch%litter_in(recp), dawgt, patch%litter_in(donp))
          !----- 10. adapt_dt_last is a controller SEED, not a conserved amount -- any value is valid and   !
          !      the controller re-adapts within a step. Area-weight it like its neighbours purely so    !
@@ -473,7 +473,7 @@ contains
             patch%dist_type(newp)      = DIST_TREEFALL
             patch%owner_site(newp)     = is
             !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
-            !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
+            !      rate (unlike soil_carbon/decomp_xi, which are genuine inherited material). ----------!
             patch%shed_water_rate(newp) = 0.0_wp
             patch%shed_water_enth(newp) = 0.0_wp
             patch%slow_co2_rate(newp)   = 0.0_wp   ! fresh gap: no cohort of its own respired today
@@ -497,8 +497,8 @@ contains
                                                            patch%soil_energy(p0))
                patch%soil_carbon(newp) = blend_soil_carbon(patch%area(p0)/atot, patch%soil_carbon(p0), &
                                                            0.0_wp, patch%soil_carbon(p0))
-               patch%xi_accum(newp) = blend_xi_accum(patch%area(p0)/atot, patch%xi_accum(p0), 0.0_wp,       &
-                                                     patch%xi_accum(p0))
+               patch%decomp_xi(newp) = blend_decomp_xi(patch%area(p0)/atot, patch%decomp_xi(p0), 0.0_wp,       &
+                                                     patch%decomp_xi(p0))
                patch%litter_in(newp) = blend_litter_input(patch%area(p0)/atot, patch%litter_in(p0),     &
                                                           0.0_wp, patch%litter_in(p0))
                do d = p0 + 1_ik, p1
@@ -509,7 +509,7 @@ contains
                   patch%soil_water(newp) = blend_soil_water(1.0_wp, patch%soil_water(newp), wd, patch%soil_water(d))
                   patch%soil_energy(newp) = blend_soil_energy(1.0_wp, patch%soil_energy(newp), wd, patch%soil_energy(d))
                   patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
-                  patch%xi_accum(newp)    = blend_xi_accum(1.0_wp, patch%xi_accum(newp), wd, patch%xi_accum(d))
+                  patch%decomp_xi(newp)    = blend_decomp_xi(1.0_wp, patch%decomp_xi(newp), wd, patch%decomp_xi(d))
                   patch%litter_in(newp)   = blend_litter_input(1.0_wp, patch%litter_in(newp), wd,        &
                                                                patch%litter_in(d))
                end do

@@ -24,7 +24,8 @@ module meds_fast_time_derivs
    use meds_column_state_ops, only : assemble_soil_energy_forcing
    use meds_fast_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
                                tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t,                  &
-                               column_state_t, column_frozen_t, column_tend_t, column_site_t
+                               column_state_t, column_frozen_t, column_tend_t
+   use meds_site_state_vars, only : site_surface_t
    implicit none
    private
 
@@ -248,10 +249,10 @@ contains
    ! rates and the leaves transpire what the network gave them, so every stage sees the same water    !
    ! (docs/science/soil_plant_water.md §4, docs/science/numerical_scheme.md §5b).                     !
    !---------------------------------------------------------------------------------------!
-   pure subroutine column_derivs(y, frozen, col_site, n, nsl, f, sf_out)
+   pure subroutine column_derivs(y, frozen, site, n, nsl, f, sf_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
-      type(column_site_t),   intent(in)  :: col_site
+      type(site_surface_t),  intent(in)  :: site
       integer(ik),           intent(in)  :: n      !< number of cohorts
       integer(ik),           intent(in)  :: nsl    !< number of active soil layers
       type(column_tend_t),   intent(out) :: f
@@ -271,7 +272,7 @@ contains
 
       !----- The soil-top temperature from the current state, for the ground skin. -----------------!
       wmass1   = y%theta(1) * rho_h2o
-      call internal_energy_to_temp(y%soil_energy(1), wmass1, col_site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       y_stage%cas_enthalpy = y%cas_enthalpy
@@ -304,7 +305,7 @@ contains
       !----- The faces the energy equation was given, read from eforc, for the stepper to check      !
       !      against the theta it commits. ---------------------------------------------------------!
       f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store downward
-      call soil_energy_time_deriv(soil_energy, eforc, col_site%soil_profile, col_site%soil,   &
+      call soil_energy_time_deriv(soil_energy, eforc, site%soil_profile, site%soil,   &
                                   f%dedt, bottom_face=f%g_bottom)
 
       !----- 4. Plant water mass per plant: the network's sapflow and uptake in, and out the          !

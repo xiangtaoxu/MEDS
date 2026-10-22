@@ -38,14 +38,13 @@ program test_slow_diag_units
    use meds_constants,           only : yr_sec, n_soil_layer_max
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
+   use meds_soil_params,         only : soil_profile_t
    use meds_polygon_state_vars,  only : polygon_t, reset_step_diagnostics
    use meds_diag_vars,           only : alloc_patch_diag, patch_diag_value, patch_diag_slow_row, PA_LITTER_LEAF, &
                                         PA_LITTER_FINEROOT, PA_LITTER_STRUCT, PA_RECRUIT_NPLANT, PA_DISTURB_AREA, PA_LE, PA_GPP
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,       only : SOIL_RETENTION_VG
-   use meds_fast_config,         only : fast_context_t, apply_hydraulics_config, apply_canopy_film_config,        &
-                                        build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
    use meds_slow_dynamics,       only : advance_slow_dynamics, advance_boundary_dynamics
@@ -57,7 +56,7 @@ program test_slow_diag_units
    integer(ik), parameter :: NSL = 10_ik
    type(meds_config_t)  :: cfg
    type(polygon_t)      :: poly
-   type(fast_context_t) :: ctx
+   type(soil_profile_t) :: test_profile   !< the site's soil column (use_test_column)
    real(wp)             :: x(8), pool0, pool1, elapsed_yr, frac_expected
    integer(ik)          :: np
 
@@ -73,17 +72,8 @@ program test_slow_diag_units
 
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil_profile)
-   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
-   call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
-   call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-   call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
-   ctx%col_config%soil_carbon = cfg%soil_carbon
-   ctx%col_config%ea_rd = cfg%ea_rd
-   ctx%col_config%hd_rd = cfg%hd_rd
-   ctx%col_config%ds_rd = cfg%ds_rd
-   ctx%col_config%integrator = build_integrator_opts(cfg)
-   call build_rad_optics(cfg, ctx%rad_opt)               ! the two-stream's per-PFT optics
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, test_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, test_profile)
    cfg%init%soil_temp = 295.0_wp
 
    call init_bare_ground(poly, cfg, 1_ik)
@@ -99,7 +89,7 @@ program test_slow_diag_units
    call alloc_patch_diag(poly%patch%diag, max(poly%patch%cap, 1_ik), .true.)
 
    !=== 1. THE FIXTURE MIRRORS THE DRIVER: one fast window weighs exactly one slow step. =========!
-   call fast_dynamics(poly, ctx, cfg)
+   call fast_dynamics(poly, cfg)
    call check_close(poly%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                                  &
                     'fast window accumulates exactly dt_slow of weight (the fixture mirrors the driver)')
    elapsed_yr = poly%patch%diag%w(1) / yr_sec
@@ -141,7 +131,7 @@ program test_slow_diag_units
    block
       call reset_step_diagnostics(poly)                          ! the output has read step 1
       call advance_boundary_dynamics(poly, cfg, .true., .true.)  ! new month AND new year
-      call fast_dynamics(poly, ctx, cfg)                         ! the next step's window
+      call fast_dynamics(poly, cfg)                              ! the next step's window
       elapsed_yr = poly%patch%diag%w(1) / yr_sec
       call check_close(poly%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
                        'the window after the boundary weighs exactly one slow step')
@@ -189,7 +179,7 @@ contains
    !      at 0.30 in every layer. ------------------------------------------------------------!
    subroutine use_test_column(p)
       type(polygon_t), intent(inout) :: p
-      p%site%surface(1)%soil_profile = ctx%col_site%soil_profile
+      p%site%surface(1)%soil_profile = test_profile
       p%site%surface(1)%theta_start  = 0.30_wp
    end subroutine use_test_column
 

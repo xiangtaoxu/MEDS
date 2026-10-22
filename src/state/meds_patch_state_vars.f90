@@ -24,13 +24,14 @@ module meds_patch_state_vars
    use meds_config,           only : meds_config_t
    use meds_soil_derive,      only : top_soil_psi
    use meds_site_state_vars,    only : site_surface_t
+   use meds_biogeochem_params,  only : N_SOIL_POOL
    implicit none
    private
 
    public :: cas_state_t, snow_column_t, soil_water_column_t, soil_energy_column_t, soil_carbon_t
-   public :: xi_accum_t, litter_input_t
+   public :: decomp_xi_t, litter_input_t
    public :: blend_cas, cas_set_depth, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon
-   public :: blend_xi_accum, blend_litter_input
+   public :: blend_decomp_xi, blend_litter_input
    public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block
    public :: patch_physical_state
    public :: canopy_air_bad_field, canopy_air_field_name
@@ -99,18 +100,12 @@ module meds_patch_state_vars
    end type soil_carbon_t
 
    !----- The day's decomposition scalars for soil_carbon_step: each pool's xi integrated  !
-   !      over the day (docs/science/soil_carbon.md §7, eq. (5)), summed by the fast loop. !
-   !      Named fields, as in soil_carbon_t. ----------------------------------------------!
-   type :: xi_accum_t
-      real(wp) :: fast_grnd   = 0.0_wp   !< INT_day xi_1 dt [day]
-      real(wp) :: fast_soil   = 0.0_wp   !< INT_day xi_2 dt [day]
-      real(wp) :: struct_grnd = 0.0_wp   !< INT_day xi_3 dt [day]
-      real(wp) :: struct_soil = 0.0_wp   !< INT_day xi_4 dt [day]
-      real(wp) :: microbial   = 0.0_wp   !< INT_day xi_5 dt [day]
-      real(wp) :: slow        = 0.0_wp   !< INT_day xi_6 dt [day]
-      real(wp) :: passive     = 0.0_wp   !< INT_day xi_7 dt [day]
-      real(wp) :: rh_fast_accum = 0.0_wp !< [kgC/m2] today's fast-loop Rh, a check on soil_carbon_step's own
-   end type xi_accum_t
+   !      over the day (docs/science/soil_carbon.md §7, eq. (5)), summed by the fast loop, !
+   !      by pool (IP_*). -----------------------------------------------------------------!
+   type :: decomp_xi_t
+      real(wp) :: xi_days(N_SOIL_POOL) = 0.0_wp   !< [day] INT_day xi_j dt
+      real(wp) :: rh_fast = 0.0_wp   !< [kgC/m2] today's fast-loop Rh, a check on soil_carbon_step's own
+   end type decomp_xi_t
 
    !----- The day's litter [kgC/m2/day], already split among the pools it enters           !
    !      (docs/science/soil_carbon.md §5). -----------------------------------------------!
@@ -184,7 +179,7 @@ module meds_patch_state_vars
       !==========================================================================================!
       !----- On the patch, not local to the slow driver, so a patch made or fused partway        !
       !      through the step keeps its own sums. -----------------------------------------------!
-      type(xi_accum_t),           allocatable :: xi_accum(:)   !< the day's decomposition scalars
+      type(decomp_xi_t),          allocatable :: decomp_xi(:)  !< the day's decomposition scalars
       type(litter_input_t),       allocatable :: litter_in(:)  !< [kgC/m2/day] this step's litter
       !==========================================================================================!
       ! 10. SOLVER MEMORY                                                                        !
@@ -305,19 +300,13 @@ contains
       c%struct_soil_lignin = w1 * a%struct_soil_lignin + w2 * b%struct_soil_lignin
    end function blend_soil_carbon
 
-   pure function blend_xi_accum(w1, a, w2, b) result(c)
-      real(wp),         intent(in) :: w1, w2
-      type(xi_accum_t), intent(in) :: a, b
-      type(xi_accum_t)             :: c
-      c%fast_grnd     = w1 * a%fast_grnd     + w2 * b%fast_grnd
-      c%fast_soil     = w1 * a%fast_soil     + w2 * b%fast_soil
-      c%struct_grnd   = w1 * a%struct_grnd   + w2 * b%struct_grnd
-      c%struct_soil   = w1 * a%struct_soil   + w2 * b%struct_soil
-      c%microbial     = w1 * a%microbial     + w2 * b%microbial
-      c%slow          = w1 * a%slow          + w2 * b%slow
-      c%passive       = w1 * a%passive       + w2 * b%passive
-      c%rh_fast_accum = w1 * a%rh_fast_accum + w2 * b%rh_fast_accum
-   end function blend_xi_accum
+   pure function blend_decomp_xi(w1, a, w2, b) result(c)
+      real(wp),          intent(in) :: w1, w2
+      type(decomp_xi_t), intent(in) :: a, b
+      type(decomp_xi_t)             :: c
+      c%xi_days = w1 * a%xi_days + w2 * b%xi_days
+      c%rh_fast = w1 * a%rh_fast + w2 * b%rh_fast
+   end function blend_decomp_xi
 
    pure function blend_litter_input(w1, a, w2, b) result(c)
       real(wp),             intent(in) :: w1, w2
@@ -376,7 +365,7 @@ contains
       patch%shed_water_enth = 0.0_wp
       patch%slow_co2_rate = 0.0_wp
       !----- 9. Within-step accumulators --------------------------------------------------------!
-      allocate(patch%xi_accum(cap), patch%litter_in(cap))        ! default-initialised by its type
+      allocate(patch%decomp_xi(cap), patch%litter_in(cap))       ! default-initialised by its type
       !----- 10. Solver memory ------------------------------------------------------------------!
       allocate(patch%adapt_dt_last(cap))
       patch%adapt_dt_last = 0.0_wp
@@ -422,7 +411,7 @@ contains
       tmp%shed_water_enth(1:m) = patch%shed_water_enth(1:m)
       tmp%slow_co2_rate(1:m)   = patch%slow_co2_rate(1:m)
       !----- 9. Within-step accumulators --------------------------------------------------------!
-      tmp%xi_accum(1:m)  = patch%xi_accum(1:m)
+      tmp%decomp_xi(1:m) = patch%decomp_xi(1:m)
       tmp%litter_in(1:m) = patch%litter_in(1:m)
       !----- 10. Solver memory ------------------------------------------------------------------!
       tmp%adapt_dt_last(1:m) = patch%adapt_dt_last(1:m)
@@ -453,7 +442,7 @@ contains
       call move_alloc(tmp%shed_water_enth, patch%shed_water_enth)
       call move_alloc(tmp%slow_co2_rate, patch%slow_co2_rate)
       !----- 9. Within-step accumulators --------------------------------------------------------!
-      call move_alloc(tmp%xi_accum, patch%xi_accum)
+      call move_alloc(tmp%decomp_xi, patch%decomp_xi)
       call move_alloc(tmp%litter_in, patch%litter_in)
       !----- 10. Solver memory ------------------------------------------------------------------!
       call move_alloc(tmp%adapt_dt_last, patch%adapt_dt_last)
@@ -490,7 +479,7 @@ contains
       patch%shed_water_enth(1:m) = patch%shed_water_enth(perm(1:m))
       patch%slow_co2_rate(1:m)   = patch%slow_co2_rate(perm(1:m))
       !----- 9. Within-step accumulators --------------------------------------------------------!
-      patch%xi_accum(1:m)  = patch%xi_accum(perm(1:m))
+      patch%decomp_xi(1:m) = patch%decomp_xi(perm(1:m))
       patch%litter_in(1:m) = patch%litter_in(perm(1:m))
       !----- 10. Solver memory ------------------------------------------------------------------!
       patch%adapt_dt_last(1:m) = patch%adapt_dt_last(perm(1:m))
@@ -510,7 +499,7 @@ contains
                                             patch%cas, patch%snow, patch%soil_water, patch%soil_energy,        &
                                             patch%soil_carbon, patch%shed_water_rate, patch%shed_water_enth,   &
                                             patch%slow_co2_rate,                                               &
-                                            patch%xi_accum, patch%litter_in, patch%adapt_dt_last)
+                                            patch%decomp_xi, patch%litter_in, patch%adapt_dt_last)
    end subroutine free_patch_block
 
    !=======================================================================================!

@@ -4,8 +4,8 @@
 ! distribution (LIDF), a Beta distribution on the SCOPE 13-class grid; its moments bf and  !
 ! G(mu); and the single-scatter pair of a leaf or wood surface (Goel & Strebel 1984;       !
 ! Verhoef 1984; van der Tol et al. 2009). The equations are                                !
-! docs/science/canopy_radiation_transfer.md §1-§2, eqs. (1)-(4); meds_canopy_radiation     !
-! builds the per-PFT and per-cohort optics from these kernels.                             !
+! docs/science/canopy_radiation_transfer.md §1-§2, eqs. (1)-(4); meds_pft_derive builds    !
+! the per-PFT optics from these kernels and meds_canopy_radiation the per-cohort.          !
 !==========================================================================================!
 module meds_optics_lib
    use meds_kinds,     only : wp, ik
@@ -14,7 +14,7 @@ module meds_optics_lib
    private
 
    public :: N_LEAF_CLASS
-   public :: beta_lidf, moments_to_beta_params, leaf_bf, gfun_direct
+   public :: beta_lidf, leaf_bf, gfun_direct
    public :: scatter_pair
 
    !----- SCOPE's 13 inclination classes: 10 degrees wide to 80, then 2 degrees to 90. ----!
@@ -29,22 +29,6 @@ module meds_optics_lib
         82.0_wp, 84.0_wp, 86.0_wp, 88.0_wp, 90.0_wp ]
 
 contains
-
-   !----- Beta (p, q) from the mean and standard deviation of the leaf angle [deg], by     !
-   !      moment matching on t = theta/90 (Goel & Strebel 1984). --------------------------!
-   pure subroutine moments_to_beta_params(mean_deg, std_deg, p, q)
-      real(wp), intent(in)  :: mean_deg, std_deg
-      real(wp), intent(out) :: p, q
-      real(wp) :: mt, vt, kappa
-      real(wp), parameter :: VT_MIN = 1.0e-6_wp   ! variance floor (std_deg floor ~0.09 deg)
-      mt = min(max(mean_deg / 90.0_wp, 1.0e-3_wp), 1.0_wp - 1.0e-3_wp)   ! clamp-ok: the beta mean inside (0, 1)
-      vt = (std_deg / 90.0_wp) ** 2
-      vt = min(vt, mt * (1.0_wp - mt) * (1.0_wp - 1.0e-6_wp))             ! a Beta needs vt < mt (1 - mt)
-      vt = max(vt, VT_MIN)                                                ! keep kappa finite at std_deg = 0
-      kappa = mt * (1.0_wp - mt) / vt - 1.0_wp                            ! concentration, p + q
-      p = mt * kappa
-      q = (1.0_wp - mt) * kappa
-   end subroutine moments_to_beta_params
 
    !----- The Beta LIDF: the leaf-area share of each inclination class, for shape          !
    !      parameters (p, q) (docs/science/canopy_radiation_transfer.md eq. (1)), by a      !

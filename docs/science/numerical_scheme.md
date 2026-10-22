@@ -636,16 +636,16 @@ than a convergence proof.
 
 | piece | file |
 |---|---|
-| dispatch + the RK45→ARK stiff rescue | `src/fast_dynamics/numerics/meds_fast_step.f90` (`column_fast_step`) |
-| ESDIRK2 scheme (config name `ark`), eqs. (1)–(2) | `src/fast_dynamics/numerics/meds_fast_ark.f90` (`ark2_column_step`, `adaptive_ark_march`) |
-| adaptive Cash–Karp scheme | `src/fast_dynamics/numerics/meds_fast_rk45.f90` |
-| the shared right-hand side | `src/fast_dynamics/numerics/meds_fast_time_derivs.f90` (`column_derivs`) |
-| the frozen pre-pass | `src/fast_dynamics/numerics/meds_fast_prepass.f90` (`column_prepass`), `meds_fast_frozen.f90` (`build_column_frozen`) |
-| the implicit stage and its leaf↔canopy-air Newton | `src/fast_dynamics/numerics/meds_fast_be_stage.f90` (`column_be_stage`, `newton_surface_solve`) |
-| the soil–plant water network | `src/fast_dynamics/numerics/meds_spac_solver.f90` ([soil_plant_water](soil_plant_water.md)) |
-| error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/numerics/meds_fast_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set from config: `src/fast_dynamics/driver/meds_fast_config.f90` (`build_tol_set`) |
+| dispatch + the RK45→ARK stiff rescue | `src/fast_dynamics/integrator/meds_fast_step.f90` (`fast_step`) |
+| ESDIRK2 scheme (config name `ark`), eqs. (1)–(2) | `src/fast_dynamics/integrator/meds_fast_ark.f90` (`ark2_column_step`, `adaptive_ark_march`) |
+| adaptive Cash–Karp scheme | `src/fast_dynamics/integrator/meds_fast_rk45.f90` |
+| the shared right-hand side | `src/fast_dynamics/integrator/meds_fast_time_derivs.f90` (`column_derivs`) |
+| the frozen pre-pass | `src/fast_dynamics/integrator/meds_fast_prepass.f90` (`column_prepass`), `meds_fast_frozen.f90` (`build_column_frozen`) |
+| the implicit stage and its leaf↔canopy-air Newton | `src/fast_dynamics/integrator/meds_fast_be_stage.f90` (`column_be_stage`, `newton_surface_solve`) |
+| the soil–plant water network | `src/fast_dynamics/integrator/meds_spac_solver.f90` ([soil_plant_water](soil_plant_water.md)) |
+| error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/integrator/meds_fast_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set and the error control from config: `build_tol_set`, `build_error_control` there |
 | shared snow stage | `meds_fast_frozen.f90` (`advance_snow_stage`) |
-| patch loop, per-thread scratch pool, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
+| patch loop, per-thread step data, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
 | the linear solvers and the conservation test (§9) | `src/share/meds_linear_algebra.f90`, `src/share/meds_numerics.f90` (`conserved`) |
 
 ## 9. The shared numerical tools

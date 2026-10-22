@@ -17,7 +17,7 @@
 !==========================================================================================!
 program test_state_combinators
    use meds_kinds,            only : wp, ik
-   use meds_fast_types,       only : column_state_t, column_tend_t, patch_biophys_t
+   use meds_fast_types,       only : column_state_t, column_tend_t, fast_dynamic_state_t
    use meds_column_state_ops, only : state_init, state_axpy, state_sub, state_err_diff, zero_like,  &
                                      state_accum, state_extrap, unpack_column_state,                  &
                                      state_size, state_to_array, array_to_state, state_entry_rules
@@ -159,26 +159,26 @@ program test_state_combinators
    !       comment) -- so the exclusion is asserted here too, and the routine says so in a         !
    !       comment. Exclusion and omission must not be the same observable. -----------------------!
    block
-      type(patch_biophys_t) :: bio
-      allocate(bio%leaf_water_mass(N), bio%wood_water_mass(N),                                     &
-               bio%leaf_surf_water(N), bio%wood_surf_water(N))
-      bio%leaf_water_mass = 0.0_wp ; bio%wood_water_mass = 0.0_wp
-      bio%leaf_surf_water = 0.0_wp ; bio%wood_surf_water = 0.0_wp
-      bio%soil_energy%soil_energy = 0.0_wp ; bio%soil_water%theta = 0.0_wp
-      call unpack_column_state(a, N, NSL, bio)
-      call check_close(bio%cas%can_enthalpy, a%cas_enthalpy, 1.0e-14_wp, 'unpack: cas_enthalpy committed')
-      call check_close(bio%cas%can_shv,      a%cas_shv,      1.0e-14_wp, 'unpack: cas_shv committed')
-      call check_close(bio%cas%can_co2,      a%cas_co2,      1.0e-14_wp, 'unpack: cas_co2 committed')
-      call check_close(bio%soil_energy%soil_energy(NSL), a%soil_energy(NSL), 1.0e-14_wp, 'unpack: soil_energy committed')
-      call check_close(bio%soil_water%theta(NSL),       a%theta(NSL),       1.0e-14_wp, 'unpack: theta committed')
-      call check_close(bio%leaf_water_mass(N), a%leaf_water_mass(N), 1.0e-14_wp, 'unpack: leaf_water_mass committed')
-      call check_close(bio%wood_water_mass(N), a%wood_water_mass(N), 1.0e-14_wp, 'unpack: wood_water_mass committed')
-      call check_close(bio%leaf_surf_water(N), a%leaf_surf_water(N), 1.0e-14_wp, 'unpack: leaf_surf_water committed')
-      call check_close(bio%wood_surf_water(N), a%wood_surf_water(N), 1.0e-14_wp, 'unpack: wood_surf_water committed')
+      type(fast_dynamic_state_t) :: dyn
+      allocate(dyn%leaf_water_mass(N), dyn%wood_water_mass(N),                                     &
+               dyn%leaf_surf_water(N), dyn%wood_surf_water(N))
+      dyn%leaf_water_mass = 0.0_wp ; dyn%wood_water_mass = 0.0_wp
+      dyn%leaf_surf_water = 0.0_wp ; dyn%wood_surf_water = 0.0_wp
+      dyn%soil_energy%soil_energy = 0.0_wp ; dyn%soil_water%theta = 0.0_wp
+      call unpack_column_state(a, N, NSL, dyn)
+      call check_close(dyn%cas%can_enthalpy, a%cas_enthalpy, 1.0e-14_wp, 'unpack: cas_enthalpy committed')
+      call check_close(dyn%cas%can_shv,      a%cas_shv,      1.0e-14_wp, 'unpack: cas_shv committed')
+      call check_close(dyn%cas%can_co2,      a%cas_co2,      1.0e-14_wp, 'unpack: cas_co2 committed')
+      call check_close(dyn%soil_energy%soil_energy(NSL), a%soil_energy(NSL), 1.0e-14_wp, 'unpack: soil_energy committed')
+      call check_close(dyn%soil_water%theta(NSL),       a%theta(NSL),       1.0e-14_wp, 'unpack: theta committed')
+      call check_close(dyn%leaf_water_mass(N), a%leaf_water_mass(N), 1.0e-14_wp, 'unpack: leaf_water_mass committed')
+      call check_close(dyn%wood_water_mass(N), a%wood_water_mass(N), 1.0e-14_wp, 'unpack: wood_water_mass committed')
+      call check_close(dyn%leaf_surf_water(N), a%leaf_surf_water(N), 1.0e-14_wp, 'unpack: leaf_surf_water committed')
+      call check_close(dyn%wood_surf_water(N), a%wood_surf_water(N), 1.0e-14_wp, 'unpack: wood_surf_water committed')
       !----- can_temp is a DERIVED commit: it must be consistent with the enthalpy/humidity that   !
       !      were just committed, whatever value that is. Asserting a positive temperature instead   !
       !      would be asserting that the synthetic fill happens to be physical, which it is not.  ---!
-      call check_close(bio%cas%can_temp, cas_enthalpy_to_temp(a%cas_enthalpy, a%cas_shv),          &
+      call check_close(dyn%cas%can_temp, cas_enthalpy_to_temp(a%cas_enthalpy, a%cas_shv),          &
                        1.0e-12_wp, 'unpack: can_temp re-diagnosed from the COMMITTED enthalpy')
    end block
 

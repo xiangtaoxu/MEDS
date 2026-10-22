@@ -9,7 +9,7 @@
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : grav_head, tiny_num
-   use meds_plant_types, only : hydro_args_t
+   use meds_pft_params,  only : hydraulics_pft_t
    use meds_plant_hydr_lib, only : root_fraction_profile, tissue_water_to_psi
    use meds_numerics,       only : smooth_max0
    implicit none
@@ -37,12 +37,12 @@ contains
    !      (docs/science/plant_hydraulics.md eqs. (4)-(5)). A leafless cohort has no curve to read: its !
    !      leaf node sits at the wood potential less the crown gravity head (§2). ---------------------!
    pure real(wp) function leaf_node_psi(leaf_water, bleaf, wood_water, bwood, height, p) result(psi_l)
-      real(wp),             intent(in) :: leaf_water  !< [kg H2O/plant] leaf water
-      real(wp),             intent(in) :: bleaf       !< [kgC/plant] leaf carbon
-      real(wp),             intent(in) :: wood_water  !< [kg H2O/plant] wood (sapwood + fine-root) water
-      real(wp),             intent(in) :: bwood       !< [kgC/plant] sapwood + fine-root carbon
-      real(wp),             intent(in) :: height      !< [m] cohort height
-      type(hydro_args_t),   intent(in) :: p
+      real(wp),               intent(in) :: leaf_water  !< [kg H2O/plant] leaf water
+      real(wp),               intent(in) :: bleaf       !< [kgC/plant] leaf carbon
+      real(wp),               intent(in) :: wood_water  !< [kg H2O/plant] wood (sapwood + fine-root) water
+      real(wp),               intent(in) :: bwood       !< [kgC/plant] sapwood + fine-root carbon
+      real(wp),               intent(in) :: height      !< [m] cohort height
+      type(hydraulics_pft_t), intent(in) :: p
       if (p%leaf_curve%water_sat*bleaf > tiny_num) then
          psi_l = tissue_water_to_psi(leaf_water, p%leaf_curve, bleaf)
       else
@@ -53,20 +53,20 @@ contains
    !----- A cohort's rooting depth [m], docs/science/plant_hydraulics.md eq. (12): root_depth_b1 *     !
    !      height^root_depth_b2, capped at the soil column. --------------------------------------------!
    pure real(wp) function cohort_root_depth(height, hp, soil_depth) result(depth)
-      real(wp),             intent(in) :: height      !< [m] cohort height
-      type(hydro_args_t),   intent(in) :: hp          !< the cohort's PFT
-      real(wp),             intent(in) :: soil_depth  !< [m] depth of the soil column's bottom
+      real(wp),               intent(in) :: height      !< [m] cohort height
+      type(hydraulics_pft_t), intent(in) :: hp          !< the cohort's PFT
+      real(wp),               intent(in) :: soil_depth  !< [m] depth of the soil column's bottom
       depth = min(hp%root_depth_b1 * max(height, 0.0_wp)**hp%root_depth_b2, soil_depth)
    end function cohort_root_depth
 
    !----- A cohort's fine roots in each soil layer [-], summing to one: the exponential profile      !
    !      within its rooting depth (docs/science/plant_hydraulics.md eq. (13)). ---------------------!
    pure subroutine cohort_root_profile(height, hp, z_top, z_bot, frac)
-      real(wp),             intent(in)  :: height      !< [m] cohort height
-      type(hydro_args_t),   intent(in)  :: hp          !< the cohort's PFT
-      real(wp),             intent(in)  :: z_top(:)    !< [m] depth of each layer's top (>= 0)
-      real(wp),             intent(in)  :: z_bot(:)    !< [m] depth of each layer's bottom (> z_top)
-      real(wp),             intent(out) :: frac(:)     !< [-] the cohort's fine roots in each layer
+      real(wp),               intent(in)  :: height      !< [m] cohort height
+      type(hydraulics_pft_t), intent(in)  :: hp          !< the cohort's PFT
+      real(wp),               intent(in)  :: z_top(:)    !< [m] depth of each layer's top (>= 0)
+      real(wp),               intent(in)  :: z_bot(:)    !< [m] depth of each layer's bottom (> z_top)
+      real(wp),               intent(out) :: frac(:)     !< [-] the cohort's fine roots in each layer
       real(wp) :: depth
       depth = cohort_root_depth(height, hp, z_bot(size(z_bot)))
       frac = root_fraction_profile(hp%root_beta, depth, z_top, z_bot) / (1.0_wp - hp%root_beta)

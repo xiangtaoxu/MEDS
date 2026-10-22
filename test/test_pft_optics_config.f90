@@ -14,11 +14,16 @@
 !==========================================================================================!
 program test_pft_optics_config
    use meds_kinds,          only : wp, ik
-   use meds_config,         only : meds_config_t, pft_leaf_psi_tlp
+   use meds_config,         only : meds_config_t, derive_parameters
+   use meds_pft_derive,     only : pft_leaf_psi_tlp
    use meds_soil_derive,    only : build_soil_profile
    use meds_config_io,      only : write_pft_params_csv
-   use meds_plant_types,    only : hydro_args_table_t
-   use meds_fast_config,    only : apply_hydraulics_config, fast_context_t, build_fast_context
+   use meds_pft_params,     only : hydraulics_table_t, RAD_VIS, RAD_LW
+   use meds_constants,      only : stefan_boltzmann
+   use meds_met_types,      only : met_forcing_t
+   use meds_fast_types,     only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,       &
+                                   ensure_static_capacity, ensure_forcing_capacity
+   use meds_fast_forcing,   only : patch_forcing
    use meds_plant_hydr_lib, only : conductance_retained_fraction, tissue_psi_tlp,  &
                                    tissue_psi_to_water
    use meds_polygon_state_vars, only : polygon_t
@@ -26,12 +31,10 @@ program test_pft_optics_config
    use meds_soil_params,    only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_vegetation_dynamics, only : shed_excess_tissue_water
-   use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t)  :: cfg
-   type(fast_context_t) :: ctx
    real(wp) :: om1, om2
 
    call banner('[pft] canopy optics: per PFT, and reaching the two-stream')
@@ -45,20 +48,21 @@ program test_pft_optics_config
    call check_close(cfg%pft%leaf_clumping(1),     0.80_wp,  1.0e-14_wp, 'default leaf clumping changed')
    call check_close(cfg%pft%leaf_angle_mean(1),   45.0_wp,  1.0e-14_wp, 'default leaf-angle mean changed')
 
-   !=== 2. Uniform traits => a uniform table. The control for test 3. =======================!
-   call build_fast_context(cfg, ctx)
-   call check(ctx%rad_opt%n_pft >= 2_ik, 'fixture must have at least two PFTs to differentiate')
-   call check_close(ctx%rad_opt%omega_leaf(RAD_VIS,1), ctx%rad_opt%omega_leaf(RAD_VIS,2), 1.0e-14_wp,       &
+   !=== 2. Uniform traits => a uniform table. The control for test 3. The tables are the     !
+   !       configuration's, derived from its traits (derive_parameters), so each change below    !
+   !       derives them again. ------------------------------------------------------------------!
+   call check(cfg%pft%optics%n_pft >= 2_ik, 'fixture must have at least two PFTs to differentiate')
+   call check_close(cfg%pft%optics%omega_leaf(RAD_VIS,1), cfg%pft%optics%omega_leaf(RAD_VIS,2), 1.0e-14_wp,       &
                     'identical traits must give identical optics')
 
    !=== 3. Differentiate ONE PFT and the table must follow it -- only that one. ==============!
    !       Single-scatter albedo is reflectance + transmittance, so raising the reflectance    !
    !       of PFT 2 must raise ITS omega and leave PFT 1 alone.                                !
-   om1 = ctx%rad_opt%omega_leaf(RAD_VIS,1)
+   om1 = cfg%pft%optics%omega_leaf(RAD_VIS,1)
    cfg%pft%leaf_reflect_vis(2) = 0.30_wp
-   call build_fast_context(cfg, ctx)
-   om2 = ctx%rad_opt%omega_leaf(RAD_VIS,2)
-   call check_close(ctx%rad_opt%omega_leaf(RAD_VIS,1), om1, 1.0e-14_wp,                                    &
+   call derive_parameters(cfg)
+   om2 = cfg%pft%optics%omega_leaf(RAD_VIS,2)
+   call check_close(cfg%pft%optics%omega_leaf(RAD_VIS,1), om1, 1.0e-14_wp,                                    &
                     'changing PFT 2 must not move PFT 1 (per-PFT indexing)')
    call check_close(om2, 0.30_wp + cfg%pft%leaf_transmit_vis(2), 1.0e-12_wp,                               &
                     'leaf VIS omega must be reflectance + transmittance of THAT PFT')
@@ -66,37 +70,52 @@ program test_pft_optics_config
 
    !=== 4. Longwave is configured as EMISSIVITY: omega = 1 - emissivity, transmittance 0. ====!
    cfg%pft%leaf_emissivity(2) = 0.80_wp
-   call build_fast_context(cfg, ctx)
-   call check_close(ctx%rad_opt%omega_leaf(RAD_LW,2), 1.0_wp - 0.80_wp, 1.0e-12_wp,                        &
+   call derive_parameters(cfg)
+   call check_close(cfg%pft%optics%omega_leaf(RAD_LW,2), 1.0_wp - 0.80_wp, 1.0e-12_wp,                        &
                     'leaf LW omega must be 1 - emissivity (a leaf is opaque in the thermal band)')
 
-   !=== 4b. The ground optics come from [soil], not a constant in the fast context. =============!
+   !=== 4b. The ground optics come from [soil]: a bare patch reflects each shortwave band by its   !
+   !        albedo and returns the sky's longwave by 1 - emissivity, plus its own emission. =======!
    cfg%soil%ground_albedo_vis = 0.11_wp ; cfg%soil%ground_albedo_nir = 0.22_wp ; cfg%soil%ground_emissivity = 0.93_wp
-   call build_fast_context(cfg, ctx)
-   call check_close(ctx%soil_albedo(1), 0.11_wp, 0.0_wp, 'soil.ground_albedo_vis did not reach the radiation solver')
-   call check_close(ctx%soil_albedo(2), 0.22_wp, 0.0_wp, 'soil.ground_albedo_nir did not reach the radiation solver')
-   call check_close(ctx%soil_emiss,     0.93_wp, 0.0_wp, 'soil.ground_emissivity did not reach the radiation solver')
+   block
+      type(fast_static_state_t)  :: bare
+      type(fast_dynamic_state_t) :: dyn
+      type(fast_forcing_t)       :: forcing
+      type(met_forcing_t)        :: met
+      real(wp)                   :: lw_up
+      call ensure_static_capacity(bare, 0_ik)
+      call ensure_forcing_capacity(forcing, 0_ik)
+      dyn%soil_energy%soil_temp(1) = 290.0_wp
+      call patch_forcing(cfg, bare, dyn, met, .false., forcing)
+      call check_close(forcing%sw_up_vis, 0.11_wp * forcing%sw_in_vis, 1.0e-12_wp,                            &
+                       'soil.ground_albedo_vis did not reach the radiation solver')
+      call check_close(forcing%sw_up_nir, 0.22_wp * forcing%sw_in_nir, 1.0e-12_wp,                            &
+                       'soil.ground_albedo_nir did not reach the radiation solver')
+      lw_up = (1.0_wp - 0.93_wp) * met%lwdown + 0.93_wp * stefan_boltzmann * 290.0_wp**4
+      call check_close(forcing%lw_up, lw_up, 1.0e-9_wp, 'soil.ground_emissivity did not reach the radiation solver')
+   end block
    cfg%soil%ground_albedo_vis = 0.15_wp ; cfg%soil%ground_albedo_nir = 0.30_wp ; cfg%soil%ground_emissivity = 0.95_wp
 
    !=== 5. Clumping and the leaf-angle distribution are per PFT too. ========================!
    cfg%pft%leaf_clumping(2)   = 0.40_wp
    cfg%pft%leaf_angle_mean(2) = 20.0_wp        ! erectophile against PFT 1's 45 deg (spherical is 57.3)
-   call build_fast_context(cfg, ctx)
-   call check_close(ctx%rad_opt%clumping_leaf(2), 0.40_wp, 1.0e-14_wp, 'leaf clumping did not reach the table')
-   call check_close(ctx%rad_opt%clumping_leaf(1), 0.80_wp, 1.0e-14_wp, 'PFT 1 clumping must be untouched')
-   call check(abs(ctx%rad_opt%bf(2) - ctx%rad_opt%bf(1)) > 1.0e-6_wp,                            &
+   call derive_parameters(cfg)
+   call check_close(cfg%pft%optics%clumping_leaf(2), 0.40_wp, 1.0e-14_wp, 'leaf clumping did not reach the table')
+   call check_close(cfg%pft%optics%clumping_leaf(1), 0.80_wp, 1.0e-14_wp, 'PFT 1 clumping must be untouched')
+   call check(abs(cfg%pft%optics%bf(2) - cfg%pft%optics%bf(1)) > 1.0e-6_wp,                            &
               'a different leaf-angle mean must give a different angle distribution')
 
    !=== 5b. PER-PFT HYDRAULIC TRAITS. Same shape as the optics checks above: each PFT's table   !
    !        entry carries its own [hydraulics] record, and a different record CHANGES the answer,
    !        not merely that it compiles.
    block
-      type(hydro_args_table_t)   :: tab
+      type(hydraulics_table_t)   :: tab
       real(wp) :: plc1, plc2
       cfg%pft%hydro(2)%wood_psi50     = -0.8_wp   ! vs PFT 1's -2.0
       cfg%pft%hydro(2)%leaf_curve%pi0 = -2.5_wp   ! vs PFT 1's -1.5
       cfg%pft%hydro(2)%wood_kmax      =  2.0_wp
-      call apply_hydraulics_config(cfg, tab)
+      call derive_parameters(cfg)
+      tab = cfg%pft%hydraulics
       call check_close(tab%pft(1)%wood_psi50, cfg%pft%hydro(1)%wood_psi50, 0.0_wp,                &
                        'PFT 1 keeps its own psi50')
       call check_close(tab%pft(2)%wood_psi50, -0.8_wp,   0.0_wp, 'PFT 2 takes its own psi50')
@@ -112,30 +131,30 @@ program test_pft_optics_config
       call check(plc2 > plc1, 'a more vulnerable PFT loses more conductance at the same psi')
       !----- The fast water-stress limb (the turgor-loss point to twice it) follows the PFT's OWN   !
       !      pressure-volume curve, the one the plant-water solver stores its leaf water on. -------!
-      call build_fast_context(cfg, ctx)
-      call check_close(ctx%col_site%leaf_photo%pft(2)%psi_open,                                   &
+      call check_close(cfg%pft%leaf_photo%pft(2)%psi_open,                                   &
                        tissue_psi_tlp(-2.5_wp, cfg%pft%hydro(2)%leaf_curve%elastic_mod), 1.0e-12_wp,   &
                        'PFT 2 loses capacity from its own turgor-loss point')
-      call check_close(ctx%col_site%leaf_photo%pft(2)%psi_close,                                  &
+      call check_close(cfg%pft%leaf_photo%pft(2)%psi_close,                                  &
                        2.0_wp * tissue_psi_tlp(-2.5_wp, cfg%pft%hydro(2)%leaf_curve%elastic_mod),        &
                        1.0e-12_wp, 'PFT 2 has lost it at twice its turgor-loss point')
-      call check_close(ctx%col_site%leaf_photo%pft(1)%psi_open,                                   &
+      call check_close(cfg%pft%leaf_photo%pft(1)%psi_open,                                   &
                        tissue_psi_tlp(cfg%pft%hydro(1)%leaf_curve%pi0, cfg%pft%hydro(1)%leaf_curve%elastic_mod), &
                        1.0e-12_wp, 'PFT 1 keeps its own turgor-loss point')
-      call check_close(pft_leaf_psi_tlp(cfg, 2_ik), ctx%col_site%leaf_photo%pft(2)%psi_open, 0.0_wp, &
+      call check_close(pft_leaf_psi_tlp(cfg%pft, 2_ik), cfg%pft%leaf_photo%pft(2)%psi_open, 0.0_wp, &
                        'the phenology reads the same per-PFT turgor-loss point')
    end block
 
    !=== A cohort is born with its tissue water on ITS PFT's curve, the one the fast loop reads    !
    !    the water back on, and the slow tier caps a store on that curve too. ======================!
    block
-      type(hydro_args_table_t)   :: tab
+      type(hydraulics_table_t)   :: tab
       type(polygon_t) :: poly
       real(wp) :: w_expect, w_shed, t_birth, psi_birth
       integer(ik) :: i2
       type(soil_profile_t) :: soil
       cfg%pft%hydro(2)%leaf_curve%water_sat = 3.0_wp   ! vs PFT 1's 2.0
-      call apply_hydraulics_config(cfg, tab)
+      call derive_parameters(cfg)
+      tab = cfg%pft%hydraulics
       call init_bare_ground(poly, cfg, 1_ik)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.5_wp, 20.0_wp)
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.5_wp, 20.0_wp)
@@ -166,7 +185,7 @@ program test_pft_optics_config
       character(len=*), parameter :: CSVFILE = 'test_pft_params_tmp.csv'
       character(len=8192) :: head_line, val_line
       integer(ik)         :: u, ios, nhead, nval
-      call build_fast_context(cfg, ctx)          ! keep cfg consistent with the edits above
+      call derive_parameters(cfg)                ! keep cfg consistent with the edits above
       call write_pft_params_csv(cfg, CSVFILE)
       open(newunit=u, file=CSVFILE, status='old', action='read', iostat=ios)
       call check(ios == 0, 'PFT parameter CSV must be written')

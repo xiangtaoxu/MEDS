@@ -284,7 +284,7 @@ hour in which wet soil refills dry-season wood at a BCI storm front.
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
-| Leaf / wood tissue | `cohort_block` (per plant); `patch_biophys_t` (per m² of ground) | `leaf_energy`, `wood_energy` [J plant⁻¹], eq. (9) | `leaf_temp`, `wood_temp` [K], eq. (10) |
+| Leaf / wood tissue | `cohort_block` (per plant); `fast_dynamic_state_t` (per m² of ground) | `leaf_energy`, `wood_energy` [J plant⁻¹], eq. (9) | `leaf_temp`, `wood_temp` [K], eq. (10) |
 
 ## Code map
 

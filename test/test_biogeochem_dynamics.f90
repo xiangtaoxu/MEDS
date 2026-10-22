@@ -20,13 +20,12 @@ program test_biogeochem_dynamics
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
+   use meds_soil_params,         only : soil_profile_t
    use meds_polygon_state_vars,  only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,     only : n_soil_layer_max
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
-   use meds_fast_config,         only : fast_context_t, apply_hydraulics_config, apply_canopy_film_config,        &
-                                        build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
    use meds_slow_dynamics,       only : advance_slow_dynamics
@@ -39,7 +38,7 @@ program test_biogeochem_dynamics
    integer(ik), parameter :: NSL = 10_ik
    type(meds_config_t)  :: cfg
    type(polygon_t)      :: poly
-   type(fast_context_t) :: ctx
+   type(soil_profile_t) :: test_profile   !< the site's soil column (use_test_column)
    real(wp) :: total0, total1
    type(soilc_seam_t) :: seam   !< per-run seam worsts, accumulated by advance_slow_dynamics
    real(wp) :: we, ww
@@ -54,17 +53,8 @@ program test_biogeochem_dynamics
 
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil_profile)
-   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
-   call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
-   call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-   call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
-   ctx%col_config%soil_carbon = cfg%soil_carbon
-   ctx%col_config%ea_rd = cfg%ea_rd
-   ctx%col_config%hd_rd = cfg%hd_rd
-   ctx%col_config%ds_rd = cfg%ds_rd
-   ctx%col_config%integrator = build_integrator_opts(cfg)
-   call build_rad_optics(cfg, ctx%rad_opt)               ! the two-stream's per-PFT optics
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, test_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, test_profile)
    cfg%init%soil_temp = 295.0_wp
 
    call init_bare_ground(poly, cfg, 1_ik)
@@ -86,15 +76,15 @@ program test_biogeochem_dynamics
           + poly%patch%soil_carbon(1)%microbial_carbon + poly%patch%soil_carbon(1)%slow_carbon      &
           + poly%patch%soil_carbon(1)%passive_carbon
 
-   !=== 1. Run one real slow step: fast loop (accumulates xi_int/rh_fast_accum against the FROZEN !
+   !=== 1. Run one real slow step: fast loop (accumulates decomp_xi against the FROZEN          !
    !    pool seeded above) THEN advance_slow_dynamics (vegetation turnover -> litter, then the       !
    !    daily soil_carbon_step consuming that litter + xi_int). ====================================!
-   call fast_dynamics(poly, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
+   call fast_dynamics(poly, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
    call check(n_budget_fail == 0_ik, 'fast loop whole-column budgets closed (n_fail == 0)')
 
    block
       real(wp) :: rh_fast_accum_ref
-      rh_fast_accum_ref = poly%patch%xi_accum(1)%rh_fast_accum
+      rh_fast_accum_ref = poly%patch%decomp_xi(1)%rh_fast
       call check(rh_fast_accum_ref > 0.0_wp, 'fast loop accumulated positive matrix Rh over the day')
 
       call advance_slow_dynamics(poly, cfg, seam=seam)
@@ -133,7 +123,6 @@ program test_biogeochem_dynamics
       type(polygon_t) :: poly2
       real(wp)     :: totalA, totalB
       cfg%soil_carbon%soil_carbon_on = .false.
-      ctx%col_config%soil_carbon = cfg%soil_carbon
       call init_bare_ground(poly2, cfg, 1_ik)
       call use_test_column(poly2)
       call add_cohort(poly2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)
@@ -141,7 +130,7 @@ program test_biogeochem_dynamics
       call init_fast_state(poly2, cfg)
       poly2%patch%soil_carbon(1)%slow_carbon = 500.0_wp
       totalA = poly2%patch%soil_carbon(1)%slow_carbon
-      call fast_dynamics(poly2, ctx, cfg)
+      call fast_dynamics(poly2, cfg)
       call advance_slow_dynamics(poly2, cfg)
       totalB = poly2%patch%soil_carbon(1)%fast_grnd_carbon + poly2%patch%soil_carbon(1)%fast_soil_carbon &
              + poly2%patch%soil_carbon(1)%struct_grnd_carbon + poly2%patch%soil_carbon(1)%struct_soil_carbon &
@@ -160,7 +149,7 @@ contains
    !      at 0.30 in every layer. ------------------------------------------------------------!
    subroutine use_test_column(p)
       type(polygon_t), intent(inout) :: p
-      p%site%surface(1)%soil_profile = ctx%col_site%soil_profile
+      p%site%surface(1)%soil_profile = test_profile
       p%site%surface(1)%theta_start  = 0.30_wp
    end subroutine use_test_column
 

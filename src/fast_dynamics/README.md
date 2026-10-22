@@ -9,10 +9,10 @@ calculators: device-eligible, netCDF-free (forcing arrives as passed-in value ty
 | `canopy/` | the **medium** — radiative transfer, aerodynamics, the canopy air space |
 | `plant/` | the **organisms** — leaf gas exchange, hydraulics, maintenance respiration, tissue energy |
 | `soil/` | the **ground** — soil water's flows (between layers, evaporation, drainage), soil energy, the ground skin, the snow store |
-| `numerics/` | the integrator machinery: the state vector, the frozen work record, ARK and RK45, the soil-plant water solver, the pre-pass, error control |
-| `driver/` | the fast loop's setup from the configuration (`meds_fast_config`), and the loop that walks one slow step in `dt_fast` sub-steps over the patch axis |
+| `integrator/` | the integrator machinery: the state vector, the frozen work record, ARK and RK45, the soil-plant water solver, the pre-pass, error control |
+| `driver/` | the loop that walks one slow step in `dt_fast` sub-steps over the patch axis (`meds_fast_dynamics`): the gather and scatter of each patch's state and the sums the slow step reads (`meds_fast_state`), the forcing (`meds_fast_forcing`) and what the output reads (`meds_fast_diag`) |
 
-`numerics/` and `driver/` may see `polygon_t`; **the kernel folders may not**, and that is what
+`integrator/` and `driver/` may see `polygon_t`; **the kernel folders may not**, and that is what
 keeps them device-eligible and standalone-buildable. The slow half is `src/slow_dynamics/`; the
 split between them is by **timescale**, and within each half by domain. See
 [`../README.md`](../README.md) for the tree-wide rules.
@@ -44,7 +44,7 @@ so every symbol has exactly one legal spelling.
   the explicit path and an implicit step — both implicit in the exchange with the atmosphere. The
   driver assembles the summed surface and biotic sources and the capacities, conductances and
   atmospheric boundary conditions.
-- **Soil and plant water** — solved by **`meds_spac_solver`** (in `numerics/`): the pond, every
+- **Soil and plant water** — solved by **`meds_spac_solver`** (in `integrator/`): the pond, every
   soil layer and every cohort's wood and leaf water are stores in one network, joined by flow
   paths (soil faces, infiltration, root uptake, xylem, transpiration). Each `dt_fast` it is solved
   implicitly, with Newton iterations on each store's own unknown and adaptive sub-steps. The

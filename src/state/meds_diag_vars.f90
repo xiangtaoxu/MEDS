@@ -16,7 +16,7 @@
 !     (unequal sub-steps) and under AGG_TMEAN chaining for free, where a plain running     !
 !     mean would not be.                                                                   !
 !                                                                                          !
-!  2. RESET ONCE PER SLOW STEP -- the same lifecycle as gpp_accum / et_accum / xi_accum.   !
+!  2. RESET ONCE PER SLOW STEP -- the same lifecycle as gpp_accum / et_accum / decomp_xi.  !
 !     No second reset cadence is invented.                                                 !
 !                                                                                          !
 !  3. TRANSIENT: never written to the restart file. A checkpoint is prognostic state at an !

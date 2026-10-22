@@ -1,45 +1,29 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_biogeochem_types -- the pool count, pool indices and audit/diagnostic records of the        !
-! SLOW soil-carbon cycle: the CENTURY-family multi-pool soil carbon advanced daily by the carbon   !
-! matrix ODE dX/dt = B*I + A*xi*K*X (docs/science/soil_carbon.md eq. (1)). Pure DATA +             !
-! parameters, no methods -- the biogeochem analogue of meds_canopy_types/meds_soil_types. Links    !
-! meds_kinds and meds_patch_state_vars only.                                                       !
+! meds_biogeochem_types -- the audit and diagnostic records of the SLOW soil-carbon cycle: the    !
+! CENTURY-family multi-pool soil carbon advanced daily by the carbon matrix ODE                    !
+! dX/dt = B*I + A*xi*K*X (docs/science/soil_carbon.md eq. (1)). Pure DATA, no methods -- the       !
+! biogeochem analogue of meds_canopy_types/meds_soil_types. Links meds_kinds,                     !
+! meds_patch_state_vars and meds_biogeochem_params only.                                           !
 !                                                                                          !
-! Owned HERE: the fixed pool count `N_SOIL_POOL` + `IP_*`, soilc_audit_t, soilc_seam_t and         !
-! soilc_diag_t. The pools themselves (soil_carbon_t) and litter_input_t are per-patch state in     !
-! meds_patch_state_vars (litter_input_t is re-exported here; see the notes below), and             !
-! soil_carbon_params_t + its selector codes are config, in meds_biogeochem_params.                 !
+! Owned HERE: soilc_audit_t, soilc_seam_t and soilc_diag_t. The pools themselves (soil_carbon_t)  !
+! and litter_input_t are per-patch state in meds_patch_state_vars (litter_input_t is re-exported   !
+! here; see the notes below), and the pool layout (N_SOIL_POOL, IP_*) and soil_carbon_params_t +   !
+! its selector codes are config, in meds_biogeochem_params.                                        !
 !==========================================================================================!
 module meds_biogeochem_types
    use meds_kinds, only : wp, ik
    use meds_patch_state_vars,   only : litter_input_t
+   use meds_biogeochem_params,  only : N_SOIL_POOL
    implicit none
    private
 
-   !----- Slow soil-carbon matrix: pool count, indices and records. -----------------------------!
-   public :: N_SOIL_POOL
-   public :: IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
+   !----- Slow soil-carbon matrix: its audit and diagnostic records. ----------------------------!
    public :: litter_input_t, soilc_audit_t, soilc_seam_t, soilc_diag_t
    !----- There is exactly ONE heterotrophic-respiration form: the CENTURY matrix                    !
    !      (heterotrophic_respiration_matrix), reached through patch_heterotrophic_respiration.       !
    !      No Q10, capped-exponential or DAMM kernel is available (docs/science/soil_carbon.md        !
    !      §7, §10). ---------------------------------------------------------------------------------!
-
-   !==========================================================================================!
-   !  SLOW soil-carbon matrix: fixed pool count + index parameters (the matrix state vector X).   !
-   !  Ordered litter -> SOM -> passive so the default-scheme ACTIVE block of A is lower-triangular  !
-   !  (back-substitution / GE solvable). The 7-pool ceiling matches ED2's CENTURY set exactly.      !
-   !==========================================================================================!
-   integer(ik), parameter :: N_SOIL_POOL = 7_ik   !< length of the carbon matrix state vector X
-
-   integer(ik), parameter :: IP_FAST_GRND   = 1_ik   !< metabolic litter, above-ground (flammable)
-   integer(ik), parameter :: IP_FAST_SOIL   = 2_ik   !< metabolic litter, below-ground
-   integer(ik), parameter :: IP_STRUCT_GRND = 3_ik   !< structural litter + CWD, above-ground
-   integer(ik), parameter :: IP_STRUCT_SOIL = 4_ik   !< structural litter + CWD, below-ground
-   integer(ik), parameter :: IP_MICR        = 5_ik   !< microbial SOM        (active only in scheme 5)
-   integer(ik), parameter :: IP_SLOW        = 6_ik   !< slow / humified SOM
-   integer(ik), parameter :: IP_PASSIVE     = 7_ik   !< passive SOM          (active only in scheme 5)
 
    !==========================================================================================!
    !  The slow, stateful per-patch soil-carbon pools themselves (soil_carbon_t: written DAILY,       !

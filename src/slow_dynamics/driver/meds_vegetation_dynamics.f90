@@ -16,7 +16,8 @@
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, yr_day, grav_head
-   use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
+   use meds_config,               only : meds_config_t, growth_window_steps
+   use meds_pft_derive,           only : pft_leaf_psi_tlp
    use meds_plant_hydr_lib,       only : water_curve_t, tissue_psi_to_water, tissue_water_to_psi, tissue_capped_water
    use meds_therm_lib,            only : internal_energy_liquid
    use meds_allometry_lib,        only : size_to_leaf_carbon, carbon_to_structure, min_cohort_carbon,  &
@@ -1318,7 +1319,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Flatten the per-PFT phenology traits (cfg%pft%pheno_*) into the self-contained kernel param  !
-   ! set. Mirrors meds_fast_config's leaf-trait flattening.                                     !
+   ! set, as meds_pft_derive flattens the leaf traits.                                          !
    !---------------------------------------------------------------------------------------!
    subroutine flatten_pheno_params(cfg, ipft, p)
       type(meds_config_t),  intent(in)  :: cfg
@@ -1353,7 +1354,7 @@ contains
       !      pressure-volume curve. One authority, so the cue cannot drift from the leaf's water-    !
       !      stress controls built on the same threshold: the fast capacity ramp and the slow        !
       !      stomatal factor (docs/science/leaf_gas_exchange.md §4.1 eq. (9), §4.2 eq. (10)). -------!
-      p%leaf_psi_tlp = pft_leaf_psi_tlp(cfg, ipft)
+      p%leaf_psi_tlp = pft_leaf_psi_tlp(cfg%pft, ipft)
    end subroutine flatten_pheno_params
 
 end module meds_vegetation_dynamics
