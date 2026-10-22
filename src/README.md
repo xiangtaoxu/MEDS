@@ -48,16 +48,18 @@ src/                                    37.5 k lines · 105 modules · 21 CMake 
 │                  a field holds before it has a real one                    2 758
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
-├── fast_dynamics/       sub-daily, one dt_fast per step                      9 581
+├── fast_dynamics/       sub-daily, one dt_fast per step                      9 520
 │   ├── canopy/    the medium: two-stream radiation, aerodynamics, the
 │   │              canopy-air box                                            1 028
 │   ├── plant/     the organisms: leaf gas exchange, hydraulics, maintenance
-│   │              respiration, tissue energy                                1 097
+│   │              respiration, tissue energy                                1 063
 │   ├── soil/      the ground: soil water, soil energy, the ground skin,
 │   │              the snow store                                              752
 │   ├── numerics/  the integrator machinery: the state vector, the frozen
-│   │              work record, ARK and RK45, error control, the pre-pass    5 166
-│   └── driver/    walks one slow step in dt_fast sub-steps over the patches 1 538
+│   │              work record, ARK and RK45, error control, the pre-pass    5 146
+│   └── driver/    the fast loop's setup from the configuration, and the
+│                  walk of one slow step in dt_fast sub-steps over the
+│                  patches                                                   1 531
 │
 ├── slow_dynamics/       daily to annual                                      4 826
 │   ├── plant/     phenology, carbon allocation, trait plasticity               601
@@ -69,11 +71,12 @@ src/                                    37.5 k lines · 105 modules · 21 CMake 
 │                  drivers, and the slow conservation ledger                 2 017
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── io/            every data file a run reads or writes                      9 717
+├── io/            every data file a run reads or writes                     10 012
 │   ├── (root)     the netCDF C bindings, and the helpers both writers share    615
 │   ├── init/      the initial state, by [init].init_mode: bare ground, a
 │   │              cohort census, or a restart file, which the checkpoints
-│   │              write; init_polygon starts a polygon from one              1 606
+│   │              write; init_polygon starts a polygon from one and seeds
+│   │              the fast loop's stores (init_fast_state)                   1 692
 │   ├── met/       the atmosphere above the canopy: the met reader (a MEDS
 │   │              forcing file, or the ED_ERA5land archive) and its sample at
 │   │              a site and at a patch's canopy-air top (meds_met), the grid
@@ -82,14 +85,14 @@ src/                                    37.5 k lines · 105 modules · 21 CMake 
 │   ├── maps/      static per-cell maps on the forcing grid: the one place
 │   │              a map is read (meds_maps)                                    350
 │   └── output/    the diagnostic wall: derive → capture → reduce →
-│                  integrate → serialize                                      4 241
+│                  integrate → serialize                                      4 450
 ├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
 │                  demography, and the full coupled run                        938
 └── main/          meds_stepper (one coupled slow step, and the boundary
                    restructuring), meds_polygon (one polygon's run
                    machinery and step), meds_region (a run of one polygon
                    or many: open / step / finalize), meds_main
-                   (the PROGRAM)                                             1 406
+                   (the PROGRAM)                                             1 403
 ```
 
 **`share/` is one library, and it admits only what depends on nothing outside it.** Every module

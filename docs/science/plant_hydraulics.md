@@ -264,4 +264,4 @@ flows themselves, so the plant and soil water budgets close to round-off.
 | xylem and root flows | `meds_plant_hydr_lib`: `xylem_max_conductance`, `xylem_sapflow`, `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`; the leaves' supply limit `supply_limited_transpiration` is in `meds_plant_hydraulics` |
 | rooting depth and profile | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`; `crown_gravity_head`, `leaf_node_psi` |
 | the solve | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)) |
-| config flatten | `meds_fast_types`: `apply_hydraulics_config` |
+| config flatten | `meds_fast_config`: `apply_hydraulics_config` |

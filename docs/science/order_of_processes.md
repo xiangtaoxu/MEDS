@@ -23,13 +23,15 @@ region (`"region"`). Both go through the same stages.
 **Setup** (`region_open`):
 
 1. Read the configuration and choose the polygons.
-2. Build each polygon's initial community from `[init].init_mode`: bare ground, a census, or a
+2. Build each polygon's initial state from `[init].init_mode`: bare ground, a census, or a
    restart from the polygon's row of a state file. A census or state file that cannot start the run
    stops it. A restart also restores the calendar date and any restructuring the checkpoint still owes
-   ([§5](#5-the-calendar-boundary)).
-3. Open the forcing source. Prepare each polygon: the fast context, the forcing cursor, and the fast
-   reservoirs (unless the restart restored them); the initial snow; the canopy-air depth, from the
-   stand; the steady-state soil carbon (unless restored); and the slow ledger.
+   ([§5](#5-the-calendar-boundary)). Bare ground and a census then seed the fast reservoirs
+   (`init_fast_state`): the soil at `[init]`'s temperature and water, uniform canopy air, the
+   cohorts' tissues in step with them, and the initial snow; a restart read all of these instead.
+3. Open the forcing source. Prepare each polygon: the fast context, the forcing cursor, the
+   canopy-air depth, from the stand; the steady-state soil carbon (unless restored); and the slow
+   ledger.
 4. Open the state (restart) stream and the output files.
 
 **The loop.** Until `end_time`, the executable steps a month at a time (`region_step_month`) and
