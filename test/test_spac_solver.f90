@@ -39,7 +39,7 @@ program test_spac_solver
    use meds_plant_types,   only : hydro_args_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
    use meds_soil_params, only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN
-   use meds_config,             only : build_soil_hydr_params
+   use meds_soil_derive,        only : build_profile_hydraulics
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_types,    only : chydro_forcing_t
    implicit none
@@ -100,7 +100,7 @@ contains
       real(wp),            intent(in)  :: depth, growth
       real(wp) :: bottoms(n_soil_layer_max)
       call geometric_layer_bottoms(depth, nsl, growth, bottoms)
-      call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,          &
+      call build_profile_hydraulics(nsl, SOIL_RETENTION_VG, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,        &
                                   0.7607_wp, 1.3554_wp, -3.37_wp, s)
    end subroutine make_soil
 
@@ -507,7 +507,7 @@ contains
       vg_soil = soil
       nsl = vg_soil%n_active
       call geometric_layer_bottoms(1.44_wp, nsl, 3.0_wp, bottoms)
-      call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, bottoms, THETA_SAT, THETA_RES, 4.54e-6_wp,      &
+      call build_profile_hydraulics(nsl, SOIL_RETENTION_CAMPBELL, bottoms, THETA_SAT, THETA_RES, 4.54e-6_wp,    &
                                   PSI_SAT, B, -3.37_wp, soil)
       theta = 0.30_wp
       call make_stand(spac, 4_ik, theta, 0.0_wp, 0.95_wp, 0.9_wp, 0.0_wp)

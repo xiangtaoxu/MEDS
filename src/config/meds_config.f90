@@ -10,10 +10,9 @@
 ! curves (leaf_pi0 is hydro(pft)%leaf_curve%pi0). The reference config describes each key; !
 ! a field without an initializer is a required key or a derived value (marked DERIVED).    !
 !                                                                                          !
-! The routines derive what the parameters imply: the run's derived values, the PFT table's !
-! arrays and leaf capacities, and the soil profile the soil kernels read, built once per   !
-! column: each site and each map cell, whose [maps] inputs apply_map_inputs writes into    !
-! its polygon's configuration.                                                             !
+! The routines derive what the parameters imply: the run's derived values and the PFT     !
+! table's arrays and leaf capacities; apply_map_inputs writes a map cell's inputs into its !
+! polygon's configuration. A site's soil profile is meds_soil_derive's.                    !
 !==========================================================================================!
 module meds_config
    use meds_kinds,              only : wp, ik
@@ -21,12 +20,12 @@ module meds_config
    use meds_time,               only : meds_time_t
    use meds_pft_params,         only : pft_table_t, HYD_UNSET
    use meds_plant_hydr_lib,     only : tissue_psi_tlp
-   use meds_soil_hydr_lib,      only : soil_head_to_theta, soil_matric_potential, soil_texture_t,     &
-                                       soil_texture_to_hydraulics, SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,      only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,          only : soil_texture_to_thermal
    use meds_fast_params,        only : INTEG_ARK, CTRL_I
-   use meds_soil_params,        only : soil_params_t, soil_texture_layers_t, soil_profile_t,          &
-                                       SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
+   use meds_soil_params,        only : soil_params_t, soil_profile_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER, &
+                                       ANNUAL_DAMPING_DEPTH
+   use meds_soil_derive,        only : soil_layers, build_soil_profile, map_layer_texture
    use meds_biophysics_params,  only : snow_params_t, aero_params_t
    use meds_biogeochem_params,  only : soil_carbon_params_t
    use meds_forcing_params,     only : forcing_params_t
@@ -46,25 +45,12 @@ module meds_config
    public :: soil_carbon_params_t
    public :: region_params_t, RUN_MODE_SITE, RUN_MODE_REGION
    public :: maps_params_t, soil_maps_on
-   public :: alloc_pft_table, derive_leaf_params
-   public :: soil_column_layers, soil_column_texture, soil_column_params, soil_column_start_theta
-   public :: top_soil_psi, SOIL_LAYER_TEMPLATE, soil_layer_grid, apply_map_inputs
-   public :: build_soil_hydr_params, build_soil_therm_params
+   public :: alloc_pft_table, derive_leaf_params, apply_map_inputs
 
    !----- [init].init_mode. -------------------------------------------------------------------!
    integer(ik), parameter :: INIT_BARE    = 0_ik    !< near-bare ground
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< a cohort census (census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< a state file (restart_file)
-
-   !----- The default layer bottoms [m, down], cut at each column's depth: SoilGrids 2.0's !
-   !      depths to 1 m, then thickening to 27 m (docs/science/soil_biophysics.md, "The    !
-   !      soil layers"). ------------------------------------------------------------------!
-   real(wp), parameter :: SOIL_LAYER_TEMPLATE(15) = [0.05_wp, 0.15_wp, 0.30_wp, 0.60_wp, 1.00_wp,     &
-                          1.50_wp, 2.00_wp, 3.00_wp, 4.50_wp, 6.50_wp, 9.00_wp, 12.0_wp, 16.0_wp, 21.0_wp, 27.0_wp]
-   !----- A remainder below the cut thinner than this share of the list layer it falls in  !
-   !      joins the layer above, so no column ends in a sliver. ---------------------------!
-   real(wp), parameter :: LAYER_MERGE_SHARE = 0.5_wp
-   real(wp), parameter :: GRID_TOL = 1.0e-6_wp     !< [m] a depth this close to a list bottom ends on it
 
    !----- [init]: how the run starts. -----------------------------------------------------------!
    type :: init_params_t
@@ -357,98 +343,6 @@ contains
       pft%rd25   = pft%rd_vcmax_ratio   * pft%vcmax25
    end subroutine derive_leaf_params
 
-   !=======================================================================================!
-   !  The soil column: its layers, its texture per layer, and the bundles the soil         !
-   !  kernels read, built once per column (each site, each map cell).                      !
-   !=======================================================================================!
-
-   !---------------------------------------------------------------------------------------!
-   ! The column's layers: the bottoms [m, positive down] of `layer_bottoms` when the       !
-   ! config sets it, else SOIL_LAYER_TEMPLATE, cut at `depth` (soil_layer_grid).           !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine soil_column_layers(sc, bottoms, n_layer)
-      type(soil_params_t),        intent(in)  :: sc
-      real(wp),                   intent(out) :: bottoms(n_soil_layer_max)
-      integer(ik),                intent(out) :: n_layer
-      if (sc%n_layer_bottoms > 0_ik) then
-         call soil_layer_grid(sc%depth, sc%layer_bottoms, sc%n_layer_bottoms, bottoms, n_layer)
-      else
-         call soil_layer_grid(sc%depth, SOIL_LAYER_TEMPLATE, size(SOIL_LAYER_TEMPLATE, kind=ik),   &
-                              bottoms, n_layer)
-      end if
-   end subroutine soil_column_layers
-
-   !----- The texture per layer: the maps' per-layer values, or the one texture. ----------!
-   pure subroutine soil_column_texture(sc, tex)
-      type(soil_params_t),         intent(in)  :: sc
-      type(soil_texture_layers_t), intent(out) :: tex
-      if (sc%n_layer_values > 0_ik) then
-         tex%theta_sat = sc%layer_theta_sat
-         tex%theta_res = sc%layer_theta_res
-         tex%ksat = sc%layer_ksat
-         tex%par_a     = sc%layer_curve_par_a
-         tex%par_n   = sc%layer_curve_par_n
-         tex%k_solid   = sc%layer_solid_conductivity
-         tex%k_dry = sc%layer_dry_conductivity
-         tex%dry_cvol  = sc%layer_dry_heat_capacity
-      else
-         tex%theta_sat = sc%theta_sat
-         tex%theta_res = sc%theta_res
-         tex%ksat = sc%ksat
-         tex%par_a     = sc%curve_par_a
-         tex%par_n   = sc%curve_par_n
-         tex%k_solid   = sc%solid_conductivity
-         tex%k_dry = sc%dry_conductivity
-         tex%dry_cvol  = sc%dry_heat_capacity
-      end if
-   end subroutine soil_column_texture
-
-   !---------------------------------------------------------------------------------------!
-   ! The soil profile [soil] describes: its layers (soil_column_layers), each layer's       !
-   ! retention curve, Ks and thermal texture. The fast loop, the slow ledger and            !
-   ! validate_config all build the profile here.                                           !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine soil_column_params(sc, profile)
-      type(soil_params_t),        intent(in)  :: sc
-      type(soil_profile_t),       intent(out) :: profile
-      type(soil_texture_layers_t) :: tex
-      real(wp)    :: bottoms(n_soil_layer_max)
-      integer(ik) :: n_layer
-      call soil_column_layers(sc, bottoms, n_layer)
-      call soil_column_texture(sc, tex)
-      call build_soil_hydr_params_layers(n_layer, sc%retention, bottoms, tex%theta_sat, tex%theta_res,  &
-                                         tex%ksat, tex%par_a, tex%par_n, sc%psi_fc, profile)
-      call build_soil_therm_params_layers(n_layer, tex%k_solid, tex%k_dry, tex%dry_cvol, profile)
-   end subroutine soil_column_params
-
-   !---------------------------------------------------------------------------------------!
-   ! The water each layer starts the run with [m3/m3]: [init].soil_theta, or each layer's  !
-   ! field capacity for a column with a texture per layer (the soil maps).                 !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine soil_column_start_theta(sc, profile, init_soil_theta, theta)
-      type(soil_params_t),        intent(in)  :: sc
-      type(soil_profile_t),       intent(in)  :: profile
-      real(wp),                   intent(in)  :: init_soil_theta   !< [m3/m3] [init].soil_theta
-      real(wp),                   intent(out) :: theta(n_soil_layer_max)
-      if (sc%n_layer_values > 0_ik) then
-         theta = profile%theta_fc
-      else
-         theta = init_soil_theta
-      end if
-   end subroutine soil_column_start_theta
-
-   !---------------------------------------------------------------------------------------!
-   ! The water potential [MPa] of the profile's top layer at water content theta_top: the  !
-   ! predawn potential of a plant that has relaxed to the soil overnight. It seeds the     !
-   ! stomatal predawn potential and a new cohort's tissue water.                           !
-   !---------------------------------------------------------------------------------------!
-   pure real(wp) function top_soil_psi(profile, theta_top) result(psi)
-      type(soil_profile_t), intent(in) :: profile
-      real(wp),             intent(in) :: theta_top   !< [m3/m3]
-      psi = soil_matric_potential(profile%retention, theta_top, profile%theta_sat(1), profile%theta_res(1),   &
-                                  profile%curve_par_a(1), profile%curve_par_n(1))
-   end function top_soil_psi
-
    !---------------------------------------------------------------------------------------!
    ! apply_map_inputs -- cell k's inputs into the configuration its polygon runs           !
    ! (docs/science/soil_biophysics.md §The column from the soil maps): the soil column on  !
@@ -471,10 +365,10 @@ contains
             sc%depth = inp%soil_depth(k)
             sc%n_layer_bottoms = 0_ik
             sc%retention = SOIL_RETENTION_VG
-            call soil_column_layers(sc, bottoms, n)
+            call soil_layers(sc, bottoms, n)
             top = 0.0_wp
             do l = 1_ik, n
-               tex = layer_texture(inp, k, top, bottoms(l))
+               tex = map_layer_texture(inp, k, top, bottoms(l))
                call soil_texture_to_hydraulics(tex, sc%layer_theta_sat(l), sc%layer_theta_res(l),      &
                                                  sc%layer_curve_par_a(l), sc%layer_curve_par_n(l),       &
                                                  sc%layer_ksat(l))
@@ -498,177 +392,11 @@ contains
             cfg%soil%water_bottom_bc = SOIL_BC_DRAIN
             cfg%soil%drain_factor = 1.0_wp
          end select
-         call soil_column_params(cfg%soil, profile)
+         call build_soil_profile(cfg%soil, profile)
          cfg%soil%deep_temp  = inp%deep_temp(k)
          cfg%soil%deep_depth = abs(profile%z_node(profile%n_active)) + ANNUAL_DAMPING_DEPTH / sqrt(2.0_wp)
       end if
       if (inp%chave) cfg%pft%allom(:)%chave_e = inp%chave_e(k)
    end subroutine apply_map_inputs
-
-   !----- The soil of the column's layer [top, bottom]: the map layers it overlaps, each weighted  !
-   !      by the overlap. The deepest map layer reaches down without end. ----------------------------!
-   pure function layer_texture(inp, k, top, bottom) result(tex)
-      type(map_inputs_t), intent(in) :: inp
-      integer(ik),            intent(in) :: k
-      real(wp),               intent(in) :: top, bottom
-      type(soil_texture_t) :: tex
-      real(wp)    :: w, wsum, hi
-      integer(ik) :: m, nm
-      nm = size(inp%layer_top, kind=ik)
-      tex%sand = 0.0_wp
-      tex%silt = 0.0_wp
-      tex%clay = 0.0_wp
-      tex%org_carbon = 0.0_wp
-      tex%cec  = 0.0_wp
-      tex%ph   = 0.0_wp
-      tex%bulk_density = 0.0_wp
-      tex%coarse_frag = 0.0_wp
-      wsum = 0.0_wp
-      do m = 1_ik, nm
-         hi = bottom
-         if (m < nm) hi = min(bottom, inp%layer_bottom(m))
-         w = hi - max(top, inp%layer_top(m))
-         if (w <= 0.0_wp) cycle
-         wsum = wsum + w
-         associate (t => inp%texture(m, k))
-            tex%sand         = tex%sand         + w * t%sand
-            tex%silt         = tex%silt         + w * t%silt
-            tex%clay         = tex%clay         + w * t%clay
-            tex%org_carbon   = tex%org_carbon   + w * t%org_carbon
-            tex%cec          = tex%cec          + w * t%cec
-            tex%ph           = tex%ph           + w * t%ph
-            tex%bulk_density = tex%bulk_density + w * t%bulk_density
-            tex%coarse_frag  = tex%coarse_frag  + w * t%coarse_frag
-         end associate
-      end do
-      tex%sand = tex%sand / wsum
-      tex%silt = tex%silt / wsum
-      tex%clay = tex%clay / wsum
-      tex%org_carbon = tex%org_carbon / wsum
-      tex%cec = tex%cec / wsum
-      tex%ph = tex%ph / wsum
-      tex%bulk_density = tex%bulk_density / wsum
-      tex%coarse_frag = tex%coarse_frag / wsum
-   end function layer_texture
-
-   !=======================================================================================!
-   !  Per-column soil parameter assemblers: pure, state-free constructors that fill a      !
-   !  parameter struct from texture and geometry; not part of the fast loop.               !
-   !=======================================================================================!
-
-   !---------------------------------------------------------------------------------------!
-   ! A column's layer bottoms [m, positive down]: `list` (SOIL_LAYER_TEMPLATE or a         !
-   ! config list) cut at `depth`. The last layer ends at the depth; a remainder thinner    !
-   ! than LAYER_MERGE_SHARE of the list layer it falls in joins the layer above. A list    !
-   ! that ends above the depth gets one more layer down to it (the config refuses one).    !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine soil_layer_grid(depth, list, n_list, bottoms, n_layer)
-      real(wp),    intent(in)  :: depth, list(:)
-      integer(ik), intent(in)  :: n_list
-      real(wp),    intent(out) :: bottoms(n_soil_layer_max)
-      integer(ik), intent(out) :: n_layer
-      integer(ik) :: k
-      real(wp)    :: top
-      bottoms = 0.0_wp
-      n_layer = 0_ik
-      top     = 0.0_wp
-      do k = 1_ik, n_list
-         if (list(k) >= depth - GRID_TOL) exit                 ! list layer k holds the cut
-         n_layer = n_layer + 1_ik
-         bottoms(n_layer) = list(k)
-         top = list(k)
-      end do
-      if (k <= n_list .and. n_layer > 0_ik) then
-         if (depth - top < LAYER_MERGE_SHARE * (list(k) - top)) n_layer = n_layer - 1_ik
-      end if
-      n_layer = n_layer + 1_ik
-      bottoms(n_layer) = depth
-   end subroutine soil_layer_grid
-
-   !---------------------------------------------------------------------------------------!
-   ! A soil profile's geometry and hydraulics: the negative-z geometry from the layer       !
-   ! bottoms (soil_layer_grid), each layer's own texture, and the derived theta_fc (from    !
-   ! each layer's retention curve). The arrays hold one value per active layer: from a soil !
-   ! map's layers, or one value broadcast (build_soil_hydr_params). It starts the profile   !
-   ! afresh; build_soil_therm_params_layers adds the thermal texture. The roots are the     !
-   ! cohorts' own (meds_plant_hydraulics::cohort_root_profile), not the profile's.          !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine build_soil_hydr_params_layers(n_active, retention, layer_bottoms, theta_sat,       &
-                                                 theta_res, ksat, par_a, par_n, psi_fc_m, params)
-      integer(ik),          intent(in)  :: n_active, retention
-      real(wp),             intent(in)  :: layer_bottoms(:)    !< [m] bottoms of the active layers, positive down
-      real(wp),             intent(in)  :: theta_sat(:), theta_res(:), ksat(:), par_a(:), par_n(:)
-      real(wp),             intent(in)  :: psi_fc_m
-      type(soil_profile_t), intent(out) :: params
-      integer(ik) :: k
-
-      params%n_active  = n_active
-      params%retention = retention
-
-      !----- Interface elevations soil_layer_z(k) <= 0, k = 1 at the surface. -------------!
-      params%soil_layer_z(1)              = 0.0_wp
-      params%soil_layer_z(2:n_active + 1) = -layer_bottoms(1:n_active)
-
-      !----- Thicknesses, node elevations, internode spacings (dz, dz_node > 0). ----------!
-      do k = 1_ik, n_active
-         params%dz(k)     = params%soil_layer_z(k) - params%soil_layer_z(k+1)
-         params%z_node(k) = 0.5_wp * (params%soil_layer_z(k) + params%soil_layer_z(k+1))
-      end do
-      do k = 1_ik, n_active - 1_ik
-         params%dz_node(k) = params%z_node(k) - params%z_node(k+1)
-      end do
-      params%dz_node(n_active) = params%dz(n_active)      ! unused at the bottom face; kept > 0
-
-      !----- Each layer's texture. --------------------------------------------------------!
-      params%theta_sat(1:n_active) = theta_sat(1:n_active)
-      params%theta_res(1:n_active) = theta_res(1:n_active)
-      params%ksat(1:n_active)      = ksat(1:n_active)
-      params%curve_par_a(1:n_active) = par_a(1:n_active)
-      params%curve_par_n(1:n_active) = par_n(1:n_active)
-
-      !----- Derived threshold (from each layer's retention curve). -----------------------!
-      params%theta_fc(1:n_active) = soil_head_to_theta(retention, psi_fc_m, theta_sat(1:n_active),    &
-                                        theta_res(1:n_active), par_a(1:n_active), par_n(1:n_active))
-   end subroutine build_soil_hydr_params_layers
-
-   !----- One texture for every layer: the per-layer build with each value broadcast. -----!
-   pure subroutine build_soil_hydr_params(n_active, retention, layer_bottoms, theta_sat, theta_res,  &
-                                ksat, par_a, par_n, psi_fc_m, params)
-      integer(ik),          intent(in)  :: n_active, retention
-      real(wp),             intent(in)  :: layer_bottoms(:)    !< [m] bottoms of the active layers, positive down
-      real(wp),             intent(in)  :: theta_sat, theta_res, ksat, par_a, par_n, psi_fc_m
-      type(soil_profile_t), intent(out) :: params
-      real(wp) :: ts(n_active), tr(n_active), ks(n_active), pa(n_active), pn(n_active)
-      ts = theta_sat
-      tr = theta_res
-      ks = ksat
-      pa = par_a
-      pn = par_n
-      call build_soil_hydr_params_layers(n_active, retention, layer_bottoms, ts, tr, ks, pa, pn,        &
-                                         psi_fc_m, params)
-   end subroutine build_soil_hydr_params
-
-   !----- A soil profile's thermal texture, one value per active layer, added to the        !
-   !      geometry and hydraulics build_soil_hydr_params_layers set. ----------------------!
-   pure subroutine build_soil_therm_params_layers(n_active, k_solid, k_dry, dry_cvol, profile)
-      integer(ik),          intent(in)    :: n_active
-      real(wp),             intent(in)    :: k_solid(:), k_dry(:), dry_cvol(:)
-      type(soil_profile_t), intent(inout) :: profile
-      profile%solid_conductivity(1:n_active) = k_solid(1:n_active)
-      profile%dry_conductivity(1:n_active)   = k_dry(1:n_active)
-      profile%dry_heat_capacity(1:n_active)  = dry_cvol(1:n_active)
-   end subroutine build_soil_therm_params_layers
-
-   !----- One thermal texture for every layer. --------------------------------------------!
-   pure subroutine build_soil_therm_params(n_active, k_solid, k_dry, dry_cvol, profile)
-      integer(ik),          intent(in)    :: n_active
-      real(wp),             intent(in)    :: k_solid, k_dry, dry_cvol
-      type(soil_profile_t), intent(inout) :: profile
-      real(wp) :: ks(n_active), kd(n_active), cv(n_active)
-      ks = k_solid
-      kd = k_dry
-      cv = dry_cvol
-      call build_soil_therm_params_layers(n_active, ks, kd, cv, profile)
-   end subroutine build_soil_therm_params
 
 end module meds_config

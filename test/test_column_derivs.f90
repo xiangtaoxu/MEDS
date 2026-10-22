@@ -23,7 +23,7 @@ program test_column_derivs
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,      only : soil_profile_t, soil_params_t
-   use meds_config,             only : build_soil_hydr_params, build_soil_therm_params
+   use meds_soil_derive,        only : build_profile_hydraulics, build_profile_thermal
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
@@ -287,9 +287,9 @@ contains
       nsl = 10_ik
       print '(a)', 'test_soil_energy_tendency:'
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
+      call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
-      call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, soil)
+      call build_profile_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, soil)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp
       forcing%g_top = 120.0_wp ; forcing%geothermal = 0.0_wp
       forcing%root_heat_sink(1:10) = 3.0_wp                       ! nonzero interior sink
@@ -911,9 +911,9 @@ contains
       type(hydro_args_t)   :: hp
       integer(ik) :: i, k
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
+      call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
-      call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
+      call build_profile_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
       col_site%soil = soil_params_t()
       hp%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
       hp%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)

@@ -11,7 +11,8 @@ module meds_init
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o
    use meds_time,                only : meds_time_t, time_to_string
-   use meds_config,              only : meds_config_t, INIT_CENSUS, INIT_RESTART, top_soil_psi
+   use meds_config,              only : meds_config_t, INIT_CENSUS, INIT_RESTART
+   use meds_soil_derive,         only : top_soil_psi
    use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp, cas_temp_to_enthalpy
    use meds_cohort_state_vars,   only : set_cohort_tissue_water, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t

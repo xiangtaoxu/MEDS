@@ -22,8 +22,9 @@
 !==========================================================================================!
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
-   use meds_config,             only : meds_config_t, build_soil_hydr_params, soil_column_layers,     &
-                                       soil_column_params, soil_column_start_theta, top_soil_psi
+   use meds_config,             only : meds_config_t
+   use meds_soil_derive,        only : build_profile_hydraulics, soil_layers, build_soil_profile,           &
+                                       soil_start_theta, top_soil_psi
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
    use meds_state_defaults,     only : UNSET_POSITIVE
@@ -64,8 +65,8 @@ program test_slow_ledger
    call check(poly%cohort%n == 2_ik .and. poly%patch%n == 1_ik, 'fixture: 2 cohorts in 1 patch')
 
    associate (sc => cfg%soil)
-      call soil_column_layers(sc, soil_bottoms, n_soil_layer)
-      call build_soil_hydr_params(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat, sc%theta_res, &
+      call soil_layers(sc, soil_bottoms, n_soil_layer)
+      call build_profile_hydraulics(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat, sc%theta_res, &
                                   sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, soil)
    end associate
 
@@ -225,8 +226,8 @@ contains
                  'tissue water (a): the recruit phase''s water residual is zero')
       leaf_curve = c%pft%hydro(2_ik)%leaf_curve
       wood_curve = c%pft%hydro(2_ik)%wood_curve
-      call soil_column_params(c%soil, sp)
-      call soil_column_start_theta(c%soil, sp, c%init%soil_theta, theta_start)
+      call build_soil_profile(c%soil, sp)
+      call soil_start_theta(c%soil, sp, c%init%soil_theta, theta_start)
       call check_close(tissue_water_to_psi(st%cohort%leaf_water_mass(1), leaf_curve,            &
                        st%cohort%leaf_carbon(1)), top_soil_psi(sp, theta_start(1)), 1.0e-9_wp,     &
                        'tissue water (a): a recruit''s leaves are born at the starting top-soil potential')

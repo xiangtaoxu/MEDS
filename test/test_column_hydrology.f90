@@ -26,7 +26,7 @@ program test_column_hydrology
    use meds_constants,        only : rho_h2o, grav_head, n_soil_layer_max
    use meds_soil_types, only : chydro_forcing_t
    use meds_soil_params,      only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
-   use meds_config,             only : build_soil_hydr_params
+   use meds_soil_derive,        only : build_profile_hydraulics
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
                                     soil_theta_to_head
@@ -61,7 +61,7 @@ contains
       type(soil_profile_t), intent(out) :: params
       real(wp) :: bottoms(n_soil_layer_max)
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, bottoms)
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, bottoms, 0.43_wp, 0.078_wp,                 &
+      call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, bottoms, 0.43_wp, 0.078_wp,               &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
    end subroutine loam_params
 
@@ -237,7 +237,7 @@ contains
       integer(ik) :: step
       print '(a)', 'test_downpour:'
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, bottoms)
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, bottoms, 0.38_wp, 0.068_wp,            &
+      call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, bottoms, 0.38_wp, 0.068_wp,          &
            5.6e-7_wp, 0.8_wp, 1.09_wp, -3.37_wp, params)
       theta = 0.36_wp
       call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)

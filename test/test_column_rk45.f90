@@ -15,8 +15,8 @@
 program test_column_rk45
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o, grav_head, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
-   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
-                                        build_soil_therm_params
+   use meds_config,              only : meds_config_t
+   use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
    use meds_fast_params,         only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,  &
@@ -79,9 +79,9 @@ program test_column_rk45
    !      mutually consistent. -------------------------------------------------------------------!
    call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
    call apply_hydraulics_config(cfg, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, col_site%leaf_photo)
@@ -673,9 +673,9 @@ contains
       type(soil_profile_t) :: vg_soil
       real(wp) :: cdiag(N_CO_FAST_ROWS, N), seed
       vg_soil = col_site%soil_profile
-      call build_soil_hydr_params(NSL, SOIL_RETENTION_CAMPBELL, test_bottoms, THETA_SAT, THETA_RES,     &
+      call build_profile_hydraulics(NSL, SOIL_RETENTION_CAMPBELL, test_bottoms, THETA_SAT, THETA_RES,   &
                                   2.89e-6_wp, PSI_SAT, B, -3.37_wp, col_site%soil_profile)
-      call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)   ! the fixture's thermal texture
+      call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)   ! the fixture's thermal texture
       call set_noon_forcing()
       call reset_state()
       cfg%time_integrator = INTEG_RK45

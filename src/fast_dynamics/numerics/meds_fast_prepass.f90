@@ -10,7 +10,7 @@
 module meds_fast_prepass
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, r_gas, kgcday_2_umols
-   use meds_config,           only : top_soil_psi
+   use meds_soil_derive,      only : top_soil_psi
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM, CO_BETA_NONSTOM, &
                                      CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, &
                                      CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_GPP_RATE, CO_LEAF_PAR, CO_GB_MOL, CO_PSI_PREDAWN, &

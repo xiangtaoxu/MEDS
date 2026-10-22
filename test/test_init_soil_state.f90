@@ -11,7 +11,8 @@
 !==========================================================================================!
 program test_init_soil_state
    use meds_kinds,            only : wp, ik
-   use meds_config,           only : meds_config_t, soil_column_layers
+   use meds_config,           only : meds_config_t
+   use meds_soil_derive,      only : soil_layers
    use meds_polygon_state_vars, only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, seed_bare_ground, finalize_init
    use meds_constants,        only : n_soil_layer_max
@@ -49,7 +50,7 @@ program test_init_soil_state
    end do
 
    !=== 3. A texture per layer: each layer's own curve, each starting at its field capacity. ======!
-   call soil_column_layers(cfg%soil, bottoms, n)
+   call soil_layers(cfg%soil, bottoms, n)
    associate (sc => cfg%soil)
       sc%n_layer_values = n
       do k = 1_ik, n

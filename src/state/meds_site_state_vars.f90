@@ -16,7 +16,8 @@ module meds_site_state_vars
    use meds_constants,          only : n_soil_layer_max
    use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_diag_vars,          only : site_diag_block
-   use meds_config,             only : meds_config_t, soil_column_params, soil_column_start_theta
+   use meds_config,             only : meds_config_t
+   use meds_soil_derive,        only : build_soil_profile, soil_start_theta
    use meds_soil_params,        only : soil_params_t, soil_profile_t
    implicit none
    private
@@ -135,8 +136,8 @@ contains
       type(site_surface_t), intent(inout) :: surf
       type(meds_config_t),  intent(in)    :: cfg
       surf%soil = cfg%soil
-      call soil_column_params(cfg%soil, surf%soil_profile)
-      call soil_column_start_theta(cfg%soil, surf%soil_profile, cfg%init%soil_theta, surf%theta_start)
+      call build_soil_profile(cfg%soil, surf%soil_profile)
+      call soil_start_theta(cfg%soil, surf%soil_profile, cfg%init%soil_theta, surf%theta_start)
    end subroutine make_site_surface
 
 end module meds_site_state_vars

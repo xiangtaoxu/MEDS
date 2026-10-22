@@ -9,8 +9,9 @@
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
-   use meds_config,      only : meds_config_t, soil_column_params, pft_stomata_psi_onset, pft_wstress_psi_open,  &
+   use meds_config,      only : meds_config_t, pft_stomata_psi_onset, pft_wstress_psi_open,                      &
                                 pft_wstress_psi_close
+   use meds_soil_derive, only : build_soil_profile
    use meds_pft_params,  only : pft_table_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t, hydro_args_table_t
@@ -63,7 +64,7 @@ contains
       type(meds_config_t),  intent(in)  :: cfg
       type(fast_context_t), intent(out) :: ctx
       !----- The soil column from [soil]: one texture for the column or one per layer (soil maps). -!
-      call soil_column_params(cfg%soil, ctx%col_site%soil_profile)
+      call build_soil_profile(cfg%soil, ctx%col_site%soil_profile)
       !----- Per-PFT plant hydraulics from each PFT's [hydraulics] record. ------------------------!
       call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
       call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)

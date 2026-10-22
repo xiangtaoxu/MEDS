@@ -36,8 +36,8 @@
 program test_slow_diag_units
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : yr_sec, n_soil_layer_max
-   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
-                                        build_soil_therm_params
+   use meds_config,              only : meds_config_t
+   use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
    use meds_polygon_state_vars,  only : polygon_t, reset_step_diagnostics
    use meds_diag_vars,           only : alloc_patch_diag, patch_diag_value, patch_diag_slow_row, PA_LITTER_LEAF, &
                                         PA_LITTER_FINEROOT, PA_LITTER_STRUCT, PA_RECRUIT_NPLANT, PA_DISTURB_AREA, PA_LE, PA_GPP
@@ -72,9 +72,9 @@ program test_slow_diag_units
    cfg%soil_carbon%soil_carbon_on     = .true.
 
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil_profile)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
    call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)

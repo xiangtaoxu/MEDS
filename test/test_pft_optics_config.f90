@@ -14,7 +14,8 @@
 !==========================================================================================!
 program test_pft_optics_config
    use meds_kinds,          only : wp, ik
-   use meds_config,         only : meds_config_t, pft_leaf_psi_tlp, soil_column_params
+   use meds_config,         only : meds_config_t, pft_leaf_psi_tlp
+   use meds_soil_derive,    only : build_soil_profile
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_args_table_t
    use meds_fast_config,    only : apply_hydraulics_config, fast_context_t, build_fast_context

@@ -3,7 +3,7 @@
 ! meds_soil_params -- the [soil] block, the ground a site is set on (soil_params_t: its    !
 ! column, its surface and its two bottom boundaries), and the profile the soil kernels     !
 ! read, soil_profile_t (the layers, their hydraulic and thermal texture and the field      !
-! capacity), which meds_config derives from it once per site (soil_column_params). A       !
+! capacity), which meds_soil_derive builds from it once per site (build_soil_profile). A   !
 ! config leaf (src/share only): the soil kernels import it without meds_config.            !
 !==========================================================================================!
 module meds_soil_params
@@ -81,8 +81,8 @@ module meds_soil_params
       real(wp)    :: layer_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp
    end type soil_params_t
 
-   !----- The column's texture, one value per layer: the per-layer arrays, or the one      !
-   !      texture repeated (soil_column_texture). -----------------------------------------!
+   !----- A profile's texture, one value per layer: the per-layer arrays, or the one       !
+   !      texture repeated (soil_layer_textures). -----------------------------------------!
    type :: soil_texture_layers_t
       real(wp) :: theta_sat(n_soil_layer_max), theta_res(n_soil_layer_max), ksat(n_soil_layer_max)
       real(wp) :: par_a(n_soil_layer_max), par_n(n_soil_layer_max)

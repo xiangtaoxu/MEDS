@@ -28,8 +28,8 @@ module meds_config_check
    use meds_region_params,      only : RUN_MODE_REGION
    use meds_maps_params,        only : soil_maps_on
    use meds_config,             only : meds_config_t, site_config, pft_wstress_psi_open,              &
-                                       pft_wstress_psi_close, INIT_CENSUS, INIT_RESTART,              &
-                                       soil_column_layers, soil_column_texture, soil_column_params,   &
+                                       pft_wstress_psi_close, INIT_CENSUS, INIT_RESTART
+   use meds_soil_derive,        only : soil_layers, soil_layer_textures, build_soil_profile,          &
                                        SOIL_LAYER_TEMPLATE
    use meds_fast_params,        only : INTEG_ARK, INTEG_RK45, CTRL_I, CTRL_PI
    implicit none
@@ -331,10 +331,10 @@ contains
          else if (sc%depth > SOIL_LAYER_TEMPLATE(size(SOIL_LAYER_TEMPLATE))) then
             error stop TAG//'soil.depth is below the deepest default layer (27 m): set soil.layer_bottoms'
          end if
-         call soil_column_layers(sc, bottoms, n)
+         call soil_layers(sc, bottoms, n)
          if (sc%n_layer_values > 0_ik .and. sc%n_layer_values /= n)                                     &
             error stop TAG//'soil: the per-layer texture does not match the column''s layers'
-         call soil_column_texture(sc, tex)
+         call soil_layer_textures(sc, tex)
          if (any(tex%theta_sat(1:n) <= tex%theta_res(1:n))) error stop TAG//'soil.theta_sat <= theta_res'
          if (any(tex%theta_res(1:n) < 0.0_wp))              error stop TAG//'soil.theta_res < 0'
          !----- With a texture per layer each layer starts at its field capacity, so init.soil_theta !
@@ -374,7 +374,7 @@ contains
                        'property, like latitude; there is no safe default.'
          if (cfg%soil%deep_temp < 200.0_wp .or. cfg%soil%deep_temp > 330.0_wp)                         &
             error stop TAG//'soil.deep_temp outside 200..330 K -- it is an absolute temperature'
-         call soil_column_params(cfg%soil, sp)
+         call build_soil_profile(cfg%soil, sp)
          if (cfg%soil%deep_depth <= abs(sp%z_node(sp%n_active)))                                       &
             error stop TAG//'soil.deep_depth must lie BELOW the bottom soil node '//                    &
                        '(it is measured down from the surface, and the anchor conducts to it)'

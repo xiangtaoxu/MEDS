@@ -12,8 +12,8 @@
 !==========================================================================================!
 program test_fast_loop
    use meds_kinds,               only : wp, ik
-   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
-                                        build_soil_therm_params, top_soil_psi
+   use meds_config,              only : meds_config_t
+   use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal, top_soil_psi
    use meds_cohort_state_vars,   only : set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
@@ -60,9 +60,9 @@ program test_fast_loop
 
    !----- Build the column config + reference met inside the fast context. -----------------!
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil_profile)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
    call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
