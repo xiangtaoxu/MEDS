@@ -10,17 +10,16 @@
 module meds_fast_ark
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o
-   use meds_fast_params,  only : CTRL_L2_STRICT
    use meds_fast_control, only : state_wrms_grouped, step_control_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
                                column_budget_t, column_state_t, column_frozen_t, stage_bflux_t, column_bflux_t,   &
-                               error_control_t, mask_is_full, ark_stages_t, fast_workspace_t, column_site_t
+                               error_control_t, ark_stages_t, fast_workspace_t, column_site_t
    use meds_column_state_ops, only : state_init, state_extrap, state_err_diff, state_sub, bflux_zero,             &
                                      bflux_add, bflux_bweight, clamp_cas, soil_water_store, soil_energy_store,    &
                                      plant_water_store, canopy_film_store, deposit_condensate,                    &
                                      clamp_canopy_film, unpack_column_state, diagnose_soil_temps,                 &
-                                     apply_process_mask, transp_per_leaf_area, commit_tissue_energy
+                                     transp_per_leaf_area, commit_tissue_energy
    use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
    use meds_fast_frozen, only : build_column_frozen
    use meds_diag_vars,       only : CO_TRANSP
@@ -28,10 +27,6 @@ module meds_fast_ark
    use meds_budget_check, only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR, BUDGET_CO2_RATE_FLOOR
    implicit none
    private
-
-   !----- niter is two-valued: <= 1 is the uncoupled backward-Euler pass, > 1 the coupled 2x2 Newton  !
-   !      (capped by its own NEWT_MAX). [fast].ark_coupled picks between them. ---------------------!
-   integer(ik), parameter :: NEWT_COUPLED = 2_ik
 
    public :: column_fast_step_ark
    public :: ark2_column_step, adaptive_ark_march   ! used only by the tests
@@ -44,7 +39,7 @@ contains
    ! (column_be_stage), stiffly accurate, so Y3 is the step. Soil water moves at the network's  !
    ! rate in the stages; plant water and the films are advanced once over dt on the stages'    !
    ! b-weighted fluxes, so neither adds to the embedded error y_err. --------------------------!
-   subroutine ark2_column_step(y, frozen, col_site, n, nsl, dt, y_out, y_err, stages, niter, bf, clamp_n)
+   subroutine ark2_column_step(y, frozen, col_site, n, nsl, dt, y_out, y_err, stages, bf, clamp_n)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       type(column_site_t),   intent(in)  :: col_site
@@ -52,7 +47,6 @@ contains
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(inout) :: y_out, y_err   !< filled in place
       type(ark_stages_t),    intent(inout) :: stages    !< this thread's stage storage, filled in place
-      integer(ik), optional, intent(in)  :: niter
       type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
       !----- Stage-clamp count (column_budget_t%clamp_stage_n): only the stage-3 base is clamped. -----!
       integer(ik), optional, intent(inout) :: clamp_n
@@ -61,20 +55,16 @@ contains
       type(stage_bflux_t)   :: bf2, bf3
       real(wp)              :: transp_bw(n)
       real(wp)              :: film_evap_leaf_bw(n), film_evap_wood_bw(n)
-      integer(ik) :: np
       associate (Y2 => stages%y2, base3 => stages%base3, Y3 => stages%y3, sf2 => stages%sf2, sf3 => stages%sf3)
-         np = 1_ik
-         if (present(niter)) np = max(1_ik, niter)
-
          !----- Stage 2: a gamma*dt backward-Euler stage from y_n. --------------------------------------!
-         call column_be_stage(y, frozen, col_site, n, nsl, GAMMA*dt, Y2, sf2, niter=np, bf=bf2)
+         call column_be_stage(y, frozen, col_site, n, nsl, GAMMA*dt, Y2, sf2, bf=bf2)
          !----- Stage 3 from the extrapolated base. Extrapolating by BETA can carry the canopy-air      !
          !      enthalpy to a temperature where qsat overflows, so the base's canopy air is clamped to a  !
          !      physical range: an identity in range, and an oversized step is rejected anyway. Soil     !
          !      water needs no clamp: it moves at a steady rate, so the base stays between its ends. ----!
          call state_extrap(y, BETA, Y2, n, nsl, base3)
          call clamp_cas(base3, nfire=clamp_n)
-         call column_be_stage(base3, frozen, col_site, n, nsl, GAMMA*dt, Y3, sf3, niter=np, bf=bf3)
+         call column_be_stage(base3, frozen, col_site, n, nsl, GAMMA*dt, Y3, sf3, bf=bf3)
          call state_init(Y3, n, nsl, y_out)
          !----- Plant water over the full dt at the network's rates, debited the same b-weighted         !
          !      transpiration the canopy air's vapour balance was credited. -----------------------------!
@@ -105,18 +95,17 @@ contains
    ! embedded error is within tolerance (docs/science/numerical_scheme.md eq. (3)) and sizing  !
    ! the next by step_control_factor (eq. (4), p = 1). Returns the step and reject counts.     !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_ark_march(y0, frozen, col_site, n, nsl, t_end, ec, dt_init, y_out, ws, nsteps, nrej, niter, acc, &
+   subroutine adaptive_ark_march(y0, frozen, col_site, n, nsl, t_end, ec, dt_init, y_out, ws, nsteps, nrej, acc,        &
                                  dt_warm_out, clamp_n)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
       type(column_site_t),   intent(in)  :: col_site
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: t_end, dt_init
-      type(error_control_t), intent(in)  :: ec       !< tolerances + controller + strictness (meds_fast_control)
+      type(error_control_t), intent(in)  :: ec       !< tolerances and controller (meds_fast_control)
       type(column_state_t),  intent(inout) :: y_out  !< filled in place
       type(fast_workspace_t), intent(inout) :: ws    !< this thread's march and stage storage
       integer(ik),           intent(out) :: nsteps, nrej
-      integer(ik), optional, intent(in)  :: niter    !< <= 1 uncoupled pass, > 1 (default) coupled Newton
       !----- Warm start (docs/science/numerical_scheme.md §3 `ark`): the last accepted step that the     !
       !      interval's end did not cut short, to seed the next call. -------------------------------!
       real(wp),    optional, intent(out) :: dt_warm_out
@@ -127,12 +116,9 @@ contains
 
       type(column_bflux_t) :: bfsub
       real(wp)             :: t, dt, err, err_prev, fac, dt_floor
-      integer(ik)          :: np
       real(wp)             :: dt_try, dt_warm
       logical              :: clamped
       associate (y => ws%y_march, y_new => ws%y_new, y_err => ws%y_err, y_lo => ws%y_lo)
-         np = 8_ik
-         if (present(niter)) np = max(1_ik, niter)
          if (present(acc)) call bflux_zero(acc, n)
          !----- Sub-step floor t_end/64, at least 1e-2 s. The backward-Euler stages are L-stable, so a  !
          !      floor step stays bounded even when its error is above tolerance; the floor caps a stiff  !
@@ -151,7 +137,7 @@ contains
             dt_try = dt
             dt = min(dt, t_end - t)
             clamped = dt < dt_try - tiny_num
-            call ark2_column_step(y, frozen, col_site, n, nsl, dt, y_new, y_err, ws%stages, niter=np, bf=bfsub,          &
+            call ark2_column_step(y, frozen, col_site, n, nsl, dt, y_new, y_err, ws%stages, bf=bfsub,          &
                                   clamp_n=clamp_n)
             call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
             !----- Grouped norm over the whole column state, eq. (3). ARK's theta and plant-water terms are  !
@@ -173,9 +159,6 @@ contains
             end if
             fac = step_control_factor(err, err_prev, ec)             ! I (default) or PI (Gustafsson) controller
             if (err <= 1.0_wp .or. dt <= dt_floor) then
-               !----- L2 strict stops on a floor-forced accept that still breaches tolerance; L1 accepts it. --!
-               if (ec%level == CTRL_L2_STRICT .and. err > 1.0_wp) &
-                  error stop 'adaptive_ark_march: L2 strict -- floor step cannot meet tolerance'
                call state_init(y_new, n, nsl, y)
                if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate only accepted sub-steps
                t = t + dt
@@ -236,7 +219,7 @@ contains
       real(wp)    :: t_leaf_avg(col_cohort%n), t_wood_avg(col_cohort%n)
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, isub, nsub, nsteps, nrej
-      logical     :: halt_budgets     !< hard-stop on a non-closing budget (debug_error, full column only)
+      logical     :: halt_budgets     !< hard-stop on a non-closing budget ([fast].debug_error)
 
       n = col_cohort%n
       nsl = col_site%soil%n_active
@@ -245,9 +228,7 @@ contains
       budget%clamp_stage_n = 0_ik
       budget%theta_ood_max = 0.0_wp
 
-      !----- A reduced column (process_mask_t) cannot conserve, so it suppresses the hard stops; the   !
-      !      n_fail counts still run. ----------------------------------------------------------------!
-      halt_budgets = col_site%energy%debug_error .and. mask_is_full(col_config%mask)
+      halt_budgets = col_site%energy%debug_error
 
       !----- State^n pond mass, for the whole-water ledger. ------------------------------------------!
       w_surface0 = biophys%soil_water%w_surface
@@ -262,15 +243,13 @@ contains
       !----- Advance one dt_fast: adaptive, or fixed equal sub-steps. ---------------------------------!
       if (col_config%integrator%adaptive) then
          !----- Warm start (docs/science/numerical_scheme.md §3 `ark`): seed from the step this patch    !
-         !      settled on last dt_fast. [fast].ark_dt_init overrides; a first call starts from dt_fast. !
+         !      settled on last dt_fast; a first call starts from dt_fast. ------------------------------!
          dt0 = dt_fast
          if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)
-         if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
-         !----- The run's error control: tolerances, controller and strictness, eqs. (3)-(4). ----------!
+         !----- The run's error control: tolerances and controller, eqs. (3)-(4). -----------------------!
          ec = col_config%integrator%error_control
          call adaptive_ark_march(y, frozen, col_site, n, nsl, dt_fast, ec, dt0, y_out, ws, nsteps, nrej,         &
-                                 niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
-                                 dt_warm_out=dt_warm_next,                                          &
+                                 acc=acc, dt_warm_out=dt_warm_next,                                 &
                                  clamp_n=budget%clamp_stage_n)
          biophys%adapt_dt_last = dt_warm_next
       else
@@ -280,8 +259,7 @@ contains
          call bflux_zero(acc, n)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, frozen, col_site, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr, ws%stages, &
-                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
-                                  clamp_n=budget%clamp_stage_n)
+                                  bf=bfsub, clamp_n=budget%clamp_stage_n)
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
@@ -299,11 +277,6 @@ contains
       y_out%w_surface      = frozen%hydrology%w_surface1
       y_out%w_surface_energy = frozen%hydrology%w_surface_energy1     ! paired with the mass
 
-      !----- Process mask (docs/science/numerical_scheme.md §6): a masked-off store is restored to     !
-      !      state^n at this one commit point, its couplings having acted during the march.           !
-      !      mask%veg_energy applies below, where the tissues are committed. -------------------------!
-      call apply_process_mask(col_config%mask, y, y_out, n, nsl)
-
       !----- Canopy films: capacity clamp and overflow/deficit at the store's boundary, after the      !
       !      march. A film evaporating at its frozen conductance can overdraw below 0, which would     !
       !      create water in the next step's interception, so it is floored at 0 and the deficit is    !
@@ -318,22 +291,17 @@ contains
 
       !----- Unpack into biophys and diagnose the soil temperatures. -------------------------------!
       call unpack_column_state(y_out, n, nsl, biophys)
-      !----- The pond obeys the soil_water mask, like theta. ----------------------------------------!
-      if (col_config%mask%soil_water) then
-         biophys%soil_water%w_surface      = y_out%w_surface
-         biophys%soil_water%w_surface_energy = y_out%w_surface_energy
-      end if
+      biophys%soil_water%w_surface      = y_out%w_surface
+      biophys%soil_water%w_surface_energy = y_out%w_surface_energy
       call diagnose_soil_temps(y_out, col_site%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
             biophys%soil_energy%soil_fliq)
       !----- The tissue heat store is solved in the stages, jointly with the canopy air               !
       !      (docs/science/vegetation_energy_dynamics.md §One formulation). Each tissue's energy is     !
       !      committed from its time-average temperature over the march, the complement of what the   !
-      !      canopy air received (docs/science/numerical_scheme.md §5b). The veg_energy mask holds the !
-      !      tissue at its entry temperature and keeps its fluxes. -----------------------------------!
+      !      canopy air received (docs/science/numerical_scheme.md §5b). ------------------------------!
       t_leaf_avg(1:n) = acc%tissue_leaf_int(1:n) / dt_fast
       t_wood_avg(1:n) = acc%tissue_wood_int(1:n) / dt_fast
-      call commit_tissue_energy(frozen%tissue, col_cohort%nplant, col_config%mask%veg_energy,                  &
-                                col_config%mask%hydraulics, dt_fast, t_leaf_avg, t_wood_avg, n, biophys,      &
+      call commit_tissue_energy(frozen%tissue, col_cohort%nplant, dt_fast, t_leaf_avg, t_wood_avg, n, biophys, &
                                 tissue_store0, tissue_store1)
       !----- Each cohort's transpiration over the step, as the leaf water was debited. -------------!
       if (present(cdiag) .and. allocated(acc%transp_coh))                                           &

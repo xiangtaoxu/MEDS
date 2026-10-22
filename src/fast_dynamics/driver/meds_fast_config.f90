@@ -100,7 +100,6 @@ contains
          ctx%col_site%energy%soil_energy_budget_atol  = cfg%energy%soil_energy_budget_atol * cfg%atol_scale
       end associate
 
-      ctx%col_config%mask   = cfg%mask        ! [fast].mask    -> the stores that evolve (all on: the column)
 
       !----- The canopy-RT optics table, built once and read-only downstream. --------------------!
       call build_rad_optics(cfg, ctx%rad_opt)
@@ -320,13 +319,12 @@ contains
       tols%atol = tols%atol * cfg%atol_scale
    end function build_tol_set
 
-   !----- The error-control bundle: the tolerance set, the step controller and the strictness. -------!
+   !----- The error-control bundle: the tolerance set and the step controller. ----------------------!
    pure function build_error_control(cfg) result(ec)
       type(meds_config_t), intent(in) :: cfg
       type(error_control_t)           :: ec
       ec%tols       = build_tol_set(cfg)
       ec%controller = cfg%step_controller
-      ec%level      = cfg%error_level
    end function build_error_control
 
    !----- The integrator's whole configuration, once per run (carried on column_config_t%integrator). -!
@@ -335,10 +333,7 @@ contains
       type(integrator_opts_t)         :: opts
       opts%scheme           = cfg%time_integrator
       opts%adaptive         = cfg%ark_adaptive
-      opts%dt_init          = cfg%ark_dt_init
-      opts%coupled_newton   = cfg%ark_coupled
       opts%fixed_substeps   = cfg%ark_fixed_substep
-      opts%cas_condensation = cfg%cas_condensation
       opts%error_control    = build_error_control(cfg)
    end function build_integrator_opts
 

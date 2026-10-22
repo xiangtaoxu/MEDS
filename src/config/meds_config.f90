@@ -24,7 +24,7 @@ module meds_config
    use meds_soil_hydr_lib,      only : soil_head_to_theta, soil_matric_potential, soil_texture_t,     &
                                        soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,          only : soil_texture_to_thermal
-   use meds_fast_params,        only : process_mask_t, INTEG_ARK, CTRL_I, CTRL_L1_ADAPTIVE
+   use meds_fast_params,        only : INTEG_ARK, CTRL_I
    use meds_soil_params,        only : soil_column_config_t, soil_texture_layers_t, soil_params_t,    &
                                        soil_thermal_params_t, soil_opts_t, energy_opts_t,             &
                                        SOIL_BC_DRAIN, SOIL_BC_AQUIFER, ANNUAL_DAMPING_DEPTH
@@ -94,20 +94,13 @@ module meds_config
       integer(ik) :: time_integrator     = INTEG_ARK      !< INTEG_ARK | INTEG_RK45
       logical     :: ark_adaptive        = .true.         !< adaptive sub-steps; .false.: ark_fixed_substep
       integer(ik) :: ark_fixed_substep   = 4_ik           !< sub-steps per dt_fast when not adaptive
-      real(wp)    :: ark_dt_init         = 0.0_wp         !< [s] first adaptive sub-step (0: warm start)
       real(wp)    :: rtol                = 1.0e-3_wp      !< [-] relative tolerance of every group
       real(wp)    :: atol_scale          = 1.0_wp         !< [-] multiplier on every group's atol
-      integer(ik) :: error_level         = CTRL_L1_ADAPTIVE !< CTRL_L0_FIXED | CTRL_L1_ADAPTIVE | CTRL_L2_STRICT
       integer(ik) :: step_controller     = CTRL_I         !< CTRL_I | CTRL_PI
-      logical     :: ark_coupled         = .true.         !< the coupled leaf <-> canopy-air Newton solve
       real(wp)    :: forcing_sample_frac = 0.5_wp         !< [-] where in the sub-step the forcing is sampled
-      logical     :: cas_condensation    = .true.         !< condense canopy-air supersaturation
       logical     :: canopy_water_on     = .false.        !< the canopy interception films
       real(wp)    :: snow_init_swe       = 0.0_wp         !< [kg/m2] snow seeded at the run start
       real(wp)    :: snow_init_temp      = 270.0_wp       !< [K] its temperature
-      logical     :: fast_probe          = .false.        !< the sub-daily probe CSV
-      character(len=256) :: fast_probe_file = 'fast_probe.csv'
-      type(process_mask_t) :: mask                        !< the stores that evolve (all on: the full column)
       integer(ik) :: n_fast_per_slow                      !< DERIVED nint(dt_slow / dt_fast), at least 1
 
       !----- [soil]: the ground; its solver settings come from [fast]. ------------------------!

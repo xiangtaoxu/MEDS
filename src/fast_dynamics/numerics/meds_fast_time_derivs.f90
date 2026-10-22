@@ -22,7 +22,7 @@ module meds_fast_time_derivs
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
    use meds_plant_biophysics, only : veg_energy_balance, lw_emission_slope
    use meds_column_state_ops, only : assemble_soil_energy_forcing
-   use meds_fast_types, only : column_config_t, snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,    &
+   use meds_fast_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
                                tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t,                  &
                                column_state_t, column_frozen_t, column_tend_t, column_site_t
    implicit none
@@ -197,12 +197,8 @@ contains
 
       !----- Smooth condensation sink (dew, fog): supersaturated canopy air relaxes to qsat over TAU_COND. !
       !      The condensate leaves as liquid at tcas, taking only its liquid enthalpy; the latent heat    !
-      !      stays in the air, as in real condensation. [fast].cas_condensation (default on). ----------!
-      if (cas%cas_condensation) then
-         f%cond     = (cas%cas_mass_capacity / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
-      else
-         f%cond     = 0.0_wp
-      end if
+      !      stays in the air, as in real condensation. ----------------------------------------------!
+      f%cond     = (cas%cas_mass_capacity / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
       f%src_vap  = f%src_vap  - f%cond
       f%cond_enth = f%cond * internal_energy_liquid(tcas)
       f%src_enth = f%src_enth - f%cond_enth

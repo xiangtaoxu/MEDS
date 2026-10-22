@@ -14,18 +14,15 @@ module meds_fast_rk45
    use meds_fast_time_derivs, only : column_derivs, cas_conductances
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t,             &
                                      surface_tend_t, column_config_t, column_cohort_t, column_forcing_t,          &
-                                     column_budget_t, mask_is_full, patch_biophys_t, fast_workspace_t,            &
-                                     column_site_t
+                                     column_budget_t, patch_biophys_t, fast_workspace_t, column_site_t
    use meds_fast_frozen,      only : build_column_frozen
-   use meds_column_state_ops, only : state_init, state_accum, state_sub, zero_like, apply_process_mask,           &
-                                     clamp_cas, soil_water_store, soil_energy_store, plant_water_store,           &
-                                     canopy_film_store, deposit_condensate, clamp_canopy_film,                    &
-                                     unpack_column_state, diagnose_soil_temps, transp_per_leaf_area,              &
-                                     commit_tissue_energy
+   use meds_column_state_ops, only : state_init, state_accum, state_sub, zero_like, clamp_cas,                    &
+                                     soil_water_store, soil_energy_store, plant_water_store, canopy_film_store,   &
+                                     deposit_condensate, clamp_canopy_film, unpack_column_state,                  &
+                                     diagnose_soil_temps, transp_per_leaf_area, commit_tissue_energy
    use meds_diag_vars,        only : CO_TRANSP
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
-   use meds_fast_params,      only : CTRL_L2_STRICT
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_budget_check,     only : budget_check, last_check_closed, BUDGET_ENERGY_RATE_FLOOR,      &
                                      BUDGET_WATER_RATE_FLOOR
@@ -363,8 +360,6 @@ contains
          end if
          fac = step_control_factor(err, err_prev, ec)
          if (err <= 1.0_wp .or. dt <= dt_floor) then
-            if (ec%level == CTRL_L2_STRICT .and. err > 1.0_wp) &
-               error stop 'adaptive_rk45_march: L2 strict -- floor step cannot meet tolerance'
             call state_init(y_new, n, nsl, y)
             if (present(face_resid_acc)) face_resid_acc = face_resid_acc + face_i
             if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
@@ -459,7 +454,6 @@ contains
 
       dt0 = dt_fast
       if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)
-      if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
       ec = col_config%integrator%error_control
       ec%p_order = RK45_P_ORDER
       tl_int_acc(1:n) = 0.0_wp
@@ -490,10 +484,6 @@ contains
          return
       end if
 
-      !----- Process mask (docs/science/numerical_scheme.md §6): a masked-off store, soil and plant   !
-      !      water included, is restored to state^n. ------------------------------------------------!
-      call apply_process_mask(col_config%mask, y, y_out, n, nsl)
-
       !----- Canopy films: capacity clamp and overflow/deficit at the store's boundary after the march, !
       !      as on ARK: a film can overdraw below 0, so it is floored and the deficit booked as        !
       !      negative outflow. ----------------------------------------------------------------------!
@@ -517,24 +507,16 @@ contains
       call diagnose_soil_temps(y_out, col_site%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
             biophys%soil_energy%soil_fliq)
       !----- The pond, its runoff and their enthalpy are the water network's, as theta is            !
-      !      (docs/science/soil_plant_water.md); under the soil_water mask the pond keeps its state^n. !
-      if (col_config%mask%soil_water) then
-         w_pond_rk    = frozen%hydrology%w_surface1
-         e_pond_rk    = frozen%hydrology%w_surface_energy1
-         runoff_rk    = frozen%hydrology%runoff_surf * dt_fast
-         over_enth_rk = frozen%hydrology%runoff_enth * dt_fast
-         biophys%soil_water%w_surface      = w_pond_rk
-         biophys%soil_water%w_surface_energy = e_pond_rk
-      else
-         w_pond_rk = w_surface0
-         e_pond_rk = e_pond0
-         runoff_rk = 0.0_wp
-         over_enth_rk = 0.0_wp
-      end if
+      !      (docs/science/soil_plant_water.md). ---------------------------------------------------!
+      w_pond_rk    = frozen%hydrology%w_surface1
+      e_pond_rk    = frozen%hydrology%w_surface_energy1
+      runoff_rk    = frozen%hydrology%runoff_surf * dt_fast
+      over_enth_rk = frozen%hydrology%runoff_enth * dt_fast
+      biophys%soil_water%w_surface      = w_pond_rk
+      biophys%soil_water%w_surface_energy = e_pond_rk
 
       !----- Commit the tissues' energy from their time-average temperature, as on ARK. -------------!
-      call commit_tissue_energy(frozen%tissue, col_cohort%nplant, col_config%mask%veg_energy,                  &
-                                col_config%mask%hydraulics, dt_fast, tl_int_acc(1:n) / dt_fast,             &
+      call commit_tissue_energy(frozen%tissue, col_cohort%nplant, dt_fast, tl_int_acc(1:n) / dt_fast,         &
                                 tw_int_acc(1:n) / dt_fast, n, biophys, tissue_store0, tissue_store1)
       !----- The transpiration each cohort's leaves lost over the step, as on the ARK path. ---------!
       if (present(cdiag)) cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(tr_int_acc(1:n), dt_fast,          &
@@ -604,7 +586,7 @@ contains
       real(wp),              intent(in) :: dt_fast
       type(column_config_t), intent(in) :: col_config
       type(column_site_t),   intent(in) :: col_site
-      if (.not. (col_site%energy%debug_error .and. mask_is_full(col_config%mask))) return
+      if (.not. col_site%energy%debug_error) return
       if (.not. last_check_closed(budget%whole_water, dt_fast, BUDGET_WATER_RATE_FLOOR)) then
          write(*, '(a,es13.5)') 'meds_fast_rk45: whole_water (rk45) did not close, resid = ',               &
                                 budget%whole_water%resid

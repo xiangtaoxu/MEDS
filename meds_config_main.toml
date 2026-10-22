@@ -31,14 +31,10 @@ dt_fast             = "900s"   # sub-daily step, an accuracy setting: 900 s is t
 # time_integrator     = "ark"        # "ark" (ESDIRK2) | "rk45" (explicit, for comparison)
 # ark_adaptive        = true         # adaptive sub-steps; false: ark_fixed_substep of them
 # ark_fixed_substep   = 4            # [-]  sub-steps per dt_fast when not adaptive
-# ark_dt_init         = 0.0          # [s]  first adaptive sub-step; 0: the one the patch last converged to
 # rtol                = 1.0e-3       # [-]  relative tolerance of every error-controlled store, the march's
 #                                    #   and the soil-plant water network's
 # atol_scale          = 1.0          # [-]  multiplier on every absolute tolerance (rtol alone saturates)
-# error_level         = "adaptive"   # "fixed" | "adaptive" | "strict" (a floor sub-step that misses the
-#                                    #   tolerance stops the run)
 # step_controller     = "i"          # "i" (integral) | "pi" (proportional-integral, damps step hunting)
-# ark_coupled         = true         # the leaf <-> canopy-air solve: coupled Newton; false: one pass
 # ---- The soil-plant water network (docs/science/soil_plant_water.md §3). ----
 # water_atol          = 1.0e-4       # [-]  its absolute tolerance: water content for soil and pond, relative
 #                                    #   water content for plant tissues
@@ -48,22 +44,11 @@ dt_fast             = "900s"   # sub-daily step, an accuracy setting: 900 s is t
 # ---- Switches and the initial snow. ----
 # forcing_sample_frac = 0.5          # [-]  where in each sub-step the forcing is sampled, in [0, 1]
 #                                    #   (docs/science/numerical_scheme.md §7)
-# cas_condensation    = true         # condense canopy-air supersaturation
 # canopy_water_on     = false        # the canopy interception films and their evaporation
 # intercept_alpha     = 1.0          # [-]  Beer interception efficiency
 # intercept_k         = 0.5          # [1/PAI] Beer interception extinction
 # snow_init_swe       = 0.0          # [kg/m2] snow water equivalent at the run start
 # snow_init_temp      = 270.0        # [K]  its temperature
-# fast_probe          = false        # one CSV row per (patch, sub-step), for debugging; needs n_threads = 1
-# fast_probe_file     = "fast_probe.csv"
-# ---- The process mask: a store switched off stays as it is (numerical_scheme.md §6). ----
-# mask.veg_energy     = true         # leaf and wood energy
-# mask.cas_energy     = true         # canopy-air enthalpy
-# mask.cas_vapour     = true         # canopy-air humidity
-# mask.cas_co2        = true         # canopy-air CO2
-# mask.soil_heat      = true         # soil heat
-# mask.soil_water     = true         # soil water
-# mask.hydraulics     = true         # plant hydraulics
 
 [soil]
 # The ground: the column, its surface and its two bottom boundaries. Every key is optional, at the

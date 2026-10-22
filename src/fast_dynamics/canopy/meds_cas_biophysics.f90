@@ -28,8 +28,8 @@ module meds_cas_biophysics
       real(wp) :: atm_co2              = 400.0_wp!< [umol/mol]  free-atmosphere CO2
    end type cas_column_t
 
-   !----- The summed sources into the CAS. Any adjustment (the supersaturation sink,                 !
-   !      [fast].cas_condensation) is folded in before the box update, so both kernels share it. ---!
+   !----- The summed sources into the CAS. Any adjustment (the supersaturation sink) is folded in    !
+   !      before the box update, so both kernels share it. ----------------------------------------!
    type :: cas_source_t
       real(wp) :: surface_enthalpy_source = 0.0_wp   !< [W/m2]      sensible + latent into the CAS
       real(wp) :: surface_vapor_source    = 0.0_wp   !< [kg/m2/s]   vapour into the CAS

@@ -18,8 +18,7 @@ module meds_fast_dynamics
    use meds_therm_lib,           only : cas_temp_to_enthalpy, specific_humidity_to_vpd, precip_phase
    use meds_fast_config, only : fast_context_t, site_column_configs
    use meds_column_view, only : copy_column_cohort
-   use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string, seconds_into_day,         &
-                                     slope_incidence_cosz
+   use meds_time,             only : meds_time_t, time_advance_seconds, seconds_into_day, slope_incidence_cosz
    use meds_output_types,     only : output_buffers_t
    use meds_diag_vars,        only : N_CO_FAST_ROWS, N_PA_ROWS, patch_diag_block, polygon_diag_block, PA_LE, PA_H, &
                                      PA_RNET, PA_SW_GROUND, &
@@ -246,7 +245,7 @@ contains
                red_nfail(max(npatch,1_ik)))
 
       !----- This slow step's met samples: met_advance once per sub-step in increasing time, and     !
-      !      met_instant, a pure function of (reader state, time). The probe writes the sample times. !
+      !      met_instant, a pure function of (reader state, time).                                    !
       if (do_forcing) then
          allocate(met_sample(nsub), t_sample(nsub))
          met_cur%kt_last_day = poly%kt_last_day          ! the polygon's memory of the sky, carried over
@@ -477,11 +476,6 @@ contains
                poly%patch%xi_accum(ip)%rh_fast_accum = poly%patch%xi_accum(ip)%rh_fast_accum         &
                                                      + budget%rh_matrix_step * dt_fast_days
             end if
-            !----- The opt-in sub-daily probe. It writes one shared file, so the configuration check    !
-            !      rejects it with n_threads > 1. -------------------------------------------------!
-            if (cfg%fast_probe .and. do_forcing)                                                    &
-               call write_fast_probe(cfg, t_sample(isub), ip, ncoh, biophys, col_cohort, gpp_coh(1:ncoh),      &
-                                     le_flux, met%swdown())
             !----- Patch GPP and net absorbed radiation for the patch row. h_flux comes from          !
             !      column_fast_step, as le_flux does: formed here from post-call reads, nvfortran      !
             !      miscompiles it to 0 (the array-valued-result class of trap, docs/building.md). -----!
@@ -685,40 +679,6 @@ contains
       end if
       if (do_fast) out_bufs%fast_ready = .true.   ! signal main: the staging holds this slow step
    end subroutine fast_dynamics
-
-   !----- The opt-in sub-daily probe ([fast].fast_probe): one CSV row per (patch, sub-step), flushed  !
-   !      as written, from a saved unit opened on first use. The FAST tier is the supported sub-daily  !
-   !      output; the probe serves integrator and dt_fast checks. -----------------------------------!
-   subroutine write_fast_probe(cfg, t_sub, ip, ncoh, biophys, col_cohort, gpp_coh, le_flux, sw_in)
-      type(meds_config_t),   intent(in) :: cfg
-      type(meds_time_t),     intent(in) :: t_sub
-      integer(ik),           intent(in) :: ip, ncoh
-      type(patch_biophys_t), intent(in) :: biophys
-      type(column_cohort_t), intent(in) :: col_cohort
-      real(wp),              intent(in) :: gpp_coh(:), le_flux, sw_in
-      integer, save :: unit           ! newunit returns a negative handle: track open state apart
-      logical, save :: opened = .false.
-      real(wp)      :: gpp_patch, leaf_temp_mean, wood_temp_mean
-
-      if (.not. opened) then
-         open(newunit=unit, file=trim(cfg%fast_probe_file), status='replace', action='write')
-         write(unit,'(a)') 'datetime,patch,sw_in_W_m2,cas_temp_K,gpp_umol_m2_s,le_W_m2,soil_temp_top_K,leaf_temp_K,wood_temp_K'
-         opened = .true.
-      end if
-
-      gpp_patch = 0.0_wp
-      leaf_temp_mean = 0.0_wp
-      wood_temp_mean = 0.0_wp
-      if (ncoh > 0_ik) then
-         gpp_patch      = sum(gpp_coh(1:ncoh) * col_cohort%nplant(1:ncoh))    ! per-plant [umol/plant/s] x nplant -> [umol/m2/s]
-         leaf_temp_mean = sum(biophys%leaf_temp(1:ncoh)) / real(ncoh, wp)
-         wood_temp_mean = sum(biophys%wood_temp(1:ncoh)) / real(ncoh, wp)
-      end if
-
-      write(unit,'(a,",",i0,7(",",es13.6))') trim(time_to_string(t_sub)), ip,   &
-            sw_in, biophys%cas%can_temp, gpp_patch, le_flux, biophys%soil_energy%soil_temp(1), leaf_temp_mean, wood_temp_mean
-      flush(unit)
-   end subroutine write_fast_probe
 
    !----- Grow-only capacity of the per-patch forcing buffers, pre-sized to the largest patch; their  !
    !      writers loop to col_cohort%n, so a larger capacity is exact. ------------------------------!

@@ -97,8 +97,7 @@ program test_tissue_energy
                    abs(site_energy(poly) - e_total) <= 1.0e-12_wp * e_total)
 
    !=== 4. The fast commit. =====================================================================!
-   call commit_case(.false., 'mask off')
-   call commit_case(.true.,  'mask on')
+   call commit_case('commit')
 
    call test_report('test_tissue_energy')
 
@@ -116,8 +115,7 @@ contains
 
    !----- One cohort, one plant per m2, whose leaf and wood gain water over the step and relax from  !
    !      300 K and 296 K towards 301.5 K and 296.8 K. --------------------------------------------!
-   subroutine commit_case(veg_energy_on, tag)
-      logical,          intent(in) :: veg_energy_on
+   subroutine commit_case(tag)
       character(len=*), intent(in) :: tag
       real(wp), parameter :: DL = 2.0e3_wp, DW = 4.0e4_wp          ! [J/K] dry heat capacities
       real(wp), parameter :: WL0 = 0.8_wp, WW0 = 9.0_wp            ! [kg] start-of-step water
@@ -141,16 +139,11 @@ contains
       biophys%wood_energy     = tissue_temp_to_energy(DW, WW0, TW0)
       biophys%leaf_water_mass = WL0 + DWL                          ! the network's end-of-step water
       biophys%wood_water_mass = WW0 + DWW
-      call commit_tissue_energy(tissue, [1.0_wp], veg_energy_on, .true., DT, [TL_AVG], [TW_AVG], 1_ik, biophys, &
+      call commit_tissue_energy(tissue, [1.0_wp], DT, [TL_AVG], [TW_AVG], 1_ik, biophys, &
                                 store0, store1)
-      heat = 0.0_wp
-      tl_expect = TL0
-      tw_expect = TW0
-      if (veg_energy_on) then
-         heat = (DL + WL0 * cp_liq) * (TL_AVG - TL0) + (DW + WW0 * cp_liq) * (TW_AVG - TW0)
-         tl_expect = ((DL + WL0 * cp_liq) * TL_AVG + DWL * cp_liq * TL0) / (DL + (WL0 + DWL) * cp_liq)
-         tw_expect = ((DW + WW0 * cp_liq) * TW_AVG + DWW * cp_liq * TW0) / (DW + (WW0 + DWW) * cp_liq)
-      end if
+      heat = (DL + WL0 * cp_liq) * (TL_AVG - TL0) + (DW + WW0 * cp_liq) * (TW_AVG - TW0)
+      tl_expect = ((DL + WL0 * cp_liq) * TL_AVG + DWL * cp_liq * TL0) / (DL + (WL0 + DWL) * cp_liq)
+      tw_expect = ((DW + WW0 * cp_liq) * TW_AVG + DWW * cp_liq * TW0) / (DW + (WW0 + DWW) * cp_liq)
       enth = DWL * internal_energy_liquid(TL0) + DWW * internal_energy_liquid(TW0)
       call check_true(tag//': the tissues gain the heat they relaxed through and their water''s enthalpy', &
                       abs((store1 - store0) - (heat + enth)) <= 1.0e-12_wp * abs(heat + enth))

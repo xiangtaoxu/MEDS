@@ -21,7 +21,7 @@ module meds_fast_types
    use meds_biogeochem_params, only : decomp_opts_t
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
-   use meds_fast_params, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I, process_mask_t
+   use meds_fast_params, only : INTEG_ARK, CTRL_I
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
    private
@@ -29,7 +29,6 @@ module meds_fast_types
    public :: column_config_t, column_site_t, column_cohort_t, column_forcing_t, column_budget_t
    public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
    public :: tol_set_t, error_control_t, integrator_opts_t
-   public :: mask_is_full
    public :: ensure_column_cohort_capacity
    public :: surface_state_t, surface_tend_t
    public :: patch_biophys_t, ensure_patch_biophys_capacity
@@ -72,9 +71,8 @@ module meds_fast_types
                                        ATOL_LEAF_W_DEF, ATOL_WOOD_W_DEF, ATOL_THETA_DEF]
    end type tol_set_t
 
-   !----- What an adaptive march runs under: strictness, controller, step-factor limits, tolerances. !
+   !----- What an adaptive march runs under: controller, step-factor limits, tolerances. ----------!
    type :: error_control_t
-      integer(ik)      :: level      = CTRL_L1_ADAPTIVE
       integer(ik)      :: controller = CTRL_I
       real(wp)         :: safety     = 0.9_wp
       real(wp)         :: fmin       = 0.2_wp
@@ -91,17 +89,13 @@ module meds_fast_types
    type :: integrator_opts_t
       integer(ik) :: scheme           = INTEG_ARK  !< INTEG_ARK | INTEG_RK45
       logical     :: adaptive         = .true.     !< ARK: adaptive sub-stepping (else fixed_substeps)
-      real(wp)    :: dt_init          = 0.0_wp     !< [s] first sub-step (<= 0: warm start / dt_fast)
-      logical     :: coupled_newton   = .true.     !< ARK: coupled leaf<->CAS Newton (else uncoupled BE)
       integer(ik) :: fixed_substeps   = 1_ik       !< ARK, adaptive = .false.: equal sub-steps per dt_fast
-      logical     :: cas_condensation = .true.     !< apply the CAS supersaturation sink (both schemes)
-      type(error_control_t) :: error_control       !< tolerances + controller + strictness
+      type(error_control_t) :: error_control       !< tolerances + controller
    end type integrator_opts_t
 
    !----- The run part of the column's configuration, built once per run (build_fast_context) and  !
    !      shared by every site: what the run's configuration and the PFT table set. ---------------!
    type :: column_config_t
-      type(process_mask_t)        :: mask            !< process-complexity mask (all on = full column)
       type(aero_cfg_t)            :: aero            !< aerodynamics constants
       !----- Stem and fine-root maintenance respiration's peaked temperature response: leaf Rd's,     !
       !      [leaf_physiology] ea_rd, hd_rd, ds_rd (docs/science/plant_respiration.md §4). ----------!
@@ -276,8 +270,6 @@ module meds_fast_types
       real(wp) :: nee_biotic    = 0.0_wp      !< [umol/m2/s] frozen biotic CO2 source (Ra+Rh-GPP)
       real(wp) :: rho           = 0.0_wp      !< [kg/m3]   canopy-air density
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
-      !----- [fast].cas_condensation: off separates the sink from the rest of the canopy-air budget.
-      logical  :: cas_condensation = .true.  !< apply the CAS supersaturation sink (both schemes)
    end type cas_boundary_t
 
    !----- Per-cohort leaf and wood energy-balance coefficients and the tissue heat store, frozen at  !
@@ -584,14 +576,6 @@ module meds_fast_types
    end type patch_biophys_t
 
 contains
-
-   !----- Is the column the full system? Only then do the budget halts apply: a held store still     !
-   !      exchanges with its neighbours, so a reduced column cannot conserve. ----------------------!
-   pure logical function mask_is_full(m)
-      type(process_mask_t), intent(in) :: m
-      mask_is_full = m%veg_energy .and. m%cas_energy .and. m%cas_vapour .and. m%cas_co2 .and.        &
-                     m%soil_heat  .and. m%soil_water .and. m%hydraulics
-   end function mask_is_full
 
    !----- Allocate a column_cohort_t (the per-patch cohort SoA the fast loop consumes). ------!
    subroutine alloc_column_cohort(col_cohort, n)

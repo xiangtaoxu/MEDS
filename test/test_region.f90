@@ -405,7 +405,6 @@ contains
    function common_block() result(b)
       character(len=:), allocatable :: b
       b = '[run]'//nl()//'start_time = "2021-01-25"'//nl()//'end_time = "2021-02-06"'//nl()//        &
-          '[fast]'//nl()//'fast_probe = false'//nl()//                                              &
           '[init]'//nl()//'init_mode = 0'//nl()//                                                   &
           '[forcing]'//nl()//'format = "ERA5land"'//nl()//'data_path = "'//trim(work)//'/archive"'//nl()//    &
           'recycle = false'//nl()//                                                                 &
