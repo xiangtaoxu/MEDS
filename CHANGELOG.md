@@ -54,7 +54,11 @@ snapshot, its value at the period's end, under the name without `mean_`, off unt
 its tiers; a flux or a rate is a mean only (#474, #477). An `io_config` line names a variable or a pattern (`"*_co" = false`, `"mean_*_py" = "M Y"`), the
 most specific line winning, and `[output]`'s group and axis switches go (#475). The state files are
 `[output]`'s too (`state_write`, `state_interval` in days, months or years, `state_file_dir`,
-`state_file_prefix`), and `[forcing].format` is `"default"` or `"ERA5land"` (#476).
+`state_file_prefix`), and `[forcing].format` is `"default"` or `"ERA5land"` (#476). The fast loop
+drops its RK4 test oracle, so RK45 is its one explicit integrator and the tests' explicit reference; it
+drops the code and fields nothing read and three evaluations whose results nothing used, writes one
+statement per line and keeps its longer explanations on the science pages, with no change to any result
+(#478).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -441,9 +445,45 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
   `total_et` and `count_cohorts` are gone (read `poly%et_accum` and `poly%cohort%n`). No netCDF variable
   name, TOML key or C API changes; the `meds_io_config.toml` that `--dump-io-config` writes labels the
   scalar axis `polygon`.
+- **Fortran names in the fast loop** (#478), for code built against MEDS's modules:
+  `meds_fast_rk4_oracle` and its `rk4_column_step` are gone; `PATH_C3` and `PATH_C4` come from
+  `meds_pft_params`, not `meds_plant_types`, and the radiation types from `meds_canopy_types`, not
+  `meds_canopy_radiation`; the fields listed under Removed are gone, so `assemble_soil_energy_forcing`
+  takes no geothermal flux, `run_spac_solver` takes the ground's water input and its temperature
+  (`precip_ground`, `t_pond_inflow`) as arguments, and `newton_surface_solve` returns no end-of-step
+  canopy-air enthalpy and humidity. Nineteen routines and constants used only in their own module are
+  private, among them `adaptive_rk45_march`, `solve_band`, `water_enthalpy_faces` and the pre-pass's six
+  stages. No netCDF variable name, TOML key or C API changes.
 
 ### Changed
 
+- **RK45 is the fast loop's one explicit integrator** (#478). The RK4 oracle, a fixed-step RK4 march of
+  the column's state that only the tests ran, is gone; the backward-Euler and arrowhead tests compare
+  against an RK45 march at a 4 s step instead. `[fast].time_integrator = "rk45"` stays a full
+  production choice, with the ARK rescue, and the docs call it the explicit alternative rather than the
+  accuracy baseline.
+- **Three evaluations whose results nothing used are gone** (#478): the end-of-step temperature
+  inversion and `surface_derivs` call of an ARK step, which fed only a fallback the step never takes
+  (the tissues are committed from their time-averaged temperatures); the closing `surface_derivs` call
+  and canopy-air commit of `newton_surface_solve`, which its caller redid; and the per-branch canopy-air
+  commits of a backward-Euler stage, which commits the box once, after either branch. Every output is
+  bit-identical with gfortran and with ifx.
+- **The annotations of `src/fast_dynamics` are short, and their reasoning is on the science pages**
+  (#478). Module headers are 6-8 lines and field and routine comments a line or a few; whole-line
+  comments go from 3,709 to 1,980. New: in `numerical_scheme.md`, the ARK warm start, RK45's rescue
+  triggers and why explicit stepping is affordable (§3), and how the tissues' energy, the condensate and
+  the reported fluxes close the ledgers (§5b); `diagnostics.md` §4 "The patch row"; in
+  `soil_plant_water.md`, the film-evaporation cap (§4) and the ground inflow's heat (§5); in
+  `soil_biophysics.md`, the water-enthalpy faces and the interception drip; `leaf_gas_exchange.md` §2
+  and §4.2; a leafless cohort's leaf node in `plant_hydraulics.md` §2; the vapour enthalpy the tissues
+  pay in `vegetation_energy_dynamics.md`; and passages in `snow_biophysics.md`,
+  `canopy_radiation_transfer.md` §4, `soil_carbon.md` §7 and `column_biophysics.md`. Two compiler traps
+  join `docs/building.md`, and the fast loop's ED2 provenance is in `docs/ed2_comparison.md` §4.9.
+  Comments that had become wrong are fixed.
+- **Unused imports and locals in `src/fast_dynamics`** (#478): 119 imported names and 14 locals nothing
+  used go, and repeated `use` lines of one module merge.
+- **No `;` statement joins in `src/fast_dynamics`** (#478), as in `src/state`, `src/config`, `src/init`
+  and `src/io`.
 - **State files at any interval** (#476). `[output].state_interval` writes a state file every N days
   from the run's start, or at every N-th month or year boundary, and one at the run's end; a month's
   batch of steps ends at a state time, so a daily state file falls mid-month. A yearly interval
@@ -860,6 +900,12 @@ most specific line winning, and `[output]`'s group and axis switches go (#475). 
 
 ### Removed
 
+- **The RK4 oracle** (#478), `meds_fast_rk4_oracle` with `rk4_column_step`, and `test_column_derivs`'
+  RK4 march test.
+- **Fast-loop fields nothing read** (#478): `aero_out_t%qstar`, `%cstar` and `%can_depth`;
+  `energy_flux_t%ground_heat`, `%nsub` and `%converged`; `energy_forcing_t%w_flux_bot` and
+  `%t_water_bot`; `soil_hydrology_t%geothermal`, `%precip_ground` and `%t_pond_inflow`; and
+  `chydro_forcing_t%precip_ground` and `%t_pond_inflow`.
 - **The per-cohort leaf-temperature staging** (#474), which nothing read since the F twins merged
   (#473): the fast loop filled it every sub-step.
 - **The `"const"` forcing backend** (#469), with `MET_BACKEND_CONST` and its test, and `met_cursor_t`'s
